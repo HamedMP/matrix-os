@@ -43,7 +43,7 @@ export default function Home() {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <div className="flex flex-1 flex-col min-w-0">
-        <div className="relative flex-1 min-h-0">
+        <div className="relative flex flex-col flex-1 min-h-0">
           <Desktop />
 
           <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4">
@@ -51,14 +51,7 @@ export default function Home() {
               <ThoughtCard />
             </div>
 
-            <div className="pointer-events-auto flex flex-col items-center gap-2 pb-2">
-              {!sidebarOpen && !overlayDismissed && (
-                <ResponseOverlay
-                  messages={chat.messages}
-                  busy={chat.busy}
-                  onDismiss={() => setOverlayDismissed(true)}
-                />
-              )}
+            <div className="pointer-events-auto flex justify-center pb-2">
               <InputBar
                 sessionId={chat.sessionId}
                 busy={chat.busy}
@@ -97,6 +90,14 @@ export default function Home() {
         >
           <MessageSquareIcon className="size-4" />
         </Button>
+      )}
+
+      {!sidebarOpen && !overlayDismissed && (
+        <ResponseOverlay
+          messages={chat.messages}
+          busy={chat.busy}
+          onDismiss={() => setOverlayDismissed(true)}
+        />
       )}
     </div>
   );
