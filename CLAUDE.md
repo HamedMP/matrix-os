@@ -71,6 +71,78 @@ docs/                # Reference documentation
 - Prompt caching: `cache_control: {type: "ephemeral"}` on system prompt + tools for 90% savings
 - Integration tests use haiku to keep costs <$0.10 per run
 
+## Running the Platform
+
+### Prerequisites
+- Node.js 22+
+- pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
+- `ANTHROPIC_API_KEY` env var set (for kernel AI features)
+
+### Install
+```bash
+pnpm install
+```
+
+### Run Tests
+```bash
+bun run test              # Unit tests (97 tests, ~300ms)
+bun run test:watch        # Watch mode
+bun run test:integration  # Integration tests (needs API key, uses haiku)
+bun run test:coverage     # Coverage report
+```
+
+### Start Development Servers
+```bash
+# All at once (gateway + shell):
+bun run dev
+
+# Or individually:
+bun run dev:gateway   # Hono gateway on http://localhost:4000
+bun run dev:shell     # Next.js shell on http://localhost:3000
+```
+
+The gateway boots the home directory at `~/matrixos/` on first run (copies from `home/` template, initializes git).
+
+### Environment Variables
+- `ANTHROPIC_API_KEY` -- required for kernel AI features
+- `MATRIX_HOME` -- custom home directory path (default: `~/matrixos/`)
+- `PORT` -- gateway port (default: 4000)
+- `NEXT_PUBLIC_GATEWAY_WS` -- shell WebSocket URL (default: `ws://localhost:4000/ws`)
+- `NEXT_PUBLIC_GATEWAY_URL` -- shell HTTP URL (default: `http://localhost:4000`)
+- `GATEWAY_URL` -- Next.js proxy target (default: `http://localhost:4000`)
+
+### Architecture
+```
+Browser (localhost:3000)
+  |-- Next.js shell (desktop, chat, terminal, module graph)
+  |-- proxy.ts rewrites /gateway/* and /modules/* to gateway
+  |
+Gateway (localhost:4000)
+  |-- /ws           Main WebSocket (chat, file watcher events)
+  |-- /ws/terminal  PTY WebSocket (xterm.js <-> node-pty)
+  |-- /api/message  REST endpoint for kernel messages
+  |-- /files/*      Serve home directory files
+  |-- /modules/*    Reverse proxy to module ports (3100-3999)
+  |-- /api/theme    Current theme JSON
+  |-- /health       Health check
+```
+
+## Current State (updated per commit)
+
+**Commit**: ea49030 | **Tests**: 97 passing (11 test files) | **Phase 4 complete**
+
+### Completed
+- **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
+- **Phase 2**: SQLite/Drizzle schema, system prompt builder, agent frontmatter parser, first-boot
+- **Phase 3**: Kernel (spawnKernel with V1 query+resume), IPC MCP server (7 tools), hooks (8 hooks), gateway (Hono HTTP+WS, dispatcher, file watcher), agent prompts (builder, researcher, deployer)
+- **Phase 4**: Next.js 16 shell -- Desktop (window mgmt), ChatPanel, AppViewer (iframe), Dock, ActivityFeed, Terminal (xterm.js+node-pty), ModuleGraph (vis-network), useSocket/useFileWatcher/useTheme hooks, proxy.ts, module reverse proxy
+
+### Next Up
+- **Phase 5**: Self-healing (T045-T049) -- healer agent, health checks, auto-patch
+- **Phase 6**: Self-evolution (T050-T053) -- evolver agent, protected files, watchdog
+- **Phase 7**: Multiprocessing (T054-T056) -- concurrent kernel dispatch
+- **Phase 8**: Polish + demo (T057-T064) -- pre-seed apps, demo script, recording
+
 ## Development Rules
 
 - Next.js 16: `proxy.ts` replaces `middleware.ts`, Turbopack by default, React Compiler stable, `cacheComponents` replaces PPR
