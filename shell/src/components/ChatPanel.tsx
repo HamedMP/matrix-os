@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
-import { reduceChat, type ChatMessage } from "@/lib/chat";
+import { useConversation } from "@/hooks/useConversation";
+import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import {
   Conversation,
   ConversationContent,
@@ -19,10 +20,18 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   WrenchIcon,
   CheckCircleIcon,
   LoaderCircleIcon,
   SendIcon,
+  PlusIcon,
 } from "lucide-react";
 
 function ToolMessage({ msg }: { msg: ChatMessage }) {
@@ -49,6 +58,25 @@ export function ChatPanel() {
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const { connected, subscribe, send } = useSocket();
+  const { conversations, load } = useConversation();
+
+  useEffect(() => {
+    if (conversations.length === 0) return;
+
+    const sorted = [...conversations].sort(
+      (a, b) => b.updatedAt - a.updatedAt,
+    );
+    const latest = sorted[0];
+
+    if (!sessionId && latest.messageCount > 0) {
+      load(latest.id).then((conv) => {
+        if (conv) {
+          setSessionId(conv.id);
+          setMessages(hydrateMessages(conv.messages));
+        }
+      });
+    }
+  }, [conversations, sessionId, load]);
 
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
@@ -94,14 +122,56 @@ export function ChatPanel() {
     [input, busy, send, sessionId],
   );
 
+  const handleNewChat = useCallback(() => {
+    setMessages([]);
+    setSessionId(undefined);
+  }, []);
+
+  const handleSwitchConversation = useCallback(
+    (id: string) => {
+      load(id).then((conv) => {
+        if (conv) {
+          setSessionId(conv.id);
+          setMessages(hydrateMessages(conv.messages));
+        }
+      });
+    },
+    [load],
+  );
+
   return (
     <aside className="flex w-[400px] flex-col border-l border-border bg-card">
       <header className="flex items-center justify-between px-4 py-3">
-        <span className="text-sm font-medium">Chat</span>
-        <Badge variant={connected ? "default" : "destructive"} className="text-xs">
-          <span className={`size-1.5 rounded-full ${connected ? "bg-success" : "bg-current"}`} />
-          {connected ? "Connected" : "Offline"}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Chat</span>
+          {conversations.length > 1 && (
+            <Select value={sessionId ?? ""} onValueChange={handleSwitchConversation}>
+              <SelectTrigger size="sm" className="h-6 text-xs w-[140px]">
+                <SelectValue placeholder="Select..." />
+              </SelectTrigger>
+              <SelectContent>
+                {conversations
+                  .sort((a, b) => b.updatedAt - a.updatedAt)
+                  .map((c) => (
+                    <SelectItem key={c.id} value={c.id} className="text-xs">
+                      {c.preview
+                        ? c.preview.slice(0, 30) + (c.preview.length > 30 ? "..." : "")
+                        : c.id.slice(0, 12)}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" className="size-6" onClick={handleNewChat}>
+            <PlusIcon className="size-3.5" />
+          </Button>
+          <Badge variant={connected ? "default" : "destructive"} className="text-xs">
+            <span className={`size-1.5 rounded-full ${connected ? "bg-success" : "bg-current"}`} />
+            {connected ? "Connected" : "Offline"}
+          </Badge>
+        </div>
       </header>
       <Separator />
 

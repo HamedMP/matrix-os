@@ -7,6 +7,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
+import { createConversationStore, type ConversationStore } from "./conversations.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 import type { WSContext } from "hono/ws";
 
@@ -64,6 +65,7 @@ export function createGateway(config: GatewayConfig) {
   });
 
   const watcher: Watcher = createWatcher(homePath);
+  const conversations: ConversationStore = createConversationStore(homePath);
 
   const clients = new Set<WSContext>();
 
@@ -79,40 +81,64 @@ export function createGateway(config: GatewayConfig) {
 
   app.get(
     "/ws",
-    upgradeWebSocket(() => ({
-      onOpen(_evt, ws) {
-        clients.add(ws);
-      },
+    upgradeWebSocket(() => {
+      let pendingText: string | undefined;
+      let activeSessionId: string | undefined;
 
-      onMessage(evt, ws) {
-        let parsed: ClientMessage;
-        try {
-          parsed = JSON.parse(
-            typeof evt.data === "string" ? evt.data : "",
-          ) as ClientMessage;
-        } catch {
-          send(ws, { type: "kernel:error", message: "Invalid JSON" });
-          return;
-        }
+      return {
+        onOpen(_evt, ws) {
+          clients.add(ws);
+        },
 
-        if (parsed.type === "message") {
-          dispatcher
-            .dispatch(parsed.text, parsed.sessionId, (event) => {
-              send(ws, kernelEventToServerMessage(event));
-            })
-            .catch((err: Error) => {
-              send(ws, {
-                type: "kernel:error",
-                message: err.message ?? "Kernel error",
+        onMessage(evt, ws) {
+          let parsed: ClientMessage;
+          try {
+            parsed = JSON.parse(
+              typeof evt.data === "string" ? evt.data : "",
+            ) as ClientMessage;
+          } catch {
+            send(ws, { type: "kernel:error", message: "Invalid JSON" });
+            return;
+          }
+
+          if (parsed.type === "message") {
+            pendingText = parsed.text;
+
+            dispatcher
+              .dispatch(parsed.text, parsed.sessionId, (event) => {
+                const msg = kernelEventToServerMessage(event);
+                send(ws, msg);
+
+                if (msg.type === "kernel:init") {
+                  activeSessionId = msg.sessionId;
+                  conversations.begin(msg.sessionId);
+                  if (pendingText) {
+                    conversations.addUserMessage(msg.sessionId, pendingText);
+                    pendingText = undefined;
+                  }
+                } else if (msg.type === "kernel:text" && activeSessionId) {
+                  conversations.appendAssistantText(activeSessionId, msg.text);
+                } else if (msg.type === "kernel:result" && activeSessionId) {
+                  conversations.finalize(activeSessionId);
+                }
+              })
+              .catch((err: Error) => {
+                if (activeSessionId) {
+                  conversations.finalize(activeSessionId);
+                }
+                send(ws, {
+                  type: "kernel:error",
+                  message: err.message ?? "Kernel error",
+                });
               });
-            });
-        }
-      },
+          }
+        },
 
-      onClose(_evt, ws) {
-        clients.delete(ws);
-      },
-    })),
+        onClose(_evt, ws) {
+          clients.delete(ws);
+        },
+      };
+    }),
   );
 
   app.get(
@@ -180,6 +206,10 @@ export function createGateway(config: GatewayConfig) {
     return c.body(content, 200, {
       "Content-Type": mimeTypes[ext ?? ""] ?? "text/plain",
     });
+  });
+
+  app.get("/api/conversations", (c) => {
+    return c.json(conversations.list());
   });
 
   app.get("/api/theme", (c) => {

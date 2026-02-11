@@ -137,6 +137,56 @@
 
 ---
 
+## Phase 4b: Chat History Persistence -- US2 "Conversations survive refresh"
+
+**Goal**: Chat messages persist as JSON files in `~/matrixos/system/conversations/`. Page refresh reloads conversation. Multiple conversations switchable via dropdown. Follows "Everything Is a File" principle -- no new WebSocket message types needed.
+
+### Tests (TDD)
+
+- [x] T065 [US2] Write `tests/gateway/conversations.test.ts` -- ConversationStore: begin, addUserMessage, appendAssistantText, finalize, list, get, full flow (survives restart), multiple independent conversations (13 tests)
+
+### Implementation
+
+- [x] T066 [US2] Implement `createConversationStore()` in `packages/gateway/src/conversations.ts` -- pure utility: `begin`, `addUserMessage`, `appendAssistantText` (memory buffer), `finalize` (flush to disk), `list`, `get`. Assistant text buffered in memory during streaming, written once on finalize to prevent file watcher flooding.
+- [x] T067 [P] [US2] Create `home/system/conversations/.gitkeep` -- empty dir in home template so `ensureHome()` creates it on first boot
+- [x] T068 [US2] Wire conversations into `packages/gateway/src/server.ts` -- instantiate store, track `kernel:init` (begin + addUserMessage), `kernel:text` (appendAssistantText), `kernel:result` (finalize). Add `GET /api/conversations` endpoint.
+- [x] T069 [P] [US2] Add `hydrateMessages()` to `shell/src/lib/chat.ts` -- converts persisted messages to `ChatMessage[]`
+- [x] T070 [US2] Create `useConversation` hook in `shell/src/hooks/useConversation.ts` -- follows `useTheme` pattern: fetch on mount, re-fetch on `system/conversations/` file changes via `useFileWatcherPattern`
+- [x] T071 [US2] Integrate into `ChatPanel.tsx` -- load latest conversation on mount, hydrate into state, add conversation switcher (Radix Select, visible when >1 conversation), "New Chat" button
+
+**Checkpoint**: Send a message, refresh the page, conversation reloads. Send messages in two sessions, switch between them via dropdown. Conversation files appear at `~/matrixos/system/conversations/*.json` and are human-readable.
+
+---
+
+## Phase 4c: Interaction Model -- US2 "Click-to-generate, Imagine-style UX"
+
+**Goal**: Bridge the gap between static iframe apps and Imagine's "click-to-generate" interaction model. Settle the interaction architecture before Phases 5-7 so self-healing and self-evolution work with interactive apps. Restructure shell layout for progressive disclosure.
+
+**Spec**: `specs/003-architecture/phase-4c-interaction-model.md`
+
+### OS Bridge
+
+- [ ] T072 [US2] Implement `shell/src/lib/os-bridge.ts` -- defines `window.MatrixOS` API (`generate`, `navigate`, `readData`, `writeData`, `app`), `postMessage` protocol between iframe and shell, `injectBridge(iframe, appName)` function, `handleBridgeMessage(event, sendToKernel)` handler. Bridge prefixes app context to kernel prompts: `"[App: {name}] {message}"`
+- [ ] T073 [US2] Write tests for OS bridge -- message serialization, context prefixing, data scope validation (app can only access `~/data/{appName}/`), unknown message types ignored
+- [ ] T074 [US2] Modify `AppViewer.tsx` -- inject bridge into iframe on load via `injectBridge()`, listen for `postMessage` events, route `os:generate` and `os:navigate` to kernel via existing WebSocket `send()`. Route `os:read-data` and `os:write-data` to new data endpoint.
+- [ ] T075 [US2] Add `POST /api/bridge/data` endpoint in `packages/gateway/src/server.ts` -- reads/writes JSON files in `~/data/{appName}/`. Scoped: rejects paths outside app namespace. Supports `{ action: "read"|"write", app: string, key: string, value?: string }`.
+
+### Layout Restructure
+
+- [ ] T076 [P] [US2] Implement `InputBar.tsx` in `shell/src/components/` -- bottom-center text input bar, suggestion chips slot above, mic button placeholder (disabled), submit button. Uses existing `useSocket` `send()`. Replaces ChatPanel's input form as the primary interaction point.
+- [ ] T077 [P] [US2] Implement `SuggestionChips.tsx` in `shell/src/components/` -- renders contextual prompt chips. Empty desktop: "Build me a notes app", "Create an expense tracker", "Show what you can do". App open: "Add dark mode", "Make it faster". After error: "Fix this". Clicking submits as message.
+- [ ] T078 [P] [US2] Implement `ThoughtCard.tsx` in `shell/src/components/` -- floating top-right card showing agent activity. Shows tool name and spinner during `kernel:tool_start`, fades on `kernel:tool_end`/`kernel:result`. Subscribes to existing WebSocket events via `useSocket`.
+- [ ] T079 [US2] Implement `BottomPanel.tsx` in `shell/src/components/` -- collapsible panel containing Terminal, ModuleGraph, ActivityFeed as tabs. Hidden by default. Toggle via `Cmd+J`/`Ctrl+J`. Preference stored in `localStorage`.
+
+### Integration
+
+- [ ] T080 [US2] Restructure `page.tsx` layout -- Desktop canvas fills screen, InputBar fixed at bottom-center, BottomPanel collapsible at bottom, ChatPanel becomes toggleable sidebar (history only, no input). ThoughtCard floats top-right over desktop.
+- [ ] T081 [US2] Modify `ChatPanel.tsx` -- remove input form (moved to InputBar), add collapse/expand toggle, show only message history and conversation switcher. Collapsed state shows a small toggle button at screen edge.
+
+**Checkpoint**: Open `localhost:3000`, see clean canvas with bottom-center input bar and suggestion chips. Type "Build me a notes app" -> thought card shows agent working -> app window appears. Click inside the app -> bridge routes interaction back to kernel -> app updates. Press `Cmd+J` -> terminal/graph/feed panel slides up. Chat sidebar toggles independently.
+
+---
+
 ## Phase 5: Self-Healing -- US3 "OS heals itself"
 
 **Goal**: Break an app intentionally, OS detects, diagnoses, patches, and restarts.
@@ -206,8 +256,16 @@ Phase 1 (Setup) ─────────────> Phase 2 (Foundation)
                      Phase 4    Phase 5    Phase 7
                      (Shell)   (Healing)  (Multiproc)
                        US2       US3        US5
-                          |         |
-                          v         v
+                       |          |
+                       v          |
+                  Phase 4b        |
+                  (History)       |
+                       |          |
+                       v          |
+                  Phase 4c        |
+                  (Interaction)   |
+                       |          |
+                       v          v
                      Phase 6 (Evolution / US4)
                           |
                           v
@@ -216,18 +274,20 @@ Phase 1 (Setup) ─────────────> Phase 2 (Foundation)
 
 ### Critical Path
 
-Setup -> Foundation -> Kernel -> Shell -> Polish = minimum for demo
+Setup -> Foundation -> Kernel -> Shell -> 4b (history) -> 4c (interaction) -> Polish = minimum for demo
 
-~70 tasks (T001-T064 + TDD test tasks T007a-c, T013a-c, T006b).
+~85 tasks (T001-T081 + TDD test tasks T007a-c, T013a-c, T006b).
 
 ### Parallel Opportunities
 
 - Phase 4 (Shell), Phase 5 (Healing), and Phase 7 (Multiprocessing) can run in parallel after Phase 3
+- Phase 4c can run in parallel with Phase 5 (no dependencies between interaction model and healing)
 - All [P] tasks within a phase can run in parallel
 - Knowledge file writing (T010) can parallel with SQLite setup (T007)
 - Shell components (T035-T041) are all parallelizable
 - Hook implementations (T019-T025) are all parallelizable
 - Agent prompts (T029-T031) can parallel with hook implementations
+- Phase 4c: InputBar (T076), SuggestionChips (T077), ThoughtCard (T078) are parallelizable
 
 ### MVP Path (US1 + US2 only)
 
@@ -235,9 +295,11 @@ Setup -> Foundation -> Kernel -> Shell -> Polish = minimum for demo
 2. Phase 2: Foundation
 3. Phase 3: Kernel (US1) -- "describe and it builds" via API
 4. Phase 4: Shell (US2) -- browser desktop with chat + terminal + module graph
-5. Phase 8: Polish -- pre-seed, demo script, record
+5. Phase 4b: Chat history persistence -- conversations survive refresh
+6. Phase 4c: Interaction model -- OS bridge, bottom-center input, suggestion chips, progressive disclosure
+7. Phase 8: Polish -- visual redesign (warm palette, organic backgrounds), pre-seed, demo script, record
 
-This gives a working demo: open browser -> chat -> apps appear -> terminal works -> module graph shows architecture.
+This gives the full Imagine-aligned demo: open browser -> clean canvas with input bar -> type or click chip -> agent works (thought card) -> app appears -> click inside app -> kernel generates new view -> press Cmd+J for dev tools.
 
 ---
 

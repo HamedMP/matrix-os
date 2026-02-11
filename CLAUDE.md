@@ -124,18 +124,20 @@ Gateway (localhost:4000)
   |-- /files/*      Serve home directory files
   |-- /modules/*    Reverse proxy to module ports (3100-3999)
   |-- /api/theme    Current theme JSON
+  |-- /api/conversations  Conversation list metadata
   |-- /health       Health check
 ```
 
 ## Current State (updated per commit)
 
-**Commit**: ea49030 | **Tests**: 97 passing (11 test files) | **Phase 4 complete**
+**Tests**: 110 passing (12 test files) | **Phase 4b complete**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
 - **Phase 2**: SQLite/Drizzle schema, system prompt builder, agent frontmatter parser, first-boot
 - **Phase 3**: Kernel (spawnKernel with V1 query+resume), IPC MCP server (7 tools), hooks (8 hooks), gateway (Hono HTTP+WS, dispatcher, file watcher), agent prompts (builder, researcher, deployer)
 - **Phase 4**: Next.js 16 shell -- Desktop (window mgmt), ChatPanel, AppViewer (iframe), Dock, ActivityFeed, Terminal (xterm.js+node-pty), ModuleGraph (vis-network), useSocket/useFileWatcher/useTheme hooks, proxy.ts, module reverse proxy
+- **Phase 4b**: Chat history persistence -- ConversationStore (JSON files in system/conversations/), useConversation hook, ChatPanel with conversation switcher and "New Chat" button, hydrateMessages helper
 
 ### Next Up
 - **Phase 5**: Self-healing (T045-T049) -- healer agent, health checks, auto-patch

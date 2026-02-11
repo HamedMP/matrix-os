@@ -1,5 +1,20 @@
 import type { ServerMessage } from "@/hooks/useSocket";
 
+interface PersistedMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
+export function hydrateMessages(messages: PersistedMessage[]): ChatMessage[] {
+  return messages.map((m, i) => ({
+    id: `persisted-${i}`,
+    role: m.role,
+    content: m.content,
+    timestamp: m.timestamp,
+  }));
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
