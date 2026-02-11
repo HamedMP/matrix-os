@@ -1,5 +1,4 @@
 import { defineConfig } from "vitest/config";
-import { resolve } from "node:path";
 
 export default defineConfig({
   resolve: {
@@ -7,12 +6,12 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {
       provider: "v8",
       include: ["packages/kernel/src/**", "packages/gateway/src/**"],
-      exclude: ["**/*.test.ts", "**/*.integration.ts"],
+      exclude: ["**/*.test.ts", "**/*.test.tsx", "**/*.integration.ts"],
       thresholds: {
         statements: 99,
         branches: 95,

@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -121,6 +123,40 @@ export function createGateway(config: GatewayConfig) {
     });
 
     return c.json({ events });
+  });
+
+  app.get("/files/*", (c) => {
+    const filePath = c.req.path.replace("/files/", "");
+    const fullPath = join(homePath, filePath);
+
+    if (!existsSync(fullPath)) {
+      return c.text("Not found", 404);
+    }
+
+    const content = readFileSync(fullPath, "utf-8");
+    const ext = filePath.split(".").pop();
+
+    const mimeTypes: Record<string, string> = {
+      html: "text/html",
+      json: "application/json",
+      js: "application/javascript",
+      css: "text/css",
+      md: "text/markdown",
+      txt: "text/plain",
+    };
+
+    return c.body(content, 200, {
+      "Content-Type": mimeTypes[ext ?? ""] ?? "text/plain",
+    });
+  });
+
+  app.get("/api/theme", (c) => {
+    const themePath = join(homePath, "system/theme.json");
+    if (!existsSync(themePath)) {
+      return c.json({ error: "No theme" }, 404);
+    }
+    const theme = JSON.parse(readFileSync(themePath, "utf-8"));
+    return c.json(theme);
   });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
