@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "name": "hello-world",
+    "type": "app",
+    "path": "~/modules/hello-world",
+    "status": "active"
+  }
+]

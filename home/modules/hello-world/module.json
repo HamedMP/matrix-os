@@ -1,0 +1,7 @@
+{
+  "name": "hello-world",
+  "description": "A simple Hello World app with modern design and animations",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "author": "user"
+}
