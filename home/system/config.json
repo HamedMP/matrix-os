@@ -1,0 +1,14 @@
+{
+  "homePath": "~/matrixos",
+  "kernel": {
+    "model": "claude-opus-4-6",
+    "effort": "high",
+    "maxTurns": 80
+  },
+  "gateway": {
+    "port": 4000
+  },
+  "shell": {
+    "port": 3000
+  }
+}

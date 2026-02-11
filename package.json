@@ -1,0 +1,23 @@
+{
+  "name": "matrix-os",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.6.2",
+  "scripts": {
+    "dev": "bun run --filter './packages/*' dev & bun run --filter './shell' dev",
+    "dev:kernel": "bun run --filter '@matrix-os/kernel' dev",
+    "dev:gateway": "bun run --filter '@matrix-os/gateway' dev",
+    "dev:shell": "bun run --filter shell dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.0.18",
+    "vitest": "^4.0.18"
+  }
+}

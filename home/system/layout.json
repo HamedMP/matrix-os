@@ -1,0 +1,8 @@
+{
+  "dock": [],
+  "windows": [],
+  "panels": {
+    "chat": { "visible": true, "position": "right", "width": 400 },
+    "activity": { "visible": true, "position": "bottom", "height": 200 }
+  }
+}

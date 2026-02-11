@@ -1,0 +1,19 @@
+{
+  "name": "default",
+  "colors": {
+    "bg": "#0a0a0a",
+    "fg": "#ededed",
+    "accent": "#3b82f6",
+    "surface": "#171717",
+    "border": "#262626",
+    "muted": "#737373",
+    "error": "#ef4444",
+    "success": "#22c55e",
+    "warning": "#eab308"
+  },
+  "fonts": {
+    "mono": "JetBrains Mono, monospace",
+    "sans": "Inter, system-ui, sans-serif"
+  },
+  "radius": "0.5rem"
+}
