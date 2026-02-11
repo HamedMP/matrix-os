@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useFileWatcherPattern } from "@/hooks/useFileWatcher";
 import { modulesToGraph, type ModuleEntry } from "@/lib/moduleGraph";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 const GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
@@ -107,22 +109,16 @@ export function ModuleGraph() {
 
   return (
     <div className="flex flex-col h-full">
-      <div
-        className="flex items-center justify-between px-3 py-1.5 border-b text-xs select-none"
-        style={{
-          borderColor: "var(--color-border)",
-          background: "var(--color-surface)",
-        }}
-      >
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs select-none bg-card">
         <span className="font-medium">Module Graph</span>
-        <span className="text-xs" style={{ color: "var(--color-muted)" }}>
-          {modules.length} modules
-        </span>
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+          {modules.length}
+        </Badge>
       </div>
+      <Separator />
       <div
         ref={containerRef}
-        className="flex-1 min-h-0"
-        style={{ background: "var(--color-bg)" }}
+        className="flex-1 min-h-0 bg-background"
       />
     </div>
   );

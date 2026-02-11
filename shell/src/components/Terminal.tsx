@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 const TERMINAL_WS =
   process.env.NEXT_PUBLIC_GATEWAY_WS?.replace("/ws", "/ws/terminal") ??
@@ -26,9 +28,9 @@ export function Terminal() {
         fontSize: 13,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
         theme: {
-          background: "var(--color-bg, #1a1a2e)",
-          foreground: "var(--color-fg, #e0e0e0)",
-          cursor: "var(--color-accent, #64ffda)",
+          background: "#0a0a0a",
+          foreground: "#ededed",
+          cursor: "#3b82f6",
         },
       });
 
@@ -104,27 +106,20 @@ export function Terminal() {
 
   return (
     <div className="flex flex-col h-full">
-      <div
-        className="flex items-center justify-between px-3 py-1.5 border-b text-xs select-none"
-        style={{
-          borderColor: "var(--color-border)",
-          background: "var(--color-surface)",
-        }}
-      >
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs select-none bg-card">
         <span className="font-medium">Terminal</span>
-        <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{
-            background: ready
-              ? "var(--color-success)"
-              : "var(--color-error)",
-          }}
-        />
+        <Badge
+          variant={ready ? "default" : "destructive"}
+          className="text-[10px] px-1.5 py-0"
+        >
+          <span className={`size-1.5 rounded-full ${ready ? "bg-success" : "bg-current"}`} />
+          {ready ? "Ready" : "Offline"}
+        </Badge>
       </div>
+      <Separator />
       <div
         ref={containerRef}
-        className="flex-1 min-h-0"
-        style={{ background: "var(--color-bg)" }}
+        className="flex-1 min-h-0 bg-background"
       />
     </div>
   );

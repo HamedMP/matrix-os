@@ -7,6 +7,7 @@ import { Dock } from "@/components/Dock";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { Terminal } from "@/components/Terminal";
 import { ModuleGraph } from "@/components/ModuleGraph";
+import { Separator } from "@/components/ui/separator";
 
 export default function Home() {
   useTheme();
@@ -15,26 +16,17 @@ export default function Home() {
     <div className="flex h-screen w-screen overflow-hidden">
       <div className="flex flex-1 flex-col">
         <Desktop />
-        <div
-          className="flex border-t"
-          style={{
-            height: 280,
-            borderColor: "var(--color-border)",
-          }}
-        >
+        <Separator />
+        <div className="flex h-[280px]">
           <div className="flex-1 min-w-0">
             <Terminal />
           </div>
-          <div
-            className="w-[300px] border-l"
-            style={{ borderColor: "var(--color-border)" }}
-          >
+          <Separator orientation="vertical" />
+          <div className="w-[300px]">
             <ModuleGraph />
           </div>
-          <div
-            className="w-[240px] border-l overflow-y-auto"
-            style={{ borderColor: "var(--color-border)" }}
-          >
+          <Separator orientation="vertical" />
+          <div className="w-[240px] overflow-y-auto">
             <ActivityFeed />
           </div>
         </div>

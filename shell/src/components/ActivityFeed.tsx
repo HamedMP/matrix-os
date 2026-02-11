@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
+import { Badge } from "@/components/ui/badge";
+import { ChevronsUpDownIcon } from "lucide-react";
 
 interface Activity {
   id: string;
@@ -11,7 +18,7 @@ interface Activity {
 
 export function ActivityFeed() {
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [collapsed, setCollapsed] = useState(false);
+  const [open, setOpen] = useState(true);
   const { subscribe } = useSocket();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -43,44 +50,33 @@ export function ActivityFeed() {
   }, [activities]);
 
   return (
-    <div
-      className="border-t"
-      style={{
-        borderColor: "var(--color-border)",
-        background: "var(--color-surface)",
-        height: collapsed ? 32 : 120,
-      }}
-    >
-      <div
-        className="flex items-center justify-between px-3 py-1 cursor-pointer select-none"
-        onClick={() => setCollapsed((c) => !c)}
-      >
-        <span className="text-xs font-medium" style={{ color: "var(--color-muted)" }}>
-          Activity {collapsed ? "+" : "-"}
-        </span>
-        <span className="text-xs" style={{ color: "var(--color-muted)" }}>
-          {activities.length} events
-        </span>
-      </div>
+    <Collapsible open={open} onOpenChange={setOpen} className="border-t border-border bg-card">
+      <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-1.5 select-none hover:bg-muted/50 transition-colors">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Activity</span>
+          <ChevronsUpDownIcon className="size-3 text-muted-foreground" />
+        </div>
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+          {activities.length}
+        </Badge>
+      </CollapsibleTrigger>
 
-      {!collapsed && (
-        <div ref={scrollRef} className="overflow-y-auto px-3 pb-2" style={{ maxHeight: 88 }}>
+      <CollapsibleContent>
+        <div ref={scrollRef} className="overflow-y-auto px-3 pb-2 max-h-22">
           {activities.length === 0 ? (
-            <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-              No activity yet
-            </p>
+            <p className="text-xs text-muted-foreground">No activity yet</p>
           ) : (
             activities.map((act) => (
               <div key={act.id} className="flex gap-2 text-xs py-0.5">
-                <span style={{ color: "var(--color-muted)" }}>
+                <span className="text-muted-foreground shrink-0">
                   {new Date(act.timestamp).toLocaleTimeString()}
                 </span>
-                <span>{act.text}</span>
+                <span className="text-foreground">{act.text}</span>
               </div>
             ))
           )}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

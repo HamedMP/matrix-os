@@ -1,8 +1,47 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { reduceChat, type ChatMessage } from "@/lib/chat";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import {
+  Message,
+  MessageContent,
+  MessageResponse,
+} from "@/components/ai-elements/message";
+import { Tool } from "@/components/ai-elements/tool";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import {
+  WrenchIcon,
+  CheckCircleIcon,
+  LoaderCircleIcon,
+  SendIcon,
+} from "lucide-react";
+
+function ToolMessage({ msg }: { msg: ChatMessage }) {
+  const isRunning = msg.content.startsWith("Using ");
+
+  return (
+    <Tool>
+      <div className="flex w-full items-center gap-2 p-3">
+        <WrenchIcon className="size-4 text-muted-foreground" />
+        <span className="text-sm font-medium">{msg.tool}</span>
+        {isRunning ? (
+          <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" />
+        ) : (
+          <CheckCircleIcon className="size-4 text-green-600" />
+        )}
+      </div>
+    </Tool>
+  );
+}
 
 export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -10,7 +49,6 @@ export function ChatPanel() {
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const { connected, subscribe, send } = useSocket();
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
@@ -32,10 +70,6 @@ export function ChatPanel() {
       setMessages((prev) => reduceChat(prev, msg));
     });
   }, [subscribe]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -61,95 +95,65 @@ export function ChatPanel() {
   );
 
   return (
-    <aside
-      className="flex w-[400px] flex-col border-l"
-      style={{
-        borderColor: "var(--color-border)",
-        background: "var(--color-surface)",
-      }}
-    >
-      <header
-        className="flex items-center justify-between px-4 py-3 border-b"
-        style={{ borderColor: "var(--color-border)" }}
-      >
+    <aside className="flex w-[400px] flex-col border-l border-border bg-card">
+      <header className="flex items-center justify-between px-4 py-3">
         <span className="text-sm font-medium">Chat</span>
-        <span
-          className="h-2 w-2 rounded-full"
-          style={{
-            background: connected
-              ? "var(--color-success)"
-              : "var(--color-error)",
-          }}
-        />
+        <Badge variant={connected ? "default" : "destructive"} className="text-xs">
+          <span className={`size-1.5 rounded-full ${connected ? "bg-success" : "bg-current"}`} />
+          {connected ? "Connected" : "Offline"}
+        </Badge>
       </header>
+      <Separator />
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {messages.map((msg) => (
-          <div key={msg.id}>
-            {msg.role === "user" ? (
-              <div
-                className="ml-8 rounded-lg px-3 py-2 text-sm"
-                style={{ background: "var(--color-accent)", color: "#fff" }}
-              >
-                {msg.content}
-              </div>
-            ) : msg.role === "system" ? (
-              <div
-                className="text-xs px-3 py-1 rounded"
-                style={{
-                  color: "var(--color-muted)",
-                  background: "var(--color-bg)",
-                }}
-              >
-                {msg.content}
-              </div>
-            ) : (
-              <div
-                className="mr-8 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
-                style={{ background: "var(--color-bg)" }}
-              >
-                {msg.content}
-              </div>
-            )}
-          </div>
-        ))}
+      <Conversation>
+        <ConversationContent className="gap-4 px-4 py-3">
+          {messages.map((msg) => (
+            <div key={msg.id}>
+              {msg.role === "user" ? (
+                <Message from="user">
+                  <MessageContent>{msg.content}</MessageContent>
+                </Message>
+              ) : msg.tool ? (
+                <ToolMessage msg={msg} />
+              ) : msg.role === "system" ? (
+                <div className="text-xs px-3 py-1 rounded bg-background text-muted-foreground">
+                  {msg.content}
+                </div>
+              ) : (
+                <Message from="assistant">
+                  <MessageContent>
+                    <MessageResponse>{msg.content}</MessageResponse>
+                  </MessageContent>
+                </Message>
+              )}
+            </div>
+          ))}
 
-        {busy && (
-          <div
-            className="text-xs px-3 py-1"
-            style={{ color: "var(--color-muted)" }}
-          >
-            Thinking...
-          </div>
-        )}
-      </div>
+          {busy && (
+            <div className="flex items-center gap-2 text-xs px-3 py-1 text-muted-foreground">
+              <LoaderCircleIcon className="size-3 animate-spin" />
+              Thinking...
+            </div>
+          )}
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
 
-      <form
-        onSubmit={handleSubmit}
-        className="flex gap-2 border-t px-4 py-3"
-        style={{ borderColor: "var(--color-border)" }}
-      >
-        <input
-          type="text"
+      <Separator />
+      <form onSubmit={handleSubmit} className="flex gap-2 px-4 py-3">
+        <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={connected ? "Ask Matrix OS..." : "Connecting..."}
           disabled={!connected}
-          className="flex-1 rounded-lg border px-3 py-2 text-sm outline-none"
-          style={{
-            background: "var(--color-bg)",
-            borderColor: "var(--color-border)",
-            color: "var(--color-fg)",
-          }}
         />
-        <button
+        <Button
           type="submit"
+          size="icon"
           disabled={!connected || busy || !input.trim()}
-          className="rounded-lg px-4 py-2 text-sm font-medium transition-opacity disabled:opacity-40"
-          style={{ background: "var(--color-accent)", color: "#fff" }}
         >
-          Send
-        </button>
+          <SendIcon />
+        </Button>
       </form>
     </aside>
   );

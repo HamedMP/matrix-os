@@ -3,6 +3,14 @@
 import { useState, useCallback } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AppViewer } from "./AppViewer";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardAction,
+  CardContent,
+} from "@/components/ui/card";
 
 export interface AppWindow {
   id: string;
@@ -68,13 +76,10 @@ export function Desktop() {
   }, []);
 
   return (
-    <div className="relative flex-1" style={{ background: "var(--color-bg)" }}>
+    <div className="relative flex-1 bg-background">
       {windows.length === 0 && (
         <div className="flex h-full items-center justify-center">
-          <p
-            className="text-sm"
-            style={{ color: "var(--color-muted)" }}
-          >
+          <p className="text-sm text-muted-foreground">
             No apps running. Try &quot;Build me a notes app&quot; in the chat.
           </p>
         </div>
@@ -82,46 +87,42 @@ export function Desktop() {
 
       {windows.map((win) =>
         win.minimized ? null : (
-          <div
+          <Card
             key={win.id}
-            className="absolute rounded-lg border overflow-hidden shadow-2xl"
+            className="absolute gap-0 rounded-lg p-0 overflow-hidden shadow-2xl"
             style={{
               left: win.x,
               top: win.y,
               width: win.width,
               height: win.height,
               zIndex: win.zIndex,
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
             }}
             onMouseDown={() => bringToFront(win.id)}
           >
-            <div
-              className="flex items-center justify-between px-3 py-2 cursor-move border-b select-none"
-              style={{
-                borderColor: "var(--color-border)",
-                background: "var(--color-surface)",
-              }}
-            >
-              <span className="text-xs font-medium truncate">
+            <CardHeader className="flex-row items-center gap-0 px-3 py-2 border-b border-border cursor-move select-none space-y-0">
+              <CardTitle className="text-xs font-medium truncate">
                 {win.title}
-              </span>
-              <div className="flex gap-1.5">
-                <button
+              </CardTitle>
+              <CardAction className="flex gap-1.5 self-center">
+                <Button
                   onClick={() => toggleMinimize(win.id)}
-                  className="h-3 w-3 rounded-full"
-                  style={{ background: "var(--color-warning)" }}
+                  variant="ghost"
+                  className="size-3 rounded-full bg-warning p-0 hover:bg-warning/80"
+                  aria-label="Minimize"
                 />
-                <button
+                <Button
                   onClick={() => closeWindow(win.id)}
-                  className="h-3 w-3 rounded-full"
-                  style={{ background: "var(--color-error)" }}
+                  variant="ghost"
+                  className="size-3 rounded-full bg-destructive p-0 hover:bg-destructive/80"
+                  aria-label="Close"
                 />
-              </div>
-            </div>
+              </CardAction>
+            </CardHeader>
 
-            <AppViewer path={win.path} />
-          </div>
+            <CardContent className="flex-1 p-0 min-h-0">
+              <AppViewer path={win.path} />
+            </CardContent>
+          </Card>
         ),
       )}
     </div>
