@@ -41,16 +41,38 @@ Start with the simplest implementation that works. Single-process async concurre
 
 - **Language**: TypeScript, strict mode, ES modules
 - **Runtime**: Node.js 22+
-- **AI Kernel**: Claude Agent SDK (V2 preview) with Opus 4.6
+- **AI Kernel**: Claude Agent SDK V1 `query()` with `resume` (V2 drops critical options) + Opus 4.6
 - **Frontend**: React + Nextjs
 - **Database**: SQLite via Drizzle ORM (better-sqlite3 driver, WAL mode)
 - **Web Server**: Hono (lightweight, WebSocket support)
 - **Bundler**: Nextjs (frontend) + tsx (backend dev)
-- **Validation**: Zod for schema validation
+- **Validation**: Zod 4 for schema validation
+- **Testing**: Vitest for unit/integration tests, TDD workflow, 99-100% coverage target
+- **Package Manager**: pnpm (install), bun (run scripts)
+- **Context Window**: 200K standard, 1M beta (`betas: ["context-1m-2025-08-07"]`, tier 4+)
+- **Prompt Caching**: `cache_control: {type: "ephemeral"}` on tools + system prompt for 90% input cost savings on subsequent turns
+- **Compaction**: Server-side compaction API for long kernel sessions
 - No external dependencies when native Node.js APIs suffice
 - Prefer CDN imports in generated HTML apps over npm-installed packages
 
 ## Development Workflow
+
+### VI. Test-Driven Development (NON-NEGOTIABLE)
+
+The OS is complex and self-modifying. TDD is mandatory to prevent regressions as the system evolves.
+
+- **Tests first**: Write failing tests before implementation. Red -> Green -> Refactor.
+- **Vitest** for all kernel and gateway tests (unit + integration)
+- **Spike before spec**: When SDK behavior is undocumented, write a spike test against the real SDK before committing to an approach (as done for V1 vs V2 decision)
+- **Test categories**:
+  - **Unit tests**: Pure functions (prompt assembly, schema validation, frontmatter parsing)
+  - **Integration tests**: SDK interactions (MCP tool calls, agent spawning, multi-turn resume, hooks)
+  - **Contract tests**: IPC tool inputs/outputs match expected schemas
+- **Test isolation**: Integration tests use haiku model to keep costs under $0.10 per suite run
+- **Coverage target**: 99-100% for kernel and gateway packages. Measure with `vitest --coverage`.
+- **No implementation without a failing test**: If a test can't be written for it, question whether it's needed
+
+### Other Workflow Rules
 
 - Verify every SDK assumption against actual docs before implementing
 - Test against real Agent SDK behavior, not just docs (docs may be incomplete)
@@ -62,4 +84,9 @@ Start with the simplest implementation that works. Single-process async concurre
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 1.0.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-11
+**Version**: 1.2.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-11
+
+### Amendment Log
+
+- **1.1.0** (2026-02-11): Added TDD principle (VI). Changed AI Kernel from V2 to V1 `query()` with `resume` based on spike testing. Added Vitest, pnpm/bun to tech constraints.
+- **1.2.0** (2026-02-11): Added prompt caching strategy (90% input cost savings), 1M context window beta, compaction API, 99-100% test coverage target.

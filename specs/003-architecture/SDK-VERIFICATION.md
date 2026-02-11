@@ -11,45 +11,63 @@ Cross-reference of Matrix OS architecture specs against actual Agent SDK docs an
 
 ---
 
-## Decision: Use V2 Preview SDK
+## Decision: Use V1 `query()` with `resume` (UPDATED 2026-02-11)
 
-Matrix OS will use the **V2 TypeScript SDK** (`unstable_v2_createSession` / `unstable_v2_resumeSession`) instead of V1 (`query()`).
+Matrix OS will use **V1 `query()`** with the `resume` option for multi-turn conversations.
 
-**Why V2 is a better fit:**
-- Kernel loop is naturally `send()` -> `stream()` -> process -> `send()` again
-- V1 requires managing a shared async generator for both input and output, which is awkward when doing work between turns
-- Session resume is a dedicated function (`unstable_v2_resumeSession`) instead of an option flag
-- One-shot queries are simpler (`unstable_v2_prompt()` returns a result directly)
+**Why V1, not V2:**
+V2 (`unstable_v2_createSession`) was the original plan for its cleaner `send()/stream()` pattern. However, **live spike testing revealed V2 silently drops critical options**: `mcpServers`, `agents`, `systemPrompt`, `maxTurns`, and `allowDangerouslySkipPermissions` are all absent from `SDKSessionOptions` types and are not passed through at runtime. The V2 docs say "Additional options supported" but testing shows MCP tools never connect when passed to V2.
 
-**Risk:** V2 is explicitly marked **unstable preview**. APIs may change before stabilization. Acceptable for hackathon, needs monitoring for longer-lived use.
+**V1 with `resume` gives V2-like ergonomics:**
+- Each user message = separate `query()` call with full options
+- `resume: sessionId` preserves conversation context across turns
+- No async generator coordination needed
+- MCP tools, agents, hooks, systemPrompt all work on every turn
+- Session ID is the only state to persist between turns
 
-**Missing in V2:** Session forking (`forkSession`), some advanced streaming input patterns. Neither is needed for Matrix OS.
+**Spike results (2026-02-11):**
+| Feature | V1 `query()` | V2 `createSession()` |
+|---------|-------------|---------------------|
+| Custom MCP tools | PASS | FAIL (silently dropped) |
+| `bypassPermissions` | PASS | not testable (no tools) |
+| Custom `systemPrompt` | PASS | FAIL (silently dropped) |
+| Multi-turn (resume) | PASS (3 turns, same session) | PASS (send/stream) |
+| Cost (haiku, 3 turns) | $0.05 | N/A |
 
-**V2 API surface:**
+**V1 Kernel Pattern:**
 ```typescript
-import {
-  unstable_v2_createSession,
-  unstable_v2_resumeSession,
-  unstable_v2_prompt,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 
-// Cold boot
-const session = unstable_v2_createSession({ model: "claude-opus-4-6", ...options });
+// Each turn = separate query() with resume
+async function kernelTurn(message: string, sessionId?: string) {
+  const options = {
+    model: "claude-opus-4-6",
+    systemPrompt: osSystemPrompt,
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    mcpServers: { "matrix-os-ipc": ipcServer },
+    agents: allAgents,
+    hooks: kernelHooks,
+    allowedTools: [...],
+    maxTurns: 80,
+    ...(sessionId && { resume: sessionId }),
+  };
 
-// Warm wake (resume from hibernate)
-const session = unstable_v2_resumeSession(sessionId, { model: "claude-opus-4-6", ...options });
-
-// Kernel loop
-await session.send(userMessage);
-for await (const msg of session.stream()) {
-  // process messages
+  const q = query({ prompt: message, options });
+  let sid: string | undefined;
+  for await (const msg of q) {
+    sid = msg.session_id;
+    // stream to shell via WebSocket
+  }
+  return sid; // persist for next turn
 }
-
-// One-shot (simple queries)
-const result = await unstable_v2_prompt("What is 2+2?", { model: "claude-opus-4-6" });
 ```
 
-**Impact on verification items below:** Items marked with [V2] have changed verdicts or notes due to V2 adoption.
+**V2 may still be useful for:** One-shot queries (`unstable_v2_prompt`) where full options aren't needed (e.g., simple classification, routing decisions). But the kernel loop must use V1.
+
+**Additional finding:** `allowedTools` is an auto-approve list, NOT a filter. All tools are available by default. Use the `tools` option or `disallowedTools` to restrict tool availability.
+
+**Additional finding:** `AgentDefinition` now includes more fields than originally documented: `disallowedTools`, `mcpServers` (per-agent), `maxTurns`, `skills`, `criticalSystemReminder_EXPERIMENTAL`. This was found in SDK v0.2.39 types.
 
 ---
 
@@ -563,52 +581,130 @@ This could enforce structured result contracts for sub-agents (e.g., builder mus
 
 ---
 
-## 6. Critical Fixes Required
+## 6. Cost Optimization: Prompt Caching + 1M Context + Compaction
 
-### 6.1 MUST FIX: Rewrite kernel to V2 session pattern [V2]
+### 6.0 Prompt Caching Strategy
 
-Replace all `query()` calls with V2 session pattern:
+The V1 `query()` + `resume` pattern sends the same tools, system prompt, and agent definitions on every turn. Prompt caching dramatically reduces costs on subsequent turns.
 
+**How it works:**
+- Add `cache_control: {type: "ephemeral"}` to content blocks
+- Cache order (must follow): tools -> system -> messages
+- Cached content: 10% of base input price ($0.50/MTok vs $5/MTok for Opus 4.6)
+- Cache writes: 125% of base input price ($6.25/MTok for Opus 4.6)
+- 5-minute TTL, refreshes on each use (effectively infinite for active conversations)
+- Minimum cacheable: 4096 tokens for Opus 4.6
+- Up to 4 cache breakpoints
+
+**Kernel caching strategy:**
 ```typescript
-// Kernel cold boot
-const session = unstable_v2_createSession({
-  model: "claude-opus-4-6",
-  permissionMode: "bypassPermissions",
-  allowDangerouslySkipPermissions: true,
-  systemPrompt: { type: "preset", preset: "claude_code", append: osSystemPrompt },
-  agents: allAgents,
-  hooks: { PostToolUse: [...], Stop: [...] },
-  mcpServers: { "matrix-os": matrixOsTools },
-});
+// The kernel's V1 query() options naturally benefit from caching.
+// Tools and system prompt are sent identically on every turn.
+// With cache_control on system prompt blocks, subsequent turns
+// pay 90% less for the repeated content.
 
-// Kernel warm wake
-const session = unstable_v2_resumeSession(storedSessionId, { ...sameOptions });
-
-// Kernel loop
-await session.send(userMessage);
-let sessionId: string | undefined;
-for await (const msg of session.stream()) {
-  sessionId = msg.session_id;
-  if (msg.type === "assistant") {
-    // Stream to shell UI
+// System prompt as cacheable content block:
+systemPrompt: [
+  {
+    type: "text",
+    text: osSystemPrompt,  // ~7K tokens, stable across turns
+    cache_control: { type: "ephemeral" }
   }
-  if (msg.type === "result") {
-    // Process final result, update state
-  }
-}
+]
 
-// Save session ID for hibernate
-await saveSessionId(sessionId);
-session.close();
+// Tool definitions (via MCP server) are cached automatically
+// by the API when they appear before system prompt in the cache order.
 ```
 
-### 6.2 MUST FIX: `knowledge` field does not exist
+**Expected savings per conversation:**
+| Turn | System prompt cost | Tool definitions | Messages |
+|------|--------------------|------------------|----------|
+| 1 (cold) | $6.25/MTok (write) | $6.25/MTok (write) | Full price |
+| 2+ (warm) | $0.50/MTok (read) | $0.50/MTok (read) | Full price for new |
+
+For a 10-turn kernel session with ~10K token system prompt + tools:
+- Without caching: ~$0.50 in input costs for repeated content
+- With caching: ~$0.05 for turns 2-10 (cache reads) + $0.06 for turn 1 (cache write)
+- **Savings: ~80-90% on input costs for system prompt + tools**
+
+**Note:** The Agent SDK may handle caching internally for `systemPrompt` and `mcpServers`. Verify at implementation time whether `cache_control` needs to be set explicitly or if the SDK's V1 `query()` applies it automatically. The Anthropic API itself supports caching -- the question is whether the SDK wraps it.
+
+### 6.0b 1M Context Window (Beta)
+
+Opus 4.6 supports a 1M token context window in beta. For Matrix OS, this is useful for:
+- Long kernel sessions (builder generating complex apps, multi-step builds)
+- Large codebases loaded into context for the evolver agent
+- Extended multi-turn conversations without compaction
+
+**Activation:**
+```typescript
+// Via Anthropic API (not Agent SDK -- needs verification):
+betas: ["context-1m-2025-08-07"]
+```
+
+**Constraints:**
+- Beta, tier 4+ organizations only
+- Premium pricing above 200K: 2x input, 1.5x output
+- Available on API, Bedrock, Vertex AI, Microsoft Foundry
+
+**Matrix OS approach:** Start with 200K standard context. Use compaction for long sessions. Enable 1M beta only if specific operations (large codebase evolution, extended build sessions) prove they need it. The cost premium (2x input above 200K) makes it a targeted optimization, not a default.
+
+### 6.0c Compaction API for Long Sessions
+
+Server-side compaction automatically condenses earlier parts of a conversation. Available in beta for Opus 4.6.
+
+**How it integrates with the kernel:**
+- Auto-compaction triggers in streaming mode when context grows large
+- `PreCompact` hook fires before compaction (opportunity to preserve critical state)
+- `compact_boundary` system message indicates compaction occurred
+- Subagent transcripts are NOT affected by main conversation compaction
+
+**Matrix OS approach:** The kernel's `PreCompact` hook should write a state snapshot to `~/system/state.md` before compaction, ensuring the summarized context includes a pointer to the full state on disk. This leverages Principle I (Everything Is a File) -- the file system is the durable memory, the context window is working memory.
+
+---
+
+## 7. Critical Fixes Required
+
+### 7.1 DONE: Kernel uses V1 `query()` with `resume` (spike-verified)
+
+V2 was planned but dropped after spike testing showed it silently drops `mcpServers`, `agents`, `systemPrompt`. V1 with `resume` is proven:
+
+```typescript
+// Kernel turn (cold boot or resume)
+async function kernelTurn(message: string, sessionId?: string) {
+  const q = query({
+    prompt: message,
+    options: {
+      model: "claude-opus-4-6",
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      systemPrompt: osSystemPrompt,
+      agents: allAgents,
+      hooks: kernelHooks,
+      mcpServers: { "matrix-os-ipc": ipcServer },
+      allowedTools: [...],
+      maxTurns: 80,
+      ...(sessionId && { resume: sessionId }),
+    },
+  });
+
+  let sid: string | undefined;
+  for await (const msg of q) {
+    sid = msg.session_id;
+    if (msg.type === "assistant") { /* stream to shell */ }
+    if (msg.type === "result") { /* update state */ }
+  }
+  return sid; // persist for next turn
+}
+```
+
+### 7.2 MUST FIX: `knowledge` field does not exist
 
 Replace `knowledge: [...]` in agent definitions with either:
 - `skills: [...]` (if using CLI frontmatter) -- loads from `.claude/skills/`
 - Or manually prepend knowledge content to the agent's `prompt` string (if using SDK)
 
-### 6.3 SHOULD FIX: Distinguish SDK vs CLI agent features
+### 7.3 SHOULD FIX: Distinguish SDK vs CLI agent features
 
 The spec conflates SDK agent definitions (simple: description, prompt, tools, model) with CLI frontmatter (rich: adds permissionMode, maxTurns, memory, hooks, disallowedTools).
 
@@ -618,7 +714,7 @@ For SDK usage, the kernel must handle rich features itself:
 - `memory` per agent: read/write files manually, prepend to prompt
 - `hooks` per agent: set on `query()` call, not on agent definition
 
-### 6.4 SHOULD FIX: Use `systemPrompt` preset
+### 7.4 SHOULD FIX: Use `systemPrompt` preset
 
 Add to kernel query options:
 ```typescript
@@ -629,11 +725,11 @@ systemPrompt: {
 }
 ```
 
-### 6.5 NICE TO HAVE: Consider custom MCP tools
+### 7.5 NICE TO HAVE: Consider custom MCP tools
 
 Instead of relying on Bash for state management, define Matrix OS tools via `createSdkMcpServer`. This gives agents typed, safe tools instead of raw shell access.
 
-### 6.6 NICE TO HAVE: Consider structured outputs
+### 7.6 NICE TO HAVE: Consider structured outputs
 
 Use `outputFormat` for sub-agent result contracts. Forces structured responses instead of hoping the agent writes results to the right files.
 
@@ -643,12 +739,12 @@ Use `outputFormat` for sub-agent result contracts. Forces structured responses i
 
 | # | Assumption | Verdict | Action Required |
 |---|-----------|---------|-----------------|
-| 1.1 | `query()` import from `@anthropic-ai/claude-agent-sdk` | CONFIRMED [V2] | Use V2 imports (`unstable_v2_createSession`, etc.) |
-| 1.2 | Blocking `await query()` | **WRONG** [V2] | Use V2 `send()` / `stream()` pattern |
-| 1.3 | `permissionMode: "bypassPermissions"` | CONFIRMED | None |
-| 1.4 | `agents` option with `{description, prompt, tools}` | PARTIAL | SDK only supports 4 fields, not rich frontmatter |
+| 1.1 | `query()` import from `@anthropic-ai/claude-agent-sdk` | CONFIRMED | Use V1 `query()` (V2 drops critical options) |
+| 1.2 | Blocking `await query()` | **WRONG** | Use `for await (const msg of query(...))` streaming pattern |
+| 1.3 | `permissionMode: "bypassPermissions"` | CONFIRMED (spike) | Tested live with V1, works |
+| 1.4 | `agents` option with `{description, prompt, tools}` | CONFIRMED+ | SDK v0.2.39 adds `disallowedTools`, `mcpServers`, `maxTurns`, `skills` per agent |
 | 1.5 | `hooks` with regex matchers | CONFIRMED | Implement hook functions with correct signature |
-| 1.6 | `resume: sessionId` | CONFIRMED [V2] | Use `unstable_v2_resumeSession()` |
+| 1.6 | `resume: sessionId` | CONFIRMED (spike) | V1 `resume` option, tested live with 3-turn multi-turn |
 | 2.1 | `model` per sub-agent | CONFIRMED | None |
 | 2.2 | `permissionMode` per sub-agent | N/A (SDK) | CLI only. Use global mode or `canUseTool` in SDK |
 | 2.3 | `maxTurns` per sub-agent | PARTIAL | Per-session, not per-agent definition |
@@ -657,23 +753,23 @@ Use `outputFormat` for sub-agent result contracts. Forces structured responses i
 | 2.6 | `skills` per sub-agent | N/A (SDK) | CLI only. Manually prepend in SDK |
 | 2.7 | `hooks` per sub-agent | PARTIAL | SDK: per-session. CLI: per-agent |
 | 2.8 | `disallowedTools` per sub-agent | PARTIAL | SDK: per-session. CLI: per-agent |
-| 3.1 | Shared task list | N/A | CLI-only. Custom MCP tools + SQLite (see Section 7) |
-| 3.2 | Mailbox/messaging | N/A | CLI-only. Custom MCP tools + SQLite (see Section 7) |
+| 3.1 | Shared task list | N/A | CLI-only. Custom MCP tools + SQLite (see Section 8) |
+| 3.2 | Mailbox/messaging | N/A | CLI-only. Custom MCP tools + SQLite (see Section 8) |
 | 3.3 | Delegate mode | N/A (SDK) | Implement via tool restrictions |
 | 3.4 | No nested spawning | CONFIRMED | Omit Task tool from sub-agents |
 | 3.5 | Plan-then-execute | PARTIAL | Concept exists, workflow differs |
 | 3.6 | Quality gate hooks | CONFIRMED | PostToolUse + Stop hooks work |
-| 4.1 | maxTurns + resume interaction | UNCLEAR [V2] | V2 uses `resumeSession` -- likely resets per-session, needs testing |
+| 4.1 | maxTurns + resume interaction | CONFIRMED (spike) | V1 `resume` + `maxTurns` resets per-query call. Tested with 3 turns. |
 | 4.2 | Token cost tracking | CONFIRMED | `total_cost_usd` + `modelUsage` |
 | 4.3 | Auto-compaction | CONFIRMED | Exists in streaming mode, threshold undocumented |
 
 ---
 
-## 7. IPC Layer: Task List + Messaging via Custom MCP Tools
+## 8. IPC Layer: Task List + Messaging via Custom MCP Tools
 
 Agent Teams' shared task list and mailbox messaging are CLI-only features. Matrix OS needs these capabilities programmatically. The solution: custom MCP tools backed by SQLite, exposed to agents as first-class tools.
 
-### 7.1 Architecture
+### 8.1 Architecture
 
 ```
 Kernel <-> SQLite DB <-> MCP Server (in-process) <-> Agents
@@ -681,7 +777,7 @@ Kernel <-> SQLite DB <-> MCP Server (in-process) <-> Agents
 
 The kernel creates an in-process MCP server using `createSdkMcpServer()`. This server exposes task and messaging operations as tools. Agents call these tools naturally -- they appear alongside Read, Write, Bash, etc.
 
-### 7.2 SQLite Schema
+### 8.2 SQLite Schema
 
 ```sql
 -- Task list (replaces processes.json)
@@ -715,7 +811,7 @@ CREATE INDEX idx_tasks_assigned ON tasks(assigned_to);
 CREATE INDEX idx_messages_to ON messages(to_agent, read);
 ```
 
-### 7.3 MCP Tool Definitions
+### 8.3 MCP Tool Definitions
 
 These tools are defined using `createSdkMcpServer` and given to agents via `mcpServers` + `allowedTools`:
 
@@ -762,7 +858,7 @@ const matrixOsIpc = createSdkMcpServer({
 });
 ```
 
-### 7.4 Wiring into the Kernel
+### 8.4 Wiring into the Kernel
 
 ```typescript
 const session = unstable_v2_createSession({
@@ -793,7 +889,7 @@ Sub-agents get a subset of IPC tools based on their role:
 - **Researcher**: `read_messages`, `send_message` (read-only, reports findings)
 - **Kernel**: all tools (creates tasks, reads messages, manages state)
 
-### 7.5 Task Lifecycle
+### 8.5 Task Lifecycle
 
 ```
 User request
@@ -820,7 +916,7 @@ Kernel's SubagentStop hook fires
 Kernel reads task output, updates state, unblocks dependents
 ```
 
-### 7.6 Advantages Over CLI Agent Teams
+### 8.6 Advantages Over CLI Agent Teams
 
 | | CLI Agent Teams | Matrix OS IPC Layer |
 |---|---|---|
@@ -831,7 +927,7 @@ Kernel reads task output, updates state, unblocks dependents
 | **Concurrency** | File locking | Row-level locking via SQLite |
 | **Agent interface** | Implicit (agent teams protocol) | Explicit MCP tools (typed, discoverable) |
 
-### 7.7 Design Decisions for the Builder
+### 8.7 Design Decisions for the Builder
 
 This IPC layer is a good candidate for building yourself. Key decisions:
 

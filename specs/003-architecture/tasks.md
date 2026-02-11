@@ -23,20 +23,29 @@
 
 ## Phase 1: Setup
 
-**Purpose**: Project scaffolding, dependencies, monorepo structure
+**Purpose**: Project scaffolding, dependencies, monorepo structure, TDD infrastructure
 
-- [ ] T001 Initialize monorepo with TypeScript strict mode, ESM, Node 22+ -- root `package.json` with workspaces for `packages/kernel`, `packages/gateway`, `shell/`
-- [ ] T002 [P] Install kernel dependencies: `@anthropic-ai/claude-agent-sdk`, `drizzle-orm`, `better-sqlite3`, `zod`, `chokidar` in `packages/kernel/`
+- [ ] T001 Initialize monorepo with TypeScript strict mode, ESM, Node 22+ -- root `package.json` with pnpm workspaces for `packages/kernel`, `packages/gateway`, `shell/`
+- [ ] T002 [P] Install kernel dependencies: `@anthropic-ai/claude-agent-sdk`, `drizzle-orm`, `better-sqlite3`, `zod@4`, `chokidar` in `packages/kernel/`
 - [ ] T003 [P] Install gateway dependencies: `hono`, `@hono/node-server` in `packages/gateway/`
 - [ ] T004 [P] Create Next.js 16 app in `shell/` with `create-next-app` -- App Router, TypeScript strict
-- [ ] T005 [P] Configure tsx for backend dev server (`packages/kernel/`, `packages/gateway/`)
-- [ ] T006 Create directory structure per plan.md -- `packages/`, `shell/`, `home/`, `tests/`
+- [ ] T005 [P] Configure tsx for backend dev server, bun for running scripts (`packages/kernel/`, `packages/gateway/`)
+- [ ] T006 Create directory structure per plan.md -- `packages/`, `shell/`, `home/`, `tests/`, `spike/`
+- [ ] T006b [P] Configure Vitest in root -- `vitest.config.ts` with workspaces, separate configs for unit tests (fast, no SDK) and integration tests (live SDK, haiku, tagged `@integration`). Add `test` and `test:integration` scripts. Enable `@vitest/coverage-v8` for coverage reporting, target 99-100% for kernel and gateway packages.
 
 ---
 
 ## Phase 2: Foundation (Blocking Prerequisites)
 
-**Purpose**: SQLite/Drizzle, file system template, system prompt assembly
+**Purpose**: SQLite/Drizzle, file system template, system prompt assembly. TDD: write tests first.
+
+### Tests (write FIRST, must FAIL before implementation)
+
+- [ ] T007a [P] [US1] Write `tests/kernel/schema.test.ts` -- test Drizzle schema: tasks table CRUD, messages table CRUD, indexes exist, WAL mode enabled
+- [ ] T007b [P] [US1] Write `tests/kernel/prompt.test.ts` -- test `buildSystemPrompt()`: returns string, stays under 7K tokens, includes all L1 cache sections, handles missing files gracefully
+- [ ] T007c [P] [US1] Write `tests/kernel/agents.test.ts` -- test frontmatter parser: valid YAML extracted, body preserved, `inject` field resolves knowledge files, unknown fields ignored, SDK `AgentDefinition` shape returned
+
+### Implementation
 
 - [ ] T007 [US1] Define Drizzle schema in `packages/kernel/src/schema.ts` -- tasks table, messages table with types and indexes (from SDK-VERIFICATION.md Section 7.2). Tasks table replaces `processes.json` as the source of truth for active processes.
 - [ ] T008 [US1] Create SQLite database setup in `packages/kernel/src/db.ts` -- Drizzle ORM instance with better-sqlite3 driver, WAL mode, run migrations
@@ -44,9 +53,9 @@
 - [ ] T010 [P] [US1] Write knowledge files: `home/agents/knowledge/app-generation.md`, `theme-system.md`, `module-standard.md`
 - [ ] T011 [US1] Implement `buildSystemPrompt()` in `packages/kernel/src/prompt.ts` -- reads registers (system-prompt.md), L1 cache (state.md, modules.json, activity.log tail, knowledge TOC, agent TOC), user context (user-profile.md, memory/long-term.md). Must stay under 7K tokens. Note: kernel uses custom system prompt string (not `preset: "claude_code"`), sub-agents can optionally use preset.
 - [ ] T012 [US1] Implement first-boot logic: copy `home/` to `~/matrixos/` (or configured path) if not exists, initialize git repo in the home directory
-- [ ] T013 [P] [US1] Create markdown frontmatter parser for agent definition files -- parse YAML frontmatter + body from `~/agents/custom/*.md`. Note: only `description`, `prompt`, `tools`, `model` map to SDK `AgentDefinition`. Other fields (`inject`, `mcp`, `maxTurns`) are Matrix OS extensions handled by kernel code.
+- [ ] T013 [P] [US1] Create markdown frontmatter parser for agent definition files -- parse YAML frontmatter + body from `~/agents/custom/*.md`. Note: `description`, `prompt`, `tools`, `model`, `maxTurns`, `disallowedTools`, `mcpServers` map to SDK `AgentDefinition` (v0.2.39+). `inject` and `mcp` are Matrix OS extensions handled by kernel code.
 
-**Checkpoint**: `buildSystemPrompt()` returns a valid string. Drizzle migrations run, tables created. File system template copies on first boot with all directories.
+**Checkpoint**: All T007a-c tests pass green. `buildSystemPrompt()` returns a valid string under 7K tokens. Drizzle migrations run, tables created. File system template copies on first boot.
 
 ---
 
@@ -54,13 +63,19 @@
 
 **Goal**: User sends a message via terminal/API, kernel routes it, builder creates an app, files appear on disk.
 
+### Tests (write FIRST, must FAIL before implementation)
+
+- [ ] T013a [P] [US1] Write `tests/kernel/ipc.test.ts` -- contract tests for all 7 MCP tools: `list_tasks` returns array, `claim_task` is atomic (prevents double-claim), `complete_task` stores output, `fail_task` sets error, `send_message` inserts row, `read_messages` marks as read, `read_state` returns summary. Test against in-memory SQLite.
+- [ ] T013b [P] [US1] Write `tests/kernel/hooks.test.ts` -- test hook return shapes: `updateStateHook` returns `hookEventName`, `safetyGuardHook` denies dangerous commands, `gitSnapshotHook` is called on Write/Edit
+- [ ] T013c [US1] Write `tests/kernel/kernel.integration.ts` -- `@integration` tagged: test full `spawnKernel()` -> MCP tool call -> result. Uses haiku. Tests: single turn works, resume preserves context, agent spawning works, hooks fire. Cost budget: <$0.20 per run.
+
 ### Core Kernel
 
-- [ ] T014 [US1] Implement IPC MCP server in `packages/kernel/src/ipc.ts` -- `createSdkMcpServer` with 7 tools: `list_tasks`, `claim_task`, `complete_task`, `fail_task`, `send_message`, `read_messages`, `read_state` (backed by Drizzle queries). **SDK note**: verify V2 `session.send()` works with `mcpServers` option -- V1 required streaming input for MCP. Test early; if V2 fails with MCP, fall back to V1.
-- [ ] T015 [US1] Define core agent configs in `packages/kernel/src/agents.ts` -- builder (opus), healer (sonnet), researcher (haiku), deployer (sonnet), evolver (opus). Each with `description`, `prompt`, `tools`, `model` (SDK `AgentDefinition` fields only), plus IPC tool subsets in `tools` array. Note: per-agent `maxTurns` is not part of `AgentDefinition` -- handle at session level.
+- [ ] T014 [US1] Implement IPC MCP server in `packages/kernel/src/ipc.ts` -- `createSdkMcpServer` with 7 tools: `list_tasks`, `claim_task`, `complete_task`, `fail_task`, `send_message`, `read_messages`, `read_state` (backed by Drizzle queries). **Spike-verified**: V1 `query()` with MCP tools works (tested 2026-02-11).
+- [ ] T015 [US1] Define core agent configs in `packages/kernel/src/agents.ts` -- builder (opus, effort: "max"), healer (sonnet), researcher (haiku, effort: "low"), deployer (sonnet), evolver (opus, effort: "high"). Each with SDK `AgentDefinition` fields: `description`, `prompt`, `tools`, `model`, `maxTurns`, `disallowedTools`. IPC tool subsets in `tools` array.
 - [ ] T016 [US1] Implement `loadCustomAgents()` in `packages/kernel/src/agents.ts` -- scan `~/agents/custom/*.md`, parse frontmatter, resolve `inject` field (read knowledge files from `~/agents/knowledge/`, prepend to `prompt` string), resolve `mcp` field to `mcpServers` config at spawn time. Return SDK-compatible `AgentDefinition` objects.
-- [ ] T017 [US1] Implement `kernelOptions()` in `packages/kernel/src/index.ts` -- custom system prompt, `permissionMode: "bypassPermissions"` + `allowDangerouslySkipPermissions: true`, agents, mcpServers, hooks config, allowedTools (including `mcp__matrix-os-ipc__*` wildcard)
-- [ ] T018 [US1] Implement `spawnKernel()` in `packages/kernel/src/index.ts` -- V2 SDK `unstable_v2_createSession`/`unstable_v2_resumeSession`, `send()`/`stream()` loop, session persistence. **SDK risk**: V2 option passthrough (agents, hooks, mcpServers, permissionMode) is assumed but not fully documented. If V2 rejects these options, fall back to V1 `query()` with streaming input. Test this before building hooks.
+- [ ] T017 [US1] Implement `kernelOptions()` in `packages/kernel/src/index.ts` -- custom system prompt with `cache_control: {type: "ephemeral"}` for prompt caching (90% savings on turns 2+), `permissionMode: "bypassPermissions"` + `allowDangerouslySkipPermissions: true`, agents, mcpServers, hooks config, allowedTools, `thinking: { type: "adaptive" }` for Opus 4.6 adaptive thinking, effort level per context. Verify whether Agent SDK applies caching automatically or if explicit `cache_control` is needed on system prompt blocks.
+- [ ] T018 [US1] Implement `spawnKernel()` in `packages/kernel/src/index.ts` -- V1 `query()` with `resume` option for multi-turn. Each turn: `query({ prompt, options: { ...kernelOptions, resume: sessionId } })`. Stream output via `for await`. Return session ID for next turn. **Spike-verified**: V1 query + resume + MCP tools + agents + bypassPermissions all work (tested 2026-02-11).
 
 ### Hooks
 
@@ -71,6 +86,7 @@
 - [ ] T023 [P] [US1] Implement `onSubagentComplete` in `packages/kernel/src/hooks.ts` -- SubagentStop hook. **SDK note**: `SubagentStopHookInput` does NOT include the subagent's result text. Read task output from SQLite IPC (where subagent called `complete_task`), correlate via `agent_id` -> `assigned_to`. Updates state.
 - [ ] T024 [P] [US2] Implement `notifyShellHook` in `packages/kernel/src/hooks.ts` -- PostToolUse on Write|Edit, pushes file change events to shell via WebSocket (enables live desktop updates when kernel writes files)
 - [ ] T025 [P] [US1] Implement `safetyGuardHook` in `packages/kernel/src/hooks.ts` -- PostToolUse on Bash, validates commands against safety rules (prevent `rm -rf /`, protect core OS paths)
+- [ ] T025b [P] [US1] Implement `preCompactHook` in `packages/kernel/src/hooks.ts` -- PreCompact hook, writes state snapshot to `~/system/state.md` before compaction so summarized context includes a pointer to full state on disk. Ensures long sessions don't lose critical state.
 
 ### Gateway
 
@@ -202,7 +218,7 @@ Phase 1 (Setup) ─────────────> Phase 2 (Foundation)
 
 Setup -> Foundation -> Kernel -> Shell -> Polish = minimum for demo
 
-64 total tasks. T001-T064.
+~70 tasks (T001-T064 + TDD test tasks T007a-c, T013a-c, T006b).
 
 ### Parallel Opportunities
 
@@ -240,9 +256,27 @@ Findings from the agent swarm verification (2026-02-11):
 - Added T062 note about cross-module data flow validation
 - Clarified in T055 that SQLite replaces processes.json as source of truth
 
+### Spike findings (2026-02-11)
+- V1 `query()` with `resume` is the kernel pattern -- V2 silently drops mcpServers/agents/systemPrompt
+- V1 MCP tools: PASS (createSdkMcpServer, in-process, Zod 4 schemas)
+- V1 multi-turn with resume: PASS (3 turns, same session, $0.05 haiku)
+- V1 agents: PASS (kernel routes to builder sub-agent, sub-agent uses MCP tools)
+- AgentDefinition v0.2.39 now includes: maxTurns, disallowedTools, mcpServers, skills per agent
+- `allowedTools` is auto-approve list, NOT filter. Use `tools` option or `disallowedTools` to restrict.
+- SDK requires Zod 4 (`zod/v4` import path)
+
+### Opus 4.6 features to leverage
+- `thinking: { type: "adaptive" }` -- kernel uses adaptive thinking (replaces budget_tokens)
+- `effort` parameter -- builder gets "max", researcher gets "low", kernel gets "high"
+- Compaction API -- automatic context summarization for long kernel sessions. PreCompact hook writes state snapshot before compaction.
+- Fast mode -- `speed: "fast"` for demo recordings (2.5x faster, premium pricing)
+- 128K output -- builder can generate entire apps in one turn
+- No prefill -- Opus 4.6 does NOT support assistant prefills (breaking change, use structured outputs or system prompt instead)
+- 1M context window beta -- `betas: ["context-1m-2025-08-07"]`, tier 4+, 2x input above 200K. Use for extended build sessions if 200K proves insufficient.
+- Prompt caching -- `cache_control: {type: "ephemeral"}` on system prompt + tool defs. 90% savings on repeated content ($0.50/MTok vs $5/MTok). 5-min TTL refreshes on use. Min 4096 tokens for Opus 4.6.
+
 ### Accepted risks
-- V2 SDK instability: fallback to V1 documented in SDK-VERIFICATION.md
-- V2 option passthrough not fully documented: test early in Phase 3
+- V1 `query()` API is the kernel pattern (V2 drops critical options -- spike tested 2026-02-11)
 - Voice is vision-first but implementation-last: acceptable for hackathon, demo script should not promise voice
 - MCP inbound gateway: deferred (P2), not needed for demo
 - Sharing workflow: architecturally enabled (apps are files), no explicit export/import UI
@@ -255,7 +289,13 @@ Findings from the agent swarm verification (2026-02-11):
 - [P] tasks = different files, no dependencies
 - [Story] label maps task to user story for traceability
 - Each phase has a checkpoint to validate before proceeding
-- SDK V2 is unstable -- if it breaks, fallback code path documented in SDK-VERIFICATION.md
+- **TDD**: Test tasks (T007a-c, T013a-c) must pass before their implementation tasks start
+- V1 `query()` with `resume` is the kernel pattern (spike-verified, see SDK-VERIFICATION.md)
 - Pre-seeded apps are critical for demo pacing (30-90s generation is too slow for 3-min video)
 - Git snapshots are cheap insurance -- commit early, commit often
 - `bypassPermissions` propagates to all subagents -- use PreToolUse hooks for access control
+- Opus 4.6: adaptive thinking, effort levels, compaction, fast mode, 128K output, no prefills, 1M context beta, prompt caching
+- Zod 4 required by SDK (import from `zod/v4`)
+- Test coverage target: 99-100% for kernel and gateway packages (`@vitest/coverage-v8`)
+- Prompt caching: 90% input cost savings on system prompt + tool definitions across turns
+- pnpm for installs, bun for running scripts
