@@ -166,22 +166,22 @@
 
 ### OS Bridge
 
-- [ ] T072 [US2] Implement `shell/src/lib/os-bridge.ts` -- defines `window.MatrixOS` API (`generate`, `navigate`, `readData`, `writeData`, `app`), `postMessage` protocol between iframe and shell, `injectBridge(iframe, appName)` function, `handleBridgeMessage(event, sendToKernel)` handler. Bridge prefixes app context to kernel prompts: `"[App: {name}] {message}"`
-- [ ] T073 [US2] Write tests for OS bridge -- message serialization, context prefixing, data scope validation (app can only access `~/data/{appName}/`), unknown message types ignored
-- [ ] T074 [US2] Modify `AppViewer.tsx` -- inject bridge into iframe on load via `injectBridge()`, listen for `postMessage` events, route `os:generate` and `os:navigate` to kernel via existing WebSocket `send()`. Route `os:read-data` and `os:write-data` to new data endpoint.
-- [ ] T075 [US2] Add `POST /api/bridge/data` endpoint in `packages/gateway/src/server.ts` -- reads/writes JSON files in `~/data/{appName}/`. Scoped: rejects paths outside app namespace. Supports `{ action: "read"|"write", app: string, key: string, value?: string }`.
+- [x] T072 [US2] Implement `shell/src/lib/os-bridge.ts` -- defines `window.MatrixOS` API (`generate`, `navigate`, `readData`, `writeData`, `app`), `postMessage` protocol between iframe and shell, `injectBridge(iframe, appName)` function, `handleBridgeMessage(event, sendToKernel)` handler. Bridge prefixes app context to kernel prompts: `"[App: {name}] {message}"`
+- [x] T073 [US2] Write tests for OS bridge -- message serialization, context prefixing, data scope validation (app can only access `~/data/{appName}/`), unknown message types ignored
+- [x] T074 [US2] Modify `AppViewer.tsx` -- inject bridge into iframe on load via `injectBridge()`, listen for `postMessage` events, route `os:generate` and `os:navigate` to kernel via existing WebSocket `send()`. Route `os:read-data` and `os:write-data` to new data endpoint.
+- [x] T075 [US2] Add `POST /api/bridge/data` endpoint in `packages/gateway/src/server.ts` -- reads/writes JSON files in `~/data/{appName}/`. Scoped: rejects paths outside app namespace. Supports `{ action: "read"|"write", app: string, key: string, value?: string }`.
 
 ### Layout Restructure
 
-- [ ] T076 [P] [US2] Implement `InputBar.tsx` in `shell/src/components/` -- bottom-center text input bar, suggestion chips slot above, mic button placeholder (disabled), submit button. Uses existing `useSocket` `send()`. Replaces ChatPanel's input form as the primary interaction point.
-- [ ] T077 [P] [US2] Implement `SuggestionChips.tsx` in `shell/src/components/` -- renders contextual prompt chips. Empty desktop: "Build me a notes app", "Create an expense tracker", "Show what you can do". App open: "Add dark mode", "Make it faster". After error: "Fix this". Clicking submits as message.
-- [ ] T078 [P] [US2] Implement `ThoughtCard.tsx` in `shell/src/components/` -- floating top-right card showing agent activity. Shows tool name and spinner during `kernel:tool_start`, fades on `kernel:tool_end`/`kernel:result`. Subscribes to existing WebSocket events via `useSocket`.
-- [ ] T079 [US2] Implement `BottomPanel.tsx` in `shell/src/components/` -- collapsible panel containing Terminal, ModuleGraph, ActivityFeed as tabs. Hidden by default. Toggle via `Cmd+J`/`Ctrl+J`. Preference stored in `localStorage`.
+- [x] T076 [P] [US2] Implement `InputBar.tsx` in `shell/src/components/` -- bottom-center text input bar, suggestion chips slot above, mic button placeholder (disabled), submit button. Uses existing `useSocket` `send()`. Replaces ChatPanel's input form as the primary interaction point.
+- [x] T077 [P] [US2] Implement `SuggestionChips.tsx` in `shell/src/components/` -- renders contextual prompt chips. Empty desktop: "Build me a notes app", "Create an expense tracker", "Show what you can do". App open: "Add dark mode", "Make it faster". After error: "Fix this". Clicking submits as message.
+- [x] T078 [P] [US2] Implement `ThoughtCard.tsx` in `shell/src/components/` -- floating top-right card showing agent activity. Shows tool name and spinner during `kernel:tool_start`, fades on `kernel:tool_end`/`kernel:result`. Subscribes to existing WebSocket events via `useSocket`.
+- [x] T079 [US2] Implement `BottomPanel.tsx` in `shell/src/components/` -- collapsible panel containing Terminal, ModuleGraph, ActivityFeed as tabs. Hidden by default. Toggle via `Cmd+J`/`Ctrl+J`. Preference stored in `localStorage`.
 
 ### Integration
 
-- [ ] T080 [US2] Restructure `page.tsx` layout -- Desktop canvas fills screen, InputBar fixed at bottom-center, BottomPanel collapsible at bottom, ChatPanel becomes toggleable sidebar (history only, no input). ThoughtCard floats top-right over desktop.
-- [ ] T081 [US2] Modify `ChatPanel.tsx` -- remove input form (moved to InputBar), add collapse/expand toggle, show only message history and conversation switcher. Collapsed state shows a small toggle button at screen edge.
+- [x] T080 [US2] Restructure `page.tsx` layout -- Desktop canvas fills screen, InputBar fixed at bottom-center, BottomPanel collapsible at bottom, ChatPanel becomes toggleable sidebar (history only, no input). ThoughtCard floats top-right over desktop.
+- [x] T081 [US2] Modify `ChatPanel.tsx` -- remove input form (moved to InputBar), add collapse/expand toggle, show only message history and conversation switcher. Collapsed state shows a small toggle button at screen edge.
 
 **Checkpoint**: Open `localhost:3000`, see clean canvas with bottom-center input bar and suggestion chips. Type "Build me a notes app" -> thought card shows agent working -> app window appears. Click inside the app -> bridge routes interaction back to kernel -> app updates. Press `Cmd+J` -> terminal/graph/feed panel slides up. Chat sidebar toggles independently.
 

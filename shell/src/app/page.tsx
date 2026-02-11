@@ -1,38 +1,93 @@
 "use client";
 
+import { useState, useCallback, useMemo } from "react";
 import { useTheme } from "@/hooks/useTheme";
+import { useChatState } from "@/hooks/useChatState";
 import { Desktop } from "@/components/Desktop";
 import { ChatPanel } from "@/components/ChatPanel";
-import { Dock } from "@/components/Dock";
-import { ActivityFeed } from "@/components/ActivityFeed";
-import { Terminal } from "@/components/Terminal";
-import { ModuleGraph } from "@/components/ModuleGraph";
-import { Separator } from "@/components/ui/separator";
+import { InputBar } from "@/components/InputBar";
+import { SuggestionChips } from "@/components/SuggestionChips";
+import { ThoughtCard } from "@/components/ThoughtCard";
+import { BottomPanel } from "@/components/BottomPanel";
+import { Button } from "@/components/ui/button";
+import { MessageSquareIcon } from "lucide-react";
 
 export default function Home() {
   useTheme();
 
+  const chat = useChatState();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const chipContext = useMemo(() => {
+    const hasError = chat.messages.some(
+      (m) => m.role === "system" && !m.tool,
+    );
+    if (hasError) return "error" as const;
+
+    const hasMessages = chat.messages.some((m) => m.role === "user");
+    if (hasMessages) return "app" as const;
+
+    return "empty" as const;
+  }, [chat.messages]);
+
+  const handleChipSelect = useCallback(
+    (text: string) => {
+      chat.submitMessage(text);
+    },
+    [chat.submitMessage],
+  );
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      <div className="flex flex-1 flex-col">
-        <Desktop />
-        <Separator />
-        <div className="flex h-[280px]">
-          <div className="flex-1 min-w-0">
-            <Terminal />
-          </div>
-          <Separator orientation="vertical" />
-          <div className="w-[300px]">
-            <ModuleGraph />
-          </div>
-          <Separator orientation="vertical" />
-          <div className="w-[240px] overflow-y-auto">
-            <ActivityFeed />
+      <div className="flex flex-1 flex-col min-w-0">
+        <div className="relative flex-1 min-h-0">
+          <Desktop />
+
+          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4">
+            <div className="flex justify-end">
+              <ThoughtCard />
+            </div>
+
+            <div className="pointer-events-auto flex justify-center pb-2">
+              <InputBar
+                sessionId={chat.sessionId}
+                busy={chat.busy}
+                onSubmit={chat.submitMessage}
+                chips={
+                  <SuggestionChips
+                    context={chipContext}
+                    onSelect={handleChipSelect}
+                  />
+                }
+              />
+            </div>
           </div>
         </div>
+
+        <BottomPanel />
       </div>
-      <ChatPanel />
-      <Dock />
+
+      {sidebarOpen ? (
+        <ChatPanel
+          messages={chat.messages}
+          sessionId={chat.sessionId}
+          busy={chat.busy}
+          connected={chat.connected}
+          conversations={chat.conversations}
+          onNewChat={chat.newChat}
+          onSwitchConversation={chat.switchConversation}
+          onClose={() => setSidebarOpen(false)}
+        />
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="fixed right-3 top-3 z-50 size-8 rounded-lg border border-border bg-card/80 backdrop-blur-sm"
+          onClick={() => setSidebarOpen(true)}
+        >
+          <MessageSquareIcon className="size-4" />
+        </Button>
+      )}
     </div>
   );
 }

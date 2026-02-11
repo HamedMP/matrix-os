@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, normalize } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -206,6 +206,34 @@ export function createGateway(config: GatewayConfig) {
     return c.body(content, 200, {
       "Content-Type": mimeTypes[ext ?? ""] ?? "text/plain",
     });
+  });
+
+  app.post("/api/bridge/data", async (c) => {
+    const body = await c.req.json<{
+      action: "read" | "write";
+      app: string;
+      key: string;
+      value?: string;
+    }>();
+
+    const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
+    const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
+    const dataDir = join(homePath, "data", safeApp);
+    const filePath = normalize(join(dataDir, `${safeKey}.json`));
+
+    if (!filePath.startsWith(normalize(dataDir))) {
+      return c.json({ error: "Path traversal denied" }, 403);
+    }
+
+    if (body.action === "read") {
+      if (!existsSync(filePath)) return c.json(null);
+      const content = readFileSync(filePath, "utf-8");
+      return c.json(JSON.parse(content));
+    }
+
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(filePath, JSON.stringify(body.value));
+    return c.json({ ok: true });
   });
 
   app.get("/api/conversations", (c) => {

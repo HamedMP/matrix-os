@@ -1,9 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useSocket, type ServerMessage } from "@/hooks/useSocket";
-import { useConversation } from "@/hooks/useConversation";
-import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
+import type { ChatMessage } from "@/lib/chat";
 import {
   Conversation,
   ConversationContent,
@@ -16,7 +13,6 @@ import {
 } from "@/components/ai-elements/message";
 import { Tool } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -30,9 +26,27 @@ import {
   WrenchIcon,
   CheckCircleIcon,
   LoaderCircleIcon,
-  SendIcon,
   PlusIcon,
+  PanelRightCloseIcon,
 } from "lucide-react";
+
+interface ConversationMeta {
+  id: string;
+  preview: string;
+  messageCount: number;
+  updatedAt: number;
+}
+
+export interface ChatPanelProps {
+  messages: ChatMessage[];
+  sessionId: string | undefined;
+  busy: boolean;
+  connected: boolean;
+  conversations: ConversationMeta[];
+  onNewChat: () => void;
+  onSwitchConversation: (id: string) => void;
+  onClose: () => void;
+}
 
 function ToolMessage({ msg }: { msg: ChatMessage }) {
   const isRunning = msg.content.startsWith("Using ");
@@ -52,105 +66,28 @@ function ToolMessage({ msg }: { msg: ChatMessage }) {
   );
 }
 
-export function ChatPanel() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [sessionId, setSessionId] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const { connected, subscribe, send } = useSocket();
-  const { conversations, load } = useConversation();
-
-  useEffect(() => {
-    if (conversations.length === 0) return;
-
-    const sorted = [...conversations].sort(
-      (a, b) => b.updatedAt - a.updatedAt,
-    );
-    const latest = sorted[0];
-
-    if (!sessionId && latest.messageCount > 0) {
-      load(latest.id).then((conv) => {
-        if (conv) {
-          setSessionId(conv.id);
-          setMessages(hydrateMessages(conv.messages));
-        }
-      });
-    }
-  }, [conversations, sessionId, load]);
-
-  useEffect(() => {
-    return subscribe((msg: ServerMessage) => {
-      if (msg.type === "kernel:init") {
-        setSessionId(msg.sessionId);
-        setBusy(true);
-        return;
-      }
-
-      if (msg.type === "kernel:result") {
-        setBusy(false);
-        return;
-      }
-
-      if (msg.type === "kernel:error") {
-        setBusy(false);
-      }
-
-      setMessages((prev) => reduceChat(prev, msg));
-    });
-  }, [subscribe]);
-
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const text = input.trim();
-      if (!text || busy) return;
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `user-${Date.now()}`,
-          role: "user",
-          content: text,
-          timestamp: Date.now(),
-        },
-      ]);
-
-      send({ type: "message", text, sessionId });
-      setInput("");
-      setBusy(true);
-    },
-    [input, busy, send, sessionId],
-  );
-
-  const handleNewChat = useCallback(() => {
-    setMessages([]);
-    setSessionId(undefined);
-  }, []);
-
-  const handleSwitchConversation = useCallback(
-    (id: string) => {
-      load(id).then((conv) => {
-        if (conv) {
-          setSessionId(conv.id);
-          setMessages(hydrateMessages(conv.messages));
-        }
-      });
-    },
-    [load],
-  );
-
+export function ChatPanel({
+  messages,
+  sessionId,
+  busy,
+  connected,
+  conversations,
+  onNewChat,
+  onSwitchConversation,
+  onClose,
+}: ChatPanelProps) {
   return (
-    <aside className="flex w-[400px] flex-col border-l border-border bg-card">
+    <aside className="flex w-[360px] flex-col border-l border-border bg-card">
       <header className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Chat</span>
+          <span className="text-sm font-medium">History</span>
           {conversations.length > 1 && (
-            <Select value={sessionId ?? ""} onValueChange={handleSwitchConversation}>
-              <SelectTrigger size="sm" className="h-6 text-xs w-[140px]">
+            <Select value={sessionId ?? ""} onValueChange={onSwitchConversation}>
+              <SelectTrigger size="sm" className="h-6 text-xs w-[130px]">
                 <SelectValue placeholder="Select..." />
               </SelectTrigger>
               <SelectContent>
-                {conversations
+                {[...conversations]
                   .sort((a, b) => b.updatedAt - a.updatedAt)
                   .map((c) => (
                     <SelectItem key={c.id} value={c.id} className="text-xs">
@@ -163,14 +100,17 @@ export function ChatPanel() {
             </Select>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="size-6" onClick={handleNewChat}>
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="icon" className="size-6" onClick={onNewChat}>
             <PlusIcon className="size-3.5" />
           </Button>
           <Badge variant={connected ? "default" : "destructive"} className="text-xs">
             <span className={`size-1.5 rounded-full ${connected ? "bg-success" : "bg-current"}`} />
             {connected ? "Connected" : "Offline"}
           </Badge>
+          <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+            <PanelRightCloseIcon className="size-3.5" />
+          </Button>
         </div>
       </header>
       <Separator />
@@ -208,23 +148,6 @@ export function ChatPanel() {
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-
-      <Separator />
-      <form onSubmit={handleSubmit} className="flex gap-2 px-4 py-3">
-        <Input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={connected ? "Ask Matrix OS..." : "Connecting..."}
-          disabled={!connected}
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={!connected || busy || !input.trim()}
-        >
-          <SendIcon />
-        </Button>
-      </form>
     </aside>
   );
 }
