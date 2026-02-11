@@ -6,3 +6,17 @@ export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
 export { ensureHome } from "./boot.js";
 export { buildSystemPrompt } from "./prompt.js";
+export {
+  loadHealthCheckTargets,
+  checkModuleHealth,
+  backupModule,
+  restoreModule,
+  createHeartbeat,
+} from "./heartbeat.js";
+export type {
+  HealthTarget,
+  HealthCheckResult,
+  ModuleHealth,
+  HeartbeatConfig,
+  Heartbeat,
+} from "./heartbeat.js";

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -8,7 +8,14 @@ import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
-import type { KernelEvent } from "@matrix-os/kernel";
+import {
+  createHeartbeat,
+  backupModule,
+  restoreModule,
+  checkModuleHealth,
+  type Heartbeat,
+  type KernelEvent,
+} from "@matrix-os/kernel";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -66,8 +73,61 @@ export function createGateway(config: GatewayConfig) {
 
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
-
   const clients = new Set<WSContext>();
+
+  function logHealing(message: string) {
+    const timestamp = new Date().toISOString();
+    const line = `[${timestamp}] [heal] ${message}\n`;
+    const logPath = join(homePath, "system/activity.log");
+    try { appendFileSync(logPath, line); } catch { /* log dir may not exist yet */ }
+  }
+
+  function broadcastError(message: string) {
+    const json = JSON.stringify({ type: "kernel:error", message });
+    for (const ws of clients) {
+      ws.send(json);
+    }
+  }
+
+  const heartbeat: Heartbeat = createHeartbeat({
+    homePath,
+    onHealthFailure: async (target, error) => {
+      const modulePath = join(homePath, "modules", target.name);
+
+      logHealing(`Module "${target.name}" failed health checks: ${error}`);
+      broadcastError(`Module "${target.name}" is unhealthy: ${error}. Attempting auto-heal...`);
+
+      backupModule(homePath, target.name, modulePath);
+
+      const healPrompt =
+        `[HEAL] Module "${target.name}" has failed health checks. ` +
+        `Error: ${error}. Port: ${target.port}. Path: ${modulePath}. ` +
+        `Health endpoint: ${target.healthPath}. ` +
+        `A backup has been created at ${join(homePath, ".backup", target.name)}. ` +
+        `Diagnose and fix the issue.`;
+
+      try {
+        await dispatcher.dispatch(healPrompt, undefined, () => {});
+
+        const result = await checkModuleHealth(target.port, target.healthPath, 5000);
+        if (result.ok) {
+          logHealing(`Module "${target.name}" healed successfully`);
+          broadcastError(`Module "${target.name}" has been healed.`);
+        } else {
+          restoreModule(homePath, target.name, modulePath);
+          logHealing(`Healing failed for "${target.name}": ${result.error}. Restored from backup.`);
+          broadcastError(`Auto-heal failed for "${target.name}". Restored from backup.`);
+        }
+      } catch (err) {
+        restoreModule(homePath, target.name, modulePath);
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        logHealing(`Healing error for "${target.name}": ${msg}. Restored from backup.`);
+        broadcastError(`Auto-heal error for "${target.name}": ${msg}. Restored from backup.`);
+      }
+    },
+  });
+
+  heartbeat.start();
 
   watcher.on((change) => {
     const msg: ServerMessage = change;
@@ -295,7 +355,9 @@ export function createGateway(config: GatewayConfig) {
     server,
     dispatcher,
     watcher,
+    heartbeat,
     async close() {
+      heartbeat.stop();
       await watcher.close();
       server.close();
     },
