@@ -7,42 +7,42 @@
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
-  /* shadcn theme -- dark values matching Matrix OS */
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --card: #171717;
-  --card-foreground: #ededed;
-  --popover: #171717;
-  --popover-foreground: #ededed;
-  --primary: #3b82f6;
+  /* Warm light palette -- lavender canvas, terracotta accent */
+  --background: #ece5f0;
+  --foreground: #1c1917;
+  --card: #ffffff;
+  --card-foreground: #1c1917;
+  --popover: #ffffff;
+  --popover-foreground: #1c1917;
+  --primary: #c2703a;
   --primary-foreground: #ffffff;
-  --secondary: #262626;
-  --secondary-foreground: #ededed;
-  --muted: #262626;
-  --muted-foreground: #737373;
-  --accent: #1e293b;
-  --accent-foreground: #ededed;
+  --secondary: #f0eaf4;
+  --secondary-foreground: #44403c;
+  --muted: #f0eaf4;
+  --muted-foreground: #78716c;
+  --accent: #f0eaf4;
+  --accent-foreground: #44403c;
   --destructive: #ef4444;
   --success: #22c55e;
   --warning: #eab308;
-  --border: #262626;
-  --input: #333333;
-  --ring: #3b82f6;
+  --border: #d8d0de;
+  --input: #d8d0de;
+  --ring: #c2703a;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: #171717;
-  --sidebar-foreground: #ededed;
-  --sidebar-primary: #3b82f6;
+  --sidebar: #f0eaf4;
+  --sidebar-foreground: #1c1917;
+  --sidebar-primary: #c2703a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #262626;
-  --sidebar-accent-foreground: #ededed;
-  --sidebar-border: #262626;
-  --sidebar-ring: #3b82f6;
+  --sidebar-accent: #ece5f0;
+  --sidebar-accent-foreground: #44403c;
+  --sidebar-border: #d8d0de;
+  --sidebar-ring: #c2703a;
 }
 
 @theme inline {
@@ -93,6 +93,10 @@ body {
   font-family: var(--font-sans);
   overflow: hidden;
   height: 100vh;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800' viewBox='0 0 800 800'%3E%3Cg fill='none' stroke='%23c8b8d0' stroke-width='1' opacity='0.4'%3E%3Cpath d='M0 200 Q200 150 400 200 T800 200'/%3E%3Cpath d='M0 300 Q200 250 400 300 T800 300'/%3E%3Cpath d='M0 400 Q200 350 400 400 T800 400'/%3E%3Cpath d='M0 500 Q200 450 400 500 T800 500'/%3E%3Cpath d='M0 600 Q200 550 400 600 T800 600'/%3E%3Cpath d='M0 250 Q300 200 600 260 T800 240'/%3E%3Cpath d='M0 350 Q300 310 600 370 T800 340'/%3E%3Cpath d='M0 450 Q300 410 600 470 T800 440'/%3E%3Cpath d='M0 550 Q300 510 600 570 T800 540'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 ::-webkit-scrollbar {

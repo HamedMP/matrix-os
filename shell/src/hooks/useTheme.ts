@@ -13,28 +13,39 @@ interface Theme {
 const DEFAULT_THEME: Theme = {
   name: "default",
   colors: {
-    bg: "#0a0a0a",
-    fg: "#ededed",
-    accent: "#3b82f6",
-    surface: "#171717",
-    border: "#262626",
-    muted: "#737373",
-    error: "#ef4444",
+    background: "#ece5f0",
+    foreground: "#1c1917",
+    card: "#ffffff",
+    "card-foreground": "#1c1917",
+    popover: "#ffffff",
+    "popover-foreground": "#1c1917",
+    primary: "#c2703a",
+    "primary-foreground": "#ffffff",
+    secondary: "#f0eaf4",
+    "secondary-foreground": "#44403c",
+    muted: "#f0eaf4",
+    "muted-foreground": "#78716c",
+    accent: "#f0eaf4",
+    "accent-foreground": "#44403c",
+    destructive: "#ef4444",
     success: "#22c55e",
     warning: "#eab308",
+    border: "#d8d0de",
+    input: "#d8d0de",
+    ring: "#c2703a",
   },
   fonts: {
     mono: "JetBrains Mono, monospace",
     sans: "Inter, system-ui, sans-serif",
   },
-  radius: "0.5rem",
+  radius: "0.75rem",
 };
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
 
   for (const [key, value] of Object.entries(theme.colors)) {
-    root.style.setProperty(`--color-${key}`, value);
+    root.style.setProperty(`--${key}`, value);
   }
 
   for (const [key, value] of Object.entries(theme.fonts)) {

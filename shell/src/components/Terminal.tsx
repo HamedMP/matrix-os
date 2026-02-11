@@ -28,9 +28,10 @@ export function Terminal() {
         fontSize: 13,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
         theme: {
-          background: "#0a0a0a",
-          foreground: "#ededed",
-          cursor: "#3b82f6",
+          background: "#ffffff",
+          foreground: "#1c1917",
+          cursor: "#c2703a",
+          selectionBackground: "#c2703a33",
         },
       });
 

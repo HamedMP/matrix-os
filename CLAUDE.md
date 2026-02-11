@@ -143,6 +143,10 @@ Gateway (localhost:4000)
 - **Phase 7**: Multiprocessing (T054-T056) -- concurrent kernel dispatch
 - **Phase 8**: Polish + demo (T057-T064) -- pre-seed apps, demo script, recording
 
+## Shell Patterns
+
+- **Never mutate state objects in reducers** -- `reduceChat` and similar must create new objects via spread (`{ ...obj, content: obj.content + delta }`) instead of mutating in-place (`obj.content += delta`). Shallow array copies (`[...arr]`) share object references; mutating them causes React double-rendering bugs (streaming text duplication).
+
 ## Development Rules
 
 - Next.js 16: `proxy.ts` replaces `middleware.ts`, Turbopack by default, React Compiler stable, `cacheComponents` replaces PPR

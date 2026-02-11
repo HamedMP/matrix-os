@@ -55,9 +55,9 @@ export function ModuleGraph() {
           color: {
             background: n.color,
             border: n.color,
-            highlight: { background: n.color, border: "#fff" },
+            highlight: { background: n.color, border: "#c2703a" },
           },
-          font: { color: "#e0e0e0", size: 12 },
+          font: { color: "#1c1917", size: 12 },
           shape: "dot",
           size: 20,
         })),
@@ -69,7 +69,7 @@ export function ModuleGraph() {
           from: e.from,
           to: e.to,
           arrows: "to",
-          color: { color: "#555", highlight: "#aaa" },
+          color: { color: "#b8b0be", highlight: "#78716c" },
         })),
       );
 

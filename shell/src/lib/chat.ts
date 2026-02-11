@@ -18,7 +18,7 @@ export function reduceChat(
     case "kernel:text": {
       const last = next[next.length - 1];
       if (last?.role === "assistant" && !last.tool) {
-        last.content += event.text;
+        next[next.length - 1] = { ...last, content: last.content + event.text };
       } else {
         next.push({
           id: `msg-${Date.now()}`,
@@ -42,7 +42,7 @@ export function reduceChat(
     case "kernel:tool_end": {
       const last = next[next.length - 1];
       if (last?.tool) {
-        last.content = `Used ${last.tool}`;
+        next[next.length - 1] = { ...last, content: `Used ${last.tool}` };
       }
       break;
     }
