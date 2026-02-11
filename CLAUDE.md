@@ -73,6 +73,7 @@ docs/                # Reference documentation
 
 ## Development Rules
 
+- Next.js 16: `proxy.ts` replaces `middleware.ts`, Turbopack by default, React Compiler stable, `cacheComponents` replaces PPR
 - TDD: write failing tests FIRST, then implement (Red -> Green -> Refactor)
 - Spike before spec: test undocumented SDK behavior with throwaway code before committing
 - Commit after completing each phase or major feature

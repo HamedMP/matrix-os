@@ -1,6 +1,10 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
 
 export default defineConfig({
+  resolve: {
+    conditions: ["node"],
+  },
   test: {
     globals: true,
     include: ["tests/**/*.test.ts"],
