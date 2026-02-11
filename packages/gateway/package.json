@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/main.ts",
     "build": "tsc"
   },
   "devDependencies": {
@@ -19,6 +19,7 @@
     "@matrix-os/kernel": "workspace:*",
     "chokidar": "^4.0.0",
     "hono": "^4.11.9",
+    "node-pty": "^1.1.0",
     "ws": "^8.19.0"
   }
 }

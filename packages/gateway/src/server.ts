@@ -6,6 +6,7 @@ import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
+import { createPtyHandler, type PtyMessage } from "./pty.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 import type { WSContext } from "hono/ws";
 
@@ -114,6 +115,37 @@ export function createGateway(config: GatewayConfig) {
     })),
   );
 
+  app.get(
+    "/ws/terminal",
+    upgradeWebSocket(() => {
+      const pty = createPtyHandler(homePath);
+
+      return {
+        onOpen(_evt, ws) {
+          pty.onSend((msg) => {
+            ws.send(JSON.stringify(msg));
+          });
+          pty.open();
+        },
+
+        onMessage(evt, _ws) {
+          try {
+            const msg = JSON.parse(
+              typeof evt.data === "string" ? evt.data : "",
+            ) as PtyMessage;
+            pty.onMessage(msg);
+          } catch {
+            // ignore malformed
+          }
+        },
+
+        onClose() {
+          pty.close();
+        },
+      };
+    }),
+  );
+
   app.post("/api/message", async (c) => {
     const body = await c.req.json<{ text: string; sessionId?: string }>();
     const events: KernelEvent[] = [];
@@ -157,6 +189,42 @@ export function createGateway(config: GatewayConfig) {
     }
     const theme = JSON.parse(readFileSync(themePath, "utf-8"));
     return c.json(theme);
+  });
+
+  app.all("/modules/:name/*", async (c) => {
+    const moduleName = c.req.param("name");
+    const modulesPath = join(homePath, "system/modules.json");
+
+    if (!existsSync(modulesPath)) {
+      return c.text("No modules registered", 404);
+    }
+
+    const modules = JSON.parse(readFileSync(modulesPath, "utf-8")) as Array<{
+      name: string;
+      port: number;
+      status: string;
+    }>;
+
+    const mod = modules.find((m) => m.name === moduleName);
+    if (!mod) {
+      return c.text(`Module "${moduleName}" not found`, 404);
+    }
+
+    const subPath = c.req.path.replace(`/modules/${moduleName}`, "") || "/";
+    const targetUrl = `http://localhost:${mod.port}${subPath}`;
+
+    const res = await fetch(targetUrl, {
+      method: c.req.method,
+      headers: c.req.raw.headers,
+      body: c.req.method !== "GET" && c.req.method !== "HEAD"
+        ? c.req.raw.body
+        : undefined,
+    });
+
+    return new Response(res.body, {
+      status: res.status,
+      headers: res.headers,
+    });
   });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
