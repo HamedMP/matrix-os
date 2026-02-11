@@ -9,11 +9,16 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
-    "hono": "^4.11.9"
+    "@hono/node-ws": "^1.3.0",
+    "@matrix-os/kernel": "workspace:*",
+    "chokidar": "^4.0.0",
+    "hono": "^4.11.9",
+    "ws": "^8.19.0"
   }
 }
