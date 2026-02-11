@@ -8,6 +8,7 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { InputBar } from "@/components/InputBar";
 import { SuggestionChips } from "@/components/SuggestionChips";
 import { ThoughtCard } from "@/components/ThoughtCard";
+import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { BottomPanel } from "@/components/BottomPanel";
 import { Button } from "@/components/ui/button";
 import { MessageSquareIcon } from "lucide-react";
@@ -17,6 +18,7 @@ export default function Home() {
 
   const chat = useChatState();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [overlayDismissed, setOverlayDismissed] = useState(false);
 
   const chipContext = useMemo(() => {
     const hasError = chat.messages.some(
@@ -30,8 +32,9 @@ export default function Home() {
     return "empty" as const;
   }, [chat.messages]);
 
-  const handleChipSelect = useCallback(
+  const handleSubmit = useCallback(
     (text: string) => {
+      setOverlayDismissed(false);
       chat.submitMessage(text);
     },
     [chat.submitMessage],
@@ -48,15 +51,22 @@ export default function Home() {
               <ThoughtCard />
             </div>
 
-            <div className="pointer-events-auto flex justify-center pb-2">
+            <div className="pointer-events-auto flex flex-col items-center gap-2 pb-2">
+              {!sidebarOpen && !overlayDismissed && (
+                <ResponseOverlay
+                  messages={chat.messages}
+                  busy={chat.busy}
+                  onDismiss={() => setOverlayDismissed(true)}
+                />
+              )}
               <InputBar
                 sessionId={chat.sessionId}
                 busy={chat.busy}
-                onSubmit={chat.submitMessage}
+                onSubmit={handleSubmit}
                 chips={
                   <SuggestionChips
                     context={chipContext}
-                    onSelect={handleChipSelect}
+                    onSelect={handleSubmit}
                   />
                 }
               />
