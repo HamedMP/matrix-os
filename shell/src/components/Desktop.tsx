@@ -3,18 +3,23 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AppViewer } from "./AppViewer";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardHeader,
   CardTitle,
-  CardAction,
   CardContent,
 } from "@/components/ui/card";
-import { LayoutGridIcon } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+
+const DOCK_WIDTH = 56;
 
 export interface AppWindow {
   id: string;
@@ -50,6 +55,80 @@ const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 
 let nextZ = 1;
+
+function TrafficLights({
+  onClose,
+  onMinimize,
+}: {
+  onClose: () => void;
+  onMinimize: () => void;
+}) {
+  return (
+    <div className="group/traffic flex items-center gap-1.5 mr-2">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
+        aria-label="Close"
+      >
+        <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+          x
+        </span>
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onMinimize();
+        }}
+        className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
+        aria-label="Minimize"
+      >
+        <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+          -
+        </span>
+      </button>
+      <button
+        className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
+        aria-label="Maximize"
+      />
+    </div>
+  );
+}
+
+function DockIcon({
+  name,
+  active,
+  onClick,
+}: {
+  name: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const initial = name.charAt(0).toUpperCase();
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className="relative flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+        >
+          <span className="text-sm font-semibold text-foreground">
+            {initial}
+          </span>
+          {active && (
+            <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8}>
+        {name}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function Desktop() {
   const [windows, setWindows] = useState<AppWindow[]>([]);
@@ -95,8 +174,8 @@ export function Desktop() {
           id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           title: name,
           path,
-          x: 40 + prev.length * 30,
-          y: 40 + prev.length * 30,
+          x: DOCK_WIDTH + 20 + prev.length * 30,
+          y: 20 + prev.length * 30,
           width: 640,
           height: 480,
           minimized: false,
@@ -173,10 +252,10 @@ export function Desktop() {
     setWindows((prev) => prev.filter((w) => w.id !== id));
   }, []);
 
-  const toggleMinimize = useCallback((id: string) => {
+  const minimizeWindow = useCallback((id: string) => {
     setWindows((prev) =>
       prev.map((w) =>
-        w.id === id ? { ...w, minimized: !w.minimized } : w,
+        w.id === id ? { ...w, minimized: true } : w,
       ),
     );
   }, []);
@@ -262,114 +341,107 @@ export function Desktop() {
     setInteracting(false);
   }, []);
 
-  const visibleWindows = windows.filter((w) => !w.minimized);
-
   return (
-    <div className="relative flex-1">
-      {visibleWindows.length === 0 && apps.length === 0 && (
-        <div className="flex h-full items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            No apps running. Try &quot;Build me a notes app&quot; in the
-            chat.
-          </p>
-        </div>
-      )}
-
-      {windows.map((win) =>
-        win.minimized ? null : (
-          <Card
-            key={win.id}
-            className="absolute gap-0 rounded-lg p-0 overflow-hidden shadow-2xl"
-            style={{
-              left: win.x,
-              top: win.y,
-              width: win.width,
-              height: win.height,
-              zIndex: win.zIndex,
-            }}
-            onMouseDown={() => bringToFront(win.id)}
+    <TooltipProvider delayDuration={300}>
+      <div className="relative flex-1 flex">
+        {apps.length > 0 && (
+          <aside
+            className="flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm"
+            style={{ width: DOCK_WIDTH }}
           >
-            <CardHeader
-              className="flex-row items-center gap-0 px-3 py-2 border-b border-border cursor-grab active:cursor-grabbing select-none space-y-0"
-              onPointerDown={(e) => onDragStart(win.id, e)}
-              onPointerMove={onDragMove}
-              onPointerUp={onDragEnd}
-            >
-              <CardTitle className="text-xs font-medium truncate">
-                {win.title}
-              </CardTitle>
-              <CardAction className="flex gap-1.5 self-center">
-                <Button
-                  onClick={() => toggleMinimize(win.id)}
-                  variant="ghost"
-                  className="size-3 rounded-full bg-warning p-0 hover:bg-warning/80"
-                  aria-label="Minimize"
+            {apps.map((app) => {
+              const win = windows.find(
+                (w) => w.path === app.path && !w.minimized,
+              );
+              return (
+                <DockIcon
+                  key={app.path}
+                  name={app.name}
+                  active={!!win}
+                  onClick={() => openWindow(app.name, app.path)}
                 />
-                <Button
-                  onClick={() => closeWindow(win.id)}
-                  variant="ghost"
-                  className="size-3 rounded-full bg-destructive p-0 hover:bg-destructive/80"
-                  aria-label="Close"
-                />
-              </CardAction>
-            </CardHeader>
+              );
+            })}
+          </aside>
+        )}
 
-            <CardContent className="relative flex-1 p-0 min-h-0">
-              <AppViewer path={win.path} />
-              {interacting && (
-                <div className="absolute inset-0 z-10" />
-              )}
-            </CardContent>
+        <div className="relative flex-1">
+          {windows.filter((w) => !w.minimized).length === 0 &&
+            apps.length === 0 && (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-sm text-muted-foreground">
+                  No apps running. Try &quot;Build me a notes app&quot; in
+                  the chat.
+                </p>
+              </div>
+            )}
 
-            <div
-              className="absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
-              onPointerDown={(e) => onResizeStart(win.id, e)}
-              onPointerMove={onResizeMove}
-              onPointerUp={onResizeEnd}
-            >
-              <svg
-                viewBox="0 0 16 16"
-                className="size-4 text-muted-foreground/40"
+          {windows.map((win) =>
+            win.minimized ? null : (
+              <Card
+                key={win.id}
+                className="absolute gap-0 rounded-lg p-0 overflow-hidden shadow-2xl"
+                style={{
+                  left: win.x,
+                  top: win.y,
+                  width: win.width,
+                  height: win.height,
+                  zIndex: win.zIndex,
+                }}
+                onMouseDown={() => bringToFront(win.id)}
               >
-                <path
-                  d="M14 2v12H2"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1"
-                />
-                <path
-                  d="M14 7v7H7"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1"
-                />
-              </svg>
-            </div>
-          </Card>
-        ),
-      )}
+                <CardHeader
+                  className="flex-row items-center gap-0 px-3 py-2 border-b border-border cursor-grab active:cursor-grabbing select-none space-y-0"
+                  onPointerDown={(e) => onDragStart(win.id, e)}
+                  onPointerMove={onDragMove}
+                  onPointerUp={onDragEnd}
+                >
+                  <TrafficLights
+                    onClose={() => closeWindow(win.id)}
+                    onMinimize={() => minimizeWindow(win.id)}
+                  />
+                  <CardTitle className="text-xs font-medium truncate flex-1 text-center">
+                    {win.title}
+                  </CardTitle>
+                  <div className="w-[54px]" />
+                </CardHeader>
 
-      {apps.length > 0 && (
-        <nav className="absolute bottom-3 left-1/2 -translate-x-1/2 z-50 flex gap-1.5 rounded-xl border border-border bg-card/80 px-3 py-2 backdrop-blur-sm">
-          {apps.map((app) => {
-            const win = windows.find((w) => w.path === app.path);
-            const isOpen = win && !win.minimized;
+                <CardContent className="relative flex-1 p-0 min-h-0">
+                  <AppViewer path={win.path} />
+                  {interacting && (
+                    <div className="absolute inset-0 z-10" />
+                  )}
+                </CardContent>
 
-            return (
-              <Button
-                key={app.path}
-                variant={isOpen ? "default" : "ghost"}
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => openWindow(app.name, app.path)}
-              >
-                <LayoutGridIcon className="size-3" />
-                {app.name}
-              </Button>
-            );
-          })}
-        </nav>
-      )}
-    </div>
+                <div
+                  className="absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
+                  onPointerDown={(e) => onResizeStart(win.id, e)}
+                  onPointerMove={onResizeMove}
+                  onPointerUp={onResizeEnd}
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    className="size-4 text-muted-foreground/40"
+                  >
+                    <path
+                      d="M14 2v12H2"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1"
+                    />
+                    <path
+                      d="M14 7v7H7"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1"
+                    />
+                  </svg>
+                </div>
+              </Card>
+            ),
+          )}
+        </div>
+      </div>
+    </TooltipProvider>
   );
 }
