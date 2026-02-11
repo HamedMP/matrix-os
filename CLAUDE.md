@@ -131,7 +131,7 @@ Gateway (localhost:4000)
 
 ## Current State (updated per commit)
 
-**Tests**: 123 passing (13 test files) | **Phase 4c complete**
+**Tests**: 123 passing (13 test files) | **Phase 4d complete**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -140,6 +140,7 @@ Gateway (localhost:4000)
 - **Phase 4**: Next.js 16 shell -- Desktop (window mgmt), ChatPanel, AppViewer (iframe), Dock, ActivityFeed, Terminal (xterm.js+node-pty), ModuleGraph (vis-network), useSocket/useFileWatcher/useTheme hooks, proxy.ts, module reverse proxy
 - **Phase 4b**: Chat history persistence -- ConversationStore (JSON files in system/conversations/), useConversation hook, ChatPanel with conversation switcher and "New Chat" button, hydrateMessages helper
 - **Phase 4c**: Interaction model -- OS bridge (window.MatrixOS), bottom-center InputBar, SuggestionChips, ThoughtCard, collapsible BottomPanel (Cmd+J), toggleable ChatPanel sidebar, useChatState hook, bridge data endpoint
+- **Phase 4d**: Shell polish -- ResponseOverlay (draggable/resizable streaming response card above InputBar), macOS-style left dock with app icons and tooltips, traffic light window buttons (red=close, yellow=minimize, green=maximize), draggable/resizable app windows with iframe pointer-steal prevention, Desktop loads active modules from system/modules.json, hello-world demo module pre-seeded in home template
 
 ### Next Up
 - **Phase 5**: Self-healing (T045-T049) -- healer agent, health checks, auto-patch

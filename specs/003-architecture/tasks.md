@@ -187,6 +187,24 @@
 
 ---
 
+## Phase 4d: Shell Polish -- US2 "Desktop feels like an OS"
+
+**Goal**: Make the desktop feel native -- draggable/resizable windows, macOS-style dock, streaming response overlay, module auto-loading.
+
+- [x] T082 [US2] `ResponseOverlay.tsx` -- streaming response card above InputBar, shows assistant response when sidebar is closed, dismissable via X, auto-reappears on next message
+- [x] T083 [US2] Make ResponseOverlay draggable (header) and resizable (corner handle) with pointer capture, fixed positioning
+- [x] T084 [US2] Desktop loads active modules from `system/modules.json` on mount and on file watcher changes, opens windows via `module.json` entry point
+- [x] T085 [US2] Draggable/resizable app windows -- pointer-event drag on header, resize handle on bottom-right, transparent overlay prevents iframe pointer steal during interaction
+- [x] T086 [US2] macOS-style left dock -- vertical sidebar with app initial icons, Radix tooltips on hover, active indicator dot, click to open/restore
+- [x] T087 [US2] Traffic light window buttons -- red (x) close, yellow (-) minimize, green maximize placeholder, symbols appear on group hover
+- [x] T088 [US2] Fix Desktop centering (add flex container to parent) and remove `bg-background` so body wave pattern shows through
+- [x] T089 [US2] Pre-seed hello-world demo module in `home/modules/hello-world/` with `module.json` and `index.html`
+- [x] T090 [US2] Fix `appNameFromPath` in AppViewer to handle `modules/` paths
+
+**Checkpoint**: Refresh localhost:3000, hello-world opens in a draggable/resizable window with traffic light buttons. Left dock shows app icon. Close -> dock stays -> click dock icon -> window re-opens. Send a message -> streaming response overlay appears above input bar, draggable.
+
+---
+
 ## Phase 5: Self-Healing -- US3 "OS heals itself"
 
 **Goal**: Break an app intentionally, OS detects, diagnoses, patches, and restarts.
@@ -265,6 +283,10 @@ Phase 1 (Setup) ─────────────> Phase 2 (Foundation)
                   Phase 4c        |
                   (Interaction)   |
                        |          |
+                       v          |
+                  Phase 4d        |
+                  (Polish)        |
+                       |          |
                        v          v
                      Phase 6 (Evolution / US4)
                           |
@@ -274,9 +296,9 @@ Phase 1 (Setup) ─────────────> Phase 2 (Foundation)
 
 ### Critical Path
 
-Setup -> Foundation -> Kernel -> Shell -> 4b (history) -> 4c (interaction) -> Polish = minimum for demo
+Setup -> Foundation -> Kernel -> Shell -> 4b (history) -> 4c (interaction) -> 4d (polish) -> Phase 5 (healing) = next
 
-~85 tasks (T001-T081 + TDD test tasks T007a-c, T013a-c, T006b).
+~94 tasks (T001-T090 + TDD test tasks T007a-c, T013a-c, T006b).
 
 ### Parallel Opportunities
 
@@ -297,7 +319,9 @@ Setup -> Foundation -> Kernel -> Shell -> 4b (history) -> 4c (interaction) -> Po
 4. Phase 4: Shell (US2) -- browser desktop with chat + terminal + module graph
 5. Phase 4b: Chat history persistence -- conversations survive refresh
 6. Phase 4c: Interaction model -- OS bridge, bottom-center input, suggestion chips, progressive disclosure
-7. Phase 8: Polish -- visual redesign (warm palette, organic backgrounds), pre-seed, demo script, record
+7. Phase 4d: Shell polish -- macOS dock, traffic lights, drag/resize, ResponseOverlay, module loading
+8. Phase 5: Self-healing -- healer agent, health checks, auto-patch
+9. Phase 8: Polish -- pre-seed apps, demo script, record
 
 This gives the full Imagine-aligned demo: open browser -> clean canvas with input bar -> type or click chip -> agent works (thought card) -> app appears -> click inside app -> kernel generates new view -> press Cmd+J for dev tools.
 
