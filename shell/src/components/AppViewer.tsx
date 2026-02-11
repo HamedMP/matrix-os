@@ -18,6 +18,9 @@ interface AppViewerProps {
 }
 
 function appNameFromPath(path: string): string {
+  if (path.startsWith("modules/")) {
+    return path.split("/")[1];
+  }
   return path.replace("apps/", "").replace(".html", "");
 }
 

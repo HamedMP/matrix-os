@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AppViewer } from "./AppViewer";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,9 @@ import {
   CardAction,
   CardContent,
 } from "@/components/ui/card";
+
+const GATEWAY_URL =
+  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
 
 export interface AppWindow {
   id: string;
@@ -24,37 +27,96 @@ export interface AppWindow {
   zIndex: number;
 }
 
+interface ModuleRegistryEntry {
+  name: string;
+  type: string;
+  path: string;
+  status: string;
+}
+
+interface ModuleMeta {
+  name: string;
+  entry: string;
+  version?: string;
+}
+
 let nextZ = 1;
+
+function addWindow(
+  prev: AppWindow[],
+  title: string,
+  path: string,
+): AppWindow[] {
+  if (prev.find((w) => w.path === path)) return prev;
+  return [
+    ...prev,
+    {
+      id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      path,
+      x: 40 + prev.length * 30,
+      y: 40 + prev.length * 30,
+      width: 640,
+      height: 480,
+      minimized: false,
+      zIndex: nextZ++,
+    },
+  ];
+}
 
 export function Desktop() {
   const [windows, setWindows] = useState<AppWindow[]>([]);
 
+  const loadModules = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `${GATEWAY_URL}/files/system/modules.json`,
+      );
+      if (!res.ok) return;
+      const registry: ModuleRegistryEntry[] = await res.json();
+
+      for (const mod of registry) {
+        if (mod.status !== "active") continue;
+
+        try {
+          const metaRes = await fetch(
+            `${GATEWAY_URL}/files/modules/${mod.name}/module.json`,
+          );
+          if (!metaRes.ok) continue;
+          const meta: ModuleMeta = await metaRes.json();
+          const path = `modules/${mod.name}/${meta.entry}`;
+
+          setWindows((prev) => addWindow(prev, meta.name, path));
+        } catch {
+          // module.json missing or invalid, skip
+        }
+      }
+    } catch {
+      // modules.json not available yet
+    }
+  }, []);
+
+  useEffect(() => {
+    loadModules();
+  }, [loadModules]);
+
   useFileWatcher(
-    useCallback((path: string, event: string) => {
-      if (!path.startsWith("apps/") || event === "unlink") return;
+    useCallback(
+      (path: string, event: string) => {
+        if (event === "unlink") return;
 
-      const name = path.replace("apps/", "").replace(".html", "");
+        if (path === "system/modules.json") {
+          loadModules();
+          return;
+        }
 
-      setWindows((prev) => {
-        const existing = prev.find((w) => w.path === path);
-        if (existing) return prev;
-
-        return [
-          ...prev,
-          {
-            id: `win-${Date.now()}`,
-            title: name,
-            path,
-            x: 40 + prev.length * 30,
-            y: 40 + prev.length * 30,
-            width: 640,
-            height: 480,
-            minimized: false,
-            zIndex: nextZ++,
-          },
-        ];
-      });
-    }, []),
+        if (path.startsWith("apps/")) {
+          const name = path.replace("apps/", "").replace(".html", "");
+          setWindows((prev) => addWindow(prev, name, path));
+        }
+      },
+      [loadModules],
+    ),
   );
 
   const bringToFront = useCallback((id: string) => {
@@ -76,7 +138,7 @@ export function Desktop() {
   }, []);
 
   return (
-    <div className="relative flex-1 bg-background">
+    <div className="relative flex-1">
       {windows.length === 0 && (
         <div className="flex h-full items-center justify-center">
           <p className="text-sm text-muted-foreground">
