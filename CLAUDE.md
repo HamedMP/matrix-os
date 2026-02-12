@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Matrix OS is a real-time, self-expanding operating system where the Claude Agent SDK serves as the kernel. The system generates software from natural language, persists everything as files, and heals/evolves itself.
+Matrix OS is a real-time, self-expanding operating system AND personal AI assistant where the Claude Agent SDK serves as the kernel. The system generates software from natural language, persists everything as files, heals/evolves itself, and is reachable through multiple channels (web desktop, Telegram, WhatsApp, Discord, Slack). It combines the vision of real-time software generation with a personal AI assistant that is always on, always reachable, and proactive.
 
 ## Constitution (Source of Truth)
 
@@ -18,9 +18,10 @@ Key principles:
 
 ## Architecture Specs
 
-- `specs/003-architecture/FINAL-SPEC.md` -- full architecture specification
+- `specs/003-architecture/FINAL-SPEC.md` -- full architecture specification (visual OS)
+- `specs/003-architecture/PERSONAL-ASSISTANT-SPEC.md` -- personal assistant spec (SOUL, channels, cron, heartbeat, cloud)
 - `specs/003-architecture/plan.md` -- implementation plan, project structure, phases
-- `specs/003-architecture/tasks.md` -- task breakdown (T001-T064 across 8 phases)
+- `specs/003-architecture/tasks.md` -- task breakdown (T001-T136 across 12 phases)
 - `specs/003-architecture/SDK-VERIFICATION.md` -- SDK assumption verification, IPC layer design, cost optimization
 - `specs/003-architecture/KERNEL-AND-MEMORY.md` -- kernel and memory architecture detail
 - `specs/003-architecture/SUBAGENTS-INSPIRATION.md` -- sub-agent patterns from Claude Code
@@ -42,18 +43,20 @@ Key principles:
 - **Runtime**: Node.js 22+
 - **AI**: Claude Agent SDK V1 `query()` with `resume` + Opus 4.6
 - **Frontend**: Next.js 16, React 19
-- **Backend**: Hono (HTTP/WebSocket gateway)
+- **Backend**: Hono (HTTP/WebSocket gateway + channel adapters)
+- **Channels**: node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt
 - **Database**: SQLite via Drizzle ORM (better-sqlite3, WAL mode)
 - **Validation**: Zod 4 (`zod/v4` import)
+- **Scheduling**: node-cron (cron expressions), native timers
 - **Testing**: Vitest (TDD, 99-100% coverage, `@vitest/coverage-v8`)
 - **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm
 
 ## Project Structure
 
 ```
-packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks)
-packages/gateway/    # Hono HTTP/WebSocket gateway
-shell/               # Next.js 16 frontend (desktop shell)
+packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
+packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
+shell/               # Next.js 16 frontend (desktop shell -- one of many shells)
 home/                # File system template (copied on first boot)
 tests/               # Vitest test suites
 spike/               # Throwaway SDK experiments
@@ -106,32 +109,42 @@ The gateway boots the home directory at `~/matrixos/` on first run (copies from 
 ### Environment Variables
 - `ANTHROPIC_API_KEY` -- required for kernel AI features
 - `MATRIX_HOME` -- custom home directory path (default: `~/matrixos/`)
+- `MATRIX_AUTH_TOKEN` -- bearer token for web shell auth (optional, for cloud deployment)
 - `PORT` -- gateway port (default: 4000)
 - `NEXT_PUBLIC_GATEWAY_WS` -- shell WebSocket URL (default: `ws://localhost:4000/ws`)
 - `NEXT_PUBLIC_GATEWAY_URL` -- shell HTTP URL (default: `http://localhost:4000`)
 - `GATEWAY_URL` -- Next.js proxy target (default: `http://localhost:4000`)
+- Channel tokens are configured in `~/matrixos/system/config.json` (Everything Is a File)
 
 ### Architecture
 ```
-Browser (localhost:3000)
-  |-- Next.js shell (desktop, chat, terminal, module graph)
-  |-- proxy.ts rewrites /gateway/* and /modules/* to gateway
-  |
-Gateway (localhost:4000)
-  |-- /ws           Main WebSocket (chat, file watcher events)
-  |-- /ws/terminal  PTY WebSocket (xterm.js <-> node-pty)
-  |-- /api/message  REST endpoint for kernel messages
-  |-- /files/*      Serve home directory files
-  |-- /modules/*    Reverse proxy to module ports (3100-3999)
-  |-- /api/theme    Current theme JSON
-  |-- /api/conversations  Conversation list metadata
-  |-- /api/bridge/data    App data read/write (scoped to ~/data/{appName}/)
-  |-- /health       Health check
+Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
+  |-- Next.js shell (desktop UI)        |-- Channel adapters (polling/websocket)
+  |-- proxy.ts rewrites to gateway      |
+  |                                     |
+  +------------- Gateway (localhost:4000) ---------------+
+                  |-- /ws           Main WebSocket (chat, file watcher events)
+                  |-- /ws/terminal  PTY WebSocket (xterm.js <-> node-pty)
+                  |-- /api/message  REST endpoint for kernel messages
+                  |-- /api/channels/status  Connected channel status
+                  |-- /files/*      Serve home directory files
+                  |-- /modules/*    Reverse proxy to module ports (3100-3999)
+                  |-- /api/theme    Current theme JSON
+                  |-- /api/conversations  Conversation list metadata
+                  |-- /api/layout   GET/PUT window layout persistence
+                  |-- /api/bridge/data    App data read/write (scoped to ~/data/{appName}/)
+                  |-- /health       Health check
+                  |
+                  |-- ChannelManager  (starts/stops channel adapters)
+                  |-- CronService     (scheduled tasks from ~/system/cron.json)
+                  |-- HeartbeatRunner (periodic kernel invocation)
+                  |
+                  +---> Dispatcher ---> Kernel (Agent SDK)
 ```
 
 ## Current State (updated per commit)
 
-**Tests**: 178 passing (15 test files) | **Phase 6 complete**
+**Tests**: 200 passing (16 test files) | **Phase 6 complete + shell hardening**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -141,12 +154,17 @@ Gateway (localhost:4000)
 - **Phase 4b**: Chat history persistence -- ConversationStore (JSON files in system/conversations/), useConversation hook, ChatPanel with conversation switcher and "New Chat" button, hydrateMessages helper
 - **Phase 4c**: Interaction model -- OS bridge (window.MatrixOS), bottom-center InputBar, SuggestionChips, ThoughtCard, collapsible BottomPanel (Cmd+J), toggleable ChatPanel sidebar, useChatState hook, bridge data endpoint
 - **Phase 4d**: Shell polish -- ResponseOverlay (draggable/resizable streaming response card above InputBar), macOS-style left dock with app icons and tooltips, traffic light window buttons (red=close, yellow=minimize, green=maximize), draggable/resizable app windows with iframe pointer-steal prevention, Desktop loads active modules from system/modules.json, hello-world demo module pre-seeded in home template
+- **Phase 4e**: Shell hardening -- window state persistence (layout.json via GET/PUT /api/layout, restore positions on refresh, closed windows stay in dock), message queuing (type-ahead while kernel busy, auto-drain on result/error, queue count badge), iframe sandbox fix (allow-same-origin for external APIs), builder prompt serving instructions
 - **Phase 5**: Self-healing -- heartbeat loop (30s health checks on modules with ports), healer sub-agent (sonnet, 2-attempt limit), backup/restore before/after healing, activity.log + WebSocket error notifications, healing-strategies.md knowledge file
 - **Phase 6**: Self-evolution -- protected files PreToolUse hook (denies writes to constitution, kernel/gateway src, tests, config), watchdog (tracks evolver commits, git reset on crash), full evolver prompt (git snapshots, allowed/denied modification targets)
 
 ### Next Up
 - **Phase 7**: Multiprocessing (T054-T056) -- concurrent kernel dispatch
 - **Phase 8**: Polish + demo (T057-T064) -- pre-seed apps, demo script, recording
+- **Phase 9**: SOUL + Skills (T100-T105) -- agent identity, expandable capabilities
+- **Phase 10**: Channels (T106-T119) -- Telegram, WhatsApp, Discord, Slack adapters
+- **Phase 11**: Cron + Heartbeat (T120-T129) -- scheduled tasks, proactive agent wakeup
+- **Phase 12**: Cloud Deploy (T130-T136) -- Dockerfile, systemd, auth, setup script
 
 ## Shell Patterns
 
