@@ -131,7 +131,7 @@ Gateway (localhost:4000)
 
 ## Current State (updated per commit)
 
-**Tests**: 149 passing (14 test files) | **Phase 5 complete**
+**Tests**: 178 passing (15 test files) | **Phase 6 complete**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -142,9 +142,9 @@ Gateway (localhost:4000)
 - **Phase 4c**: Interaction model -- OS bridge (window.MatrixOS), bottom-center InputBar, SuggestionChips, ThoughtCard, collapsible BottomPanel (Cmd+J), toggleable ChatPanel sidebar, useChatState hook, bridge data endpoint
 - **Phase 4d**: Shell polish -- ResponseOverlay (draggable/resizable streaming response card above InputBar), macOS-style left dock with app icons and tooltips, traffic light window buttons (red=close, yellow=minimize, green=maximize), draggable/resizable app windows with iframe pointer-steal prevention, Desktop loads active modules from system/modules.json, hello-world demo module pre-seeded in home template
 - **Phase 5**: Self-healing -- heartbeat loop (30s health checks on modules with ports), healer sub-agent (sonnet, 2-attempt limit), backup/restore before/after healing, activity.log + WebSocket error notifications, healing-strategies.md knowledge file
+- **Phase 6**: Self-evolution -- protected files PreToolUse hook (denies writes to constitution, kernel/gateway src, tests, config), watchdog (tracks evolver commits, git reset on crash), full evolver prompt (git snapshots, allowed/denied modification targets)
 
 ### Next Up
-- **Phase 6**: Self-evolution (T050-T053) -- evolver agent, protected files, watchdog
 - **Phase 7**: Multiprocessing (T054-T056) -- concurrent kernel dispatch
 - **Phase 8**: Polish + demo (T057-T064) -- pre-seed apps, demo script, recording
 
