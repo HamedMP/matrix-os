@@ -9,11 +9,12 @@ import { SendIcon, MicIcon } from "lucide-react";
 interface InputBarProps {
   sessionId?: string;
   busy: boolean;
+  queueLength?: number;
   onSubmit: (text: string) => void;
   chips?: ReactNode;
 }
 
-export function InputBar({ sessionId, busy, onSubmit, chips }: InputBarProps) {
+export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: InputBarProps) {
   const [input, setInput] = useState("");
   const { connected } = useSocket();
 
@@ -21,11 +22,11 @@ export function InputBar({ sessionId, busy, onSubmit, chips }: InputBarProps) {
     (e: React.FormEvent) => {
       e.preventDefault();
       const text = input.trim();
-      if (!text || busy) return;
+      if (!text) return;
       onSubmit(text);
       setInput("");
     },
-    [input, busy, onSubmit],
+    [input, onSubmit],
   );
 
   return (
@@ -42,6 +43,11 @@ export function InputBar({ sessionId, busy, onSubmit, chips }: InputBarProps) {
           disabled={!connected}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0"
         />
+        {queueLength > 0 && (
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {queueLength} queued
+          </span>
+        )}
         <Button
           type="button"
           size="icon"
@@ -56,7 +62,7 @@ export function InputBar({ sessionId, busy, onSubmit, chips }: InputBarProps) {
           type="submit"
           size="icon"
           className="size-8"
-          disabled={!connected || busy || !input.trim()}
+          disabled={!connected || !input.trim()}
         >
           <SendIcon className="size-4" />
         </Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
@@ -10,6 +10,7 @@ export interface ChatState {
   sessionId: string | undefined;
   busy: boolean;
   connected: boolean;
+  queue: string[];
   conversations: ReturnType<typeof useConversation>["conversations"];
   submitMessage: (text: string) => void;
   newChat: () => void;
@@ -20,8 +21,11 @@ export function useChatState(): ChatState {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const [queue, setQueue] = useState<string[]>([]);
   const { connected, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
 
   useEffect(() => {
     if (conversations.length === 0) return;
@@ -49,22 +53,30 @@ export function useChatState(): ChatState {
         return;
       }
 
-      if (msg.type === "kernel:result") {
+      if (msg.type === "kernel:result" || msg.type === "kernel:error") {
         setBusy(false);
-        return;
-      }
 
-      if (msg.type === "kernel:error") {
-        setBusy(false);
+        setQueue((prev) => {
+          if (prev.length === 0) return prev;
+          const [next, ...rest] = prev;
+          send({ type: "message", text: next, sessionId: sessionRef.current });
+          setBusy(true);
+          return rest;
+        });
+
+        if (msg.type === "kernel:error") {
+          setMessages((prev) => reduceChat(prev, msg));
+        }
+        return;
       }
 
       setMessages((prev) => reduceChat(prev, msg));
     });
-  }, [subscribe]);
+  }, [subscribe, send]);
 
   const submitMessage = useCallback(
     (text: string) => {
-      if (!text || busy) return;
+      if (!text) return;
 
       setMessages((prev) => [
         ...prev,
@@ -76,8 +88,12 @@ export function useChatState(): ChatState {
         },
       ]);
 
-      send({ type: "message", text, sessionId });
-      setBusy(true);
+      if (busy) {
+        setQueue((prev) => [...prev, text]);
+      } else {
+        send({ type: "message", text, sessionId });
+        setBusy(true);
+      }
     },
     [busy, send, sessionId],
   );
@@ -85,6 +101,7 @@ export function useChatState(): ChatState {
   const newChat = useCallback(() => {
     setMessages([]);
     setSessionId(undefined);
+    setQueue([]);
   }, []);
 
   const switchConversation = useCallback(
@@ -93,6 +110,7 @@ export function useChatState(): ChatState {
         if (conv) {
           setSessionId(conv.id);
           setMessages(hydrateMessages(conv.messages));
+          setQueue([]);
         }
       });
     },
@@ -104,6 +122,7 @@ export function useChatState(): ChatState {
     sessionId,
     busy,
     connected,
+    queue,
     conversations,
     submitMessage,
     newChat,

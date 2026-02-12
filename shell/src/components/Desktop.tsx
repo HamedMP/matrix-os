@@ -33,6 +33,16 @@ export interface AppWindow {
   zIndex: number;
 }
 
+interface LayoutWindow {
+  path: string;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  state: "open" | "minimized" | "closed";
+}
+
 interface AppEntry {
   name: string;
   path: string;
@@ -185,13 +195,22 @@ export function Desktop() {
     });
   }, []);
 
+  const closedPathsRef = useRef(new Set<string>());
+
   const loadModules = useCallback(async () => {
     try {
-      const res = await fetch(
-        `${GATEWAY_URL}/files/system/modules.json`,
-      );
-      if (!res.ok) return;
-      const registry: ModuleRegistryEntry[] = await res.json();
+      const [layoutRes, modulesRes] = await Promise.all([
+        fetch(`${GATEWAY_URL}/api/layout`).catch(() => null),
+        fetch(`${GATEWAY_URL}/files/system/modules.json`).catch(() => null),
+      ]);
+
+      const savedLayout: { windows?: LayoutWindow[] } =
+        layoutRes?.ok ? await layoutRes.json() : {};
+      const savedWindows = savedLayout.windows ?? [];
+      const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
+
+      if (!modulesRes?.ok) return;
+      const registry: ModuleRegistryEntry[] = await modulesRes.json();
 
       for (const mod of registry) {
         if (mod.status !== "active") continue;
@@ -205,7 +224,33 @@ export function Desktop() {
           const path = `modules/${mod.name}/${meta.entry}`;
 
           addApp(meta.name, path);
-          openWindow(meta.name, path);
+
+          const saved = layoutMap.get(path);
+          if (saved) {
+            if (saved.state === "closed") {
+              closedPathsRef.current.add(path);
+              continue;
+            }
+            setWindows((prev) => {
+              if (prev.find((w) => w.path === path)) return prev;
+              return [
+                ...prev,
+                {
+                  id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  title: saved.title,
+                  path,
+                  x: saved.x,
+                  y: saved.y,
+                  width: saved.width,
+                  height: saved.height,
+                  minimized: saved.state === "minimized",
+                  zIndex: nextZ++,
+                },
+              ];
+            });
+          } else {
+            openWindow(meta.name, path);
+          }
         } catch {
           // module.json missing or invalid, skip
         }
@@ -218,6 +263,46 @@ export function Desktop() {
   useEffect(() => {
     loadModules();
   }, [loadModules]);
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const layoutWindows: LayoutWindow[] = windows.map((w) => ({
+        path: w.path,
+        title: w.title,
+        x: w.x,
+        y: w.y,
+        width: w.width,
+        height: w.height,
+        state: w.minimized ? "minimized" : "open",
+      }));
+
+      for (const path of closedPathsRef.current) {
+        if (!layoutWindows.find((lw) => lw.path === path)) {
+          const app = apps.find((a) => a.path === path);
+          layoutWindows.push({
+            path,
+            title: app?.name ?? path,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            state: "closed",
+          });
+        }
+      }
+
+      fetch(`${GATEWAY_URL}/api/layout`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ windows: layoutWindows }),
+      }).catch(() => {});
+    }, 500);
+
+    return () => clearTimeout(saveTimerRef.current);
+  }, [windows, apps]);
 
   useFileWatcher(
     useCallback(
@@ -249,7 +334,11 @@ export function Desktop() {
   }, []);
 
   const closeWindow = useCallback((id: string) => {
-    setWindows((prev) => prev.filter((w) => w.id !== id));
+    setWindows((prev) => {
+      const win = prev.find((w) => w.id === id);
+      if (win) closedPathsRef.current.add(win.path);
+      return prev.filter((w) => w.id !== id);
+    });
   }, []);
 
   const minimizeWindow = useCallback((id: string) => {

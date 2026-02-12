@@ -310,6 +310,29 @@ export function createGateway(config: GatewayConfig) {
     return c.json(conversations.list());
   });
 
+  app.get("/api/layout", (c) => {
+    const layoutPath = join(homePath, "system/layout.json");
+    if (!existsSync(layoutPath)) {
+      return c.json({});
+    }
+    try {
+      const data = JSON.parse(readFileSync(layoutPath, "utf-8"));
+      return c.json(data);
+    } catch {
+      return c.json({});
+    }
+  });
+
+  app.put("/api/layout", async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    if (!body || typeof body !== "object" || !Array.isArray(body.windows)) {
+      return c.json({ error: "Invalid layout: requires windows array" }, 400);
+    }
+    const layoutPath = join(homePath, "system/layout.json");
+    writeFileSync(layoutPath, JSON.stringify(body, null, 2));
+    return c.json({ ok: true });
+  });
+
   app.get("/api/theme", (c) => {
     const themePath = join(homePath, "system/theme.json");
     if (!existsSync(themePath)) {

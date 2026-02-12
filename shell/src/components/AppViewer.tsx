@@ -89,7 +89,7 @@ export function AppViewer({ path, sessionId }: AppViewerProps) {
       key={refreshKey}
       src={`${GATEWAY_URL}/files/${path}`}
       className="h-full w-full border-0"
-      sandbox="allow-scripts allow-forms allow-popups"
+      sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
       title={path}
     />
   );

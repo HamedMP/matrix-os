@@ -142,6 +142,12 @@ AFTER BUILDING:
 
 If you encounter an unfamiliar domain, consider creating a new knowledge file in ~/agents/knowledge/ for future reference.
 
+SERVING:
+- Apps are served through the gateway at http://localhost:4000/files/<path>
+- Do NOT create separate servers for HTML apps -- the gateway serves them
+- Apps run inside a sandboxed iframe with allow-scripts, allow-same-origin
+- External CDN scripts (YouTube API, etc.) work normally
+
 VERIFICATION (REQUIRED):
 - After writing files, use Glob to verify they exist at the expected paths
 - Read back modules.json to confirm your entry was added

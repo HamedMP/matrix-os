@@ -160,3 +160,129 @@ describe("chat message reducer", () => {
     expect(result[0].content).toBe("Hello");
   });
 });
+
+describe("message queue logic", () => {
+  interface QueueState {
+    busy: boolean;
+    queue: string[];
+    messages: ChatMessage[];
+    sent: Array<{ text: string; sessionId?: string }>;
+  }
+
+  function createQueueState(): QueueState {
+    return { busy: false, queue: [], messages: [], sent: [] };
+  }
+
+  function submitMessage(state: QueueState, text: string, sessionId?: string) {
+    if (!text) return;
+
+    state.messages = [
+      ...state.messages,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: text,
+        timestamp: Date.now(),
+      },
+    ];
+
+    if (state.busy) {
+      state.queue = [...state.queue, text];
+    } else {
+      state.sent.push({ text, sessionId });
+      state.busy = true;
+    }
+  }
+
+  function onResult(state: QueueState, sessionId?: string) {
+    state.busy = false;
+    if (state.queue.length > 0) {
+      const [next, ...rest] = state.queue;
+      state.queue = rest;
+      state.sent.push({ text: next, sessionId });
+      state.busy = true;
+    }
+  }
+
+  function onError(state: QueueState, sessionId?: string) {
+    onResult(state, sessionId);
+  }
+
+  it("sends immediately when not busy", () => {
+    const state = createQueueState();
+    submitMessage(state, "hello");
+    expect(state.busy).toBe(true);
+    expect(state.sent).toHaveLength(1);
+    expect(state.sent[0].text).toBe("hello");
+    expect(state.queue).toHaveLength(0);
+  });
+
+  it("queues messages when busy", () => {
+    const state = createQueueState();
+    submitMessage(state, "first");
+    submitMessage(state, "second");
+    submitMessage(state, "third");
+
+    expect(state.sent).toHaveLength(1);
+    expect(state.sent[0].text).toBe("first");
+    expect(state.queue).toEqual(["second", "third"]);
+  });
+
+  it("shows all user messages immediately even when queued", () => {
+    const state = createQueueState();
+    submitMessage(state, "first");
+    submitMessage(state, "second");
+
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0].content).toBe("first");
+    expect(state.messages[1].content).toBe("second");
+  });
+
+  it("drains queue on result", () => {
+    const state = createQueueState();
+    submitMessage(state, "first");
+    submitMessage(state, "second");
+    submitMessage(state, "third");
+
+    onResult(state);
+    expect(state.sent).toHaveLength(2);
+    expect(state.sent[1].text).toBe("second");
+    expect(state.queue).toEqual(["third"]);
+    expect(state.busy).toBe(true);
+
+    onResult(state);
+    expect(state.sent).toHaveLength(3);
+    expect(state.sent[2].text).toBe("third");
+    expect(state.queue).toEqual([]);
+    expect(state.busy).toBe(true);
+
+    onResult(state);
+    expect(state.busy).toBe(false);
+  });
+
+  it("drains queue on error too", () => {
+    const state = createQueueState();
+    submitMessage(state, "first");
+    submitMessage(state, "second");
+
+    onError(state);
+    expect(state.sent).toHaveLength(2);
+    expect(state.sent[1].text).toBe("second");
+  });
+
+  it("ignores empty text submissions", () => {
+    const state = createQueueState();
+    submitMessage(state, "");
+    expect(state.messages).toHaveLength(0);
+    expect(state.sent).toHaveLength(0);
+  });
+
+  it("becomes idle after all queued messages complete", () => {
+    const state = createQueueState();
+    submitMessage(state, "only");
+
+    onResult(state);
+    expect(state.busy).toBe(false);
+    expect(state.queue).toHaveLength(0);
+  });
+});

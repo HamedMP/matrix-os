@@ -55,6 +55,7 @@ export default function Home() {
               <InputBar
                 sessionId={chat.sessionId}
                 busy={chat.busy}
+                queueLength={chat.queue.length}
                 onSubmit={handleSubmit}
                 chips={
                   <SuggestionChips
