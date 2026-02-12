@@ -20,3 +20,9 @@ export type {
   HeartbeatConfig,
   Heartbeat,
 } from "./heartbeat.js";
+export {
+  createProtectedFilesHook,
+  createWatchdog,
+  PROTECTED_FILE_PATTERNS,
+} from "./evolution.js";
+export type { WatchdogConfig, Watchdog } from "./evolution.js";

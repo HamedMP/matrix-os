@@ -13,7 +13,9 @@ import {
   backupModule,
   restoreModule,
   checkModuleHealth,
+  createWatchdog,
   type Heartbeat,
+  type Watchdog,
   type KernelEvent,
 } from "@matrix-os/kernel";
 import type { WSContext } from "hono/ws";
@@ -128,6 +130,14 @@ export function createGateway(config: GatewayConfig) {
   });
 
   heartbeat.start();
+
+  const watchdog: Watchdog = createWatchdog({
+    homePath,
+    onRevert: (commitMsg) => {
+      logHealing(`Watchdog reverted evolver commit: ${commitMsg}`);
+      broadcastError(`Evolver change reverted: ${commitMsg}`);
+    },
+  });
 
   watcher.on((change) => {
     const msg: ServerMessage = change;
@@ -356,8 +366,10 @@ export function createGateway(config: GatewayConfig) {
     dispatcher,
     watcher,
     heartbeat,
+    watchdog,
     async close() {
       heartbeat.stop();
+      watchdog.stop();
       await watcher.close();
       server.close();
     },

@@ -12,6 +12,7 @@ import {
   notifyShellHook,
   preCompactHook,
 } from "./hooks.js";
+import { createProtectedFilesHook } from "./evolution.js";
 
 const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__list_tasks",
@@ -41,6 +42,7 @@ export function kernelOptions(config: KernelConfig) {
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`);
   const agents = { ...coreAgents, ...customAgents };
   const systemPrompt = buildSystemPrompt(homePath);
+  const protectedFilesHook = createProtectedFilesHook(homePath);
 
   return {
     model: config.model ?? "claude-opus-4-6",
@@ -69,6 +71,10 @@ export function kernelOptions(config: KernelConfig) {
         {
           matcher: "Bash|Write|Edit",
           hooks: [safetyGuardHook],
+        },
+        {
+          matcher: "Write|Edit",
+          hooks: [protectedFilesHook],
         },
       ],
       PostToolUse: [
