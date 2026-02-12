@@ -12,6 +12,12 @@ export function buildSystemPrompt(homePath: string): string {
     sections.push("You are the Matrix OS kernel.");
   }
 
+  // File system paths (absolute)
+  sections.push("\n## File System\n");
+  sections.push(
+    `MATRIX_HOME: ${homePath}\nAll paths like ~/modules/, ~/system/, ~/apps/ resolve to MATRIX_HOME. Always use the absolute path when writing files.`,
+  );
+
   // State summary
   const statePath = join(homePath, "system", "state.md");
   sections.push("\n## Current State\n");

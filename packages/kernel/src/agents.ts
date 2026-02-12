@@ -140,7 +140,16 @@ AFTER BUILDING:
 - Update ~/system/modules.json: add entry with { "name", "type", "path", "status": "active" }
 - Call complete_task with: { "name", "type", "path", "description" }
 
-If you encounter an unfamiliar domain, consider creating a new knowledge file in ~/agents/knowledge/ for future reference.`;
+If you encounter an unfamiliar domain, consider creating a new knowledge file in ~/agents/knowledge/ for future reference.
+
+VERIFICATION (REQUIRED):
+- After writing files, use Glob to verify they exist at the expected paths
+- Read back modules.json to confirm your entry was added
+- Report the exact absolute paths of all files written
+
+OUTPUT FORMAT:
+- Always include the absolute file paths you wrote in your response
+- If any verification step fails, report the failure instead of claiming success`;
 
 const RESEARCHER_PROMPT = `You are the Matrix OS researcher agent. You find information and report back concisely.
 
@@ -276,13 +285,19 @@ REPORTING:
 - On success: complete_task with { changes, description, snapshot: true }
 - On failure: fail_task with { attempted, error, snapshotCommit }`;
 
-export function getCoreAgents(): Record<string, AgentDefinition> {
+function resolveHomePaths(prompt: string, homePath: string): string {
+  return prompt.replaceAll("~/", `${homePath}/`);
+}
+
+export function getCoreAgents(
+  homePath: string,
+): Record<string, AgentDefinition> {
   return {
     builder: {
       description:
         "Use this agent when the user asks to build, create, or generate an app, tool, or module. " +
         "The builder writes files and reports completion via IPC tools.",
-      prompt: BUILDER_PROMPT,
+      prompt: resolveHomePaths(BUILDER_PROMPT, homePath),
       tools: [...FILE_TOOLS, ...IPC_TOOLS.builder],
       model: "opus",
       maxTurns: 50,
@@ -290,7 +305,7 @@ export function getCoreAgents(): Record<string, AgentDefinition> {
     healer: {
       description:
         "Use this agent when something is broken, failing health checks, or needs diagnosis and repair.",
-      prompt: HEALER_PROMPT,
+      prompt: resolveHomePaths(HEALER_PROMPT, homePath),
       tools: [...FILE_TOOLS, ...IPC_TOOLS.healer],
       model: "sonnet",
       maxTurns: 30,
@@ -306,7 +321,7 @@ export function getCoreAgents(): Record<string, AgentDefinition> {
     deployer: {
       description:
         "Use this agent for deploying modules, managing ports, and starting/stopping services.",
-      prompt: DEPLOYER_PROMPT,
+      prompt: resolveHomePaths(DEPLOYER_PROMPT, homePath),
       tools: [...FILE_TOOLS, ...IPC_TOOLS.builder],
       model: "sonnet",
       maxTurns: 20,
@@ -314,7 +329,7 @@ export function getCoreAgents(): Record<string, AgentDefinition> {
     evolver: {
       description:
         "Use this agent when the user asks to modify the OS itself -- its UI, behavior, or capabilities.",
-      prompt: EVOLVER_PROMPT,
+      prompt: resolveHomePaths(EVOLVER_PROMPT, homePath),
       tools: [...FILE_TOOLS, ...IPC_TOOLS.builder],
       model: "opus",
       maxTurns: 40,

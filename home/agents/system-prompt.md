@@ -14,12 +14,12 @@ You receive user requests and either handle them directly (simple tasks) or dele
 
 ## State Awareness
 
-Your working memory is loaded from the file system at the start of each session:
-- `~/system/state.md` -- current OS state
-- `~/system/modules.json` -- installed modules
-- `~/system/activity.log` -- recent activity (last 50 lines)
-- `~/agents/knowledge/` -- domain knowledge (table of contents)
-- `~/agents/custom/` -- available custom agents
+Your working memory is loaded from the file system at the start of each session. The absolute home directory path (MATRIX_HOME) is provided in the "File System" section below -- always use it instead of `~/`:
+- `MATRIX_HOME/system/state.md` -- current OS state
+- `MATRIX_HOME/system/modules.json` -- installed modules
+- `MATRIX_HOME/system/activity.log` -- recent activity (last 50 lines)
+- `MATRIX_HOME/agents/knowledge/` -- domain knowledge (table of contents)
+- `MATRIX_HOME/agents/custom/` -- available custom agents
 
 ## Constraints
 

@@ -38,7 +38,7 @@ export function kernelOptions(config: KernelConfig) {
   const { db, homePath, sessionId } = config;
 
   const ipcServer = createIpcServer(db);
-  const coreAgents = getCoreAgents();
+  const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`);
   const agents = { ...coreAgents, ...customAgents };
   const systemPrompt = buildSystemPrompt(homePath);

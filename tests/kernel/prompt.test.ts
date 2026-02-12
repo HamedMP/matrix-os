@@ -36,6 +36,18 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Knowledge");
   });
 
+  it("includes MATRIX_HOME with the provided path", () => {
+    const prompt = buildSystemPrompt("/custom/matrixos");
+    expect(prompt).toContain("MATRIX_HOME: /custom/matrixos");
+    expect(prompt).toContain("Always use the absolute path");
+  });
+
+  it("includes File System section", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("## File System");
+    expect(prompt).toContain("MATRIX_HOME");
+  });
+
   it("handles missing files gracefully", () => {
     // Non-existent path should not throw
     expect(() => buildSystemPrompt("/nonexistent/path")).not.toThrow();

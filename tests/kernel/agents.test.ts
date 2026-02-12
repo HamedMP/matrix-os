@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseFrontmatter,
   loadCustomAgents,
+  getCoreAgents,
 } from "../../packages/kernel/src/agents.js";
 
 describe("parseFrontmatter", () => {
@@ -85,6 +86,43 @@ Prompt.`;
 
     const result = parseFrontmatter(md);
     expect(result.frontmatter.maxTurns).toBe(20);
+  });
+});
+
+describe("getCoreAgents", () => {
+  const homePath = "/test/matrixos";
+
+  it("injects absolute paths -- no ~/ remains in any agent prompt", () => {
+    const agents = getCoreAgents(homePath);
+    for (const [, agent] of Object.entries(agents)) {
+      expect(agent.prompt).not.toContain("~/");
+    }
+  });
+
+  it("replaces ~/ with the provided homePath", () => {
+    const agents = getCoreAgents(homePath);
+    expect(agents.builder.prompt).toContain("/test/matrixos/modules/");
+    expect(agents.builder.prompt).toContain("/test/matrixos/apps/");
+    expect(agents.builder.prompt).toContain(
+      "/test/matrixos/system/modules.json",
+    );
+  });
+
+  it("builder prompt contains verification instructions", () => {
+    const agents = getCoreAgents(homePath);
+    expect(agents.builder.prompt).toContain("VERIFICATION (REQUIRED)");
+    expect(agents.builder.prompt).toContain("absolute");
+  });
+
+  it("returns all five core agents", () => {
+    const agents = getCoreAgents(homePath);
+    expect(Object.keys(agents)).toEqual([
+      "builder",
+      "healer",
+      "researcher",
+      "deployer",
+      "evolver",
+    ]);
   });
 });
 
