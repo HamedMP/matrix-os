@@ -7,3 +7,4 @@ dist/
 !.env.example
 
 .DS_STORE
+coverage/
