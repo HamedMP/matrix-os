@@ -194,6 +194,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Development Rules
 
+- Use Next.js/Vercel/React skills and best practices when working on frontend (shell or www)
 - Next.js 16: `proxy.ts` replaces `middleware.ts`, Turbopack by default, React Compiler stable, `cacheComponents` replaces PPR
 - TDD: write failing tests FIRST, then implement (Red -> Green -> Refactor)
 - Spike before spec: test undocumented SDK behavior with throwaway code before committing

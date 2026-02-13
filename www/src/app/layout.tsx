@@ -18,21 +18,31 @@ const caveat = Caveat({
 });
 
 export const metadata: Metadata = {
-  title: "Matrix OS -- The Operating System That Builds Itself",
+  metadataBase: new URL("https://matrix-os.com"),
+  title: "Matrix OS | The OS That Builds Itself",
   description:
-    "An AI-native operating system where software is generated in real time from conversation. Your OS, your messaging, your social network, your AI assistant -- unified under one identity.",
+    "An AI-native operating system where software is generated in real time from conversation. Your OS, your messaging, your social network, your AI assistant, unified under one identity.",
   openGraph: {
     title: "Matrix OS",
-    description: "The Operating System That Builds Itself",
+    description: "The OS that builds itself. Describe what you need. It writes it into existence.",
     url: "https://matrix-os.com",
     siteName: "Matrix OS",
     type: "website",
+    locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
     title: "Matrix OS",
-    description: "The Operating System That Builds Itself",
+    description: "The OS that builds itself. Describe what you need. It writes it into existence.",
+    creator: "@HamedMP",
   },
+  keywords: [
+    "AI operating system",
+    "Claude Agent SDK",
+    "AI-native OS",
+    "self-building software",
+    "Matrix OS",
+  ],
 };
 
 export default function RootLayout({
