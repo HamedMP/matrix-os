@@ -11,13 +11,18 @@
 
 - [ ] T054a [P] [US5] Write `tests/gateway/dispatcher-concurrent.test.ts` -- test: fires multiple kernels in parallel, each gets unique process ID, `Promise.allSettled` returns all results, processes table has correct entries during execution
 
+## Dependencies
+
+- T054 modifies `dispatcher.ts` -- coordinate with T109 (006 channel-aware dispatch) which also modifies dispatcher. Complete T109 first.
+- T056 modifies `prompt.ts` -- coordinate with T110 (006 channel prompt context) which also modifies prompt builder. Complete T110 first.
+
 ## Implementation
 
-- [ ] T054 [US5] Implement concurrent kernel dispatch in `packages/gateway/src/dispatcher.ts` -- `Promise.allSettled` for parallel `spawnKernel()` calls, tag responses with request ID for WebSocket multiplexing, no blocking between requests
+- [ ] T054 [US5] Implement concurrent kernel dispatch in `packages/gateway/src/dispatcher.ts` -- `Promise.allSettled` for parallel `spawnKernel()` calls, tag responses with request ID for WebSocket multiplexing, no blocking between requests. (Depends on: T109)
 
 - [ ] T055 [US5] Implement process registration in `packages/kernel/src/index.ts` -- kernel instances register in tasks table on spawn (`{ type: "kernel", task: description, status: "running", touching: [paths] }`), deregister on complete/crash. Replaces `processes.json` as source of truth. Generate `processes.json` and `state.md` from SQLite for system prompt L1 cache.
 
-- [ ] T056 [US5] Add conflict avoidance in `packages/kernel/src/prompt.ts` -- kernel reads active processes before starting, system prompt includes active process list, avoids paths claimed by other kernels. Add rule: "if 3+ kernels running, prefer direct handling over sub-agent spawning"
+- [ ] T056 [US5] Add conflict avoidance in `packages/kernel/src/prompt.ts` -- kernel reads active processes before starting, system prompt includes active process list, avoids paths claimed by other kernels. Add rule: "if 3+ kernels running, prefer direct handling over sub-agent spawning". (Depends on: T110)
 
 ## Checkpoint
 

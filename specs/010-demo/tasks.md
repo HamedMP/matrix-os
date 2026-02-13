@@ -6,6 +6,7 @@
 ## Implementation
 
 - [ ] T057 [P] Pre-seed 2-3 demo apps in `home/apps/` -- expense tracker, notes, dashboard. Pre-built for fast demo (avoids 30-90s generation wait).
+- [ ] T057b [US2] Implement module reverse proxy in gateway -- route `localhost:PORT/modules/<name>/` to module's port. (Moved from 003 T043. Gateway serves static module files but lacks port-based reverse proxy.)
 
 - [ ] T058 [P] Implement `CodeEditor.tsx` in `shell/components/` -- Monaco editor for viewing/editing any file (stretch)
 

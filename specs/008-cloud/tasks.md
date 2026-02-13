@@ -1,7 +1,7 @@
 # Tasks: Cloud Deployment + Multi-Tenant Platform
 
 **Spec**: spec.md | **Plan**: plan.md
-**Task range**: T130-T136 (single-user), T140-T159 (multi-tenant)
+**Task range**: T130-T136 (single-user), T140-T159 (multi-tenant). T137-T139 reserved.
 
 ## User Stories
 
