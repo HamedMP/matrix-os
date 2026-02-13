@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, normalize } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -8,6 +8,7 @@ import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { resolveWithinHome } from "./path-security.js";
 import {
   createHeartbeat,
   backupModule,
@@ -62,7 +63,8 @@ function send(ws: WSContext, msg: ServerMessage) {
 }
 
 export function createGateway(config: GatewayConfig) {
-  const { homePath, port = 4000 } = config;
+  const { homePath: rawHomePath, port = 4000 } = config;
+  const homePath = resolve(rawHomePath);
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -255,7 +257,11 @@ export function createGateway(config: GatewayConfig) {
 
   app.get("/files/*", (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = join(homePath, filePath);
+    const fullPath = resolveWithinHome(homePath, filePath);
+
+    if (!fullPath) {
+      return c.text("Forbidden", 403);
+    }
 
     if (!existsSync(fullPath)) {
       return c.text("Not found", 404);
