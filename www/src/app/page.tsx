@@ -30,39 +30,46 @@ export default function LandingPage() {
 
 function Nav() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/60 bg-background/70 backdrop-blur-xl">
-      <div className="mx-auto max-w-6xl flex items-center justify-between px-6 py-3.5">
-        <a href="/" className="flex items-center gap-2 group">
-          <div className="size-7 rounded-lg bg-primary flex items-center justify-center">
-            <span className="text-xs font-bold text-white font-mono">M</span>
+    <nav className="fixed top-0 left-0 right-0 z-50">
+      <div className="mx-auto max-w-5xl px-4 pt-4">
+        <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 backdrop-blur-xl px-5 py-2.5 shadow-sm">
+          <a href="/" className="flex items-center gap-2.5 group">
+            <div className="size-7 rounded-lg bg-primary flex items-center justify-center shadow-sm">
+              <span className="text-xs font-bold text-white font-mono">M</span>
+            </div>
+            <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
+              matrix-os
+            </span>
+          </a>
+
+          <div className="hidden sm:flex items-center gap-0.5">
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+              <a href="#how-it-works">How It Works</a>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+              <a href="#features">Features</a>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+              <a href="#web4">Web 4</a>
+            </Button>
           </div>
-          <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
-            matrix-os
-          </span>
-        </a>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" asChild>
-            <a href="#how-it-works">How It Works</a>
-          </Button>
-          <Button variant="ghost" size="sm" asChild>
-            <a href="#features">Features</a>
-          </Button>
-          <Button variant="ghost" size="sm" asChild>
-            <a
-              href="https://github.com/HamedMP/matrix-os"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <GithubIcon className="size-4" />
-            </a>
-          </Button>
-          <div className="w-px h-5 bg-border mx-2" />
-          <Button size="sm" asChild>
-            <a href="#get-started">
-              Get Started
-              <ArrowRightIcon />
-            </a>
-          </Button>
+
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" asChild>
+              <a
+                href="https://github.com/HamedMP/matrix-os"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <GithubIcon className="size-4" />
+              </a>
+            </Button>
+            <Button size="sm" className="rounded-xl text-xs px-4" asChild>
+              <a href="#get-started">
+                Get Started
+              </a>
+            </Button>
+          </div>
         </div>
       </div>
     </nav>
@@ -73,55 +80,52 @@ function Nav() {
 
 function Hero() {
   return (
-    <section className="relative pt-28 pb-8 px-6 overflow-hidden">
+    <section className="relative pt-32 pb-20 px-6 overflow-hidden">
       {/* Decorative glow */}
       <div
-        className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] animate-pulse-glow pointer-events-none"
+        className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] animate-pulse-glow pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse at center, rgba(194,112,58,0.12) 0%, transparent 70%)",
+            "radial-gradient(ellipse at center, rgba(194,112,58,0.1) 0%, transparent 70%)",
         }}
       />
 
       <div className="relative mx-auto max-w-5xl">
         {/* Text block */}
-        <div className="text-center mb-14">
+        <div className="text-center mb-16">
           <div className="animate-fade-up">
             <Badge
               variant="outline"
-              className="mb-8 border-primary/30 bg-card/80 text-primary font-mono text-xs tracking-widest uppercase backdrop-blur-sm"
+              className="mb-6 border-primary/30 bg-card/80 text-primary font-mono text-[10px] tracking-[0.2em] uppercase backdrop-blur-sm py-1.5 px-4"
             >
-              Anthropic Hackathon -- Built with Opus 4.6
+              Built with Claude Opus 4.6
             </Badge>
           </div>
 
-          <h1 className="animate-fade-up delay-100 text-5xl sm:text-6xl md:text-7xl lg:text-[5.5rem] font-bold tracking-tight mb-6 leading-[1.05]">
-            The operating system
-            <br />
-            <span className="text-primary">that builds itself</span>
+          <h1 className="animate-fade-up delay-100 text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 leading-[1.1]">
+            The OS that <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">builds itself</span>
           </h1>
 
-          <p className="animate-fade-up delay-200 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed font-light">
-            Describe what you need. Matrix OS writes it into existence --
-            real software, generated in real time, saved as files you own.
-            The AI isn't a feature. It is the kernel.
+          <p className="animate-fade-up delay-200 text-base sm:text-lg text-muted-foreground max-w-lg mx-auto mb-10 leading-relaxed">
+            Describe what you need. Matrix OS writes it into existence.
+            Real software, generated in real time, saved as files you own.
           </p>
 
-          <div className="animate-fade-up delay-300 flex items-center justify-center gap-4">
-            <Button size="lg" className="h-12 px-8 text-base" asChild>
+          <div className="animate-fade-up delay-300 flex items-center justify-center gap-3">
+            <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
               <a href="#get-started">
                 Get your instance
-                <ArrowRightIcon />
+                <ArrowRightIcon className="size-4 ml-1" />
               </a>
             </Button>
-            <Button variant="outline" size="lg" className="h-12 px-8 text-base bg-card/60 backdrop-blur-sm" asChild>
+            <Button variant="outline" size="lg" className="h-11 px-7 text-sm rounded-xl bg-card/60 backdrop-blur-sm" asChild>
               <a
                 href="https://github.com/HamedMP/matrix-os"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <GithubIcon />
-                View source
+                <GithubIcon className="size-4" />
+                Source
               </a>
             </Button>
           </div>
@@ -131,7 +135,7 @@ function Hero() {
         <div className="animate-fade-up delay-500 relative mx-auto max-w-4xl">
           <OsMockup />
           {/* Shadow beneath mockup */}
-          <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 w-3/4 h-16 bg-foreground/5 rounded-[100%] blur-2xl" />
+          <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-3/4 h-20 bg-foreground/5 rounded-[100%] blur-3xl" />
         </div>
       </div>
     </section>
@@ -282,7 +286,7 @@ function HowItWorks() {
     {
       num: "01",
       title: "You describe it",
-      desc: "Tell the OS what you need in natural language. A task tracker, an expense app, a dashboard -- anything.",
+      desc: "Tell the OS what you need in natural language. A task tracker, an expense app, a dashboard. Anything.",
       visual: (
         <div className="font-mono text-xs space-y-1.5 text-muted-foreground">
           <div className="text-foreground">
@@ -295,7 +299,7 @@ function HowItWorks() {
     {
       num: "02",
       title: "The kernel writes it",
-      desc: "Claude Opus 4.6 generates real software -- HTML, CSS, JS -- and saves it as a file on your system.",
+      desc: "Claude Opus 4.6 generates real software (HTML, CSS, JS) and saves it as a file on your system.",
       visual: (
         <div className="font-mono text-xs space-y-1 text-muted-foreground">
           <div>
@@ -339,7 +343,7 @@ function HowItWorks() {
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
             From conversation to software
             <br />
-            <span className="text-primary">in seconds</span>
+            in <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.3em]">seconds</span>
           </h2>
         </div>
 
@@ -386,7 +390,7 @@ function BentoFeatures() {
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
             Not just an assistant.
             <br />
-            <span className="text-primary">An operating system.</span>
+            An <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.3em]">operating system.</span>
           </h2>
         </div>
 
@@ -399,7 +403,7 @@ function BentoFeatures() {
                   Everything is a file
                 </h3>
                 <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-                  Apps, profiles, config, AI personality -- all stored as real
+                  Apps, profiles, config, AI personality. All stored as real
                   files. Back up your OS by copying a folder. Share an app by
                   sending a file.
                 </p>
@@ -452,7 +456,7 @@ function BentoFeatures() {
             <h3 className="text-lg font-semibold mb-1">Multi-channel</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
               Same kernel, every platform. Web desktop, Telegram, WhatsApp,
-              Discord, Slack -- all connected to one identity.
+              Discord, Slack. All connected to one identity.
             </p>
             <div className="flex flex-wrap gap-2">
               {["Web", "Telegram", "WhatsApp", "Discord", "Slack"].map((ch) => (
@@ -486,7 +490,7 @@ function BentoFeatures() {
             </div>
           </div>
 
-          {/* Large: Self-Expanding + Architecture */}
+          {/* Self-Expanding */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
             <h3 className="text-lg font-semibold mb-1">Self-expanding</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
@@ -501,6 +505,21 @@ function BentoFeatures() {
                 <span className="text-primary">+</span> agents/deploy-tool.md
               </div>
               <div className="text-success">2 new skills registered</div>
+            </div>
+          </div>
+
+          {/* TDD */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300 flex flex-col">
+            <h3 className="text-lg font-semibold mb-1">Test-driven</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed flex-1">
+              Every component is tested before it ships. 200 tests, near-total
+              coverage. The OS trusts itself because it verifies itself.
+            </p>
+            <div className="mt-4 rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
+              <div><span className="text-success">PASS</span> kernel/spawn.test.ts</div>
+              <div><span className="text-success">PASS</span> gateway/dispatch.test.ts</div>
+              <div><span className="text-success">PASS</span> hooks/access-control.test.ts</div>
+              <div className="pt-1 text-success">200 tests passed (0.3s)</div>
             </div>
           </div>
 
@@ -559,12 +578,12 @@ function Web4() {
             </Badge>
 
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
-              This is <span className="text-primary">Web 4</span>
+              This is <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.3em]">Web 4</span>
             </h2>
 
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed">
               Your operating system, messaging, social media, AI assistant, apps,
-              games, and identity -- all one thing.
+              games, and identity. All one thing.
               Not stitched together with APIs. Actually one thing.
             </p>
 
@@ -622,7 +641,7 @@ function Web4() {
                 {
                   tag: "git sync",
                   title: "Every device is a peer",
-                  desc: "Laptop, phone, cloud -- all equal. Git is the sync fabric. No central server.",
+                  desc: "Laptop, phone, cloud. All equal. Git is the sync fabric. No central server.",
                 },
               ].map((item) => (
                 <div
@@ -655,7 +674,7 @@ function CTA() {
     <section id="get-started" className="py-24 px-6">
       <div className="mx-auto max-w-3xl text-center">
         <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-4">
-          Get your own <span className="text-primary">Matrix OS</span>
+          Get your own <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.3em]">Matrix OS</span>
         </h2>
         <p className="text-muted-foreground mb-10 leading-relaxed max-w-lg mx-auto">
           Sign up to receive your personal instance at
@@ -685,7 +704,7 @@ function CTA() {
             >
               Anthropic Hackathon
             </a>
-            . The entire system -- kernel, shell, this page -- is built with
+            . The entire system (kernel, shell, this page) is built with
             Claude Code.
           </p>
         </div>
