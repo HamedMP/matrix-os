@@ -8,7 +8,11 @@ Every piece of state, configuration, application, agent definition, and user dat
 
 - Apps are files in `~/apps/` or codebases in `~/projects/`
 - OS state is files in `~/system/`
+- Agent identity is `~/system/soul.md`
 - Agent definitions are markdown files in `~/agents/custom/`
+- Skills are markdown files in `~/agents/skills/`
+- Channel config is in `~/system/config.json`
+- Cron jobs are in `~/system/cron.json`
 - User data is JSON/SQLite in `~/data/`
 - Sharing = sending a file. Backup = copying a folder.
 
@@ -23,7 +27,12 @@ The Claude Agent SDK is not a feature bolted onto the OS -- it IS the OS kernel.
 
 ### III. Headless Core, Multi-Shell
 
-The core (kernel + file system + agent) works without any UI. The web shell is one renderer that watches files and draws what it finds. Other shells (CLI, mobile, voice-only, API) read the same files. Never couple core logic to a specific renderer. The shell discovers apps -- it doesn't know what exists ahead of time.
+The core (kernel + file system + agent) works without any UI. The web shell is one renderer that watches files and draws what it finds. Messaging channels (Telegram, WhatsApp, Discord, Slack) are additional shells that route through the same kernel. Other shells (CLI, mobile, voice-only, API) read the same files. Never couple core logic to a specific renderer. The shell discovers apps -- it doesn't know what exists ahead of time.
+
+- Web desktop: visual interaction (browser at localhost:3000 or cloud URL)
+- Telegram/WhatsApp/Discord/Slack: conversational interaction (text messages)
+- Heartbeat: proactive interaction (OS reaches out on schedule)
+- All shells route through the same gateway -> dispatcher -> kernel pipeline
 
 ### IV. Self-Healing and Self-Expanding
 
@@ -44,7 +53,9 @@ Start with the simplest implementation that works. Single-process async concurre
 - **AI Kernel**: Claude Agent SDK V1 `query()` with `resume` (V2 drops critical options) + Opus 4.6
 - **Frontend**: React + Nextjs
 - **Database**: SQLite via Drizzle ORM (better-sqlite3 driver, WAL mode)
-- **Web Server**: Hono (lightweight, WebSocket support)
+- **Web Server**: Hono (lightweight, WebSocket support, channel adapters)
+- **Channels**: node-telegram-bot-api (Telegram), @whiskeysockets/baileys (WhatsApp), discord.js (Discord), @slack/bolt (Slack)
+- **Scheduling**: node-cron (cron expressions), native timers (intervals, one-shot)
 - **Bundler**: Nextjs (frontend) + tsx (backend dev)
 - **Validation**: Zod 4 for schema validation
 - **Testing**: Vitest for unit/integration tests, TDD workflow, 99-100% coverage target
@@ -84,9 +95,10 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 1.2.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-11
+**Version**: 1.3.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-12
 
 ### Amendment Log
 
 - **1.1.0** (2026-02-11): Added TDD principle (VI). Changed AI Kernel from V2 to V1 `query()` with `resume` based on spike testing. Added Vitest, pnpm/bun to tech constraints.
 - **1.2.0** (2026-02-11): Added prompt caching strategy (90% input cost savings), 1M context window beta, compaction API, 99-100% test coverage target.
+- **1.3.0** (2026-02-12): Expanded vision to include personal AI assistant capabilities. Added: SOUL identity (`soul.md`), skills system (`agents/skills/`), multi-channel messaging (Telegram, WhatsApp, Discord, Slack), cron scheduling, proactive heartbeat, cloud deployment. Expanded Principle III with channel shells. Added channel/scheduling tech constraints. Inspired by OpenClaw/Moltbot and Nanobot (both MIT, open source). Matrix OS is now both a visual OS and a personal AI assistant.

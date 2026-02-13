@@ -56,6 +56,26 @@ The UI shell is a lightweight renderer that watches the file system and draws wh
 
 This means the shell itself is malleable. Tell the agent "move the dock to the left side" and it edits `~/system/layout.json`. Tell it "make everything dark with orange accents" and it edits `~/system/theme.json`. Tell it "I want a minimal desktop with just my three main apps" and it reconfigures the entire layout. You're not locked into someone else's idea of what a desktop should look like.
 
+### The Core Metaphor
+
+Matrix OS treats the Claude Agent SDK as a literal operating system kernel. The metaphor isn't decorative -- it maps precisely to real computer architecture:
+
+| Computer Architecture | Matrix OS Equivalent                                 |
+| --------------------- | ---------------------------------------------------- |
+| CPU                   | Claude Opus 4.6 (reasoning engine)                   |
+| RAM                   | Agent SDK context window (working memory)            |
+| CPU Cores             | Concurrent kernel instances (parallel query() calls) |
+| Kernel                | Main agent with smart routing + full tool access     |
+| Processes             | Sub-agents spawned via Task tool                     |
+| Process Table         | ~/system/processes.json                              |
+| Virtual Memory        | Demand-paged knowledge files                         |
+| Disk                  | File system (~/apps, ~/data, ~/system, ~/agents)     |
+| Swap                  | Session resume (hibernate/wake)                      |
+| System Calls          | Agent SDK tools (Read, Write, Edit, Bash, etc.)      |
+| IPC                   | File system (agents coordinate through shared files) |
+| BIOS/Firmware         | Static system prompt (core identity, never changes)  |
+| Device Drivers        | MCP servers (external service connections)           |
+
 ---
 
 ## What You Can Do
@@ -171,6 +191,7 @@ Standard directories on disk, not a virtual abstraction. `~/apps/` contains HTML
 The simplest apps are self-contained HTML files — they can import from CDNs (Tailwind, Chart.js, D3) and communicate with the OS through a lightweight bridge API (`window.OS`). These render instantly in the shell as sandboxed iframes with shared theme variables.
 
 But Matrix OS isn't limited to HTML apps. Because the agent has full computer control via the Claude Agent SDK, it can create:
+
 - **HTML apps** (`~/apps/tracker.html`) — instant, no build step, rendered in shell
 - **Full codebases** (`~/projects/my-saas/`) — React, Next.js, Python, Rust, whatever the task needs
 - **Scripts and tools** (`~/tools/deploy.sh`) — automation, deployment, maintenance
@@ -184,6 +205,9 @@ Everything is a file. But "file" can mean a single HTML page or a full productio
 The agent layer isn't just "powered by Claude" — it IS the operating system's kernel. The Claude Agent SDK has full control over the machine: file system, shell, processes, network, package managers, compilers, deployment tools. It can do anything a developer with terminal access can do.
 
 This means Matrix OS can generate anything:
+
+This means Matrix OS can generate anything:
+
 - A self-contained HTML app for quick tools and dashboards
 - A full React/Next.js codebase when the task demands it
 - A Rust desktop application compiled and running natively

@@ -2,7 +2,19 @@
 
 ## What This Is
 
-Matrix OS is a real-time, self-expanding operating system AND personal AI assistant where the Claude Agent SDK serves as the kernel. The system generates software from natural language, persists everything as files, heals/evolves itself, and is reachable through multiple channels (web desktop, Telegram, WhatsApp, Discord, Slack). It combines the vision of real-time software generation with a personal AI assistant that is always on, always reachable, and proactive.
+Matrix OS is **Web 4** -- a unified AI operating system that combines OS, messaging, social media, AI assistants, and games into a single platform. The Claude Agent SDK serves as the kernel. The system generates software from natural language, persists everything as files, heals/evolves itself, and is reachable through multiple channels (web desktop, Telegram, WhatsApp, Discord, Slack, Matrix protocol).
+
+**Website**: matrix-os.com
+
+### The Web 4 Vision
+
+- Runs on ALL your devices (laptop, phone, cloud) -- peer-to-peer git sync, no central server
+- Federated identity via Matrix protocol: `@user:matrix-os.com` (human) / `@user_ai:matrix-os.com` (AI)
+- AI-to-AI communication via Matrix custom events (modern email: AIs negotiate meetings, share data)
+- Social layer: profiles, feeds, friends/family with privilege levels, aggregate existing platforms
+- App marketplace: build, share, monetize apps (including multiplayer games with leaderboards)
+- Security: "call center" model for external AI access (sandboxed context, not full account access)
+- Full vision: `specs/web4-vision.md`
 
 ## Constitution (Source of Truth)
 
@@ -18,15 +30,23 @@ Key principles:
 
 ## Architecture Specs
 
-- `specs/003-architecture/FINAL-SPEC.md` -- full architecture specification (visual OS)
-- `specs/003-architecture/PERSONAL-ASSISTANT-SPEC.md` -- personal assistant spec (SOUL, channels, cron, heartbeat, cloud)
-- `specs/003-architecture/plan.md` -- implementation plan, project structure, phases
-- `specs/003-architecture/tasks.md` -- task breakdown (T001-T136 across 12 phases)
-- `specs/003-architecture/SDK-VERIFICATION.md` -- SDK assumption verification, IPC layer design, cost optimization
+### Vision & North Star
+- `specs/web4-vision.md` -- **Web 4 vision document** (the north star)
+- `specs/matrixos-vision.md` -- original vision doc
+
+### Active Specs (current work)
+- `specs/004-concurrent/` -- Phase 7: Multiprocessing (T054-T056)
+- `specs/005-soul-skills/` -- Phase 9: SOUL identity + skills (T100-T105)
+- `specs/006-channels/` -- Phase 10: Multi-channel messaging (T106-T119)
+- `specs/007-proactive/` -- Phase 11: Cron + heartbeat (T120-T129)
+- `specs/008-cloud/` -- Phase 12: Cloud deployment (T130-T136)
+- `specs/009-platform/` -- Web 4 platform: identity, sync, mobile, marketplace, games (T200-T261)
+- `specs/010-demo/` -- Phase 8: Demo polish + recording (T057-T064)
+
+### Archive (Phases 1-6 complete)
+- `specs/003-architecture/` -- original architecture spec, plan, tasks (reference only)
+- `specs/003-architecture/SDK-VERIFICATION.md` -- SDK assumption verification
 - `specs/003-architecture/KERNEL-AND-MEMORY.md` -- kernel and memory architecture detail
-- `specs/003-architecture/SUBAGENTS-INSPIRATION.md` -- sub-agent patterns from Claude Code
-- `specs/003-architecture/AGENT-TEAMS-INSPIRATION.md` -- agent teams patterns
-- `specs/003-architecture/ANALYSIS-FEEDBACK.md` -- four-reviewer analysis
 
 ## Reference Docs
 
@@ -45,6 +65,7 @@ Key principles:
 - **Frontend**: Next.js 16, React 19
 - **Backend**: Hono (HTTP/WebSocket gateway + channel adapters)
 - **Channels**: node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt
+- **Federation**: Matrix protocol (matrix-js-sdk) -- federated identity, AI-to-AI, E2E encryption
 - **Database**: SQLite via Drizzle ORM (better-sqlite3, WAL mode)
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Scheduling**: node-cron (cron expressions), native timers
@@ -158,13 +179,14 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 5**: Self-healing -- heartbeat loop (30s health checks on modules with ports), healer sub-agent (sonnet, 2-attempt limit), backup/restore before/after healing, activity.log + WebSocket error notifications, healing-strategies.md knowledge file
 - **Phase 6**: Self-evolution -- protected files PreToolUse hook (denies writes to constitution, kernel/gateway src, tests, config), watchdog (tracks evolver commits, git reset on crash), full evolver prompt (git snapshots, allowed/denied modification targets)
 
-### Next Up
-- **Phase 7**: Multiprocessing (T054-T056) -- concurrent kernel dispatch
-- **Phase 8**: Polish + demo (T057-T064) -- pre-seed apps, demo script, recording
-- **Phase 9**: SOUL + Skills (T100-T105) -- agent identity, expandable capabilities
-- **Phase 10**: Channels (T106-T119) -- Telegram, WhatsApp, Discord, Slack adapters
-- **Phase 11**: Cron + Heartbeat (T120-T129) -- scheduled tasks, proactive agent wakeup
-- **Phase 12**: Cloud Deploy (T130-T136) -- Dockerfile, systemd, auth, setup script
+### Next Up (see specs/004-010 for details)
+- **005 SOUL + Skills** (T100-T105) -- agent identity, personality, expandable capabilities
+- **006 Channels** (T106-T119) -- Telegram, WhatsApp, Discord, Slack, Matrix protocol
+- **007 Proactive** (T120-T129) -- cron scheduled tasks, heartbeat, proactive agent wakeup
+- **008 Cloud** (T130-T136) -- Dockerfile, systemd, auth, setup script
+- **009 Platform** (T200-T261) -- Web 4: identity handles, git sync, mobile, marketplace, games, AI social
+- **004 Concurrent** (T054-T056) -- concurrent kernel dispatch
+- **010 Demo** (T057-T064) -- pre-seed apps, demo script, recording
 
 ## Shell Patterns
 

@@ -1,0 +1,244 @@
+# Matrix OS
+
+**The operating system that builds itself.**
+
+Matrix OS is an AI-native operating system where software doesn't exist until you need it. You speak, and applications materialize -- generated in real time, saved as real files, yours to keep, inspect, and modify. The AI isn't a feature bolted onto the side. It IS the kernel.
+
+Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) (Feb 10-16, 2026).
+
+---
+
+## The Idea
+
+Every OS you've ever used works the same way: someone wrote the software months before you touched it. They decided what it looks like, what it does, what you're allowed to change.
+
+Matrix OS starts from a different premise: **what if the software didn't exist until the moment you needed it?**
+
+You open Matrix OS and see a clean surface. You tell it what you need, and the system writes it into existence. Not a template. Not a widget from a library. Real software, generated for you, tailored to your request, saved as files you own.
+
+And it goes further. Matrix OS is also your personal AI assistant, your messaging platform, your social network, and your game console -- unified under one identity, one file system, one AI kernel. We call this **Web 4**.
+
+```
+Terminal (1970s) -> OS (1980s) -> GUI (1990s) -> Web+Mobile (2000s) -> AI Assistants (2020s)
+  -> Matrix OS / Web 4 (2026)
+```
+
+---
+
+## What It Does
+
+**Generate apps from conversation.** Say "I need an expense tracker" and a fully functional expense tracker appears on your desktop -- styled to your theme, persisted to your file system, ready to use.
+
+**Self-healing.** Break something? The OS detects the problem, diagnoses it, and repairs it. A dedicated healer agent monitors running modules and fixes failures automatically.
+
+**Self-expanding.** The OS writes its own capabilities. New agents, new skills, new tools -- all generated on demand by the evolver agent.
+
+**Multi-channel.** Talk to your OS from the web desktop, Telegram, WhatsApp, Discord, or Slack. Same kernel, same identity, same file system.
+
+**Proactive.** Cron jobs, heartbeats, scheduled tasks. The OS doesn't just respond -- it anticipates.
+
+**SOUL identity.** Every instance has a personality defined in `~/system/soul.md`. It shapes how the AI thinks, communicates, and acts.
+
+**Cloud-native + Multi-tenant.** Sign up at matrix-os.com, get your own instance at `yourname.matrix-os.com`. Each user gets an isolated Docker container with persistent storage.
+
+---
+
+## Architecture
+
+```
+Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
+  |-- Next.js shell (desktop UI)        |-- Channel adapters
+  |                                     |
+  +------------- Gateway (localhost:4000) ---------------+
+                  |-- WebSocket (chat, file watcher, terminal)
+                  |-- REST API (messages, files, themes, layout)
+                  |-- Channel manager, cron, heartbeat
+                  |
+                  +---> Dispatcher ---> Kernel (Claude Agent SDK)
+                                         |-- Builder agent (generates apps)
+                                         |-- Researcher agent (gathers info)
+                                         |-- Deployer agent (ships modules)
+                                         |-- Healer agent (fixes breakage)
+                                         |-- Evolver agent (grows the OS)
+```
+
+The core metaphor maps precisely to computer architecture:
+
+| Computer | Matrix OS |
+|----------|-----------|
+| CPU | Claude Opus 4.6 |
+| RAM | Agent context window |
+| Kernel | Main agent with tool access |
+| Processes | Sub-agents via Task tool |
+| Disk | File system (`~/apps`, `~/data`, `~/system`) |
+| System calls | Agent SDK tools (Read, Write, Edit, Bash) |
+| Device drivers | MCP servers |
+| IPC | File-based coordination |
+
+### The Web 4 Vision
+
+Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, messaging, social media, AI assistant, apps, games, and identity are all one thing.
+
+- **Federated identity** via [Matrix protocol](https://spec.matrix.org/latest/): `@you:matrix-os.com` (human) + `@you_ai:matrix-os.com` (AI agent)
+- **AI-to-AI communication**: your AI talks to other AIs via Matrix rooms with custom event types
+- **Peer-to-peer sync**: git is the sync layer -- all devices are equal peers
+- **App marketplace**: apps are files -- distribution is file sharing
+- **Multiplayer games**: generate games from conversation, play against humans or AIs
+- **E2E encrypted**: Olm/Megolm encryption on all AI-to-AI and human-to-human communication
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | TypeScript 5.5+, strict mode, ES modules |
+| Runtime | Node.js 22+ |
+| AI | Claude Agent SDK V1 (`query()` + `resume`), Opus 4.6 |
+| Frontend | Next.js 16, React 19 |
+| Backend | Hono (HTTP/WebSocket gateway) |
+| Database | SQLite via Drizzle ORM (WAL mode) |
+| Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
+| Federation | Matrix protocol (matrix-js-sdk, Conduit homeserver) |
+| Validation | Zod 4 |
+| Testing | Vitest (200 tests, TDD) |
+| Package mgr | pnpm (install), bun (scripts) |
+
+---
+
+## Project Structure
+
+```
+packages/kernel/     # AI kernel (Agent SDK, agents, IPC tools, hooks, SOUL, skills)
+packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
+shell/               # Next.js 16 frontend (desktop shell)
+home/                # File system template (copied on first boot)
+platform/            # Multi-tenant orchestrator (signup, auth, containers)
+tests/               # Vitest test suites
+specs/               # Architecture specs and vision docs
+docs/                # Reference documentation
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 22+
+- pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
+- `ANTHROPIC_API_KEY` environment variable
+
+### Install
+
+```bash
+pnpm install
+```
+
+### Run Tests
+
+```bash
+bun run test              # 200 unit tests (~300ms)
+bun run test:watch        # Watch mode
+bun run test:integration  # Integration tests (needs API key, uses haiku)
+bun run test:coverage     # Coverage report
+```
+
+### Start Development
+
+```bash
+# All at once (gateway + shell):
+bun run dev
+
+# Or individually:
+bun run dev:gateway   # Gateway on http://localhost:4000
+bun run dev:shell     # Shell on http://localhost:3000
+```
+
+The gateway boots the home directory at `~/matrixos/` on first run.
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ANTHROPIC_API_KEY` | Required for AI features | -- |
+| `MATRIX_HOME` | Home directory path | `~/matrixos/` |
+| `PORT` | Gateway port | `4000` |
+
+---
+
+## Current Status
+
+**200 tests passing across 16 test files.**
+
+### Completed (Phases 1-6)
+
+- **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
+- **Phase 2**: SQLite/Drizzle schema, system prompt builder, agent parser, first-boot
+- **Phase 3**: Kernel (Agent SDK V1 query+resume), IPC MCP server (7 tools), hooks (8 hooks), gateway (Hono HTTP+WS), agent prompts (builder, researcher, deployer)
+- **Phase 4**: Next.js desktop shell -- window management, ChatPanel, AppViewer, Dock, Terminal (xterm.js), conversation history, interaction model (InputBar, SuggestionChips, bridge API), shell polish (draggable/resizable windows, macOS-style dock, traffic lights), state persistence, message queuing
+- **Phase 5**: Self-healing -- heartbeat loop, healer sub-agent, backup/restore, activity log
+- **Phase 6**: Self-evolution -- protected files hook, watchdog, evolver prompt
+
+### In Progress (Phases 7-12)
+
+- **Phase 7**: Concurrent kernel dispatch
+- **Phase 9**: SOUL identity + Skills system
+- **Phase 10**: Channel adapters (Telegram, WhatsApp, Discord, Slack)
+- **Phase 11**: Cron + Heartbeat (proactive AI)
+- **Phase 12**: Cloud deployment + Multi-tenant platform
+
+---
+
+## The Hackathon Demo
+
+Matrix OS is being built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon).
+
+**The demo narrative:**
+
+> This is Matrix OS. It's not just an AI assistant and it's not just an operating system. It's both. And it's also your social network, your messaging platform, and your game console. Watch me build an app by speaking. Watch me message it from Telegram. Watch two AIs negotiate a meeting. Watch me play a game against my AI. One identity. One platform. Every device. This is Web 4.
+
+**What we demonstrate:**
+
+1. OS generates apps from conversation
+2. Multi-channel access (Telegram)
+3. SOUL personality (consistent AI identity)
+4. Proactive behavior (heartbeat, reminders)
+5. Cloud deployment (access from any device)
+6. Handle system (`@hamed` / `@hamed_ai` identity)
+7. Self-healing (break something, watch it recover)
+
+**Stretch goals:**
+
+8. Multiplayer games
+9. AI-to-AI interaction (two instances talking)
+10. Git sync between devices
+
+---
+
+## Principles
+
+1. **Everything Is a File** -- apps, profiles, config, AI personality -- all files. Sync = git. Share = send a file. Backup = copy a folder.
+2. **Agent Is the Kernel** -- Claude Agent SDK V1 `query()` with `resume`. The AI has full system access. It writes software, manages files, communicates with other AIs.
+3. **Headless Core, Multi-Shell** -- the core is a gateway + kernel. Web shell, mobile app, Telegram bot, voice interface -- all shells. Add a new shell = add a new renderer.
+4. **Self-Healing and Self-Expanding** -- the OS fixes itself and grows new capabilities. Games, apps, skills, agents -- all generated on demand.
+5. **Simplicity Over Sophistication** -- the simplest implementation that works.
+6. **TDD** -- tests first, 200 passing, targeting 99-100% coverage.
+
+---
+
+## Vision Documents
+
+- [Matrix OS Vision](specs/matrixos-vision.md) -- the full product vision
+- [Web 4 Vision](specs/web4-vision.md) -- the north star for the unified AI OS platform
+- [Cloud + Multi-Tenant Spec](specs/008-cloud/spec.md) -- hackathon deployment architecture
+
+---
+
+## License
+
+MIT
+
+---
+
+*Matrix OS. Software that doesn't exist until you need it. And once it does, it's yours.*
