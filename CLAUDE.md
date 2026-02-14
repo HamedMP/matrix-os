@@ -184,7 +184,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 012 (partial)**: Onboarding persona engine -- getPersonaSuggestions (7 roles + keyword matching + defaults), parseSetupPlan/writeSetupPlan (Zod schema), IPC tools (get_persona_suggestions, write_setup_plan), bootstrap.md conversation flow, user.md role field, onboarding progress in system prompt
 
 ### In Progress
-- **012 Onboarding** (T400-T412) -- persona engine done (T400a/b, T400-T403, T405-T406), provisioning pipeline (T404) and skill templates (T407) pending
+- **012 Onboarding** (T400-T412) -- core complete (persona engine, provisioning pipeline with batch dispatch + kanban task board, skill templates). Stretch: T408 shell chips, T411 welcome tour, T412 re-onboarding
 
 ### Next Up (see specs/ for details)
 - **008A Cloud** (T130-T136) -- Dockerfile, systemd, auth, setup script

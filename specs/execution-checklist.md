@@ -27,7 +27,7 @@ No implementation is included in this document.
 **007**: Complete (T120-T129). Cron service + heartbeat runner + IPC tool. 349 tests after phase.
 **008-010**: Not started. See sections below.
 **011**: Spec written. Not started.
-**012**: Partially done (T400a/b, T400-T403, T405-T406). See section below.
+**012**: Core complete (T400-T407, T404a-T404i). Remaining: T408 shell chips, T411 welcome tour, T412 re-onboarding (stretch).
 **013**: Spec + scaffolding. Not started.
 
 ## Critical Fixes (from 2026-02-13 audit)
@@ -287,7 +287,7 @@ Tests:
 
 - [x] T400a `tests/kernel/onboarding.test.ts` (parseSetupPlan)
 - [x] T400b `tests/kernel/onboarding.test.ts` (getPersonaSuggestions)
-- [ ] T400c `tests/gateway/onboarding-build.test.ts` (provisioning pipeline)
+- [x] T400c covered by `tests/gateway/provisioner.test.ts` (T404b)
 
 Phase A (bootstrap):
 
@@ -301,13 +301,13 @@ Phase B (persona engine):
 
 Phase C (provisioning):
 
-- [ ] T404 provisionFromPlan (sequential app builds)
+- [x] T404 provisionFromPlan (T404a-T404i: batch dispatch, provisioner, task board, shell integration)
 - [x] T405 IPC tools (get_persona_suggestions, write_setup_plan)
 - [x] T406 wire onboarding progress into buildSystemPrompt
 
 Phase D-G (stretch):
 
-- [ ] T407 skill templates
+- [x] T407 skill templates (study-timer.md, budget-helper.md, enhanced reminder.md)
 - [ ] T408-T409 shell UX (chips, progress bar)
 - [ ] T410 parallel builds (needs T054)
 - [ ] T411-T412 welcome tour + re-onboarding
@@ -369,7 +369,7 @@ These tasks touch the same files and must be sequenced:
 - [x] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
 - [x] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
 - [x] Complete Phase 007 cron + heartbeat end-to-end.
-- [ ] Complete Phase 012 onboarding (T404 provisioning pipeline, T407 skill templates).
+- [x] Complete Phase 012 onboarding core (T404 provisioning + T407 skill templates). Stretch: T408, T411, T412.
 - [ ] Complete Phase 008A single-user cloud deploy path (includes T133 auth).
 - [ ] Complete Phase 013A Docker deployment (T500-T506).
 - [ ] Complete Phase 009 P0 observability + safe-mode.
