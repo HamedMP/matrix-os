@@ -1,0 +1,100 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import { useSocket, type ServerMessage } from "./useSocket";
+
+export interface TaskItem {
+  id: string;
+  type: string;
+  status: string;
+  input: string;
+  appName?: string;
+}
+
+export interface ProvisionStatus {
+  active: boolean;
+  total: number;
+  succeeded: number;
+  failed: number;
+}
+
+const GATEWAY_URL =
+  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+
+function parseAppName(input: string): string | undefined {
+  try {
+    const parsed = JSON.parse(input);
+    return parsed.app ?? parsed.message ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function useTaskBoard() {
+  const { subscribe } = useSocket();
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [provision, setProvision] = useState<ProvisionStatus>({
+    active: false,
+    total: 0,
+    succeeded: 0,
+    failed: 0,
+  });
+
+  useEffect(() => {
+    fetch(`${GATEWAY_URL}/api/tasks`)
+      .then((res) => res.json())
+      .then((data: Array<{ id: string; type: string; status: string; input: string }>) => {
+        setTasks(
+          data.map((t) => ({
+            ...t,
+            appName: parseAppName(t.input),
+          })),
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleMessage = useCallback((msg: ServerMessage) => {
+    if (msg.type === "task:created") {
+      setTasks((prev) => [
+        ...prev,
+        {
+          ...msg.task,
+          appName: parseAppName(msg.task.input),
+        },
+      ]);
+    } else if (msg.type === "task:updated") {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === msg.taskId ? { ...t, status: msg.status } : t,
+        ),
+      );
+    } else if (msg.type === "provision:start") {
+      setProvision({
+        active: true,
+        total: msg.appCount,
+        succeeded: 0,
+        failed: 0,
+      });
+    } else if (msg.type === "provision:complete") {
+      setProvision({
+        active: false,
+        total: msg.total,
+        succeeded: msg.succeeded,
+        failed: msg.failed,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    return subscribe(handleMessage);
+  }, [subscribe, handleMessage]);
+
+  const todo = tasks.filter((t) => t.status === "pending");
+  const inProgress = tasks.filter((t) => t.status === "in_progress");
+  const done = tasks.filter(
+    (t) => t.status === "completed" || t.status === "failed",
+  );
+
+  return { tasks, provision, todo, inProgress, done };
+}

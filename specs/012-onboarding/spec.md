@@ -181,10 +181,73 @@ The kernel builds apps from the setup plan. Two modes:
 **Sequential (works today with T053):**
 The kernel processes setup-plan.json and builds each app one at a time via the builder agent. Each app takes 30-90 seconds. User sees progress updates.
 
-**Parallel (requires T054):**
-Once concurrent dispatch is available, the onboarding can fire multiple build requests simultaneously. All apps build at once, cutting total time from minutes to under a minute.
+**Parallel (T404 -- implemented):**
+The gateway provisioner detects a pending setup-plan.json, creates DB tasks for each app, and fires all builds simultaneously via `dispatcher.dispatchBatch()`. The batch is atomic from the queue's perspective -- serial dispatches wait until all builds complete. Real-time progress flows through WebSocket events (`task:created`, `task:updated`, `provision:start`, `provision:complete`).
 
-The onboarding spec doesn't require T054 -- sequential building works. Parallel is an optimization.
+### Parallel Provisioning Architecture
+
+```
+setup-plan.json written (status: "pending")
+         |
+    file watcher fires
+         |
+    provisioner.onSetupPlanChange()
+         |
+    status -> "building"
+    create DB task per app
+    broadcast task:created events
+    broadcast provision:start
+         |
+    dispatcher.dispatchBatch(entries)
+         |
+    ┌─────────┬─────────┬─────────┐
+    │ Build   │ Build   │ Build   │   (parallel via Promise.allSettled)
+    │ App 1   │ App 2   │ App 3   │
+    └─────────┴─────────┴─────────┘
+         |
+    complete/fail tasks in DB
+    broadcast task:updated events
+    status -> "complete"
+    broadcast provision:complete
+```
+
+### Dispatcher Batch Mode
+
+`dispatchBatch()` extends the dispatcher with a new queue entry type. Internally, the queue uses a discriminated union:
+
+```typescript
+type InternalEntry =
+  | { kind: "serial"; /* existing QueueEntry fields */ }
+  | { kind: "batch"; entries: BatchEntry[]; resolve; reject }
+```
+
+When `processQueue` picks up a batch entry, it runs all entries in parallel via `Promise.allSettled()`. The `active` counter increments for the batch as a whole, so serial dispatches wait.
+
+### Tasks API
+
+`GET /api/tasks` exposes task state from the DB. Query `?status=pending|in_progress|completed|failed` for filtering.
+
+### WebSocket Events
+
+New ServerMessage types for real-time task state:
+
+```typescript
+| { type: "task:created"; task: { id, type, status, input } }
+| { type: "task:updated"; taskId: string; status: string }
+| { type: "provision:start"; appCount: number }
+| { type: "provision:complete"; total: number; succeeded: number; failed: number }
+```
+
+### Kanban Task Board (Shell)
+
+A three-column board in the BottomPanel "Tasks" tab showing To Do / In Progress / Done. Cards move in real-time as builders complete. Uses `useTaskBoard()` hook that fetches `GET /api/tasks` on mount and subscribes to WebSocket events for live updates.
+
+```
+┌─ To Do ──────┐ ┌─ In Progress ──┐ ┌─ Done ────────┐
+│ Flashcards   │ │ Study Planner  │ │ Budget Tracker │
+│ builder      │ │ Building...    │ │ Done 12s       │
+└──────────────┘ └────────────────┘ └────────────────┘
+```
 
 ## Shell Enhancements (Optional)
 
@@ -197,10 +260,7 @@ During role selection, the shell can show clickable chips:
 These are driven by the kernel's response -- it includes chip suggestions in its message, and the shell renders them.
 
 ### Build Progress
-During app building, show a progress indicator:
-- "Building Study Planner... (1/3)"
-- "Building Flashcards... (2/3)"
-- App windows appear on the desktop as they're built
+During app building, the Kanban task board in BottomPanel shows real-time progress. Cards move from To Do to In Progress to Done as builders complete. A provision status bar shows "Building N apps..." with spinner.
 
 ### Welcome Tour
 After build completes, highlight the first app and offer a guided walkthrough.

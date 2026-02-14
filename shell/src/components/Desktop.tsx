@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AppViewer } from "./AppViewer";
+import { TaskBoard } from "./TaskBoard";
 import {
   Card,
   CardHeader,
@@ -15,6 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { KanbanSquareIcon, XIcon } from "lucide-react";
 
 const GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
@@ -264,7 +266,7 @@ export function Desktop() {
     loadModules();
   }, [loadModules]);
 
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     clearTimeout(saveTimerRef.current);
@@ -430,31 +432,79 @@ export function Desktop() {
     setInteracting(false);
   }, []);
 
+  const [taskBoardOpen, setTaskBoardOpen] = useState(false);
+
   return (
     <TooltipProvider delayDuration={300}>
       <div className="relative flex-1 flex">
-        {apps.length > 0 && (
-          <aside
-            className="flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm"
-            style={{ width: DOCK_WIDTH }}
-          >
-            {apps.map((app) => {
-              const win = windows.find(
-                (w) => w.path === app.path && !w.minimized,
-              );
-              return (
-                <DockIcon
-                  key={app.path}
-                  name={app.name}
-                  active={!!win}
-                  onClick={() => openWindow(app.name, app.path)}
-                />
-              );
-            })}
-          </aside>
-        )}
+        <aside
+          className="flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm"
+          style={{ width: DOCK_WIDTH }}
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setTaskBoardOpen((prev) => !prev)}
+                className={`flex size-10 items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                  taskBoardOpen
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border/60"
+                }`}
+              >
+                <KanbanSquareIcon className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8}>
+              Tasks
+            </TooltipContent>
+          </Tooltip>
+
+          {apps.length > 0 && (
+            <div className="w-6 border-t border-border/40" />
+          )}
+
+          {apps.map((app) => {
+            const win = windows.find(
+              (w) => w.path === app.path && !w.minimized,
+            );
+            return (
+              <DockIcon
+                key={app.path}
+                name={app.name}
+                active={!!win}
+                onClick={() => openWindow(app.name, app.path)}
+              />
+            );
+          })}
+        </aside>
 
         <div className="relative flex-1">
+          {taskBoardOpen && (
+            <div className="absolute inset-0 z-40 flex">
+              <div className="flex flex-col w-[420px] max-w-full border-r border-border bg-card/95 backdrop-blur-md shadow-xl">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                  <div className="flex items-center gap-2">
+                    <KanbanSquareIcon className="size-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Tasks</span>
+                  </div>
+                  <button
+                    onClick={() => setTaskBoardOpen(false)}
+                    className="size-6 flex items-center justify-center rounded hover:bg-muted transition-colors"
+                  >
+                    <XIcon className="size-3.5" />
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0">
+                  <TaskBoard />
+                </div>
+              </div>
+              <div
+                className="flex-1 bg-black/20"
+                onClick={() => setTaskBoardOpen(false)}
+              />
+            </div>
+          )}
+
           {windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="flex h-full items-center justify-center">

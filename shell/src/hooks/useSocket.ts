@@ -9,7 +9,11 @@ export type ServerMessage =
   | { type: "kernel:tool_end" }
   | { type: "kernel:result"; data: Record<string, unknown> }
   | { type: "kernel:error"; message: string }
-  | { type: "file:change"; path: string; event: "add" | "change" | "unlink" };
+  | { type: "file:change"; path: string; event: "add" | "change" | "unlink" }
+  | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
+  | { type: "task:updated"; taskId: string; status: string }
+  | { type: "provision:start"; appCount: number }
+  | { type: "provision:complete"; total: number; succeeded: number; failed: number };
 
 type MessageHandler = (msg: ServerMessage) => void;
 
