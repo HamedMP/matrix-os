@@ -202,6 +202,16 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **006**: WhatsApp (T113-T114), Discord (T115), Slack (T116) adapters, shell status indicators (T118)
 - **012**: Parallel builds (T410)
 
+## UX Guide
+
+Read `specs/ux-guide.md` -- the UX bible for the shell and apps. Key rules:
+1. **Toggle consistency**: Click to open, click same spot to close. Light dismiss. Escape.
+2. **No layout shift**: Transient panels overlay, never push content. Buttons never move.
+3. **Spatial memory**: Window positions, panel states, view preferences persist across reloads.
+4. **Progressive disclosure**: Clean defaults, details one click away, settings two clicks away.
+5. **Empty states are onboarding**: Icon + headline + description + CTA. Never a blank screen.
+6. **Animation as communication**: 150-300ms, ease-out for enter, ease-in for exit.
+
 ## Shell Patterns
 
 - **Never mutate state objects in reducers** -- `reduceChat` and similar must create new objects via spread (`{ ...obj, content: obj.content + delta }`) instead of mutating in-place (`obj.content += delta`). Shallow array copies (`[...arr]`) share object references; mutating them causes React double-rendering bugs (streaming text duplication).
