@@ -227,7 +227,7 @@ P0 (must-have before broad launch):
 P1 (next product-critical):
 
 - [x] T210-T216 identity system complete (handle.json, loadHandle, profiles, prompt, endpoints, setup wizard).
-- [x] T220-T221, T224 git sync core (GitSync, AutoSync, .gitignore). T222 kernel support, T223 conflict resolution remaining.
+- [x] T220-T222, T224 git sync (GitSync, AutoSync, .gitignore, sync_files IPC tool). T223 conflict resolution remaining.
 - [ ] T230-T234 mobile experience + PWA
 
 P2 (POST-MVP -- each item below is its own product. Revisit after 008B is stable.):

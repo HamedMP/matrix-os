@@ -17,6 +17,9 @@ import {
 import { loadSkillBody } from "./skills.js";
 import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
 import { saveIdentity, deriveAiHandle } from "./identity.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+const execAsync = promisify(execFile);
 
 export function createIpcServer(db: MatrixDB, homePath?: string) {
   return createSdkMcpServer({
@@ -266,6 +269,73 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               text: `Handle set! You are now @${cleaned}:matrix-os.com and your AI is @${deriveAiHandle(cleaned)}:matrix-os.com`,
             }],
           };
+        },
+      ),
+
+      tool(
+        "sync_files",
+        "Manage git sync for the user's home directory. Commit local changes, push to remote, pull from remote, add/remove remotes, or check status.",
+        {
+          action: z.enum(["status", "commit", "push", "pull", "add_remote", "remove_remote"]),
+          message: z.string().optional().describe("Commit message (for commit action)"),
+          remote_name: z.string().optional().describe("Remote name (default: origin)"),
+          remote_url: z.string().optional().describe("Remote URL (for add_remote)"),
+        },
+        async ({ action, message, remote_name, remote_url }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Sync not available (no home path)" }] };
+          }
+          async function git(...args: string[]): Promise<string> {
+            const { stdout } = await execAsync("git", args, { cwd: homePath! });
+            return stdout.trim();
+          }
+          try {
+            switch (action) {
+              case "status": {
+                const porcelain = await git("status", "--porcelain");
+                const branch = await git("rev-parse", "--abbrev-ref", "HEAD").catch(() => "unknown");
+                const remotes = await git("remote", "-v").catch(() => "none");
+                return { content: [{ type: "text" as const, text: `Branch: ${branch}\nClean: ${porcelain === ""}\nRemotes:\n${remotes}\n${porcelain ? `Changes:\n${porcelain}` : ""}` }] };
+              }
+              case "commit": {
+                const porcelain = await git("status", "--porcelain");
+                if (porcelain === "") {
+                  return { content: [{ type: "text" as const, text: "Nothing to commit -- working tree clean" }] };
+                }
+                await git("add", "-A");
+                await git("commit", "-m", message ?? "sync");
+                return { content: [{ type: "text" as const, text: `Committed: ${message ?? "sync"}` }] };
+              }
+              case "push": {
+                const remote = remote_name ?? "origin";
+                const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
+                await git("push", "-u", remote, branch);
+                return { content: [{ type: "text" as const, text: `Pushed to ${remote}/${branch}` }] };
+              }
+              case "pull": {
+                const remote = remote_name ?? "origin";
+                const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
+                await git("pull", remote, branch);
+                return { content: [{ type: "text" as const, text: `Pulled from ${remote}/${branch}` }] };
+              }
+              case "add_remote": {
+                if (!remote_name || !remote_url) {
+                  return { content: [{ type: "text" as const, text: "add_remote requires remote_name and remote_url" }] };
+                }
+                await git("remote", "add", remote_name, remote_url);
+                return { content: [{ type: "text" as const, text: `Added remote: ${remote_name} -> ${remote_url}` }] };
+              }
+              case "remove_remote": {
+                if (!remote_name) {
+                  return { content: [{ type: "text" as const, text: "remove_remote requires remote_name" }] };
+                }
+                await git("remote", "remove", remote_name);
+                return { content: [{ type: "text" as const, text: `Removed remote: ${remote_name}` }] };
+              }
+            }
+          } catch (e) {
+            return { content: [{ type: "text" as const, text: `Sync error: ${e instanceof Error ? e.message : String(e)}` }] };
+          }
         },
       ),
 

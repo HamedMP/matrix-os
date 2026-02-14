@@ -78,7 +78,7 @@
 
 - [x] T221 [US14] Add auto-sync on changes -- debounced (30s after last change): `git add -A && git commit && git push`. Triggered by file watcher events for significant changes (not activity.log).
 
-- [ ] T222 [US14] Add `matrixos sync` support via kernel -- user says "sync my files" -> kernel runs git push/pull via Bash. Or "add a backup to GitHub" -> kernel runs `git remote add`.
+- [x] T222 [US14] Add `sync_files` IPC tool -- kernel can commit, push, pull, add/remove remotes, check status. User says "sync my files" -> kernel uses tool directly.
 
 - [ ] T223 [P] [US14] Implement conflict resolution -- on pull conflict, kernel reads conflict markers, makes a decision, commits resolution. Falls back to manual if unsure.
 
