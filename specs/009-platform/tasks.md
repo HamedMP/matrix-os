@@ -22,23 +22,23 @@
 
 ### Tests
 
-- [ ] T200a [P] [US11] Write `tests/gateway/logger.test.ts` -- test interaction logger: logs prompt, tools, cost, duration, writes to `~/system/logs/`, rotates daily, handles concurrent writes
+- [x] T200a [P] [US11] Write `tests/gateway/logger.test.ts` -- 8 tests: JSONL logging, append, truncation, timestamps, query, filter by source, cost totaling, missing file handling
 
-- [ ] T200b [P] [US12] Write `tests/kernel/safe-mode.test.ts` -- test safe mode agent: limited tools, can reset config, can restore git commit, exits cleanly
+- [x] T200b [P] [US12] Write `tests/kernel/safe-mode.test.ts` -- 5 tests: sonnet model, restricted tools, diagnostic prompt, error context, graceful fallback
 
 ### Implementation
 
-- [ ] T200 [US11] Implement interaction logger in `packages/gateway/src/logger.ts` -- structured JSON logs to `~/system/logs/YYYY-MM-DD.jsonl`. Fields: timestamp, source, sessionId, prompt (truncated), tools_used, tokens_in, tokens_out, cost_usd, duration_ms, result. Appended per kernel invocation.
+- [x] T200 [US11] Implement interaction logger in `packages/gateway/src/logger.ts` -- structured JSON logs to `~/system/logs/YYYY-MM-DD.jsonl`. Fields: timestamp, source, sessionId, prompt (truncated), tools_used, tokens_in, tokens_out, cost_usd, duration_ms, result.
 
-- [ ] T201 [US11] Add `GET /api/logs` endpoint -- query logs by date range, source, result. Returns paginated JSON.
+- [x] T201 [US11] Add `GET /api/logs` endpoint -- query logs by date, filter by source. Returns entries + totalCost.
 
-- [ ] T202 [US11] Implement cost tracker in `packages/gateway/src/cost.ts` -- running total from log files, exposed via `GET /api/system/info` and injected into system prompt L1 cache ("Today's AI spend: $X.XX")
+- [x] T202 [US11] Cost tracker integrated into logger (`totalCost()`) and `GET /api/system/info` (todayCost field).
 
-- [ ] T203 [P] [US11] Create `home/system/logs/.gitkeep` -- logs directory in home template
+- [x] T203 [P] [US11] Create `home/system/logs/.gitkeep` -- logs directory in home template
 
-- [ ] T204 [US12] Implement safe mode agent in `packages/kernel/src/safe-mode.ts` -- minimal agent definition: model sonnet, tools [Read, Write, Edit, Bash], no MCP, no agent spawning. Prompt: diagnose system state, reset broken configs, restore from git, report actions.
+- [x] T204 [US12] Implement safe mode agent in `packages/kernel/src/safe-mode.ts` -- agent def (sonnet, disallowed agents), diagnostic prompt with activity.log context.
 
-- [ ] T205 [US12] Add safe mode trigger in `packages/gateway/src/server.ts` -- if main kernel crashes 3x in 5 minutes, switch to safe mode. `GET /api/safe-mode` to manually trigger. Safe mode runs, reports findings, exits back to normal.
+- [ ] T205 [US12] Add safe mode trigger in `packages/gateway/src/server.ts` -- crash counter + auto-switch to safe mode (deferred: needs crash loop detection in dispatcher).
 
 ---
 

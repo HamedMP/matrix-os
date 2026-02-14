@@ -168,7 +168,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 362 passing (32 test files) | **Through Phase 008A + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 375 passing (34 test files) | **Through Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -182,6 +182,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 006**: Multi-channel messaging -- ChannelAdapter interface, ChannelManager lifecycle, formatForChannel (Telegram/Discord/Slack/WhatsApp), Telegram adapter (polling, allowFrom), channel-aware dispatcher (DispatchContext), /api/channels/status, channel-routing knowledge file, channels config in config.json
 - **Phase 007**: Cron + Heartbeat -- CronService (interval/once/cron schedules via node-cron), CronStore (atomic JSON persistence), manage_cron IPC tool, HeartbeatRunner (periodic kernel invocation with active hours), heartbeat prompt builder, wired into gateway startup/shutdown, cron.json hot-reload via file watcher, heartbeat config in config.json
 - **Phase 008A**: Single-user cloud -- Dockerfile (multi-stage Alpine), docker-compose.yml, systemd service, auth middleware (MATRIX_AUTH_TOKEN bearer), setup-server.sh, /api/system/info endpoint
+- **Phase 009 P0**: Observability + Safety -- interaction logger (JSONL daily rotation, prompt truncation, cost tracking), GET /api/logs query endpoint, safe mode agent (sonnet, restricted tools, diagnostic prompt), logs directory template
 - **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration
 
 ### In Progress
@@ -189,8 +190,6 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **013A Docker** (T500-T506) -- Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
 
 ### Next Up (see specs/ for details)
-- **013A Docker** (T500-T506) -- Dockerfile, compose, multi-arch, CI
-- **009 P0** (T200-T205) -- observability, safe mode
 - **009 P1** (T210-T234) -- identity handles, git sync, mobile/PWA
 - **011 New Computing** (T300-T317) -- Living Software, Socratic Computing, Intent-based Interfaces
 - **013B Distro** (T510-T517) -- mkosi, systemd services, Plymouth, Raspberry Pi

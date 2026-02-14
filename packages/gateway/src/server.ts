@@ -30,6 +30,7 @@ import {
 import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
 import { getSystemInfo } from "./system-info.js";
+import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -252,6 +253,8 @@ export function createGateway(config: GatewayConfig) {
     activeHours: heartbeatConfig.activeHours,
   });
   proactiveHeartbeat.start();
+
+  const interactionLogger: InteractionLogger = createInteractionLogger(homePath);
 
   const provisioner = createProvisioner({
     homePath,
@@ -518,7 +521,18 @@ export function createGateway(config: GatewayConfig) {
     return c.json(channelManager.status());
   });
 
-  app.get("/api/system/info", (c) => c.json(getSystemInfo(homePath)));
+  app.get("/api/logs", (c) => {
+    const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
+    const source = c.req.query("source");
+    const entries = interactionLogger.query({ date, source });
+    return c.json({ entries, totalCost: interactionLogger.totalCost(date) });
+  });
+
+  app.get("/api/system/info", (c) => {
+    const info = getSystemInfo(homePath);
+    const today = new Date().toISOString().slice(0, 10);
+    return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
+  });
 
   app.get("/health", (c) => c.json({
     status: "ok",

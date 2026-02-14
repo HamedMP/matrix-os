@@ -43,3 +43,4 @@ export type {
   PersonalityConfig,
   PersonaSuggestions,
 } from "./onboarding.js";
+export { buildSafeModePrompt, safeModeAgentDef } from "./safe-mode.js";

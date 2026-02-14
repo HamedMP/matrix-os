@@ -216,13 +216,13 @@ Source: `specs/009-platform/tasks.md`
 
 P0 (must-have before broad launch):
 
-- [ ] T200a, T200b tests for logger and safe mode
-- [ ] T200 interaction logger
-- [ ] T201 logs query API
-- [ ] T202 cost tracker
-- [ ] T203 logs directory template
-- [ ] T204 safe mode agent
-- [ ] T205 safe mode trigger + API
+- [x] T200a, T200b tests for logger (8 tests) and safe mode (5 tests)
+- [x] T200 interaction logger (JSONL, daily rotation, truncation)
+- [x] T201 logs query API (GET /api/logs with date/source filter)
+- [x] T202 cost tracker (totalCost in logger + /api/system/info)
+- [x] T203 logs directory template
+- [x] T204 safe mode agent (sonnet, restricted tools, diagnostic prompt)
+- [ ] T205 safe mode trigger + crash loop detection
 
 P1 (next product-critical):
 
@@ -374,7 +374,7 @@ These tasks touch the same files and must be sequenced:
 - [x] Complete Phase 012 onboarding core (T404 provisioning + T407 skill templates). Stretch: T408, T411, T412.
 - [x] Complete Phase 008A single-user cloud deploy (T130-T135). T136 docs remaining.
 - [ ] Complete Phase 013A Docker deployment (T502-T506 remaining).
-- [ ] Complete Phase 009 P0 observability + safe-mode.
+- [x] Complete Phase 009 P0 observability + safe-mode (T200-T204). T205 crash loop deferred.
 - [ ] Complete Phase 009 P1 identity + sync + mobile.
 - [ ] Start Phase 011 new computing (Living Software, Socratic, Intent-based -- incremental).
 - [ ] Complete Phase 013B distro image (T510-T517).

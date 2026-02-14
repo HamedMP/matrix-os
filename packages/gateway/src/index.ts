@@ -26,3 +26,8 @@ export type { CronJob, CronSchedule, CronTarget } from "./cron/types.js";
 export { createHeartbeatRunner } from "./heartbeat/runner.js";
 export type { HeartbeatRunner, HeartbeatConfig } from "./heartbeat/runner.js";
 export { buildHeartbeatPrompt } from "./heartbeat/prompt.js";
+export { createInteractionLogger } from "./logger.js";
+export type { InteractionLogger, InteractionEntry, InteractionInput } from "./logger.js";
+export { authMiddleware } from "./auth.js";
+export { getSystemInfo } from "./system-info.js";
+export type { SystemInfo } from "./system-info.js";
