@@ -12,17 +12,17 @@
 
 ## Part A: Single-User Cloud (T130-T136)
 
-- [ ] T130 [US10] Create `Dockerfile` -- multi-stage build: install deps with pnpm, build gateway + shell, copy home template. Single `CMD` starts gateway. Exposes port 4000.
+- [x] T130 [US10] Create `Dockerfile` -- multi-stage build: install deps with pnpm, build gateway + shell, copy home template. Single `CMD` starts gateway. Exposes port 4000.
 
-- [ ] T131 [P] [US10] Create `docker-compose.yml` -- gateway service, volume mount for `~/matrixos/` persistence, environment variables for API keys and channel tokens
+- [x] T131 [P] [US10] Create `docker-compose.yml` -- gateway service, volume mount for `~/matrixos/` persistence, environment variables for API keys and channel tokens
 
-- [ ] T132 [P] [US10] Create `scripts/matrixos.service` -- systemd unit file for bare-metal/VM
+- [x] T132 [P] [US10] Create `scripts/matrixos.service` -- systemd unit file for bare-metal/VM
 
-- [ ] T133 [US10] Add auth token middleware to gateway in `packages/gateway/src/server.ts` -- `MATRIX_AUTH_TOKEN` env var, all HTTP/WebSocket require `Authorization: Bearer <token>`, channels exempt
+- [x] T133 [US10] Add auth token middleware to gateway in `packages/gateway/src/auth.ts` -- `MATRIX_AUTH_TOKEN` env var, all HTTP/WebSocket require `Authorization: Bearer <token>`, /health exempt. 8 tests.
 
-- [ ] T134 [P] [US10] Create `scripts/setup-server.sh` -- installs Node.js 22, pnpm, clones repo, builds
+- [x] T134 [P] [US10] Create `scripts/setup-server.sh` -- installs Node.js 22, pnpm, clones repo, builds
 
-- [ ] T135 [P] [US10] Add `GET /api/system/info` endpoint -- OS version, uptime, connected channels, active modules, disk usage
+- [x] T135 [P] [US10] Add `GET /api/system/info` endpoint -- OS version, uptime, connected channels, active modules, skills count. 5 tests.
 
 - [ ] T136 [US10] Write deployment docs in `docs/deployment.md`
 

@@ -168,7 +168,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 349 passing (30 test files) | **Through Phase 007 + Phase 004 + Phase 012 partial**
+**Tests**: 362 passing (32 test files) | **Through Phase 008A + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -181,13 +181,14 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 005**: SOUL identity system (soul.md, identity.md, user.md, bootstrap.md), skills system (loadSkills, buildSkillsToc, load_skill IPC tool, 4 starter skills), agent prompt files in home/agents/custom/, createGitSnapshotHook, estimateTokens
 - **Phase 006**: Multi-channel messaging -- ChannelAdapter interface, ChannelManager lifecycle, formatForChannel (Telegram/Discord/Slack/WhatsApp), Telegram adapter (polling, allowFrom), channel-aware dispatcher (DispatchContext), /api/channels/status, channel-routing knowledge file, channels config in config.json
 - **Phase 007**: Cron + Heartbeat -- CronService (interval/once/cron schedules via node-cron), CronStore (atomic JSON persistence), manage_cron IPC tool, HeartbeatRunner (periodic kernel invocation with active hours), heartbeat prompt builder, wired into gateway startup/shutdown, cron.json hot-reload via file watcher, heartbeat config in config.json
-- **Phase 012 (partial)**: Onboarding persona engine -- getPersonaSuggestions (7 roles + keyword matching + defaults), parseSetupPlan/writeSetupPlan (Zod schema), IPC tools (get_persona_suggestions, write_setup_plan), bootstrap.md conversation flow, user.md role field, onboarding progress in system prompt
+- **Phase 008A**: Single-user cloud -- Dockerfile (multi-stage Alpine), docker-compose.yml, systemd service, auth middleware (MATRIX_AUTH_TOKEN bearer), setup-server.sh, /api/system/info endpoint
+- **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration
 
 ### In Progress
-- **012 Onboarding** (T400-T412) -- core complete (persona engine, provisioning pipeline with batch dispatch + kanban task board, skill templates). Stretch: T408 shell chips, T411 welcome tour, T412 re-onboarding
+- **012 Onboarding** (T400-T412) -- core complete. Stretch: T408 shell chips, T411 welcome tour, T412 re-onboarding
+- **013A Docker** (T500-T506) -- Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
 
 ### Next Up (see specs/ for details)
-- **008A Cloud** (T130-T136) -- Dockerfile, systemd, auth, setup script
 - **013A Docker** (T500-T506) -- Dockerfile, compose, multi-arch, CI
 - **009 P0** (T200-T205) -- observability, safe mode
 - **009 P1** (T210-T234) -- identity handles, git sync, mobile/PWA

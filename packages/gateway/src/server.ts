@@ -28,6 +28,8 @@ import {
   type KernelEvent,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
+import { authMiddleware } from "./auth.js";
+import { getSystemInfo } from "./system-info.js";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -271,6 +273,7 @@ export function createGateway(config: GatewayConfig) {
   });
 
   app.use("*", cors());
+  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
   app.get(
     "/ws",
@@ -514,6 +517,8 @@ export function createGateway(config: GatewayConfig) {
   app.get("/api/channels/status", (c) => {
     return c.json(channelManager.status());
   });
+
+  app.get("/api/system/info", (c) => c.json(getSystemInfo(homePath)));
 
   app.get("/health", (c) => c.json({
     status: "ok",

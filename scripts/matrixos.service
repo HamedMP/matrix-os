@@ -1,0 +1,19 @@
+[Unit]
+Description=Matrix OS Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=matrixos
+WorkingDirectory=/opt/matrixos
+ExecStart=/usr/bin/node --import=tsx packages/gateway/src/main.ts
+Restart=on-failure
+RestartSec=5
+
+Environment=NODE_ENV=production
+Environment=PORT=4000
+Environment=MATRIX_HOME=/home/matrixos/matrixos
+EnvironmentFile=-/etc/matrixos/env
+
+[Install]
+WantedBy=multi-user.target

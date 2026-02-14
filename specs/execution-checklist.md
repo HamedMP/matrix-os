@@ -25,10 +25,12 @@ No implementation is included in this document.
 **005**: Complete (T100-T105, T100d-T100j). 245 tests after phase.
 **006**: Telegram path done (T106-T112, T117, T119). WhatsApp/Discord/Slack deferred. 292 tests after phase.
 **007**: Complete (T120-T129). Cron service + heartbeat runner + IPC tool. 349 tests after phase.
-**008-010**: Not started. See sections below.
+**008A**: T130-T135 done. T136 (deployment docs) remaining. 362 tests after phase.
+**008B-010**: Not started. See sections below.
 **011**: Spec written. Not started.
 **012**: Core complete (T400-T407, T404a-T404i). Remaining: T408 shell chips, T411 welcome tour, T412 re-onboarding (stretch).
-**013**: Spec + scaffolding. Not started.
+**013A**: T500 (Dockerfile) + T501 (compose) done (shared with 008A T130/T131). User working on additional distro scaffolding.
+**013B**: Not started.
 
 ## Critical Fixes (from 2026-02-13 audit)
 
@@ -164,12 +166,12 @@ Checkpoint:
 
 Source: `specs/008-cloud/tasks.md` (Part A)
 
-- [ ] T130 `Dockerfile`
-- [ ] T131 `docker-compose.yml`
-- [ ] T132 `scripts/matrixos.service`
-- [ ] T133 gateway auth token middleware
-- [ ] T134 `scripts/setup-server.sh`
-- [ ] T135 `/api/system/info` endpoint
+- [x] T130 `Dockerfile` (multi-stage, Alpine, native addons)
+- [x] T131 `docker-compose.yml` (volume, env, healthcheck)
+- [x] T132 `scripts/matrixos.service` (systemd unit)
+- [x] T133 `packages/gateway/src/auth.ts` (bearer token middleware, 8 tests)
+- [x] T134 `scripts/setup-server.sh` (Node 22, pnpm, systemd)
+- [x] T135 `packages/gateway/src/system-info.ts` + endpoint (5 tests)
 - [ ] T136 `docs/deployment.md`
 
 Checkpoint:
@@ -322,8 +324,8 @@ Source: `specs/013-distro/tasks.md`
 
 Phase A (Docker):
 
-- [ ] T500 Dockerfile (multi-stage build)
-- [ ] T501 docker-compose.yml
+- [x] T500 Dockerfile (multi-stage build) -- shared with T130
+- [x] T501 docker-compose.yml -- shared with T131
 - [ ] T502 multi-arch build
 - [ ] T503 container networking
 - [ ] T504 idle/wake lifecycle
@@ -370,8 +372,8 @@ These tasks touch the same files and must be sequenced:
 - [x] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
 - [x] Complete Phase 007 cron + heartbeat end-to-end.
 - [x] Complete Phase 012 onboarding core (T404 provisioning + T407 skill templates). Stretch: T408, T411, T412.
-- [ ] Complete Phase 008A single-user cloud deploy path (includes T133 auth).
-- [ ] Complete Phase 013A Docker deployment (T500-T506).
+- [x] Complete Phase 008A single-user cloud deploy (T130-T135). T136 docs remaining.
+- [ ] Complete Phase 013A Docker deployment (T502-T506 remaining).
 - [ ] Complete Phase 009 P0 observability + safe-mode.
 - [ ] Complete Phase 009 P1 identity + sync + mobile.
 - [ ] Start Phase 011 new computing (Living Software, Socratic, Intent-based -- incremental).
