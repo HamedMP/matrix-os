@@ -311,6 +311,7 @@ Phase D-G (stretch):
 
 - [x] T407 skill templates (study-timer.md, budget-helper.md, enhanced reminder.md)
 - [x] T408-T409 shell UX (role chips in SuggestionChips, task board in dock overlay)
+- [x] T408b Mission Control redesign: kanban/grid toggle, cron jobs section (GET /api/cron), add task (POST /api/tasks), AppTile grid, TaskDetail panel, zustand preferences, ui:cards/ui:options/ui:status blocks
 - [ ] T410 parallel builds (needs T054)
 - [x] T411-T412 welcome tour (role-specific first actions) + re-onboarding (setup-wizard.md skill)
 

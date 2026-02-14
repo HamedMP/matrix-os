@@ -157,6 +157,8 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
                   |-- /api/conversations  Conversation list metadata
                   |-- /api/layout   GET/PUT window layout persistence
                   |-- /api/bridge/data    App data read/write (scoped to ~/data/{appName}/)
+                  |-- /api/cron     GET cron job list
+                  |-- /api/tasks    GET list + POST create tasks
                   |-- /health       Health check
                   |
                   |-- ChannelManager  (starts/stops channel adapters)
@@ -168,7 +170,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 380 passing (35 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 425 passing (38 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -184,14 +186,13 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 008A**: Single-user cloud -- Dockerfile (multi-stage Alpine), docker-compose.yml, systemd service, auth middleware (MATRIX_AUTH_TOKEN bearer), setup-server.sh, /api/system/info endpoint
 - **Phase 009 P0**: Observability + Safety -- interaction logger (JSONL daily rotation, prompt truncation, cost tracking), GET /api/logs query endpoint, safe mode agent (sonnet, restricted tools, diagnostic prompt), logs directory template
 - **Phase 009 P1 Identity**: Handle registry (handle.json), loadHandle/saveIdentity/deriveAiHandle, profile.md + ai-profile.md templates, handle injection into system prompt, GET /api/profile + /api/ai-profile endpoints
-- **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration
+- **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration, Mission Control (kanban/grid toggle, cron section, add task, AppTile, TaskDetail, ui:cards/ui:options/ui:status blocks, zustand preferences)
+- **Phase 009 P1 Sync+Mobile**: Git sync (auto-sync, sync_files IPC tool), mobile responsive shell, PWA manifest
 
 ### In Progress
-- **012 Onboarding** (T400-T412) -- core complete. Stretch: T408 shell chips, T411 welcome tour, T412 re-onboarding
 - **013A Docker** (T500-T506) -- Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
 
 ### Next Up (see specs/ for details)
-- **009 P1** (T210-T234) -- identity handles, git sync, mobile/PWA
 - **011 New Computing** (T300-T317) -- Living Software, Socratic Computing, Intent-based Interfaces
 - **013B Distro** (T510-T517) -- mkosi, systemd services, Plymouth, Raspberry Pi
 - **008B Multi-Tenant** (T140-T159) -- platform service, container orchestration
@@ -199,7 +200,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ### Deferred (lower priority within completed phases)
 - **006**: WhatsApp (T113-T114), Discord (T115), Slack (T116) adapters, shell status indicators (T118)
-- **012**: Shell UX (T408-T409), parallel builds (T410), welcome tour (T411), re-onboarding (T412)
+- **012**: Parallel builds (T410)
 
 ## Shell Patterns
 

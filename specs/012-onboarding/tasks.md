@@ -63,6 +63,8 @@
 
 - [x] T409 [US8] Superseded by T404h/T404i -- Kanban task board in dock overlay replaces simple progress indicator. Real-time task cards show build progress per app.
 
+- [x] T408b [US8] Mission Control redesign -- replaces TaskBoard with full Mission Control overlay: kanban/grid view toggle (zustand-persisted preference), cron jobs section (GET /api/cron), inline add-task input (POST /api/tasks), AppTile grid, TaskDetail panel, clickable TaskCard with timestamps. UI blocks system: ui:cards, ui:options, ui:status blocks parsed from assistant markdown and rendered as interactive components in ChatPanel, ResponseOverlay. ResponseOverlay shows full conversation. bootstrap.md uses ui:cards for role selection.
+
 ### Phase G: Post-Onboarding
 
 - [x] T411 [US8] Implement welcome tour logic in bootstrap.md -- role-specific first actions after provisioning (e.g., "Try adding your Monday classes to the Study Planner" for students). Mentions remaining apps without overwhelming.
