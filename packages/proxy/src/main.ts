@@ -9,8 +9,56 @@ const PORT = Number(process.env.PROXY_PORT ?? 8080);
 
 const app = new Hono();
 
+// Instance registry (in-memory -- instances register on startup)
+interface Instance {
+  handle: string;
+  gatewayUrl: string;
+  shellPort: number;
+  registeredAt: string;
+  lastSeen: string;
+}
+const instances = new Map<string, Instance>();
+
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }));
+
+// Instance management
+app.post('/instances/register', async (c) => {
+  const body = await c.req.json<{ handle: string; gatewayUrl: string; shellPort: number }>();
+  instances.set(body.handle, {
+    handle: body.handle,
+    gatewayUrl: body.gatewayUrl,
+    shellPort: body.shellPort,
+    registeredAt: new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+  });
+  return c.json({ ok: true, instances: instances.size });
+});
+
+app.get('/instances', (c) => {
+  return c.json([...instances.values()]);
+});
+
+app.delete('/instances/:handle', (c) => {
+  instances.delete(c.req.param('handle'));
+  return c.json({ ok: true });
+});
+
+// Cross-instance messaging: proxy routes message to target instance's gateway
+app.post('/send/:targetHandle', async (c) => {
+  const target = instances.get(c.req.param('targetHandle'));
+  if (!target) return c.json({ error: 'Instance not found' }, 404);
+
+  const body = await c.req.json<{ text: string; from: { handle: string; displayName?: string } }>();
+
+  const resp = await fetch(`${target.gatewayUrl}/api/message`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: body.text, from: body.from }),
+  });
+
+  return c.json(await resp.json(), resp.status as any);
+});
 
 // Usage endpoints
 app.get('/usage/:userId', (c) => {

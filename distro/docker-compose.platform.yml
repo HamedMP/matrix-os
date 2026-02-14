@@ -1,0 +1,80 @@
+# Production multi-tenant platform
+# Usage: docker compose -f distro/docker-compose.platform.yml up -d
+#
+# Prerequisites:
+#   - Cloudflare tunnel created: cloudflared tunnel create matrix-os
+#   - Credentials at /etc/cloudflared/credentials.json
+#   - DNS: CNAME *.matrix-os.com -> <tunnel-id>.cfargotunnel.com
+#   - DNS: CNAME api.matrix-os.com -> <tunnel-id>.cfargotunnel.com
+#
+# User containers are created dynamically by the platform orchestrator
+# via dockerode -- they are NOT defined in this compose file.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    volumes:
+      - ./cloudflared.yml:/etc/cloudflared/config.yml:ro
+      - cloudflared-creds:/etc/cloudflared
+    depends_on:
+      platform:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - matrixos-net
+
+  platform:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["node", "--import=tsx", "packages/platform/src/main.ts"]
+    environment:
+      - PLATFORM_PORT=9000
+      - PLATFORM_DB_PATH=/data/platform.db
+      - PLATFORM_SECRET=${PLATFORM_SECRET}
+    ports:
+      - "9000:9000"
+    volumes:
+      - platform-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - user-data:/data/users
+    healthcheck:
+      test: wget -qO- http://localhost:9000/health || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - matrixos-net
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["node", "--import=tsx", "packages/proxy/src/main.ts"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PROXY_PORT=8080
+      - PROXY_DB_PATH=/data/proxy.db
+    ports:
+      - "8080:8080"
+    volumes:
+      - proxy-data:/data
+    healthcheck:
+      test: wget -qO- http://localhost:8080/health || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - matrixos-net
+
+volumes:
+  cloudflared-creds:
+  platform-data:
+  proxy-data:
+  user-data:
+
+networks:
+  matrixos-net:

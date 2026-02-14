@@ -1,0 +1,9 @@
+tunnel: matrix-os
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: api.matrix-os.com
+    service: http://localhost:9000
+  - hostname: "*.matrix-os.com"
+    service: http://localhost:9000
+  - service: http_status:404

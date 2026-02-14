@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { createDispatcher, type Dispatcher, type BatchEntry } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
@@ -373,12 +373,20 @@ export function createGateway(config: GatewayConfig) {
   );
 
   app.post("/api/message", async (c) => {
-    const body = await c.req.json<{ text: string; sessionId?: string }>();
+    const body = await c.req.json<{
+      text: string;
+      sessionId?: string;
+      from?: { handle: string; displayName?: string };
+    }>();
     const events: KernelEvent[] = [];
+
+    const context: DispatchContext | undefined = body.from
+      ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
+      : undefined;
 
     await dispatcher.dispatch(body.text, body.sessionId, (event) => {
       events.push(event);
-    });
+    }, context);
 
     return c.json({ events });
   });

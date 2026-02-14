@@ -13,6 +13,7 @@
     "dev:shell": "bun run --filter shell dev",
     "dev:www": "bun run --filter www dev",
     "dev:proxy": "bun run --filter '@matrix-os/proxy' dev",
+    "dev:platform": "bun run --filter '@matrix-os/platform' dev",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",

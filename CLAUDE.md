@@ -80,12 +80,16 @@ Key principles:
 ```
 packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
 packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
+packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode)
+packages/proxy/      # Shared API proxy (Hono :8080, usage tracking)
 shell/               # Next.js 16 frontend (desktop shell -- one of many shells)
+www/                 # matrix-os.com (Next.js on Vercel, Clerk auth, Inngest)
 home/                # File system template (copied on first boot)
 tests/               # Vitest test suites
 spike/               # Throwaway SDK experiments
 specs/               # Architecture specs
 docs/                # Reference documentation
+distro/              # Docker, cloudflared, systemd deployment configs
 ```
 
 ## SDK Decisions (Spike-Verified)
@@ -170,7 +174,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 439 passing (39 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 479 passing (44 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -188,6 +192,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 009 P1 Identity**: Handle registry (handle.json), loadHandle/saveIdentity/deriveAiHandle, profile.md + ai-profile.md templates, handle injection into system prompt, GET /api/profile + /api/ai-profile endpoints
 - **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration, Mission Control (kanban/grid toggle, cron section, add task, AppTile, TaskDetail, ui:cards/ui:options/ui:status blocks, zustand preferences), Cmd+K command palette (shadcn CommandDialog, Zustand command registry, global keyboard shortcuts)
 - **Phase 009 P1 Sync+Mobile**: Git sync (auto-sync, sync_files IPC tool), mobile responsive shell, PWA manifest
+- **Phase 008B**: Multi-tenant platform -- platform service (Hono :9000, Drizzle, dockerode orchestrator, lifecycle manager, social API), Clerk auth + Inngest provisioning in www/, admin dashboard, Cloudflare Tunnel + docker-compose.platform.yml
 
 ### In Progress
 - **013A Docker** (T500-T506) -- Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
@@ -195,7 +200,6 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 ### Next Up (see specs/ for details)
 - **011 New Computing** (T300-T317) -- Living Software, Socratic Computing, Intent-based Interfaces
 - **013B Distro** (T510-T517) -- mkosi, systemd services, Plymouth, Raspberry Pi
-- **008B Multi-Tenant** (T140-T159) -- platform service, container orchestration
 - **010 Demo** (T057-T064) -- pre-seed apps, demo script, recording
 
 ### Deferred (lower priority within completed phases)
