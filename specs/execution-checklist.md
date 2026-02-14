@@ -24,7 +24,7 @@ No implementation is included in this document.
 
 These must be addressed before or during the next phases. Task IDs are assigned to the appropriate spec.
 
-- [ ] T053 (004) Serial dispatch queue -- prevents concurrent state corruption. Must be done before 006 (channels).
+- [x] T053 (004) Serial dispatch queue -- prevents concurrent state corruption. Must be done before 006 (channels).
 - [ ] T100i (005) Implement gitSnapshotHook -- self-healing safety net is currently hollow.
 - [ ] T100j (005) System prompt token budgeting -- will exceed 7K as SOUL + skills grow.
 - [ ] T133 (008A) Auth token validation -- MATRIX_AUTH_TOKEN documented but never checked. Already in 008 task list.
@@ -106,8 +106,8 @@ Source: `specs/004-concurrent/tasks.md`. Deferred until after channels -- concur
 
 Pre-requisite (serial queue -- must be done before 006):
 
-- [ ] T053a `tests/gateway/dispatcher-queue.test.ts`
-- [ ] T053 serial dispatch queue in `dispatcher.ts` (FIFO mutex, no parallelism)
+- [x] T053a `tests/gateway/dispatcher-queue.test.ts`
+- [x] T053 serial dispatch queue in `dispatcher.ts` (FIFO mutex, no parallelism)
 
 Full concurrent dispatch (after 006):
 
@@ -288,7 +288,7 @@ These tasks touch the same files and must be sequenced:
 
 ## 13) Execution Order Checklist (No Timeline)
 
-- [ ] T053 serial dispatch queue (critical fix, before channels).
+- [x] T053 serial dispatch queue (critical fix, before channels).
 - [ ] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
 - [ ] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
 - [ ] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).

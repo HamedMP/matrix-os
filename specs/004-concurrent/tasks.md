@@ -11,8 +11,8 @@
 
 This task must be completed BEFORE Phase 006 (channels). Without it, web shell + Telegram + cron can all call `dispatcher.dispatch()` simultaneously, corrupting home directory state.
 
-- [ ] T053a [P] [US5] Write `tests/gateway/dispatcher-queue.test.ts` -- test: second dispatch waits for first to finish, queue drains in order, errors don't block queue, queue reports length
-- [ ] T053 [US5] Add serial dispatch queue to `packages/gateway/src/dispatcher.ts` -- FIFO queue with mutex. Second `dispatch()` call waits for first to complete before spawning kernel. No parallel execution yet (that's T054). Prevents file corruption from concurrent kernel writes.
+- [x] T053a [P] [US5] Write `tests/gateway/dispatcher-queue.test.ts` -- test: second dispatch waits for first to finish, queue drains in order, errors don't block queue, queue reports length
+- [x] T053 [US5] Add serial dispatch queue to `packages/gateway/src/dispatcher.ts` -- FIFO queue with mutex. Second `dispatch()` call waits for first to complete before spawning kernel. No parallel execution yet (that's T054). Prevents file corruption from concurrent kernel writes.
 
 ## Tests (TDD)
 
