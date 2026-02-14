@@ -5,15 +5,23 @@ import { Badge } from "@/components/ui/badge";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 
-async function getContainerInfo(handle: string) {
+type ContainerResult =
+  | { state: "running" | "stopped"; data: Record<string, unknown> }
+  | { state: "not_provisioned" }
+  | { state: "platform_unavailable" };
+
+async function getContainerInfo(handle: string): Promise<ContainerResult> {
   try {
     const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}`, {
       cache: "no-store",
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      return { state: data.status === "running" ? "running" : "stopped", data };
+    }
+    return { state: "not_provisioned" };
   } catch {
-    return null;
+    return { state: "platform_unavailable" };
   }
 }
 
@@ -22,7 +30,8 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   const handle = user.username ?? user.id;
-  const container = await getContainerInfo(handle);
+  const hasUsername = !!user.username;
+  const result = await getContainerInfo(handle);
 
   return (
     <div className="min-h-screen p-8">
@@ -36,31 +45,43 @@ export default async function DashboardPage() {
           </p>
         </div>
 
+        {!hasUsername && (
+          <Card className="rounded-xl shadow-sm border-warning/30 bg-warning/5">
+            <CardContent className="pt-6">
+              <p className="text-sm text-foreground">
+                <span className="font-medium">Set a username</span> in your account settings to get a clean handle like <span className="font-mono text-primary">@alice:matrix-os.com</span> instead of your user ID.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="rounded-xl shadow-sm">
           <CardHeader>
             <CardTitle>Your Instance</CardTitle>
-            <CardDescription>
-              @{handle}:matrix-os.com
-            </CardDescription>
+            {hasUsername && (
+              <CardDescription>
+                @{handle}:matrix-os.com
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
-            {container ? (
+            {result.state === "running" || result.state === "stopped" ? (
               <>
                 <div className="flex items-center gap-2">
                   <Badge
                     variant="outline"
                     className={
-                      container.status === "running"
+                      result.state === "running"
                         ? "rounded-full border-success/30 bg-success/10 text-success"
                         : "rounded-full border-border bg-muted text-muted-foreground"
                     }
                   >
-                    {container.status}
+                    {result.state}
                   </Badge>
                 </div>
 
                 <p className="text-sm text-muted-foreground">
-                  Last active: {new Date(container.last_active).toLocaleString()}
+                  Last active: {new Date(result.data.last_active as string).toLocaleString()}
                 </p>
 
                 <a
@@ -70,13 +91,22 @@ export default async function DashboardPage() {
                   Open Matrix OS
                 </a>
               </>
+            ) : result.state === "not_provisioned" ? (
+              <div className="space-y-3 py-4 text-center">
+                <p className="text-muted-foreground">
+                  No instance provisioned yet.
+                </p>
+                <p className="text-sm text-muted-foreground/70">
+                  Your instance will be created automatically when the platform is deployed.
+                </p>
+              </div>
             ) : (
               <div className="space-y-3 py-4 text-center">
                 <p className="text-muted-foreground">
-                  Your instance is being provisioned...
+                  Platform service is not available.
                 </p>
                 <p className="text-sm text-muted-foreground/70">
-                  This usually takes about 30 seconds. Refresh to check.
+                  The platform hasn&apos;t been deployed yet. Check back later.
                 </p>
               </div>
             )}
