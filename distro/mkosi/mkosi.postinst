@@ -16,8 +16,17 @@ useradd -m -s /bin/bash user || true
 # mkosi.extra/opt/matrix-os/ -> /opt/matrix-os/
 # This directory should contain the pre-built app (run `pnpm install && next build` first)
 
-# Create env file directory
+# Git defaults
+git config --system init.defaultBranch main
+
+# Create env file with placeholder
 mkdir -p /etc/matrix-os
+cat > /etc/matrix-os/env << 'ENV'
+# Set your Anthropic API key here
+ANTHROPIC_API_KEY=
+MATRIX_HOME=/home/user/matrixos
+NODE_ENV=production
+ENV
 
 # Install systemd services
 cp /opt/matrix-os/distro/systemd/matrix-gateway.service /etc/systemd/system/
@@ -57,5 +66,27 @@ systemctl enable systemd-resolved
 
 # SSH for remote access
 systemctl enable ssh
+
+# First-boot service: initialize home directory
+cat > /etc/systemd/system/matrix-firstboot.service << 'FIRSTBOOT'
+[Unit]
+Description=Matrix OS First Boot Setup
+ConditionPathExists=!/home/user/matrixos/system
+After=network-online.target
+Before=matrix-gateway.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=user
+ExecStart=/bin/bash -c 'cp -r /opt/matrix-os/home/* /home/user/matrixos/ && cd /home/user/matrixos && git init && git add . && git commit -m "Matrix OS: initial state"'
+
+[Install]
+WantedBy=multi-user.target
+FIRSTBOOT
+
+mkdir -p /home/user/matrixos
+chown user:user /home/user/matrixos
+systemctl enable matrix-firstboot.service
 
 echo "Matrix OS image post-install complete"

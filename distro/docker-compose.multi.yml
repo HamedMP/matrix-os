@@ -1,0 +1,49 @@
+# Multi-tenant deployment with API proxy
+# Usage: docker compose -f distro/docker-compose.multi.yml up
+
+services:
+  proxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["node", "--import=tsx", "packages/proxy/src/main.ts"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PROXY_PORT=8080
+      - PROXY_DB_PATH=/data/proxy.db
+    ports:
+      - "8080:8080"
+    volumes:
+      - proxy-data:/data
+    networks:
+      - matrixos-net
+    healthcheck:
+      test: wget -qO- http://localhost:8080/health || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+
+  matrixos:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      - ANTHROPIC_BASE_URL=http://proxy:8080
+      - MATRIX_AUTH_TOKEN=${MATRIX_AUTH_TOKEN:-}
+    ports:
+      - "3000:3000"
+      - "4000:4000"
+    volumes:
+      - matrixos-home:/home/matrixos/home
+    networks:
+      - matrixos-net
+    depends_on:
+      proxy:
+        condition: service_healthy
+
+volumes:
+  proxy-data:
+  matrixos-home:
+
+networks:
+  matrixos-net:

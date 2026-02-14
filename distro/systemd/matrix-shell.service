@@ -10,7 +10,8 @@ Environment=NODE_ENV=production
 Environment=GATEWAY_URL=http://localhost:4000
 Environment=NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
 Environment=NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
-ExecStart=/usr/bin/node node_modules/.bin/next start -p 3000
+EnvironmentFile=-/etc/matrix-os/env
+ExecStart=/usr/bin/node ../node_modules/next/dist/bin/next start -p 3000
 Restart=always
 RestartSec=3
 StandardOutput=journal

@@ -1,0 +1,40 @@
+#!/bin/bash
+set -e
+
+# mkosi.build -- prepares the application for inclusion in the image.
+# Run from the repo root BEFORE `mkosi build`.
+#
+# Usage:
+#   cd distro/mkosi && bash mkosi.build
+#   sudo mkosi build
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+EXTRA="$(dirname "$0")/mkosi.extra"
+
+echo "Building Matrix OS for mkosi image..."
+
+# Clean previous build artifacts
+rm -rf "$EXTRA/opt/matrix-os"
+mkdir -p "$EXTRA/opt/matrix-os"
+
+# Install and build
+cd "$REPO_ROOT"
+pnpm install --frozen-lockfile
+cd shell && npx next build && cd ..
+
+# Copy built application (exclude dev artifacts)
+rsync -a \
+  --exclude=node_modules \
+  --exclude=.git \
+  --exclude=tests \
+  --exclude=specs \
+  --exclude=docs \
+  --exclude=spike \
+  --exclude='distro/mkosi/mkosi.extra' \
+  . "$EXTRA/opt/matrix-os/"
+
+# Production-only dependencies
+cd "$EXTRA/opt/matrix-os"
+pnpm install --prod --frozen-lockfile
+
+echo "Build complete. Run: cd distro/mkosi && sudo mkosi build"
