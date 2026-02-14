@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { AdminDashboard } from "./admin-dashboard";
 
@@ -17,9 +17,11 @@ async function getContainers() {
 }
 
 export default async function AdminPage() {
-  const { sessionClaims } = await auth();
+  const user = await currentUser();
+  if (!user) redirect("/login");
 
-  if (sessionClaims?.metadata?.role !== "admin") {
+  const metadata = user.publicMetadata as Record<string, unknown>;
+  if (metadata?.role !== "admin") {
     redirect("/dashboard");
   }
 
