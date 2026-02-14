@@ -77,7 +77,7 @@ export function ChatPanel({
   onClose,
 }: ChatPanelProps) {
   return (
-    <aside className="flex w-[360px] flex-col border-l border-border bg-card">
+    <aside className="flex w-full fixed inset-0 z-50 md:static md:inset-auto md:z-auto md:w-[360px] flex-col border-l border-border bg-card">
       <header className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">History</span>

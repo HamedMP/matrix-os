@@ -34,14 +34,14 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
       {chips}
       <form
         onSubmit={handleSubmit}
-        className="flex w-full max-w-[560px] items-center gap-2 rounded-xl border border-border bg-card/90 px-3 py-2 shadow-lg backdrop-blur-sm"
+        className="flex w-full max-w-full md:max-w-[560px] items-center gap-2 rounded-xl border border-border bg-card/90 px-3 py-2 shadow-lg backdrop-blur-sm"
       >
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={connected ? "Ask Matrix OS..." : "Connecting..."}
           disabled={!connected}
-          className="border-0 bg-transparent shadow-none focus-visible:ring-0"
+          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-base md:text-sm"
         />
         {queueLength > 0 && (
           <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -52,19 +52,19 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
           type="button"
           size="icon"
           variant="ghost"
-          className="size-8 text-muted-foreground"
+          className="size-10 md:size-8 text-muted-foreground"
           disabled
           title="Voice input (coming soon)"
         >
-          <MicIcon className="size-4" />
+          <MicIcon className="size-5 md:size-4" />
         </Button>
         <Button
           type="submit"
           size="icon"
-          className="size-8"
+          className="size-10 md:size-8"
           disabled={!connected || !input.trim()}
         >
-          <SendIcon className="size-4" />
+          <SendIcon className="size-5 md:size-4" />
         </Button>
       </form>
     </div>

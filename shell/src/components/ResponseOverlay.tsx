@@ -130,12 +130,12 @@ export function ResponseOverlay({
 
   return (
     <div
-      className="fixed z-40 animate-in fade-in slide-in-from-bottom-2 rounded-xl border border-border bg-card/95 shadow-lg backdrop-blur-sm"
+      className="response-overlay fixed z-40 animate-in fade-in slide-in-from-bottom-2 rounded-xl border border-border bg-card/95 shadow-lg backdrop-blur-sm"
       style={{
-        left: currentPos.x,
-        top: currentPos.y,
-        width: size.width,
-      }}
+        "--ro-x": `${currentPos.x}px`,
+        "--ro-y": `${currentPos.y}px`,
+        "--ro-w": `${size.width}px`,
+      } as React.CSSProperties}
     >
       <div
         className="flex items-center justify-between px-3 py-1.5 border-b border-border/50 cursor-grab active:cursor-grabbing select-none"

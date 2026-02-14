@@ -135,3 +135,33 @@ pre {
     @apply bg-background text-foreground;
   }
 }
+
+/* App windows: full-screen on mobile, positioned on desktop */
+.app-window {
+  inset: 0;
+}
+
+@media (min-width: 768px) {
+  .app-window {
+    inset: auto;
+    left: var(--win-x);
+    top: var(--win-y);
+    width: var(--win-w);
+    height: var(--win-h);
+  }
+}
+
+/* Response overlay: full-width on mobile, positioned on desktop */
+.response-overlay {
+  left: 0.5rem;
+  right: 0.5rem;
+  top: var(--ro-y);
+}
+
+@media (min-width: 768px) {
+  .response-overlay {
+    left: var(--ro-x);
+    right: auto;
+    width: var(--ro-w);
+  }
+}

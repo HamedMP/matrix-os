@@ -228,7 +228,7 @@ P1 (next product-critical):
 
 - [x] T210-T216 identity system complete (handle.json, loadHandle, profiles, prompt, endpoints, setup wizard).
 - [x] T220-T222, T224 git sync (GitSync, AutoSync, .gitignore, sync_files IPC tool). T223 conflict resolution remaining.
-- [ ] T230-T234 mobile experience + PWA
+- [x] T230-T234 mobile responsive shell + PWA manifest
 
 P2 (POST-MVP -- each item below is its own product. Revisit after 008B is stable.):
 

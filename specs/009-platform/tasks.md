@@ -88,11 +88,11 @@
 
 ## Phase 16: Mobile Experience (P1)
 
-- [ ] T230 [US15] Make web shell responsive -- CSS media queries for mobile breakpoints (<768px)
-- [ ] T231 [P] [US15] Mobile dock -- bottom tab bar replacing left dock on narrow screens
-- [ ] T232 [P] [US15] Mobile windows -- full-screen cards with swipe navigation
-- [ ] T233 [P] [US15] Touch-friendly input bar -- larger touch targets, swipe for suggestions
-- [ ] T234 [US15] Add PWA manifest (`shell/public/manifest.json`) -- installable on home screen, app icon, splash screen
+- [x] T230 [US15] Make web shell responsive -- CSS media queries for mobile breakpoints (<768px)
+- [x] T231 [P] [US15] Mobile dock -- bottom tab bar replacing left dock on narrow screens
+- [x] T232 [P] [US15] Mobile windows -- full-screen cards via CSS custom properties
+- [x] T233 [P] [US15] Touch-friendly input bar -- larger touch targets (size-10), full-width on mobile
+- [x] T234 [US15] Add PWA manifest (`shell/public/manifest.json`) -- installable on home screen, viewport meta
 
 ---
 

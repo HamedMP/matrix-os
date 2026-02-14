@@ -41,17 +41,17 @@ export default function Home() {
   );
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      <div className="flex flex-1 flex-col min-w-0">
+    <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
+      <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
           <Desktop />
 
-          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4">
+          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2 md:p-4">
             <div className="flex justify-end">
               <ThoughtCard />
             </div>
 
-            <div className="pointer-events-auto flex justify-center pb-2">
+            <div className="pointer-events-auto flex justify-center pb-2 md:pb-2">
               <InputBar
                 sessionId={chat.sessionId}
                 busy={chat.busy}
@@ -68,7 +68,9 @@ export default function Home() {
           </div>
         </div>
 
-        <BottomPanel />
+        <div className="hidden md:block">
+          <BottomPanel />
+        </div>
       </div>
 
       {sidebarOpen ? (

@@ -436,9 +436,10 @@ export function Desktop() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="relative flex-1 flex">
+      <div className="relative flex-1 flex flex-col md:flex-row">
+        {/* Desktop dock (left sidebar) */}
         <aside
-          className="flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm"
+          className="hidden md:flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm"
           style={{ width: DOCK_WIDTH }}
         >
           <Tooltip>
@@ -478,10 +479,44 @@ export function Desktop() {
           })}
         </aside>
 
-        <div className="relative flex-1">
+        {/* Mobile dock (bottom tab bar) */}
+        {apps.length > 0 && (
+          <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto">
+            <button
+              onClick={() => setTaskBoardOpen((prev) => !prev)}
+              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                taskBoardOpen
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border/60"
+              }`}
+            >
+              <KanbanSquareIcon className="size-4" />
+            </button>
+            {apps.map((app) => {
+              const win = windows.find(
+                (w) => w.path === app.path && !w.minimized,
+              );
+              return (
+                <button
+                  key={app.path}
+                  onClick={() => openWindow(app.name, app.path)}
+                  className={`flex shrink-0 h-9 items-center gap-1.5 px-3 rounded-lg border transition-all active:scale-95 ${
+                    win
+                      ? "bg-primary/10 border-primary/30 text-foreground"
+                      : "bg-card border-border/60 text-muted-foreground"
+                  }`}
+                >
+                  <span className="text-xs font-medium truncate max-w-[80px]">{app.name}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+
+        <div className="relative flex-1 min-h-0">
           {taskBoardOpen && (
             <div className="absolute inset-0 z-40 flex">
-              <div className="flex flex-col w-[420px] max-w-full border-r border-border bg-card/95 backdrop-blur-md shadow-xl">
+              <div className="flex flex-col w-full md:w-[420px] md:max-w-full border-r border-border bg-card/95 backdrop-blur-md shadow-xl">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-border">
                   <div className="flex items-center gap-2">
                     <KanbanSquareIcon className="size-4 text-muted-foreground" />
@@ -515,22 +550,23 @@ export function Desktop() {
               </div>
             )}
 
+          {/* Desktop: positioned windows; Mobile: full-screen cards */}
           {windows.map((win) =>
             win.minimized ? null : (
               <Card
                 key={win.id}
-                className="absolute gap-0 rounded-lg p-0 overflow-hidden shadow-2xl"
+                className="app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl"
                 style={{
-                  left: win.x,
-                  top: win.y,
-                  width: win.width,
-                  height: win.height,
+                  "--win-x": `${win.x}px`,
+                  "--win-y": `${win.y}px`,
+                  "--win-w": `${win.width}px`,
+                  "--win-h": `${win.height}px`,
                   zIndex: win.zIndex,
-                }}
+                } as React.CSSProperties}
                 onMouseDown={() => bringToFront(win.id)}
               >
                 <CardHeader
-                  className="flex-row items-center gap-0 px-3 py-2 border-b border-border cursor-grab active:cursor-grabbing select-none space-y-0"
+                  className="flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
                   onPointerDown={(e) => onDragStart(win.id, e)}
                   onPointerMove={onDragMove}
                   onPointerUp={onDragEnd}
@@ -553,7 +589,7 @@ export function Desktop() {
                 </CardContent>
 
                 <div
-                  className="absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
+                  className="hidden md:block absolute bottom-0 right-0 size-4 cursor-se-resize touch-none z-20"
                   onPointerDown={(e) => onResizeStart(win.id, e)}
                   onPointerMove={onResizeMove}
                   onPointerUp={onResizeEnd}

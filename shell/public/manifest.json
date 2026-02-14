@@ -1,0 +1,21 @@
+{
+  "name": "Matrix OS",
+  "short_name": "MatrixOS",
+  "description": "Your AI operating system",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ece5f0",
+  "theme_color": "#c2703a",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
