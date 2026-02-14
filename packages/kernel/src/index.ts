@@ -6,6 +6,9 @@ export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
 export { ensureHome } from "./boot.js";
 export { buildSystemPrompt } from "./prompt.js";
+export { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
+export { loadSkills, loadSkillBody, buildSkillsToc } from "./skills.js";
+export type { SkillDefinition } from "./skills.js";
 export {
   loadHealthCheckTargets,
   checkModuleHealth,

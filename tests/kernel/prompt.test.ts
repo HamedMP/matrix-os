@@ -55,9 +55,32 @@ describe("buildSystemPrompt", () => {
     expect(typeof prompt).toBe("string");
   });
 
-  it("includes user profile if available", () => {
+  it("includes user section", () => {
     const prompt = buildSystemPrompt(homePath);
-    // user-profile.md exists in home/ with stub content
-    expect(prompt).toContain("User");
+    expect(prompt).toContain("## User");
+  });
+
+  it("includes SOUL content from soul.md", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("## Soul");
+    expect(prompt).toContain("genuinely helpful");
+  });
+
+  it("includes identity content from identity.md", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("## Identity");
+  });
+
+  it("includes bootstrap on first run", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("## First Run");
+    expect(prompt).toContain("fresh install");
+  });
+
+  it("injects SOUL before state (L0 cache position)", () => {
+    const prompt = buildSystemPrompt(homePath);
+    const soulIdx = prompt.indexOf("## Soul");
+    const stateIdx = prompt.indexOf("## Current State");
+    expect(soulIdx).toBeLessThan(stateIdx);
   });
 });

@@ -50,21 +50,21 @@ These must be addressed before or during the next phases. Task IDs are assigned 
 
 Source: `specs/005-soul-skills/tasks.md`
 
-- [ ] T100a `tests/kernel/soul.test.ts`
-- [ ] T100b `tests/kernel/skills.test.ts`
-- [ ] T100 `home/system/soul.md`
-- [ ] T101 `packages/kernel/src/soul.ts` loadSoul
-- [ ] T102 `packages/kernel/src/prompt.ts` inject SOUL in system prompt
-- [ ] T103 `packages/kernel/src/skills.ts` loadSkills + frontmatter parsing
-- [ ] T104 `home/agents/skills/` initial skills (`summarize.md`, `weather.md`, `reminder.md`, `skill-creator.md`)
-- [ ] T105 wire skills TOC + `load_skill` IPC tool
+- [x] T100a `tests/kernel/soul.test.ts`
+- [x] T100b `tests/kernel/skills.test.ts`
+- [x] T100 `home/system/soul.md`
+- [x] T101 `packages/kernel/src/soul.ts` loadSoul
+- [x] T102 `packages/kernel/src/prompt.ts` inject SOUL in system prompt
+- [x] T103 `packages/kernel/src/skills.ts` loadSkills + frontmatter parsing
+- [x] T104 `home/agents/skills/` initial skills (`summarize.md`, `weather.md`, `reminder.md`, `skill-creator.md`)
+- [x] T105 wire skills TOC + `load_skill` IPC tool
 - [ ] T100d-T100h agent prompts (builder, researcher, deployer, healer, evolver)
 - [ ] T100i gitSnapshotHook (audit critical fix)
 - [ ] T100j system prompt token budgeting (audit critical fix)
 
 Checkpoint:
 
-- [ ] Kernel can list skills and dynamically load skill body at runtime.
+- [x] Kernel can list skills and dynamically load skill body at runtime.
 
 ## 3) Phase 006: Multi-Channel Messaging (Telegram First)
 

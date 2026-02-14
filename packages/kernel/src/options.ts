@@ -37,7 +37,7 @@ export interface KernelConfig {
 export function kernelOptions(config: KernelConfig) {
   const { db, homePath, sessionId } = config;
 
-  const ipcServer = createIpcServer(db);
+  const ipcServer = createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`);
   const agents = { ...coreAgents, ...customAgents };

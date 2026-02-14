@@ -1,5 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
+import { loadSkills, buildSkillsToc } from "./skills.js";
 
 export function buildSystemPrompt(homePath: string): string {
   const sections: string[] = [];
@@ -10,6 +12,37 @@ export function buildSystemPrompt(homePath: string): string {
     sections.push(readFileSync(systemPromptPath, "utf-8"));
   } else {
     sections.push("You are the Matrix OS kernel.");
+  }
+
+  // SOUL -- personality and behavior (L0, always present)
+  const soul = loadSoul(homePath);
+  if (soul) {
+    sections.push("\n## Soul\n");
+    sections.push(soul);
+  }
+
+  // Identity -- AI's public face
+  const identity = loadIdentity(homePath);
+  if (identity) {
+    sections.push("\n## Identity\n");
+    sections.push(identity);
+  }
+
+  // User -- human profile
+  const user = loadUser(homePath);
+  if (user) {
+    sections.push("\n## User\n");
+    sections.push(user);
+  }
+
+  // Bootstrap -- first-run instructions (deleted after onboarding)
+  const bootstrap = loadBootstrap(homePath);
+  if (bootstrap) {
+    sections.push("\n## First Run\n");
+    sections.push(bootstrap);
+    sections.push(
+      "\nIMPORTANT: This is a fresh install. Follow the bootstrap instructions above. After onboarding is complete, delete ~/system/bootstrap.md.",
+    );
   }
 
   // File system paths (absolute)
@@ -67,24 +100,25 @@ export function buildSystemPrompt(homePath: string): string {
     sections.push("No knowledge files yet.");
   }
 
-  // User profile
-  const profilePath = join(homePath, "agents", "user-profile.md");
-  sections.push("\n## User Profile\n");
-  if (existsSync(profilePath)) {
-    sections.push(readFileSync(profilePath, "utf-8"));
-  } else {
-    sections.push("No user profile configured.");
+  // Skills TOC
+  const skills = loadSkills(homePath);
+  if (skills.length > 0) {
+    sections.push("\n## Available Skills\n");
+    sections.push(buildSkillsToc(skills));
+    sections.push(
+      "\nTo use a skill, call the `load_skill` tool with the skill name. The full instructions will be loaded into context.",
+    );
   }
 
-  // Activity (last 50 lines)
+  // Activity (last 20 lines -- capped for token budget)
   const activityPath = join(homePath, "system", "activity.log");
   sections.push("\n## Recent Activity\n");
   if (existsSync(activityPath)) {
     const content = readFileSync(activityPath, "utf-8");
     const lines = content.split("\n").filter(Boolean);
-    const last50 = lines.slice(-50);
+    const last20 = lines.slice(-20);
     sections.push(
-      last50.length > 0 ? last50.join("\n") : "No recent activity.",
+      last20.length > 0 ? last20.join("\n") : "No recent activity.",
     );
   } else {
     sections.push("No recent activity.");

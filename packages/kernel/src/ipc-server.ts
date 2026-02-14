@@ -11,8 +11,9 @@ import {
   readState,
   createTask,
 } from "./ipc.js";
+import { loadSkillBody } from "./skills.js";
 
-export function createIpcServer(db: MatrixDB) {
+export function createIpcServer(db: MatrixDB, homePath?: string) {
   return createSdkMcpServer({
     name: "matrix-os-ipc",
     tools: [
@@ -157,6 +158,30 @@ export function createIpcServer(db: MatrixDB) {
           content: [{ type: "text" as const, text: state }],
         };
       }),
+
+      tool(
+        "load_skill",
+        "Load the full instructions for a skill by name. Use this when a user request matches a skill's triggers.",
+        { skill_name: z.string() },
+        async ({ skill_name }) => {
+          if (!homePath) {
+            return {
+              content: [
+                { type: "text" as const, text: "Skills not available (no home path configured)" },
+              ],
+            };
+          }
+          const body = loadSkillBody(homePath, skill_name);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: body ?? `Skill "${skill_name}" not found`,
+              },
+            ],
+          };
+        },
+      ),
     ],
   });
 }
