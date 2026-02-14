@@ -1,4 +1,5 @@
 import { currentUser } from "@clerk/nextjs/server";
+import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,13 +37,22 @@ export default async function DashboardPage() {
   return (
     <div className="min-h-screen p-8">
       <div className="max-w-2xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Matrix OS
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Welcome back, {user.firstName ?? handle}
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Matrix OS
+            </h1>
+            <p className="text-muted-foreground mt-2">
+              Welcome back, {user.firstName ?? handle}
+            </p>
+          </div>
+          <UserButton
+            appearance={{
+              elements: {
+                avatarBox: "size-10",
+              },
+            }}
+          />
         </div>
 
         {!hasUsername && (
