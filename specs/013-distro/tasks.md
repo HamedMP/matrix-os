@@ -3,21 +3,21 @@
 ## Phase A: Docker (T500-T506)
 
 ### T500: Dockerfile (multi-stage build)
-- [ ] Stage 1: Node 22 Alpine builder with pnpm, native build tools
-- [ ] Stage 2: Production image with Node 22, git, production deps
-- [ ] Build shell (next build) and gateway (tsc) in builder stage
-- [ ] Handle node-pty and better-sqlite3 native compilation
-- [ ] .dockerignore for node_modules, .git, tests, specs, docs
+- [x] Stage 1: Node 22 Alpine builder with pnpm, native build tools
+- [x] Stage 2: Production image with Node 22, git, production deps
+- [x] Build shell (next build) and gateway (tsc) in builder stage
+- [x] Handle node-pty and better-sqlite3 native compilation
+- [x] .dockerignore for node_modules, .git, tests, specs, docs
 - [ ] Verify image builds and gateway starts
 - **Output**: Working `Dockerfile` at repo root
 - **Blocked by**: nothing
 
 ### T501: docker-compose.yml (dev/test)
-- [ ] Gateway + shell service definitions
-- [ ] Volume mount for ~/matrixos/ persistence
-- [ ] Port mapping (3000, 4000)
-- [ ] Environment variables (ANTHROPIC_API_KEY, MATRIX_HOME)
-- [ ] Health check configuration
+- [x] Gateway + shell service definitions
+- [x] Volume mount for ~/matrixos/ persistence
+- [x] Port mapping (3000, 4000)
+- [x] Environment variables (ANTHROPIC_API_KEY, MATRIX_HOME)
+- [x] Health check configuration
 - [ ] `docker compose up` boots Matrix OS
 - **Output**: Working `docker-compose.yml` at repo root
 - **Blocked by**: T500

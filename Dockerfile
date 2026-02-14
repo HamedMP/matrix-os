@@ -19,6 +19,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
 COPY shell/package.json shell/
+
+# Hoist packages so next binary is accessible from shell/
+RUN echo "shamefully-hoist=true" > .npmrc
+
 RUN pnpm install --frozen-lockfile
 
 # Copy source
@@ -27,34 +31,22 @@ COPY shell/ shell/
 COPY home/ home/
 
 # Build shell (Next.js)
-RUN pnpm --filter shell build
+RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------
 # Stage 2: Production
 # --------------------------------------------------
 FROM node:22-alpine
 
-# Runtime dependencies: git (for home dir init + self-healing),
-# native build tools (node-pty needs them at runtime on Alpine)
+# Runtime: git (home dir init + self-healing), build tools (node-pty native addon)
 RUN apk add --no-cache git python3 make g++ linux-headers bash
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
 WORKDIR /app
 
-# Copy built application
-COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
-COPY --from=builder /app/packages/ packages/
-COPY --from=builder /app/shell/ shell/
-COPY --from=builder /app/home/ home/
-
-# Install production deps only
-RUN pnpm install --frozen-lockfile --prod
-
-# Re-install dev deps for packages that need tsx at runtime
-# (gateway uses tsx watch in dev, but we run with --import=tsx in prod)
-RUN pnpm --filter @matrix-os/gateway add -D tsx
-RUN pnpm --filter @matrix-os/kernel add -D tsx
+# Copy entire built workspace from builder (includes node_modules with native addons)
+COPY --from=builder /app/ ./
 
 # Default environment
 ENV NODE_ENV=production
