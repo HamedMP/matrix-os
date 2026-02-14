@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { buildSystemPrompt, estimateTokens } from "../../packages/kernel/src/prompt.js";
+import { createDB, type MatrixDB } from "../../packages/kernel/src/db.js";
+import { createTask, claimTask } from "../../packages/kernel/src/ipc.js";
 
 describe("buildSystemPrompt", () => {
   const homePath = "./home";
@@ -144,6 +149,58 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("Onboarding Progress");
 
     rmSync(tempHome, { recursive: true, force: true });
+  });
+});
+
+describe("T056: Active processes in prompt", () => {
+  let tempHome: string;
+  let db: MatrixDB;
+
+  beforeEach(() => {
+    tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-proc-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    db = createDB(join(tempHome, "system", "matrix.db"));
+  });
+
+  afterEach(() => {
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("includes active processes section when db has running kernels", () => {
+    const id = createTask(db, { type: "kernel", input: { message: "Build a CRM" } });
+    claimTask(db, id, "dispatcher");
+
+    const prompt = buildSystemPrompt(tempHome, db);
+    expect(prompt).toContain("## Active Processes");
+    expect(prompt).toContain("Build a CRM");
+  });
+
+  it("adds concurrency warning when 3+ processes active", () => {
+    for (const msg of ["task-1", "task-2", "task-3"]) {
+      const id = createTask(db, { type: "kernel", input: { message: msg } });
+      claimTask(db, id, "dispatcher");
+    }
+
+    const prompt = buildSystemPrompt(tempHome, db);
+    expect(prompt).toContain("3+ kernels running");
+  });
+
+  it("omits process section when no db provided", () => {
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).not.toContain("Active Processes");
+  });
+
+  it("omits process section when no active processes", () => {
+    const prompt = buildSystemPrompt(tempHome, db);
+    expect(prompt).not.toContain("Active Processes");
+  });
+
+  it("excludes non-kernel tasks from process list", () => {
+    const id = createTask(db, { type: "build", input: { message: "make widget" } });
+    claimTask(db, id, "builder");
+
+    const prompt = buildSystemPrompt(tempHome, db);
+    expect(prompt).not.toContain("Active Processes");
   });
 });
 

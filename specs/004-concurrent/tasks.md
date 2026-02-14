@@ -16,7 +16,7 @@ This task must be completed BEFORE Phase 006 (channels). Without it, web shell +
 
 ## Tests (TDD)
 
-- [ ] T054a [P] [US5] Write `tests/gateway/dispatcher-concurrent.test.ts` -- test: fires multiple kernels in parallel, each gets unique process ID, `Promise.allSettled` returns all results, processes table has correct entries during execution
+- [x] T054a [P] [US5] Write `tests/gateway/dispatcher-concurrent.test.ts` -- test: fires multiple kernels in parallel, each gets unique process ID, `Promise.allSettled` returns all results, processes table has correct entries during execution
 
 ## Dependencies
 
@@ -26,11 +26,11 @@ This task must be completed BEFORE Phase 006 (channels). Without it, web shell +
 
 ## Implementation
 
-- [ ] T054 [US5] Implement concurrent kernel dispatch in `packages/gateway/src/dispatcher.ts` -- `Promise.allSettled` for parallel `spawnKernel()` calls, tag responses with request ID for WebSocket multiplexing, no blocking between requests. (Depends on: T109)
+- [x] T054 [US5] Implement concurrent kernel dispatch in `packages/gateway/src/dispatcher.ts` -- `maxConcurrency` option (default Infinity), bounded concurrent queue, parallel `spawnKernel()` calls with independent events, `activeCount` tracking. (Depends on: T109)
 
-- [ ] T055 [US5] Implement process registration in `packages/kernel/src/index.ts` -- kernel instances register in tasks table on spawn (`{ type: "kernel", task: description, status: "running", touching: [paths] }`), deregister on complete/crash. Replaces `processes.json` as source of truth. Generate `processes.json` and `state.md` from SQLite for system prompt L1 cache.
+- [x] T055 [US5] Implement process registration in `packages/gateway/src/dispatcher.ts` -- kernel processes register in SQLite tasks table on dispatch start (`{ type: "kernel", status: "in_progress" }`), deregister on complete/fail via IPC functions. Active processes queryable via `listTasks`.
 
-- [ ] T056 [US5] Add conflict avoidance in `packages/kernel/src/prompt.ts` -- kernel reads active processes before starting, system prompt includes active process list, avoids paths claimed by other kernels. Add rule: "if 3+ kernels running, prefer direct handling over sub-agent spawning". (Depends on: T110)
+- [x] T056 [US5] Add conflict avoidance in `packages/kernel/src/prompt.ts` -- `buildSystemPrompt` accepts optional `db` parameter, reads active kernel processes, includes "Active Processes" section in system prompt, adds "3+ kernels" concurrency warning. `kernelOptions` passes `db` to prompt builder.
 
 ## Checkpoint
 

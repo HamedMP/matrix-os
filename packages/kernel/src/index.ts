@@ -23,6 +23,7 @@ export type {
   HeartbeatConfig,
   Heartbeat,
 } from "./heartbeat.js";
+export { createTask, claimTask, completeTask, failTask, listTasks } from "./ipc.js";
 export { createGitSnapshotHook } from "./hooks.js";
 export {
   createProtectedFilesHook,

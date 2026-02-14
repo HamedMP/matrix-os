@@ -3,13 +3,15 @@ import { join } from "node:path";
 import { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 import { loadSkills, buildSkillsToc } from "./skills.js";
 import { parseSetupPlan } from "./onboarding.js";
+import { listTasks } from "./ipc.js";
+import type { MatrixDB } from "./db.js";
 
 export function estimateTokens(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);
 }
 
-export function buildSystemPrompt(homePath: string): string {
+export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
   const sections: string[] = [];
 
   // Base system prompt
@@ -130,6 +132,30 @@ export function buildSystemPrompt(homePath: string): string {
       sections.push(`Remaining: ${remaining.join(", ")}`);
     }
     sections.push("Continue building the remaining apps from the setup plan.");
+  }
+
+  // Active processes (from DB)
+  if (db) {
+    const active = listTasks(db, { status: "in_progress" })
+      .filter((t) => t.type === "kernel");
+    if (active.length > 0) {
+      sections.push("\n## Active Processes\n");
+      sections.push(
+        active.map((p) => {
+          try {
+            const input = JSON.parse(p.input);
+            return `- ${input.message ?? "unknown task"}`;
+          } catch {
+            return `- ${p.id}`;
+          }
+        }).join("\n"),
+      );
+      if (active.length >= 3) {
+        sections.push(
+          "\nWARNING: 3+ kernels running. Prefer direct handling over sub-agent spawning to limit resource usage.",
+        );
+      }
+    }
   }
 
   // Activity (last 20 lines -- capped for token budget)

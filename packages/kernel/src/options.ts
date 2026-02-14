@@ -41,7 +41,7 @@ export function kernelOptions(config: KernelConfig) {
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const agents = { ...coreAgents, ...customAgents };
-  const systemPrompt = buildSystemPrompt(homePath);
+  const systemPrompt = buildSystemPrompt(homePath, db);
   const protectedFilesHook = createProtectedFilesHook(homePath);
   const gitSnapshotHook = createGitSnapshotHook(homePath);
 

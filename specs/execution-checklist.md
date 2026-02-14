@@ -120,14 +120,14 @@ Pre-requisite (serial queue -- must be done before 006):
 
 Full concurrent dispatch (after 006):
 
-- [ ] T054a `tests/gateway/dispatcher-concurrent.test.ts`
-- [ ] T054 `packages/gateway/src/dispatcher.ts` concurrent dispatch + request multiplexing
-- [ ] T055 `packages/kernel/src/index.ts` kernel process registration in SQLite tasks table
-- [ ] T056 `packages/kernel/src/prompt.ts` conflict avoidance via active process context
+- [x] T054a `tests/gateway/dispatcher-concurrent.test.ts`
+- [x] T054 `packages/gateway/src/dispatcher.ts` concurrent dispatch + maxConcurrency option
+- [x] T055 process registration in SQLite tasks table via dispatcher
+- [x] T056 `packages/kernel/src/prompt.ts` conflict avoidance via active process context
 
 Checkpoint:
 
-- [ ] "Build me a CRM" and "Make the theme darker" run in parallel without file conflicts.
+- [x] "Build me a CRM" and "Make the theme darker" run in parallel without file conflicts.
 
 ## 5) Phase 007: Cron + Heartbeat
 
@@ -366,7 +366,7 @@ These tasks touch the same files and must be sequenced:
 - [x] T053 serial dispatch queue (critical fix, before channels).
 - [x] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
 - [x] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
-- [ ] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
+- [x] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
 - [ ] Complete Phase 007 cron + heartbeat end-to-end.
 - [ ] Complete Phase 012 onboarding (T404 provisioning pipeline, T407 skill templates).
 - [ ] Complete Phase 008A single-user cloud deploy path (includes T133 auth).

@@ -168,7 +168,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 292 passing (25 test files) | **Through Phase 006 + Phase 012 partial**
+**Tests**: 307 passing (26 test files) | **Through Phase 006 + Phase 004 + Phase 012 partial**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -177,7 +177,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 4**: Next.js 16 shell -- Desktop, ChatPanel, AppViewer, Dock, ActivityFeed, Terminal, ModuleGraph, OS bridge, InputBar, ResponseOverlay, window persistence, message queuing
 - **Phase 5**: Self-healing -- heartbeat loop, healer sub-agent, backup/restore, activity.log, healing-strategies.md
 - **Phase 6**: Self-evolution -- protected files hook, watchdog, evolver prompt
-- **Phase 004 (T053)**: Serial dispatch queue (FIFO mutex prevents concurrent state corruption)
+- **Phase 004**: Serial dispatch queue (T053), concurrent dispatch with maxConcurrency (T054), process registration in tasks table (T055), active process conflict avoidance in system prompt (T056)
 - **Phase 005**: SOUL identity system (soul.md, identity.md, user.md, bootstrap.md), skills system (loadSkills, buildSkillsToc, load_skill IPC tool, 4 starter skills), agent prompt files in home/agents/custom/, createGitSnapshotHook, estimateTokens
 - **Phase 006**: Multi-channel messaging -- ChannelAdapter interface, ChannelManager lifecycle, formatForChannel (Telegram/Discord/Slack/WhatsApp), Telegram adapter (polling, allowFrom), channel-aware dispatcher (DispatchContext), /api/channels/status, channel-routing knowledge file, channels config in config.json
 - **Phase 012 (partial)**: Onboarding persona engine -- getPersonaSuggestions (7 roles + keyword matching + defaults), parseSetupPlan/writeSetupPlan (Zod schema), IPC tools (get_persona_suggestions, write_setup_plan), bootstrap.md conversation flow, user.md role field, onboarding progress in system prompt
@@ -186,7 +186,6 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **012 Onboarding** (T400-T412) -- persona engine done (T400a/b, T400-T403, T405-T406), provisioning pipeline (T404) and skill templates (T407) pending
 
 ### Next Up (see specs/ for details)
-- **004 Concurrent** (T054-T056) -- concurrent kernel dispatch (parallel sessions)
 - **007 Proactive** (T120-T129) -- cron scheduled tasks, heartbeat, proactive agent wakeup
 - **008A Cloud** (T130-T136) -- Dockerfile, systemd, auth, setup script
 - **013A Docker** (T500-T506) -- Dockerfile, compose, multi-arch, CI

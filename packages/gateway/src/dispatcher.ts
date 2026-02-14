@@ -2,6 +2,10 @@ import {
   spawnKernel,
   createDB,
   ensureHome,
+  createTask,
+  claimTask,
+  completeTask,
+  failTask,
   type KernelConfig,
   type KernelEvent,
   type MatrixDB,
@@ -15,6 +19,7 @@ export interface DispatchOptions {
   model?: string;
   maxTurns?: number;
   spawnFn?: SpawnFn;
+  maxConcurrency?: number;
 }
 
 export interface DispatchContext {
@@ -32,6 +37,7 @@ export interface Dispatcher {
     context?: DispatchContext,
   ): Promise<void>;
   readonly queueLength: number;
+  readonly activeCount: number;
   db: MatrixDB;
   homePath: string;
 }
@@ -46,18 +52,28 @@ interface QueueEntry {
 }
 
 export function createDispatcher(opts: DispatchOptions): Dispatcher {
-  const { homePath, spawnFn = spawnKernel } = opts;
+  const { homePath, spawnFn = spawnKernel, maxConcurrency = Infinity } = opts;
 
   ensureHome(homePath);
   const db = createDB(`${homePath}/system/matrix.db`);
 
   const queue: QueueEntry[] = [];
-  let running = false;
+  let active = 0;
 
-  async function processQueue() {
-    if (running || queue.length === 0) return;
-    running = true;
-    const entry = queue.shift()!;
+  function processQueue() {
+    while (active < maxConcurrency && queue.length > 0) {
+      const entry = queue.shift()!;
+      active++;
+      runEntry(entry);
+    }
+  }
+
+  async function runEntry(entry: QueueEntry) {
+    const processId = createTask(db, {
+      type: "kernel",
+      input: { message: entry.message },
+    });
+    claimTask(db, processId, "dispatcher");
 
     try {
       let message = entry.message;
@@ -79,11 +95,14 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       for await (const event of spawnFn(message, config)) {
         entry.onEvent(event);
       }
+
+      completeTask(db, processId, { message: entry.message });
       entry.resolve();
     } catch (error) {
+      failTask(db, processId, (error as Error).message);
       entry.reject(error as Error);
     } finally {
-      running = false;
+      active--;
       processQueue();
     }
   }
@@ -94,6 +113,10 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
     get queueLength() {
       return queue.length;
+    },
+
+    get activeCount() {
+      return active;
     },
 
     dispatch(message, sessionId, onEvent, context) {

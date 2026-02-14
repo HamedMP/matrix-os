@@ -34,7 +34,7 @@ describe("T053: Serial dispatch queue", () => {
 
   it("processes a single dispatch normally", async () => {
     const spawn = vi.fn(fakeSpawn());
-    const dispatcher = createDispatcher({ homePath, spawnFn: spawn });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
     const events: KernelEvent[] = [];
 
     await dispatcher.dispatch("hello", undefined, (e) => events.push(e));
@@ -66,7 +66,7 @@ describe("T053: Serial dispatch queue", () => {
       }
     });
 
-    const dispatcher = createDispatcher({ homePath, spawnFn: spawn });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
 
     const p1 = dispatcher.dispatch("first", undefined, () => {});
     const p2 = dispatcher.dispatch("second", undefined, () => {});
@@ -103,7 +103,7 @@ describe("T053: Serial dispatch queue", () => {
       } as KernelEvent;
     });
 
-    const dispatcher = createDispatcher({ homePath, spawnFn: spawn });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
 
     const p1 = dispatcher.dispatch("a", undefined, () => {});
     const p2 = dispatcher.dispatch("b", undefined, () => {});
@@ -131,7 +131,7 @@ describe("T053: Serial dispatch queue", () => {
       } as KernelEvent;
     });
 
-    const dispatcher = createDispatcher({ homePath, spawnFn: spawn });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
 
     const p1 = dispatcher.dispatch("will-fail", undefined, () => {});
     const p2 = dispatcher.dispatch("will-succeed", undefined, () => {});
@@ -155,7 +155,7 @@ describe("T053: Serial dispatch queue", () => {
       } as KernelEvent;
     });
 
-    const dispatcher = createDispatcher({ homePath, spawnFn: spawn });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
 
     expect(dispatcher.queueLength).toBe(0);
 
