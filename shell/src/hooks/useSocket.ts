@@ -17,8 +17,13 @@ export type ServerMessage =
 
 type MessageHandler = (msg: ServerMessage) => void;
 
-const GATEWAY_WS =
-  process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:4000/ws";
+function getGatewayWs(): string {
+  if (process.env.NEXT_PUBLIC_GATEWAY_WS) return process.env.NEXT_PUBLIC_GATEWAY_WS;
+  if (typeof window === "undefined") return "ws://localhost:4000/ws";
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.hostname}:4000/ws`;
+}
+const GATEWAY_WS = getGatewayWs();
 
 let globalSocket: WebSocket | null = null;
 let handlers = new Set<MessageHandler>();

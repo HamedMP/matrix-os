@@ -39,9 +39,17 @@ RUN cd shell && node ../node_modules/next/dist/bin/next build
 FROM node:22-alpine
 
 # Runtime: git (home dir init + self-healing), build tools (node-pty native addon)
-RUN apk add --no-cache git python3 make g++ linux-headers bash
+RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
+
+# Claude Code CLI (required by Agent SDK -- it spawns claude as a subprocess)
+RUN npm install -g @anthropic-ai/claude-code
+
+# Non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
+RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
+    su-exec matrixos git config --global user.name "Matrix OS" && \
+    su-exec matrixos git config --global user.email "os@matrix-os.com"
 
 WORKDIR /app
 
@@ -51,7 +59,7 @@ COPY --from=builder /app/ ./
 # Default environment
 ENV NODE_ENV=production
 ENV PORT=4000
-ENV MATRIX_HOME=/home/user/matrixos
+ENV MATRIX_HOME=/home/matrixos/home
 ENV NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
 ENV NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
 ENV GATEWAY_URL=http://localhost:4000
@@ -60,7 +68,7 @@ ENV GATEWAY_URL=http://localhost:4000
 EXPOSE 3000 4000
 
 # Persistent home directory
-VOLUME ["/home/user/matrixos"]
+VOLUME ["/home/matrixos/home"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

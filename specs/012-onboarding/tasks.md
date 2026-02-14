@@ -59,15 +59,15 @@
 
 ### Phase E: Shell UX (optional, enhances experience)
 
-- [ ] T408 [US8] Add suggestion chips support for onboarding in `shell/` -- when kernel response includes role suggestions, render as clickable chips in ChatPanel. Chips send the selected text as user message. Works with existing chip infrastructure if available, or add minimal chip rendering.
+- [x] T408 [US8] Add suggestion chips support for onboarding in `shell/` -- `SuggestionChips` `empty` context shows role chips (Student, Developer, Investor, Entrepreneur, Parent, Creative, Researcher). Clicking a chip sends the role as a message, bootstrap.md recognizes it as role selection.
 
-- [ ] T409 [US8] Superseded by T404h/T404i -- Kanban task board in BottomPanel replaces simple progress indicator. Real-time task cards show build progress per app.
+- [x] T409 [US8] Superseded by T404h/T404i -- Kanban task board in dock overlay replaces simple progress indicator. Real-time task cards show build progress per app.
 
 ### Phase G: Post-Onboarding
 
-- [ ] T411 [US8] Implement welcome tour logic in bootstrap.md -- after all apps are built, guide user to the most relevant app first. Suggest a concrete first action ("Try adding your Monday classes to the Study Planner"). Don't overwhelm with everything at once.
+- [x] T411 [US8] Implement welcome tour logic in bootstrap.md -- role-specific first actions after provisioning (e.g., "Try adding your Monday classes to the Study Planner" for students). Mentions remaining apps without overwhelming.
 
-- [ ] T412 [US8] Add re-onboarding capability -- `~/agents/skills/setup-wizard.md` skill that lets users re-run onboarding anytime ("reconfigure my OS", "I changed careers", "start fresh"). Creates new bootstrap.md, runs the flow again, preserves existing data the user wants to keep.
+- [x] T412 [US8] Add re-onboarding capability -- `~/agents/skills/setup-wizard.md` skill that lets users re-run onboarding anytime ("reconfigure my OS", "I changed careers", "start fresh"). Preserves existing apps/data, writes new setup-plan.json to trigger provisioner.
 
 ## Task Dependencies
 

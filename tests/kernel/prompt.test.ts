@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { buildSystemPrompt, estimateTokens } from "../../packages/kernel/src/prompt.js";
@@ -149,6 +149,55 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("Onboarding Progress");
 
     rmSync(tempHome, { recursive: true, force: true });
+  });
+});
+
+describe("T216: Handle setup nudge", () => {
+  let tempHome: string;
+
+  afterEach(() => {
+    if (tempHome) rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("nudges handle setup when handle is empty and no bootstrap", () => {
+    tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-handle-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "system", "handle.json"),
+      JSON.stringify({ handle: "", aiHandle: "", displayName: "", createdAt: "" }),
+    );
+    // No bootstrap.md -- onboarding already done
+
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).toContain("set_handle");
+    expect(prompt).not.toContain("@:matrix-os.com");
+  });
+
+  it("does not nudge when handle is set", () => {
+    tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-handle2-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "system", "handle.json"),
+      JSON.stringify({ handle: "hamed", aiHandle: "hamed_ai", displayName: "Hamed", createdAt: "2026-01-01" }),
+    );
+
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).toContain("@hamed_ai:matrix-os.com");
+    expect(prompt).not.toContain("set_handle");
+  });
+
+  it("does not nudge during bootstrap (handle setup is part of onboarding)", () => {
+    tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-handle3-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "system", "handle.json"),
+      JSON.stringify({ handle: "", aiHandle: "", displayName: "", createdAt: "" }),
+    );
+    // Bootstrap present -- onboarding not done yet
+    writeFileSync(join(tempHome, "system", "bootstrap.md"), "# Bootstrap");
+
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).not.toContain("set_handle");
   });
 });
 

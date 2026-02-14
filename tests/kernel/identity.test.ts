@@ -71,4 +71,19 @@ describe("T210: Identity system", () => {
     const id = loadHandle(homePath);
     expect(id.handle).toBe("");
   });
+
+  it("saveIdentity auto-derives aiHandle and sets createdAt", () => {
+    homePath = tmpHome();
+    saveIdentity(homePath, {
+      handle: "alice",
+      aiHandle: deriveAiHandle("alice"),
+      displayName: "Alice",
+      createdAt: new Date().toISOString(),
+    });
+    const saved = loadHandle(homePath);
+    expect(saved.handle).toBe("alice");
+    expect(saved.aiHandle).toBe("alice_ai");
+    expect(saved.displayName).toBe("Alice");
+    expect(saved.createdAt).toBeTruthy();
+  });
 });

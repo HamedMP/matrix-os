@@ -226,7 +226,7 @@ P0 (must-have before broad launch):
 
 P1 (next product-critical):
 
-- [x] T210-T215 identity system (handle.json, loadHandle, profiles, prompt, endpoints). T216 first-boot wizard remaining.
+- [x] T210-T216 identity system complete (handle.json, loadHandle, profiles, prompt, endpoints, setup wizard).
 - [ ] T220-T224 git sync
 - [ ] T230-T234 mobile experience + PWA
 
@@ -310,9 +310,9 @@ Phase C (provisioning):
 Phase D-G (stretch):
 
 - [x] T407 skill templates (study-timer.md, budget-helper.md, enhanced reminder.md)
-- [ ] T408-T409 shell UX (chips, progress bar)
+- [x] T408-T409 shell UX (role chips in SuggestionChips, task board in dock overlay)
 - [ ] T410 parallel builds (needs T054)
-- [ ] T411-T412 welcome tour + re-onboarding
+- [x] T411-T412 welcome tour (role-specific first actions) + re-onboarding (setup-wizard.md skill)
 
 Checkpoint:
 

@@ -62,7 +62,7 @@
 
 - [x] T215 [US13] Add `GET /api/profile` and `GET /api/ai-profile` endpoints -- serve profile markdown
 
-- [ ] T216 [P] [US13] Add setup wizard for first boot -- if handle.json is empty, kernel asks user to set their handle on first interaction
+- [x] T216 [P] [US13] Add setup wizard for first boot -- if handle.json is empty, kernel asks user to set their handle on first interaction
 
 ---
 

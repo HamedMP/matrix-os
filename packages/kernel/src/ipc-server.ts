@@ -16,6 +16,7 @@ import {
 } from "./ipc.js";
 import { loadSkillBody } from "./skills.js";
 import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
+import { saveIdentity, deriveAiHandle } from "./identity.js";
 
 export function createIpcServer(db: MatrixDB, homePath?: string) {
   return createSdkMcpServer({
@@ -238,6 +239,36 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
           }
         },
       ),
+      tool(
+        "set_handle",
+        "Set the user's handle (username) for their Matrix OS identity. Creates @handle:matrix-os.com and @handle_ai:matrix-os.com.",
+        {
+          handle: z.string().describe("The username (lowercase, no spaces, e.g. 'hamed')"),
+          display_name: z.string().describe("The user's display name (e.g. 'Hamed')"),
+        },
+        async ({ handle, display_name }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot set handle (no home path)" }] };
+          }
+          const cleaned = handle.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+          if (!cleaned) {
+            return { content: [{ type: "text" as const, text: "Invalid handle. Use lowercase letters, numbers, underscores, or hyphens." }] };
+          }
+          saveIdentity(homePath, {
+            handle: cleaned,
+            aiHandle: deriveAiHandle(cleaned),
+            displayName: display_name,
+            createdAt: new Date().toISOString(),
+          });
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Handle set! You are now @${cleaned}:matrix-os.com and your AI is @${deriveAiHandle(cleaned)}:matrix-os.com`,
+            }],
+          };
+        },
+      ),
+
       tool(
         "manage_cron",
         "Manage scheduled cron jobs. Use 'add' to create reminders/recurring tasks, 'remove' to delete, 'list' to view all.",

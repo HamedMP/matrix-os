@@ -6,9 +6,13 @@ type ChipContext = "empty" | "app" | "error";
 
 const CHIPS: Record<ChipContext, string[]> = {
   empty: [
-    "Build me a notes app",
-    "Create an expense tracker",
-    "Show what you can do",
+    "Student",
+    "Developer",
+    "Investor",
+    "Entrepreneur",
+    "Parent",
+    "Creative",
+    "Researcher",
   ],
   app: [
     "Add dark mode",

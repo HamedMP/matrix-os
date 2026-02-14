@@ -1,0 +1,23 @@
+# Logs (regenerated, can be large)
+system/logs/
+
+# Auth state (secrets)
+system/whatsapp-auth/
+
+# Database (local state, not portable)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Dependencies
+node_modules/
+
+# Large media (user can un-ignore specific files)
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# OS files
+.DS_Store
+Thumbs.db

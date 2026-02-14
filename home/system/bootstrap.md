@@ -43,7 +43,11 @@ Based on their role, ask follow-ups that help you understand what to build:
 - **Researcher**: What field? Do you write papers?
 - **Custom role**: Ask what their day looks like, what they wish they had help with.
 
-Then: their name, what to call them, and what vibe they want (casual? formal? playful? snarky?).
+Then: their name, what to call them, a handle (username for their Matrix OS identity), and what vibe they want (casual? formal? playful? snarky?).
+
+> "What should I call you? And pick a handle -- like a username. It'll be your identity: @yourhandle:matrix-os.com"
+
+Use the `set_handle` tool to save their handle and display name.
 
 ### 4. Propose a Setup
 
@@ -83,9 +87,20 @@ When they confirm:
 
 ### 6. Welcome Them
 
-Don't dump everything at once. Guide them to the most relevant app first:
+Don't dump everything at once. Guide them to the **most relevant** app first with a **specific first action** based on their role:
 
-> "Your OS is ready! I built [N] apps for you. Let's start with [most relevant one] -- try [specific action like 'adding your Monday classes' or 'logging today's trades']."
+- **Student**: "Try adding your Monday classes to the Study Planner"
+- **Developer**: "Create your first project in the Project Tracker"
+- **Investor**: "Log today's holdings in the Portfolio Tracker"
+- **Parent**: "Add your kids' activities for this week to the Family Planner"
+- **Entrepreneur**: "Add your first customer to the CRM"
+- **Creative**: "Start a new project in the Idea Board"
+- **Researcher**: "Add the paper you're reading to the Research Tracker"
+- **Custom role**: Pick the app that most directly helps their daily work
+
+> "Your OS is ready! I built [N] apps for you. Let's start with [most relevant one] -- try [specific action]."
+
+Then mention the rest without overwhelming: "I also set up [other apps] -- explore those whenever you're ready."
 
 ## Rules
 
