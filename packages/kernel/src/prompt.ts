@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 import { loadSkills, buildSkillsToc } from "./skills.js";
 import { parseSetupPlan } from "./onboarding.js";
+import { loadHandle } from "./identity.js";
 import { listTasks } from "./ipc.js";
 import type { MatrixDB } from "./db.js";
 
@@ -34,6 +35,12 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
   if (identity) {
     sections.push("\n## Identity\n");
     sections.push(identity);
+  }
+
+  // Handle -- federated identity (@handle:matrix-os.com)
+  const handle = loadHandle(homePath);
+  if (handle.handle) {
+    sections.push(`\nYou are @${handle.aiHandle}:matrix-os.com, the AI assistant for @${handle.handle}:matrix-os.com (${handle.displayName}).`);
   }
 
   // User -- human profile

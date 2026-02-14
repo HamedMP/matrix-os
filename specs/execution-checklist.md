@@ -226,7 +226,7 @@ P0 (must-have before broad launch):
 
 P1 (next product-critical):
 
-- [ ] T210-T216 identity system
+- [x] T210-T215 identity system (handle.json, loadHandle, profiles, prompt, endpoints). T216 first-boot wizard remaining.
 - [ ] T220-T224 git sync
 - [ ] T230-T234 mobile experience + PWA
 

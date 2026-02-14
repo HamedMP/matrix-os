@@ -44,3 +44,5 @@ export type {
   PersonaSuggestions,
 } from "./onboarding.js";
 export { buildSafeModePrompt, safeModeAgentDef } from "./safe-mode.js";
+export { loadHandle, saveIdentity, deriveAiHandle } from "./identity.js";
+export type { Identity } from "./identity.js";

@@ -168,7 +168,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 375 passing (34 test files) | **Through Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 380 passing (35 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -183,6 +183,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 007**: Cron + Heartbeat -- CronService (interval/once/cron schedules via node-cron), CronStore (atomic JSON persistence), manage_cron IPC tool, HeartbeatRunner (periodic kernel invocation with active hours), heartbeat prompt builder, wired into gateway startup/shutdown, cron.json hot-reload via file watcher, heartbeat config in config.json
 - **Phase 008A**: Single-user cloud -- Dockerfile (multi-stage Alpine), docker-compose.yml, systemd service, auth middleware (MATRIX_AUTH_TOKEN bearer), setup-server.sh, /api/system/info endpoint
 - **Phase 009 P0**: Observability + Safety -- interaction logger (JSONL daily rotation, prompt truncation, cost tracking), GET /api/logs query endpoint, safe mode agent (sonnet, restricted tools, diagnostic prompt), logs directory template
+- **Phase 009 P1 Identity**: Handle registry (handle.json), loadHandle/saveIdentity/deriveAiHandle, profile.md + ai-profile.md templates, handle injection into system prompt, GET /api/profile + /api/ai-profile endpoints
 - **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration
 
 ### In Progress

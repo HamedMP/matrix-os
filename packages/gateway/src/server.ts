@@ -521,6 +521,18 @@ export function createGateway(config: GatewayConfig) {
     return c.json(channelManager.status());
   });
 
+  app.get("/api/profile", (c) => {
+    const profilePath = join(homePath, "system", "profile.md");
+    if (!existsSync(profilePath)) return c.text("No profile", 404);
+    return c.text(readFileSync(profilePath, "utf-8"));
+  });
+
+  app.get("/api/ai-profile", (c) => {
+    const aiProfilePath = join(homePath, "system", "ai-profile.md");
+    if (!existsSync(aiProfilePath)) return c.text("No AI profile", 404);
+    return c.text(readFileSync(aiProfilePath, "utf-8"));
+  });
+
   app.get("/api/logs", (c) => {
     const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
     const source = c.req.query("source");

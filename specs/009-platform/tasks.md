@@ -46,21 +46,21 @@
 
 ### Tests
 
-- [ ] T210a [P] [US13] Write `tests/kernel/identity.test.ts` -- test handle loading, AI handle derivation, profile file parsing
+- [x] T210a [P] [US13] Write `tests/kernel/identity.test.ts` -- 5 tests: empty handle, load from JSON, derive AI handle, save, corrupt file
 
 ### Implementation
 
-- [ ] T210 [US13] Create handle registry at `home/system/handle.json` -- `{ "handle": "", "aiHandle": "", "displayName": "", "createdAt": "" }`. Empty by default, populated on first setup.
+- [x] T210 [US13] Create handle registry at `home/system/handle.json` -- empty by default, populated on first setup.
 
-- [ ] T211 [US13] Implement `loadIdentity()` in `packages/kernel/src/identity.ts` -- reads handle.json, derives AI handle (`{handle}_ai`), returns identity for prompt injection
+- [x] T211 [US13] Implement `loadHandle()` in `packages/kernel/src/identity.ts` -- reads handle.json, derives AI handle (`{handle}_ai`), returns Identity
 
-- [ ] T212 [US13] Create `home/system/profile.md` -- human profile template (display name, bio, timezone, language)
+- [x] T212 [US13] Create `home/system/profile.md` -- human profile template (display name, bio, timezone, language)
 
-- [ ] T213 [US13] Create `home/system/ai-profile.md` -- AI profile template (personality summary from SOUL, skills list, capabilities)
+- [x] T213 [US13] Create `home/system/ai-profile.md` -- AI profile template (personality, skills, capabilities)
 
-- [ ] T214 [US13] Modify `buildSystemPrompt()` to include identity -- "You are @{handle}_ai, the AI assistant for @{handle}."
+- [x] T214 [US13] Modify `buildSystemPrompt()` to include handle -- "You are @{handle}_ai:matrix-os.com, the AI assistant for @{handle}:matrix-os.com"
 
-- [ ] T215 [US13] Add `GET /api/profile` and `GET /api/ai-profile` endpoints -- serve profile info (public subset)
+- [x] T215 [US13] Add `GET /api/profile` and `GET /api/ai-profile` endpoints -- serve profile markdown
 
 - [ ] T216 [P] [US13] Add setup wizard for first boot -- if handle.json is empty, kernel asks user to set their handle on first interaction
 
