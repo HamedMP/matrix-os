@@ -1,0 +1,24 @@
+services:
+  matrix-os:
+    build: .
+    ports:
+      - "3000:3000"
+      - "4000:4000"
+    volumes:
+      - matrixos-data:/home/user/matrixos
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MATRIX_HOME=/home/user/matrixos
+      - PORT=4000
+      - NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
+      - NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
+      - GATEWAY_URL=http://localhost:4000
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  matrixos-data:

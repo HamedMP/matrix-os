@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Matrix OS
+Description=Matrix OS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/matrix-os
+ScriptFile=/usr/share/plymouth/themes/matrix-os/matrix-os.script

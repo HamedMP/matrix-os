@@ -10,6 +10,9 @@ This is a consolidation of tasks and checklists from:
 - `specs/008-cloud/*`
 - `specs/009-platform/*`
 - `specs/010-demo/*`
+- `specs/011-new-computing/*`
+- `specs/012-onboarding/*`
+- `specs/013-distro/*`
 - `specs/web4-vision.md`
 - `specs/matrixos-vision.md`
 
@@ -18,7 +21,13 @@ No implementation is included in this document.
 ## Current State
 
 **003-architecture**: 81/89 tasks done (Phases 1-6 complete, 207 tests). 8 unchecked are stubs moved to forward specs (agent prompts -> 005, module proxy -> 010).
-**004-011**: Not started. See sections below.
+**004**: T053 (serial queue) done. T054-T056 (concurrent) not started.
+**005**: Complete (T100-T105, T100d-T100j). 245 tests after phase.
+**006**: Telegram path done (T106-T112, T117, T119). WhatsApp/Discord/Slack deferred. 292 tests after phase.
+**007-010**: Not started. See sections below.
+**011**: Spec written. Not started.
+**012**: Partially done (T400a/b, T400-T403, T405-T406). See section below.
+**013**: Spec + scaffolding. Not started.
 
 ## Critical Fixes (from 2026-02-13 audit)
 
@@ -269,7 +278,73 @@ Checkpoint:
 
 - [ ] Expense tracker evolves from usage, Socratic questions before ambiguous builds, same intent renders differently on web vs Telegram.
 
-## 11) Cross-Cutting Security + Quality Checklist
+## 11) Phase 012: Personalized Onboarding
+
+Source: `specs/012-onboarding/tasks.md`
+
+Tests:
+
+- [x] T400a `tests/kernel/onboarding.test.ts` (parseSetupPlan)
+- [x] T400b `tests/kernel/onboarding.test.ts` (getPersonaSuggestions)
+- [ ] T400c `tests/gateway/onboarding-build.test.ts` (provisioning pipeline)
+
+Phase A (bootstrap):
+
+- [x] T400 `home/system/bootstrap.md` rewrite (full onboarding flow)
+- [x] T401 `home/system/user.md` role field
+
+Phase B (persona engine):
+
+- [x] T402 `packages/kernel/src/onboarding.ts` getPersonaSuggestions
+- [x] T403 `packages/kernel/src/onboarding.ts` parseSetupPlan + writeSetupPlan
+
+Phase C (provisioning):
+
+- [ ] T404 provisionFromPlan (sequential app builds)
+- [x] T405 IPC tools (get_persona_suggestions, write_setup_plan)
+- [x] T406 wire onboarding progress into buildSystemPrompt
+
+Phase D-G (stretch):
+
+- [ ] T407 skill templates
+- [ ] T408-T409 shell UX (chips, progress bar)
+- [ ] T410 parallel builds (needs T054)
+- [ ] T411-T412 welcome tour + re-onboarding
+
+Checkpoint:
+
+- [ ] Fresh install triggers onboarding flow, builds persona-specific apps.
+
+## 12) Phase 013: Linux Distro + Docker Deployment
+
+Source: `specs/013-distro/tasks.md`
+
+Phase A (Docker):
+
+- [ ] T500 Dockerfile (multi-stage build)
+- [ ] T501 docker-compose.yml
+- [ ] T502 multi-arch build
+- [ ] T503 container networking
+- [ ] T504 idle/wake lifecycle
+- [ ] T505 API key proxy + cost tracking
+- [ ] T506 GitHub Actions CI
+
+Phase B (Distro image):
+
+- [ ] T510 systemd service files
+- [ ] T511 Plymouth boot splash
+- [ ] T512 mkosi configuration (x86)
+- [ ] T513 rpi-image-gen (ARM64 Pi)
+- [ ] T514 first-boot setup
+- [ ] T515 UTM testing
+- [ ] T516 USB live boot
+- [ ] T517 OTA updates
+
+Checkpoint:
+
+- [ ] Docker image boots, distro image boots in UTM.
+
+## 13) Cross-Cutting Security + Quality Checklist
 
 - [x] Verify all filesystem read/write endpoints enforce home-path containment. (Fixed: /files/* uses resolveWithinHome(), commit 3919f3f.)
 - [ ] Add auth + authorization boundaries for HTTP, WS, and channel entrypoints.
@@ -278,7 +353,7 @@ Checkpoint:
 - [ ] Add structured logging for kernel invocations, tool usage, and failures.
 - [ ] Add crash-loop protection and rollback/safe-mode entry criteria.
 
-## 12) Cross-Phase Dependencies
+## 14) Cross-Phase Dependencies
 
 These tasks touch the same files and must be sequenced:
 
@@ -286,16 +361,19 @@ These tasks touch the same files and must be sequenced:
 - **prompt.ts**: T110 (006 channel prompt context) -> T056 (004 conflict avoidance). Complete channel context injection first, then add process awareness.
 - **config.json**: T112 (006 channels config) -> T126 (007 heartbeat active hours). Both add sections to the same config file.
 
-## 13) Execution Order Checklist (No Timeline)
+## 15) Execution Order Checklist (No Timeline)
 
 - [x] T053 serial dispatch queue (critical fix, before channels).
 - [x] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
-- [ ] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
+- [x] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
 - [ ] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
 - [ ] Complete Phase 007 cron + heartbeat end-to-end.
+- [ ] Complete Phase 012 onboarding (T404 provisioning pipeline, T407 skill templates).
 - [ ] Complete Phase 008A single-user cloud deploy path (includes T133 auth).
+- [ ] Complete Phase 013A Docker deployment (T500-T506).
 - [ ] Complete Phase 009 P0 observability + safe-mode.
 - [ ] Complete Phase 009 P1 identity + sync + mobile.
 - [ ] Start Phase 011 new computing (Living Software, Socratic, Intent-based -- incremental).
+- [ ] Complete Phase 013B distro image (T510-T517).
 - [ ] Start Phase 008B/009 P2 platform expansion.
 - [ ] Finalize Phase 010 demo polish and recording.

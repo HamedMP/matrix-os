@@ -1,0 +1,31 @@
+[Unit]
+Description=Matrix OS Kiosk Display
+After=matrix-shell.service
+Wants=matrix-shell.service
+
+[Service]
+Type=simple
+User=kiosk
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/cage -- /usr/bin/chromium-browser \
+  --kiosk \
+  --no-first-run \
+  --disable-infobars \
+  --noerrdialogs \
+  --disable-translate \
+  --disable-features=TranslateUI \
+  --no-default-browser-check \
+  --disable-pinch \
+  --overscroll-history-navigation=disabled \
+  http://localhost:3000
+Restart=always
+RestartSec=5
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

@@ -2,6 +2,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 import { loadSkills, buildSkillsToc } from "./skills.js";
+import { parseSetupPlan } from "./onboarding.js";
 
 export function estimateTokens(text: string): number {
   if (!text) return 0;
@@ -113,6 +114,22 @@ export function buildSystemPrompt(homePath: string): string {
     sections.push(
       "\nTo use a skill, call the `load_skill` tool with the skill name. The full instructions will be loaded into context.",
     );
+  }
+
+  // Onboarding progress (when mid-build)
+  const setupPlan = parseSetupPlan(homePath);
+  if (setupPlan && setupPlan.status === "building") {
+    const total = setupPlan.apps.length;
+    const done = setupPlan.built.length;
+    const remaining = setupPlan.apps
+      .filter((a) => !setupPlan.built.includes(a.name))
+      .map((a) => a.name);
+    sections.push("\n## Onboarding Progress\n");
+    sections.push(`Building apps: ${done}/${total} complete.`);
+    if (remaining.length > 0) {
+      sections.push(`Remaining: ${remaining.join(", ")}`);
+    }
+    sections.push("Continue building the remaining apps from the setup plan.");
   }
 
   // Activity (last 20 lines -- capped for token budget)

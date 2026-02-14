@@ -89,6 +89,62 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("## Available Skills");
     expect(prompt).toContain("load_skill");
   });
+
+  it("includes onboarding progress when setup plan is building", () => {
+    // Uses the temp dir approach to write a setup-plan.json
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
+    const { join, resolve } = require("node:path");
+    const { tmpdir } = require("node:os");
+    const tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-onboard-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "system", "setup-plan.json"),
+      JSON.stringify({
+        role: "student",
+        apps: [
+          { name: "Study Planner", description: "Schedule" },
+          { name: "Flashcards", description: "Cards" },
+          { name: "Budget Tracker", description: "Budget" },
+        ],
+        skills: [],
+        personality: { vibe: "casual", traits: [] },
+        status: "building",
+        built: ["Study Planner"],
+      }),
+    );
+
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).toContain("Onboarding Progress");
+    expect(prompt).toContain("1/3 complete");
+    expect(prompt).toContain("Flashcards");
+    expect(prompt).toContain("Budget Tracker");
+
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("does not include onboarding progress when plan is complete", () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require("node:fs");
+    const { join, resolve } = require("node:path");
+    const { tmpdir } = require("node:os");
+    const tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-onboard2-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "system", "setup-plan.json"),
+      JSON.stringify({
+        role: "student",
+        apps: [{ name: "Study Planner", description: "Schedule" }],
+        skills: [],
+        personality: { vibe: "casual", traits: [] },
+        status: "complete",
+        built: ["Study Planner"],
+      }),
+    );
+
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).not.toContain("Onboarding Progress");
+
+    rmSync(tempHome, { recursive: true, force: true });
+  });
 });
 
 describe("estimateTokens", () => {

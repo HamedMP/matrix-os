@@ -1,0 +1,32 @@
+// Matrix OS Plymouth boot splash script
+// Minimal: centered logo with a progress spinner
+
+// Background
+Window.SetBackgroundTopColor(0.02, 0.02, 0.02);
+Window.SetBackgroundBottomColor(0.04, 0.04, 0.04);
+
+// Logo (place logo.png in this directory)
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
+logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 40);
+logo.sprite.SetOpacity(1);
+
+// Progress text
+progress_text.image = Image.Text("Starting Matrix OS...", 0.7, 0.7, 0.7);
+progress_text.sprite = Sprite(progress_text.image);
+progress_text.sprite.SetX(Window.GetWidth() / 2 - progress_text.image.GetWidth() / 2);
+progress_text.sprite.SetY(Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 20);
+
+// Progress callback
+fun boot_progress_cb(duration, progress) {
+  pct = Math.Int(progress * 100);
+  t = Image.Text(pct + "%", 0.5, 0.5, 0.5);
+  progress_text.sprite.SetImage(t);
+  progress_text.sprite.SetX(Window.GetWidth() / 2 - t.GetWidth() / 2);
+}
+Plymouth.SetBootProgressFunction(boot_progress_cb);
+
+// Hide password prompts and messages (kiosk mode)
+fun message_cb(text) { }
+Plymouth.SetMessageFunction(message_cb);

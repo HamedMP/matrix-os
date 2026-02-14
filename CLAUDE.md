@@ -43,6 +43,8 @@ Key principles:
 - `specs/009-platform/` -- Web 4 platform: identity, sync, mobile, marketplace, games (T200-T261)
 - `specs/010-demo/` -- Phase 8: Demo polish + recording (T057-T064)
 - `specs/011-new-computing/` -- New computing paradigms: Living Software, Socratic Computing, Intent-based (T300-T317)
+- `specs/012-onboarding/` -- Personalized onboarding: role discovery, setup proposal, multi-agent provisioning (T400-T412)
+- `specs/013-distro/` -- Linux distro + Docker deployment: Dockerfile, mkosi, systemd, cage kiosk (T500-T517)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/` -- original architecture spec, plan, tasks (reference only)
@@ -166,28 +168,38 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 200 passing (16 test files) | **Phase 6 complete + shell hardening**
+**Tests**: 292 passing (25 test files) | **Through Phase 006 + Phase 012 partial**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
 - **Phase 2**: SQLite/Drizzle schema, system prompt builder, agent frontmatter parser, first-boot
-- **Phase 3**: Kernel (spawnKernel with V1 query+resume), IPC MCP server (7 tools), hooks (8 hooks), gateway (Hono HTTP+WS, dispatcher, file watcher), agent prompts (builder, researcher, deployer)
-- **Phase 4**: Next.js 16 shell -- Desktop (window mgmt), ChatPanel, AppViewer (iframe), Dock, ActivityFeed, Terminal (xterm.js+node-pty), ModuleGraph (vis-network), useSocket/useFileWatcher/useTheme hooks, proxy.ts, module reverse proxy
-- **Phase 4b**: Chat history persistence -- ConversationStore (JSON files in system/conversations/), useConversation hook, ChatPanel with conversation switcher and "New Chat" button, hydrateMessages helper
-- **Phase 4c**: Interaction model -- OS bridge (window.MatrixOS), bottom-center InputBar, SuggestionChips, ThoughtCard, collapsible BottomPanel (Cmd+J), toggleable ChatPanel sidebar, useChatState hook, bridge data endpoint
-- **Phase 4d**: Shell polish -- ResponseOverlay (draggable/resizable streaming response card above InputBar), macOS-style left dock with app icons and tooltips, traffic light window buttons (red=close, yellow=minimize, green=maximize), draggable/resizable app windows with iframe pointer-steal prevention, Desktop loads active modules from system/modules.json, hello-world demo module pre-seeded in home template
-- **Phase 4e**: Shell hardening -- window state persistence (layout.json via GET/PUT /api/layout, restore positions on refresh, closed windows stay in dock), message queuing (type-ahead while kernel busy, auto-drain on result/error, queue count badge), iframe sandbox fix (allow-same-origin for external APIs), builder prompt serving instructions
-- **Phase 5**: Self-healing -- heartbeat loop (30s health checks on modules with ports), healer sub-agent (sonnet, 2-attempt limit), backup/restore before/after healing, activity.log + WebSocket error notifications, healing-strategies.md knowledge file
-- **Phase 6**: Self-evolution -- protected files PreToolUse hook (denies writes to constitution, kernel/gateway src, tests, config), watchdog (tracks evolver commits, git reset on crash), full evolver prompt (git snapshots, allowed/denied modification targets)
+- **Phase 3**: Kernel (spawnKernel with V1 query+resume), IPC MCP server (8 tools incl load_skill), hooks (8 hooks incl gitSnapshotHook), gateway (Hono HTTP+WS, dispatcher with serial queue, file watcher), agent prompts (builder, researcher, deployer, healer, evolver -- in home/agents/custom/)
+- **Phase 4**: Next.js 16 shell -- Desktop, ChatPanel, AppViewer, Dock, ActivityFeed, Terminal, ModuleGraph, OS bridge, InputBar, ResponseOverlay, window persistence, message queuing
+- **Phase 5**: Self-healing -- heartbeat loop, healer sub-agent, backup/restore, activity.log, healing-strategies.md
+- **Phase 6**: Self-evolution -- protected files hook, watchdog, evolver prompt
+- **Phase 004 (T053)**: Serial dispatch queue (FIFO mutex prevents concurrent state corruption)
+- **Phase 005**: SOUL identity system (soul.md, identity.md, user.md, bootstrap.md), skills system (loadSkills, buildSkillsToc, load_skill IPC tool, 4 starter skills), agent prompt files in home/agents/custom/, createGitSnapshotHook, estimateTokens
+- **Phase 006**: Multi-channel messaging -- ChannelAdapter interface, ChannelManager lifecycle, formatForChannel (Telegram/Discord/Slack/WhatsApp), Telegram adapter (polling, allowFrom), channel-aware dispatcher (DispatchContext), /api/channels/status, channel-routing knowledge file, channels config in config.json
+- **Phase 012 (partial)**: Onboarding persona engine -- getPersonaSuggestions (7 roles + keyword matching + defaults), parseSetupPlan/writeSetupPlan (Zod schema), IPC tools (get_persona_suggestions, write_setup_plan), bootstrap.md conversation flow, user.md role field, onboarding progress in system prompt
 
-### Next Up (see specs/004-010 for details)
-- **005 SOUL + Skills** (T100-T105) -- agent identity, personality, expandable capabilities
-- **006 Channels** (T106-T119) -- Telegram, WhatsApp, Discord, Slack, Matrix protocol
+### In Progress
+- **012 Onboarding** (T400-T412) -- persona engine done (T400a/b, T400-T403, T405-T406), provisioning pipeline (T404) and skill templates (T407) pending
+
+### Next Up (see specs/ for details)
+- **004 Concurrent** (T054-T056) -- concurrent kernel dispatch (parallel sessions)
 - **007 Proactive** (T120-T129) -- cron scheduled tasks, heartbeat, proactive agent wakeup
-- **008 Cloud** (T130-T136) -- Dockerfile, systemd, auth, setup script
-- **009 Platform** (T200-T261) -- Web 4: identity handles, git sync, mobile, marketplace, games, AI social
-- **004 Concurrent** (T054-T056) -- concurrent kernel dispatch
+- **008A Cloud** (T130-T136) -- Dockerfile, systemd, auth, setup script
+- **013A Docker** (T500-T506) -- Dockerfile, compose, multi-arch, CI
+- **009 P0** (T200-T205) -- observability, safe mode
+- **009 P1** (T210-T234) -- identity handles, git sync, mobile/PWA
+- **011 New Computing** (T300-T317) -- Living Software, Socratic Computing, Intent-based Interfaces
+- **013B Distro** (T510-T517) -- mkosi, systemd services, Plymouth, Raspberry Pi
+- **008B Multi-Tenant** (T140-T159) -- platform service, container orchestration
 - **010 Demo** (T057-T064) -- pre-seed apps, demo script, recording
+
+### Deferred (lower priority within completed phases)
+- **006**: WhatsApp (T113-T114), Discord (T115), Slack (T116) adapters, shell status indicators (T118)
+- **012**: Shell UX (T408-T409), parallel builds (T410), welcome tour (T411), re-onboarding (T412)
 
 ## Shell Patterns
 

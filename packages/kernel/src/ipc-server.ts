@@ -12,6 +12,7 @@ import {
   createTask,
 } from "./ipc.js";
 import { loadSkillBody } from "./skills.js";
+import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
 
 export function createIpcServer(db: MatrixDB, homePath?: string) {
   return createSdkMcpServer({
@@ -180,6 +181,58 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               },
             ],
           };
+        },
+      ),
+
+      tool(
+        "get_persona_suggestions",
+        "Get recommended apps, skills, and personality for a user role. Use during onboarding to propose a setup.",
+        { role: z.string().describe("The user's role (e.g. 'student', 'developer', 'investor', or any custom role)") },
+        async ({ role }) => {
+          const suggestions = getPersonaSuggestions(role);
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(suggestions, null, 2) },
+            ],
+          };
+        },
+      ),
+
+      tool(
+        "write_setup_plan",
+        "Write the onboarding setup plan to ~/system/setup-plan.json. Call this after the user confirms the proposed setup.",
+        { plan_json: z.string().describe("JSON string of the setup plan") },
+        async ({ plan_json }) => {
+          if (!homePath) {
+            return {
+              content: [
+                { type: "text" as const, text: "Cannot write setup plan (no home path configured)" },
+              ],
+            };
+          }
+          try {
+            const raw = JSON.parse(plan_json);
+            const result = SetupPlanSchema.safeParse(raw);
+            if (!result.success) {
+              return {
+                content: [
+                  { type: "text" as const, text: `Invalid setup plan: ${result.error.message}` },
+                ],
+              };
+            }
+            writeSetupPlan(homePath, result.data);
+            return {
+              content: [
+                { type: "text" as const, text: "Setup plan written to ~/system/setup-plan.json" },
+              ],
+            };
+          } catch (e) {
+            return {
+              content: [
+                { type: "text" as const, text: `Failed to write setup plan: ${e instanceof Error ? e.message : String(e)}` },
+              ],
+            };
+          }
         },
       ),
     ],

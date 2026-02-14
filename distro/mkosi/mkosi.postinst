@@ -1,0 +1,61 @@
+#!/bin/bash
+set -e
+
+# This script runs inside the image during build (chroot context).
+# $DESTDIR is set to the image root by mkosi.
+
+# Install pnpm
+corepack enable
+corepack prepare pnpm@10.6.2 --activate
+
+# Create kiosk user (no password, auto-login)
+useradd -m -s /bin/bash -G video,input,audio kiosk || true
+useradd -m -s /bin/bash user || true
+
+# Copy Matrix OS application (built externally, placed in mkosi.extra/)
+# mkosi.extra/opt/matrix-os/ -> /opt/matrix-os/
+# This directory should contain the pre-built app (run `pnpm install && next build` first)
+
+# Create env file directory
+mkdir -p /etc/matrix-os
+
+# Install systemd services
+cp /opt/matrix-os/distro/systemd/matrix-gateway.service /etc/systemd/system/
+cp /opt/matrix-os/distro/systemd/matrix-shell.service /etc/systemd/system/
+cp /opt/matrix-os/distro/systemd/matrix-kiosk.service /etc/systemd/system/
+
+# Enable services
+systemctl enable matrix-gateway.service
+systemctl enable matrix-shell.service
+systemctl enable matrix-kiosk.service
+
+# Auto-login on TTY1
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << 'GETTY'
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --noreset --noclear --autologin kiosk - $TERM
+GETTY
+
+# Install Plymouth theme
+cp -r /opt/matrix-os/distro/plymouth/matrix-os /usr/share/plymouth/themes/
+plymouth-set-default-theme matrix-os || true
+
+# Network: DHCP on all ethernet interfaces
+mkdir -p /etc/systemd/network
+cat > /etc/systemd/network/20-wired.network << 'NET'
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+NET
+
+# Enable networkd + resolved
+systemctl enable systemd-networkd
+systemctl enable systemd-resolved
+
+# SSH for remote access
+systemctl enable ssh
+
+echo "Matrix OS image post-install complete"

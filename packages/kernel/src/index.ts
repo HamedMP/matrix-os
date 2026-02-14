@@ -30,3 +30,15 @@ export {
   PROTECTED_FILE_PATTERNS,
 } from "./evolution.js";
 export type { WatchdogConfig, Watchdog } from "./evolution.js";
+export {
+  parseSetupPlan,
+  writeSetupPlan,
+  getPersonaSuggestions,
+} from "./onboarding.js";
+export type {
+  SetupPlan,
+  AppSuggestion,
+  SkillSuggestion,
+  PersonalityConfig,
+  PersonaSuggestions,
+} from "./onboarding.js";
