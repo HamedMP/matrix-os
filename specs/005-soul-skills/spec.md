@@ -53,6 +53,31 @@ I am Matrix OS -- a personal operating system and AI assistant. I run on your ma
 
 `buildSystemPrompt()` reads `~/system/soul.md` and injects it after the core identity section, before state/knowledge. SOUL is L0 -- always present, never compressed. Cost: ~300-500 tokens per request.
 
+## Identity Files
+
+Beyond SOUL, the kernel loads three additional system files that define the OS and its relationship with the user:
+
+### `~/system/identity.md` -- Public Identity
+
+Who the OS is externally: name, nature (AI Operating System), vibe, emoji, avatar URL. This is the "business card" -- used when the OS introduces itself or responds to "who are you?". Fields are user-editable.
+
+### `~/system/user.md` -- User Profile
+
+Who the human is: name, what to call them, pronouns, timezone, notes, and free-form context. The OS uses this to personalize responses (language, units, tone). Replaces the old `agents/user-profile.md`.
+
+### `~/system/bootstrap.md` -- First-Run Ritual
+
+Only exists on first boot. Guides the onboarding conversation: greet the user, update identity/user/soul files with their preferences, suggest building something together, then self-delete. The prompt includes a "FIRST RUN" instruction when this file exists.
+
+### Loading Order
+
+`buildSystemPrompt()` injects identity files in this order (all L0, never evicted):
+
+1. SOUL (personality, values, communication style)
+2. Identity (public-facing identity card)
+3. User (human profile and preferences)
+4. Bootstrap (first-run only, deleted after onboarding)
+
 ## Skills System
 
 ### What Skills Are

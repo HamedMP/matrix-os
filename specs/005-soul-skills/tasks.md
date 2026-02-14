@@ -17,7 +17,13 @@
 
 - [x] T100 [US7] Create `home/system/soul.md` -- default SOUL identity. Personality: helpful, direct, curious. Values: user privacy, accuracy, transparency. Communication: clear and concise, adapts to channel.
 
-- [x] T101 [US7] Implement `loadSoul()` in `packages/kernel/src/soul.ts` -- reads `~/system/soul.md`, returns content string. Called by `buildSystemPrompt()`. If file missing, returns empty string.
+- [x] T100-id [US7] Create `home/system/identity.md` -- public identity (name, nature, vibe, emoji, avatar). Inspired by moltbot IDENTITY.md.
+
+- [x] T100-usr [US7] Create `home/system/user.md` -- human user profile (name, pronouns, timezone, notes). Replaces `agents/user-profile.md`. Inspired by moltbot USER.md.
+
+- [x] T100-boot [US7] Create `home/system/bootstrap.md` -- first-run onboarding ritual. Guides initial conversation, updates identity files, self-deletes. Inspired by moltbot BOOTSTRAP.md.
+
+- [x] T101 [US7] Implement `loadSoul()`, `loadIdentity()`, `loadUser()`, `loadBootstrap()` in `packages/kernel/src/soul.ts` -- reads system files, returns content strings. Called by `buildSystemPrompt()`. If file missing, returns empty string.
 
 - [x] T102 [US7] Modify `buildSystemPrompt()` in `packages/kernel/src/prompt.ts` -- insert SOUL content after core identity section, before state/knowledge. SOUL is L0 cache (never evicted).
 
