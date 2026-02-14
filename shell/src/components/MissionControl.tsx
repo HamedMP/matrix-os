@@ -70,13 +70,15 @@ export function MissionControl({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex">
+    <div className="fixed inset-0 z-[45]">
       <div
         className="absolute inset-0 bg-background/80 backdrop-blur-lg"
-        onClick={onClose}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
       />
 
-      <div className="relative flex flex-1 flex-col z-10 overflow-hidden">
+      <div className="relative flex flex-col h-full z-10 overflow-hidden md:pl-14">
         <div className="flex items-center justify-between px-6 py-4">
           <h2 className="text-lg font-semibold">Mission Control</h2>
           <button
@@ -263,11 +265,18 @@ export function MissionControl({
       </div>
 
       {selectedTask && (
-        <div className="relative z-10">
-          <TaskDetail
-            task={selectedTask}
-            onClose={() => selectTask(null)}
-          />
+        <div
+          className="fixed inset-0 z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) selectTask(null);
+          }}
+        >
+          <div className="absolute right-0 top-0 h-full">
+            <TaskDetail
+              task={selectedTask}
+              onClose={() => selectTask(null)}
+            />
+          </div>
         </div>
       )}
     </div>

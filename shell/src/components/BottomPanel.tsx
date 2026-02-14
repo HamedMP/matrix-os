@@ -64,13 +64,16 @@ export function BottomPanel() {
 
   const selectTab = useCallback(
     (t: Tab) => {
-      setTab(t);
-      if (!open) {
+      if (t === tab && open) {
+        setOpen(false);
+        savePreference(false, t);
+      } else {
+        setTab(t);
         setOpen(true);
+        savePreference(true, t);
       }
-      savePreference(true, t);
     },
-    [open],
+    [tab, open],
   );
 
   const toggle = useCallback(() => {
@@ -126,20 +129,21 @@ export function BottomPanel() {
         </Button>
       </div>
 
-      {open && (
-        <>
-          <Separator />
-          <div className="h-[240px] min-h-0">
-            {tab === "terminal" && <Terminal />}
-            {tab === "graph" && <ModuleGraph />}
-            {tab === "activity" && (
-              <div className="h-full overflow-y-auto">
-                <ActivityFeed />
-              </div>
-            )}
-          </div>
-        </>
-      )}
+      <div
+        className="overflow-hidden transition-[max-height] duration-200 ease-in-out"
+        style={{ maxHeight: open ? 240 : 0 }}
+      >
+        <Separator />
+        <div className="h-[240px] min-h-0">
+          {tab === "terminal" && <Terminal />}
+          {tab === "graph" && <ModuleGraph />}
+          {tab === "activity" && (
+            <div className="h-full overflow-y-auto">
+              <ActivityFeed />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

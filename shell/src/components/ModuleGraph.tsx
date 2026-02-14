@@ -5,6 +5,7 @@ import { useFileWatcherPattern } from "@/hooks/useFileWatcher";
 import { modulesToGraph, type ModuleEntry } from "@/lib/moduleGraph";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { NetworkIcon } from "lucide-react";
 
 const GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
@@ -116,10 +117,18 @@ export function ModuleGraph() {
         </Badge>
       </div>
       <Separator />
-      <div
-        ref={containerRef}
-        className="flex-1 min-h-0 bg-background"
-      />
+      {modules.length === 0 ? (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-muted-foreground">
+          <NetworkIcon className="size-5 mb-1.5 opacity-40" />
+          <p className="text-xs font-medium">No modules running</p>
+          <p className="text-[10px] opacity-70">Apps you build will appear here as modules.</p>
+        </div>
+      ) : (
+        <div
+          ref={containerRef}
+          className="flex-1 min-h-0 bg-background"
+        />
+      )}
     </div>
   );
 }

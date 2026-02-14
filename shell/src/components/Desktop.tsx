@@ -439,7 +439,7 @@ export function Desktop() {
       <div className="relative flex-1 flex flex-col md:flex-row">
         {/* Desktop dock (left sidebar) */}
         <aside
-          className="hidden md:flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm"
+          className="hidden md:flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm z-[55]"
           style={{ width: DOCK_WIDTH }}
         >
           <Tooltip>
@@ -481,7 +481,7 @@ export function Desktop() {
 
         {/* Mobile dock (bottom tab bar) */}
         {apps.length > 0 && (
-          <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto">
+          <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               onClick={() => setTaskBoardOpen((prev) => !prev)}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${

@@ -8,7 +8,7 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { ChevronsUpDownIcon } from "lucide-react";
+import { ChevronsUpDownIcon, ActivityIcon } from "lucide-react";
 
 interface Activity {
   id: string;
@@ -64,7 +64,11 @@ export function ActivityFeed() {
       <CollapsibleContent>
         <div ref={scrollRef} className="overflow-y-auto px-3 pb-2 max-h-22">
           {activities.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No activity yet</p>
+            <div className="flex flex-col items-center justify-center py-4 text-muted-foreground">
+              <ActivityIcon className="size-5 mb-1.5 opacity-40" />
+              <p className="text-xs font-medium">No recent activity</p>
+              <p className="text-[10px] opacity-70">System events will appear here as the OS works.</p>
+            </div>
           ) : (
             activities.map((act) => (
               <div key={act.id} className="flex gap-2 text-xs py-0.5">
