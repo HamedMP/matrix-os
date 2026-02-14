@@ -45,6 +45,7 @@ export function parseFrontmatter(content: string): ParsedAgent {
 
 export function loadCustomAgents(
   agentsDir: string,
+  homePath?: string,
 ): Record<string, AgentDefinition> {
   if (!existsSync(agentsDir)) return {};
 
@@ -64,9 +65,11 @@ export function loadCustomAgents(
     const name = frontmatter.name ?? basename(file, ".md");
     if (!frontmatter.description) continue;
 
+    const prompt = homePath ? resolveHomePaths(body, homePath) : body;
+
     agents[name] = {
       description: frontmatter.description,
-      prompt: body,
+      prompt,
       ...(frontmatter.tools && { tools: frontmatter.tools }),
       ...(frontmatter.model && { model: frontmatter.model }),
       ...(frontmatter.maxTurns && { maxTurns: frontmatter.maxTurns }),

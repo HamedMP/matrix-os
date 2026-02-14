@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 import { loadSkills, buildSkillsToc } from "./skills.js";
 
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
 export function buildSystemPrompt(homePath: string): string {
   const sections: string[] = [];
 

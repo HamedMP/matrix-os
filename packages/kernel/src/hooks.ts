@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 export interface HookInput {
   hook_event_name: string;
   tool_name?: string;
@@ -86,9 +88,33 @@ export async function logActivityHook(input: HookInput): Promise<HookOutput> {
   return {};
 }
 
-export async function gitSnapshotHook(input: HookInput): Promise<HookOutput> {
-  // In full implementation: git add + commit before file mutations
-  return {};
+export function createGitSnapshotHook(
+  homePath: string,
+): (input: HookInput) => Promise<HookOutput> {
+  return async (input: HookInput): Promise<HookOutput> => {
+    if (input.tool_name !== "Write" && input.tool_name !== "Edit") {
+      return {};
+    }
+
+    try {
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: homePath,
+        encoding: "utf-8",
+      }).trim();
+
+      if (!status) return {};
+
+      execFileSync("git", ["add", "-A"], { cwd: homePath, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "snapshot: pre-mutation"], {
+        cwd: homePath,
+        stdio: "ignore",
+      });
+    } catch {
+      // Not a git repo or nothing to commit -- silently continue
+    }
+
+    return {};
+  };
 }
 
 export async function persistSessionHook(

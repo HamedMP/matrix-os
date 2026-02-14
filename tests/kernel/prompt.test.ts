@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSystemPrompt } from "../../packages/kernel/src/prompt.js";
+import { buildSystemPrompt, estimateTokens } from "../../packages/kernel/src/prompt.js";
 
 describe("buildSystemPrompt", () => {
   const homePath = "./home";
@@ -82,5 +82,26 @@ describe("buildSystemPrompt", () => {
     const soulIdx = prompt.indexOf("## Soul");
     const stateIdx = prompt.indexOf("## Current State");
     expect(soulIdx).toBeLessThan(stateIdx);
+  });
+
+  it("includes skills TOC section", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("## Available Skills");
+    expect(prompt).toContain("load_skill");
+  });
+});
+
+describe("estimateTokens", () => {
+  it("estimates ~1 token per 4 characters", () => {
+    expect(estimateTokens("hello world")).toBe(3); // 11 chars / 4 = 2.75, ceil = 3
+  });
+
+  it("returns 0 for empty string", () => {
+    expect(estimateTokens("")).toBe(0);
+  });
+
+  it("handles long text proportionally", () => {
+    const text = "a".repeat(4000);
+    expect(estimateTokens(text)).toBe(1000); // 4000 / 4 = 1000
   });
 });

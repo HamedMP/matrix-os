@@ -5,7 +5,7 @@ export type { KernelConfig } from "./options.js";
 export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
 export { ensureHome } from "./boot.js";
-export { buildSystemPrompt } from "./prompt.js";
+export { buildSystemPrompt, estimateTokens } from "./prompt.js";
 export { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 export { loadSkills, loadSkillBody, buildSkillsToc } from "./skills.js";
 export type { SkillDefinition } from "./skills.js";
@@ -23,6 +23,7 @@ export type {
   HeartbeatConfig,
   Heartbeat,
 } from "./heartbeat.js";
+export { createGitSnapshotHook } from "./hooks.js";
 export {
   createProtectedFilesHook,
   createWatchdog,

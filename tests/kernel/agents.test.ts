@@ -127,20 +127,42 @@ describe("getCoreAgents", () => {
 });
 
 describe("loadCustomAgents", () => {
-  it("returns an empty object for empty directory", () => {
-    const agents = loadCustomAgents("./home/agents/custom");
-    expect(agents).toEqual({});
-  });
-
   it("returns an empty object for nonexistent directory", () => {
     const agents = loadCustomAgents("/nonexistent/path");
     expect(agents).toEqual({});
   });
 
-  it("loads agent definitions from markdown files", () => {
-    // This test will pass once we have actual .md files in the custom dir
-    // For now it validates the empty-dir behavior
+  it("loads all five agent files from home/agents/custom", () => {
     const agents = loadCustomAgents("./home/agents/custom");
-    expect(typeof agents).toBe("object");
+    expect(Object.keys(agents).sort()).toEqual([
+      "builder",
+      "deployer",
+      "evolver",
+      "healer",
+      "researcher",
+    ]);
+  });
+
+  it("parses agent frontmatter correctly", () => {
+    const agents = loadCustomAgents("./home/agents/custom");
+    expect(agents.builder.model).toBe("opus");
+    expect(agents.builder.maxTurns).toBe(50);
+    expect(agents.builder.tools).toContain("Read");
+    expect(agents.builder.tools).toContain("mcp__matrix-os-ipc__claim_task");
+  });
+
+  it("loads prompt body for each agent", () => {
+    const agents = loadCustomAgents("./home/agents/custom");
+    expect(agents.builder.prompt).toContain("WORKFLOW");
+    expect(agents.healer.prompt).toContain("COMMON FAILURE PATTERNS");
+    expect(agents.researcher.prompt).toContain("GUIDELINES");
+    expect(agents.deployer.prompt).toContain("PORT MANAGEMENT");
+    expect(agents.evolver.prompt).toContain("SAFETY RULES");
+  });
+
+  it("resolves ~/ paths when homePath provided", () => {
+    const agents = loadCustomAgents("./home/agents/custom", "/test/home");
+    expect(agents.builder.prompt).toContain("/test/home/modules/");
+    expect(agents.builder.prompt).not.toContain("~/modules/");
   });
 });

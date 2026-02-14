@@ -6,7 +6,7 @@ import {
   safetyGuardHook,
   updateStateHook,
   logActivityHook,
-  gitSnapshotHook,
+  createGitSnapshotHook,
   persistSessionHook,
   onSubagentComplete,
   notifyShellHook,
@@ -39,10 +39,11 @@ export function kernelOptions(config: KernelConfig) {
 
   const ipcServer = createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
-  const customAgents = loadCustomAgents(`${homePath}/agents/custom`);
+  const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const agents = { ...coreAgents, ...customAgents };
   const systemPrompt = buildSystemPrompt(homePath);
   const protectedFilesHook = createProtectedFilesHook(homePath);
+  const gitSnapshotHook = createGitSnapshotHook(homePath);
 
   return {
     model: config.model ?? "claude-opus-4-6",

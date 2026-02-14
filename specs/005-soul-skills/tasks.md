@@ -37,19 +37,19 @@
 
 These agents have dispatch logic wired up but lack dedicated prompt files in `home/agents/custom/`.
 
-- [ ] T100d [US1] Write builder agent prompt `home/agents/custom/builder.md` -- instructions for generating HTML apps in `~/apps/`, structured modules in `~/modules/`, theme integration, IPC tool usage, module.json creation
-- [ ] T100e [P] [US1] Write researcher agent prompt `home/agents/custom/researcher.md` -- instructions for gathering information, WebSearch/WebFetch, returning findings via `send_message` IPC tool
-- [ ] T100f [P] [US1] Write deployer agent prompt `home/agents/custom/deployer.md` -- instructions for deploying to hosting platforms, reading deployment knowledge
-- [ ] T100g [US3] Write healer agent prompt `home/agents/custom/healer.md` -- diagnosis workflow, patch patterns, rollback on test failure. Dispatch logic exists in gateway.
-- [ ] T100h [US4] Write evolver agent prompt `home/agents/custom/evolver.md` -- safety constraints, git snapshot before changes, protected files awareness. Dispatch logic exists in gateway.
+- [x] T100d [US1] Write builder agent prompt `home/agents/custom/builder.md` -- instructions for generating HTML apps in `~/apps/`, structured modules in `~/modules/`, theme integration, IPC tool usage, module.json creation
+- [x] T100e [P] [US1] Write researcher agent prompt `home/agents/custom/researcher.md` -- instructions for gathering information, WebSearch/WebFetch, returning findings via `send_message` IPC tool
+- [x] T100f [P] [US1] Write deployer agent prompt `home/agents/custom/deployer.md` -- instructions for deploying to hosting platforms, reading deployment knowledge
+- [x] T100g [US3] Write healer agent prompt `home/agents/custom/healer.md` -- diagnosis workflow, patch patterns, rollback on test failure. Dispatch logic exists in gateway.
+- [x] T100h [US4] Write evolver agent prompt `home/agents/custom/evolver.md` -- safety constraints, git snapshot before changes, protected files awareness. Dispatch logic exists in gateway.
 
 ## Critical Fixes (from audit)
 
 These address gaps identified in the 2026-02-13 audit. They touch kernel code and are best addressed while kernel internals are already being modified for SOUL + skills.
 
-- [ ] T100i [US3] Implement `gitSnapshotHook` in `packages/kernel/src/hooks.ts` -- git add + commit before file mutations. Currently a no-op stub. Without this, the self-healing/rollback guarantee is hollow. Use `execFileSync("git", ["add", "-A"])` + `execFileSync("git", ["commit", "-m", "snapshot: pre-mutation"])` in homePath. Skip if no changes to commit.
+- [x] T100i [US3] Implement `createGitSnapshotHook` in `packages/kernel/src/hooks.ts` -- git add + commit before file mutations. Currently a no-op stub. Without this, the self-healing/rollback guarantee is hollow. Use `execFileSync("git", ["add", "-A"])` + `execFileSync("git", ["commit", "-m", "snapshot: pre-mutation"])` in homePath. Skip if no changes to commit.
 
-- [ ] T100j [US7] Add system prompt token budgeting in `packages/kernel/src/prompt.ts` -- SOUL + skills injection will push prompt beyond 7K token budget. Add `estimateTokens(text)` (4 chars ~= 1 token), `truncateToTokenBudget(sections, maxTokens)` utility. Cap activity at 20 lines (not 50), summarize modules as count + names. Enforce budget in `buildSystemPrompt()`.
+- [x] T100j [US7] Add system prompt token budgeting in `packages/kernel/src/prompt.ts` -- SOUL + skills injection will push prompt beyond 7K token budget. Add `estimateTokens(text)` (4 chars ~= 1 token), `truncateToTokenBudget(sections, maxTokens)` utility. Cap activity at 20 lines (not 50), summarize modules as count + names. Enforce budget in `buildSystemPrompt()`.
 
 ## Checkpoint
 

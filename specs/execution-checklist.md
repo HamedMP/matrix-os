@@ -25,8 +25,8 @@ No implementation is included in this document.
 These must be addressed before or during the next phases. Task IDs are assigned to the appropriate spec.
 
 - [x] T053 (004) Serial dispatch queue -- prevents concurrent state corruption. Must be done before 006 (channels).
-- [ ] T100i (005) Implement gitSnapshotHook -- self-healing safety net is currently hollow.
-- [ ] T100j (005) System prompt token budgeting -- will exceed 7K as SOUL + skills grow.
+- [x] T100i (005) Implement gitSnapshotHook -- self-healing safety net is currently hollow.
+- [x] T100j (005) System prompt token budgeting -- will exceed 7K as SOUL + skills grow.
 - [ ] T133 (008A) Auth token validation -- MATRIX_AUTH_TOKEN documented but never checked. Already in 008 task list.
 
 ## 0) Program-Level Checklist
@@ -58,9 +58,9 @@ Source: `specs/005-soul-skills/tasks.md`
 - [x] T103 `packages/kernel/src/skills.ts` loadSkills + frontmatter parsing
 - [x] T104 `home/agents/skills/` initial skills (`summarize.md`, `weather.md`, `reminder.md`, `skill-creator.md`)
 - [x] T105 wire skills TOC + `load_skill` IPC tool
-- [ ] T100d-T100h agent prompts (builder, researcher, deployer, healer, evolver)
-- [ ] T100i gitSnapshotHook (audit critical fix)
-- [ ] T100j system prompt token budgeting (audit critical fix)
+- [x] T100d-T100h agent prompts (builder, researcher, deployer, healer, evolver)
+- [x] T100i gitSnapshotHook (audit critical fix)
+- [x] T100j system prompt token budgeting (audit critical fix)
 
 Checkpoint:
 
@@ -289,7 +289,7 @@ These tasks touch the same files and must be sequenced:
 ## 13) Execution Order Checklist (No Timeline)
 
 - [x] T053 serial dispatch queue (critical fix, before channels).
-- [ ] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
+- [x] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
 - [ ] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
 - [ ] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
 - [ ] Complete Phase 007 cron + heartbeat end-to-end.
