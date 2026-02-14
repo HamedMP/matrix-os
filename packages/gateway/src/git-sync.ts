@@ -25,6 +25,58 @@ export interface GitSync {
   removeRemote(name: string): Promise<GitResult>;
 }
 
+const IGNORED_PATTERNS = [
+  "system/activity.log",
+  "system/logs/",
+  ".sqlite",
+];
+
+export interface AutoSync {
+  onChange(path: string): void;
+  shouldSync(path: string): boolean;
+  stop(): void;
+}
+
+export interface AutoSyncOptions {
+  debounceMs?: number;
+}
+
+export function createAutoSync(sync: GitSync, options: AutoSyncOptions = {}): AutoSync {
+  const debounceMs = options.debounceMs ?? 30_000;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function shouldSync(path: string): boolean {
+    return !IGNORED_PATTERNS.some((p) => path.includes(p));
+  }
+
+  function scheduleCommit() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      timer = null;
+      await sync.commit("auto-sync");
+      const status = await sync.status();
+      if (status.hasRemote) {
+        await sync.push();
+      }
+    }, debounceMs);
+  }
+
+  return {
+    onChange(path: string) {
+      if (shouldSync(path)) {
+        scheduleCommit();
+      }
+    },
+    shouldSync,
+    stop() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
 export function createGitSync(homePath: string): GitSync {
   async function git(...args: string[]): Promise<string> {
     const { stdout } = await execAsync("git", args, { cwd: homePath });

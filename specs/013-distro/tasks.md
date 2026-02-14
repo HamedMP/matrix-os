@@ -2,23 +2,27 @@
 
 ## Phase A: Docker (T500-T506)
 
-### T500: Dockerfile (multi-stage build)
+### T500: Dockerfile (multi-stage build) -- DONE
 - [x] Stage 1: Node 22 Alpine builder with pnpm, native build tools
 - [x] Stage 2: Production image with Node 22, git, production deps
 - [x] Build shell (next build) and gateway (tsc) in builder stage
 - [x] Handle node-pty and better-sqlite3 native compilation
 - [x] .dockerignore for node_modules, .git, tests, specs, docs
-- [ ] Verify image builds and gateway starts
+- [x] Verify image builds and gateway starts
+- [x] Non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
+- [x] Claude Code CLI installed globally (Agent SDK spawns claude subprocess)
+- [x] Dynamic WebSocket URL (derive from window.location for OrbStack/VPS)
 - **Output**: Working `Dockerfile` at repo root
 - **Blocked by**: nothing
 
-### T501: docker-compose.yml (dev/test)
+### T501: docker-compose.yml (dev/test) -- DONE
 - [x] Gateway + shell service definitions
 - [x] Volume mount for ~/matrixos/ persistence
 - [x] Port mapping (3000, 4000)
-- [x] Environment variables (ANTHROPIC_API_KEY, MATRIX_HOME)
+- [x] Environment variables via .env.docker
 - [x] Health check configuration
-- [ ] `docker compose up` boots Matrix OS
+- [x] `docker compose up` boots Matrix OS
+- [x] First-boot home directory initialization from template
 - **Output**: Working `docker-compose.yml` at repo root
 - **Blocked by**: T500
 

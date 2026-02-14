@@ -143,3 +143,78 @@ describe("T220: GitSync", () => {
     expect(tracked).toContain(".gitignore");
   });
 });
+
+describe("T221: AutoSync", () => {
+  let homePath: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    homePath = tmpGitRepo();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (homePath) rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("skips ignored paths (activity.log, logs/)", () => {
+    const auto = createAutoSync(createGitSync(homePath), { debounceMs: 30_000 });
+    expect(auto.shouldSync("system/activity.log")).toBe(false);
+    expect(auto.shouldSync("system/logs/2026-02-13.jsonl")).toBe(false);
+    expect(auto.shouldSync("system/state.md")).toBe(true);
+    expect(auto.shouldSync("apps/todo/index.html")).toBe(true);
+    auto.stop();
+  });
+
+  it("debounces multiple changes into one commit", async () => {
+    const sync = createGitSync(homePath);
+    const commitSpy = vi.spyOn(sync, "commit").mockResolvedValue({ success: true, message: "ok" });
+    vi.spyOn(sync, "status").mockResolvedValue({ clean: true, ahead: 0, behind: 0, branch: "main", hasRemote: false });
+    const auto = createAutoSync(sync, { debounceMs: 5_000 });
+
+    auto.onChange("system/state.md");
+    auto.onChange("apps/todo/index.html");
+    auto.onChange("system/user.md");
+
+    expect(commitSpy).not.toHaveBeenCalled();
+
+    // Advance past debounce
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    auto.stop();
+  });
+
+  it("resets debounce timer on new changes", async () => {
+    const sync = createGitSync(homePath);
+    const commitSpy = vi.spyOn(sync, "commit").mockResolvedValue({ success: true, message: "ok" });
+    vi.spyOn(sync, "status").mockResolvedValue({ clean: true, ahead: 0, behind: 0, branch: "main", hasRemote: false });
+    const auto = createAutoSync(sync, { debounceMs: 5_000 });
+
+    auto.onChange("system/state.md");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    // New change resets the timer
+    auto.onChange("apps/new.html");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    // Still hasn't fired (only 3s since last change)
+    expect(commitSpy).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    auto.stop();
+  });
+
+  it("stop() clears pending timer", async () => {
+    const sync = createGitSync(homePath);
+    const commitSpy = vi.spyOn(sync, "commit");
+    const auto = createAutoSync(sync, { debounceMs: 5_000 });
+
+    auto.onChange("system/state.md");
+    auto.stop();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(commitSpy).not.toHaveBeenCalled();
+  });
+});

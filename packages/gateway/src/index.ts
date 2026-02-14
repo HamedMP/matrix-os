@@ -28,6 +28,8 @@ export type { HeartbeatRunner, HeartbeatConfig } from "./heartbeat/runner.js";
 export { buildHeartbeatPrompt } from "./heartbeat/prompt.js";
 export { createInteractionLogger } from "./logger.js";
 export type { InteractionLogger, InteractionEntry, InteractionInput } from "./logger.js";
+export { createGitSync, createAutoSync } from "./git-sync.js";
+export type { GitSync, GitStatus, GitResult, AutoSync, AutoSyncOptions } from "./git-sync.js";
 export { authMiddleware } from "./auth.js";
 export { getSystemInfo } from "./system-info.js";
 export type { SystemInfo } from "./system-info.js";

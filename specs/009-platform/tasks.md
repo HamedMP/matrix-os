@@ -70,19 +70,19 @@
 
 ### Tests
 
-- [ ] T220a [P] [US14] Write `tests/gateway/git-sync.test.ts` -- test sync logic: commit, push, pull, conflict detection, .gitignore management
+- [x] T220a [P] [US14] Write `tests/gateway/git-sync.test.ts` -- 14 tests: status, commit, push, pull, remotes, .gitignore, auto-sync debounce
 
 ### Implementation
 
-- [ ] T220 [US14] Implement `GitSync` in `packages/gateway/src/git-sync.ts` -- `commit()`, `push()`, `pull()`, `addRemote()`, `removeRemote()`, `status()`. Uses child_process `git` commands.
+- [x] T220 [US14] Implement `GitSync` in `packages/gateway/src/git-sync.ts` -- `commit()`, `push()`, `pull()`, `addRemote()`, `removeRemote()`, `status()`. Uses child_process `execFile` (safe, no shell).
 
-- [ ] T221 [US14] Add auto-sync on changes -- debounced (30s after last change): `git add -A && git commit && git push`. Triggered by file watcher events for significant changes (not activity.log).
+- [x] T221 [US14] Add auto-sync on changes -- debounced (30s after last change): `git add -A && git commit && git push`. Triggered by file watcher events for significant changes (not activity.log).
 
 - [ ] T222 [US14] Add `matrixos sync` support via kernel -- user says "sync my files" -> kernel runs git push/pull via Bash. Or "add a backup to GitHub" -> kernel runs `git remote add`.
 
 - [ ] T223 [P] [US14] Implement conflict resolution -- on pull conflict, kernel reads conflict markers, makes a decision, commits resolution. Falls back to manual if unsure.
 
-- [ ] T224 [P] [US14] Create `.gitignore` template in `home/` -- ignore `system/logs/`, `system/whatsapp-auth/`, `node_modules/`, `*.sqlite`, large media files
+- [x] T224 [P] [US14] Create `.gitignore` template in `home/` -- ignore `system/logs/`, `system/whatsapp-auth/`, `node_modules/`, `*.sqlite`, large media files
 
 ---
 

@@ -99,7 +99,43 @@ cat ~/matrixos/system/modules.json
 
 ---
 
-## 5. Identity and Profiles
+## 5. Handle Setup (First Boot Identity)
+
+**User**: On fresh install or when handle is empty, chat anything
+
+**Expected**:
+- If during bootstrap: kernel asks for handle as part of onboarding conversation
+- If after bootstrap: kernel notices empty handle and prompts to set one
+- Kernel calls `set_handle` tool with chosen handle and display name
+- Handle saved to `~/system/handle.json`
+
+**Verify**:
+```bash
+cat ~/matrixos/system/handle.json
+# Should contain: handle, aiHandle, displayName, createdAt
+```
+
+---
+
+## 6. Git Sync
+
+**User**: "Sync my files to GitHub" or "Add a backup remote"
+
+**Expected** (once T222 kernel support is wired):
+- Kernel calls git sync operations to push/pull
+- Auto-sync debounces file changes (30s) and commits automatically
+- `.gitignore` excludes logs, sqlite, whatsapp-auth, large media
+
+**Verify**:
+```bash
+cd ~/matrixos && git log --oneline -5   # auto-sync commits
+cat ~/matrixos/.gitignore               # exclusion patterns
+git remote -v                           # configured remotes
+```
+
+---
+
+## 7. Identity and Profiles
 
 **User**: Check profile endpoints
 
@@ -112,7 +148,7 @@ curl http://localhost:4000/api/system/info   # version, modules, skills, cost
 
 ---
 
-## 6. Observability
+## 8. Observability
 
 **User**: Chat with the kernel (any message)
 
@@ -129,7 +165,7 @@ cat ~/matrixos/system/logs/$(date +%Y-%m-%d).jsonl
 
 ---
 
-## 7. Auth Middleware
+## 9. Auth Middleware
 
 **Setup**: Restart with `MATRIX_AUTH_TOKEN=demo-token bun run dev:gateway`
 
@@ -147,7 +183,7 @@ curl http://localhost:4000/health
 
 ---
 
-## 8. Telegram Channel
+## 10. Telegram Channel
 
 **Setup**: Edit `~/matrixos/system/config.json`, set:
 ```json
@@ -178,7 +214,7 @@ curl http://localhost:4000/api/channels/status
 
 ---
 
-## 9. Concurrent Tasks
+## 11. Concurrent Tasks
 
 **User** (in two browser tabs or shell + Telegram simultaneously):
 - Tab 1: "Build me a CRM app"
@@ -197,7 +233,7 @@ curl http://localhost:4000/health
 
 ---
 
-## 10. System Health
+## 12. System Health
 
 **Verify**:
 ```bash
