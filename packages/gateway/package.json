@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "@types/node-telegram-bot-api": "^0.64.13",
     "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
@@ -23,6 +24,7 @@
     "chokidar": "^4.0.0",
     "hono": "^4.11.9",
     "node-pty": "^1.1.0",
+    "node-telegram-bot-api": "^0.67.0",
     "ws": "^8.19.0"
   }
 }

@@ -9,6 +9,10 @@ import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { resolveWithinHome } from "./path-security.js";
+import { createChannelManager, type ChannelManager } from "./channels/manager.js";
+import { createTelegramAdapter } from "./channels/telegram.js";
+import { formatForChannel } from "./channels/format.js";
+import type { ChannelConfig, ChannelId } from "./channels/types.js";
 import {
   createHeartbeat,
   backupModule,
@@ -140,6 +144,64 @@ export function createGateway(config: GatewayConfig) {
       broadcastError(`Evolver change reverted: ${commitMsg}`);
     },
   });
+
+  // Channel manager -- reads config, starts enabled adapters
+  const configPath = join(homePath, "system/config.json");
+  let channelsConfig: Partial<Record<ChannelId, ChannelConfig>> = {};
+  try {
+    if (existsSync(configPath)) {
+      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+      channelsConfig = cfg.channels ?? {};
+    }
+  } catch { /* no channel config */ }
+
+  const channelManager: ChannelManager = createChannelManager({
+    config: channelsConfig,
+    adapters: {
+      telegram: createTelegramAdapter(),
+    },
+    onMessage: (msg) => {
+      const sessionKey = `${msg.source}:${msg.senderId}`;
+      let responseText = "";
+
+      dispatcher
+        .dispatch(msg.text, sessionKey, (event) => {
+          if (event.type === "init") {
+            conversations.begin(event.sessionId);
+            conversations.addUserMessage(event.sessionId, msg.text);
+          } else if (event.type === "text") {
+            responseText += event.text;
+            conversations.appendAssistantText(sessionKey, event.text);
+          } else if (event.type === "result") {
+            conversations.finalize(sessionKey);
+          }
+        }, {
+          channel: msg.source,
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          chatId: msg.chatId,
+        })
+        .then(() => {
+          if (responseText) {
+            const formatted = formatForChannel(msg.source, responseText);
+            channelManager.send({
+              channelId: msg.source,
+              chatId: msg.chatId,
+              text: formatted,
+            });
+          }
+        })
+        .catch((err: Error) => {
+          channelManager.send({
+            channelId: msg.source,
+            chatId: msg.chatId,
+            text: `Error: ${err.message}`,
+          });
+        });
+    },
+  });
+
+  channelManager.start();
 
   watcher.on((change) => {
     const msg: ServerMessage = change;
@@ -384,6 +446,10 @@ export function createGateway(config: GatewayConfig) {
     });
   });
 
+  app.get("/api/channels/status", (c) => {
+    return c.json(channelManager.status());
+  });
+
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   const server = serve({ fetch: app.fetch, port });
@@ -396,9 +462,11 @@ export function createGateway(config: GatewayConfig) {
     watcher,
     heartbeat,
     watchdog,
+    channelManager,
     async close() {
       heartbeat.stop();
       watchdog.stop();
+      await channelManager.stop();
       await watcher.close();
       server.close();
     },

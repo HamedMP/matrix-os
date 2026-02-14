@@ -72,19 +72,19 @@ Source: `specs/006-channels/tasks.md`
 
 Infrastructure:
 
-- [ ] T106a `tests/gateway/channels/manager.test.ts`
-- [ ] T106b `tests/gateway/channels/telegram.test.ts`
-- [ ] T106c `tests/gateway/channels/message-format.test.ts`
-- [ ] T106 `packages/gateway/src/channels/types.ts`
-- [ ] T107 `packages/gateway/src/channels/manager.ts`
-- [ ] T108 `packages/gateway/src/channels/format.ts`
-- [ ] T109 `packages/gateway/src/dispatcher.ts` channel-aware dispatch context
-- [ ] T110 prompt channel context + channel-routing knowledge
+- [x] T106a `tests/gateway/channels/manager.test.ts`
+- [x] T106b `tests/gateway/channels/telegram.test.ts`
+- [x] T106c `tests/gateway/channels/message-format.test.ts`
+- [x] T106 `packages/gateway/src/channels/types.ts`
+- [x] T107 `packages/gateway/src/channels/manager.ts`
+- [x] T108 `packages/gateway/src/channels/format.ts`
+- [x] T109 `packages/gateway/src/dispatcher.ts` channel-aware dispatch context
+- [x] T110 prompt channel context + channel-routing knowledge
 
 Adapters:
 
-- [ ] T111 Telegram adapter
-- [ ] T112 `home/system/config.json` channels section
+- [x] T111 Telegram adapter
+- [x] T112 `home/system/config.json` channels section
 - [ ] T113 WhatsApp adapter
 - [ ] T114 WhatsApp QR flow endpoint
 - [ ] T115 Discord adapter
@@ -92,13 +92,13 @@ Adapters:
 
 Integration:
 
-- [ ] T117 wire ChannelManager in gateway startup/shutdown + `/api/channels/status`
+- [x] T117 wire ChannelManager in gateway startup/shutdown + `/api/channels/status`
 - [ ] T118 shell channel status indicators
-- [ ] T119 `home/agents/knowledge/channel-routing.md`
+- [x] T119 `home/agents/knowledge/channel-routing.md`
 
 Checkpoint:
 
-- [ ] Telegram inbound/outbound works and appears in web shell conversation stream.
+- [x] Telegram inbound/outbound works and appears in web shell conversation stream.
 
 ## 4) Phase 004: Concurrent Kernel Dispatch
 

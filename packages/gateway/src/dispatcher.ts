@@ -6,6 +6,7 @@ import {
   type KernelEvent,
   type MatrixDB,
 } from "@matrix-os/kernel";
+import type { ChannelId } from "./channels/types.js";
 
 export type SpawnFn = typeof spawnKernel;
 
@@ -16,11 +17,19 @@ export interface DispatchOptions {
   spawnFn?: SpawnFn;
 }
 
+export interface DispatchContext {
+  channel?: ChannelId;
+  senderId?: string;
+  senderName?: string;
+  chatId?: string;
+}
+
 export interface Dispatcher {
   dispatch(
     message: string,
     sessionId: string | undefined,
     onEvent: (event: KernelEvent) => void,
+    context?: DispatchContext,
   ): Promise<void>;
   readonly queueLength: number;
   db: MatrixDB;
@@ -31,6 +40,7 @@ interface QueueEntry {
   message: string;
   sessionId: string | undefined;
   onEvent: (event: KernelEvent) => void;
+  context?: DispatchContext;
   resolve: () => void;
   reject: (error: Error) => void;
 }
@@ -50,6 +60,14 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     const entry = queue.shift()!;
 
     try {
+      let message = entry.message;
+      if (entry.context?.channel) {
+        const parts = [`[Channel: ${entry.context.channel}]`];
+        if (entry.context.senderName) parts.push(`[User: ${entry.context.senderName}]`);
+        else if (entry.context.senderId) parts.push(`[User: ${entry.context.senderId}]`);
+        message = `${parts.join(" ")} ${message}`;
+      }
+
       const config: KernelConfig = {
         db,
         homePath,
@@ -58,7 +76,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         maxTurns: opts.maxTurns,
       };
 
-      for await (const event of spawnFn(entry.message, config)) {
+      for await (const event of spawnFn(message, config)) {
         entry.onEvent(event);
       }
       entry.resolve();
@@ -78,9 +96,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       return queue.length;
     },
 
-    dispatch(message, sessionId, onEvent) {
+    dispatch(message, sessionId, onEvent, context) {
       return new Promise<void>((resolve, reject) => {
-        queue.push({ message, sessionId, onEvent, resolve, reject });
+        queue.push({ message, sessionId, onEvent, context, resolve, reject });
         processQueue();
       });
     },

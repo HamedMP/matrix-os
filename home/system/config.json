@@ -10,5 +10,11 @@
   },
   "shell": {
     "port": 3000
+  },
+  "channels": {
+    "telegram": { "enabled": false, "token": "", "allowFrom": [] },
+    "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },
+    "discord": { "enabled": false, "token": "", "allowFrom": [] },
+    "slack": { "enabled": false, "botToken": "", "appToken": "", "allowFrom": [] }
   }
 }
