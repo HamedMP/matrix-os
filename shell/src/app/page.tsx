@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useChatState } from "@/hooks/useChatState";
+import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
+import { useCommandStore } from "@/stores/commands";
 import { Desktop } from "@/components/Desktop";
 import { ChatPanel } from "@/components/ChatPanel";
+import { CommandPalette } from "@/components/CommandPalette";
 import { InputBar } from "@/components/InputBar";
 import { SuggestionChips } from "@/components/SuggestionChips";
 import { ThoughtCard } from "@/components/ThoughtCard";
@@ -19,6 +22,34 @@ export default function Home() {
   const chat = useChatState();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [overlayDismissed, setOverlayDismissed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
+
+  const register = useCommandStore((s) => s.register);
+  const unregister = useCommandStore((s) => s.unregister);
+
+  useEffect(() => {
+    register([
+      {
+        id: "action:toggle-sidebar",
+        label: "Toggle Chat Sidebar",
+        group: "Actions",
+        shortcut: "Cmd+B",
+        keywords: ["chat", "panel", "messages"],
+        execute: () => setSidebarOpen((prev) => !prev),
+      },
+      {
+        id: "action:new-chat",
+        label: "New Chat",
+        group: "Actions",
+        shortcut: "Cmd+N",
+        keywords: ["conversation", "session"],
+        execute: () => chat.newChat(),
+      },
+    ]);
+    return () => unregister(["action:toggle-sidebar", "action:new-chat"]);
+  }, [register, unregister, chat.newChat]);
 
   const chipContext = useMemo(() => {
     const hasError = chat.messages.some(
@@ -95,6 +126,8 @@ export default function Home() {
           <MessageSquareIcon className="size-4" />
         </Button>
       )}
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
 
       {!sidebarOpen && !overlayDismissed && (
         <ResponseOverlay

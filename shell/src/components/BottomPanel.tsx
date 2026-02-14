@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useCommandStore } from "@/stores/commands";
 import { Terminal } from "./Terminal";
 import { ModuleGraph } from "./ModuleGraph";
 import { ActivityFeed } from "./ActivityFeed";
@@ -47,21 +48,6 @@ export function BottomPanel() {
     setTab(pref.tab);
   }, []);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "j") {
-        e.preventDefault();
-        setOpen((prev) => {
-          const next = !prev;
-          savePreference(next, tab);
-          return next;
-        });
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [tab]);
-
   const selectTab = useCallback(
     (t: Tab) => {
       if (t === tab && open) {
@@ -83,6 +69,25 @@ export function BottomPanel() {
       return next;
     });
   }, [tab]);
+
+  const register = useCommandStore((s) => s.register);
+  const unregister = useCommandStore((s) => s.unregister);
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+
+  useEffect(() => {
+    register([
+      {
+        id: "action:toggle-bottom-panel",
+        label: "Toggle Bottom Panel",
+        group: "Actions",
+        shortcut: "Cmd+J",
+        keywords: ["terminal", "activity", "modules", "panel"],
+        execute: () => toggleRef.current(),
+      },
+    ]);
+    return () => unregister(["action:toggle-bottom-panel"]);
+  }, [register, unregister]);
 
   return (
     <div className="flex flex-col border-t border-border bg-card">

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
+import { useCommandStore } from "@/stores/commands";
 import { AppViewer } from "./AppViewer";
 import { MissionControl } from "./MissionControl";
 import {
@@ -433,6 +434,39 @@ export function Desktop() {
   }, []);
 
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
+
+  const register = useCommandStore((s) => s.register);
+  const unregister = useCommandStore((s) => s.unregister);
+
+  const toggleMcRef = useRef(() => setTaskBoardOpen((prev) => !prev));
+  const openWindowRef = useRef(openWindow);
+  openWindowRef.current = openWindow;
+
+  useEffect(() => {
+    register([
+      {
+        id: "action:toggle-mc",
+        label: "Toggle Mission Control",
+        group: "Actions",
+        shortcut: "F3",
+        keywords: ["tasks", "kanban", "dashboard"],
+        execute: () => toggleMcRef.current(),
+      },
+    ]);
+    return () => unregister(["action:toggle-mc"]);
+  }, [register, unregister]);
+
+  useEffect(() => {
+    const appCommands = apps.map((app) => ({
+      id: `app:${app.path}`,
+      label: app.name,
+      group: "Apps" as const,
+      keywords: [app.path],
+      execute: () => openWindowRef.current(app.name, app.path),
+    }));
+    if (appCommands.length > 0) register(appCommands);
+    return () => unregister(apps.map((a) => `app:${a.path}`));
+  }, [apps, register, unregister]);
 
   return (
     <TooltipProvider delayDuration={300}>

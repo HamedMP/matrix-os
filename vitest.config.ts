@@ -1,8 +1,12 @@
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
     conditions: ["node"],
+    alias: {
+      "@": path.resolve(__dirname, "shell/src"),
+    },
   },
   test: {
     globals: true,
