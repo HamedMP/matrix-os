@@ -65,6 +65,8 @@
 
 - [x] T408b [US8] Mission Control redesign -- replaces TaskBoard with full Mission Control overlay: kanban/grid view toggle (zustand-persisted preference), cron jobs section (GET /api/cron), inline add-task input (POST /api/tasks), AppTile grid, TaskDetail panel, clickable TaskCard with timestamps. UI blocks system: ui:cards, ui:options, ui:status blocks parsed from assistant markdown and rendered as interactive components in ChatPanel, ResponseOverlay. ResponseOverlay shows full conversation. bootstrap.md uses ui:cards for role selection.
 
+- [x] T408c [US8] Cmd+K command palette + global keyboard shortcuts -- Zustand command registry (`stores/commands.ts`) with self-registering components. shadcn `CommandDialog` (cmdk) for searchable palette UI at z-[60]. `useGlobalShortcuts` hook replaces per-component keydown listeners. Shortcuts: Cmd+K (palette), Cmd+J (bottom panel), Cmd+B (sidebar toggle), Cmd+N (new chat), F3 (Mission Control). 14 tests in `tests/shell/commands.test.ts`.
+
 ### Phase G: Post-Onboarding
 
 - [x] T411 [US8] Implement welcome tour logic in bootstrap.md -- role-specific first actions after provisioning (e.g., "Try adding your Monday classes to the Study Planner" for students). Mentions remaining apps without overwhelming.

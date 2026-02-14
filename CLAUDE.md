@@ -170,7 +170,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 425 passing (38 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 439 passing (39 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -186,7 +186,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 008A**: Single-user cloud -- Dockerfile (multi-stage Alpine), docker-compose.yml, systemd service, auth middleware (MATRIX_AUTH_TOKEN bearer), setup-server.sh, /api/system/info endpoint
 - **Phase 009 P0**: Observability + Safety -- interaction logger (JSONL daily rotation, prompt truncation, cost tracking), GET /api/logs query endpoint, safe mode agent (sonnet, restricted tools, diagnostic prompt), logs directory template
 - **Phase 009 P1 Identity**: Handle registry (handle.json), loadHandle/saveIdentity/deriveAiHandle, profile.md + ai-profile.md templates, handle injection into system prompt, GET /api/profile + /api/ai-profile endpoints
-- **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration, Mission Control (kanban/grid toggle, cron section, add task, AppTile, TaskDetail, ui:cards/ui:options/ui:status blocks, zustand preferences)
+- **Phase 012**: Onboarding -- persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration, Mission Control (kanban/grid toggle, cron section, add task, AppTile, TaskDetail, ui:cards/ui:options/ui:status blocks, zustand preferences), Cmd+K command palette (shadcn CommandDialog, Zustand command registry, global keyboard shortcuts)
 - **Phase 009 P1 Sync+Mobile**: Git sync (auto-sync, sync_files IPC tool), mobile responsive shell, PWA manifest
 
 ### In Progress
@@ -228,3 +228,4 @@ Read `specs/ux-guide.md` -- the UX bible for the shell and apps. Key rules:
 - Minimal comments -- code should be self-documenting
 - No over-engineering -- solve the current problem
 - Keep kernel system prompt under 7K tokens
+- Always use Drizzle ORM for database access -- never raw SQL queries with better-sqlite3 directly
