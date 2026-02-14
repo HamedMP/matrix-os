@@ -1,5 +1,8 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { MatrixDB } from "./db.js";
 import {
   listTasks,
@@ -232,6 +235,74 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
                 { type: "text" as const, text: `Failed to write setup plan: ${e instanceof Error ? e.message : String(e)}` },
               ],
             };
+          }
+        },
+      ),
+      tool(
+        "manage_cron",
+        "Manage scheduled cron jobs. Use 'add' to create reminders/recurring tasks, 'remove' to delete, 'list' to view all.",
+        {
+          action: z.enum(["add", "remove", "list"]),
+          name: z.string().optional().describe("Job name (required for add)"),
+          message: z.string().optional().describe("Message to deliver when job fires (required for add)"),
+          schedule: z.string().optional().describe("JSON schedule object, e.g. {\"type\":\"interval\",\"intervalMs\":3600000} or {\"type\":\"cron\",\"cron\":\"0 9 * * *\"} or {\"type\":\"once\",\"at\":\"2026-03-01T09:00:00Z\"}"),
+          job_id: z.string().optional().describe("Job ID (required for remove)"),
+          channel: z.string().optional().describe("Target channel for delivery (telegram, discord, slack, whatsapp)"),
+          chat_id: z.string().optional().describe("Target chat ID for delivery"),
+        },
+        async ({ action, name, message, schedule, job_id, channel, chat_id }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cron not available (no home path)" }] };
+          }
+          const cronPath = join(homePath, "system", "cron.json");
+
+          function readJobs(): unknown[] {
+            if (!existsSync(cronPath)) return [];
+            try { return JSON.parse(readFileSync(cronPath, "utf-8")); } catch { return []; }
+          }
+
+          function writeJobs(jobs: unknown[]) {
+            writeFileSync(cronPath, JSON.stringify(jobs, null, 2) + "\n");
+          }
+
+          switch (action) {
+            case "list": {
+              const jobs = readJobs();
+              return { content: [{ type: "text" as const, text: jobs.length > 0 ? JSON.stringify(jobs, null, 2) : "No cron jobs" }] };
+            }
+            case "add": {
+              if (!name || !message || !schedule) {
+                return { content: [{ type: "text" as const, text: "add requires name, message, and schedule" }] };
+              }
+              let parsed: unknown;
+              try { parsed = JSON.parse(schedule); } catch {
+                return { content: [{ type: "text" as const, text: "Invalid schedule JSON" }] };
+              }
+              const job = {
+                id: `cron_${randomUUID().slice(0, 8)}`,
+                name,
+                message,
+                schedule: parsed,
+                target: channel ? { channel, chatId: chat_id } : undefined,
+                createdAt: new Date().toISOString(),
+              };
+              const jobs = readJobs();
+              jobs.push(job);
+              writeJobs(jobs);
+              return { content: [{ type: "text" as const, text: `Created cron job: ${job.id} (${name})` }] };
+            }
+            case "remove": {
+              if (!job_id) {
+                return { content: [{ type: "text" as const, text: "remove requires job_id" }] };
+              }
+              const jobs = readJobs();
+              const filtered = jobs.filter((j: any) => j.id !== job_id);
+              if (filtered.length === jobs.length) {
+                return { content: [{ type: "text" as const, text: `Job ${job_id} not found` }] };
+              }
+              writeJobs(filtered);
+              return { content: [{ type: "text" as const, text: `Removed cron job: ${job_id}` }] };
+            }
           }
         },
       ),

@@ -17,6 +17,17 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "vitest run --coverage"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "node-pty",
+      "esbuild",
+      "sharp",
+      "unrs-resolver",
+      "@next/swc-linux-arm64-musl",
+      "@next/swc-linux-x64-musl"
+    ]
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@vitest/coverage-v8": "^4.0.18",

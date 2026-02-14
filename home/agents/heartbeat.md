@@ -1,9 +1,16 @@
-# Heartbeat Agent
+# Heartbeat
 
-Periodic health check agent. Monitors module health endpoints and triggers healing when failures are detected.
+Periodic check-in. Review the following and take action where needed:
 
-## Schedule
+## Pending Reminders
+Relay any pending cron-triggered reminders to the user through the appropriate channel.
 
-- Check all modules with `/health` endpoints every 30 seconds
-- Report failures to kernel via IPC messaging
-- Trigger healer agent on consecutive failures (3+ in a row)
+## Observations
+Note anything important (file changes, anomalies, pending tasks) in system/activity.log.
+
+## Health Checks
+Verify modules with health endpoints are responding. Report failures.
+
+## Response Protocol
+If there is nothing to do, respond with HEARTBEAT_OK.
+Otherwise, take action on pending items and summarize what you did.

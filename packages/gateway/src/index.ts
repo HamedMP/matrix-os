@@ -1,7 +1,8 @@
 export { createGateway } from "./server.js";
-export type { GatewayConfig } from "./server.js";
+export type { GatewayConfig, ServerMessage } from "./server.js";
+export { createProvisioner } from "./provisioner.js";
 export { createDispatcher } from "./dispatcher.js";
-export type { Dispatcher, DispatchOptions, DispatchContext, SpawnFn } from "./dispatcher.js";
+export type { Dispatcher, DispatchOptions, DispatchContext, SpawnFn, BatchEntry, BatchResult } from "./dispatcher.js";
 export { createWatcher } from "./watcher.js";
 export type { Watcher, FileChangeEvent, FileEvent } from "./watcher.js";
 export { createPtyHandler } from "./pty.js";
@@ -17,3 +18,11 @@ export type {
   ChannelMessage,
   ChannelReply,
 } from "./channels/types.js";
+export { createCronStore } from "./cron/store.js";
+export type { CronStore } from "./cron/store.js";
+export { createCronService } from "./cron/service.js";
+export type { CronService, CronServiceConfig } from "./cron/service.js";
+export type { CronJob, CronSchedule, CronTarget } from "./cron/types.js";
+export { createHeartbeatRunner } from "./heartbeat/runner.js";
+export type { HeartbeatRunner, HeartbeatConfig } from "./heartbeat/runner.js";
+export { buildHeartbeatPrompt } from "./heartbeat/prompt.js";

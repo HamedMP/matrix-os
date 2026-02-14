@@ -21,10 +21,11 @@ No implementation is included in this document.
 ## Current State
 
 **003-architecture**: 81/89 tasks done (Phases 1-6 complete, 207 tests). 8 unchecked are stubs moved to forward specs (agent prompts -> 005, module proxy -> 010).
-**004**: T053 (serial queue) done. T054-T056 (concurrent) not started.
+**004**: Complete (T053-T056). Serial + concurrent dispatch. 307 tests after phase.
 **005**: Complete (T100-T105, T100d-T100j). 245 tests after phase.
 **006**: Telegram path done (T106-T112, T117, T119). WhatsApp/Discord/Slack deferred. 292 tests after phase.
-**007-010**: Not started. See sections below.
+**007**: Complete (T120-T129). Cron service + heartbeat runner + IPC tool. 349 tests after phase.
+**008-010**: Not started. See sections below.
 **011**: Spec written. Not started.
 **012**: Partially done (T400a/b, T400-T403, T405-T406). See section below.
 **013**: Spec + scaffolding. Not started.
@@ -135,29 +136,29 @@ Source: `specs/007-proactive/tasks.md`
 
 Cron:
 
-- [ ] T120a `tests/gateway/cron/service.test.ts`
-- [ ] T120b `tests/gateway/cron/store.test.ts`
-- [ ] T120 `packages/gateway/src/cron/service.ts`
-- [ ] T121 `packages/gateway/src/cron/store.ts`
-- [ ] T122 `packages/kernel/src/ipc.ts` add cron IPC tool
-- [ ] T123 `home/system/cron.json`
+- [x] T120a `tests/gateway/cron/service.test.ts`
+- [x] T120b `tests/gateway/cron/store.test.ts`
+- [x] T120 `packages/gateway/src/cron/service.ts`
+- [x] T121 `packages/gateway/src/cron/store.ts`
+- [x] T122 `packages/kernel/src/ipc-server.ts` manage_cron IPC tool
+- [x] T123 `home/system/cron.json`
 
 Heartbeat:
 
-- [ ] T120c `tests/gateway/heartbeat/runner.test.ts`
-- [ ] T124 `packages/gateway/src/heartbeat/runner.ts`
-- [ ] T125 `packages/gateway/src/heartbeat/prompt.ts`
-- [ ] T126 active-hours behavior in config + runtime logic
-- [ ] T127 route heartbeat outputs to channels
+- [x] T120c `tests/gateway/heartbeat/runner.test.ts`
+- [x] T124 `packages/gateway/src/heartbeat/runner.ts`
+- [x] T125 `packages/gateway/src/heartbeat/prompt.ts`
+- [x] T126 active-hours behavior in config + runtime logic
+- [x] T127 route heartbeat outputs to channels
 
 Integration:
 
-- [ ] T128 wire cron + heartbeat startup/shutdown + health status
-- [ ] T129 update default `home/agents/heartbeat.md`
+- [x] T128 wire cron + heartbeat startup/shutdown + health status
+- [x] T129 update default `home/agents/heartbeat.md`
 
 Checkpoint:
 
-- [ ] Reminder created by kernel appears in cron store and is delivered by heartbeat cycle.
+- [x] Reminder created by kernel appears in cron store and is delivered by heartbeat cycle.
 
 ## 6) Phase 008A: Single-User Cloud Deployment
 
@@ -367,7 +368,7 @@ These tasks touch the same files and must be sequenced:
 - [x] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
 - [x] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
 - [x] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
-- [ ] Complete Phase 007 cron + heartbeat end-to-end.
+- [x] Complete Phase 007 cron + heartbeat end-to-end.
 - [ ] Complete Phase 012 onboarding (T404 provisioning pipeline, T407 skill templates).
 - [ ] Complete Phase 008A single-user cloud deploy path (includes T133 auth).
 - [ ] Complete Phase 013A Docker deployment (T500-T506).

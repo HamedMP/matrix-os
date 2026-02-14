@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { createDispatcher, type Dispatcher } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
@@ -13,16 +13,21 @@ import { createChannelManager, type ChannelManager } from "./channels/manager.js
 import { createTelegramAdapter } from "./channels/telegram.js";
 import { formatForChannel } from "./channels/format.js";
 import type { ChannelConfig, ChannelId } from "./channels/types.js";
+import { createCronStore } from "./cron/store.js";
+import { createCronService, type CronService } from "./cron/service.js";
+import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
 import {
   createHeartbeat,
   backupModule,
   restoreModule,
   checkModuleHealth,
   createWatchdog,
+  listTasks,
   type Heartbeat,
   type Watchdog,
   type KernelEvent,
 } from "@matrix-os/kernel";
+import { createProvisioner } from "./provisioner.js";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -38,14 +43,18 @@ interface ClientMessage {
   sessionId?: string;
 }
 
-type ServerMessage =
+export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
   | { type: "kernel:text"; text: string }
   | { type: "kernel:tool_start"; tool: string }
   | { type: "kernel:tool_end" }
   | { type: "kernel:result"; data: unknown }
   | { type: "kernel:error"; message: string }
-  | { type: "file:change"; path: string; event: string };
+  | { type: "file:change"; path: string; event: string }
+  | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
+  | { type: "task:updated"; taskId: string; status: string }
+  | { type: "provision:start"; appCount: number }
+  | { type: "provision:complete"; total: number; succeeded: number; failed: number };
 
 function kernelEventToServerMessage(event: KernelEvent): ServerMessage {
   switch (event.type) {
@@ -90,11 +99,15 @@ export function createGateway(config: GatewayConfig) {
     try { appendFileSync(logPath, line); } catch { /* log dir may not exist yet */ }
   }
 
-  function broadcastError(message: string) {
-    const json = JSON.stringify({ type: "kernel:error", message });
+  function broadcast(msg: ServerMessage) {
+    const json = JSON.stringify(msg);
     for (const ws of clients) {
       ws.send(json);
     }
+  }
+
+  function broadcastError(message: string) {
+    broadcast({ type: "kernel:error", message });
   }
 
   const heartbeat: Heartbeat = createHeartbeat({
@@ -203,11 +216,57 @@ export function createGateway(config: GatewayConfig) {
 
   channelManager.start();
 
+  // Cron service -- scheduled tasks from ~/system/cron.json
+  const cronStore = createCronStore(join(homePath, "system", "cron.json"));
+  const cronService: CronService = createCronService({
+    store: cronStore,
+    onTrigger: (job) => {
+      if (job.target?.channel && job.target?.chatId) {
+        const formatted = formatForChannel(job.target.channel, job.message);
+        channelManager.send({
+          channelId: job.target.channel,
+          chatId: job.target.chatId,
+          text: formatted,
+        });
+      }
+    },
+  });
+  cronService.start();
+
+  // Heartbeat runner -- periodic kernel invocation
+  let heartbeatConfig: { everyMinutes?: number; activeHours?: { start: string; end: string } } = {};
+  try {
+    if (existsSync(configPath)) {
+      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+      heartbeatConfig = cfg.heartbeat ?? {};
+    }
+  } catch { /* no heartbeat config */ }
+
+  const proactiveHeartbeat: HeartbeatRunner = createHeartbeatRunner({
+    homePath,
+    dispatcher,
+    channelManager,
+    everyMinutes: heartbeatConfig.everyMinutes,
+    activeHours: heartbeatConfig.activeHours,
+  });
+  proactiveHeartbeat.start();
+
+  const provisioner = createProvisioner({
+    homePath,
+    dispatcher,
+    broadcast,
+  });
+
   watcher.on((change) => {
-    const msg: ServerMessage = change;
-    const json = JSON.stringify(msg);
-    for (const ws of clients) {
-      ws.send(json);
+    broadcast(change);
+    if (change.path === "system/setup-plan.json") {
+      provisioner.onSetupPlanChange().catch((err: Error) => {
+        broadcastError(`Provisioning error: ${err.message}`);
+      });
+    }
+    if (change.path === "system/cron.json") {
+      cronService.stop();
+      cronService.start();
     }
   });
 
@@ -446,11 +505,21 @@ export function createGateway(config: GatewayConfig) {
     });
   });
 
+  app.get("/api/tasks", (c) => {
+    const status = c.req.query("status");
+    const tasks = listTasks(dispatcher.db, status ? { status } : undefined);
+    return c.json(tasks);
+  });
+
   app.get("/api/channels/status", (c) => {
     return c.json(channelManager.status());
   });
 
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  app.get("/health", (c) => c.json({
+    status: "ok",
+    cronJobs: cronService.listJobs().length,
+    channels: channelManager.status(),
+  }));
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
@@ -463,9 +532,13 @@ export function createGateway(config: GatewayConfig) {
     heartbeat,
     watchdog,
     channelManager,
+    cronService,
+    proactiveHeartbeat,
     async close() {
       heartbeat.stop();
       watchdog.stop();
+      proactiveHeartbeat.stop();
+      cronService.stop();
       await channelManager.stop();
       await watcher.close();
       server.close();

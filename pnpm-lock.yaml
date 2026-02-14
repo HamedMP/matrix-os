@@ -35,12 +35,18 @@ importers:
       '@matrix-os/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@types/node-cron':
+        specifier: ^3.0.11
+        version: 3.0.11
       chokidar:
         specifier: ^4.0.0
         version: 4.0.3
       hono:
         specifier: ^4.11.9
         version: 4.11.9
+      node-cron:
+        specifier: ^4.2.1
+        version: 4.2.1
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -2596,6 +2602,9 @@ packages:
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
+
+  '@types/node-cron@3.0.11':
+    resolution: {integrity: sha512-0ikrnug3/IyneSHqCBeslAhlK2aBfYek1fGo4bP4QnZPmiqSGRK+Oy7ZMisLWkesffJvQ1cqAcBnJC+8+nxIAg==}
 
   '@types/node-telegram-bot-api@0.64.13':
     resolution: {integrity: sha512-/d3sYpZq4sDwKWAm9XsIsb8MclclJ1yPXZC7uAzZRrJIFY8yg/63oNrLf9CBTlaS/XGR1N66BwibfJQGiWVsqg==}
@@ -5175,6 +5184,10 @@ packages:
 
   node-addon-api@7.1.1:
     resolution: {integrity: sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==}
+
+  node-cron@4.2.1:
+    resolution: {integrity: sha512-lgimEHPE/QDgFlywTd8yTR61ptugX3Qer29efeyWw2rv259HtGBNn1vZVmp8lB9uo9wC0t/AT4iGqXxia+CJFg==}
+    engines: {node: '>=6.0.0'}
 
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
@@ -8741,6 +8754,8 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
+  '@types/node-cron@3.0.11': {}
+
   '@types/node-telegram-bot-api@0.64.13':
     dependencies:
       '@types/node': 25.2.3
@@ -11797,6 +11812,8 @@ snapshots:
       semver: 7.7.4
 
   node-addon-api@7.1.1: {}
+
+  node-cron@4.2.1: {}
 
   node-domexception@1.0.0: {}
 

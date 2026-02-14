@@ -11,6 +11,10 @@
   "shell": {
     "port": 3000
   },
+  "heartbeat": {
+    "everyMinutes": 30,
+    "activeHours": { "start": "08:00", "end": "22:00" }
+  },
   "channels": {
     "telegram": { "enabled": false, "token": "", "allowFrom": [] },
     "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },
