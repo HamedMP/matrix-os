@@ -35,13 +35,14 @@ Key principles:
 - `specs/matrixos-vision.md` -- original vision doc
 
 ### Active Specs (current work)
-- `specs/004-concurrent/` -- Phase 7: Multiprocessing (T054-T056)
-- `specs/005-soul-skills/` -- Phase 9: SOUL identity + skills (T100-T105)
+- `specs/004-concurrent/` -- Phase 7: Multiprocessing (T053-T056, T053 serial queue is pre-req for 006)
+- `specs/005-soul-skills/` -- Phase 9: SOUL identity + skills (T100-T105, T100i-T100j audit fixes)
 - `specs/006-channels/` -- Phase 10: Multi-channel messaging (T106-T119)
 - `specs/007-proactive/` -- Phase 11: Cron + heartbeat (T120-T129)
-- `specs/008-cloud/` -- Phase 12: Cloud deployment (T130-T136)
+- `specs/008-cloud/` -- Phase 12: Cloud deployment (T130-T136, T140-T159)
 - `specs/009-platform/` -- Web 4 platform: identity, sync, mobile, marketplace, games (T200-T261)
 - `specs/010-demo/` -- Phase 8: Demo polish + recording (T057-T064)
+- `specs/011-new-computing/` -- New computing paradigms: Living Software, Socratic Computing, Intent-based (T300-T317)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/` -- original architecture spec, plan, tasks (reference only)

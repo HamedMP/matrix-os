@@ -18,7 +18,16 @@ No implementation is included in this document.
 ## Current State
 
 **003-architecture**: 81/89 tasks done (Phases 1-6 complete, 207 tests). 8 unchecked are stubs moved to forward specs (agent prompts -> 005, module proxy -> 010).
-**004-010**: Not started. See sections below.
+**004-011**: Not started. See sections below.
+
+## Critical Fixes (from 2026-02-13 audit)
+
+These must be addressed before or during the next phases. Task IDs are assigned to the appropriate spec.
+
+- [ ] T053 (004) Serial dispatch queue -- prevents concurrent state corruption. Must be done before 006 (channels).
+- [ ] T100i (005) Implement gitSnapshotHook -- self-healing safety net is currently hollow.
+- [ ] T100j (005) System prompt token budgeting -- will exceed 7K as SOUL + skills grow.
+- [ ] T133 (008A) Auth token validation -- MATRIX_AUTH_TOKEN documented but never checked. Already in 008 task list.
 
 ## 0) Program-Level Checklist
 
@@ -50,6 +59,8 @@ Source: `specs/005-soul-skills/tasks.md`
 - [ ] T104 `home/agents/skills/` initial skills (`summarize.md`, `weather.md`, `reminder.md`, `skill-creator.md`)
 - [ ] T105 wire skills TOC + `load_skill` IPC tool
 - [ ] T100d-T100h agent prompts (builder, researcher, deployer, healer, evolver)
+- [ ] T100i gitSnapshotHook (audit critical fix)
+- [ ] T100j system prompt token budgeting (audit critical fix)
 
 Checkpoint:
 
@@ -92,6 +103,13 @@ Checkpoint:
 ## 4) Phase 004: Concurrent Kernel Dispatch
 
 Source: `specs/004-concurrent/tasks.md`. Deferred until after channels -- concurrent dispatch becomes useful when web shell + Telegram can send messages simultaneously.
+
+Pre-requisite (serial queue -- must be done before 006):
+
+- [ ] T053a `tests/gateway/dispatcher-queue.test.ts`
+- [ ] T053 serial dispatch queue in `dispatcher.ts` (FIFO mutex, no parallelism)
+
+Full concurrent dispatch (after 006):
 
 - [ ] T054a `tests/gateway/dispatcher-concurrent.test.ts`
 - [ ] T054 `packages/gateway/src/dispatcher.ts` concurrent dispatch + request multiplexing
@@ -225,7 +243,33 @@ Checkpoint:
 
 - [ ] 7-act demo runs end-to-end without manual patching.
 
-## 10) Cross-Cutting Security + Quality Checklist
+## 10) Phase 011: New Forms of Computing
+
+Source: `specs/011-new-computing/tasks.md`
+
+Three paradigms that make Matrix OS a new medium, not just faster app generation.
+
+Living Software:
+
+- [ ] T300-T304 usage telemetry, evolution skill, cron integration, approval UX
+
+Socratic Computing:
+
+- [ ] T305-T308 ambiguity detection, dialogue lineage, socratic skill, cross-channel continuity
+
+Intent-Based Interfaces:
+
+- [ ] T310-T314 intent file format, matching, channel-specific rendering, example intent
+
+Progressive Depth:
+
+- [ ] T315-T317 Bruner's modes, beginner mode, context-aware suggestions
+
+Checkpoint:
+
+- [ ] Expense tracker evolves from usage, Socratic questions before ambiguous builds, same intent renders differently on web vs Telegram.
+
+## 11) Cross-Cutting Security + Quality Checklist
 
 - [x] Verify all filesystem read/write endpoints enforce home-path containment. (Fixed: /files/* uses resolveWithinHome(), commit 3919f3f.)
 - [ ] Add auth + authorization boundaries for HTTP, WS, and channel entrypoints.
@@ -234,7 +278,7 @@ Checkpoint:
 - [ ] Add structured logging for kernel invocations, tool usage, and failures.
 - [ ] Add crash-loop protection and rollback/safe-mode entry criteria.
 
-## 11) Cross-Phase Dependencies
+## 12) Cross-Phase Dependencies
 
 These tasks touch the same files and must be sequenced:
 
@@ -242,14 +286,16 @@ These tasks touch the same files and must be sequenced:
 - **prompt.ts**: T110 (006 channel prompt context) -> T056 (004 conflict avoidance). Complete channel context injection first, then add process awareness.
 - **config.json**: T112 (006 channels config) -> T126 (007 heartbeat active hours). Both add sections to the same config file.
 
-## 12) Execution Order Checklist (No Timeline)
+## 13) Execution Order Checklist (No Timeline)
 
-- [ ] Complete Phase 005 fully (SOUL + skills + agent prompts).
+- [ ] T053 serial dispatch queue (critical fix, before channels).
+- [ ] Complete Phase 005 fully (SOUL + skills + agent prompts + audit critical fixes T100i/T100j).
 - [ ] Complete Phase 006 Telegram path end-to-end (minimum one channel production-ready).
 - [ ] Complete Phase 004 concurrent dispatch (needed once channels + web shell both send messages).
 - [ ] Complete Phase 007 cron + heartbeat end-to-end.
-- [ ] Complete Phase 008A single-user cloud deploy path.
+- [ ] Complete Phase 008A single-user cloud deploy path (includes T133 auth).
 - [ ] Complete Phase 009 P0 observability + safe-mode.
 - [ ] Complete Phase 009 P1 identity + sync + mobile.
-- [ ] Start Phase 008B/009 P2 platform expansion (post-MVP).
+- [ ] Start Phase 011 new computing (Living Software, Socratic, Intent-based -- incremental).
+- [ ] Start Phase 008B/009 P2 platform expansion.
 - [ ] Finalize Phase 010 demo polish and recording.

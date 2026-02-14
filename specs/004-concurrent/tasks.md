@@ -7,12 +7,20 @@
 
 - **US5** (P1): "Multiple requests run without blocking each other"
 
+## Critical Pre-Requisite: Serial Dispatch Queue
+
+This task must be completed BEFORE Phase 006 (channels). Without it, web shell + Telegram + cron can all call `dispatcher.dispatch()` simultaneously, corrupting home directory state.
+
+- [ ] T053a [P] [US5] Write `tests/gateway/dispatcher-queue.test.ts` -- test: second dispatch waits for first to finish, queue drains in order, errors don't block queue, queue reports length
+- [ ] T053 [US5] Add serial dispatch queue to `packages/gateway/src/dispatcher.ts` -- FIFO queue with mutex. Second `dispatch()` call waits for first to complete before spawning kernel. No parallel execution yet (that's T054). Prevents file corruption from concurrent kernel writes.
+
 ## Tests (TDD)
 
 - [ ] T054a [P] [US5] Write `tests/gateway/dispatcher-concurrent.test.ts` -- test: fires multiple kernels in parallel, each gets unique process ID, `Promise.allSettled` returns all results, processes table has correct entries during execution
 
 ## Dependencies
 
+- T053 must be completed before Phase 006 (channels). It serializes dispatch; T054 later upgrades to parallel.
 - T054 modifies `dispatcher.ts` -- coordinate with T109 (006 channel-aware dispatch) which also modifies dispatcher. Complete T109 first.
 - T056 modifies `prompt.ts` -- coordinate with T110 (006 channel prompt context) which also modifies prompt builder. Complete T110 first.
 

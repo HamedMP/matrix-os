@@ -37,6 +37,14 @@ These agents have dispatch logic wired up but lack dedicated prompt files in `ho
 - [ ] T100g [US3] Write healer agent prompt `home/agents/custom/healer.md` -- diagnosis workflow, patch patterns, rollback on test failure. Dispatch logic exists in gateway.
 - [ ] T100h [US4] Write evolver agent prompt `home/agents/custom/evolver.md` -- safety constraints, git snapshot before changes, protected files awareness. Dispatch logic exists in gateway.
 
+## Critical Fixes (from audit)
+
+These address gaps identified in the 2026-02-13 audit. They touch kernel code and are best addressed while kernel internals are already being modified for SOUL + skills.
+
+- [ ] T100i [US3] Implement `gitSnapshotHook` in `packages/kernel/src/hooks.ts` -- git add + commit before file mutations. Currently a no-op stub. Without this, the self-healing/rollback guarantee is hollow. Use `execFileSync("git", ["add", "-A"])` + `execFileSync("git", ["commit", "-m", "snapshot: pre-mutation"])` in homePath. Skip if no changes to commit.
+
+- [ ] T100j [US7] Add system prompt token budgeting in `packages/kernel/src/prompt.ts` -- SOUL + skills injection will push prompt beyond 7K token budget. Add `estimateTokens(text)` (4 chars ~= 1 token), `truncateToTokenBudget(sections, maxTokens)` utility. Cap activity at 20 lines (not 50), summarize modules as count + names. Enforce budget in `buildSystemPrompt()`.
+
 ## Checkpoint
 
 Kernel boots, reads `soul.md`, responds with personality. Ask "What skills do you have?" -- kernel lists available skills. Ask "Summarize this article" -- kernel loads summarize skill and executes it. Say "Be more casual" -- kernel edits `soul.md`, personality changes.
