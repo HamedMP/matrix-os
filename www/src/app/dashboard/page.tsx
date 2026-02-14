@@ -3,6 +3,7 @@ import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ProvisionButton } from "./provision-button";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 
@@ -39,9 +40,12 @@ export default async function DashboardPage() {
       <div className="max-w-2xl mx-auto space-y-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              Matrix OS
-            </h1>
+            <div className="flex items-center gap-3">
+              <img src="/logo.png" alt="Matrix OS" className="size-9 rounded-xl" />
+              <h1 className="text-3xl font-bold tracking-tight">
+                Matrix OS
+              </h1>
+            </div>
             <p className="text-muted-foreground mt-2">
               Welcome back, {user.firstName ?? handle}
             </p>
@@ -106,9 +110,7 @@ export default async function DashboardPage() {
                 <p className="text-muted-foreground">
                   No instance provisioned yet.
                 </p>
-                <p className="text-sm text-muted-foreground/70">
-                  Your instance will be created automatically when the platform is deployed.
-                </p>
+                <ProvisionButton />
               </div>
             ) : (
               <div className="space-y-3 py-4 text-center">

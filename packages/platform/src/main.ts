@@ -160,7 +160,12 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) 
 if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')) {
   const db = createPlatformDb(DB_PATH);
   const docker = new Dockerode();
-  const orchestrator = createOrchestrator({ db, docker });
+  const orchestrator = createOrchestrator({
+    db,
+    docker,
+    image: process.env.PLATFORM_IMAGE,
+    dataDir: process.env.PLATFORM_DATA_DIR,
+  });
 
   const app = createApp({ db, orchestrator });
 

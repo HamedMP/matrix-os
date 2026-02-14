@@ -1,3 +1,5 @@
+import { mkdirSync, existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq, desc, sql, max } from 'drizzle-orm';
@@ -12,6 +14,10 @@ let _db: PlatformDB;
 let _sqlite: InstanceType<typeof Database>;
 
 export function createPlatformDb(path: string = DB_PATH): PlatformDB {
+  if (path !== ':memory:') {
+    const dir = dirname(path);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  }
   const sqlite = new Database(path);
   if (path !== ':memory:') {
     sqlite.pragma('journal_mode = WAL');

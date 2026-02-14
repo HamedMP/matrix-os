@@ -34,9 +34,7 @@ function Nav() {
       <div className="mx-auto max-w-5xl px-4 pt-4">
         <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 backdrop-blur-xl px-5 py-2.5 shadow-sm">
           <a href="/" className="flex items-center gap-2.5 group">
-            <div className="size-7 rounded-lg bg-primary flex items-center justify-center shadow-sm">
-              <span className="text-xs font-bold text-white font-mono">M</span>
-            </div>
+            <img src="/logo.png" alt="Matrix OS" className="size-7 rounded-lg shadow-sm" />
             <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
               matrix-os
             </span>
@@ -729,9 +727,7 @@ function Footer() {
     <footer className="py-10 px-6 border-t border-border/60">
       <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <div className="size-5 rounded bg-primary flex items-center justify-center">
-            <span className="text-[8px] font-bold text-white font-mono">M</span>
-          </div>
+          <img src="/logo.png" alt="Matrix OS" className="size-5 rounded" />
           <span className="font-mono text-xs text-muted-foreground">
             matrix-os.com
           </span>

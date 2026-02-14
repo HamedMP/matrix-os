@@ -32,31 +32,16 @@ export default async function Image() {
           }}
         />
 
-        {/* Logo mark */}
-        <div
+        {/* Logo */}
+        <img
+          src="https://matrix-os.com/logo.png"
+          width={100}
+          height={100}
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 80,
-            height: 80,
-            borderRadius: 20,
-            background: "#c2703a",
+            borderRadius: 24,
             marginBottom: 32,
-            boxShadow: "0 8px 32px rgba(194,112,58,0.3)",
           }}
-        >
-          <span
-            style={{
-              fontSize: 48,
-              fontWeight: 700,
-              color: "#ffffff",
-              lineHeight: 1,
-            }}
-          >
-            M
-          </span>
-        </div>
+        />
 
         {/* Title */}
         <div
