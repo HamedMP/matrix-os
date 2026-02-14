@@ -23,6 +23,7 @@ import {
   checkModuleHealth,
   createWatchdog,
   listTasks,
+  getTask,
   type Heartbeat,
   type Watchdog,
   type KernelEvent,
@@ -515,6 +516,34 @@ export function createGateway(config: GatewayConfig) {
     const status = c.req.query("status");
     const tasks = listTasks(dispatcher.db, status ? { status } : undefined);
     return c.json(tasks);
+  });
+
+  app.post("/api/tasks", async (c) => {
+    const body = await c.req.json<{ type?: string; input: string; priority?: number }>();
+    if (!body.input || typeof body.input !== "string") {
+      return c.json({ error: "input is required" }, 400);
+    }
+    const id = createTask(dispatcher.db, {
+      type: body.type ?? "todo",
+      input: body.input,
+      priority: body.priority,
+    });
+    const task = getTask(dispatcher.db, id);
+    broadcast({
+      type: "task:created",
+      task: { id, type: body.type ?? "todo", status: "pending", input: body.input },
+    });
+    return c.json({ id, task }, 201);
+  });
+
+  app.get("/api/tasks/:id", (c) => {
+    const task = getTask(dispatcher.db, c.req.param("id"));
+    if (!task) return c.json({ error: "Not found" }, 404);
+    return c.json(task);
+  });
+
+  app.get("/api/cron", (c) => {
+    return c.json(cronService.listJobs());
   });
 
   app.get("/api/channels/status", (c) => {

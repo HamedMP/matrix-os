@@ -83,6 +83,7 @@ export default function Home() {
           onNewChat={chat.newChat}
           onSwitchConversation={chat.switchConversation}
           onClose={() => setSidebarOpen(false)}
+          onSubmit={handleSubmit}
         />
       ) : (
         <Button
@@ -100,6 +101,7 @@ export default function Home() {
           messages={chat.messages}
           busy={chat.busy}
           onDismiss={() => setOverlayDismissed(true)}
+          onSubmit={handleSubmit}
         />
       )}
     </div>

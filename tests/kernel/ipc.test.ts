@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createDB, type MatrixDB } from "../../packages/kernel/src/db.js";
 import {
   listTasks,
+  getTask,
   claimTask,
   completeTask,
   failTask,
@@ -63,6 +64,35 @@ describe("IPC tools", () => {
       const builderTasks = listTasks(db, { assignedTo: "builder" });
       expect(builderTasks).toHaveLength(1);
       expect(builderTasks[0].assignedTo).toBe("builder");
+    });
+  });
+
+  describe("getTask", () => {
+    it("returns a task by ID", () => {
+      const id = createTask(db, { type: "build", input: { request: "app1" } });
+      const task = getTask(db, id);
+      expect(task).toBeDefined();
+      expect(task!.id).toBe(id);
+      expect(task!.type).toBe("build");
+      expect(task!.status).toBe("pending");
+    });
+
+    it("returns undefined for missing task", () => {
+      const task = getTask(db, "nonexistent");
+      expect(task).toBeUndefined();
+    });
+
+    it("includes all task fields after claim and complete", () => {
+      const id = createTask(db, { type: "build", input: { request: "app" } });
+      claimTask(db, id, "builder");
+      completeTask(db, id, { files: ["app.html"] });
+
+      const task = getTask(db, id);
+      expect(task!.status).toBe("completed");
+      expect(task!.assignedTo).toBe("builder");
+      expect(task!.claimedAt).toBeInstanceOf(Date);
+      expect(task!.completedAt).toBeInstanceOf(Date);
+      expect(JSON.parse(task!.output!)).toEqual({ files: ["app.html"] });
     });
   });
 

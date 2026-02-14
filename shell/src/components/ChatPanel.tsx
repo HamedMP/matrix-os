@@ -9,8 +9,8 @@ import {
 import {
   Message,
   MessageContent,
-  MessageResponse,
 } from "@/components/ai-elements/message";
+import { RichContent } from "@/components/ui-blocks";
 import { Tool } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -46,6 +46,7 @@ export interface ChatPanelProps {
   onNewChat: () => void;
   onSwitchConversation: (id: string) => void;
   onClose: () => void;
+  onSubmit?: (text: string) => void;
 }
 
 function ToolMessage({ msg }: { msg: ChatMessage }) {
@@ -75,6 +76,7 @@ export function ChatPanel({
   onNewChat,
   onSwitchConversation,
   onClose,
+  onSubmit,
 }: ChatPanelProps) {
   return (
     <aside className="flex w-full fixed inset-0 z-50 md:static md:inset-auto md:z-auto md:w-[360px] flex-col border-l border-border bg-card">
@@ -132,7 +134,7 @@ export function ChatPanel({
               ) : (
                 <Message from="assistant">
                   <MessageContent>
-                    <MessageResponse>{msg.content}</MessageResponse>
+                    <RichContent onAction={onSubmit}>{msg.content}</RichContent>
                   </MessageContent>
                 </Message>
               )}

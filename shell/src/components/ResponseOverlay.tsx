@@ -2,18 +2,24 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { ChatMessage } from "@/lib/chat";
-import { MessageResponse } from "@/components/ai-elements/message";
-import { LoaderCircleIcon, XIcon } from "lucide-react";
+import { RichContent } from "@/components/ui-blocks";
+import {
+  LoaderCircleIcon,
+  XIcon,
+  WrenchIcon,
+  CheckCircleIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ResponseOverlayProps {
   messages: ChatMessage[];
   busy: boolean;
   onDismiss: () => void;
+  onSubmit?: (text: string) => void;
 }
 
 const DEFAULT_WIDTH = 560;
-const DEFAULT_CONTENT_HEIGHT = 200;
+const DEFAULT_CONTENT_HEIGHT = 320;
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 80;
 
@@ -21,6 +27,7 @@ export function ResponseOverlay({
   messages,
   busy,
   onDismiss,
+  onSubmit,
 }: ResponseOverlayProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -43,17 +50,13 @@ export function ResponseOverlay({
     origH: number;
   } | null>(null);
 
-  const lastAssistant = [...messages]
-    .reverse()
-    .find((m) => m.role === "assistant" && !m.tool);
-
-  const show = busy || lastAssistant;
+  const show = busy || messages.length > 0;
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [lastAssistant?.content]);
+  }, [messages.length, messages[messages.length - 1]?.content]);
 
   const getDefaultPos = useCallback(
     () => ({
@@ -148,7 +151,7 @@ export function ResponseOverlay({
             <LoaderCircleIcon className="size-3 animate-spin text-muted-foreground" />
           )}
           <span className="text-[11px] text-muted-foreground">
-            {busy ? "Responding..." : "Response"}
+            {busy ? "Responding..." : "Conversation"}
           </span>
         </div>
         <Button
@@ -162,14 +165,39 @@ export function ResponseOverlay({
       </div>
       <div
         ref={scrollRef}
-        className="overflow-y-auto px-3 py-2 text-sm"
+        className="overflow-y-auto px-3 py-2 text-sm flex flex-col gap-2"
         style={{ height: size.height }}
       >
-        {lastAssistant ? (
-          <MessageResponse>{lastAssistant.content}</MessageResponse>
-        ) : busy ? (
+        {messages.map((msg) => (
+          <div key={msg.id}>
+            {msg.role === "user" ? (
+              <div className="flex justify-end">
+                <div className="rounded-lg bg-secondary px-3 py-1.5 text-xs max-w-[80%]">
+                  {msg.content}
+                </div>
+              </div>
+            ) : msg.tool ? (
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground py-0.5">
+                <WrenchIcon className="size-3" />
+                <span>{msg.tool}</span>
+                {msg.content.startsWith("Using ") ? (
+                  <LoaderCircleIcon className="size-3 animate-spin" />
+                ) : (
+                  <CheckCircleIcon className="size-3 text-green-600" />
+                )}
+              </div>
+            ) : msg.role === "system" ? (
+              <div className="text-[11px] text-muted-foreground/70 py-0.5">
+                {msg.content}
+              </div>
+            ) : (
+              <RichContent onAction={onSubmit}>{msg.content}</RichContent>
+            )}
+          </div>
+        ))}
+        {busy && messages.length === 0 && (
           <span className="text-xs text-muted-foreground">Thinking...</span>
-        ) : null}
+        )}
       </div>
 
       <div

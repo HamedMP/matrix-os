@@ -20,6 +20,10 @@ export function createTask(
   return id;
 }
 
+export function getTask(db: MatrixDB, taskId: string) {
+  return db.select().from(tasks).where(eq(tasks.id, taskId)).get();
+}
+
 export function listTasks(
   db: MatrixDB,
   filter?: { status?: string; assignedTo?: string },

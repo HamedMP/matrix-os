@@ -375,7 +375,7 @@ These tasks touch the same files and must be sequenced:
 - [x] Complete Phase 008A single-user cloud deploy (T130-T135). T136 docs remaining.
 - [ ] Complete Phase 013A Docker deployment (T502-T506 remaining).
 - [x] Complete Phase 009 P0 observability + safe-mode (T200-T204). T205 crash loop deferred.
-- [ ] Complete Phase 009 P1 identity + sync + mobile.
+- [x] Complete Phase 009 P1 identity + sync + mobile. T223 conflict resolution deferred.
 - [ ] Start Phase 011 new computing (Living Software, Socratic, Intent-based -- incremental).
 - [ ] Complete Phase 013B distro image (T510-T517).
 - [ ] Start Phase 008B/009 P2 platform expansion.

@@ -8,6 +8,12 @@ export interface TaskItem {
   type: string;
   status: string;
   input: string;
+  output?: string;
+  assignedTo?: string;
+  priority?: number;
+  createdAt?: string;
+  claimedAt?: string;
+  completedAt?: string;
   appName?: string;
 }
 
@@ -39,11 +45,12 @@ export function useTaskBoard() {
     succeeded: 0,
     failed: 0,
   });
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${GATEWAY_URL}/api/tasks`)
       .then((res) => res.json())
-      .then((data: Array<{ id: string; type: string; status: string; input: string }>) => {
+      .then((data: TaskItem[]) => {
         setTasks(
           data.map((t) => ({
             ...t,
@@ -90,11 +97,23 @@ export function useTaskBoard() {
     return subscribe(handleMessage);
   }, [subscribe, handleMessage]);
 
+  const selectTask = useCallback((id: string | null) => {
+    setSelectedTaskId(id);
+  }, []);
+
+  const addTask = useCallback(async (input: string) => {
+    await fetch(`${GATEWAY_URL}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "todo", input }),
+    });
+  }, []);
+
   const todo = tasks.filter((t) => t.status === "pending");
   const inProgress = tasks.filter((t) => t.status === "in_progress");
   const done = tasks.filter(
     (t) => t.status === "completed" || t.status === "failed",
   );
 
-  return { tasks, provision, todo, inProgress, done };
+  return { tasks, provision, todo, inProgress, done, selectedTaskId, selectTask, addTask };
 }

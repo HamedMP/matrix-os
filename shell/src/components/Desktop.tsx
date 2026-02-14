@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AppViewer } from "./AppViewer";
-import { TaskBoard } from "./TaskBoard";
+import { MissionControl } from "./MissionControl";
 import {
   Card,
   CardHeader,
@@ -16,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { KanbanSquareIcon, XIcon } from "lucide-react";
+import { KanbanSquareIcon } from "lucide-react";
 
 const GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
@@ -515,29 +515,12 @@ export function Desktop() {
 
         <div className="relative flex-1 min-h-0">
           {taskBoardOpen && (
-            <div className="absolute inset-0 z-40 flex">
-              <div className="flex flex-col w-full md:w-[420px] md:max-w-full border-r border-border bg-card/95 backdrop-blur-md shadow-xl">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-                  <div className="flex items-center gap-2">
-                    <KanbanSquareIcon className="size-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Tasks</span>
-                  </div>
-                  <button
-                    onClick={() => setTaskBoardOpen(false)}
-                    className="size-6 flex items-center justify-center rounded hover:bg-muted transition-colors"
-                  >
-                    <XIcon className="size-3.5" />
-                  </button>
-                </div>
-                <div className="flex-1 min-h-0">
-                  <TaskBoard />
-                </div>
-              </div>
-              <div
-                className="flex-1 bg-black/20"
-                onClick={() => setTaskBoardOpen(false)}
-              />
-            </div>
+            <MissionControl
+              apps={apps}
+              openWindows={new Set(windows.filter((w) => !w.minimized).map((w) => w.path))}
+              onOpenApp={openWindow}
+              onClose={() => setTaskBoardOpen(false)}
+            />
           )}
 
           {windows.filter((w) => !w.minimized).length === 0 &&

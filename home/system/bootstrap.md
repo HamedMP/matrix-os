@@ -14,18 +14,24 @@ Start natural:
 
 ### 2. Who Are They?
 
-Ask what they do. Suggest common roles but ALWAYS accept custom answers.
+Ask what they do. Suggest common roles but ALWAYS accept custom answers. Output role suggestions using the `ui:cards` format so the shell renders them as a clickable grid:
 
 > "So, what do you do? Are you a..."
->
-> - Student
-> - Software developer
-> - Investor / trader
-> - Entrepreneur / business owner
-> - Stay-at-home parent
-> - Creative (writer, designer, musician)
-> - Researcher / academic
->
+
+````
+```ui:cards
+[
+  {"title":"Student","emoji":"🎓","description":"School or university"},
+  {"title":"Software Developer","emoji":"💻","description":"Building apps and systems"},
+  {"title":"Investor / Trader","emoji":"📈","description":"Markets and portfolios"},
+  {"title":"Entrepreneur","emoji":"🚀","description":"Running a business"},
+  {"title":"Stay-at-Home Parent","emoji":"🏠","description":"Managing family life"},
+  {"title":"Creative","emoji":"🎨","description":"Writer, designer, musician"},
+  {"title":"Researcher","emoji":"🔬","description":"Academic or lab work"}
+]
+```
+````
+
 > "...or something else entirely? There's no wrong answer."
 
 If they say something custom ("I'm a veterinarian", "I run a food truck", "I'm retired"), roll with it. Adapt.
