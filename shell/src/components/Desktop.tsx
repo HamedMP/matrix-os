@@ -5,6 +5,7 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { AppViewer } from "./AppViewer";
+import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import {
   Card,
@@ -575,7 +576,20 @@ export function Desktop() {
             />
           )}
 
-          {windows.filter((w) => !w.minimized).length === 0 &&
+          {!modeConfig.showWindows && (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    {desktopMode === "ambient" ? "Ambient mode" : "Conversational mode"}
+                  </p>
+                  <p className="text-xs text-muted-foreground/60">
+                    Use Cmd+K to switch modes
+                  </p>
+                </div>
+              </div>
+            )}
+
+          {modeConfig.showWindows && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="flex h-full items-center justify-center">
                 <p className="text-sm text-muted-foreground">
@@ -586,7 +600,7 @@ export function Desktop() {
             )}
 
           {/* Desktop: positioned windows; Mobile: full-screen cards */}
-          {windows.map((win) =>
+          {modeConfig.showWindows && windows.map((win) =>
             win.minimized ? null : (
               <Card
                 key={win.id}
@@ -613,7 +627,12 @@ export function Desktop() {
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}
                   </CardTitle>
-                  <div className="w-[54px]" />
+                  <div className="w-[54px] flex items-center justify-end">
+                    <AIButton
+                      appName={win.title}
+                      appPath={win.path}
+                    />
+                  </div>
                 </CardHeader>
 
                 <CardContent className="relative flex-1 p-0 min-h-0">

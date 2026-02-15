@@ -2,9 +2,10 @@
 
 import { useState, useCallback, type ReactNode } from "react";
 import { useSocket } from "@/hooks/useSocket";
+import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SendIcon, MicIcon } from "lucide-react";
+import { SendIcon, MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
 
 interface InputBarProps {
   sessionId?: string;
@@ -18,6 +19,21 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
   const [input, setInput] = useState("");
   const { connected } = useSocket();
 
+  const {
+    isRecording,
+    isTranscribing,
+    isSupported,
+    startRecording,
+    stopRecording,
+  } = useVoice({
+    onTranscription: (text) => {
+      onSubmit(text);
+    },
+    onError: (err) => {
+      console.error("Voice error:", err);
+    },
+  });
+
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
@@ -29,6 +45,14 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
     [input, onSubmit],
   );
 
+  const handleMicClick = useCallback(() => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [isRecording, startRecording, stopRecording]);
+
   return (
     <div className="pointer-events-auto flex flex-col items-center gap-2">
       {chips}
@@ -39,8 +63,16 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={connected ? "Ask Matrix OS..." : "Connecting..."}
-          disabled={!connected}
+          placeholder={
+            isTranscribing
+              ? "Transcribing..."
+              : isRecording
+                ? "Listening..."
+                : connected
+                  ? "Ask Matrix OS..."
+                  : "Connecting..."
+          }
+          disabled={!connected || isRecording}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-base md:text-sm"
         />
         {queueLength > 0 && (
@@ -52,11 +84,30 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
           type="button"
           size="icon"
           variant="ghost"
-          className="size-10 md:size-8 text-muted-foreground"
-          disabled
-          title="Voice input (coming soon)"
+          className={`size-10 md:size-8 ${
+            isRecording
+              ? "text-red-500 animate-pulse"
+              : "text-muted-foreground"
+          }`}
+          disabled={!connected || !isSupported || isTranscribing}
+          onClick={handleMicClick}
+          title={
+            !isSupported
+              ? "Voice input not supported in this browser"
+              : isRecording
+                ? "Stop recording"
+                : isTranscribing
+                  ? "Transcribing..."
+                  : "Voice input"
+          }
         >
-          <MicIcon className="size-5 md:size-4" />
+          {isTranscribing ? (
+            <Loader2Icon className="size-5 md:size-4 animate-spin" />
+          ) : isRecording ? (
+            <MicOffIcon className="size-5 md:size-4" />
+          ) : (
+            <MicIcon className="size-5 md:size-4" />
+          )}
         </Button>
         <Button
           type="submit"

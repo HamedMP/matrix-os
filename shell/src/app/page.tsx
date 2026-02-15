@@ -5,6 +5,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useChatState } from "@/hooks/useChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { Desktop } from "@/components/Desktop";
 import { ChatPanel } from "@/components/ChatPanel";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -13,6 +14,7 @@ import { SuggestionChips } from "@/components/SuggestionChips";
 import { ThoughtCard } from "@/components/ThoughtCard";
 import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
+import { AppStore } from "@/components/AppStore";
 import { BottomPanel } from "@/components/BottomPanel";
 import { Button } from "@/components/ui/button";
 import { MessageSquareIcon } from "lucide-react";
@@ -21,9 +23,12 @@ export default function Home() {
   useTheme();
 
   const chat = useChatState();
+  const modeConfig = useDesktopMode((s) => s.getModeConfig(s.mode));
+  const isCenterChat = modeConfig.chatPosition === "center";
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [overlayDismissed, setOverlayDismissed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [storeOpen, setStoreOpen] = useState(false);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
 
@@ -48,8 +53,15 @@ export default function Home() {
         keywords: ["conversation", "session"],
         execute: () => chat.newChat(),
       },
+      {
+        id: "action:app-store",
+        label: "App Store",
+        group: "Actions",
+        keywords: ["store", "install", "browse", "apps", "marketplace"],
+        execute: () => setStoreOpen(true),
+      },
     ]);
-    return () => unregister(["action:toggle-sidebar", "action:new-chat"]);
+    return () => unregister(["action:toggle-sidebar", "action:new-chat", "action:app-store"]);
   }, [register, unregister, chat.newChat]);
 
   const chipContext = useMemo(() => {
@@ -105,7 +117,23 @@ export default function Home() {
         </div>
       </div>
 
-      {sidebarOpen ? (
+      {isCenterChat ? (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+          <div className="pointer-events-auto w-full max-w-2xl mx-4 max-h-[70vh] overflow-hidden rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl">
+            <ChatPanel
+              messages={chat.messages}
+              sessionId={chat.sessionId}
+              busy={chat.busy}
+              connected={chat.connected}
+              conversations={chat.conversations}
+              onNewChat={chat.newChat}
+              onSwitchConversation={chat.switchConversation}
+              onClose={() => {}}
+              onSubmit={handleSubmit}
+            />
+          </div>
+        </div>
+      ) : sidebarOpen ? (
         <ChatPanel
           messages={chat.messages}
           sessionId={chat.sessionId}
@@ -130,6 +158,7 @@ export default function Home() {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ApprovalDialog />
+      <AppStore open={storeOpen} onOpenChange={setStoreOpen} />
 
       {!sidebarOpen && !overlayDismissed && (
         <ResponseOverlay

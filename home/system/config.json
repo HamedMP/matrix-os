@@ -21,6 +21,14 @@
     "requireApproval": ["Bash:destructive", "Write:system"],
     "autoApprove": ["Read", "list_tasks", "read_state"]
   },
+  "voice": {
+    "enabled": false,
+    "elevenlabs_key": "",
+    "voice_id": "21m00Tcm4TlvDq8ikWAM",
+    "model": "eleven_turbo_v2_5",
+    "stt_provider": "elevenlabs",
+    "auto_speak_responses": false
+  },
   "channels": {
     "telegram": { "enabled": false, "token": "", "allowFrom": [] },
     "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },

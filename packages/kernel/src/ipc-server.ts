@@ -631,6 +631,141 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
           }
         },
       ),
+
+      tool(
+        "speak",
+        "Convert text to speech audio using ElevenLabs. Saves audio to ~/data/audio/. Useful for proactive audio messages.",
+        {
+          text: z.string().describe("Text to convert to speech"),
+          voice_id: z.string().optional().describe("Custom ElevenLabs voice ID"),
+        },
+        async ({ text, voice_id }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot speak (no home path)" }] };
+          }
+
+          let voiceConfig: { elevenlabs_key?: string; voice_id?: string; model?: string; enabled?: boolean } = {};
+          try {
+            const configPath = join(homePath, "system", "config.json");
+            if (existsSync(configPath)) {
+              const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+              voiceConfig = cfg.voice ?? {};
+            }
+          } catch {}
+
+          const apiKey = process.env.ELEVENLABS_API_KEY ?? voiceConfig.elevenlabs_key ?? "";
+          if (!apiKey) {
+            return { content: [{ type: "text" as const, text: "Voice not configured. Set ELEVENLABS_API_KEY or add voice.elevenlabs_key to config.json." }] };
+          }
+
+          const vid = voice_id ?? voiceConfig.voice_id ?? "21m00Tcm4TlvDq8ikWAM";
+          const model = voiceConfig.model ?? "eleven_turbo_v2_5";
+
+          try {
+            const url = `https://api.elevenlabs.io/v1/text-to-speech/${vid}`;
+            const response = await fetch(url, {
+              method: "POST",
+              headers: {
+                "xi-api-key": apiKey,
+                "Content-Type": "application/json",
+                Accept: "audio/mpeg",
+              },
+              body: JSON.stringify({
+                text,
+                model_id: model,
+                voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+              }),
+            });
+
+            if (!response.ok) {
+              return { content: [{ type: "text" as const, text: `TTS failed: ${response.status} ${response.statusText}` }] };
+            }
+
+            const arrayBuffer = await response.arrayBuffer();
+            const audioDir = join(homePath, "data", "audio");
+            mkdirSync(audioDir, { recursive: true });
+            const fileName = `${Date.now()}-tts.mp3`;
+            const localPath = join(audioDir, fileName);
+            writeFileSync(localPath, Buffer.from(arrayBuffer));
+
+            const cost = text.length * 0.0003;
+            const tracker = createUsageTracker(homePath);
+            tracker.track("voice_tts", cost, { chars: text.length });
+
+            return {
+              content: [{ type: "text" as const, text: `Audio saved to ${localPath}\nCost: $${cost.toFixed(4)}` }],
+            };
+          } catch (e) {
+            return {
+              content: [{ type: "text" as const, text: `TTS error: ${e instanceof Error ? e.message : String(e)}` }],
+            };
+          }
+        },
+      ),
+
+      tool(
+        "transcribe",
+        "Convert audio file to text using speech-to-text. Returns transcription.",
+        {
+          audio_path: z.string().describe("Path to audio file to transcribe"),
+        },
+        async ({ audio_path }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot transcribe (no home path)" }] };
+          }
+
+          let voiceConfig: { elevenlabs_key?: string; stt_provider?: string } = {};
+          try {
+            const configPath = join(homePath, "system", "config.json");
+            if (existsSync(configPath)) {
+              const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+              voiceConfig = cfg.voice ?? {};
+            }
+          } catch {}
+
+          const apiKey = process.env.ELEVENLABS_API_KEY ?? voiceConfig.elevenlabs_key ?? "";
+          if (!apiKey) {
+            return { content: [{ type: "text" as const, text: "Voice not configured. Set ELEVENLABS_API_KEY or add voice.elevenlabs_key to config.json." }] };
+          }
+
+          const absPath = audio_path.startsWith("/") ? audio_path : join(homePath, audio_path.replace(/^~\//, ""));
+          if (!existsSync(absPath)) {
+            return { content: [{ type: "text" as const, text: `Audio file not found: ${absPath}` }] };
+          }
+
+          try {
+            const audioBuffer = readFileSync(absPath);
+            const formData = new FormData();
+            const blob = new Blob([audioBuffer], { type: "audio/webm" });
+            formData.append("audio", blob, "recording.webm");
+            formData.append("model_id", "scribe_v1");
+
+            const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+              method: "POST",
+              headers: { "xi-api-key": apiKey },
+              body: formData,
+            });
+
+            if (!response.ok) {
+              return { content: [{ type: "text" as const, text: `STT failed: ${response.status} ${response.statusText}` }] };
+            }
+
+            const data = await response.json() as { text: string };
+            const estimatedSeconds = audioBuffer.length / 16000;
+            const cost = estimatedSeconds * 0.0017;
+            const tracker = createUsageTracker(homePath);
+            tracker.track("voice_stt", cost, { audio_path: absPath });
+
+            return {
+              content: [{ type: "text" as const, text: `Transcription: ${data.text}\nCost: $${cost.toFixed(4)}` }],
+            };
+          } catch (e) {
+            return {
+              content: [{ type: "text" as const, text: `STT error: ${e instanceof Error ? e.message : String(e)}` }],
+            };
+          }
+        },
+      ),
     ],
   });
 }
