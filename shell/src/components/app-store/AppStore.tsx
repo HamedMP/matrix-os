@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useMemo } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useAppStore, type AppStoreEntry } from "@/stores/app-store";
 import { AppStoreHeader } from "./AppStoreHeader";
@@ -20,24 +20,16 @@ interface AppStoreProps {
 
 export function AppStore({ open, onOpenChange }: AppStoreProps) {
   const { send } = useSocket();
-  const {
-    entries,
-    search,
-    selectedCategory,
-    selectedApp,
-    installedIds,
-    setEntries,
-    setSearch,
-    setCategory,
-    selectApp,
-    markInstalled,
-    featured,
-    bundled,
-    promptLibrary,
-    searchResults,
-    newApps,
-    topRated,
-  } = useAppStore();
+  const entries = useAppStore((s) => s.entries);
+  const search = useAppStore((s) => s.search);
+  const selectedCategory = useAppStore((s) => s.selectedCategory);
+  const selectedApp = useAppStore((s) => s.selectedApp);
+  const installedIds = useAppStore((s) => s.installedIds);
+  const setEntries = useAppStore((s) => s.setEntries);
+  const setSearch = useAppStore((s) => s.setSearch);
+  const setCategory = useAppStore((s) => s.setCategory);
+  const selectApp = useAppStore((s) => s.selectApp);
+  const markInstalled = useAppStore((s) => s.markInstalled);
 
   useEffect(() => {
     if (!open) return;
@@ -112,17 +104,49 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
     [send, onOpenChange, markInstalled],
   );
 
-  if (!open) return null;
-
   const isSearching = search.length > 0;
   const isFiltered = selectedCategory !== "All";
   const showBrowse = !isSearching && !isFiltered;
 
-  const featuredEntries = featured();
-  const results = searchResults();
-  const bundledApps = bundled();
-  const promptApps = promptLibrary();
-  const newEntries = newApps();
+  const featuredEntries = useMemo(
+    () => entries.filter((e) => e.featured),
+    [entries],
+  );
+
+  const bundledApps = useMemo(
+    () => entries.filter((e) => e.source === "bundled"),
+    [entries],
+  );
+
+  const promptApps = useMemo(
+    () => entries.filter((e) => e.source === "prompt"),
+    [entries],
+  );
+
+  const newEntries = useMemo(
+    () => entries.filter((e) => e.new),
+    [entries],
+  );
+
+  const results = useMemo(() => {
+    let filtered = selectedCategory === "All"
+      ? entries
+      : entries.filter(
+          (e) => e.category.toLowerCase() === selectedCategory.toLowerCase(),
+        );
+    if (search) {
+      const q = search.toLowerCase();
+      filtered = filtered.filter(
+        (e) =>
+          e.name.toLowerCase().includes(q) ||
+          e.description.toLowerCase().includes(q) ||
+          (e.tags ?? []).some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+    return filtered;
+  }, [entries, selectedCategory, search]);
+
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[45]">
