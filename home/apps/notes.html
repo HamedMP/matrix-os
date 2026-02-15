@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notes</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --fg: #e0e0e0;
+  --accent: #FF9800;
+  --surface: #1a1a1a;
+  --border: #333;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  height: 100vh;
+}
+.sidebar {
+  width: 240px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.sidebar-header {
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-header h1 { font-size: 1.1em; }
+.sidebar-header button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.search {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.search input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.search input:focus { outline: none; border-color: var(--accent); }
+.note-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+}
+.note-list li {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.note-list li:hover { background: rgba(255,255,255,0.05); }
+.note-list li.active { background: rgba(255, 152, 0, 0.15); border-left: 3px solid var(--accent); }
+.note-title { font-size: 14px; font-weight: 500; }
+.note-preview { font-size: 12px; color: #999; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-date { font-size: 11px; color: #666; margin-top: 2px; }
+.editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.editor-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.editor-header input {
+  flex: 1;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.editor-header input:focus { outline: none; }
+.editor-header button {
+  background: transparent;
+  color: #999;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+.editor-header button:hover { color: #e53935; }
+textarea {
+  flex: 1;
+  background: var(--bg);
+  color: var(--fg);
+  border: none;
+  padding: 20px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: none;
+}
+textarea:focus { outline: none; }
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+}
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h1>Notes</h1>
+    <button id="newBtn">+ New</button>
+  </div>
+  <div class="search">
+    <input type="text" id="search" placeholder="Search...">
+  </div>
+  <ul class="note-list" id="list"></ul>
+</div>
+<div class="editor" id="editor">
+  <div class="empty-state">Select a note or create a new one</div>
+</div>
+
+<script>
+var notes = [];
+var activeId = null;
+var saveTimer = null;
+var GATEWAY = location.origin;
+var APP_NAME = 'notes';
+
+document.getElementById('newBtn').addEventListener('click', newNote);
+document.getElementById('search').addEventListener('input', renderList);
+
+function loadData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'notes' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data && data.value) {
+      try { notes = JSON.parse(data.value); } catch(e) { notes = []; }
+    }
+    renderList();
+  })
+  .catch(function() { renderList(); });
+}
+
+function saveData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'notes', value: JSON.stringify(notes) })
+  });
+}
+
+function newNote() {
+  var note = {
+    id: Date.now(),
+    title: 'Untitled',
+    content: '',
+    created: new Date().toISOString(),
+    updated: new Date().toISOString()
+  };
+  notes.unshift(note);
+  saveData();
+  activeId = note.id;
+  renderList();
+  renderEditor();
+}
+
+function selectNote(id) {
+  activeId = id;
+  renderList();
+  renderEditor();
+}
+
+function deleteNote() {
+  if (!activeId) return;
+  notes = notes.filter(function(n) { return n.id !== activeId; });
+  activeId = null;
+  saveData();
+  renderList();
+  renderEditor();
+}
+
+function getActive() {
+  return notes.find(function(n) { return n.id === activeId; });
+}
+
+function debounceSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveData, 500);
+}
+
+function renderList() {
+  var query = (document.getElementById('search').value || '').toLowerCase();
+  var filtered = notes.filter(function(n) {
+    if (!query) return true;
+    return n.title.toLowerCase().indexOf(query) >= 0 || n.content.toLowerCase().indexOf(query) >= 0;
+  });
+
+  var listEl = document.getElementById('list');
+  listEl.replaceChildren();
+
+  if (filtered.length === 0) {
+    var emptyLi = document.createElement('li');
+    emptyLi.style.cssText = 'color:#666;padding:20px;text-align:center';
+    emptyLi.textContent = 'No notes';
+    listEl.appendChild(emptyLi);
+    return;
+  }
+
+  filtered.forEach(function(n) {
+    var li = document.createElement('li');
+    li.className = n.id === activeId ? 'active' : '';
+    li.addEventListener('click', function() { selectNote(n.id); });
+
+    var titleDiv = document.createElement('div');
+    titleDiv.className = 'note-title';
+    titleDiv.textContent = n.title;
+    li.appendChild(titleDiv);
+
+    var previewDiv = document.createElement('div');
+    previewDiv.className = 'note-preview';
+    previewDiv.textContent = n.content.slice(0, 60).replace(/\n/g, ' ') || 'Empty note';
+    li.appendChild(previewDiv);
+
+    var dateDiv = document.createElement('div');
+    dateDiv.className = 'note-date';
+    dateDiv.textContent = new Date(n.updated).toLocaleDateString();
+    li.appendChild(dateDiv);
+
+    listEl.appendChild(li);
+  });
+}
+
+function renderEditor() {
+  var note = getActive();
+  var editorEl = document.getElementById('editor');
+  editorEl.replaceChildren();
+
+  if (!note) {
+    var empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'Select a note or create a new one';
+    editorEl.appendChild(empty);
+    return;
+  }
+
+  var header = document.createElement('div');
+  header.className = 'editor-header';
+
+  var titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.value = note.title;
+  titleInput.addEventListener('input', function() {
+    note.title = titleInput.value;
+    note.updated = new Date().toISOString();
+    debounceSave();
+    renderList();
+  });
+  header.appendChild(titleInput);
+
+  var delBtn = document.createElement('button');
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', deleteNote);
+  header.appendChild(delBtn);
+
+  editorEl.appendChild(header);
+
+  var textarea = document.createElement('textarea');
+  textarea.value = note.content;
+  textarea.addEventListener('input', function() {
+    note.content = textarea.value;
+    note.updated = new Date().toISOString();
+    debounceSave();
+  });
+  editorEl.appendChild(textarea);
+
+  textarea.focus();
+}
+
+loadData();
+</script>
+</body>
+</html>

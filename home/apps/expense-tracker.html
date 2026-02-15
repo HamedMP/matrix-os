@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense Tracker</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --fg: #e0e0e0;
+  --accent: #4CAF50;
+  --surface: #1a1a1a;
+  --border: #333;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+h1 { font-size: 1.4em; margin-bottom: 16px; }
+h2 { font-size: 1.1em; margin: 16px 0 8px; color: var(--accent); }
+.form-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+input, select {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+input[type="number"] { width: 100px; }
+input[type="text"] { flex: 1; min-width: 120px; }
+input[type="date"] { width: 140px; }
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button:hover { opacity: 0.9; }
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.summary-card .label { font-size: 12px; color: #999; }
+.summary-card .value { font-size: 1.3em; font-weight: 600; margin-top: 4px; }
+.expense-list { list-style: none; }
+.expense-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.expense-item .desc { flex: 1; }
+.expense-item .amount { font-weight: 600; white-space: nowrap; }
+.expense-item .cat {
+  font-size: 12px;
+  color: #999;
+  background: var(--surface);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.expense-item .date { font-size: 12px; color: #666; }
+.delete-btn {
+  background: transparent;
+  color: #999;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.delete-btn:hover { color: #e53935; }
+.empty { color: #666; text-align: center; padding: 32px 0; }
+</style>
+</head>
+<body>
+<h1>Expense Tracker</h1>
+
+<div class="form-row">
+  <input type="number" id="amount" placeholder="Amount" step="0.01" min="0">
+  <input type="text" id="description" placeholder="Description">
+  <select id="category">
+    <option value="food">Food</option>
+    <option value="transport">Transport</option>
+    <option value="entertainment">Entertainment</option>
+    <option value="utilities">Utilities</option>
+    <option value="shopping">Shopping</option>
+    <option value="health">Health</option>
+    <option value="other">Other</option>
+  </select>
+  <input type="date" id="date">
+  <button onclick="addExpense()">Add</button>
+</div>
+
+<h2>This Month</h2>
+<div class="summary" id="summary"></div>
+
+<h2>Expenses</h2>
+<ul class="expense-list" id="list"></ul>
+
+<script>
+var expenses = [];
+var GATEWAY = location.origin;
+var APP_NAME = 'expense-tracker';
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'expenses' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data && data.value) {
+      try { expenses = JSON.parse(data.value); } catch(e) { expenses = []; }
+    }
+    render();
+  })
+  .catch(function() { render(); });
+}
+
+function saveData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'expenses', value: JSON.stringify(expenses) })
+  });
+}
+
+function addExpense() {
+  var amount = parseFloat(document.getElementById('amount').value);
+  var desc = document.getElementById('description').value.trim();
+  var cat = document.getElementById('category').value;
+  var date = document.getElementById('date').value || today();
+  if (!amount || amount <= 0) return;
+  if (!desc) desc = cat;
+  expenses.unshift({ amount: amount, description: desc, category: cat, date: date, id: Date.now() });
+  saveData();
+  document.getElementById('amount').value = '';
+  document.getElementById('description').value = '';
+  render();
+}
+
+function removeExpense(id) {
+  expenses = expenses.filter(function(e) { return e.id !== id; });
+  saveData();
+  render();
+}
+
+function el(tag, className, textContent) {
+  var e = document.createElement(tag);
+  if (className) e.className = className;
+  if (textContent !== undefined) e.textContent = textContent;
+  return e;
+}
+
+function render() {
+  var now = new Date();
+  var monthStart = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  var monthExpenses = expenses.filter(function(e) { return e.date.startsWith(monthStart); });
+  var total = monthExpenses.reduce(function(s, e) { return s + e.amount; }, 0);
+  var byCategory = {};
+  monthExpenses.forEach(function(e) {
+    byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
+  });
+
+  var summaryEl = document.getElementById('summary');
+  summaryEl.replaceChildren();
+
+  var totalCard = el('div', 'summary-card');
+  totalCard.appendChild(el('div', 'label', 'Total'));
+  totalCard.appendChild(el('div', 'value', '$' + total.toFixed(2)));
+  summaryEl.appendChild(totalCard);
+
+  Object.keys(byCategory).sort().forEach(function(cat) {
+    var card = el('div', 'summary-card');
+    card.appendChild(el('div', 'label', cat));
+    card.appendChild(el('div', 'value', '$' + byCategory[cat].toFixed(2)));
+    summaryEl.appendChild(card);
+  });
+
+  var listEl = document.getElementById('list');
+  listEl.replaceChildren();
+
+  if (expenses.length === 0) {
+    listEl.appendChild(el('li', 'empty', 'No expenses yet. Add one above.'));
+    return;
+  }
+
+  expenses.forEach(function(e) {
+    var li = el('li', 'expense-item');
+    li.appendChild(el('span', 'date', e.date));
+    li.appendChild(el('span', 'desc', e.description));
+    li.appendChild(el('span', 'cat', e.category));
+    li.appendChild(el('span', 'amount', '$' + e.amount.toFixed(2)));
+    var btn = el('button', 'delete-btn', 'x');
+    btn.addEventListener('click', function() { removeExpense(e.id); });
+    li.appendChild(btn);
+    listEl.appendChild(li);
+  });
+}
+
+document.getElementById('date').value = today();
+loadData();
+</script>
+</body>
+</html>

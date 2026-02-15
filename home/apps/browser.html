@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --fg: #e0e0e0;
+  --accent: #4FC3F7;
+  --surface: #1a1a1a;
+  --border: #333;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.nav-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.nav-btn:hover { background: rgba(255,255,255,0.05); }
+.nav-btn:disabled { opacity: 0.3; cursor: default; }
+.url-bar {
+  flex: 1;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.url-bar:focus { outline: none; border-color: var(--accent); }
+.go-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.go-btn:hover { opacity: 0.9; }
+.bookmark-btn {
+  background: transparent;
+  color: #999;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.bookmark-btn:hover { color: var(--accent); border-color: var(--accent); }
+.bookmarks-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  overflow-x: auto;
+  min-height: 32px;
+}
+.bookmark-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bookmark-item:hover { border-color: var(--accent); }
+.bookmark-item .remove {
+  color: #666;
+  cursor: pointer;
+  font-size: 10px;
+}
+.bookmark-item .remove:hover { color: #e53935; }
+.content {
+  flex: 1;
+  position: relative;
+}
+.content iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+.error-msg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #666;
+}
+.error-msg h2 { margin-bottom: 8px; font-size: 1.2em; }
+.error-msg p { font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button class="nav-btn" id="backBtn" disabled>&lt;</button>
+  <button class="nav-btn" id="fwdBtn" disabled>&gt;</button>
+  <input type="text" class="url-bar" id="urlBar" placeholder="Enter URL..." value="https://example.com">
+  <button class="go-btn" id="goBtn">Go</button>
+  <button class="bookmark-btn" id="bookmarkBtn">+Bookmark</button>
+</div>
+<div class="bookmarks-bar" id="bookmarksBar"></div>
+<div class="content" id="content">
+  <div class="error-msg">
+    <h2>Enter a URL above</h2>
+    <p>Some sites may block iframe embedding due to security restrictions.</p>
+  </div>
+</div>
+
+<script>
+var GATEWAY = location.origin;
+var APP_NAME = 'browser';
+var history = [];
+var historyIndex = -1;
+var bookmarks = [];
+
+document.getElementById('goBtn').addEventListener('click', navigate);
+document.getElementById('urlBar').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') navigate();
+});
+document.getElementById('backBtn').addEventListener('click', goBack);
+document.getElementById('fwdBtn').addEventListener('click', goForward);
+document.getElementById('bookmarkBtn').addEventListener('click', addBookmark);
+
+function loadBookmarks() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'bookmarks' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data && data.value) {
+      try { bookmarks = JSON.parse(data.value); } catch(e) { bookmarks = []; }
+    }
+    renderBookmarks();
+  })
+  .catch(function() { renderBookmarks(); });
+}
+
+function saveBookmarks() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'bookmarks', value: JSON.stringify(bookmarks) })
+  });
+}
+
+function navigate() {
+  var url = document.getElementById('urlBar').value.trim();
+  if (!url) return;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+    document.getElementById('urlBar').value = url;
+  }
+
+  if (historyIndex < history.length - 1) {
+    history = history.slice(0, historyIndex + 1);
+  }
+  history.push(url);
+  historyIndex = history.length - 1;
+  updateNavButtons();
+  loadUrl(url);
+}
+
+function loadUrl(url) {
+  var contentEl = document.getElementById('content');
+  contentEl.replaceChildren();
+
+  var iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups';
+  iframe.title = 'Browser content';
+  contentEl.appendChild(iframe);
+}
+
+function goBack() {
+  if (historyIndex <= 0) return;
+  historyIndex--;
+  var url = history[historyIndex];
+  document.getElementById('urlBar').value = url;
+  updateNavButtons();
+  loadUrl(url);
+}
+
+function goForward() {
+  if (historyIndex >= history.length - 1) return;
+  historyIndex++;
+  var url = history[historyIndex];
+  document.getElementById('urlBar').value = url;
+  updateNavButtons();
+  loadUrl(url);
+}
+
+function updateNavButtons() {
+  document.getElementById('backBtn').disabled = historyIndex <= 0;
+  document.getElementById('fwdBtn').disabled = historyIndex >= history.length - 1;
+}
+
+function addBookmark() {
+  var url = document.getElementById('urlBar').value.trim();
+  if (!url || bookmarks.some(function(b) { return b.url === url; })) return;
+  var title = url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  bookmarks.push({ url: url, title: title });
+  saveBookmarks();
+  renderBookmarks();
+}
+
+function removeBookmark(url) {
+  bookmarks = bookmarks.filter(function(b) { return b.url !== url; });
+  saveBookmarks();
+  renderBookmarks();
+}
+
+function renderBookmarks() {
+  var bar = document.getElementById('bookmarksBar');
+  bar.replaceChildren();
+
+  bookmarks.forEach(function(b) {
+    var item = document.createElement('div');
+    item.className = 'bookmark-item';
+
+    var label = document.createElement('span');
+    label.textContent = b.title;
+    label.addEventListener('click', function() {
+      document.getElementById('urlBar').value = b.url;
+      navigate();
+    });
+    item.appendChild(label);
+
+    var remove = document.createElement('span');
+    remove.className = 'remove';
+    remove.textContent = 'x';
+    remove.addEventListener('click', function(e) {
+      e.stopPropagation();
+      removeBookmark(b.url);
+    });
+    item.appendChild(remove);
+
+    bar.appendChild(item);
+  });
+}
+
+loadBookmarks();
+</script>
+</body>
+</html>

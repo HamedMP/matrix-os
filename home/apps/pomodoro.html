@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pomodoro</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --fg: #e0e0e0;
+  --accent: #E91E63;
+  --surface: #1a1a1a;
+  --border: #333;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+.timer-container { text-align: center; max-width: 400px; width: 100%; }
+h1 { font-size: 1.4em; margin-bottom: 24px; }
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.mode-tabs button {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.mode-tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.progress-ring {
+  width: 240px;
+  height: 240px;
+  margin: 0 auto 24px;
+  position: relative;
+}
+.progress-ring svg { transform: rotate(-90deg); }
+.progress-ring .bg { fill: none; stroke: var(--border); stroke-width: 8; }
+.progress-ring .fg { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.5s ease; }
+.time-in-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 3em;
+  font-weight: 200;
+  font-variant-numeric: tabular-nums;
+}
+.controls {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.controls button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 32px;
+  cursor: pointer;
+  font-size: 16px;
+}
+.controls button:hover { opacity: 0.9; }
+.controls button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--border); }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.stat-card .label { font-size: 12px; color: #999; }
+.stat-card .value { font-size: 1.3em; font-weight: 600; margin-top: 4px; }
+.status { font-size: 14px; color: #999; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="timer-container">
+  <h1>Pomodoro Timer</h1>
+
+  <div class="mode-tabs" id="modeTabs"></div>
+
+  <div class="progress-ring">
+    <svg width="240" height="240" viewBox="0 0 240 240">
+      <circle class="bg" cx="120" cy="120" r="108" />
+      <circle class="fg" id="ring" cx="120" cy="120" r="108" />
+    </svg>
+    <div class="time-in-ring" id="display">25:00</div>
+  </div>
+
+  <div class="status" id="status">Ready to focus</div>
+
+  <div class="controls">
+    <button id="startBtn">Start</button>
+    <button class="secondary" id="resetBtn">Reset</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">Sessions Today</div>
+      <div class="value" id="sessionsToday">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Focus Time</div>
+      <div class="value" id="focusTime">0m</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total Sessions</div>
+      <div class="value" id="totalSessions">0</div>
+    </div>
+  </div>
+</div>
+
+<script>
+var DURATIONS = { focus: 25 * 60, short: 5 * 60, long: 15 * 60 };
+var LABELS = { focus: 'Focus', short: 'Short Break', long: 'Long Break' };
+var mode = 'focus';
+var timeLeft = DURATIONS.focus;
+var running = false;
+var interval = null;
+var sessions = [];
+var completedToday = 0;
+var CIRCUMFERENCE = 2 * Math.PI * 108;
+var GATEWAY = location.origin;
+var APP_NAME = 'pomodoro';
+
+var ringEl = document.getElementById('ring');
+ringEl.style.strokeDasharray = String(CIRCUMFERENCE);
+
+document.getElementById('startBtn').addEventListener('click', toggleTimer);
+document.getElementById('resetBtn').addEventListener('click', resetTimer);
+
+function loadData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'sessions' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data && data.value) {
+      try { sessions = JSON.parse(data.value); } catch(e) { sessions = []; }
+    }
+    updateStats();
+  })
+  .catch(function() { updateStats(); });
+}
+
+function saveData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'sessions', value: JSON.stringify(sessions) })
+  });
+}
+
+function renderModeTabs() {
+  var tabsEl = document.getElementById('modeTabs');
+  tabsEl.replaceChildren();
+  ['focus', 'short', 'long'].forEach(function(m) {
+    var btn = document.createElement('button');
+    btn.className = m === mode ? 'active' : '';
+    btn.textContent = LABELS[m];
+    btn.addEventListener('click', function() { setMode(m); });
+    tabsEl.appendChild(btn);
+  });
+}
+
+function setMode(m) {
+  mode = m;
+  timeLeft = DURATIONS[m];
+  if (running) { clearInterval(interval); running = false; }
+  document.getElementById('startBtn').textContent = 'Start';
+  var statusText = m === 'focus' ? 'Ready to focus' : m === 'short' ? 'Short break' : 'Long break';
+  document.getElementById('status').textContent = statusText;
+  renderModeTabs();
+  updateDisplay();
+}
+
+function toggleTimer() {
+  if (running) {
+    clearInterval(interval);
+    running = false;
+    document.getElementById('startBtn').textContent = 'Start';
+    document.getElementById('status').textContent = 'Paused';
+  } else {
+    running = true;
+    document.getElementById('startBtn').textContent = 'Pause';
+    document.getElementById('status').textContent = mode === 'focus' ? 'Focusing...' : 'On break';
+    interval = setInterval(tick, 1000);
+  }
+}
+
+function resetTimer() {
+  if (running) { clearInterval(interval); running = false; }
+  timeLeft = DURATIONS[mode];
+  document.getElementById('startBtn').textContent = 'Start';
+  document.getElementById('status').textContent = 'Ready to focus';
+  updateDisplay();
+}
+
+function tick() {
+  timeLeft--;
+  if (timeLeft <= 0) {
+    clearInterval(interval);
+    running = false;
+    document.getElementById('startBtn').textContent = 'Start';
+    if (mode === 'focus') {
+      sessions.push({ date: new Date().toISOString(), duration: DURATIONS.focus });
+      saveData();
+      updateStats();
+      document.getElementById('status').textContent = 'Session complete! Take a break.';
+      completedToday++;
+      if (completedToday % 4 === 0) {
+        setMode('long');
+      } else {
+        setMode('short');
+      }
+    } else {
+      document.getElementById('status').textContent = 'Break over! Ready to focus.';
+      setMode('focus');
+    }
+    return;
+  }
+  updateDisplay();
+}
+
+function updateDisplay() {
+  var m = Math.floor(timeLeft / 60);
+  var s = timeLeft % 60;
+  document.getElementById('display').textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  var total = DURATIONS[mode];
+  var progress = timeLeft / total;
+  var offset = CIRCUMFERENCE * progress;
+  ringEl.style.strokeDashoffset = String(CIRCUMFERENCE - offset);
+}
+
+function updateStats() {
+  var today = new Date().toISOString().slice(0, 10);
+  var todaySessions = sessions.filter(function(s) { return s.date.startsWith(today); });
+  var totalMinutes = todaySessions.reduce(function(sum, s) { return sum + s.duration; }, 0) / 60;
+  completedToday = todaySessions.length;
+  document.getElementById('sessionsToday').textContent = String(todaySessions.length);
+  document.getElementById('focusTime').textContent = Math.round(totalMinutes) + 'm';
+  document.getElementById('totalSessions').textContent = String(sessions.length);
+}
+
+renderModeTabs();
+updateDisplay();
+loadData();
+</script>
+</body>
+</html>

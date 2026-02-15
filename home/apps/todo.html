@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Todo</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --fg: #e0e0e0;
+  --accent: #2196F3;
+  --surface: #1a1a1a;
+  --border: #333;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+h1 { font-size: 1.4em; margin-bottom: 16px; }
+.add-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+input, select {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+input[type="text"] { flex: 1; min-width: 140px; }
+input[type="date"] { width: 140px; }
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button:hover { opacity: 0.9; }
+.filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.filters button {
+  background: var(--surface);
+  color: var(--fg);
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+.filters button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.task-list { list-style: none; }
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.task-item.done .task-text { text-decoration: line-through; color: #666; }
+.checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.checkbox.checked { background: var(--accent); border-color: var(--accent); }
+.checkbox.checked::after { content: ''; display: block; width: 6px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); margin-top: -2px; }
+.task-text { flex: 1; font-size: 14px; }
+.task-meta { font-size: 12px; color: #666; display: flex; gap: 8px; align-items: center; }
+.cat-badge {
+  font-size: 11px;
+  background: var(--surface);
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #999;
+}
+.delete-btn {
+  background: transparent;
+  color: #666;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 14px;
+}
+.delete-btn:hover { color: #e53935; }
+.empty { color: #666; text-align: center; padding: 32px 0; }
+.count { font-size: 13px; color: #666; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<h1>Todo</h1>
+
+<div class="add-row">
+  <input type="text" id="taskInput" placeholder="What needs to be done?">
+  <select id="taskCat">
+    <option value="general">General</option>
+    <option value="work">Work</option>
+    <option value="personal">Personal</option>
+    <option value="shopping">Shopping</option>
+    <option value="health">Health</option>
+  </select>
+  <input type="date" id="taskDue">
+  <button id="addBtn">Add</button>
+</div>
+
+<div class="filters" id="filters"></div>
+<div class="count" id="count"></div>
+<ul class="task-list" id="list"></ul>
+
+<script>
+var tasks = [];
+var filter = 'all';
+var GATEWAY = location.origin;
+var APP_NAME = 'todo';
+
+document.getElementById('addBtn').addEventListener('click', addTask);
+document.getElementById('taskInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') addTask();
+});
+
+function loadData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'tasks' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data && data.value) {
+      try { tasks = JSON.parse(data.value); } catch(e) { tasks = []; }
+    }
+    render();
+  })
+  .catch(function() { render(); });
+}
+
+function saveData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'tasks', value: JSON.stringify(tasks) })
+  });
+}
+
+function addTask() {
+  var input = document.getElementById('taskInput');
+  var text = input.value.trim();
+  if (!text) return;
+  var cat = document.getElementById('taskCat').value;
+  var due = document.getElementById('taskDue').value || null;
+  tasks.push({ id: Date.now(), text: text, done: false, category: cat, due: due, created: new Date().toISOString() });
+  saveData();
+  input.value = '';
+  document.getElementById('taskDue').value = '';
+  render();
+}
+
+function toggleTask(id) {
+  var task = tasks.find(function(t) { return t.id === id; });
+  if (task) task.done = !task.done;
+  saveData();
+  render();
+}
+
+function removeTask(id) {
+  tasks = tasks.filter(function(t) { return t.id !== id; });
+  saveData();
+  render();
+}
+
+function setFilter(f) {
+  filter = f;
+  render();
+}
+
+function render() {
+  var filtered = tasks;
+  if (filter === 'active') filtered = tasks.filter(function(t) { return !t.done; });
+  if (filter === 'done') filtered = tasks.filter(function(t) { return t.done; });
+
+  var active = tasks.filter(function(t) { return !t.done; }).length;
+  document.getElementById('count').textContent = active + ' task' + (active !== 1 ? 's' : '') + ' remaining';
+
+  var filtersEl = document.getElementById('filters');
+  filtersEl.replaceChildren();
+  ['all', 'active', 'done'].forEach(function(f) {
+    var btn = document.createElement('button');
+    btn.className = filter === f ? 'active' : '';
+    btn.textContent = f.charAt(0).toUpperCase() + f.slice(1);
+    btn.addEventListener('click', function() { setFilter(f); });
+    filtersEl.appendChild(btn);
+  });
+
+  var listEl = document.getElementById('list');
+  listEl.replaceChildren();
+
+  if (filtered.length === 0) {
+    var emptyLi = document.createElement('li');
+    emptyLi.className = 'empty';
+    emptyLi.textContent = tasks.length === 0 ? 'No tasks yet. Add one above.' : 'No matching tasks.';
+    listEl.appendChild(emptyLi);
+    return;
+  }
+
+  filtered.forEach(function(t) {
+    var li = document.createElement('li');
+    li.className = 'task-item' + (t.done ? ' done' : '');
+
+    var checkbox = document.createElement('div');
+    checkbox.className = 'checkbox' + (t.done ? ' checked' : '');
+    checkbox.addEventListener('click', function() { toggleTask(t.id); });
+    li.appendChild(checkbox);
+
+    var textSpan = document.createElement('span');
+    textSpan.className = 'task-text';
+    textSpan.textContent = t.text;
+    li.appendChild(textSpan);
+
+    var meta = document.createElement('div');
+    meta.className = 'task-meta';
+    var badge = document.createElement('span');
+    badge.className = 'cat-badge';
+    badge.textContent = t.category;
+    meta.appendChild(badge);
+    if (t.due) {
+      var dueSpan = document.createElement('span');
+      dueSpan.textContent = t.due;
+      meta.appendChild(dueSpan);
+    }
+    li.appendChild(meta);
+
+    var delBtn = document.createElement('button');
+    delBtn.className = 'delete-btn';
+    delBtn.textContent = 'x';
+    delBtn.addEventListener('click', function() { removeTask(t.id); });
+    li.appendChild(delBtn);
+
+    listEl.appendChild(li);
+  });
+}
+
+loadData();
+</script>
+</body>
+</html>
