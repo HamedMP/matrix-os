@@ -220,7 +220,7 @@ Read `specs/ux-guide.md` -- the UX bible for the shell and apps. Key rules:
 
 - **Never mutate state objects in reducers** -- `reduceChat` and similar must create new objects via spread (`{ ...obj, content: obj.content + delta }`) instead of mutating in-place (`obj.content += delta`). Shallow array copies (`[...arr]`) share object references; mutating them causes React double-rendering bugs (streaming text duplication).
 
-## Releases
+## Releases + Deployment
 
 Tags follow SemVer with `v` prefix (`v0.1.0`, `v0.2.0`, ...). Pre-1.0: minor = features, patch = fixes.
 
@@ -231,7 +231,8 @@ git push origin v0.X.0                                # push tag
 git log $(git describe --tags --abbrev=0)..HEAD --oneline  # commits since last tag
 ```
 
-Full process: `docs/dev/releases.md`
+VPS deployment: `docs/dev/vps-deployment.md` (platform, containers, Cloudflare, backups)
+Release process: `docs/dev/releases.md`
 
 ## Development Rules
 
