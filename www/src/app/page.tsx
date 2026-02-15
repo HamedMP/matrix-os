@@ -1,7 +1,6 @@
 import { Fragment } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import {
   ArrowRightIcon,
   GithubIcon,
@@ -9,6 +8,17 @@ import {
   TerminalIcon,
   LayersIcon,
   ShieldIcon,
+  HammerIcon,
+  SearchIcon,
+  RocketIcon,
+  HeartPulseIcon,
+  SparklesIcon,
+  BookOpenIcon,
+  FileTextIcon,
+  ZapIcon,
+  MessageSquareIcon,
+  BrainIcon,
+  WrenchIcon,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -17,8 +27,11 @@ export default function LandingPage() {
       <Nav />
       <Hero />
       <TechStrip />
+      <Problem />
       <HowItWorks />
+      <AgentShowcase />
       <BentoFeatures />
+      <SkillsShowcase />
       <Web4 />
       <CTA />
       <Footer />
@@ -49,6 +62,9 @@ function Nav() {
             </Button>
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
               <a href="#web4">Web 4</a>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+              <a href="/whitepaper">Whitepaper</a>
             </Button>
           </div>
 
@@ -101,19 +117,27 @@ function Hero() {
           </div>
 
           <h1 className="animate-fade-up delay-100 text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 leading-[1.1]">
-            The OS that <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">builds itself</span>
+            Your computer is stuck in 1984.
+            <br />
+            <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">This one isn't.</span>
           </h1>
 
-          <p className="animate-fade-up delay-200 text-base sm:text-lg text-muted-foreground max-w-lg mx-auto mb-10 leading-relaxed">
-            Describe what you need. Matrix OS writes it into existence.
-            Real software, generated in real time, saved as files you own.
+          <p className="animate-fade-up delay-200 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto mb-10 leading-relaxed">
+            Matrix OS is an AI operating system where software writes itself.
+            Describe what you need. Watch it appear. Everything is a file you own.
           </p>
 
-          <div className="animate-fade-up delay-300 flex items-center justify-center gap-3">
+          <div className="animate-fade-up delay-300 flex items-center justify-center gap-3 flex-wrap">
             <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
-              <a href="#get-started">
+              <a href="/signup">
                 Get your instance
                 <ArrowRightIcon className="size-4 ml-1" />
+              </a>
+            </Button>
+            <Button variant="outline" size="lg" className="h-11 px-7 text-sm rounded-xl bg-card/60 backdrop-blur-sm" asChild>
+              <a href="/whitepaper">
+                <BookOpenIcon className="size-4" />
+                Whitepaper
               </a>
             </Button>
             <Button variant="outline" size="lg" className="h-11 px-7 text-sm rounded-xl bg-card/60 backdrop-blur-sm" asChild>
@@ -253,12 +277,12 @@ function OsMockup() {
 
 function TechStrip() {
   const items = [
+    "546 Tests Passing",
+    "14 IPC Tools",
+    "7 Skills",
+    "6 Agents",
+    "Telegram Connected",
     "Claude Opus 4.6",
-    "Agent SDK",
-    "Next.js 16",
-    "Matrix Protocol",
-    "200 Tests",
-    "TypeScript",
   ];
 
   return (
@@ -272,6 +296,28 @@ function TechStrip() {
             {item}
           </span>
         ))}
+      </div>
+    </section>
+  );
+}
+
+/* ──────────────────────────── Problem ──────────────────────────── */
+
+function Problem() {
+  return (
+    <section className="py-20 px-6">
+      <div className="mx-auto max-w-3xl text-center">
+        <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-8 leading-tight text-foreground/80">
+          Thousands of apps that don't talk to each other.
+          <br />
+          An AI assistant trapped in a chat box.
+          <br />
+          Files scattered across services you don't control.
+        </h2>
+        <p className="text-lg text-muted-foreground leading-relaxed max-w-xl mx-auto">
+          What if your OS understood you? What if software wrote itself?
+          What if every device you own was the same computer?
+        </p>
       </div>
     </section>
   );
@@ -366,6 +412,126 @@ function HowItWorks() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ──────────────────────────── Agent Showcase ─────────────────────── */
+
+function AgentShowcase() {
+  const agents = [
+    {
+      icon: HammerIcon,
+      name: "Builder",
+      role: "Creates apps and features from your descriptions",
+      example: '"Build me an expense tracker" -> writes ~/apps/expenses.html',
+      color: "text-primary",
+      bg: "bg-primary/10 border-primary/20",
+    },
+    {
+      icon: SearchIcon,
+      name: "Researcher",
+      role: "Investigates problems, reads docs, gathers context",
+      example: '"Why is my app slow?" -> analyzes code, suggests fixes',
+      color: "text-blue-600",
+      bg: "bg-blue-50 border-blue-200",
+    },
+    {
+      icon: RocketIcon,
+      name: "Deployer",
+      role: "Ships code to production, manages infrastructure",
+      example: '"Deploy this to the cloud" -> provisions and deploys',
+      color: "text-violet-600",
+      bg: "bg-violet-50 border-violet-200",
+    },
+    {
+      icon: HeartPulseIcon,
+      name: "Healer",
+      role: "Detects failures and repairs the OS autonomously",
+      example: "Corrupted file detected -> restored from git snapshot",
+      color: "text-success",
+      bg: "bg-emerald-50 border-emerald-200",
+    },
+    {
+      icon: SparklesIcon,
+      name: "Evolver",
+      role: "Grows new capabilities, writes new agents and skills",
+      example: '"I wish I could..." -> creates a new skill file',
+      color: "text-amber-600",
+      bg: "bg-amber-50 border-amber-200",
+    },
+  ];
+
+  return (
+    <section id="agents" className="py-24 px-6">
+      <div className="mx-auto max-w-5xl">
+        <div className="text-center mb-16">
+          <Badge
+            variant="outline"
+            className="mb-4 border-primary/30 bg-card/80 text-primary font-mono text-xs tracking-widest uppercase"
+          >
+            Agent Team
+          </Badge>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
+            Five agents.{" "}
+            <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.3em]">One kernel.</span>
+          </h2>
+          <p className="mt-4 text-muted-foreground max-w-lg mx-auto leading-relaxed">
+            Your request reaches the kernel. The kernel decides which agent handles it.
+            Each agent has its own prompt, tools, and specialty.
+          </p>
+        </div>
+
+        {/* Flow visualization */}
+        <div className="mb-12 rounded-2xl border border-border bg-card p-6 overflow-x-auto">
+          <div className="flex items-center justify-center gap-2 sm:gap-3 min-w-[500px] mx-auto font-mono text-xs">
+            <div className="rounded-lg border border-border bg-secondary/70 px-3 py-2 text-muted-foreground shrink-0">
+              You
+            </div>
+            <div className="w-6 border-t border-dashed border-border" />
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-primary font-semibold shrink-0">
+              Kernel
+            </div>
+            <div className="w-6 border-t border-dashed border-border" />
+            <div className="flex flex-col gap-1.5">
+              {agents.map((a) => (
+                <div key={a.name} className="flex items-center gap-1.5">
+                  <div className={`size-1.5 rounded-full ${a.color === "text-primary" ? "bg-primary" : a.color === "text-success" ? "bg-success" : a.color === "text-blue-600" ? "bg-blue-500" : a.color === "text-violet-600" ? "bg-violet-500" : "bg-amber-500"}`} />
+                  <span className="text-foreground">{a.name}</span>
+                </div>
+              ))}
+            </div>
+            <div className="w-6 border-t border-dashed border-border" />
+            <div className="rounded-lg border border-border bg-secondary/70 px-3 py-2 text-muted-foreground shrink-0">
+              ~/matrixos/
+            </div>
+          </div>
+        </div>
+
+        {/* Agent cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {agents.map((agent) => {
+            const Icon = agent.icon;
+            return (
+              <div
+                key={agent.name}
+                className="rounded-2xl border border-border bg-card p-5 hover:shadow-lg hover:border-primary/20 transition-all duration-300"
+              >
+                <div className={`size-10 rounded-xl border flex items-center justify-center mb-3 ${agent.bg}`}>
+                  <Icon className={`size-5 ${agent.color}`} />
+                </div>
+                <h3 className="text-sm font-semibold mb-1">{agent.name}</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed mb-3">
+                  {agent.role}
+                </p>
+                <div className="rounded-lg bg-secondary/70 border border-border/50 px-2.5 py-1.5 font-mono text-[10px] text-muted-foreground leading-relaxed">
+                  {agent.example}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -510,14 +676,14 @@ function BentoFeatures() {
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300 flex flex-col">
             <h3 className="text-lg font-semibold mb-1">Test-driven</h3>
             <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-              Every component is tested before it ships. 200 tests, near-total
-              coverage. The OS trusts itself because it verifies itself.
+              Every component is tested before it ships. 546 tests across 47
+              files. The OS trusts itself because it verifies itself.
             </p>
             <div className="mt-4 rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
               <div><span className="text-success">PASS</span> kernel/spawn.test.ts</div>
               <div><span className="text-success">PASS</span> gateway/dispatch.test.ts</div>
               <div><span className="text-success">PASS</span> hooks/access-control.test.ts</div>
-              <div className="pt-1 text-success">200 tests passed (0.3s)</div>
+              <div className="pt-1 text-success">479 tests passed (10s)</div>
             </div>
           </div>
 
@@ -681,17 +847,20 @@ function CTA() {
         </p>
 
         <div className="rounded-2xl border border-border bg-card p-8 shadow-lg max-w-md mx-auto">
-          <form className="space-y-3">
-            <Input
-              type="email"
-              placeholder="you@example.com"
-              className="h-12 bg-background text-base"
-            />
-            <Button type="submit" className="w-full h-12 text-base">
-              <SendIcon />
-              Join the waitlist
+          <div className="space-y-3">
+            <Button className="w-full h-12 text-base" asChild>
+              <a href="/signup">
+                <SendIcon className="size-4" />
+                Get your instance
+              </a>
             </Button>
-          </form>
+            <Button variant="outline" className="w-full h-12 text-base bg-card/60" asChild>
+              <a href="/whitepaper">
+                <BookOpenIcon className="size-4" />
+                Read the whitepaper
+              </a>
+            </Button>
+          </div>
           <p className="text-[11px] text-muted-foreground mt-4">
             Built for the{" "}
             <a
@@ -709,10 +878,11 @@ function CTA() {
 
         <blockquote className="mt-12 max-w-xl mx-auto border-l-2 border-primary/30 pl-6 text-left">
           <p className="text-sm text-muted-foreground italic leading-relaxed">
-            "This is Matrix OS. It's not just an AI assistant and it's not just
-            an operating system. It's both. And it's also your social network,
-            your messaging platform, and your game console. One identity. One
-            platform. Every device. This is Web 4."
+            &quot;This is Matrix OS. It&apos;s not just an AI assistant and
+            it&apos;s not just an operating system. It&apos;s both. And
+            it&apos;s also your social network, your messaging platform, and
+            your game console. One identity. One platform. Every device. This
+            is Web 4.&quot;
           </p>
         </blockquote>
       </div>
@@ -740,6 +910,12 @@ function Footer() {
             className="hover:text-foreground transition-colors"
           >
             GitHub
+          </a>
+          <a
+            href="/whitepaper"
+            className="hover:text-foreground transition-colors"
+          >
+            Whitepaper
           </a>
           <a
             href="https://spec.matrix.org/latest/"
