@@ -20,9 +20,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { KanbanSquareIcon, StoreIcon, MonitorIcon } from "lucide-react";
+import { getGatewayUrl } from "@/lib/gateway";
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 const DOCK_WIDTH = 56;
 

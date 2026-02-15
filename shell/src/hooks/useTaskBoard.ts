@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSocket, type ServerMessage } from "./useSocket";
+import { getGatewayUrl } from "@/lib/gateway";
 
 export interface TaskItem {
   id: string;
@@ -24,8 +25,7 @@ export interface ProvisionStatus {
   failed: number;
 }
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 function parseAppName(input: string): string | undefined {
   try {

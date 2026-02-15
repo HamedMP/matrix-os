@@ -3,10 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { getGatewayWs } from "@/lib/gateway";
 
-const TERMINAL_WS =
-  process.env.NEXT_PUBLIC_GATEWAY_WS?.replace("/ws", "/ws/terminal") ??
-  "ws://localhost:4000/ws/terminal";
+const TERMINAL_WS = getGatewayWs().replace("/ws", "/ws/terminal");
 
 export function Terminal() {
   const containerRef = useRef<HTMLDivElement>(null);

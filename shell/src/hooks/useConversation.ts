@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useFileWatcherPattern } from "./useFileWatcher";
+import { getGatewayUrl } from "@/lib/gateway";
 
 interface ConversationMeta {
   id: string;
@@ -22,8 +23,7 @@ interface ConversationFile {
   }>;
 }
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 const CONV_PATTERN = /^system\/conversations\//;
 

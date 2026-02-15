@@ -5,9 +5,8 @@ MATRIX_HOME="${MATRIX_HOME:-/home/matrixos/home}"
 echo "Matrix OS starting..."
 echo "Home directory: $MATRIX_HOME"
 
-# Ensure volume is owned by non-root user
+# Ensure volume mount is owned by non-root user (skip /app -- already correct from build)
 chown -R matrixos:matrixos "$MATRIX_HOME" 2>/dev/null || true
-chown -R matrixos:matrixos /app 2>/dev/null || true
 
 # First boot: copy template into empty volume
 if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then

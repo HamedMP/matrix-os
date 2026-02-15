@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { getGatewayWs } from "@/lib/gateway";
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
@@ -19,12 +20,6 @@ export type ServerMessage =
 
 type MessageHandler = (msg: ServerMessage) => void;
 
-function getGatewayWs(): string {
-  if (process.env.NEXT_PUBLIC_GATEWAY_WS) return process.env.NEXT_PUBLIC_GATEWAY_WS;
-  if (typeof window === "undefined") return "ws://localhost:4000/ws";
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.hostname}:4000/ws`;
-}
 const GATEWAY_WS = getGatewayWs();
 
 let globalSocket: WebSocket | null = null;

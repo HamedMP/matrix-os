@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
+import { createConnection } from 'node:net';
+import type { IncomingMessage } from 'node:http';
 import Dockerode from 'dockerode';
 import {
   createPlatformDb,
@@ -228,7 +230,44 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   const app = createApp({ db, orchestrator });
 
-  serve({ fetch: app.fetch, port: PORT }, () => {
+  const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
+  });
+
+  // WebSocket upgrade handler for subdomain proxy
+  (server as import('node:http').Server).on('upgrade', (req: IncomingMessage, socket, head) => {
+    const host = req.headers.host ?? '';
+    const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
+    if (!match || match[1] === 'api' || match[1] === 'www') {
+      socket.destroy();
+      return;
+    }
+
+    const handle = match[1];
+    const record = getContainer(db, handle);
+    if (!record) {
+      socket.destroy();
+      return;
+    }
+
+    // Proxy WebSocket upgrade to the user container's gateway (port 4000)
+    const upstream = createConnection({ host: `matrixos-${handle}`, port: 4000 }, () => {
+      const path = req.url ?? '/';
+      const headers = Object.entries(req.headers)
+        .filter(([k]) => k !== 'host')
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\r\n');
+
+      upstream.write(
+        `${req.method} ${path} HTTP/1.1\r\nHost: matrixos-${handle}:4000\r\n${headers}\r\n\r\n`
+      );
+      if (head.length > 0) upstream.write(head);
+
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
   });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getGatewayUrl } from "@/lib/gateway";
 
 export type CronSchedule =
   | { type: "cron"; cron: string }
@@ -15,8 +16,7 @@ export interface CronJob {
   createdAt: string;
 }
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 export function useCronJobs() {
   const [jobs, setJobs] = useState<CronJob[]>([]);

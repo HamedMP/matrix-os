@@ -6,9 +6,9 @@ import { modulesToGraph, type ModuleEntry } from "@/lib/moduleGraph";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { NetworkIcon } from "lucide-react";
+import { getGatewayUrl } from "@/lib/gateway";
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 export function ModuleGraph() {
   const containerRef = useRef<HTMLDivElement>(null);

@@ -8,9 +8,9 @@ import {
   buildBridgeScript,
   type BridgeHandler,
 } from "@/lib/os-bridge";
+import { getGatewayUrl } from "@/lib/gateway";
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 interface AppViewerProps {
   path: string;

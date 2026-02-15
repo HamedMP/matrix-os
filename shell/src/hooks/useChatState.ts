@@ -4,9 +4,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
+import { getGatewayUrl } from "@/lib/gateway";
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 export interface ChatState {
   messages: ChatMessage[];

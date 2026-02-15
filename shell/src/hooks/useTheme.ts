@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
+import { getGatewayUrl } from "@/lib/gateway";
 
 interface Theme {
   name: string;
@@ -73,8 +74,7 @@ export function useTheme() {
 
 async function fetchTheme(): Promise<Theme> {
   try {
-    const gatewayUrl =
-      process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+    const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/theme`);
     if (res.ok) return res.json();
   } catch {

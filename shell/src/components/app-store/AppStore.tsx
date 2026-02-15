@@ -9,9 +9,9 @@ import { AppStoreSection } from "./AppStoreSection";
 import { AppStoreCategory } from "./AppStoreCategory";
 import { AppDetail } from "./AppDetail";
 import { FALLBACK_CATALOG } from "./catalog";
+import { getGatewayUrl } from "@/lib/gateway";
 
-const GATEWAY_URL =
-  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+const GATEWAY_URL = getGatewayUrl();
 
 interface AppStoreProps {
   open: boolean;
