@@ -50,7 +50,7 @@ NOTE: Actual implementation diverged from original spec. Auth uses Clerk (not Pa
 
 - [x] T146 [P] [US21] `distro/docker-compose.platform.yml` -- platform service, Cloudflare Tunnel (replaces Caddy), shared network.
 
-- [ ] T147 [US21] Subdomain routing -- Cloudflare Tunnel + platform `/proxy/:handle/*` endpoint handles `{handle}.matrix-os.com` traffic. Needs cloudflared config for host-header-to-path rewriting.
+- [x] T147 [US21] Subdomain routing -- Host-header middleware in platform extracts handle from `{handle}.matrix-os.com`, proxies to container shell port. Cloudflared `*.matrix-os.com` ingress routes to platform. No auth required for user-facing traffic.
 
 ### Landing Page + Auth UI (DONE via www/)
 

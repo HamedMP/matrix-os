@@ -23,7 +23,52 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
-  // Auth middleware for all routes below
+  // Subdomain proxy: {handle}.matrix-os.com -> user container (before auth)
+  app.use('*', async (c, next) => {
+    const host = c.req.header('host') ?? '';
+    const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
+    if (!match || match[1] === 'api' || match[1] === 'www') return next();
+
+    const handle = match[1];
+    const record = getContainer(db, handle);
+    if (!record) return c.json({ error: 'Unknown instance' }, 404);
+
+    if (record.status === 'stopped') {
+      try {
+        await orchestrator.start(handle);
+      } catch {
+        return c.json({ error: 'Failed to wake container' }, 503);
+      }
+    }
+
+    updateLastActive(db, handle);
+
+    const path = c.req.path;
+    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const targetUrl = `http://localhost:${record.shellPort}${path}${qs}`;
+
+    try {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && value) headers.set(key, value);
+      }
+
+      const upstream = await fetch(targetUrl, {
+        method: c.req.method,
+        headers,
+        body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+      });
+
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: upstream.headers,
+      });
+    } catch {
+      return c.json({ error: 'Container unreachable' }, 502);
+    }
+  });
+
+  // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
     if (c.req.path === '/health') return next();
     if (!PLATFORM_SECRET) return next();
