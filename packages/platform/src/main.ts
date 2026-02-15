@@ -45,7 +45,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) 
 
     const path = c.req.path;
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const targetUrl = `http://localhost:${record.shellPort}${path}${qs}`;
+    const targetUrl = `http://matrixos-${handle}:3000${path}${qs}`;
 
     try {
       const headers = new Headers();
@@ -186,7 +186,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) 
     updateLastActive(db, handle);
 
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
-    const targetUrl = `http://localhost:${record.shellPort}${path}`;
+    const targetUrl = `http://matrixos-${handle}:3000${path}`;
 
     try {
       const headers = new Headers();
