@@ -34,9 +34,12 @@ export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeatu
 
   return (
     <div className="relative rounded-2xl overflow-hidden mb-6">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => onSelect(entry)}
-        className="w-full text-left"
+        onKeyDown={(e) => { if (e.key === "Enter") onSelect(entry); }}
+        className="w-full text-left cursor-pointer"
       >
         <div
           className="relative px-6 py-8 md:py-10"
@@ -79,7 +82,7 @@ export function AppStoreFeatured({ entries, onSelect, onInstall }: AppStoreFeatu
             </Button>
           </div>
         </div>
-      </button>
+      </div>
 
       {entries.length > 1 && (
         <>
