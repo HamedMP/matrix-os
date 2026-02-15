@@ -29,6 +29,11 @@
     "stt_provider": "elevenlabs",
     "auto_speak_responses": false
   },
+  "browser": {
+    "enabled": false,
+    "headless": true,
+    "timeout": 30000
+  },
   "channels": {
     "telegram": { "enabled": false, "token": "", "allowFrom": [] },
     "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },
