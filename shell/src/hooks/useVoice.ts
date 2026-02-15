@@ -22,10 +22,13 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isSupported] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
-  });
+  const [isSupported, setIsSupported] = useState(false);
+
+  useEffect(() => {
+    setIsSupported(
+      Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
+    );
+  }, []);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
