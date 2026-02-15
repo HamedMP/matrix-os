@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProvisionButton } from "./provision-button";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
+const isLocal = PLATFORM_API_URL.includes("localhost");
 
 type ContainerResult =
   | { state: "running" | "stopped"; data: Record<string, unknown> }
@@ -99,7 +100,7 @@ export default async function DashboardPage() {
                 </p>
 
                 <a
-                  href={`https://${handle}.matrix-os.com`}
+                  href={isLocal ? `http://localhost:${result.data.shell_port}` : `https://${handle}.matrix-os.com`}
                   className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
                 >
                   Open Matrix OS
