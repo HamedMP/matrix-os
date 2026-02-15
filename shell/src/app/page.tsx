@@ -117,7 +117,18 @@ export default function Home() {
         </div>
       </div>
 
-      {isCenterChat ? (
+      {!isCenterChat && !sidebarOpen && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="fixed right-3 top-3 z-50 size-8 rounded-lg border border-border bg-card/80 backdrop-blur-sm"
+          onClick={() => setSidebarOpen(true)}
+        >
+          <MessageSquareIcon className="size-4" />
+        </Button>
+      )}
+
+      {isCenterChat && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
           <div className="pointer-events-auto w-full max-w-2xl mx-4 max-h-[70vh] overflow-hidden rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl">
             <ChatPanel
@@ -133,7 +144,9 @@ export default function Home() {
             />
           </div>
         </div>
-      ) : sidebarOpen ? (
+      )}
+
+      {!isCenterChat && sidebarOpen && (
         <ChatPanel
           messages={chat.messages}
           sessionId={chat.sessionId}
@@ -145,15 +158,6 @@ export default function Home() {
           onClose={() => setSidebarOpen(false)}
           onSubmit={handleSubmit}
         />
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="fixed right-3 top-3 z-50 size-8 rounded-lg border border-border bg-card/80 backdrop-blur-sm"
-          onClick={() => setSidebarOpen(true)}
-        >
-          <MessageSquareIcon className="size-4" />
-        </Button>
       )}
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />

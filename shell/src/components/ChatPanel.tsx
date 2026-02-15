@@ -79,7 +79,7 @@ export function ChatPanel({
   onSubmit,
 }: ChatPanelProps) {
   return (
-    <aside className="flex w-full fixed inset-0 z-50 md:static md:inset-auto md:z-auto md:w-[360px] flex-col border-l border-border bg-card">
+    <aside className="flex fixed inset-0 z-50 w-full flex-col border-l border-border bg-card md:inset-y-0 md:left-auto md:right-0 md:w-[400px] md:shadow-2xl">
       <header className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">History</span>
