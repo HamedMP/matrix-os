@@ -91,8 +91,9 @@ app.all('/v1/*', async (c) => {
     }, 429);
   }
 
-  // Use user's key if provided, otherwise use shared key
-  const apiKey = c.req.header('x-api-key') ?? ANTHROPIC_KEY;
+  // Use user's key if provided and valid, otherwise use shared key
+  const providedKey = c.req.header('x-api-key');
+  const apiKey = (providedKey && providedKey.startsWith('sk-ant-')) ? providedKey : ANTHROPIC_KEY;
   if (!apiKey) {
     return c.json({ type: 'error', error: { type: 'auth_error', message: 'No API key configured' } }, 401);
   }
