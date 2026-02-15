@@ -7,6 +7,9 @@ export interface SkillDefinition {
   description: string;
   triggers: string[];
   fileName: string;
+  category: string;
+  tools_needed: string[];
+  channel_hints: string[];
 }
 
 export function loadSkills(homePath: string): SkillDefinition[] {
@@ -33,6 +36,9 @@ export function loadSkills(homePath: string): SkillDefinition[] {
       description: frontmatter.description as string,
       triggers: (frontmatter.triggers as string[]) ?? [],
       fileName: file,
+      category: (frontmatter.category as string) ?? "utility",
+      tools_needed: (frontmatter.tools_needed as string[]) ?? [],
+      channel_hints: (frontmatter.channel_hints as string[]) ?? ["any"],
     });
   }
 

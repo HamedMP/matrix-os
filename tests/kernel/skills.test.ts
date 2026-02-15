@@ -113,6 +113,53 @@ triggers:
       const skills = loadSkills(homePath);
       expect(skills).toEqual([]);
     });
+
+    it("parses category, tools_needed, and channel_hints from frontmatter", () => {
+      writeFileSync(
+        join(homePath, "agents", "skills", "web-search.md"),
+        `---
+name: web-search
+description: Search the web
+triggers:
+  - search
+  - google
+category: productivity
+tools_needed:
+  - WebSearch
+  - WebFetch
+channel_hints:
+  - any
+---
+
+# Web Search`,
+      );
+
+      const skills = loadSkills(homePath);
+      expect(skills).toHaveLength(1);
+      expect(skills[0].category).toBe("productivity");
+      expect(skills[0].tools_needed).toEqual(["WebSearch", "WebFetch"]);
+      expect(skills[0].channel_hints).toEqual(["any"]);
+    });
+
+    it("defaults category to utility when not specified", () => {
+      writeFileSync(
+        join(homePath, "agents", "skills", "simple.md"),
+        `---
+name: simple
+description: A simple skill
+triggers:
+  - simple
+---
+
+# Simple`,
+      );
+
+      const skills = loadSkills(homePath);
+      expect(skills).toHaveLength(1);
+      expect(skills[0].category).toBe("utility");
+      expect(skills[0].tools_needed).toEqual([]);
+      expect(skills[0].channel_hints).toEqual(["any"]);
+    });
   });
 
   describe("loadSkillBody", () => {
@@ -151,12 +198,18 @@ Step 2: Format response.`,
           description: "Weather lookup",
           triggers: ["weather", "forecast"],
           fileName: "weather.md",
+          category: "productivity",
+          tools_needed: ["WebSearch"],
+          channel_hints: ["any"],
         },
         {
           name: "summarize",
           description: "Summarize text",
           triggers: ["summarize", "tldr"],
           fileName: "summarize.md",
+          category: "productivity",
+          tools_needed: [],
+          channel_hints: ["any"],
         },
       ];
 
