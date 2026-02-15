@@ -1,0 +1,301 @@
+{
+  "pages": [
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Introduce Matrix OS, its vision as Web 4 and an AI-native operating system where software writes itself. Explain the core concept of Claude Agent SDK as kernel, 'Everything Is a File' principle, and multi-channel access",
+      "title": "Overview"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Comprehensive overview of system architecture including the three-layer design (kernel, gateway, platform), deployment models, and how components interact",
+      "title": "Architecture"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Architecture",
+      "purpose": "Deep dive into the kernel layer: Claude Agent SDK's query() function, IPC MCP server with 25 tools, system prompt construction (~7K tokens), hooks system, and agent execution model",
+      "title": "Kernel"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Architecture",
+      "purpose": "Explain the gateway service: Hono HTTP/WebSocket server, dispatcher with serial queue, channel manager, cron service, heartbeat runner, and how it routes requests to the kernel",
+      "title": "Gateway"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Architecture",
+      "purpose": "Document the multi-tenant platform service: container orchestration with Dockerode, lifecycle management (start/stop/destroy), port allocation, and idle timeout",
+      "title": "Platform"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Architecture",
+      "purpose": "Describe the Next.js shell application: Desktop window manager, ChatPanel, InputBar, command palette, spatial memory, and desktop modes",
+      "title": "Shell"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Overview of deployment strategies, environment configuration, and infrastructure requirements",
+      "title": "Deployment"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Deployment",
+      "purpose": "Guide for running Matrix OS locally: matrixos CLI commands, starting gateway and shell, environment variables, and development workflow",
+      "title": "Single-User (Local)"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Deployment",
+      "purpose": "Production deployment on VPS: Cloudflare Tunnel setup, Docker container isolation, subdomain routing, Anthropic API proxy, and resource limits (CPX21 server specs)",
+      "title": "Multi-Tenant (Production)"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Overview of the multiple ways users can interact with Matrix OS: web, CLI, and messaging platforms",
+      "title": "User Interfaces"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "User Interfaces",
+      "purpose": "Detailed documentation of the web-based desktop environment: window management, chat interface, InputBar with voice, TaskBoard/MissionControl, and responsive design",
+      "title": "Web Shell"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "User Interfaces",
+      "purpose": "Command-line interface documentation: matrixos start/send/status/doctor commands, argument parsing, and integration with gateway API",
+      "title": "CLI"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "User Interfaces",
+      "purpose": "How Matrix OS integrates with messaging platforms: ChannelManager, adapter pattern, Telegram/Discord/WhatsApp/Slack implementations, and message formatting",
+      "title": "Multi-Channel Support"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Introduction to the agent architecture: how agents are defined, tool access patterns, and spawning subagents",
+      "title": "Agent System"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Agent System",
+      "purpose": "Document the 5 built-in agents: Builder (creates apps), Healer (auto-repairs), Researcher (gathers info), Deployer (manages modules), Evolver (grows capabilities)",
+      "title": "Core Agents"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Agent System",
+      "purpose": "Guide for creating user-defined agents: markdown format with YAML frontmatter, specifying tools/model/maxTurns, and loading from ~/agents/custom/",
+      "title": "Custom Agents"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Agent System",
+      "purpose": "Explain the skills system: markdown files with triggers, load_skill IPC tool, skill TOC injection, and 13 starter skills",
+      "title": "Skills System"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Overview of how Matrix OS stores data: file system structure, SQLite database, and memory system",
+      "title": "Data & Persistence"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Data & Persistence",
+      "purpose": "Document the ~/matrixos/ directory structure: system/ config files, agents/ definitions, apps/ and modules/, data/ storage, and .backup/ snapshots",
+      "title": "File System"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Data & Persistence",
+      "purpose": "SQLite schema documentation: tasks table (workflow queue), messages table (inter-agent communication), and memories table structure",
+      "title": "Database Schema"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Data & Persistence",
+      "purpose": "RAG memory system: remember/recall/forget IPC tools, FTS5 full-text search, auto-extraction from conversations, 300 token cap, and categorization (preference/fact/instruction)",
+      "title": "Memory System"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Overview of the www/ Next.js application: landing page, authentication flow, user/admin dashboards",
+      "title": "Public Website"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Public Website",
+      "purpose": "Document the marketing site: LandingPage component structure, feature showcase, agent introduction, bento grid, Web 4 vision, and whitepaper",
+      "title": "Landing & Marketing"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Public Website",
+      "purpose": "Clerk integration: sign-up/sign-in flows, AuthLayout component, FeatureShowcase carousel, webhook handling, and protected routes",
+      "title": "Authentication"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Public Website",
+      "purpose": "User-facing dashboard: DashboardPage component, container status display (running/stopped/not_provisioned), ProvisionButton, and instance access URLs",
+      "title": "User Dashboard"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Public Website",
+      "purpose": "Administrative interface: AdminDashboard component, container list, start/stop/destroy actions, PostHog tracking, and system monitoring",
+      "title": "Admin Dashboard"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "purpose": "Overview of key user-facing features and capabilities built into Matrix OS",
+      "title": "Features"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Features",
+      "purpose": "Application discovery and installation: AppStore component, FALLBACK_CATALOG, featured carousel, bundled vs prompt apps, installation flow, and useAppStore state",
+      "title": "App Store"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Features",
+      "purpose": "Speech-to-text and text-to-speech: VoiceService with ElevenLabs, useVoice hook, InputBar microphone, WebSocket /ws/voice endpoint, and cost tracking",
+      "title": "Voice Integration"
+    },
+    {
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ],
+      "parent": "Features",
+      "purpose": "Conversation management: new_conversation IPC tool, session switching, ConversationStore, search across conversations, and persistence to ~/system/conversations/",
+      "title": "Multi-Session & Conversations"
+    }
+  ],
+  "repo_notes": [
+    {
+      "content": ""
+    }
+  ]
+}
