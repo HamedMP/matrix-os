@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { ProvisionButton } from "./provision-button";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
+const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
+const HANDLE_PREFIX = process.env.HANDLE_PREFIX ?? "";
 const isLocal = PLATFORM_API_URL.includes("localhost");
 
 type ContainerResult =
@@ -15,8 +17,11 @@ type ContainerResult =
 
 async function getContainerInfo(handle: string): Promise<ContainerResult> {
   try {
+    const headers: Record<string, string> = {};
+    if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
     const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}`, {
       cache: "no-store",
+      headers,
     });
     if (res.ok) {
       const data = await res.json();
@@ -32,7 +37,7 @@ export default async function DashboardPage() {
   const user = await currentUser();
   if (!user) redirect("/login");
 
-  const handle = user.username ?? user.id;
+  const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
   const hasUsername = !!user.username;
   const result = await getContainerInfo(handle);
 
