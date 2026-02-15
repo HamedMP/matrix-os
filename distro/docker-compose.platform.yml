@@ -80,3 +80,4 @@ volumes:
 
 networks:
   matrixos-net:
+    name: matrixos-net
