@@ -70,11 +70,14 @@ export function loadHealthCheckTargets(homePath: string): HealthTarget[] {
     if (!mod.port) continue;
 
     let healthPath = "/health";
-    const manifestPath = join(homePath, "modules", mod.name, "manifest.json");
-    if (existsSync(manifestPath)) {
+    const modDir = join(homePath, "modules", mod.name);
+    const metaPath = existsSync(join(modDir, "module.json"))
+      ? join(modDir, "module.json")
+      : join(modDir, "manifest.json");
+    if (existsSync(metaPath)) {
       try {
         const manifest = JSON.parse(
-          readFileSync(manifestPath, "utf-8"),
+          readFileSync(metaPath, "utf-8"),
         ) as ManifestEntry;
         if (manifest.health) healthPath = manifest.health;
       } catch {

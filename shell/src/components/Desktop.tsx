@@ -62,7 +62,8 @@ interface ModuleRegistryEntry {
 
 interface ModuleMeta {
   name: string;
-  entry: string;
+  entry?: string;
+  entryPoint?: string;
   version?: string;
 }
 
@@ -226,12 +227,19 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         if (mod.status !== "active") continue;
 
         try {
-          const metaRes = await fetch(
+          // Try module.json first (standard), fall back to manifest.json
+          let metaRes = await fetch(
             `${GATEWAY_URL}/files/modules/${mod.name}/module.json`,
           );
+          if (!metaRes.ok) {
+            metaRes = await fetch(
+              `${GATEWAY_URL}/files/modules/${mod.name}/manifest.json`,
+            );
+          }
           if (!metaRes.ok) continue;
           const meta: ModuleMeta = await metaRes.json();
-          const path = `modules/${mod.name}/${meta.entry}`;
+          const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
+          const path = `modules/${mod.name}/${entryFile}`;
 
           addApp(meta.name, path);
 
