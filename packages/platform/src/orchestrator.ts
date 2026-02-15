@@ -37,7 +37,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   const {
     db,
     docker,
-    image = 'ghcr.io/finnaai/matrix-os:latest',
+    image = 'ghcr.io/hamedmp/matrix-os:latest',
     network = 'matrixos-net',
     baseGatewayPort = 4001,
     baseShellPort = 3001,

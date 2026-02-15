@@ -48,7 +48,7 @@ Methods:
 - `getInfo(handle)` / `listAll(status?)` -- read from DB
 
 Container config:
-- Image: `ghcr.io/finnaai/matrix-os:latest`
+- Image: `ghcr.io/hamedmp/matrix-os:latest`
 - Network: `matrixos-net` (bridge, created if missing)
 - Resources: 256MB memory, 0.5 CPU
 - Restart: `unless-stopped`

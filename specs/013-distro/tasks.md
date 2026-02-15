@@ -29,7 +29,7 @@
 ### T502: Multi-arch build (ARM64 + x86) -- DONE
 - [x] Docker buildx setup for linux/amd64 + linux/arm64
 - [x] CI/CD build script (GitHub Actions with QEMU + buildx)
-- [x] Push to ghcr.io/finnaai/matrix-os (SHA + latest tags)
+- [x] Push to ghcr.io/hamedmp/matrix-os (SHA + latest tags)
 - [x] GHA layer caching (cache-from/cache-to type=gha)
 - **Output**: `.github/workflows/docker.yml`
 - **Blocked by**: T500

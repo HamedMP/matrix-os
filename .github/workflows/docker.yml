@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: finnaai/matrix-os
+  IMAGE_NAME: hamedmp/matrix-os
 
 jobs:
   build:
