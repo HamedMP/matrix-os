@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useCommandStore } from "@/stores/commands";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { AppViewer } from "./AppViewer";
 import { MissionControl } from "./MissionControl";
 import {
@@ -437,12 +438,25 @@ export function Desktop() {
 
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
+  const desktopMode = useDesktopMode((s) => s.mode);
+  const setDesktopMode = useDesktopMode((s) => s.setMode);
+  const allModes = useDesktopMode((s) => s.allModes);
+  const getModeConfig = useDesktopMode((s) => s.getModeConfig);
+  const modeConfig = getModeConfig(desktopMode);
 
   const toggleMcRef = useRef(() => setTaskBoardOpen((prev) => !prev));
   const openWindowRef = useRef(openWindow);
   openWindowRef.current = openWindow;
 
   useEffect(() => {
+    const modeCommands = allModes().map((m) => ({
+      id: `mode:${m.id}`,
+      label: `Mode: ${m.label}`,
+      group: "Actions" as const,
+      keywords: ["mode", "layout", m.id, m.description],
+      execute: () => setDesktopMode(m.id),
+    }));
+
     register([
       {
         id: "action:toggle-mc",
@@ -452,9 +466,13 @@ export function Desktop() {
         keywords: ["tasks", "kanban", "dashboard"],
         execute: () => toggleMcRef.current(),
       },
+      ...modeCommands,
     ]);
-    return () => unregister(["action:toggle-mc"]);
-  }, [register, unregister]);
+    return () => unregister([
+      "action:toggle-mc",
+      ...allModes().map((m) => `mode:${m.id}`),
+    ]);
+  }, [register, unregister, allModes, setDesktopMode]);
 
   useEffect(() => {
     const appCommands = apps.map((app) => ({
@@ -471,8 +489,8 @@ export function Desktop() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="relative flex-1 flex flex-col md:flex-row">
-        {/* Desktop dock (left sidebar) */}
-        <aside
+        {/* Desktop dock (left sidebar) -- hidden in ambient/conversational modes */}
+        {modeConfig.showDock && <aside
           className="hidden md:flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm z-[55]"
           style={{ width: DOCK_WIDTH }}
         >
@@ -511,10 +529,10 @@ export function Desktop() {
               />
             );
           })}
-        </aside>
+        </aside>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {apps.length > 0 && (
+        {modeConfig.showDock && apps.length > 0 && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               onClick={() => setTaskBoardOpen((prev) => !prev)}

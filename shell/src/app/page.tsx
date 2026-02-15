@@ -12,6 +12,7 @@ import { InputBar } from "@/components/InputBar";
 import { SuggestionChips } from "@/components/SuggestionChips";
 import { ThoughtCard } from "@/components/ThoughtCard";
 import { ResponseOverlay } from "@/components/ResponseOverlay";
+import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { BottomPanel } from "@/components/BottomPanel";
 import { Button } from "@/components/ui/button";
 import { MessageSquareIcon } from "lucide-react";
@@ -128,6 +129,7 @@ export default function Home() {
       )}
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <ApprovalDialog />
 
       {!sidebarOpen && !overlayDismissed && (
         <ResponseOverlay
