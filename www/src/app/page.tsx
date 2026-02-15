@@ -726,6 +726,69 @@ function BentoFeatures() {
   );
 }
 
+/* ──────────────────────────── Skills Showcase ──────────────────────── */
+
+function SkillsShowcase() {
+  const skills = [
+    { name: "Summarize", icon: <FileTextIcon className="size-4" />, desc: "Condense long text into key points" },
+    { name: "Weather", icon: <ZapIcon className="size-4" />, desc: "Current conditions and forecasts" },
+    { name: "Reminder", icon: <MessageSquareIcon className="size-4" />, desc: "Schedule and manage notifications" },
+    { name: "Budget Helper", icon: <LayersIcon className="size-4" />, desc: "Track spending and savings goals" },
+    { name: "Study Timer", icon: <BrainIcon className="size-4" />, desc: "Pomodoro sessions with break reminders" },
+    { name: "Setup Wizard", icon: <SparklesIcon className="size-4" />, desc: "Onboard new users, configure the OS" },
+    { name: "Skill Creator", icon: <WrenchIcon className="size-4" />, desc: "Create new skills from descriptions" },
+  ];
+
+  return (
+    <section id="skills" className="py-24 px-6">
+      <div className="mx-auto max-w-5xl">
+        <div className="text-center mb-16">
+          <Badge
+            variant="outline"
+            className="mb-4 border-primary/30 bg-card/80 text-primary font-mono text-xs tracking-widest uppercase"
+          >
+            Skills
+          </Badge>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-4">
+            Teach it anything.{" "}
+            <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.3em]">It remembers.</span>
+          </h2>
+          <p className="text-muted-foreground max-w-xl mx-auto leading-relaxed">
+            Skills are markdown files with frontmatter. The kernel loads them on demand.
+            Seven built-in, and you can create your own with the Skill Creator.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {skills.map((skill) => (
+            <div
+              key={skill.name}
+              className="rounded-xl border border-border bg-card p-4 hover:shadow-md hover:border-primary/20 transition-all duration-200"
+            >
+              <div className="flex items-center gap-2.5 mb-2">
+                <div className="size-8 rounded-lg bg-secondary/70 border border-border/50 flex items-center justify-center text-muted-foreground">
+                  {skill.icon}
+                </div>
+                <span className="text-sm font-semibold">{skill.name}</span>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {skill.desc}
+              </p>
+            </div>
+          ))}
+          <div className="rounded-xl border border-dashed border-primary/30 bg-primary/5 p-4 flex flex-col items-center justify-center text-center">
+            <span className="text-2xl text-primary mb-1">+</span>
+            <span className="text-xs font-semibold text-primary">Create your own</span>
+            <span className="text-[10px] text-muted-foreground mt-1">
+              Describe it, the OS writes it
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ──────────────────────────────── Web 4 ──────────────────────────── */
 
 function Web4() {
@@ -846,35 +909,52 @@ function CTA() {
           Build apps, connect channels, customize your AI.
         </p>
 
-        <div className="rounded-2xl border border-border bg-card p-8 shadow-lg max-w-md mx-auto">
-          <div className="space-y-3">
-            <Button className="w-full h-12 text-base" asChild>
-              <a href="/signup">
-                <SendIcon className="size-4" />
-                Get your instance
-              </a>
-            </Button>
-            <Button variant="outline" className="w-full h-12 text-base bg-card/60" asChild>
-              <a href="/whitepaper">
-                <BookOpenIcon className="size-4" />
-                Read the whitepaper
-              </a>
-            </Button>
-          </div>
-          <p className="text-[11px] text-muted-foreground mt-4">
-            Built for the{" "}
-            <a
-              href="https://cv.inc/e/claude-code-hackathon"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              Anthropic Hackathon
+        <div className="flex items-center justify-center gap-4 flex-wrap mb-8">
+          <Button size="lg" className="h-12 px-8 text-base rounded-xl" asChild>
+            <a href="/signup">
+              Get your instance
+              <ArrowRightIcon className="size-4 ml-1" />
             </a>
-            . The entire system (kernel, shell, this page) is built with
-            Claude Code.
-          </p>
+          </Button>
+          <Button variant="outline" size="lg" className="h-12 px-8 text-base rounded-xl bg-card/60" asChild>
+            <a href="/whitepaper">
+              <BookOpenIcon className="size-4" />
+              Read the whitepaper
+            </a>
+          </Button>
         </div>
+
+        <div className="flex items-center justify-center gap-4 flex-wrap mb-10">
+          <a
+            href="https://github.com/HamedMP/matrix-os"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://img.shields.io/github/stars/HamedMP/matrix-os?style=flat&logo=github&label=Stars"
+              alt="GitHub stars"
+              className="h-5"
+              loading="lazy"
+            />
+          </a>
+          <Badge variant="outline" className="text-xs font-mono">
+            546 tests passing
+          </Badge>
+        </div>
+
+        <p className="text-[11px] text-muted-foreground mb-8">
+          Built for the{" "}
+          <a
+            href="https://cv.inc/e/claude-code-hackathon"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline"
+          >
+            Anthropic Hackathon
+          </a>
+          . The entire system (kernel, shell, this page) is built with Claude Code.
+        </p>
 
         <blockquote className="mt-12 max-w-xl mx-auto border-l-2 border-primary/30 pl-6 text-left">
           <p className="text-sm text-muted-foreground italic leading-relaxed">
