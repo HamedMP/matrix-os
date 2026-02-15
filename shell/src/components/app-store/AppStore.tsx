@@ -44,37 +44,33 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
     fetch(`${GATEWAY_URL}/files/system/app-store.json`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: AppStoreEntry[] | null) => {
-        if (data && data.length > 0) {
-          // Merge: fallback metadata enriches runtime entries
-          const byId = new Map(data.map((e) => [e.id, e]));
-          for (const fallback of FALLBACK_CATALOG) {
-            if (!byId.has(fallback.id)) {
-              byId.set(fallback.id, fallback);
-            } else {
-              const existing = byId.get(fallback.id)!;
-              byId.set(fallback.id, {
-                ...existing,
-                // Always use fallback's canonical category (old data has mismatched names)
-                category: fallback.category,
-                icon: existing.icon ?? fallback.icon,
-                iconColor: existing.iconColor ?? fallback.iconColor,
-                rating: existing.rating ?? fallback.rating,
-                ratingCount: existing.ratingCount ?? fallback.ratingCount,
-                downloads: existing.downloads ?? fallback.downloads,
-                tags: existing.tags ?? fallback.tags,
-                featured: existing.featured ?? fallback.featured,
-                featuredTagline: existing.featuredTagline ?? fallback.featuredTagline,
-                new: existing.new ?? fallback.new,
-                longDescription: existing.longDescription ?? fallback.longDescription,
-              });
-            }
+        if (!data || data.length === 0) return;
+        // Merge: runtime data enriched with fallback metadata
+        const byId = new Map(data.map((e) => [e.id, e]));
+        for (const fallback of FALLBACK_CATALOG) {
+          if (!byId.has(fallback.id)) {
+            byId.set(fallback.id, fallback);
+          } else {
+            const existing = byId.get(fallback.id)!;
+            byId.set(fallback.id, {
+              ...existing,
+              category: fallback.category,
+              icon: existing.icon ?? fallback.icon,
+              iconColor: existing.iconColor ?? fallback.iconColor,
+              rating: existing.rating ?? fallback.rating,
+              ratingCount: existing.ratingCount ?? fallback.ratingCount,
+              downloads: existing.downloads ?? fallback.downloads,
+              tags: existing.tags ?? fallback.tags,
+              featured: existing.featured ?? fallback.featured,
+              featuredTagline: existing.featuredTagline ?? fallback.featuredTagline,
+              new: existing.new ?? fallback.new,
+              longDescription: existing.longDescription ?? fallback.longDescription,
+            });
           }
-          setEntries(Array.from(byId.values()));
-        } else {
-          setEntries(FALLBACK_CATALOG);
         }
+        setEntries(Array.from(byId.values()));
       })
-      .catch(() => setEntries(FALLBACK_CATALOG));
+      .catch(() => {});
   }, [open, setEntries]);
 
   useEffect(() => {

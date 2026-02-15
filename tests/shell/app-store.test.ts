@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useAppStore, CATEGORIES, type AppStoreEntry } from "../../shell/src/stores/app-store";
+import { FALLBACK_CATALOG } from "../../shell/src/components/app-store/catalog";
 
 const SAMPLE_ENTRIES: AppStoreEntry[] = [
   {
@@ -88,9 +89,11 @@ describe("App Store Zustand Store", () => {
     });
   });
 
-  it("has correct initial state", () => {
+  it("initializes with fallback catalog", () => {
+    useAppStore.setState({ entries: FALLBACK_CATALOG });
     const state = useAppStore.getState();
-    expect(state.entries).toEqual([]);
+    expect(state.entries).toBe(FALLBACK_CATALOG);
+    expect(state.entries.length).toBeGreaterThanOrEqual(40);
     expect(state.search).toBe("");
     expect(state.selectedCategory).toBe("All");
     expect(state.selectedApp).toBeNull();

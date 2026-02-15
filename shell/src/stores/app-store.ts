@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { FALLBACK_CATALOG } from "@/components/app-store/catalog";
 
 export interface AppStoreEntry {
   id: string;
@@ -68,7 +69,7 @@ function matchCategory(entry: AppStoreEntry, category: string): boolean {
 }
 
 export const useAppStore = create<AppStoreState>()((set, get) => ({
-  entries: [],
+  entries: FALLBACK_CATALOG,
   search: "",
   selectedCategory: "All",
   selectedApp: null,
