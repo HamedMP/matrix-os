@@ -623,7 +623,7 @@ function BentoFeatures() {
               Discord, Slack. All connected to one identity.
             </p>
             <div className="flex flex-wrap gap-2">
-              {["Web", "Telegram", "WhatsApp", "Discord", "Slack"].map((ch) => (
+              {["Web", "Telegram", "WhatsApp", "Discord", "Slack", "CLI"].map((ch) => (
                 <span
                   key={ch}
                   className="text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-full border border-border bg-secondary/50 text-muted-foreground"
@@ -682,8 +682,8 @@ function BentoFeatures() {
             <div className="mt-4 rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
               <div><span className="text-success">PASS</span> kernel/spawn.test.ts</div>
               <div><span className="text-success">PASS</span> gateway/dispatch.test.ts</div>
-              <div><span className="text-success">PASS</span> hooks/access-control.test.ts</div>
-              <div className="pt-1 text-success">479 tests passed (10s)</div>
+              <div><span className="text-success">PASS</span> cli/cli.test.ts</div>
+              <div className="pt-1 text-success">546 tests passed</div>
             </div>
           </div>
 
@@ -701,9 +701,9 @@ function BentoFeatures() {
             <div className="grid grid-cols-2 text-xs font-mono border-t border-border">
               {[
                 ["CPU", "Claude Opus 4.6"],
-                ["RAM", "Context window"],
-                ["Kernel", "Main agent + tools"],
-                ["Processes", "Sub-agents"],
+                ["RAM", "Context window (1M tokens)"],
+                ["Kernel", "Main agent + 14 IPC tools"],
+                ["Processes", "5 sub-agents"],
                 ["Disk", "~/apps, ~/data, ~/system"],
                 ["Syscalls", "Read, Write, Edit, Bash"],
                 ["Drivers", "MCP servers"],
