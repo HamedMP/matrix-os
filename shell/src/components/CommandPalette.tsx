@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useCommandStore } from "@/stores/commands";
+import { useCommandStore, type Command } from "@/stores/commands";
 import {
   CommandDialog,
   CommandInput,
@@ -31,8 +31,8 @@ export function CommandPalette({
   const commands = useCommandStore((s) => s.commands);
 
   const { apps, actions } = useMemo(() => {
-    const apps: typeof grouped.apps = [];
-    const actions: typeof grouped.actions = [];
+    const apps: Command[] = [];
+    const actions: Command[] = [];
     const grouped = { apps, actions };
     for (const cmd of commands.values()) {
       if (cmd.group === "Apps") apps.push(cmd);
