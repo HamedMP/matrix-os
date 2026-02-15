@@ -98,6 +98,33 @@ NOTE: Actual implementation diverged from original spec. Auth uses Clerk (not Pa
 
 - [ ] T159 [US21] Production deployment script -- VPS provisioning, Docker, Cloudflare Tunnel, wildcard DNS.
 
+### Performance (added post-deployment)
+
+**Measured latency breakdown (2026-02-15):**
+
+| Hop | TTFB | Notes |
+|-----|------|-------|
+| Direct Anthropic API | ~0.6s | Baseline from Hetzner VPS |
+| Through API proxy | ~0.4s streaming | Proxy adds ~0.3s non-streaming |
+| Cloudflare Tunnel | ~115ms | Minimal overhead |
+| Docker network | ~0ms | Container-to-container negligible |
+| **Kernel dispatch (cold)** | **~12s** | **Bottleneck: Claude CLI subprocess spawn** |
+
+The kernel's cold-start dominates total latency. The Agent SDK spawns a `claude` CLI
+process per `query()` call. Each spawn loads the full system prompt, home directory
+context, and tool definitions before the first API request.
+
+- [ ] T165 Investigate Agent SDK persistent process / session reuse
+  - Agent SDK `resume` reuses a conversation but still spawns a process
+  - Need to measure: process spawn vs prompt compilation vs API TTFB
+  - Potential: keep a warm claude process per container (long-running subprocess)
+  - Potential: use Anthropic API directly for simple messages, SDK for tool-use
+
+- [ ] T166 Optimize system prompt token count
+  - Current prompt includes full home directory listing, skills TOC, active processes
+  - Target: <4K tokens for cold start, lazy-load detail on demand
+  - Measure prompt token count vs response latency correlation
+
 ### Security Hardening (added post-review)
 
 - [x] T160 Platform API auth middleware -- `PLATFORM_SECRET` bearer token on all routes (except /health). Fail-open when unconfigured (dev mode).
