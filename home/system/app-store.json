@@ -1,0 +1,86 @@
+[
+  {
+    "id": "todo",
+    "name": "Todo",
+    "description": "Simple task list with add, complete, and delete",
+    "category": "productivity",
+    "author": "Matrix OS",
+    "source": "bundled"
+  },
+  {
+    "id": "notes",
+    "name": "Notes",
+    "description": "Quick notes with auto-save",
+    "category": "productivity",
+    "author": "Matrix OS",
+    "source": "bundled"
+  },
+  {
+    "id": "expense-tracker",
+    "name": "Expense Tracker",
+    "description": "Track daily expenses and budgets",
+    "category": "productivity",
+    "author": "Matrix OS",
+    "source": "bundled"
+  },
+  {
+    "id": "pomodoro",
+    "name": "Pomodoro Timer",
+    "description": "Focus timer with work/break intervals",
+    "category": "productivity",
+    "author": "Matrix OS",
+    "source": "bundled"
+  },
+  {
+    "id": "code-editor",
+    "name": "Code Editor",
+    "description": "Lightweight code editor with syntax highlighting",
+    "category": "dev-tools",
+    "author": "Matrix OS",
+    "source": "bundled"
+  },
+  {
+    "id": "browser",
+    "name": "Browser",
+    "description": "Simple web browser",
+    "category": "utility",
+    "author": "Matrix OS",
+    "source": "bundled"
+  },
+  {
+    "id": "weather-dashboard",
+    "name": "Weather Dashboard",
+    "description": "Current weather and 5-day forecast with visual charts",
+    "category": "utility",
+    "author": "Matrix OS",
+    "source": "prompt",
+    "prompt": "Build a weather dashboard app. Show current temperature, conditions, humidity, and wind speed at the top. Below that show a 5-day forecast as cards. Use a clean, modern design with weather icons. Include a search bar to change city. Use the OpenWeatherMap-style layout."
+  },
+  {
+    "id": "snake-game",
+    "name": "Snake",
+    "description": "Classic snake game with arrow key controls",
+    "category": "games",
+    "author": "Matrix OS",
+    "source": "prompt",
+    "prompt": "Build a classic snake game. Use arrow keys to control direction. Snake grows when eating food (red dots). Score display at top. Game over on wall or self collision. Green snake on dark background. Include a restart button."
+  },
+  {
+    "id": "habit-tracker",
+    "name": "Habit Tracker",
+    "description": "Daily habit tracking with streak visualization",
+    "category": "productivity",
+    "author": "Matrix OS",
+    "source": "prompt",
+    "prompt": "Build a habit tracker app. Users can add habits with names. Each habit shows a row of daily checkboxes for the current week. Completed days show green, missed show red. Track current streak count per habit. Clean minimal design. Data persists via OS bridge."
+  },
+  {
+    "id": "markdown-preview",
+    "name": "Markdown Preview",
+    "description": "Live markdown editor with side-by-side preview",
+    "category": "dev-tools",
+    "author": "Matrix OS",
+    "source": "prompt",
+    "prompt": "Build a markdown editor with live preview. Split screen: left side is a textarea for markdown input, right side shows rendered HTML. Support headers, bold, italic, links, code blocks, and lists. Auto-update preview on input change."
+  }
+]
