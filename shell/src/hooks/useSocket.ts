@@ -13,7 +13,9 @@ export type ServerMessage =
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
   | { type: "provision:start"; appCount: number }
-  | { type: "provision:complete"; total: number; succeeded: number; failed: number };
+  | { type: "provision:complete"; total: number; succeeded: number; failed: number }
+  | { type: "session:switched"; sessionId: string }
+  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number };
 
 type MessageHandler = (msg: ServerMessage) => void;
 
@@ -74,7 +76,7 @@ export function useSocket() {
     };
   }, []);
 
-  const send = useCallback((msg: { type: string; text: string; sessionId?: string }) => {
+  const send = useCallback((msg: { type: string; text?: string; sessionId?: string }) => {
     if (globalSocket?.readyState === WebSocket.OPEN) {
       globalSocket.send(JSON.stringify(msg));
     }

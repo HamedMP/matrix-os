@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { shouldRequireApproval, type ApprovalPolicy } from "./approval.js";
 
 export interface HookInput {
   hook_event_name: string;
@@ -140,4 +141,38 @@ export async function preCompactHook(input: HookInput): Promise<HookOutput> {
   // In full implementation: write state snapshot to ~/system/state.md
   // before compaction so summarized context includes pointer to full state
   return {};
+}
+
+export type RequestApprovalFn = (toolName: string, args: unknown) => Promise<boolean>;
+
+export function createApprovalHook(
+  policy: ApprovalPolicy,
+  requestApproval: RequestApprovalFn,
+): (input: HookInput) => Promise<HookOutput> {
+  return async (input: HookInput): Promise<HookOutput> => {
+    if (!input.tool_name) return {};
+
+    const needsApproval = shouldRequireApproval(
+      input.tool_name,
+      input.tool_input,
+      policy,
+    );
+
+    if (!needsApproval) return {};
+
+    try {
+      const approved = await requestApproval(input.tool_name, input.tool_input);
+      if (approved) return {};
+
+      return {
+        hookSpecificOutput: { permissionDecision: "deny" },
+        systemMessage: `User denied approval for ${input.tool_name}`,
+      };
+    } catch {
+      return {
+        hookSpecificOutput: { permissionDecision: "deny" },
+        systemMessage: `Approval timed out for ${input.tool_name} -- auto-denied`,
+      };
+    }
+  };
 }

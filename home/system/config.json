@@ -15,6 +15,12 @@
     "everyMinutes": 30,
     "activeHours": { "start": "08:00", "end": "22:00" }
   },
+  "approval": {
+    "enabled": true,
+    "timeout": 30000,
+    "requireApproval": ["Bash:destructive", "Write:system"],
+    "autoApprove": ["Read", "list_tasks", "read_state"]
+  },
   "channels": {
     "telegram": { "enabled": false, "token": "", "allowFrom": [] },
     "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },

@@ -32,6 +32,8 @@ import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
+import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
+import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -41,11 +43,10 @@ export interface GatewayConfig {
   maxTurns?: number;
 }
 
-interface ClientMessage {
-  type: "message";
-  text: string;
-  sessionId?: string;
-}
+type ClientMessage =
+  | { type: "message"; text: string; sessionId?: string }
+  | { type: "switch_session"; sessionId: string }
+  | { type: "approval_response"; id: string; approved: boolean };
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string }
@@ -58,7 +59,9 @@ export type ServerMessage =
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
   | { type: "provision:start"; appCount: number }
-  | { type: "provision:complete"; total: number; succeeded: number; failed: number };
+  | { type: "provision:complete"; total: number; succeeded: number; failed: number }
+  | { type: "session:switched"; sessionId: string }
+  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number };
 
 function kernelEventToServerMessage(event: KernelEvent): ServerMessage {
   switch (event.type) {
@@ -255,6 +258,16 @@ export function createGateway(config: GatewayConfig) {
   });
   proactiveHeartbeat.start();
 
+  let approvalPolicy: ApprovalPolicy = DEFAULT_APPROVAL_POLICY;
+  try {
+    if (existsSync(configPath)) {
+      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+      if (cfg.approval) {
+        approvalPolicy = { ...DEFAULT_APPROVAL_POLICY, ...cfg.approval };
+      }
+    }
+  } catch { /* no approval config */ }
+
   const interactionLogger: InteractionLogger = createInteractionLogger(homePath);
 
   const provisioner = createProvisioner({
@@ -284,10 +297,15 @@ export function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => {
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
+      let approvalBridge: ApprovalBridge | undefined;
 
       return {
         onOpen(_evt, ws) {
           clients.add(ws);
+          approvalBridge = createApprovalBridge({
+            send: (msg) => send(ws, msg),
+            timeout: approvalPolicy.timeout,
+          });
         },
 
         onMessage(evt, ws) {
@@ -298,6 +316,17 @@ export function createGateway(config: GatewayConfig) {
             ) as ClientMessage;
           } catch {
             send(ws, { type: "kernel:error", message: "Invalid JSON" });
+            return;
+          }
+
+          if (parsed.type === "switch_session") {
+            activeSessionId = parsed.sessionId;
+            send(ws, { type: "session:switched", sessionId: parsed.sessionId });
+            return;
+          }
+
+          if (parsed.type === "approval_response" && approvalBridge) {
+            approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
             return;
           }
 
@@ -452,6 +481,27 @@ export function createGateway(config: GatewayConfig) {
     return c.json(conversations.list());
   });
 
+  app.post("/api/conversations", async (c) => {
+    const body = await c.req.json<{ channel?: string }>().catch(() => ({}));
+    const id = conversations.create(body.channel);
+    return c.json({ id }, 201);
+  });
+
+  app.delete("/api/conversations/:id", (c) => {
+    const id = c.req.param("id");
+    const deleted = conversations.delete(id);
+    if (!deleted) return c.json({ error: "Not found" }, 404);
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/conversations/:id/search", (c) => {
+    const query = c.req.query("q");
+    if (!query) return c.json({ error: "q parameter required" }, 400);
+    const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
+    const results = conversations.search(query, { limit });
+    return c.json(results);
+  });
+
   app.get("/api/layout", (c) => {
     const layoutPath = join(homePath, "system/layout.json");
     if (!existsSync(layoutPath)) {
@@ -581,6 +631,23 @@ export function createGateway(config: GatewayConfig) {
     const info = getSystemInfo(homePath);
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
+  });
+
+  app.get("/api/usage", (c) => {
+    try {
+      const { createUsageTracker } = require("@matrix-os/kernel");
+      const tracker = createUsageTracker(homePath);
+      const period = (c.req.query("period") ?? "daily") as string;
+      const date = c.req.query("date") as string | undefined;
+      const month = c.req.query("month") as string | undefined;
+
+      if (period === "monthly") {
+        return c.json(tracker.getMonthly(month));
+      }
+      return c.json(tracker.getDaily(date));
+    } catch {
+      return c.json({ total: 0, byAction: {} });
+    }
   });
 
   app.get("/health", (c) => c.json({

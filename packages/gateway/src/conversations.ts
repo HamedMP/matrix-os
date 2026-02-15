@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export interface ConversationMessage {
   role: "user" | "assistant";
@@ -22,6 +23,15 @@ export interface ConversationMeta {
   updatedAt: number;
 }
 
+export interface SearchResult {
+  sessionId: string;
+  messageIndex: number;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+  preview: string;
+}
+
 export interface ConversationStore {
   begin(sessionId: string): void;
   addUserMessage(sessionId: string, content: string): void;
@@ -29,6 +39,9 @@ export interface ConversationStore {
   finalize(sessionId: string): void;
   list(): ConversationMeta[];
   get(id: string): ConversationFile | null;
+  create(channel?: string): string;
+  delete(id: string): boolean;
+  search(query: string, opts?: { limit?: number }): SearchResult[];
 }
 
 export function createConversationStore(homePath: string): ConversationStore {
@@ -123,6 +136,63 @@ export function createConversationStore(homePath: string): ConversationStore {
       const cached = active.get(id);
       if (cached) return cached;
       return readFromDisk(id);
+    },
+
+    create(channel?) {
+      const uuid = randomUUID();
+      const id = channel ? `${channel}:${uuid}` : uuid;
+      const now = Date.now();
+      const conv: ConversationFile = {
+        id,
+        createdAt: now,
+        updatedAt: now,
+        messages: [],
+      };
+      active.set(id, conv);
+      writeToDisk(conv);
+      return id;
+    },
+
+    delete(id) {
+      const path = filePath(id);
+      if (!existsSync(path)) return false;
+      unlinkSync(path);
+      active.delete(id);
+      buffers.delete(id);
+      return true;
+    },
+
+    search(query, opts?) {
+      if (!existsSync(dir)) return [];
+      const limit = opts?.limit ?? Infinity;
+      const lowerQuery = query.toLowerCase();
+      const results: SearchResult[] = [];
+
+      const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+      for (const f of files) {
+        const id = f.replace(".json", "");
+        const conv = readFromDisk(id);
+        if (!conv) continue;
+
+        for (let i = 0; i < conv.messages.length; i++) {
+          const msg = conv.messages[i];
+          if (msg.content.toLowerCase().includes(lowerQuery)) {
+            results.push({
+              sessionId: conv.id,
+              messageIndex: i,
+              role: msg.role,
+              content: msg.content,
+              timestamp: msg.timestamp,
+              preview: msg.content.length > 100
+                ? msg.content.slice(0, 100) + "..."
+                : msg.content,
+            });
+          }
+        }
+      }
+
+      results.sort((a, b) => b.timestamp - a.timestamp);
+      return results.slice(0, limit);
     },
   };
 }

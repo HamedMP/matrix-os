@@ -5,6 +5,9 @@ import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 
+const GATEWAY_URL =
+  process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+
 export interface ChatState {
   messages: ChatMessage[];
   sessionId: string | undefined;
@@ -13,7 +16,7 @@ export interface ChatState {
   queue: string[];
   conversations: ReturnType<typeof useConversation>["conversations"];
   submitMessage: (text: string) => void;
-  newChat: () => void;
+  newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
 }
 
@@ -98,11 +101,26 @@ export function useChatState(): ChatState {
     [busy, send, sessionId],
   );
 
-  const newChat = useCallback(() => {
+  const newChat = useCallback(async () => {
     setMessages([]);
-    setSessionId(undefined);
     setQueue([]);
-  }, []);
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        const { id } = await res.json();
+        setSessionId(id);
+        send({ type: "switch_session", sessionId: id });
+      } else {
+        setSessionId(undefined);
+      }
+    } catch {
+      setSessionId(undefined);
+    }
+  }, [send]);
 
   const switchConversation = useCallback(
     (id: string) => {
@@ -111,10 +129,11 @@ export function useChatState(): ChatState {
           setSessionId(conv.id);
           setMessages(hydrateMessages(conv.messages));
           setQueue([]);
+          send({ type: "switch_session", sessionId: conv.id });
         }
       });
     },
-    [load],
+    [load, send],
   );
 
   return {

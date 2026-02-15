@@ -33,3 +33,7 @@ export type { GitSync, GitStatus, GitResult, AutoSync, AutoSyncOptions } from ".
 export { authMiddleware } from "./auth.js";
 export { getSystemInfo } from "./system-info.js";
 export type { SystemInfo } from "./system-info.js";
+export { createConversationStore } from "./conversations.js";
+export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
+export { createApprovalBridge } from "./approval.js";
+export type { ApprovalBridge, ApprovalRequest, ApprovalResponse } from "./approval.js";
