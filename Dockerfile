@@ -18,6 +18,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
+COPY packages/platform/package.json packages/platform/
+COPY packages/proxy/package.json packages/proxy/
 COPY shell/package.json shell/
 
 # Hoist packages so next binary is accessible from shell/

@@ -28,7 +28,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    command: ["node", "--import=tsx", "packages/platform/src/main.ts"]
+    entrypoint: ["node", "--import=tsx"]
+    command: ["packages/platform/src/main.ts"]
     environment:
       - PLATFORM_PORT=9000
       - PLATFORM_DB_PATH=/data/platform.db
@@ -52,7 +53,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    command: ["node", "--import=tsx", "packages/proxy/src/main.ts"]
+    entrypoint: ["node", "--import=tsx"]
+    command: ["packages/proxy/src/main.ts"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PROXY_PORT=8080
