@@ -3,13 +3,14 @@ import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
+const HANDLE_PREFIX = process.env.HANDLE_PREFIX ?? "";
 
 export const provisionUser = inngest.createFunction(
   { id: "provision-matrix-os" },
   { event: "clerk/user.created" },
   async ({ event, step }) => {
     const user = event.data;
-    const handle = user.username ?? user.id;
+    const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
     const posthog = getPostHogClient();
 
     posthog.capture({

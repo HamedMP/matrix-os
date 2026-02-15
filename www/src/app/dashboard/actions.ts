@@ -6,12 +6,13 @@ import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
+const HANDLE_PREFIX = process.env.HANDLE_PREFIX ?? "";
 
 export async function provisionInstance(): Promise<{ error?: string }> {
   const user = await currentUser();
   if (!user) return { error: "Not authenticated" };
 
-  const handle = user.username ?? user.id;
+  const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
   const posthog = getPostHogClient();
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
