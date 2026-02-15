@@ -14,7 +14,7 @@ import { SuggestionChips } from "@/components/SuggestionChips";
 import { ThoughtCard } from "@/components/ThoughtCard";
 import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
-import { AppStore } from "@/components/AppStore";
+import { AppStore } from "@/components/app-store/AppStore";
 import { BottomPanel } from "@/components/BottomPanel";
 import { Button } from "@/components/ui/button";
 import { MessageSquareIcon } from "lucide-react";
@@ -58,7 +58,7 @@ export default function Home() {
         label: "App Store",
         group: "Actions",
         keywords: ["store", "install", "browse", "apps", "marketplace"],
-        execute: () => setStoreOpen(true),
+        execute: () => setStoreOpen((prev) => !prev),
       },
     ]);
     return () => unregister(["action:toggle-sidebar", "action:new-chat", "action:app-store"]);
@@ -88,7 +88,7 @@ export default function Home() {
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
-          <Desktop />
+          <Desktop storeOpen={storeOpen} onToggleStore={() => setStoreOpen((prev) => !prev)} />
 
           <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2 md:p-4">
             <div className="flex justify-end">

@@ -19,7 +19,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { KanbanSquareIcon } from "lucide-react";
+import { KanbanSquareIcon, StoreIcon, MonitorIcon } from "lucide-react";
 
 const GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
@@ -145,7 +145,12 @@ function DockIcon({
   );
 }
 
-export function Desktop() {
+interface DesktopProps {
+  storeOpen?: boolean;
+  onToggleStore?: () => void;
+}
+
+export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   const [windows, setWindows] = useState<AppWindow[]>([]);
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [interacting, setInteracting] = useState(false);
@@ -445,6 +450,12 @@ export function Desktop() {
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(desktopMode);
 
+  const modes = allModes();
+  const cycleMode = useCallback(() => {
+    const idx = modes.findIndex((m) => m.id === desktopMode);
+    setDesktopMode(modes[(idx + 1) % modes.length].id);
+  }, [modes, desktopMode, setDesktopMode]);
+
   const toggleMcRef = useRef(() => setTaskBoardOpen((prev) => !prev));
   const openWindowRef = useRef(openWindow);
   openWindowRef.current = openWindow;
@@ -513,6 +524,24 @@ export function Desktop() {
             </TooltipContent>
           </Tooltip>
 
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleStore}
+                className={`flex size-10 items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                  storeOpen
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border/60"
+                }`}
+              >
+                <StoreIcon className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8}>
+              App Store
+            </TooltipContent>
+          </Tooltip>
+
           {apps.length > 0 && (
             <div className="w-6 border-t border-border/40" />
           )}
@@ -530,10 +559,26 @@ export function Desktop() {
               />
             );
           })}
+
+          <div className="mt-auto">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={cycleMode}
+                  className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+                >
+                  <MonitorIcon className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                {modeConfig.label} mode
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </aside>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && apps.length > 0 && (
+        {modeConfig.showDock && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               onClick={() => setTaskBoardOpen((prev) => !prev)}
@@ -544,6 +589,23 @@ export function Desktop() {
               }`}
             >
               <KanbanSquareIcon className="size-4" />
+            </button>
+            <button
+              onClick={onToggleStore}
+              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                storeOpen
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border/60"
+              }`}
+            >
+              <StoreIcon className="size-4" />
+            </button>
+            <button
+              onClick={cycleMode}
+              className="flex shrink-0 size-9 items-center justify-center rounded-lg border border-border/60 bg-card transition-all active:scale-95"
+              title={`${modeConfig.label} mode`}
+            >
+              <MonitorIcon className="size-4" />
             </button>
             {apps.map((app) => {
               const win = windows.find(
@@ -580,11 +642,14 @@ export function Desktop() {
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
                   <p className="text-sm text-muted-foreground mb-1">
-                    {desktopMode === "ambient" ? "Ambient mode" : "Conversational mode"}
+                    {modeConfig.label} mode
                   </p>
-                  <p className="text-xs text-muted-foreground/60">
-                    Use Cmd+K to switch modes
-                  </p>
+                  <button
+                    onClick={cycleMode}
+                    className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                  >
+                    Switch mode
+                  </button>
                 </div>
               </div>
             )}

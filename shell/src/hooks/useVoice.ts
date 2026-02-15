@@ -26,7 +26,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
 
   useEffect(() => {
     setIsSupported(
-      Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
+      typeof navigator.mediaDevices?.getUserMedia === "function" && typeof window.MediaRecorder === "function"
     );
   }, []);
 

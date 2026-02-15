@@ -37,7 +37,7 @@ export function ApprovalDialog() {
   const [request, setRequest] = useState<ApprovalRequest | null>(null);
   const [remaining, setRemaining] = useState(0);
   const { subscribe, send } = useSocket();
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const deadlineRef = useRef(0);
 
   useEffect(() => {
