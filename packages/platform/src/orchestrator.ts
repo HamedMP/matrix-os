@@ -73,6 +73,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           `MATRIX_HANDLE=${handle}`,
           `PROXY_URL=${proxyUrl}`,
           `ANTHROPIC_BASE_URL=${proxyUrl}`,
+          `ANTHROPIC_API_KEY=sk-proxy-managed`,
           `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
           `PORT=4000`,
           `SHELL_PORT=3000`,
