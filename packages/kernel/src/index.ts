@@ -55,3 +55,5 @@ export { createImageClient } from "./image-gen.js";
 export type { ImageClient, ImageResult } from "./image-gen.js";
 export { createUsageTracker } from "./usage.js";
 export type { UsageTracker, UsageEntry, UsageSummary } from "./usage.js";
+export { loadAppMeta } from "./app-meta.js";
+export type { AppMeta } from "./app-meta.js";

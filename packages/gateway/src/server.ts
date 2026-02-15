@@ -34,6 +34,7 @@ import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
+import { listApps } from "./apps.js";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -598,6 +599,10 @@ export function createGateway(config: GatewayConfig) {
     const task = getTask(dispatcher.db, c.req.param("id"));
     if (!task) return c.json({ error: "Not found" }, 404);
     return c.json(task);
+  });
+
+  app.get("/api/apps", (c) => {
+    return c.json(listApps(homePath));
   });
 
   app.get("/api/cron", (c) => {
