@@ -37,7 +37,7 @@ No implementation is included in this document.
 **006**: Telegram path done (T106-T112, T117, T119). WhatsApp/Discord/Slack deferred. 292 tests after phase.
 **007**: Complete (T120-T129). Cron service + heartbeat runner + IPC tool. 349 tests after phase.
 **008A**: T130-T135 done. T136 (deployment docs) remaining. 362 tests after phase.
-**008B**: Platform service built (Clerk auth, orchestrator, lifecycle, admin). T140-T159 scope.
+**008B**: Platform service built (Clerk auth, orchestrator, lifecycle, admin, social). T140-T164 scope. Auth uses Clerk + Inngest (not Passkeys/TOTP from original spec). Security hardened: platform API auth middleware (T160), Inngest 409 idempotency (T161), lifecycle manager wired (T162), PostHog flush (T163), real health check (T164).
 **009 P0**: T200-T204 done. T205 crash loop deferred.
 **009 P1**: T210-T216, T220-T222, T224, T230-T234 done. T223 conflict resolution deferred.
 **010**: Not started. See sections below.
@@ -65,6 +65,11 @@ No implementation is included in this document.
 - [x] T100i (005) Implement gitSnapshotHook -- self-healing safety net.
 - [x] T100j (005) System prompt token budgeting.
 - [x] T133 (008A) Auth token validation (bearer token middleware, 8 tests).
+- [x] T160 (008B) Platform API auth middleware (PLATFORM_SECRET bearer token, all routes).
+- [x] T161 (008B) Inngest 409 idempotency (retry-safe provisioning).
+- [x] T162 (008B) Lifecycle manager wired into platform startup.
+- [x] T163 (008B) PostHog flush in serverless contexts.
+- [x] T164 (008B) Container health check verifies gateway, not just DB status.
 
 ## 0) Program-Level Checklist
 
@@ -348,7 +353,7 @@ Task Manager App (T770):
 ## Cross-Cutting Security + Quality Checklist
 
 - [x] Verify all filesystem read/write endpoints enforce home-path containment.
-- [ ] Add auth + authorization boundaries for HTTP, WS, and channel entrypoints.
+- [x] Add auth + authorization boundaries for HTTP, WS, and channel entrypoints. (T133 gateway auth, T160 platform API auth)
 - [ ] Define and enforce realistic test/coverage thresholds aligned with actual scope.
 - [ ] Add non-empty integration test suite and CI signal for `test:integration`.
 - [ ] Add structured logging for kernel invocations, tool usage, and failures.

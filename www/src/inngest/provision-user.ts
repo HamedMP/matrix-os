@@ -1,7 +1,8 @@
 import { inngest } from "./client";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
+const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
 
 export const provisionUser = inngest.createFunction(
   { id: "provision-matrix-os" },
@@ -30,11 +31,18 @@ export const provisionUser = inngest.createFunction(
     });
 
     await step.run("provision-container", async () => {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (PLATFORM_SECRET) headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
+
       const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({ handle, clerkUserId: user.id }),
       });
+
+      if (res.status === 409) {
+        return { alreadyProvisioned: true };
+      }
 
       if (!res.ok) {
         const body = await res.text();
@@ -57,9 +65,24 @@ export const provisionUser = inngest.createFunction(
     await step.sleep("wait-for-boot", "10s");
 
     await step.run("verify-running", async () => {
-      const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}`);
+      const headers: Record<string, string> = {};
+      if (PLATFORM_SECRET) headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
+
+      const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}`, { headers });
       if (!res.ok) throw new Error("Container not found after provision");
       const info = await res.json();
+
+      if (info.status !== "running") {
+        throw new Error(`Container not running: ${info.status}`);
+      }
+
+      const healthUrl = `http://localhost:${info.port}/health`;
+      try {
+        const healthRes = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+        if (!healthRes.ok) throw new Error(`Gateway health check failed: ${healthRes.status}`);
+      } catch (e: any) {
+        throw new Error(`Gateway not reachable at port ${info.port}: ${e.message}`);
+      }
 
       posthog.capture({
         distinctId: user.id,
@@ -79,6 +102,7 @@ export const provisionUser = inngest.createFunction(
         },
       });
 
+      await shutdownPostHog();
       return { status: info.status };
     });
   },

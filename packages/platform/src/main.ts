@@ -20,8 +20,19 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) 
   const { db, orchestrator } = deps;
   const app = new Hono();
 
-  // Health check
+  // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  // Auth middleware for all routes below
+  app.use('*', async (c, next) => {
+    if (c.req.path === '/health') return next();
+    if (!PLATFORM_SECRET) return next();
+    const auth = c.req.header('authorization');
+    if (auth !== `Bearer ${PLATFORM_SECRET}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    return next();
+  });
 
   // --- Container management ---
 
@@ -166,6 +177,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     image: process.env.PLATFORM_IMAGE,
     dataDir: process.env.PLATFORM_DATA_DIR,
   });
+
+  const lifecycle = createLifecycleManager({ db, orchestrator });
+  lifecycle.start();
 
   const app = createApp({ db, orchestrator });
 

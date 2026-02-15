@@ -30,65 +30,85 @@
 
 ## Part B: Multi-Tenant Platform (T140-T159)
 
-### Infrastructure
+NOTE: Actual implementation diverged from original spec. Auth uses Clerk (not Passkeys/TOTP), provisioning uses Inngest (not direct), landing page is in `www/` (Next.js on Vercel, not in platform). Tasks updated to reflect reality.
 
-- [ ] T140 [US21] Create `platform/` directory -- separate Node.js/Hono service for the multi-tenant orchestrator. Handles signup, login, container management, social API.
+### Infrastructure (DONE)
 
-- [ ] T141 [US21] Implement auth service in `platform/src/auth.ts` -- Passkeys (WebAuthn) via `@simplewebauthn/server` + TOTP 2FA fallback via `otpauth`. Registration flow: choose handle -> register passkey/TOTP -> create account. Login flow: passkey challenge -> verify -> JWT.
+- [x] T140 [US21] Create `packages/platform/` -- Hono service (:9000) for multi-tenant orchestrator. SQLite/Drizzle DB, container management, social API.
 
-- [ ] T142 [US21] Implement session management in `platform/src/session.ts` -- JWT (1h) + refresh tokens (7d), HttpOnly secure cookies, token includes handle + container ID.
+- [x] T141 [US21] Auth via Clerk (replaces Passkeys/TOTP) -- Clerk handles signup/login in `www/`, Inngest webhook provisions containers on `clerk/user.created` event. Platform API protected by `PLATFORM_SECRET` bearer token.
 
-- [ ] T143 [US21] Implement user database in `platform/src/db.ts` -- SQLite via Drizzle. Tables: `users` (handle, publicKey, totpSecret, createdAt), `containers` (handle, containerId, port, status, lastActive), `usage` (handle, tokensIn, tokensOut, costUsd).
+- [x] T142 [US21] Session management via Clerk -- Clerk handles JWTs/cookies in `www/`. Platform API uses shared secret (not user sessions).
 
-### Container Orchestrator
+- [x] T143 [US21] Platform database in `packages/platform/src/db.ts` -- SQLite via Drizzle. Tables: `containers` (handle, clerkUserId, containerId, port, shellPort, status, lastActive), `port_assignments` (port, label).
 
-- [ ] T144 [US21] Implement container orchestrator in `platform/src/orchestrator.ts` -- uses `dockerode` to create/start/stop/destroy containers. Each container gets: unique port, volume at `/data/users/{handle}/matrixos/`, env vars (API key, handle), resource limits (256MB, 0.5 CPU). Containers join `matrixos-net` Docker network.
+### Container Orchestrator (DONE)
 
-- [ ] T145 [US21] Implement idle detection + sleep in `platform/src/lifecycle.ts` -- check last activity per container every 5min. Stop containers idle >30min. Wake on next login. Health check loop.
+- [x] T144 [US21] Container orchestrator in `packages/platform/src/orchestrator.ts` -- dockerode, provision/start/stop/destroy. Each container: unique gateway+shell ports, volume at `/data/users/{handle}/matrixos/`, resource limits (256MB, 0.5 CPU), `matrixos-net` network.
 
-- [ ] T146 [P] [US21] Create `platform/docker-compose.yml` -- Caddy (wildcard TLS), platform service, Conduit Matrix homeserver, shared network `matrixos-net`. Defines the full multi-tenant stack.
+- [x] T145 [US21] Lifecycle manager in `packages/platform/src/lifecycle.ts` -- check every 5min, stop containers idle >30min. Wired into gateway startup.
 
-- [ ] T147 [US21] Implement Caddy dynamic routing -- Caddyfile with `*.matrix-os.com` wildcard, on-demand TLS, reverse proxy to platform service which looks up container port by subdomain.
+- [x] T146 [P] [US21] `distro/docker-compose.platform.yml` -- platform service, Cloudflare Tunnel (replaces Caddy), shared network.
 
-### Landing Page + Auth UI
+- [ ] T147 [US21] Subdomain routing -- Cloudflare Tunnel + platform `/proxy/:handle/*` endpoint handles `{handle}.matrix-os.com` traffic. Needs cloudflared config for host-header-to-path rewriting.
 
-- [ ] T148 [US21] Create landing page at `platform/src/pages/index.tsx` (or static HTML) -- hero section, demo video, "Get Started" button, features grid, live instance counter.
+### Landing Page + Auth UI (DONE via www/)
 
-- [ ] T149 [US21] Create signup page at `platform/src/pages/signup.tsx` -- handle picker (availability check), passkey registration, TOTP QR code alternative. On success: create container, redirect to `{handle}.matrix-os.com`.
+- [x] T148 [US21] Landing page at `www/` (Next.js on Vercel) -- hero, features, agent showcase, whitepaper link.
 
-- [ ] T150 [US21] Create login page at `platform/src/pages/login.tsx` -- handle input, passkey challenge, TOTP fallback. On success: ensure container is running, redirect to subdomain.
+- [x] T149 [US21] Signup via Clerk components in `www/` -- handle = Clerk username, Inngest `provisionUser` function auto-provisions container on signup.
+
+- [x] T150 [US21] Login via Clerk in `www/` -- dashboard shows instance status, manual provision fallback button.
+
+### Inngest Provisioning (DONE)
+
+- [x] T149a [US21] Inngest function `provision-matrix-os` -- triggered by `clerk/user.created`, provisions container via platform API, verifies health, PostHog tracking.
+
+- [x] T149b [US21] Dashboard server action `provisionInstance()` -- manual fallback for failed auto-provision, same endpoint with auth.
 
 ### API Key + Quota
 
-- [ ] T151 [US21] Implement API proxy in `platform/src/proxy.ts` -- intercepts Anthropic API calls from containers, tracks tokens + cost per user, enforces quota ($5 free tier), rate limits (5 concurrent invocations).
+- [x] T151 [US21] API proxy in `packages/proxy/` -- Hono :8080, intercepts Anthropic API calls, tracks usage per handle, enforces limits.
 
-- [ ] T152 [P] [US21] Implement cost dashboard endpoint -- `GET api.matrix-os.com/usage/{handle}` returns usage stats. Injected into each user's Matrix OS system prompt as "Budget: $X.XX remaining".
+- [ ] T152 [P] [US21] Cost dashboard endpoint -- usage stats injected into system prompt as "Budget: $X.XX remaining".
 
-### Social + Discovery
+### Social + Discovery (DONE)
 
-- [ ] T153 [US21] Implement social API in `platform/src/social.ts`:
-  - `GET /api/users` -- list users (handle, displayName, avatar, online status)
-  - `GET /api/users/{handle}/profile` -- public profile (from user's `~/system/profile.md`)
-  - `GET /api/users/{handle}/ai-profile` -- AI profile (from `~/system/ai-profile.md`)
-  - `GET /api/feed` -- global activity feed (aggregated from all containers)
+- [x] T153 [US21] Social API in `packages/platform/src/social.ts`:
+  - `GET /social/users` -- list users
+  - `GET /social/profiles/{handle}` -- public profile
+  - `GET /social/profiles/{handle}/ai` -- AI profile
+  - `POST /social/send/{handle}` -- cross-instance messaging
 
-- [ ] T154 [P] [US21] Implement user discovery in web shell -- show "Community" panel with online users, their AI profiles, ability to message their AI.
+- [ ] T154 [P] [US21] User discovery in web shell -- "Community" panel.
 
 ### Matrix Homeserver
 
-- [ ] T155 [US21] Deploy Conduit (lightweight Matrix homeserver) on `matrixos-net` -- auto-register users (`@handle:matrix-os.com`, `@handle_ai:matrix-os.com`) on signup. Configure for internal federation only (not public internet).
+- [ ] T155 [US21] Deploy Conduit on `matrixos-net` -- auto-register `@handle:matrix-os.com`.
 
-- [ ] T156 [US21] Wire Matrix client into each Matrix OS container -- `matrix-js-sdk` in gateway, auto-login on boot, send/receive messages via Matrix rooms for AI-to-AI communication.
+- [ ] T156 [US21] Wire `matrix-js-sdk` into each container for AI-to-AI communication.
 
-### Admin + Monitoring
+### Admin + Monitoring (DONE)
 
-- [ ] T157 [P] [US21] Implement admin dashboard at `platform/src/pages/admin.tsx` -- total users, active containers, resource usage, cost per user, ability to stop/restart containers.
+- [x] T157 [P] [US21] Admin dashboard in `www/src/app/admin/` -- user list, container status, actions.
 
-- [ ] T158 [P] [US21] Implement platform health endpoint -- `GET api.matrix-os.com/health` returns: total containers, active containers, RAM usage, disk usage, Matrix homeserver status.
+- [x] T158 [P] [US21] Platform health endpoint -- `GET /health` returns status.
 
 ### Deployment
 
-- [ ] T159 [US21] Create `scripts/deploy-platform.sh` -- provisions Hetzner VPS, installs Docker, configures Caddy, sets up wildcard DNS, deploys platform + Conduit, creates admin account.
+- [ ] T159 [US21] Production deployment script -- VPS provisioning, Docker, Cloudflare Tunnel, wildcard DNS.
+
+### Security Hardening (added post-review)
+
+- [x] T160 Platform API auth middleware -- `PLATFORM_SECRET` bearer token on all routes (except /health). Fail-open when unconfigured (dev mode).
+
+- [x] T161 Inngest 409 idempotency -- treat "container already exists" as success on retry.
+
+- [x] T162 Lifecycle manager wired into startup -- was imported but never started.
+
+- [x] T163 PostHog flush in serverless -- call `shutdownPostHog()` before function exit.
+
+- [x] T164 Verify-running health check -- actually hits container gateway `/health` instead of just reading DB status.
 
 ---
 

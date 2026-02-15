@@ -2,9 +2,10 @@
 
 import { currentUser } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
-import { getPostHogClient } from "@/lib/posthog-server";
+import { getPostHogClient, shutdownPostHog } from "@/lib/posthog-server";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
+const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
 
 export async function provisionInstance(): Promise<{ error?: string }> {
   const user = await currentUser();
@@ -13,9 +14,12 @@ export async function provisionInstance(): Promise<{ error?: string }> {
   const handle = user.username ?? user.id;
   const posthog = getPostHogClient();
 
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
+
   const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ handle, clerkUserId: user.id }),
   });
 
@@ -51,6 +55,7 @@ export async function provisionInstance(): Promise<{ error?: string }> {
     },
   });
 
+  await shutdownPostHog();
   revalidatePath("/dashboard");
   return {};
 }
