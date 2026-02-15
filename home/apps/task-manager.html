@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task Manager</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --fg: #e0e0e0;
+  --accent: #7C3AED;
+  --surface: #1a1a1a;
+  --border: #333;
+  --pending: #F59E0B;
+  --progress: #3B82F6;
+  --completed: #10B981;
+  --failed: #EF4444;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 16px;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+h1 { font-size: 1.4em; }
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.view-toggle button {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.view-toggle button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.filters button {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.filters button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.add-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+input, select {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+input[type="text"] { flex: 1; min-width: 180px; }
+select { min-width: 100px; }
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button.primary:hover { opacity: 0.9; }
+.stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.stat-badge {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.stat-badge .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.kanban-col {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 120px;
+}
+.kanban-col h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kanban-col h3 .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.kanban-col h3 .count {
+  font-weight: 400;
+  color: #999;
+  margin-left: auto;
+}
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: default;
+}
+.card:last-child { margin-bottom: 0; }
+.card-title {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.card-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.badge-type { color: #999; }
+.badge-priority-urgent { color: var(--failed); border-color: var(--failed); }
+.badge-priority-high { color: var(--pending); border-color: var(--pending); }
+.badge-priority-medium { color: var(--progress); border-color: var(--progress); }
+.badge-assignee { color: var(--accent); border-color: var(--accent); }
+.card-time { font-size: 11px; color: #666; }
+.card-output {
+  font-size: 11px;
+  color: #999;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  word-break: break-word;
+}
+.card-error { color: var(--failed); }
+.list-view { width: 100%; }
+.list-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.list-table th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #999;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.list-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  vertical-align: top;
+}
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.empty {
+  color: #666;
+  text-align: center;
+  padding: 48px 16px;
+}
+.empty p { margin-top: 8px; font-size: 14px; }
+.refresh-btn {
+  background: transparent;
+  color: #999;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.refresh-btn:hover { color: var(--fg); border-color: #666; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Task Manager</h1>
+  <button class="refresh-btn" id="refreshBtn" title="Refresh">Refresh</button>
+  <div class="view-toggle" id="viewToggle"></div>
+</div>
+
+<div class="add-row">
+  <input type="text" id="taskInput" placeholder="Describe the task...">
+  <select id="taskPriority">
+    <option value="0">Low</option>
+    <option value="1" selected>Medium</option>
+    <option value="2">High</option>
+    <option value="3">Urgent</option>
+  </select>
+  <button class="primary" id="addBtn">Add Task</button>
+</div>
+
+<div class="toolbar">
+  <div class="filters" id="filters"></div>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div id="content"></div>
+
+<script>
+var tasks = [];
+var view = 'kanban';
+var filter = 'all';
+var GATEWAY = location.origin;
+var STATUS_ORDER = ['pending', 'in_progress', 'completed', 'failed'];
+var STATUS_COLORS = {
+  pending: '#F59E0B',
+  in_progress: '#3B82F6',
+  completed: '#10B981',
+  failed: '#EF4444'
+};
+var STATUS_LABELS = {
+  pending: 'Pending',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  failed: 'Failed'
+};
+
+document.getElementById('addBtn').addEventListener('click', addTask);
+document.getElementById('taskInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') addTask();
+});
+document.getElementById('refreshBtn').addEventListener('click', loadTasks);
+
+function loadTasks() {
+  fetch(GATEWAY + '/api/tasks')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      tasks = Array.isArray(data) ? data : [];
+      render();
+    })
+    .catch(function() {
+      tasks = [];
+      render();
+    });
+}
+
+function addTask() {
+  var input = document.getElementById('taskInput');
+  var text = input.value.trim();
+  if (!text) return;
+  var priority = parseInt(document.getElementById('taskPriority').value, 10);
+
+  fetch(GATEWAY + '/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'todo', input: text, priority: priority })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function() {
+    input.value = '';
+    loadTasks();
+  })
+  .catch(function(err) {
+    console.error('Failed to create task:', err);
+  });
+}
+
+function parseInput(raw) {
+  if (!raw) return '';
+  try {
+    var parsed = JSON.parse(raw);
+    return parsed.message || parsed.input || raw;
+  } catch(e) {
+    return raw;
+  }
+}
+
+function parseOutput(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch(e) {
+    return { text: raw };
+  }
+}
+
+function priorityLabel(p) {
+  if (p >= 3) return 'urgent';
+  if (p >= 2) return 'high';
+  if (p >= 1) return 'medium';
+  return 'low';
+}
+
+function relativeTime(ts) {
+  if (!ts) return '';
+  var d = typeof ts === 'number' ? ts : new Date(ts).getTime();
+  var diff = Date.now() - d;
+  var mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  var hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  var days = Math.floor(hours / 24);
+  return days + 'd ago';
+}
+
+function el(tag, className, textContent) {
+  var e = document.createElement(tag);
+  if (className) e.className = className;
+  if (textContent !== undefined) e.textContent = textContent;
+  return e;
+}
+
+function setView(v) {
+  view = v;
+  render();
+}
+
+function setFilter(f) {
+  filter = f;
+  render();
+}
+
+function getFiltered() {
+  if (filter === 'all') return tasks;
+  return tasks.filter(function(t) { return t.status === filter; });
+}
+
+function renderViewToggle() {
+  var container = document.getElementById('viewToggle');
+  container.replaceChildren();
+  ['kanban', 'list'].forEach(function(v) {
+    var btn = document.createElement('button');
+    btn.className = view === v ? 'active' : '';
+    btn.textContent = v.charAt(0).toUpperCase() + v.slice(1);
+    btn.addEventListener('click', function() { setView(v); });
+    container.appendChild(btn);
+  });
+}
+
+function renderFilters() {
+  var container = document.getElementById('filters');
+  container.replaceChildren();
+  var options = ['all'].concat(STATUS_ORDER);
+  options.forEach(function(f) {
+    var btn = document.createElement('button');
+    btn.className = filter === f ? 'active' : '';
+    var label = f === 'all' ? 'All' : (STATUS_LABELS[f] || f);
+    var count = f === 'all' ? tasks.length : tasks.filter(function(t) { return t.status === f; }).length;
+    btn.textContent = label + ' (' + count + ')';
+    btn.addEventListener('click', function() { setFilter(f); });
+    container.appendChild(btn);
+  });
+}
+
+function renderStats() {
+  var container = document.getElementById('stats');
+  container.replaceChildren();
+  STATUS_ORDER.forEach(function(s) {
+    var count = tasks.filter(function(t) { return t.status === s; }).length;
+    if (count === 0) return;
+    var badge = el('span', 'stat-badge');
+    var dot = el('span', 'dot');
+    dot.style.backgroundColor = STATUS_COLORS[s];
+    badge.appendChild(dot);
+    badge.appendChild(document.createTextNode(STATUS_LABELS[s] + ': ' + count));
+    container.appendChild(badge);
+  });
+}
+
+function renderCard(task) {
+  var card = el('div', 'card');
+  var title = el('div', 'card-title', parseInput(task.input));
+  card.appendChild(title);
+
+  var meta = el('div', 'card-meta');
+  if (task.type) {
+    meta.appendChild(el('span', 'badge badge-type', task.type));
+  }
+  var pLabel = priorityLabel(task.priority || 0);
+  if (pLabel !== 'low') {
+    meta.appendChild(el('span', 'badge badge-priority-' + pLabel, pLabel));
+  }
+  if (task.assignedTo) {
+    meta.appendChild(el('span', 'badge badge-assignee', task.assignedTo));
+  }
+  var created = task.createdAt || task.created_at;
+  if (created) {
+    meta.appendChild(el('span', 'card-time', relativeTime(created)));
+  }
+  card.appendChild(meta);
+
+  if (task.output) {
+    var out = parseOutput(task.output);
+    var outputEl = el('div', 'card-output');
+    if (out && out.error) {
+      outputEl.className += ' card-error';
+      outputEl.textContent = out.error;
+    } else if (out && out.result) {
+      outputEl.textContent = typeof out.result === 'string' ? out.result : JSON.stringify(out.result);
+    } else if (out && out.text) {
+      outputEl.textContent = out.text;
+    }
+    if (outputEl.textContent) card.appendChild(outputEl);
+  }
+
+  return card;
+}
+
+function renderKanban(filtered) {
+  var container = document.getElementById('content');
+  var kanban = el('div', 'kanban');
+
+  STATUS_ORDER.forEach(function(status) {
+    var colTasks = filtered
+      .filter(function(t) { return t.status === status; })
+      .sort(function(a, b) { return (b.priority || 0) - (a.priority || 0); });
+
+    var col = el('div', 'kanban-col');
+    var heading = el('h3');
+    var dot = el('span', 'dot');
+    dot.style.backgroundColor = STATUS_COLORS[status];
+    heading.appendChild(dot);
+    heading.appendChild(document.createTextNode(STATUS_LABELS[status]));
+    heading.appendChild(el('span', 'count', String(colTasks.length)));
+    col.appendChild(heading);
+
+    if (colTasks.length === 0) {
+      col.appendChild(el('div', 'card-time', 'No tasks'));
+    } else {
+      colTasks.forEach(function(t) {
+        col.appendChild(renderCard(t));
+      });
+    }
+
+    kanban.appendChild(col);
+  });
+
+  container.replaceChildren(kanban);
+}
+
+function renderList(filtered) {
+  var container = document.getElementById('content');
+
+  if (filtered.length === 0) {
+    var empty = el('div', 'empty');
+    empty.appendChild(el('p', null, 'No tasks yet. Create one above or use the kernel.'));
+    container.replaceChildren(empty);
+    return;
+  }
+
+  var wrapper = el('div', 'list-view');
+  var table = el('table', 'list-table');
+
+  var thead = document.createElement('thead');
+  var headerRow = document.createElement('tr');
+  ['Status', 'Task', 'Type', 'Priority', 'Assigned', 'Created'].forEach(function(h) {
+    headerRow.appendChild(el('th', null, h));
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  var tbody = document.createElement('tbody');
+  var sorted = filtered.slice().sort(function(a, b) {
+    return (b.priority || 0) - (a.priority || 0);
+  });
+
+  sorted.forEach(function(task) {
+    var row = document.createElement('tr');
+
+    var statusCell = document.createElement('td');
+    var dot = el('span', 'status-dot');
+    dot.style.backgroundColor = STATUS_COLORS[task.status] || '#999';
+    statusCell.appendChild(dot);
+    statusCell.appendChild(document.createTextNode(STATUS_LABELS[task.status] || task.status));
+    row.appendChild(statusCell);
+
+    row.appendChild(el('td', null, parseInput(task.input)));
+
+    row.appendChild(el('td', 'badge badge-type', task.type || '-'));
+
+    var pLabel = priorityLabel(task.priority || 0);
+    var prioCell = document.createElement('td');
+    prioCell.appendChild(el('span', 'badge badge-priority-' + pLabel, pLabel));
+    row.appendChild(prioCell);
+
+    row.appendChild(el('td', null, task.assignedTo || task.assigned_to || '-'));
+
+    var created = task.createdAt || task.created_at;
+    row.appendChild(el('td', 'card-time', relativeTime(created)));
+
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  container.replaceChildren(wrapper);
+}
+
+function render() {
+  renderViewToggle();
+  renderFilters();
+  renderStats();
+
+  var filtered = getFiltered();
+
+  if (tasks.length === 0) {
+    var container = document.getElementById('content');
+    var empty = el('div', 'empty');
+    empty.appendChild(el('p', null, 'No tasks yet. Create one above or use the kernel.'));
+    container.replaceChildren(empty);
+    return;
+  }
+
+  if (view === 'kanban') {
+    renderKanban(filtered);
+  } else {
+    renderList(filtered);
+  }
+}
+
+loadTasks();
+setInterval(loadTasks, 15000);
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "@matrix-os/mcp-browser",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/browser.ts",
+    "./server": "./src/server.ts"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
+    "zod": "^4.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.52.0"
+  }
+}

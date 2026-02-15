@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
 import { getCoreAgents, loadCustomAgents } from "./agents.js";
@@ -25,6 +27,35 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__read_state",
 ];
 
+const BROWSER_TOOL_NAMES = [
+  "mcp__matrix-os-browser__browse_web",
+];
+
+function loadBrowserConfig(homePath: string): { enabled: boolean; headless: boolean; timeout: number } | null {
+  try {
+    const configPath = join(homePath, "system", "config.json");
+    if (!existsSync(configPath)) return null;
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    if (!config.browser?.enabled) return null;
+    return {
+      enabled: true,
+      headless: config.browser.headless ?? true,
+      timeout: config.browser.timeout ?? 30000,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function tryCreateBrowserServer(homePath: string, browserConfig: { headless: boolean; timeout: number }) {
+  try {
+    const { createBrowserMcpServer } = require("@matrix-os/mcp-browser/server");
+    return createBrowserMcpServer({ homePath, ...browserConfig });
+  } catch {
+    return null;
+  }
+}
+
 export interface KernelConfig {
   db: MatrixDB;
   homePath: string;
@@ -45,12 +76,24 @@ export function kernelOptions(config: KernelConfig) {
   const protectedFilesHook = createProtectedFilesHook(homePath);
   const gitSnapshotHook = createGitSnapshotHook(homePath);
 
+  const mcpServers: Record<string, unknown> = { "matrix-os-ipc": ipcServer };
+  const browserToolNames: string[] = [];
+
+  const browserConfig = loadBrowserConfig(homePath);
+  if (browserConfig) {
+    const browserServer = tryCreateBrowserServer(homePath, browserConfig);
+    if (browserServer) {
+      mcpServers["matrix-os-browser"] = browserServer;
+      browserToolNames.push(...BROWSER_TOOL_NAMES);
+    }
+  }
+
   return {
     model: config.model ?? "claude-opus-4-6",
     systemPrompt,
     permissionMode: "bypassPermissions" as const,
     allowDangerouslySkipPermissions: true,
-    mcpServers: { "matrix-os-ipc": ipcServer },
+    mcpServers,
     agents,
     allowedTools: [
       "Read",
@@ -64,6 +107,7 @@ export function kernelOptions(config: KernelConfig) {
       "WebSearch",
       "WebFetch",
       ...IPC_TOOL_NAMES,
+      ...browserToolNames,
     ],
     maxTurns: config.maxTurns ?? 80,
     thinking: { type: "adaptive" as const },
