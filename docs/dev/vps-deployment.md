@@ -1,8 +1,10 @@
 # VPS Deployment Guide
 
-Complete guide for deploying Matrix OS on a VPS. Covers: building the Docker image, running the platform service, managing user containers, and connecting everything via Cloudflare Tunnel.
+Complete guide for deploying Matrix OS on a Hetzner VPS. Covers: server setup, platform service, container management, Cloudflare Tunnel, horizontal scaling, and backups.
 
 ## Architecture
+
+### Single Node (start here)
 
 ```
 Internet
@@ -14,7 +16,7 @@ Internet
                             |
                      Cloudflare Tunnel
                             |
-                     VPS (no public ports)
+                     Hetzner VPS (no public ports except SSH)
                      |
                      +-- cloudflared (tunnel daemon)
                      +-- platform :9000 (orchestrator + subdomain router)
@@ -24,290 +26,289 @@ Internet
                      +-- ...
 ```
 
-## Prerequisites
+### Multi-Node (scale later)
 
-- VPS: Ubuntu 22.04+ or Debian 12+, 2GB+ RAM, Docker installed
-- Domain: matrix-os.com on Cloudflare (free plan works)
-- Accounts: Clerk (auth), Inngest (webhooks), Vercel (www/)
-- API key: `ANTHROPIC_API_KEY` for the proxy
+```
+                     Cloudflare Tunnel
+                            |
+                     Hetzner VPS 1 -- control plane
+                     |  +-- cloudflared
+                     |  +-- platform :9000 (orchestrator, routes to any node)
+                     |  +-- proxy :8080
+                     |  +-- matrixos-alice, matrixos-bob, ...
+                     |
+                     +-- private network (10.0.0.0/16)
+                     |
+                     Hetzner VPS 2 -- worker
+                     |  +-- Docker API :2376 (TLS, private network only)
+                     |  +-- matrixos-charlie, matrixos-dave, ...
+                     |
+                     Hetzner VPS 3 -- worker
+                        +-- Docker API :2376 (TLS, private network only)
+                        +-- matrixos-eve, matrixos-frank, ...
+```
 
-## Step 1: VPS Setup
+## Hetzner Setup
+
+### Server Selection
+
+| Users    | Server | Specs              | Cost   |
+|----------|--------|--------------------|--------|
+| 1-20     | CPX21  | 3 vCPU, 4GB RAM    | ~5/mo  |
+| 20-50    | CPX31  | 4 vCPU, 8GB RAM    | ~9/mo  |
+| 50-100   | CPX41  | 8 vCPU, 16GB RAM   | ~17/mo |
+
+Each user container is capped at 256MB RAM + 0.5 CPU. With 30-min idle timeout, most containers are stopped. A 4GB box can run ~10 concurrent users.
+
+### Create Server
+
+1. Hetzner Cloud Console > Servers > Add Server
+2. Location: Falkenstein (fsn1) or Helsinki (hel1) -- closest to your users
+3. Image: Ubuntu 24.04
+4. Type: CPX21 (start small, resize later)
+5. Networking: check "Private networks" (create one called `matrixos-internal`, e.g. `10.0.0.0/16`)
+6. SSH Keys: add your public key
+7. Name: `matrixos-cp-1` (control plane 1)
+
+### Firewall
+
+Create in Hetzner Cloud Console > Firewalls > Create Firewall:
+
+**Inbound rules:**
+
+| Protocol | Port | Source           | Description      |
+|----------|------|------------------|------------------|
+| TCP      | 22   | Your IP (or any) | SSH access       |
+
+That's it. No other inbound ports. Cloudflare Tunnel is outbound-only.
+
+**Outbound:** Allow all (default).
+
+Apply the firewall to your server.
+
+### Block Storage Volume (recommended)
+
+Create a volume for persistent data (survives server rebuilds):
+
+1. Hetzner Cloud Console > Volumes > Create Volume
+2. Size: 20GB (expandable later)
+3. Location: same as your server
+4. Attach to: `matrixos-cp-1`
+5. Mount point: `/mnt/data`
+
+On the server:
+```bash
+# Hetzner auto-mounts, but verify
+df -h /mnt/data
+
+# Create data directories
+mkdir -p /mnt/data/platform /mnt/data/proxy /mnt/data/users
+```
+
+Update docker-compose to use the volume mount (see Step 4 below).
+
+## Step 1: Server Setup
+
+SSH into your Hetzner VPS:
+
+```bash
+ssh root@<your-server-ip>
+```
 
 ### Install Docker
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-# Log out and back in
 ```
 
-### Clone the Repo
+### Clone and Build
 
 ```bash
 git clone https://github.com/HamedMP/matrix-os.git
 cd matrix-os
 
-# Or deploy from a specific tag
+# Deploy from a specific tag
 git checkout v0.3.0
-```
 
-### Build the Matrix OS Image
-
-This is the image used for per-user containers. Build it once on the VPS:
-
-```bash
+# Build the user container image
 docker build -t matrix-os:latest -f Dockerfile .
-```
 
-This takes a few minutes (installs Node.js, pnpm, builds Next.js shell, installs Claude CLI).
-
-To verify:
-```bash
-docker images matrix-os
-```
-
-### Build Platform Services
-
-The platform and proxy also use the same Dockerfile (they just run different entrypoints):
-
-```bash
+# Build platform services
 docker compose -f distro/docker-compose.platform.yml build
 ```
 
 ## Step 2: Cloudflare Tunnel
 
-The tunnel connects your VPS to Cloudflare's edge without opening any public ports.
-
-### Install cloudflared
-
 ```bash
+# Install cloudflared
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
   -o /usr/local/bin/cloudflared
 chmod +x /usr/local/bin/cloudflared
-```
 
-### Create Tunnel
-
-```bash
-cloudflared tunnel login          # Opens browser to auth with Cloudflare
+# Authenticate and create tunnel
+cloudflared tunnel login
 cloudflared tunnel create matrix-os
 
-# Note the tunnel ID (e.g., abc12345-def6-7890-...)
-# Credentials saved to ~/.cloudflared/<tunnel-id>.json
+# Copy credentials
+mkdir -p /etc/cloudflared
+cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
 ```
 
-### DNS Records
+### DNS Records (Cloudflare Dashboard)
 
-In Cloudflare Dashboard > DNS:
+| Type  | Name | Target                         | Proxy |
+|-------|------|-------------------------------|-------|
+| CNAME | api  | `<tunnel-id>.cfargotunnel.com` | Yes   |
+| CNAME | *    | `<tunnel-id>.cfargotunnel.com` | Yes   |
 
-| Type  | Name | Target                              | Proxy |
-|-------|------|-------------------------------------|-------|
-| CNAME | api  | `<tunnel-id>.cfargotunnel.com`      | Yes   |
-| CNAME | *    | `<tunnel-id>.cfargotunnel.com`      | Yes   |
-
-Root `matrix-os.com` stays pointed at Vercel (separate record).
-
-### Copy Credentials
-
-```bash
-sudo mkdir -p /etc/cloudflared
-sudo cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
-```
-
-The `distro/cloudflared.yml` config routes:
-- `api.matrix-os.com` -> `http://localhost:9000` (platform API)
-- `*.matrix-os.com` -> `http://localhost:9000` (platform resolves subdomain -> container)
+Root `matrix-os.com` stays pointed at Vercel.
 
 ## Step 3: Environment Variables
 
-Create `.env` in the repo root on the VPS:
-
 ```bash
-cat > .env << 'EOF'
-# Required: Anthropic API key for the proxy (shared across all user containers)
+cat > /root/matrix-os/.env << 'EOF'
 ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional: secret for admin API endpoints
-PLATFORM_SECRET=your-random-secret-here
-
-# Optional: override container image (defaults to ghcr.io/finnaai/matrix-os:latest)
-# Use the locally built image instead:
+PLATFORM_SECRET=your-random-secret
 PLATFORM_IMAGE=matrix-os:latest
 EOF
 ```
 
 ## Step 4: Start the Platform
 
+If using Hetzner Volume for persistent data, override the volume mounts:
+
 ```bash
+# Edit docker-compose or use environment overrides
+# The default compose uses Docker volumes. To use the Hetzner block storage:
 docker compose -f distro/docker-compose.platform.yml up -d
 ```
 
-This starts three services:
+To use the Hetzner block storage volume instead of Docker volumes, create an override:
 
-| Service      | Port | Role |
-|-------------|------|------|
-| cloudflared | --   | Tunnel daemon, routes Cloudflare traffic to localhost |
-| platform    | 9000 | Orchestrator: provisions/manages user containers, subdomain routing |
-| proxy       | 8080 | Shared Anthropic API proxy, per-user cost tracking |
+```bash
+cat > distro/docker-compose.override.yml << 'EOF'
+services:
+  platform:
+    volumes:
+      - /mnt/data/platform:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/data/users:/data/users
+  proxy:
+    volumes:
+      - /mnt/data/proxy:/data
+EOF
+```
+
+Then start with both files:
+```bash
+docker compose \
+  -f distro/docker-compose.platform.yml \
+  -f distro/docker-compose.override.yml \
+  up -d
+```
 
 ### Verify
 
 ```bash
-# Local health checks
 curl http://localhost:9000/health   # {"status":"ok"}
 curl http://localhost:8080/health   # {"status":"ok"}
 
-# Via Cloudflare (after DNS propagation, ~1 min)
+# Via Cloudflare (after DNS propagation)
 curl https://api.matrix-os.com/health
-```
-
-### View Logs
-
-```bash
-# All services
-docker compose -f distro/docker-compose.platform.yml logs -f
-
-# Individual service
-docker compose -f distro/docker-compose.platform.yml logs platform -f
-docker compose -f distro/docker-compose.platform.yml logs proxy -f
-docker compose -f distro/docker-compose.platform.yml logs cloudflared -f
 ```
 
 ## Step 5: Vercel + Clerk + Inngest
 
-The `www/` site runs on Vercel. It handles the landing page, auth (Clerk), and dashboard.
-
 ### Vercel Environment Variables
 
-Set in Vercel Dashboard > Settings > Environment Variables:
-
-| Variable                           | Value                         |
-|-----------------------------------|-----------------------------|
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_...`               |
-| `CLERK_SECRET_KEY`                  | `sk_live_...`               |
-| `INNGEST_EVENT_KEY`                 | (from Inngest dashboard)    |
-| `INNGEST_SIGNING_KEY`               | (from Inngest dashboard)    |
-| `PLATFORM_API_URL`                  | `https://api.matrix-os.com` |
+| Variable                            | Value                         |
+|------------------------------------|-------------------------------|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_...`                 |
+| `CLERK_SECRET_KEY`                  | `sk_live_...`                 |
+| `INNGEST_EVENT_KEY`                 | (from Inngest dashboard)      |
+| `INNGEST_SIGNING_KEY`               | (from Inngest dashboard)      |
+| `PLATFORM_API_URL`                  | `https://api.matrix-os.com`   |
 
 ### Clerk Configuration
 
 1. Create app at clerk.com
-2. Settings > URLs:
-   - Sign in: `/login`
-   - Sign up: `/signup`
-   - After sign in: `/dashboard`
-   - After sign up: `/dashboard`
-3. Settings > User & Authentication: enable **Username** field (used as Matrix OS handle)
-4. Webhooks > Add Endpoint:
-   - URL: `https://matrix-os.com/api/inngest`
-   - Events: `user.created`, `user.deleted`
-   - Use Inngest Transformation Template
-5. Admin access: set `publicMetadata.role = "admin"` on your user via Clerk Dashboard > Users
-
-### Inngest Configuration
-
-1. Create app at inngest.com
-2. Connect to your Vercel deployment
-3. The `/api/inngest` route auto-registers the `provision-matrix-os` function
+2. URLs: sign in `/login`, sign up `/signup`, after both `/dashboard`
+3. Enable **Username** field (used as Matrix OS handle)
+4. Webhooks: URL `https://matrix-os.com/api/inngest`, events `user.created` + `user.deleted`, Inngest template
+5. Admin: set `publicMetadata.role = "admin"` on your user
 
 ### User Flow
 
 ```
-1. User visits matrix-os.com -> landing page
-2. Clicks "Get Started" -> Clerk signup (chooses username/handle)
-3. Clerk webhook -> Inngest -> POST api.matrix-os.com/containers/provision
-4. Platform: allocates ports, creates Docker container, starts it
-5. User redirected to dashboard -> clicks "Open Matrix OS"
-6. Browser: https://{handle}.matrix-os.com
-7. Cloudflare tunnel -> platform -> reverse proxy to container's shell port
-8. User sees Matrix OS desktop
+1. matrix-os.com -> Clerk signup (choose handle)
+2. Clerk webhook -> Inngest -> POST api.matrix-os.com/containers/provision
+3. Platform: allocate ports -> create Docker container -> start
+4. Dashboard: "Open Matrix OS" -> https://{handle}.matrix-os.com
+5. Cloudflare tunnel -> platform -> reverse proxy to container shell
+6. After 30 min idle -> container auto-stops
+7. Next visit -> platform auto-wakes container
 ```
 
 ## Container Management
 
-### Via Dashboard
+### Admin Dashboard
 
-Visit `https://matrix-os.com/admin` (requires `publicMetadata.role = "admin"` on your Clerk user).
+`https://matrix-os.com/admin` (requires Clerk `publicMetadata.role = "admin"`).
 
-The admin dashboard shows all containers with start/stop/destroy controls.
-
-### Via API
-
-All commands below use the platform API. Replace `api.matrix-os.com` with `localhost:9000` if running locally.
+### API
 
 ```bash
-# List all containers
-curl https://api.matrix-os.com/containers
+BASE=https://api.matrix-os.com  # or http://localhost:9000
 
-# Get specific container info
-curl https://api.matrix-os.com/containers/alice
+# List all
+curl $BASE/containers
 
-# Provision manually (bypasses Clerk webhook)
-curl -X POST https://api.matrix-os.com/containers/provision \
+# Get one
+curl $BASE/containers/alice
+
+# Provision
+curl -X POST $BASE/containers/provision \
   -H "content-type: application/json" \
   -d '{"handle":"alice","clerkUserId":"user_123"}'
 
-# Stop a running container (idle save)
-curl -X POST https://api.matrix-os.com/containers/alice/stop
+# Start / Stop
+curl -X POST $BASE/containers/alice/start
+curl -X POST $BASE/containers/alice/stop
 
-# Start a stopped container (wake)
-curl -X POST https://api.matrix-os.com/containers/alice/start
+# Destroy
+curl -X DELETE $BASE/containers/alice
 
-# Destroy container (removes Docker container + DB record + releases ports)
-curl -X DELETE https://api.matrix-os.com/containers/alice
-
-# Filter by status
-curl https://api.matrix-os.com/containers?status=running
-curl https://api.matrix-os.com/containers?status=stopped
+# Filter
+curl "$BASE/containers?status=running"
 ```
 
-### Via Docker (direct)
+### Docker (direct)
 
 ```bash
-# List user containers
-docker ps --filter "name=matrixos-"
-
-# View logs for a specific user
-docker logs matrixos-alice -f
-
-# Enter a user's container
-docker exec -it matrixos-alice sh
-
-# Inspect resource usage
-docker stats --filter "name=matrixos-"
+docker ps --filter "name=matrixos-"          # list user containers
+docker logs matrixos-alice -f                 # logs
+docker exec -it matrixos-alice sh             # shell into container
+docker stats --filter "name=matrixos-"        # resource usage
 ```
 
 ### Container Lifecycle
 
-Each user container:
-- **Provisions**: Docker container created from `matrix-os:latest`, ports allocated, home volume mounted
-- **Running**: shell on `:{shell_port}`, gateway on `:{gateway_port}`, 256MB memory / 0.5 CPU limit
-- **Idle timeout**: lifecycle manager checks every 5 min, stops containers idle > 30 min
-- **Wake on request**: when a stopped container gets a request via subdomain, platform auto-starts it
-- **Destroy**: removes container, releases ports, deletes DB record, volume remains for data recovery
-
-### Port Allocation
-
-Ports are allocated sequentially:
-- Gateway ports: 4001, 4002, 4003, ...
-- Shell ports: 3001, 3002, 3003, ...
-
-The platform tracks allocations in SQLite. Released ports are recycled.
+- **Provision**: image pulled, ports allocated, volume mounted at `/data/users/{handle}/matrixos`
+- **Running**: 256MB memory, 0.5 CPU, restart unless-stopped
+- **Idle**: lifecycle manager checks every 5 min, stops after 30 min inactive
+- **Wake**: subdomain request -> platform detects stopped -> auto-starts -> proxy
+- **Destroy**: container removed, ports released, DB record deleted (data volume kept)
 
 ## Database
 
-The platform uses SQLite (Drizzle ORM). The DB file lives inside the `platform-data` Docker volume.
-
 ```bash
-# Access the database
+# Access platform DB
 docker compose -f distro/docker-compose.platform.yml exec platform sh
 sqlite3 /data/platform.db
 
 # Useful queries
 SELECT handle, status, port, shell_port, last_active FROM containers;
 SELECT * FROM port_assignments;
-
-# Count by status
 SELECT status, COUNT(*) FROM containers GROUP BY status;
 ```
 
@@ -322,28 +323,14 @@ docker compose -f distro/docker-compose.platform.yml build
 docker compose -f distro/docker-compose.platform.yml up -d
 ```
 
-User containers keep running -- they're independent Docker containers. Only the platform/proxy/cloudflared services restart.
-
 ### Update User Container Image
 
 ```bash
-# Build new image
 docker build -t matrix-os:latest -f Dockerfile .
-
-# New containers will use the new image
-# Existing containers keep their old image until destroyed and re-provisioned
+# New provisions use new image. Existing containers keep old image.
 ```
 
-To upgrade an existing user: destroy and re-provision (their data volume persists):
-
-```bash
-curl -X DELETE https://api.matrix-os.com/containers/alice
-curl -X POST https://api.matrix-os.com/containers/provision \
-  -H "content-type: application/json" \
-  -d '{"handle":"alice","clerkUserId":"user_123"}'
-```
-
-### Deploy from a Tag
+### Deploy from Tag
 
 ```bash
 git fetch --tags
@@ -353,16 +340,182 @@ docker tag matrix-os:v0.3.0 matrix-os:latest
 docker compose -f distro/docker-compose.platform.yml up -d --build
 ```
 
+## Horizontal Scaling
+
+Start with one node, add workers when you need more capacity. No architecture change -- the platform orchestrator already abstracts container creation behind dockerode, which supports remote Docker hosts.
+
+### How It Works
+
+```
+Control plane (VPS 1):
+  - Runs platform, proxy, cloudflared
+  - Connects to local Docker AND remote Docker APIs
+  - DB tracks which node hosts which container
+  - Routes requests to the correct node
+
+Workers (VPS 2, 3, ...):
+  - Run Docker only
+  - Expose Docker API on private network (TLS-secured)
+  - No public ports, no platform services
+  - Just run user containers
+```
+
+The key code change: the orchestrator's `docker` client becomes a map of `nodeId -> Dockerode` instances. The `containers` table gets a `node_id` column. Provisioning picks the node with the most free capacity.
+
+### Step 1: Create Worker Server
+
+1. Hetzner > Add Server (same location, same private network `matrixos-internal`)
+2. Name: `matrixos-worker-1`
+3. Apply the same firewall (SSH only)
+
+### Step 2: Set Up Docker TLS on Worker
+
+On the worker, configure Docker to accept remote API connections over TLS on the private network:
+
+```bash
+# On worker: generate TLS certs
+mkdir -p /etc/docker/tls
+cd /etc/docker/tls
+
+# CA
+openssl genrsa -out ca-key.pem 4096
+openssl req -new -x509 -days 3650 -key ca-key.pem -sha256 -out ca.pem \
+  -subj "/CN=matrixos-docker-ca"
+
+# Server cert (use private IP)
+WORKER_PRIVATE_IP=10.0.0.x  # from Hetzner private network
+openssl genrsa -out server-key.pem 4096
+openssl req -new -key server-key.pem -out server.csr \
+  -subj "/CN=$WORKER_PRIVATE_IP"
+echo "subjectAltName=IP:$WORKER_PRIVATE_IP,IP:127.0.0.1" > extfile.cnf
+openssl x509 -req -days 3650 -in server.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out server-cert.pem -extfile extfile.cnf
+
+# Client cert (copy to control plane)
+openssl genrsa -out client-key.pem 4096
+openssl req -new -key client-key.pem -out client.csr \
+  -subj "/CN=matrixos-platform"
+echo "extendedKeyUsage=clientAuth" > client-extfile.cnf
+openssl x509 -req -days 3650 -in client.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out client-cert.pem -extfile client-extfile.cnf
+
+# Configure Docker daemon
+cat > /etc/docker/daemon.json << EOF
+{
+  "hosts": ["unix:///var/run/docker.sock", "tcp://$WORKER_PRIVATE_IP:2376"],
+  "tls": true,
+  "tlsverify": true,
+  "tlscacert": "/etc/docker/tls/ca.pem",
+  "tlscert": "/etc/docker/tls/server-cert.pem",
+  "tlskey": "/etc/docker/tls/server-key.pem"
+}
+EOF
+
+systemctl restart docker
+```
+
+### Step 3: Copy Client Certs to Control Plane
+
+```bash
+# From control plane:
+mkdir -p /etc/docker/workers/worker-1
+scp worker-1:/etc/docker/tls/ca.pem /etc/docker/workers/worker-1/
+scp worker-1:/etc/docker/tls/client-cert.pem /etc/docker/workers/worker-1/
+scp worker-1:/etc/docker/tls/client-key.pem /etc/docker/workers/worker-1/
+```
+
+### Step 4: Build Image on Worker
+
+The worker needs the Matrix OS image too:
+
+```bash
+# On worker:
+git clone https://github.com/HamedMP/matrix-os.git
+cd matrix-os && git checkout v0.3.0
+docker build -t matrix-os:latest -f Dockerfile .
+```
+
+Or push to a private registry and pull from there.
+
+### Step 5: Platform Code Changes
+
+The orchestrator needs a `nodes` table and multi-host Docker support. This is a future code change (not implemented yet), but the design is:
+
+**DB schema addition:**
+```sql
+CREATE TABLE nodes (
+  id TEXT PRIMARY KEY,          -- 'local', 'worker-1', 'worker-2'
+  host TEXT NOT NULL,            -- 'local' or '10.0.0.x:2376'
+  capacity_mb INTEGER NOT NULL,  -- total RAM for containers
+  used_mb INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'active'
+);
+
+-- Add to containers table:
+ALTER TABLE containers ADD COLUMN node_id TEXT DEFAULT 'local';
+```
+
+**Orchestrator change:**
+```typescript
+// Instead of one Docker client:
+const docker = new Dockerode();
+
+// Map of node -> client:
+const nodes = new Map<string, Dockerode>();
+nodes.set('local', new Dockerode());
+nodes.set('worker-1', new Dockerode({
+  host: '10.0.0.x',
+  port: 2376,
+  ca: readFileSync('/etc/docker/workers/worker-1/ca.pem'),
+  cert: readFileSync('/etc/docker/workers/worker-1/client-cert.pem'),
+  key: readFileSync('/etc/docker/workers/worker-1/client-key.pem'),
+}));
+
+// Provisioning picks least-loaded node:
+function pickNode(): string {
+  // query nodes table, return node with lowest used_mb
+}
+```
+
+**Routing change:**
+The subdomain proxy already looks up `shell_port` from DB. With multi-node, it also needs the node's private IP:
+```typescript
+// Instead of:
+fetch(`http://localhost:${record.shellPort}${path}`)
+
+// Route to correct node:
+const node = getNode(record.nodeId);
+const host = node.id === 'local' ? 'localhost' : node.host.split(':')[0];
+fetch(`http://${host}:${record.shellPort}${path}`)
+```
+
+### Scaling Checklist
+
+- [ ] Add `nodes` table to platform DB schema
+- [ ] Add `node_id` column to `containers` table
+- [ ] Update orchestrator to accept multiple Docker hosts
+- [ ] Add node selection logic (least-loaded)
+- [ ] Update subdomain proxy to route to correct node IP
+- [ ] Add `/nodes` admin API endpoints (register, deregister, status)
+- [ ] Build image on each worker (or set up private registry)
+
+### When to Scale
+
+You need a second node when:
+- Concurrent running containers exceed ~60% of RAM (e.g. 10+ on CPX21)
+- CPU usage sustained above 80%
+- You want geographic redundancy
+
+Until then, single node is simpler and cheaper. Resize the Hetzner server (CPX21 -> CPX31 -> CPX41) before adding nodes -- vertical scaling is free of code changes.
+
 ## Troubleshooting
 
 ### Platform won't start
 
 ```bash
-# Check logs
 docker compose -f distro/docker-compose.platform.yml logs platform
 
 # Common: Docker socket not mounted
-# Fix: ensure /var/run/docker.sock exists and is accessible
 ls -la /var/run/docker.sock
 ```
 
@@ -371,60 +524,42 @@ ls -la /var/run/docker.sock
 ```bash
 docker compose -f distro/docker-compose.platform.yml logs cloudflared
 
-# Common: credentials file missing
-# Fix: ensure /etc/cloudflared/credentials.json exists
-# and cloudflared-creds volume is populated
+# Common: credentials missing
+ls /etc/cloudflared/credentials.json
 ```
 
 ### Container provisioning fails
 
 ```bash
-# Check if image exists
+# Check image exists
 docker images matrix-os
 
-# Common: image not built locally
-# Fix: docker build -t matrix-os:latest -f Dockerfile .
-
-# Check if ports are available
-docker compose -f distro/docker-compose.platform.yml exec platform sh
-sqlite3 /data/platform.db "SELECT * FROM port_assignments"
+# Check port conflicts
+sqlite3 /mnt/data/platform/platform.db "SELECT * FROM port_assignments"
 ```
 
-### User can't access their instance
+### User can't access instance
 
 ```bash
-# Check container is running
 docker ps --filter "name=matrixos-alice"
-
-# Check platform knows about it
 curl http://localhost:9000/containers/alice
-
-# Check shell is responding inside container
 docker exec matrixos-alice wget -qO- http://localhost:3000 | head -5
 ```
 
 ## Backup
 
-### Platform Database
+### Quick Backup
 
 ```bash
-# Copy from Docker volume
-docker compose -f distro/docker-compose.platform.yml exec platform \
-  cat /data/platform.db > backup-platform.db
+# Platform + proxy DBs
+cp /mnt/data/platform/platform.db /backups/platform-$(date +%Y%m%d).db
+cp /mnt/data/proxy/proxy.db /backups/proxy-$(date +%Y%m%d).db
+
+# All user data
+tar czf /backups/users-$(date +%Y%m%d).tar.gz /mnt/data/users/
 ```
 
-### User Data
-
-User home directories are in the `user-data` volume at `/data/users/{handle}/matrixos/`.
-
-```bash
-# Backup all user data
-docker compose -f distro/docker-compose.platform.yml exec platform \
-  tar czf /tmp/users-backup.tar.gz /data/users/
-docker cp $(docker compose -f distro/docker-compose.platform.yml ps -q platform):/tmp/users-backup.tar.gz .
-```
-
-### Full Backup Script
+### Automated Backup Script
 
 ```bash
 #!/bin/bash
@@ -432,17 +567,27 @@ DATE=$(date +%Y%m%d)
 BACKUP_DIR=/backups/matrix-os/$DATE
 mkdir -p $BACKUP_DIR
 
-# Platform DB
-docker compose -f distro/docker-compose.platform.yml exec -T platform \
-  cat /data/platform.db > $BACKUP_DIR/platform.db
+cp /mnt/data/platform/platform.db $BACKUP_DIR/
+cp /mnt/data/proxy/proxy.db $BACKUP_DIR/
+tar czf $BACKUP_DIR/users.tar.gz /mnt/data/users/
 
-# Proxy DB
-docker compose -f distro/docker-compose.platform.yml exec -T proxy \
-  cat /data/proxy.db > $BACKUP_DIR/proxy.db
-
-# User data
-docker compose -f distro/docker-compose.platform.yml exec -T platform \
-  tar czf - /data/users/ > $BACKUP_DIR/users.tar.gz
+# Keep last 30 days
+find /backups/matrix-os -maxdepth 1 -mtime +30 -exec rm -rf {} +
 
 echo "Backup complete: $BACKUP_DIR"
 ```
+
+Add to cron:
+```bash
+echo "0 3 * * * /root/matrix-os/scripts/backup.sh" | crontab -
+```
+
+### Hetzner Snapshots
+
+For full-server backups, use Hetzner server snapshots:
+```bash
+# Via hcloud CLI
+hcloud server create-image matrixos-cp-1 --type snapshot --description "v0.3.0 $(date +%Y%m%d)"
+```
+
+Or enable automatic backups in Hetzner Console (~20% server cost).
