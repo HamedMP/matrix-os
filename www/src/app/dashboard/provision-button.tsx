@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import posthog from "posthog-js";
 import { provisionInstance } from "./actions";
 
 export function ProvisionButton() {
@@ -10,10 +11,16 @@ export function ProvisionButton() {
   async function handleProvision() {
     setLoading(true);
     setError(null);
+
+    posthog.capture("provision_requested");
+
     const result = await provisionInstance();
     if (result.error) {
       setError(result.error);
       setLoading(false);
+      posthog.capture("provision_failed", {
+        error: result.error,
+      });
     }
   }
 

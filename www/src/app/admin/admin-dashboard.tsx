@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import posthog from "posthog-js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,19 @@ export function AdminDashboard({
 
   async function action(handle: string, method: string, path: string) {
     setLoading(`${handle}-${path}`);
+
+    const actionType = path.includes("/start")
+      ? "start"
+      : path.includes("/stop")
+        ? "stop"
+        : "destroy";
+
+    posthog.capture("admin_container_action", {
+      action: actionType,
+      target_handle: handle,
+      method,
+    });
+
     await fetch(`${apiUrl}${path}`, { method });
     await refresh();
     setLoading(null);

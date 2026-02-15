@@ -1,4 +1,5 @@
 import { inngest } from "./client";
+import { getPostHogClient } from "@/lib/posthog-server";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 
@@ -8,6 +9,25 @@ export const provisionUser = inngest.createFunction(
   async ({ event, step }) => {
     const user = event.data;
     const handle = user.username ?? user.id;
+    const posthog = getPostHogClient();
+
+    posthog.capture({
+      distinctId: user.id,
+      event: "inngest_provision_started",
+      properties: {
+        handle,
+        source: "inngest",
+      },
+    });
+
+    posthog.identify({
+      distinctId: user.id,
+      properties: {
+        handle,
+        email: user.email_addresses?.[0]?.email_address,
+        created_via: "clerk_signup",
+      },
+    });
 
     await step.run("provision-container", async () => {
       const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
@@ -18,6 +38,16 @@ export const provisionUser = inngest.createFunction(
 
       if (!res.ok) {
         const body = await res.text();
+        posthog.capture({
+          distinctId: user.id,
+          event: "inngest_provision_failed",
+          properties: {
+            handle,
+            error: body,
+            status: res.status,
+            source: "inngest",
+          },
+        });
         throw new Error(`Provision failed: ${res.status} ${body}`);
       }
 
@@ -30,6 +60,25 @@ export const provisionUser = inngest.createFunction(
       const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}`);
       if (!res.ok) throw new Error("Container not found after provision");
       const info = await res.json();
+
+      posthog.capture({
+        distinctId: user.id,
+        event: "inngest_provision_completed",
+        properties: {
+          handle,
+          container_status: info.status,
+          source: "inngest",
+        },
+      });
+
+      posthog.identify({
+        distinctId: user.id,
+        properties: {
+          has_instance: true,
+          instance_status: info.status,
+        },
+      });
+
       return { status: info.status };
     });
   },
