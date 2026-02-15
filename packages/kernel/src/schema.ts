@@ -33,3 +33,15 @@ export const messages = sqliteTable(
   },
   (table) => [index("idx_messages_to").on(table.toAgent, table.read)],
 );
+
+export const memories = sqliteTable(
+  "memories",
+  {
+    id: text("id").primaryKey(),
+    content: text("content").notNull(),
+    source: text("source"),
+    category: text("category").default("fact"),
+    createdAt: text("created_at"),
+    updatedAt: text("updated_at"),
+  },
+);

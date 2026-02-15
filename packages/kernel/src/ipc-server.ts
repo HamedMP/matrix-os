@@ -1,6 +1,6 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { MatrixDB } from "./db.js";
@@ -15,6 +15,9 @@ import {
   createTask,
 } from "./ipc.js";
 import { loadSkillBody } from "./skills.js";
+import { createMemoryStore } from "./memory.js";
+import { createImageClient } from "./image-gen.js";
+import { createUsageTracker } from "./usage.js";
 import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
 import { saveIdentity, deriveAiHandle } from "./identity.js";
 import { execFile } from "node:child_process";
@@ -403,6 +406,227 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               }
               writeJobs(filtered);
               return { content: [{ type: "text" as const, text: `Removed cron job: ${job_id}` }] };
+            }
+          }
+        },
+      ),
+
+      tool(
+        "new_conversation",
+        "Create a new conversation session. Returns the session ID. Use this when the user wants to start a fresh chat.",
+        {
+          channel: z.string().optional().describe("Optional channel prefix (e.g. 'telegram')"),
+        },
+        async ({ channel }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot create conversation (no home path)" }] };
+          }
+          const convDir = join(homePath, "system", "conversations");
+          mkdirSync(convDir, { recursive: true });
+          const uuid = randomUUID();
+          const id = channel ? `${channel}:${uuid}` : uuid;
+          const now = Date.now();
+          const conv = { id, createdAt: now, updatedAt: now, messages: [] };
+          writeFileSync(join(convDir, `${id}.json`), JSON.stringify(conv, null, 2));
+          return { content: [{ type: "text" as const, text: `Created conversation: ${id}` }] };
+        },
+      ),
+
+      tool(
+        "search_conversations",
+        "Search across all conversation sessions for messages matching a query. Use this to find context from previous conversations when the user references something discussed before.",
+        {
+          query: z.string().describe("Search query (case-insensitive substring match)"),
+          limit: z.number().optional().describe("Max results to return (default 10)"),
+        },
+        async ({ query, limit }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot search conversations (no home path)" }] };
+          }
+          const convDir = join(homePath, "system", "conversations");
+          if (!existsSync(convDir)) {
+            return { content: [{ type: "text" as const, text: "No conversations found" }] };
+          }
+
+          const maxResults = limit ?? 10;
+          const lowerQuery = query.toLowerCase();
+          const results: Array<{
+            sessionId: string;
+            messageIndex: number;
+            role: string;
+            preview: string;
+            timestamp: number;
+          }> = [];
+
+          const files = readdirSync(convDir).filter((f: string) => f.endsWith(".json"));
+          for (const f of files) {
+            try {
+              const data = JSON.parse(readFileSync(join(convDir, f), "utf-8"));
+              const messages = data.messages ?? [];
+              for (let i = 0; i < messages.length; i++) {
+                const msg = messages[i];
+                if (msg.content?.toLowerCase().includes(lowerQuery)) {
+                  results.push({
+                    sessionId: data.id ?? f.replace(".json", ""),
+                    messageIndex: i,
+                    role: msg.role,
+                    preview: msg.content.length > 100
+                      ? msg.content.slice(0, 100) + "..."
+                      : msg.content,
+                    timestamp: msg.timestamp ?? 0,
+                  });
+                }
+              }
+            } catch {
+              // skip malformed files
+            }
+          }
+
+          results.sort((a, b) => b.timestamp - a.timestamp);
+          const limited = results.slice(0, maxResults);
+
+          return {
+            content: [{
+              type: "text" as const,
+              text: limited.length > 0
+                ? JSON.stringify(limited, null, 2)
+                : `No messages matching "${query}" found`,
+            }],
+          };
+        },
+      ),
+
+      tool(
+        "remember",
+        "Store a memory about the user. Use when user says 'remember that...', 'I prefer...', 'my X is Y', or states a fact worth remembering.",
+        {
+          content: z.string().describe("The fact or preference to remember"),
+          category: z.enum(["preference", "fact", "context", "instruction"]).optional().describe("Memory category (default: fact)"),
+        },
+        async ({ content, category }) => {
+          const store = createMemoryStore(db);
+          const id = store.remember(content, { category });
+          return {
+            content: [{ type: "text" as const, text: `Remembered: "${content}" (${id})` }],
+          };
+        },
+      ),
+
+      tool(
+        "recall",
+        "Search stored memories. Use when the kernel needs context that might have been stored before.",
+        {
+          query: z.string().describe("Search query to find relevant memories"),
+          limit: z.number().optional().describe("Max results (default: 10)"),
+          category: z.enum(["preference", "fact", "context", "instruction"]).optional().describe("Filter by category"),
+        },
+        async ({ query, limit, category }) => {
+          const store = createMemoryStore(db);
+          const results = store.recall(query, { limit, category });
+          return {
+            content: [{
+              type: "text" as const,
+              text: results.length > 0
+                ? JSON.stringify(results, null, 2)
+                : "No matching memories found",
+            }],
+          };
+        },
+      ),
+
+      tool(
+        "forget",
+        "Remove a specific memory. Use when user says 'forget that', 'that's no longer true'.",
+        {
+          id: z.string().describe("The memory ID to remove"),
+        },
+        async ({ id }) => {
+          const store = createMemoryStore(db);
+          store.forget(id);
+          return {
+            content: [{ type: "text" as const, text: `Forgot memory: ${id}` }],
+          };
+        },
+      ),
+
+      tool(
+        "list_memories",
+        "List all stored memories. Use when user asks 'what do you remember about me?'",
+        {
+          category: z.enum(["preference", "fact", "context", "instruction"]).optional().describe("Filter by category"),
+        },
+        async ({ category }) => {
+          const store = createMemoryStore(db);
+          const results = store.listAll({ category });
+          return {
+            content: [{
+              type: "text" as const,
+              text: results.length > 0
+                ? JSON.stringify(results, null, 2)
+                : "No memories stored yet",
+            }],
+          };
+        },
+      ),
+
+      tool(
+        "generate_image",
+        "Generate an image from a text description using AI. Saves to ~/data/images/. Returns the local file path.",
+        {
+          prompt: z.string().describe("Text description of the image to generate"),
+          model: z.enum(["fal-ai/flux/schnell", "fal-ai/flux/dev"]).optional().describe("Model to use (default: schnell for speed, dev for quality)"),
+          size: z.string().optional().describe("Image dimensions (default: 1024x1024)"),
+          save_as: z.string().optional().describe("Custom filename for the saved image"),
+        },
+        async ({ prompt, model, size, save_as }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot generate image (no home path)" }] };
+          }
+
+          const apiKey = process.env.FAL_API_KEY ?? "";
+          if (!apiKey) {
+            try {
+              const configPath = join(homePath, "system", "config.json");
+              if (existsSync(configPath)) {
+                const config = JSON.parse(readFileSync(configPath, "utf-8"));
+                if (config.media?.fal_api_key) {
+                  return generateWithKey(config.media.fal_api_key);
+                }
+              }
+            } catch {}
+            return { content: [{ type: "text" as const, text: "Image generation not configured. Set FAL_API_KEY or add media.fal_api_key to config.json." }] };
+          }
+
+          return generateWithKey(apiKey);
+
+          async function generateWithKey(key: string) {
+            const client = createImageClient(key);
+            const tracker = createUsageTracker(homePath!);
+            const imageDir = join(homePath!, "data", "images");
+
+            try {
+              const result = await client.generateImage(prompt, {
+                model,
+                size,
+                imageDir,
+                saveAs: save_as,
+              });
+
+              tracker.track("image_gen", result.cost, { model: result.model, prompt });
+
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: `Image generated and saved to ${result.localPath}\nModel: ${result.model}\nCost: $${result.cost.toFixed(4)}\n\nTo display: ~/data/images/${result.localPath.split("/").pop()}`,
+                }],
+              };
+            } catch (e) {
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: `Image generation failed: ${e instanceof Error ? e.message : String(e)}`,
+                }],
+              };
             }
           }
         },

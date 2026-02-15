@@ -5,6 +5,7 @@ import { loadSkills, buildSkillsToc } from "./skills.js";
 import { parseSetupPlan } from "./onboarding.js";
 import { loadHandle } from "./identity.js";
 import { listTasks } from "./ipc.js";
+import { createMemoryStore } from "./memory.js";
 import type { MatrixDB } from "./db.js";
 
 export function estimateTokens(text: string): number {
@@ -62,6 +63,32 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     sections.push(
       "\nIMPORTANT: This is a fresh install. Follow the bootstrap instructions above. After onboarding is complete, delete ~/system/bootstrap.md.",
     );
+  }
+
+  // Relevant memories (from DB)
+  if (db) {
+    try {
+      const memStore = createMemoryStore(db);
+      const allMemories = memStore.listAll({ limit: 20 });
+      if (allMemories.length > 0) {
+        const TOKEN_CAP = 300;
+        const lines: string[] = [];
+        let tokenCount = 0;
+        for (const mem of allMemories) {
+          const line = `- [${mem.category ?? "fact"}] ${mem.content}`;
+          const lineTokens = estimateTokens(line);
+          if (tokenCount + lineTokens > TOKEN_CAP) break;
+          lines.push(line);
+          tokenCount += lineTokens;
+        }
+        if (lines.length > 0) {
+          sections.push("\n## Relevant Memories\n");
+          sections.push(lines.join("\n"));
+        }
+      }
+    } catch {
+      // Memory table may not exist yet in older DBs
+    }
   }
 
   // File system paths (absolute)

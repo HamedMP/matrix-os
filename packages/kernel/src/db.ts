@@ -57,4 +57,20 @@ function runMigrations(sqlite: InstanceType<typeof Database>) {
   sqlite.prepare(
     `CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_agent, read)`,
   ).run();
+
+  sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      source TEXT,
+      category TEXT DEFAULT 'fact',
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `).run();
+
+  sqlite.prepare(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+    USING fts5(content, content_rowid='rowid')
+  `).run();
 }

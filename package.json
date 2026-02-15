@@ -1,7 +1,12 @@
 {
   "name": "matrix-os",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "matrixos": "./bin/matrixos.ts",
+    "mos": "./bin/matrixos.ts"
+  },
   "engines": {
     "node": ">=22"
   },
