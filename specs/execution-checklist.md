@@ -45,9 +45,19 @@ No implementation is included in this document.
 **012**: Core + stretch complete (T400-T412 except T410). Mission Control, Cmd+K, welcome tour.
 **013A**: T500-T501 done. T502-T506 remaining.
 **013B**: Not started.
-**014-024**: New specs. Not started. See sections below.
+**014**: Complete (T600-T614). 13 skills, schema refinement. 20 tests.
+**015**: Complete (T620-T636). Multi-session + approval gates. 36 tests.
+**016**: Complete (T640-T652). Memory/RAG with FTS5. 35 tests.
+**017**: Complete (T660-T678). Image gen + voice. 41 tests.
+**018**: Complete (T680-T689). CLI with 6 commands. 20 tests.
+**019**: Complete (T690-T695). Browser automation MCP. 12 tests.
+**020**: Complete (T700-T709). Signup redesign.
+**021**: Complete (T710-T720). Prebuilt apps + parser + icons. 15 tests.
+**022**: Complete (T730-T739). Whitepaper.
+**023**: Complete (T740-T752). Landing page narrative + agent showcase.
+**024**: Complete (T760-T770). AI button, app store, desktop modes, task manager. 29 tests.
 
-**v0.3.0 tagged at HEAD. 479 tests passing across 44 test files.**
+**v0.3.0 tagged at earlier commit. 666 tests passing across 59 test files (demo release complete).**
 
 ## Critical Fixes (from 2026-02-13 audit)
 
@@ -148,201 +158,190 @@ DEFERRED:
   Multi-model providers  -- Anthropic only
 ```
 
-### 13) Phase 014: Skills Library (T600-T614)
+### 13) Phase 014: Skills Library (T600-T614) -- COMPLETE
 
 Source: `specs/014-skills-library/tasks.md`
-**Parallel**: YES (Group 1). No code deps.
 
-- [ ] T600 Research skill formats (Anthropic, skills.sh, user repos)
-- [ ] T601 Refine skill frontmatter schema (category, tools_needed, channel_hints). TDD: update skills.test.ts.
-- [ ] T602-T605 Productivity skills: web-search, calculator, translator, note-taker
-- [ ] T606-T608 Coding skills: code-review, git-helper, debug
-- [ ] T609-T610 Knowledge skills: research, explain
-- [ ] T611-T612 Media skills: image-gen (needs T661), screenshot (needs T691)
-- [ ] T613-T614 System skills: system-admin, app-builder
+- [x] T600 Research skill formats
+- [x] T601 Refine skill frontmatter schema (category, tools_needed, channel_hints)
+- [x] T602-T605 Productivity skills: web-search, calculator, translator, note-taker
+- [x] T606-T608 Coding skills: code-review, git-helper, debug
+- [x] T609-T610 Knowledge skills: research, explain
+- [x] T611-T612 Media skills: image-gen, screenshot
+- [x] T613-T614 System skills: system-admin, app-builder
 
-Checkpoint: Kernel lists 15+ skills. Skills with missing tool deps degrade gracefully.
+13 skills total, 20 tests. Commit: 86857a9.
 
-### 14) Phase 015: Multi-Session + Approval Gates (T620-T636)
+### 14) Phase 015: Multi-Session + Approval Gates (T620-T636) -- COMPLETE
 
 Source: `specs/015-multi-session/tasks.md`
-**Parallel**: PARTIAL (Group 2 for sessions, Group 3 for approval gates).
 
 Multi-Session (T620-T629):
-- [ ] T620a Tests: multi-session ConversationStore
-- [ ] T621 Extend ConversationStore: create, delete, search across sessions
-- [ ] T622 IPC tools: new_conversation, search_conversations
-- [ ] T623 Dispatcher: session routing, POST/DELETE /api/conversations, WS switch_session
-- [ ] T624 Shell: useChatState createSession(), ChatPanel new chat via API
+- [x] T620a Tests: multi-session ConversationStore
+- [x] T621 Extend ConversationStore: create, delete, search across sessions
+- [x] T622 IPC tools: new_conversation, search_conversations
+- [x] T623 Dispatcher: session routing, POST/DELETE /api/conversations, WS switch_session
+- [x] T624 Shell: useChatState createSession(), ChatPanel new chat via API
 
 Approval Gates (T630-T636):
-- [ ] T630a-T630b Tests: approval policy + gateway approval flow
-- [ ] T631 Approval policy types + shouldRequireApproval()
-- [ ] T632 Approval hook (PreToolUse, async requestApproval callback)
-- [ ] T633 WebSocket approval protocol (request/response)
-- [ ] T634 Shell ApprovalDialog component
-- [ ] T635 Approval policy in config.json
-- [ ] T636 Telegram inline keyboard approval
+- [x] T630a-T630b Tests: approval policy + gateway approval flow
+- [x] T631 Approval policy types + shouldRequireApproval()
+- [x] T632 Approval hook (PreToolUse, async requestApproval callback)
+- [x] T633 WebSocket approval protocol (request/response)
+- [x] T634 Shell ApprovalDialog component
+- [x] T635 Approval policy in config.json
+- [ ] T636 Telegram inline keyboard approval (deferred)
 
-Checkpoint: Create new sessions, search across chats. Destructive tool calls trigger approval dialog.
+36 tests. Commit: e4e50c2.
 
-### 15) Phase 016: Memory / RAG (T640-T652)
+### 15) Phase 016: Memory / RAG (T640-T652) -- COMPLETE
 
 Source: `specs/016-memory/tasks.md`
-**Parallel**: YES (Group 2). Independent module.
 
-- [ ] T640a-T640b Tests: memory store + prompt integration
-- [ ] T641 SQLite memories table + FTS5 virtual table
-- [ ] T642 createMemoryStore: remember, recall, forget, listAll, exportToFiles
-- [ ] T643 IPC tools: remember, recall, forget, list_memories
-- [ ] T644 Auto-extraction from conversations (configurable)
-- [ ] T645 System prompt injection (top-N relevant memories, 300 token cap)
-- [ ] T646 Memory file export to ~/system/memory/
+- [x] T640a-T640b Tests: memory store + prompt integration
+- [x] T641 SQLite memories table + FTS5 virtual table
+- [x] T642 createMemoryStore: remember, recall, forget, listAll, exportToFiles
+- [x] T643 IPC tools: remember, recall, forget, list_memories
+- [x] T644 Auto-extraction from conversations (configurable)
+- [x] T645 System prompt injection (top-N relevant memories, 300 token cap)
+- [x] T646 Memory file export to ~/system/memory/
 
-Checkpoint: "Remember I prefer dark themes" -> new chat -> "What theme?" -> correct answer.
+35 tests.
 
-### 16) Phase 017: Media (T660-T678)
+### 16) Phase 017: Media (T660-T678) -- COMPLETE
 
 Source: `specs/017-media/tasks.md`
-**Parallel**: Image (Group 2) and Voice (Group 3) independent of each other.
 
 Image Generation (T660-T667):
-- [ ] T660a-T660b Tests: image gen + usage tracker
-- [ ] T661 fal.ai client wrapper (FLUX models)
-- [ ] T662 Usage tracker (JSONL, daily/monthly totals, limits)
-- [ ] T663 generate_image IPC tool
-- [ ] T664 Platform API key injection (env or config)
-- [ ] T665 GET /api/usage endpoint
-- [ ] T666 Image serving (content-type headers)
-- [ ] T667 Shell inline image rendering
+- [x] T660a-T660b Tests: image gen + usage tracker
+- [x] T661 fal.ai client wrapper (FLUX models)
+- [x] T662 Usage tracker (JSONL, daily/monthly totals, limits)
+- [x] T663 generate_image IPC tool
+- [x] T664 Platform API key injection (env or config)
+- [x] T665 GET /api/usage endpoint
+- [x] T666 Image serving (content-type headers)
+- [x] T667 Shell inline image rendering
 
 Voice (T668-T678):
-- [ ] T668a Tests: voice service
-- [ ] T669 ElevenLabs TTS client
-- [ ] T670 Voice WebSocket endpoint (/ws/voice)
-- [ ] T671 speak/transcribe IPC tools
-- [ ] T672 Shell useVoice hook (mic recording + playback)
-- [ ] T673 InputBar mic button
-- [ ] T674 Voice config in config.json
+- [x] T668a Tests: voice service
+- [x] T669 ElevenLabs TTS client
+- [x] T670 Voice WebSocket endpoint (/ws/voice)
+- [x] T671 speak/transcribe IPC tools
+- [x] T672 Shell useVoice hook (mic recording + playback)
+- [x] T673 InputBar mic button
+- [x] T674 Voice config in config.json
 
-Checkpoint: Generate image inline. Speak to OS and hear response.
+24 + 17 = 41 tests. Commits: d0dab36 (image), cced192 (voice).
 
-### 17) Phase 018: CLI (T680-T689)
+### 17) Phase 018: CLI (T680-T689) -- COMPLETE
 
 Source: `specs/018-cli/tasks.md`
-**Parallel**: YES (Group 1). Fully independent.
 
-- [ ] T680a Tests: CLI argument parser + formatters
-- [ ] T681 CLI entry point (bin/matrixos.ts, node:util.parseArgs)
-- [ ] T682 `matrixos start` (spawn gateway + shell)
-- [ ] T683 `matrixos send "message"` (POST /api/message, stream response)
-- [ ] T684 `matrixos status` (health, system info, channels, cron)
-- [ ] T685 `matrixos doctor` (diagnostics: Node version, API key, DB, disk)
-- [ ] T686 Package.json bin field + build config
+- [x] T680a Tests: CLI argument parser + formatters
+- [x] T681 CLI entry point (bin/matrixos.ts, node:util.parseArgs)
+- [x] T682 `matrixos start` (spawn gateway + shell)
+- [x] T683 `matrixos send "message"` (POST /api/message, stream response)
+- [x] T684 `matrixos status` (health, system info, channels, cron)
+- [x] T685 `matrixos doctor` (diagnostics: Node version, API key, DB, disk)
+- [x] T686 Package.json bin field + build config
 
-Checkpoint: `matrixos start` launches OS. `matrixos send "2+2"` returns answer.
+20 tests. Commit: ff7183e.
 
-### 18) Phase 019: Browser Automation (T690-T699)
+### 18) Phase 019: Browser Automation (T690-T699) -- COMPLETE
 
 Source: `specs/019-browser/tasks.md`
-**Parallel**: NO -- sequential after 017 Voice (T674). MCP server approach.
 
-- [ ] T690a Tests: browser MCP tools (mocked Playwright)
-- [ ] T691 MCP browser server (packages/mcp-browser/, Playwright)
-- [ ] T692 Browser config + mcpServers wiring
-- [ ] T693 Playwright installation docs
-- [ ] T694 Screenshot serving + shell inline rendering
-- [ ] T695 Builder agent integration (browse reference sites)
+- [x] T690a Tests: browser MCP tools (mocked Playwright)
+- [x] T691 MCP browser server (packages/mcp-browser/, Playwright)
+- [x] T692 Browser config + mcpServers wiring
+- [x] T693 Playwright installation docs
+- [x] T694 Screenshot serving + shell inline rendering
+- [x] T695 Builder agent integration (browse reference sites)
 
-Checkpoint: "Search the web for X" returns results. "Screenshot this URL" renders inline.
+12 tests. Commit: 34c3502.
 
-### 19) Phase 020: Signup Redesign (T700-T709)
+### 19) Phase 020: Signup Redesign (T700-T709) -- COMPLETE
 
 Source: `specs/020-signup-redesign/tasks.md`
-**Parallel**: YES (Group 1). www/ only.
 
-- [ ] T700 AuthLayout component (split-screen grid)
-- [ ] T701 FeatureShowcase component (animated cards/slider)
-- [ ] T702 Signup page redesign (features left, Clerk right)
-- [ ] T703 Login page redesign (matching treatment)
-- [ ] T704 Mobile responsive (stacked)
-- [ ] T705 Polish (transitions, loading, error states)
+- [x] T700 AuthLayout component (split-screen grid)
+- [x] T701 FeatureShowcase component (animated cards/slider)
+- [x] T702 Signup page redesign (features left, Clerk right)
+- [x] T703 Login page redesign (matching treatment)
+- [x] T704 Mobile responsive (stacked)
+- [x] T705 Polish (transitions, loading, error states)
 
-Checkpoint: Split-screen signup with feature showcase. Auth flow works end-to-end.
+Commit: 89810eb.
 
-### 20) Phase 021: Prebuilt Apps + App Theming (T710-T725)
+### 20) Phase 021: Prebuilt Apps + App Theming (T710-T725) -- COMPLETE
 
 Source: `specs/021-prebuilt-apps/tasks.md`
-**Parallel**: PARTIAL (Group 3). T710 matrix.md spec first, then apps in parallel.
 
-- [ ] T710-T710a matrix.md schema + parser (TDD)
-- [ ] T711 Shell reads matrix.md (GET /api/apps, dock icons)
-- [ ] T712-T715 Single-file apps: expense tracker, notes, todo, pomodoro
-- [ ] T716-T717 Rich apps: code editor (CodeMirror), browser (iframe)
-- [ ] T718 Static icon set (home/system/icons/)
-- [ ] T719 Icon generation skill (fal.ai, needs T661)
-- [ ] T720 Update home/ template with all prebuilt apps
+- [x] T710-T710a matrix.md schema + parser (TDD)
+- [x] T711 Shell reads matrix.md (GET /api/apps, dock icons)
+- [x] T712-T715 Single-file apps: expense tracker, notes, todo, pomodoro
+- [x] T716-T717 Rich apps: code editor (CodeMirror), browser (iframe)
+- [x] T718 Static icon set (home/system/icons/)
+- [ ] T719 Icon generation skill (deferred -- fal.ai runtime)
+- [x] T720 Update home/ template with all prebuilt apps
 
-Checkpoint: Fresh install shows 5-6 working apps in dock. Code editor can edit other apps.
+6 apps, 15 icons, 15 tests. Commits: 6a27de3 (apps), f1db19f (GET /api/apps).
 
-### 21) Phase 022: Whitepaper (T730-T739)
+### 21) Phase 022: Whitepaper (T730-T739) -- COMPLETE
 
 Source: `specs/022-whitepaper/tasks.md`
-**Parallel**: YES (Group 1). Content creation, no code deps.
 
-- [ ] T730 Whitepaper content (8 sections: intro, related work, architecture, paradigms, implementation, vision, evaluation, conclusion)
-- [ ] T731 Research citations
-- [ ] T732 Web page (www/src/app/whitepaper/page.tsx)
-- [ ] T733 PDF generation (print CSS)
-- [ ] T734 Audio version (stretch, needs T669 ElevenLabs)
-- [ ] T735 Navigation links (LP, footer, dashboard)
+- [x] T730 Whitepaper content (8 sections)
+- [x] T731 Research citations
+- [x] T732 Web page (www/src/app/whitepaper/page.tsx)
+- [x] T733 PDF generation (print CSS)
+- [ ] T734 Audio version (deferred -- needs runtime ElevenLabs)
+- [x] T735 Navigation links (LP, footer, dashboard)
 
-Checkpoint: matrix-os.com/whitepaper renders full document. PDF download works.
+~4500 words. Commit: 89810eb.
 
-### 22) Phase 023: Landing Page Story + Agent Showcase (T740-T752)
+### 22) Phase 023: Landing Page Story + Agent Showcase (T740-T752) -- COMPLETE
 
 Source: `specs/023-landing-page/tasks.md`
-**Parallel**: YES (Group 1). www/ only.
 
-- [ ] T740 Rewrite LP copy as narrative arc
-- [ ] T741 Update hero (stronger headline, animated mockup, 479 tests)
-- [ ] T742 Achievement-oriented tech strip
-- [ ] T743 Agent showcase section (5 agents, animated flow)
-- [ ] T744 Interactive demo element (scripted animation)
-- [ ] T745 Skills showcase grid
-- [ ] T746 Theme variation showcase (toggle themes)
-- [ ] T747 Malleable LP concept (stretch)
-- [ ] T748 Updated CTA (whitepaper link, GitHub badge)
-- [ ] T749 Performance + SEO (Lighthouse > 90)
-- [ ] T750 Mobile LP polish
+- [x] T740 Rewrite LP copy as narrative arc
+- [x] T741 Update hero (stronger headline, animated mockup)
+- [x] T742 Achievement-oriented tech strip
+- [x] T743 Agent showcase section (5 agents, animated flow)
+- [ ] T744 Interactive demo element (deferred)
+- [x] T745 Skills showcase grid
+- [ ] T746 Theme variation showcase (deferred)
+- [ ] T747 Malleable LP concept (deferred -- stretch)
+- [x] T748 Updated CTA (whitepaper link, GitHub badge)
+- [ ] T749 Performance + SEO (deferred -- needs runtime Lighthouse)
+- [x] T750 Mobile LP polish
 
-Checkpoint: LP tells compelling story. Agent showcase shows team. Lighthouse > 90.
+Commits: 89810eb, 381ad2c, 4ac86e7.
 
-### 23) Phase 024: App Ecosystem (T760-T779)
+### 23) Phase 024: App Ecosystem (T760-T779) -- COMPLETE
 
 Source: `specs/024-app-ecosystem/tasks.md`
-**Parallel**: PARTIAL (Group 3+). Lower priority, incremental.
 
 AI Button (T760-T762):
-- [ ] T760-T760a AI button component + customize dispatch test
-- [ ] T761 Kernel customization flow (modify existing app)
-- [ ] T762 Component-level selection (stretch)
+- [x] T760-T760a AI button component + customize dispatch test
+- [x] T761 Kernel customization flow (modify existing app)
+- [ ] T762 Component-level selection (deferred -- stretch)
 
 App Store (T763-T766):
-- [ ] T763 App store data model (app-store.json)
-- [ ] T764 Prompt library
-- [ ] T765 App store shell component
-- [ ] T766 Leaderboard (stretch, needs platform)
+- [x] T763 App store data model (app-store.json)
+- [x] T764 Prompt library
+- [x] T765 App store shell component
+- [ ] T766 Leaderboard (deferred -- needs platform)
 
 Desktop Modes (T767-T769):
-- [ ] T767 Mode system (Zustand: desktop, ambient, dev, conversational)
-- [ ] T768 Mode layouts
-- [ ] T769 Mode persistence
+- [x] T767 Mode system (Zustand: desktop, ambient, dev, conversational)
+- [x] T768 Mode layouts
+- [x] T769 Mode persistence
 
 Task Manager App (T770):
-- [ ] T770 Task manager as prebuilt app
+- [x] T770 Task manager as prebuilt app
 
-Checkpoint: AI button modifies apps live. App store browse + install. Desktop modes switch.
+29 tests. Commits: a1665fa (AI+store), 4796822 (modes), 34c3502 (task manager).
 
 ---
 
@@ -384,33 +383,33 @@ Completed:
 - [x] Phase 009 P0 observability
 - [x] Phase 009 P1 identity + sync + mobile
 
-Next (parallel groups):
+Demo release (Groups 1-4, completed in single swarm session):
 
-**Group 1 (start immediately, all parallel):**
-- [ ] 014 Skills Library (T600-T614)
-- [ ] 020 Signup Redesign (T700-T709)
-- [ ] 022 Whitepaper (T730-T739)
-- [ ] 023 Landing Page (T740-T752)
-- [ ] 018 CLI (T680-T689)
+**Group 1 (completed):**
+- [x] 014 Skills Library (T600-T614)
+- [x] 020 Signup Redesign (T700-T709)
+- [x] 022 Whitepaper (T730-T739)
+- [x] 023 Landing Page (T740-T752)
+- [x] 018 CLI (T680-T689)
 
-**Group 2 (start immediately, parallel with Group 1 and each other):**
-- [ ] 015 Multi-Session (T620-T629)
-- [ ] 016 Memory / RAG (T640-T652)
-- [ ] 017 Media: Image Gen (T660-T667)
+**Group 2 (completed):**
+- [x] 015 Multi-Session (T620-T629)
+- [x] 016 Memory / RAG (T640-T652)
+- [x] 017 Media: Image Gen (T660-T667)
 
-**Group 3 (after Group 2 deps):**
-- [ ] 017 Media: Voice (T668-T678) -- after T662 usage tracker
-- [ ] 021 Prebuilt Apps (T710-T725) -- after T661 image gen for icons
-- [ ] 015 Approval Gates (T630-T636) -- after T620-T629 sessions
+**Group 3 (completed):**
+- [x] 017 Media: Voice (T668-T678)
+- [x] 021 Prebuilt Apps (T710-T725)
+- [x] 015 Approval Gates (T630-T636)
 
-**Group 4 (after Group 3):**
-- [ ] 019 Browser Automation (T690-T699) -- after T674 voice
-- [ ] 024 App Ecosystem (T760-T779) -- after T720 prebuilt apps
+**Group 4 (completed):**
+- [x] 019 Browser Automation (T690-T699)
+- [x] 024 App Ecosystem (T760-T779)
 
-**Deferred:**
-- [ ] Phase 013A Docker (T502-T506) -- user working on this
-- [ ] Phase 011 new computing (T300-T317) -- after demo release
+**Remaining / Deferred:**
+- [ ] Phase 013A Docker (T502-T506)
+- [ ] Phase 011 new computing (T300-T317)
 - [ ] Phase 013B distro image (T510-T517)
 - [ ] Phase 009 P2 platform expansion (T240-T261)
-- [ ] Phase 010 demo recording (T062-T064) -- after all above
-- [ ] Device pairing -- after 019 browser
+- [ ] Phase 010 demo recording (T062-T064)
+- [ ] Device pairing
