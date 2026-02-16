@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProvisionButton } from "./provision-button";
+import { UpgradeButton } from "./upgrade-button";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
@@ -101,15 +102,23 @@ export default async function DashboardPage() {
                 </div>
 
                 <p className="text-sm text-muted-foreground">
-                  Last active: {new Date(result.data.last_active as string).toLocaleString()}
+                  Last active: {new Date(result.data.lastActive as string).toLocaleString()}
                 </p>
+                {result.data.image && (
+                  <p className="text-sm text-muted-foreground">
+                    Image: <span className="font-mono text-xs">{result.data.image as string}</span>
+                  </p>
+                )}
 
-                <a
-                  href={isLocal ? `http://localhost:${result.data.shell_port}` : `https://${handle}.matrix-os.com`}
-                  className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-                >
-                  Open Matrix OS
-                </a>
+                <div className="flex items-center gap-3">
+                  <a
+                    href={isLocal ? `http://localhost:${result.data.shellPort}` : `https://${handle}.matrix-os.com`}
+                    className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    Open Matrix OS
+                  </a>
+                  <UpgradeButton />
+                </div>
               </>
             ) : result.state === "not_provisioned" ? (
               <div className="space-y-3 py-4 text-center">

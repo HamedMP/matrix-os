@@ -807,6 +807,33 @@ export function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
+  app.post("/api/system/upgrade", async (c) => {
+    const handle = process.env.MATRIX_HANDLE;
+    const token = process.env.UPGRADE_TOKEN;
+    const platformUrl = process.env.PLATFORM_INTERNAL_URL;
+
+    if (!handle || !token || !platformUrl) {
+      return c.json({ error: "Upgrade not configured" }, 503);
+    }
+
+    try {
+      const res = await fetch(`${platformUrl}/containers/${handle}/self-upgrade`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status);
+      }
+
+      return c.json({ ok: true });
+    } catch {
+      // Connection drop likely means the container is being replaced
+      return c.json({ ok: true });
+    }
+  });
+
   app.get("/api/usage", (c) => {
     try {
       const { createUsageTracker } = require("@matrix-os/kernel");

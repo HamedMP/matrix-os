@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { createConnection } from 'node:net';
@@ -92,6 +93,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
     if (c.req.path === '/health') return next();
+    if (c.req.path.endsWith('/self-upgrade') && c.req.method === 'POST') return next();
     if (!PLATFORM_SECRET) return next();
     const auth = c.req.header('authorization');
     if (auth !== `Bearer ${PLATFORM_SECRET}`) {
@@ -142,6 +144,30 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     }
   });
 
+  app.post('/containers/:handle/self-upgrade', async (c) => {
+    if (!PLATFORM_SECRET) {
+      return c.json({ error: 'Self-upgrade not configured' }, 503);
+    }
+    const handle = c.req.param('handle');
+    const auth = c.req.header('authorization');
+    const token = auth?.startsWith('Bearer ') ? auth.slice(7) : '';
+
+    const expected = createHmac('sha256', PLATFORM_SECRET).update(handle).digest('hex');
+    const tokenBuf = Buffer.from(token);
+    const expectedBuf = Buffer.from(expected);
+
+    if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    try {
+      const record = await orchestrator.upgrade(handle);
+      return c.json(record);
+    } catch (e: any) {
+      return c.json({ error: e.message }, 500);
+    }
+  });
+
   app.delete('/containers/:handle', async (c) => {
     try {
       await orchestrator.destroy(c.req.param('handle'));
@@ -160,7 +186,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   app.get('/containers/:handle', (c) => {
     const info = orchestrator.getInfo(c.req.param('handle'));
     if (!info) return c.json({ error: 'Not found' }, 404);
-    return c.json(info);
+    return c.json({ ...info, image: orchestrator.getImage() });
   });
 
   app.get('/containers/check-handle/:handle', (c) => {
@@ -260,6 +286,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     docker,
     image: process.env.PLATFORM_IMAGE,
     dataDir: process.env.PLATFORM_DATA_DIR,
+    platformSecret: PLATFORM_SECRET,
     extraEnv,
   });
 

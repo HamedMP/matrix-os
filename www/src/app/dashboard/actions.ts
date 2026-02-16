@@ -60,3 +60,26 @@ export async function provisionInstance(): Promise<{ error?: string }> {
   revalidatePath("/dashboard");
   return {};
 }
+
+export async function upgradeContainer(): Promise<{ error?: string }> {
+  const user = await currentUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const handle = `${HANDLE_PREFIX}${user.username ?? user.id}`;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (PLATFORM_SECRET) headers["Authorization"] = `Bearer ${PLATFORM_SECRET}`;
+
+  const res = await fetch(`${PLATFORM_API_URL}/containers/${handle}/upgrade`, {
+    method: "POST",
+    headers,
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    return { error: data.error ?? "Upgrade failed" };
+  }
+
+  revalidatePath("/dashboard");
+  return {};
+}

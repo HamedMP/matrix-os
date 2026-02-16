@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -11,6 +11,7 @@ const GATEWAY = getGatewayUrl();
 
 interface SystemInfo {
   version?: string;
+  image?: string;
   homePath?: string;
   nodeVersion?: string;
   platform?: string;
@@ -61,6 +62,29 @@ export function SystemSection() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+
+  const handleUpgrade = useCallback(async () => {
+    setUpgrading(true);
+    setUpgradeError(null);
+
+    try {
+      const res = await fetch(`${GATEWAY}/api/system/upgrade`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpgradeError((data as Record<string, string>).error ?? "Upgrade failed");
+        setUpgrading(false);
+        return;
+      }
+    } catch {
+      // Connection drop is expected -- container is being replaced
+    }
+
+    // Container will restart; reload after 15s
+    setTimeout(() => window.location.reload(), 15000);
   }, []);
 
   const currentVersion = info.version ?? "0.0.0";
@@ -146,9 +170,18 @@ export function SystemSection() {
             </div>
           )}
           {updateAvailable && (
-            <p className="text-xs text-muted-foreground pt-1">
-              To update, reprovision your container or contact the admin.
-            </p>
+            <div className="pt-1 space-y-2">
+              <button
+                onClick={handleUpgrade}
+                disabled={upgrading}
+                className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {upgrading ? "Upgrading... reloading in 15s" : "Upgrade Now"}
+              </button>
+              {upgradeError && (
+                <p className="text-xs text-red-500">{upgradeError}</p>
+              )}
+            </div>
           )}
           {latestVersion && !updateAvailable && (
             <p className="text-xs text-muted-foreground pt-1">
@@ -168,6 +201,7 @@ export function SystemSection() {
         <CardContent className="space-y-2">
           {[
             ["Version", info.version ?? "0.1.0"],
+            ["Image", info.image],
             ["Home Directory", info.homePath],
             ["Node.js", info.nodeVersion],
             ["Platform", info.platform],

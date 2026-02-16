@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import type Dockerode from 'dockerode';
 import {
   type PlatformDB,
@@ -22,6 +23,8 @@ export interface OrchestratorConfig {
   memoryLimit?: number;
   cpuQuota?: number;
   dataDir?: string;
+  platformSecret?: string;
+  extraEnv?: string[];
 }
 
 export interface Orchestrator {
@@ -31,6 +34,7 @@ export interface Orchestrator {
   destroy(handle: string): Promise<void>;
   upgrade(handle: string): Promise<ContainerRecord>;
   getInfo(handle: string): ContainerRecord | undefined;
+  getImage(): string;
   listAll(status?: string): ContainerRecord[];
   syncStates(): Promise<void>;
 }
@@ -47,6 +51,8 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     memoryLimit = 256 * 1024 * 1024,
     cpuQuota = 50000,
     dataDir = '/data/users',
+    platformSecret = '',
+    extraEnv = [],
   } = config;
 
   async function ensureNetwork(): Promise<void> {
@@ -54,6 +60,27 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (networks.length === 0) {
       await docker.createNetwork({ Name: network, Driver: 'bridge' });
     }
+  }
+
+  function buildEnv(handle: string): string[] {
+    const containerName = `matrixos-${handle}`;
+    const env = [
+      `MATRIX_HANDLE=${handle}`,
+      `MATRIX_IMAGE=${image}`,
+      `PROXY_URL=${proxyUrl}`,
+      `ANTHROPIC_BASE_URL=${proxyUrl}`,
+      `ANTHROPIC_API_KEY=sk-proxy-managed`,
+      `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
+      `PORT=4000`,
+      `SHELL_PORT=3000`,
+      ...extraEnv,
+    ];
+    if (platformSecret) {
+      const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
+      env.push(`UPGRADE_TOKEN=${token}`);
+      env.push(`PLATFORM_INTERNAL_URL=http://distro-platform-1:9000`);
+    }
+    return env;
   }
 
   return {
@@ -71,15 +98,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const container = await docker.createContainer({
         Image: image,
         name: containerName,
-        Env: [
-          `MATRIX_HANDLE=${handle}`,
-          `PROXY_URL=${proxyUrl}`,
-          `ANTHROPIC_BASE_URL=${proxyUrl}`,
-          `ANTHROPIC_API_KEY=sk-proxy-managed`,
-          `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
-          `PORT=4000`,
-          `SHELL_PORT=3000`,
-        ],
+        Env: buildEnv(handle),
         HostConfig: {
           Memory: memoryLimit,
           CpuQuota: cpuQuota,
@@ -167,15 +186,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const container = await docker.createContainer({
         Image: image,
         name: containerName,
-        Env: [
-          `MATRIX_HANDLE=${handle}`,
-          `PROXY_URL=${proxyUrl}`,
-          `ANTHROPIC_BASE_URL=${proxyUrl}`,
-          `ANTHROPIC_API_KEY=sk-proxy-managed`,
-          `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
-          `PORT=4000`,
-          `SHELL_PORT=3000`,
-        ],
+        Env: buildEnv(handle),
         HostConfig: {
           Memory: memoryLimit,
           CpuQuota: cpuQuota,
@@ -201,6 +212,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
     getInfo(handle) {
       return getContainer(db, handle);
+    },
+
+    getImage() {
+      return image;
     },
 
     listAll(status?) {

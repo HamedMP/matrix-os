@@ -21,6 +21,7 @@ export function getVersion(): string {
 
 export interface SystemInfo {
   version: string;
+  image: string;
   uptime: number;
   modules: number;
   channels: Record<string, boolean>;
@@ -60,6 +61,7 @@ export function getSystemInfo(homePath: string): SystemInfo {
 
   return {
     version: getVersion(),
+    image: process.env.MATRIX_IMAGE ?? "unknown",
     uptime: Math.floor((Date.now() - startTime) / 1000),
     modules,
     channels,
