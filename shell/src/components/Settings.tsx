@@ -9,7 +9,6 @@ import {
   ClockIcon,
   PuzzleIcon,
   MonitorIcon,
-  XIcon,
 } from "lucide-react";
 import { AgentSection } from "./settings/sections/AgentSection";
 import { ChannelsSection } from "./settings/sections/ChannelsSection";
@@ -30,6 +29,39 @@ const sections = [
 ] as const;
 
 type SectionId = typeof sections[number]["id"];
+
+function TrafficLights({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="group/traffic flex items-center gap-1.5">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
+        aria-label="Close"
+      >
+        <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+          x
+        </span>
+      </button>
+      <button
+        className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors opacity-50 cursor-default"
+        aria-label="Minimize"
+        disabled
+      >
+        <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+          -
+        </span>
+      </button>
+      <button
+        className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors opacity-50 cursor-default"
+        aria-label="Maximize"
+        disabled
+      />
+    </div>
+  );
+}
 
 interface SettingsProps {
   open: boolean;
@@ -69,20 +101,15 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
 
       <div className="relative flex h-full z-10 overflow-hidden md:pl-14">
         <div className="flex flex-col flex-1 bg-card/95 backdrop-blur-xl m-4 md:m-8 rounded-2xl shadow-2xl overflow-hidden">
-          <header className="flex items-center justify-between px-6 py-4 border-b border-border/40">
-            <h1 className="text-lg font-semibold">Settings</h1>
-            <button
-              onClick={() => onOpenChange(false)}
-              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted/50 transition-colors"
-              aria-label="Close Settings"
-            >
-              <XIcon className="size-4" />
-            </button>
+          <header className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none">
+            <TrafficLights onClose={() => onOpenChange(false)} />
+            <h1 className="text-xs font-medium text-center flex-1">Settings</h1>
+            <div className="w-[42px]" />
           </header>
 
           <div className="flex flex-1 min-h-0">
-            <aside className="w-48 border-r border-border/40 bg-card/50 p-3 overflow-y-auto">
-              <nav className="flex flex-col gap-1">
+            <aside className="w-48 border-r border-border/40 bg-card/50 p-2 overflow-y-auto">
+              <nav className="flex flex-col gap-0.5">
                 {sections.map((section) => {
                   const Icon = section.icon;
                   const active = activeSection === section.id;
@@ -90,13 +117,13 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
                     <button
                       key={section.id}
                       onClick={() => setActiveSection(section.id)}
-                      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all ${
+                      className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
                         active
-                          ? "bg-primary/10 text-primary font-medium border-l-2 border-primary"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          ? "bg-foreground/8 text-foreground font-medium"
+                          : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
                       }`}
                     >
-                      <Icon className="size-4 shrink-0" />
+                      <Icon className={`size-4 shrink-0 ${active ? "text-primary" : ""}`} />
                       <span>{section.label}</span>
                     </button>
                   );
