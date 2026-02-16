@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { ColorPicker } from "./ColorPicker";
 import { getGatewayUrl } from "@/lib/gateway";
 
-type BgType = "pattern" | "solid" | "gradient" | "wallpaper";
+type BgType = "pattern" | "solid" | "gradient" | "wallpaper" | "image";
 
 const BG_TYPES: { id: BgType; label: string }[] = [
   { id: "pattern", label: "Pattern" },

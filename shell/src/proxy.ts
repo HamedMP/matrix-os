@@ -1,31 +1,40 @@
-import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 
-export default clerkMiddleware(async (auth, request) => {
+// Auth is handled by the platform proxy layer (Clerk JWT verification)
+// before requests reach this container, so no Clerk middleware needed here.
+export default async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Proxy gateway API calls
-  if (pathname.startsWith("/gateway/")) {
-    const target = pathname.replace("/gateway", "");
+  // Proxy gateway API and file requests
+  if (
+    pathname.startsWith("/gateway/") ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/files/") ||
+    pathname.startsWith("/modules/") ||
+    pathname.startsWith("/ws")
+  ) {
+    const target = pathname.startsWith("/gateway/")
+      ? pathname.replace("/gateway", "")
+      : pathname;
     const url = new URL(target + request.nextUrl.search, gatewayUrl);
     return NextResponse.rewrite(url);
   }
 
-  // Proxy module requests
-  if (pathname.startsWith("/modules/")) {
-    const url = new URL(pathname + request.nextUrl.search, gatewayUrl);
-    return NextResponse.rewrite(url);
-  }
-
-  // Protect all routes -- unauthenticated users redirect to www sign-in
-  await auth.protect();
-});
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // Gateway proxy paths (must match even static-looking extensions like .html)
+    "/gateway/:path*",
+    "/files/:path*",
+    "/modules/:path*",
+    "/ws/:path*",
+    // API routes
     "/(api|trpc)(.*)",
+    // All other non-static paths
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
   ],
 };

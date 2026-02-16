@@ -127,15 +127,20 @@ curl -fsSL https://get.docker.com | sh
 git clone https://github.com/HamedMP/matrix-os.git
 cd matrix-os
 
-# Deploy from a specific tag
+# Deploy from a specific tag (or stay on main)
 git checkout v0.3.0
 
-# Build the user container image
-docker build -t matrix-os:latest -f Dockerfile .
+# Build the user container image (Clerk key is baked in at build time)
+docker build \
+  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
+  -t ghcr.io/hamedmp/matrix-os:latest \
+  -f Dockerfile .
 
-# Build platform services
-docker compose -f distro/docker-compose.platform.yml build
+# Build platform services (reads build args from .env)
+docker compose -f distro/docker-compose.platform.yml --env-file .env build
 ```
+
+The `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is required because Next.js embeds `NEXT_PUBLIC_*` vars at build time. Without it, Clerk auth will not work in the shell UI.
 
 ## Step 2: Cloudflare Tunnel
 
@@ -169,18 +174,27 @@ Root `matrix-os.com` stays pointed at Vercel.
 cat > /root/matrix-os/.env << 'EOF'
 ANTHROPIC_API_KEY=sk-ant-...
 PLATFORM_SECRET=your-random-secret
-PLATFORM_IMAGE=matrix-os:latest
+CLERK_SECRET_KEY=sk_live_...
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+FAL_API_KEY=your-fal-api-key
 EOF
 ```
 
+| Variable | Where Used | Build/Runtime | Description |
+|----------|-----------|---------------|-------------|
+| `ANTHROPIC_API_KEY` | proxy | runtime | Shared Anthropic API key for all user containers |
+| `PLATFORM_SECRET` | platform | runtime | Bearer token for admin API auth |
+| `CLERK_SECRET_KEY` | platform + user containers | runtime | Server-side Clerk JWT verification |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Docker image | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
+| `FAL_API_KEY` | platform + user containers | runtime | Fal.ai API key for image/icon generation |
+
+**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available as Docker build args. All other vars are passed at container runtime via `docker-compose.platform.yml` environment section and the orchestrator's `extraEnv` mechanism.
+
 ## Step 4: Start the Platform
 
-If using Hetzner Volume for persistent data, override the volume mounts:
-
 ```bash
-# Edit docker-compose or use environment overrides
-# The default compose uses Docker volumes. To use the Hetzner block storage:
-docker compose -f distro/docker-compose.platform.yml up -d
+# Always pass --env-file .env (reads PLATFORM_SECRET, CLERK_SECRET_KEY, FAL_API_KEY, etc.)
+docker compose -f distro/docker-compose.platform.yml --env-file .env up -d
 ```
 
 To use the Hetzner block storage volume instead of Docker volumes, create an override:
@@ -318,26 +332,39 @@ SELECT status, COUNT(*) FROM containers GROUP BY status;
 
 ```bash
 cd matrix-os
-git pull origin main        # or: git checkout v0.4.0
-docker compose -f distro/docker-compose.platform.yml build
-docker compose -f distro/docker-compose.platform.yml up -d
+git pull origin main
+docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build
 ```
+
+User containers are NOT affected -- they keep running on the old image.
 
 ### Update User Container Image
 
 ```bash
-docker build -t matrix-os:latest -f Dockerfile .
-# New provisions use new image. Existing containers keep old image.
+# Rebuild image (Clerk key is baked in at build time)
+docker build \
+  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
+  -t ghcr.io/hamedmp/matrix-os:latest \
+  -f Dockerfile .
+
+# New provisions use the new image automatically.
+# To update an existing container, use the upgrade API:
+curl -X POST http://localhost:9000/containers/<handle>/upgrade \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
 ```
+
+The upgrade endpoint stops the old container, pulls the latest image, creates a new container with the same ports and volume mount, and starts it. User data in `/data/users/{handle}/matrixos` is preserved.
 
 ### Deploy from Tag
 
 ```bash
 git fetch --tags
 git checkout v0.3.0
-docker build -t matrix-os:v0.3.0 -f Dockerfile .
-docker tag matrix-os:v0.3.0 matrix-os:latest
-docker compose -f distro/docker-compose.platform.yml up -d --build
+docker build \
+  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
+  -t ghcr.io/hamedmp/matrix-os:latest \
+  -f Dockerfile .
+docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build
 ```
 
 ## Horizontal Scaling
@@ -508,12 +535,41 @@ You need a second node when:
 
 Until then, single node is simpler and cheaper. Resize the Hetzner server (CPX21 -> CPX31 -> CPX41) before adding nodes -- vertical scaling is free of code changes.
 
+## Proxy Architecture
+
+Understanding the request flow is critical for debugging:
+
+```
+Browser -> hamedmp.matrix-os.com
+  -> Cloudflare Tunnel -> platform :9000 (subdomain proxy middleware)
+    -> http://matrixos-hamedmp:3000 (Next.js shell)
+      -> shell proxy.ts middleware rewrites /api/*, /files/*, /modules/*, /ws*
+        -> http://localhost:4000 (gateway inside same container)
+```
+
+**Key points:**
+- Platform routes all `{handle}.matrix-os.com` traffic to the user container's shell (port 3000)
+- The shell's `proxy.ts` middleware rewrites API/file/WebSocket requests to the gateway (port 4000)
+- Both shell and gateway run inside the same container (started by `docker-entrypoint.sh`)
+- The gateway is PID 1 (foreground); the shell is a background process
+- If the shell crashes, the container stays up (gateway still running) but HTTP returns 502
+- Container memory is set to 512MB (gateway + Next.js shell together need ~200-300MB)
+
+### Clerk Auth (subdomain cookies)
+
+Clerk session cookies are scoped to `matrix-os.com` by default. For subdomain auth on `{handle}.matrix-os.com`, Clerk needs cookie domain set to `.matrix-os.com` in the Clerk Dashboard (Domains settings). Until this is configured:
+- Platform-level Clerk JWT verification is disabled (commented out in `main.ts`)
+- Shell-level Clerk middleware is removed (`proxy.ts` does plain proxying)
+- Auth is effectively open on subdomains -- the shell is accessible to anyone with the URL
+
+To re-enable: configure Clerk Dashboard -> Domains with `matrix-os.com` as primary and cookie domain `.matrix-os.com`, then uncomment the JWT verification blocks in `packages/platform/src/main.ts`.
+
 ## Troubleshooting
 
 ### Platform won't start
 
 ```bash
-docker compose -f distro/docker-compose.platform.yml logs platform
+docker compose -f distro/docker-compose.platform.yml --env-file .env logs platform
 
 # Common: Docker socket not mounted
 ls -la /var/run/docker.sock
@@ -522,7 +578,7 @@ ls -la /var/run/docker.sock
 ### Tunnel not connecting
 
 ```bash
-docker compose -f distro/docker-compose.platform.yml logs cloudflared
+docker compose -f distro/docker-compose.platform.yml --env-file .env logs cloudflared
 
 # Common: credentials missing
 ls /etc/cloudflared/credentials.json
@@ -532,18 +588,55 @@ ls /etc/cloudflared/credentials.json
 
 ```bash
 # Check image exists
-docker images matrix-os
+docker images ghcr.io/hamedmp/matrix-os
 
 # Check port conflicts
 sqlite3 /mnt/data/platform/platform.db "SELECT * FROM port_assignments"
+```
+
+### User gets 502 Bad Gateway
+
+The shell (port 3000) crashed but the gateway (port 4000) is still running.
+
+```bash
+# Check what's listening inside the container
+docker exec matrixos-alice netstat -tlnp
+
+# If only port 4000 is listening, shell crashed. Restart the container:
+docker restart matrixos-alice
+
+# Check memory usage (shell crash often = OOM)
+docker stats matrixos-alice --no-stream
+```
+
+### API routes return 404 (e.g. /api/layout, /files/...)
+
+The Next.js middleware matcher may be excluding the path. Check `shell/src/proxy.ts` matcher config. Paths ending in `.html`, `.css`, `.js` etc. are excluded by the catch-all pattern but must be explicitly included via dedicated matchers for `/files/`, `/modules/`, etc.
+
+### Stale DB record after manual container deletion
+
+If you `docker rm` a container manually, the platform DB still has its record. The API will fail to destroy/re-provision it.
+
+```bash
+# Force-delete via API (handles missing Docker container gracefully)
+curl -X DELETE http://localhost:9000/containers/alice \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+
+# Then re-provision
+curl -X POST http://localhost:9000/containers/provision \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"handle":"alice","clerkUserId":"user_..."}'
 ```
 
 ### User can't access instance
 
 ```bash
 docker ps --filter "name=matrixos-alice"
-curl http://localhost:9000/containers/alice
-docker exec matrixos-alice wget -qO- http://localhost:3000 | head -5
+curl -s http://localhost:9000/containers/alice \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+docker exec matrixos-alice wget -qO- http://localhost:3000 2>&1 | head -5
+docker exec matrixos-alice wget -qO- http://localhost:4000/health 2>&1
 ```
 
 ## Backup

@@ -32,7 +32,9 @@ COPY packages/ packages/
 COPY shell/ shell/
 COPY home/ home/
 
-# Build shell (Next.js)
+# Build shell (Next.js) -- Clerk key is baked in at build time (NEXT_PUBLIC_*)
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------

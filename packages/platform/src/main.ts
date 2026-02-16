@@ -36,20 +36,23 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     const record = getContainer(db, handle);
     if (!record) return c.json({ error: 'Unknown instance' }, 404);
 
-    // Clerk JWT verification (skip for public paths and when auth not configured)
-    if (clerkAuth && !clerkAuth.isPublicPath(c.req.path) && record.clerkUserId) {
-      const token = clerkAuth.extractToken(
-        c.req.header('authorization'),
-        c.req.header('cookie'),
-      );
-      if (!token) {
-        return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-      }
-      const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
-      if (!result.authenticated) {
-        return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-      }
-    }
+    // Clerk JWT verification -- disabled until Clerk cookie domain is configured
+    // to share sessions across subdomains (.matrix-os.com).
+    // TODO: re-enable once Clerk Dashboard -> Domains has matrix-os.com as primary
+    // and cookies are set with Domain=.matrix-os.com
+    // if (clerkAuth && !clerkAuth.isPublicPath(c.req.path) && record.clerkUserId) {
+    //   const token = clerkAuth.extractToken(
+    //     c.req.header('authorization'),
+    //     c.req.header('cookie'),
+    //   );
+    //   if (!token) {
+    //     return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
+    //   }
+    //   const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
+    //   if (!result.authenticated) {
+    //     return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
+    //   }
+    // }
 
     if (record.status === 'stopped') {
       try {
@@ -244,11 +247,20 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')) {
   const db = createPlatformDb(DB_PATH);
   const docker = new Dockerode();
+  const extraEnv: string[] = [];
+  if (process.env.CLERK_SECRET_KEY) {
+    extraEnv.push(`CLERK_SECRET_KEY=${process.env.CLERK_SECRET_KEY}`);
+  }
+  if (process.env.FAL_API_KEY) {
+    extraEnv.push(`FAL_API_KEY=${process.env.FAL_API_KEY}`);
+  }
+
   const orchestrator = createOrchestrator({
     db,
     docker,
     image: process.env.PLATFORM_IMAGE,
     dataDir: process.env.PLATFORM_DATA_DIR,
+    extraEnv,
   });
 
   const lifecycle = createLifecycleManager({ db, orchestrator });
@@ -289,8 +301,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    // Verify Clerk JWT for WebSocket connections
-    if (clerkAuth && record.clerkUserId) {
+    // Verify Clerk JWT for WebSocket connections -- disabled until cookie domain configured
+    // TODO: re-enable with subdomain cookie sharing
+    if (false && clerkAuth && record.clerkUserId) {
       const token = clerkAuth.extractToken(
         req.headers.authorization,
         req.headers.cookie,
