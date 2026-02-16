@@ -18,6 +18,7 @@ function createMockDocker() {
     createNetwork: vi.fn().mockResolvedValue({}),
     createContainer: vi.fn().mockResolvedValue(mockContainer),
     getContainer: vi.fn().mockReturnValue(mockContainer),
+    pull: vi.fn().mockResolvedValue(undefined),
   };
 
   return { docker, mockContainer };
@@ -136,5 +137,60 @@ describe('platform/orchestrator', () => {
     await expect(orch.start('ghost')).rejects.toThrow('No container');
     await expect(orch.stop('ghost')).rejects.toThrow('No container');
     await expect(orch.destroy('ghost')).rejects.toThrow('No container');
+  });
+
+  it('upgrades a container (pull + recreate)', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    const newMockContainer = {
+      id: 'new-container-id',
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+    const before = orch.getInfo('alice')!;
+    expect(before.containerId).toBe('mock-container-id');
+
+    docker.createContainer.mockResolvedValue(newMockContainer);
+
+    const after = await orch.upgrade('alice');
+    expect(docker.pull).toHaveBeenCalled();
+    expect(mockContainer.remove).toHaveBeenCalledWith({ force: true });
+    expect(after.containerId).toBe('new-container-id');
+    expect(after.status).toBe('running');
+    expect(after.port).toBe(before.port);
+  });
+
+  it('syncStates reconciles DB with Docker state', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+    expect(orch.getInfo('alice')!.status).toBe('running');
+
+    docker.getContainer.mockReturnValue({
+      ...mockContainer,
+      inspect: vi.fn().mockResolvedValue({ State: { Running: false } }),
+    });
+
+    await orch.syncStates();
+    expect(orch.getInfo('alice')!.status).toBe('stopped');
+  });
+
+  it('syncStates marks container stopped when Docker inspect fails', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+
+    docker.getContainer.mockReturnValue({
+      ...mockContainer,
+      inspect: vi.fn().mockRejectedValue(new Error('no such container')),
+    });
+
+    await orch.syncStates();
+    expect(orch.getInfo('alice')!.status).toBe('stopped');
   });
 });

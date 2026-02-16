@@ -130,6 +130,15 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     }
   });
 
+  app.post('/containers/:handle/upgrade', async (c) => {
+    try {
+      const record = await orchestrator.upgrade(c.req.param('handle'));
+      return c.json(record);
+    } catch (e: any) {
+      return c.json({ error: e.message }, 404);
+    }
+  });
+
   app.delete('/containers/:handle', async (c) => {
     try {
       await orchestrator.destroy(c.req.param('handle'));
@@ -139,7 +148,8 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     }
   });
 
-  app.get('/containers', (c) => {
+  app.get('/containers', async (c) => {
+    await orchestrator.syncStates();
     const status = c.req.query('status');
     return c.json(orchestrator.listAll(status));
   });

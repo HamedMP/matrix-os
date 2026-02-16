@@ -10,9 +10,9 @@ interface Container {
   handle: string;
   status: string;
   port: number;
-  shell_port: number;
-  created_at: string;
-  last_active: string;
+  shellPort: number;
+  createdAt: string;
+  lastActive: string;
 }
 
 export function AdminDashboard({
@@ -31,13 +31,16 @@ export function AdminDashboard({
   }
 
   async function action(handle: string, method: string, path: string) {
-    setLoading(`${handle}-${path}`);
+    const key = `${handle}-${path}`;
+    setLoading(key);
 
     const actionType = path.includes("/start")
       ? "start"
       : path.includes("/stop")
         ? "stop"
-        : "destroy";
+        : path.includes("/upgrade")
+          ? "upgrade"
+          : "destroy";
 
     posthog.capture("admin_container_action", {
       action: actionType,
@@ -55,12 +58,17 @@ export function AdminDashboard({
 
   return (
     <div className="min-h-screen p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Admin Dashboard
-          </h1>
-          <p className="text-muted-foreground mt-2">Container management</p>
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Admin Dashboard
+            </h1>
+            <p className="text-muted-foreground mt-2">Container management</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={refresh} className="rounded-full">
+            Refresh
+          </Button>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
@@ -116,10 +124,10 @@ export function AdminDashboard({
                       </Badge>
                     </td>
                     <td className="p-3 text-muted-foreground font-mono text-xs">
-                      gw:{c.port} sh:{c.shell_port}
+                      gw:{c.port} sh:{c.shellPort}
                     </td>
                     <td className="p-3 text-muted-foreground text-xs">
-                      {new Date(c.last_active).toLocaleString()}
+                      {new Date(c.lastActive).toLocaleString()}
                     </td>
                     <td className="p-3 px-6 space-x-2">
                       {c.status === "stopped" ? (
@@ -151,6 +159,19 @@ export function AdminDashboard({
                             : "Stop"}
                         </Button>
                       )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          action(c.handle, "POST", `/containers/${c.handle}/upgrade`)
+                        }
+                        disabled={loading !== null}
+                        className="rounded-full border-blue-500/30 text-blue-600 hover:bg-blue-500/10"
+                      >
+                        {loading === `${c.handle}-/containers/${c.handle}/upgrade`
+                          ? "..."
+                          : "Upgrade"}
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"

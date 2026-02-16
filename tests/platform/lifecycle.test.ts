@@ -16,8 +16,10 @@ function createMockOrchestrator(): Orchestrator {
       // Simulated
     }),
     destroy: vi.fn(),
+    upgrade: vi.fn(),
     getInfo: vi.fn(),
     listAll: vi.fn(),
+    syncStates: vi.fn(),
   };
 }
 

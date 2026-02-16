@@ -29,8 +29,10 @@ export interface Orchestrator {
   start(handle: string): Promise<void>;
   stop(handle: string): Promise<void>;
   destroy(handle: string): Promise<void>;
+  upgrade(handle: string): Promise<ContainerRecord>;
   getInfo(handle: string): ContainerRecord | undefined;
   listAll(status?: string): ContainerRecord[];
+  syncStates(): Promise<void>;
 }
 
 export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
@@ -152,12 +154,79 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       deleteContainer(db, handle);
     },
 
+    async upgrade(handle) {
+      const record = getContainer(db, handle);
+      if (!record) throw new Error(`No container for handle: ${handle}`);
+
+      if (record.containerId) {
+        const old = docker.getContainer(record.containerId);
+        try { await old.stop(); } catch {}
+        await old.remove({ force: true });
+      }
+
+      await docker.pull(image);
+      await ensureNetwork();
+
+      const containerName = `matrixos-${handle}`;
+      const container = await docker.createContainer({
+        Image: image,
+        name: containerName,
+        Env: [
+          `MATRIX_HANDLE=${handle}`,
+          `PROXY_URL=${proxyUrl}`,
+          `ANTHROPIC_BASE_URL=${proxyUrl}`,
+          `ANTHROPIC_API_KEY=sk-proxy-managed`,
+          `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
+          `PORT=4000`,
+          `SHELL_PORT=3000`,
+        ],
+        HostConfig: {
+          Memory: memoryLimit,
+          CpuQuota: cpuQuota,
+          PortBindings: {
+            '4000/tcp': [{ HostPort: String(record.port) }],
+            '3000/tcp': [{ HostPort: String(record.shellPort) }],
+          },
+          Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
+          NetworkMode: network,
+          RestartPolicy: { Name: 'unless-stopped' },
+        },
+        ExposedPorts: {
+          '4000/tcp': {},
+          '3000/tcp': {},
+        },
+      });
+
+      await container.start();
+      updateContainerStatus(db, handle, 'running', container.id);
+
+      return getContainer(db, handle)!;
+    },
+
     getInfo(handle) {
       return getContainer(db, handle);
     },
 
     listAll(status?) {
       return listContainers(db, status);
+    },
+
+    async syncStates() {
+      const records = listContainers(db);
+      for (const record of records) {
+        if (!record.containerId) continue;
+        try {
+          const info = await docker.getContainer(record.containerId).inspect();
+          const actual = info.State?.Running ? 'running' : 'stopped';
+          if (actual !== record.status) {
+            updateContainerStatus(db, record.handle, actual);
+          }
+        } catch {
+          if (record.status !== 'stopped') {
+            updateContainerStatus(db, record.handle, 'stopped');
+          }
+        }
+      }
     },
   };
 }
