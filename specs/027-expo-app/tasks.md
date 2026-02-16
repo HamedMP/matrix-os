@@ -16,49 +16,49 @@
 ## Phase A: Project Setup (T870-T874)
 
 ### T870 [US42] Expo project scaffold
-- [ ] Create `apps/mobile/` with `npx create-expo-app@latest --template tabs`
-- [ ] TypeScript strict mode (`tsconfig.json` strict: true)
-- [ ] Expo Router v4 with file-based routing
-- [ ] NativeWind v5 + Tailwind CSS v4 setup
-- [ ] ESLint + Prettier matching project conventions
+- [x] Create `apps/mobile/` with `npx create-expo-app@latest --template tabs`
+- [x] TypeScript strict mode (`tsconfig.json` strict: true)
+- [x] Expo Router v4 with file-based routing
+- [x] NativeWind v5 + Tailwind CSS v4 setup
+- [x] ESLint + Prettier matching project conventions
 - **Output**: Clean Expo project that builds and runs
 
 ### T871 [US42] Design system -- theme + fonts
-- [ ] Create `apps/mobile/lib/theme.ts` -- all design tokens from specs/design-guide.md
-- [ ] Colors: background (#ece5f0), card (#ffffff), primary (#c2703a), border (#d8d0de), etc.
-- [ ] Load Inter via `@expo-google-fonts/inter`
-- [ ] Load JetBrains Mono via `@expo-google-fonts/jetbrains-mono`
-- [ ] Dark mode variant (invert background/foreground, keep primary terracotta)
+- [x] Create `apps/mobile/lib/theme.ts` -- all design tokens from specs/design-guide.md
+- [x] Colors: background (#ece5f0), card (#ffffff), primary (#c2703a), border (#d8d0de), etc.
+- [x] Load Inter via `@expo-google-fonts/inter`
+- [x] Load JetBrains Mono via `@expo-google-fonts/jetbrains-mono`
+- [x] Dark mode variant (invert background/foreground, keep primary terracotta)
 - [ ] Glass-morphism: `expo-blur` BlurView with tint="light" for native backdrop-blur
-- [ ] System theme detection (`useColorScheme()`)
+- [x] System theme detection (`useColorScheme()`)
 - **Output**: Native design system matching the web shell
 
 ### T872 [US43] Gateway client library
-- [ ] Create `apps/mobile/lib/gateway-client.ts`
-- [ ] WebSocket connection (same protocol as shell: `/ws` endpoint)
-- [ ] HTTP client for REST endpoints (`/api/message`, `/api/tasks`, `/api/channels/status`, etc.)
-- [ ] Auto-reconnect with exponential backoff
-- [ ] Bearer token auth header injection
-- [ ] Connection state: connecting / connected / disconnected / error
-- [ ] Message send/receive with typed events
+- [x] Create `apps/mobile/lib/gateway-client.ts`
+- [x] WebSocket connection (same protocol as shell: `/ws` endpoint)
+- [x] HTTP client for REST endpoints (`/api/message`, `/api/tasks`, `/api/channels/status`, etc.)
+- [x] Auto-reconnect with exponential backoff
+- [x] Bearer token auth header injection
+- [x] Connection state: connecting / connected / disconnected / error
+- [x] Message send/receive with typed events
 - **Output**: Reusable gateway client for all screens
 
 ### T873 [US43] Gateway connection screen
-- [ ] Create `apps/mobile/app/connect.tsx`
+- [x] Create `apps/mobile/app/connect.tsx`
 - [ ] Three connection methods:
-  - [ ] Manual: URL input + token input (SecureStore persistence)
+  - [x] Manual: URL input + token input (SecureStore persistence)
   - [ ] QR scan: camera-based QR code scanning (expo-camera)
   - [ ] Cloud: Clerk sign-in -> auto-discover instance URL
-- [ ] Gateway list: multiple saved gateways, switch between them
-- [ ] Connection test (hit /health, show success/error)
-- [ ] Store credentials in `expo-secure-store` (encrypted on device)
+- [x] Gateway list: multiple saved gateways, switch between them
+- [x] Connection test (hit /health, show success/error)
+- [x] Store credentials in `expo-secure-store` (encrypted on device)
 - **Output**: Users can connect to any gateway
 
 ### T874 [US43] Auth -- Clerk + biometric
-- [ ] `@clerk/clerk-expo` integration for cloud gateway auth
-- [ ] Biometric lock gate: `expo-local-authentication` for FaceID/TouchID/fingerprint
-- [ ] Setting to enable/disable biometric lock
-- [ ] Auth state persisted across app restarts
+- [x] `@clerk/clerk-expo` integration for cloud gateway auth
+- [x] Biometric lock gate: `expo-local-authentication` for FaceID/TouchID/fingerprint
+- [x] Setting to enable/disable biometric lock
+- [x] Auth state persisted across app restarts
 - **Output**: Secure app access
 
 ---
@@ -76,33 +76,33 @@
   - Long messages are scrollable
 
 ### T875 [US39] Chat message list
-- [ ] Create `apps/mobile/app/(tabs)/chat.tsx`
-- [ ] FlatList inverted (newest at bottom)
-- [ ] Message bubbles: user (right-aligned, primary bg) / assistant (left-aligned, card bg)
-- [ ] Timestamps, read indicators
-- [ ] Scroll to bottom on new message
+- [x] Create `apps/mobile/app/(tabs)/chat.tsx`
+- [x] FlatList inverted (newest at bottom)
+- [x] Message bubbles: user (right-aligned, primary bg) / assistant (left-aligned, card bg)
+- [x] Timestamps, read indicators
+- [x] Scroll to bottom on new message
 - [ ] Pull to load older messages
 - **Output**: Message list matching shell's ChatPanel
 
 ### T876 [US39] Chat input bar
-- [ ] Create `apps/mobile/components/InputBar.tsx`
-- [ ] Matches shell design: rounded-xl border, bg-card/90 with BlurView, shadow-lg
-- [ ] TextInput with auto-grow (up to 4 lines)
-- [ ] Send button (terracotta primary) -- disabled when empty
-- [ ] Keyboard avoiding view (auto-scroll above keyboard)
+- [x] Create `apps/mobile/components/InputBar.tsx`
+- [x] Matches shell design: rounded-xl border, bg-card/90 with BlurView, shadow-lg
+- [x] TextInput with auto-grow (up to 4 lines)
+- [x] Send button (terracotta primary) -- disabled when empty
+- [x] Keyboard avoiding view (auto-scroll above keyboard)
 - **Output**: Chat input matching shell style
 
 ### T877 [US39] Streaming responses
-- [ ] WebSocket streaming: render chunks as they arrive
-- [ ] Typing indicator animation (three dots pulse)
-- [ ] Smooth scroll to latest chunk during streaming
-- [ ] Handle stream interruption gracefully
+- [x] WebSocket streaming: render chunks as they arrive
+- [x] Typing indicator animation (three dots pulse)
+- [x] Smooth scroll to latest chunk during streaming
+- [x] Handle stream interruption gracefully
 - **Output**: Real-time streaming chat
 
 ### T878 [US39] Code blocks + syntax highlighting
-- [ ] Detect markdown code blocks in messages
-- [ ] Render with JetBrains Mono font, dark background
-- [ ] Language label badge
+- [x] Detect markdown code blocks in messages
+- [x] Render with JetBrains Mono font, dark background
+- [x] Language label badge
 - [ ] Copy button (clipboard)
 - [ ] Horizontal scroll for wide code
 - **Output**: Readable code in chat
@@ -125,51 +125,51 @@
 ## Phase C: Mission Control + Settings (T881-T886)
 
 ### T881 [US40] Task list screen
-- [ ] Create `apps/mobile/app/(tabs)/mission-control.tsx`
-- [ ] Fetch tasks from `GET /api/tasks`
-- [ ] Filter chips: All / Todo / In Progress / Done
-- [ ] Task cards: title, status badge, assignee, priority indicator
-- [ ] Pull to refresh
+- [x] Create `apps/mobile/app/(tabs)/mission-control.tsx`
+- [x] Fetch tasks from `GET /api/tasks`
+- [x] Filter chips: All / Todo / In Progress / Done
+- [x] Task cards: title, status badge, assignee, priority indicator
+- [x] Pull to refresh
 - **Output**: Mobile task board
 
 ### T882 [US40] Task detail bottom sheet
 - [ ] `@gorhom/bottom-sheet` for task detail view
-- [ ] Tap task card -> slide up detail sheet
-- [ ] Shows: title, description, status, assignee, created date
+- [x] Tap task card -> slide up detail sheet
+- [x] Shows: title, description, status, assignee, created date
 - [ ] Mark complete / reopen actions
 - [ ] Swipe down to dismiss
 - **Output**: Task detail with gesture interaction
 
 ### T883 [US40] Add task + cron overview
-- [ ] FAB (floating action button, terracotta) -> add task form
-- [ ] Task form: title, description, priority
-- [ ] POST `/api/tasks` to create
-- [ ] Cron section below tasks: list upcoming runs from `GET /api/cron`
-- [ ] Next run time, status badges
+- [x] FAB (floating action button, terracotta) -> add task form
+- [x] Task form: title, description, priority
+- [x] POST `/api/tasks` to create
+- [x] Cron section below tasks: list upcoming runs from `GET /api/cron`
+- [x] Next run time, status badges
 - **Output**: Task creation and cron visibility
 
 ### T884 [US42] Settings screen
-- [ ] Create `apps/mobile/app/(tabs)/settings.tsx`
+- [x] Create `apps/mobile/app/(tabs)/settings.tsx`
 - [ ] Sections:
-  - [ ] **Gateways**: list saved gateways, add/remove/switch, connection status
+  - [x] **Gateways**: list saved gateways, add/remove/switch, connection status
   - [ ] **Agent**: soul.md preview (read-only), agent name
-  - [ ] **Channels**: status badges (connected/error) from `/api/channels/status`
-  - [ ] **Notifications**: toggle per notification type
-  - [ ] **Security**: biometric lock toggle
-  - [ ] **Appearance**: system/light/dark theme
-  - [ ] **About**: version, Matrix OS logo, link to matrix-os.com
+  - [x] **Channels**: status badges (connected/error) from `/api/channels/status`
+  - [x] **Notifications**: toggle per notification type
+  - [x] **Security**: biometric lock toggle
+  - [x] **Appearance**: system/light/dark theme
+  - [x] **About**: version, Matrix OS logo, link to matrix-os.com
 - **Output**: Settings hub
 
 ### T885 [P] [US40] Channel status display
-- [ ] Fetch from `GET /api/channels/status`
-- [ ] Badge per channel: green (connected), yellow (degraded), red (error), gray (not configured)
+- [x] Fetch from `GET /api/channels/status`
+- [x] Badge per channel: green (connected), yellow (degraded), red (error), gray (not configured)
 - [ ] Tap channel -> detail card with last message time, error details
 - **Output**: Channel health at a glance
 
 ### T886 [P] App navigation + tab bar
-- [ ] Bottom tab bar: Chat (MessageSquare icon), Mission Control (LayoutGrid icon), Settings (Settings icon)
-- [ ] Active tab: terracotta color, inactive: muted-foreground
-- [ ] Smooth transitions between tabs
+- [x] Bottom tab bar: Chat (MessageSquare icon), Mission Control (LayoutGrid icon), Settings (Settings icon)
+- [x] Active tab: terracotta color, inactive: muted-foreground
+- [x] Smooth transitions between tabs
 - [ ] Badge on Chat tab for unread messages
 - **Output**: Polished navigation
 
@@ -178,33 +178,33 @@
 ## Phase D: Push Notifications + Polish (T887-T892)
 
 ### T887 [US41] Expo Push Notifications -- mobile side
-- [ ] `expo-notifications` setup
-- [ ] Request notification permissions on first launch
-- [ ] Register Expo Push Token with gateway (`POST /api/push/register`)
+- [x] `expo-notifications` setup
+- [x] Request notification permissions on first launch
+- [x] Register Expo Push Token with gateway (`POST /api/push/register`)
 - [ ] Handle notification tap -> navigate to relevant screen (chat, task, etc.)
 - [ ] Notification categories: message, task, cron, security
 - **Output**: Mobile receives push notifications
 
 ### T888 [US41] Push notification channel adapter -- gateway side
-- [ ] Create `packages/gateway/src/channels/push.ts`
-- [ ] Implements ChannelAdapter interface
-- [ ] Stores push tokens per user (in config or DB)
-- [ ] Sends via Expo Push API (`https://exp.host/--/api/v2/push/send`)
+- [x] Create `packages/gateway/src/channels/push.ts`
+- [x] Implements ChannelAdapter interface
+- [x] Stores push tokens per user (in config or DB)
+- [x] Sends via Expo Push API (`https://exp.host/--/api/v2/push/send`)
 - [ ] Notification triggers: new agent message, task status change, cron result, security alert
-- [ ] Rate limiting (max N pushes per minute)
+- [x] Rate limiting (max N pushes per minute)
 - **Output**: Gateway can push to mobile devices
 
 ### T889 [P] App icon + splash screen
-- [ ] App icon: Matrix OS logo (terracotta on lavender background)
-- [ ] Adaptive icon for Android (foreground: logo, background: lavender)
-- [ ] Splash screen: centered logo on lavender, fade transition
+- [x] App icon: Matrix OS logo (terracotta on lavender background)
+- [x] Adaptive icon for Android (foreground: logo, background: lavender)
+- [x] Splash screen: centered logo on lavender, fade transition
 - [ ] Generate all required sizes via `expo-image-utils`
 - **Output**: Branded app presence
 
 ### T890 [P] Build configuration (EAS Build)
-- [ ] `eas.json` with development, preview, and production profiles
-- [ ] iOS: provisioning profile, bundle ID `com.matrixos.mobile`
-- [ ] Android: signing key, package name `com.matrixos.mobile`
+- [x] `eas.json` with development, preview, and production profiles
+- [x] iOS: provisioning profile, bundle ID `com.matrixos.mobile`
+- [x] Android: signing key, package name `com.matrixos.mobile`
 - [ ] Development build for testing (`eas build --profile development`)
 - **Output**: Buildable app for both platforms
 

@@ -16,7 +16,7 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T900a [US44] Write `tests/mcp-browser/session-manager.test.ts`:
+- [x] T900a [US44] Write `tests/mcp-browser/session-manager.test.ts`:
   - launch() creates a new browser session (mocked Playwright)
   - getActive() returns current session
   - close() shuts down browser
@@ -25,35 +25,35 @@
   - Only one session at a time
 
 ### T900 [US44] MCP browser server scaffold
-- [ ] Create `packages/mcp-browser/package.json` -- deps: `playwright`, `@anthropic-ai/sdk`
+- [x] Create `packages/mcp-browser/package.json` -- deps: `playwright`, `@anthropic-ai/sdk`
 - [ ] Create `packages/mcp-browser/tsconfig.json`
-- [ ] Create `packages/mcp-browser/src/server.ts` -- MCP server with stdio transport
-- [ ] Register single `browser` tool (composite, action dispatch)
-- [ ] Add to `pnpm-workspace.yaml`
+- [x] Create `packages/mcp-browser/src/server.ts` -- MCP server with stdio transport
+- [x] Register single `browser` tool (composite, action dispatch)
+- [x] Add to `pnpm-workspace.yaml`
 - **Output**: MCP server that starts and exposes browser tool
 
 ### T901 [US44] Session manager
-- [ ] Create `packages/mcp-browser/src/session-manager.ts`
-- [ ] `launch()`: start Chromium via Playwright (headless by default)
-- [ ] `getActive()`: return current session or undefined
-- [ ] `close()`: close browser, clear session
-- [ ] Lazy start: browser only launches on first action (not on server start)
-- [ ] Auto-close timer: configurable idle timeout (default: 5 min)
-- [ ] Activity tracking: reset timer on every action
+- [x] Create `packages/mcp-browser/src/session-manager.ts`
+- [x] `launch()`: start Chromium via Playwright (headless by default)
+- [x] `getActive()`: return current session or undefined
+- [x] `close()`: close browser, clear session
+- [x] Lazy start: browser only launches on first action (not on server start)
+- [x] Auto-close timer: configurable idle timeout (default: 5 min)
+- [x] Activity tracking: reset timer on every action
 - **Output**: Managed browser lifecycle
 
 ### T902 [US44] Chromium installation
 - [ ] `pnpm --filter mcp-browser exec playwright install chromium` (only Chromium, ~150MB)
 - [ ] Document: "browser requires explicit Playwright install"
-- [ ] Graceful error when Chromium not installed: "Run `pnpm mcp-browser install` to enable browser"
+- [x] Graceful error when Chromium not installed: "Run `pnpm mcp-browser install` to enable browser"
 - **Output**: Chromium available for browser automation
 
 ### T903 [US44] Wire into kernel
-- [ ] When `config.browser.enabled`, add MCP server to kernel mcpServers:
+- [x] When `config.browser.enabled`, add MCP server to kernel mcpServers:
   ```
   { name: "browser", command: "node", args: ["packages/mcp-browser/dist/server.js"] }
   ```
-- [ ] Browser config in `~/system/config.json`: `{ "browser": { "enabled": true, "headless": true, "timeout": 30000, "idleTimeout": 300000 } }`
+- [x] Browser config in `~/system/config.json`: `{ "browser": { "enabled": true, "headless": true, "timeout": 30000, "idleTimeout": 300000 } }`
 - **Output**: Agent can access browser tool via MCP
 
 ### T904 [P] Chrome profile support
@@ -68,14 +68,14 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T905a [US46] Write `tests/mcp-browser/role-snapshot.test.ts`:
+- [x] T905a [US46] Write `tests/mcp-browser/role-snapshot.test.ts`:
   - Extracts accessibility tree from page
   - Tree format is compact and readable
   - Includes roles, names, values, states
   - Handles empty pages
   - Large pages truncated to token budget
 
-- [ ] T906a [US44] Write `tests/mcp-browser/browser-tool.test.ts`:
+- [x] T906a [US44] Write `tests/mcp-browser/browser-tool.test.ts`:
   - navigate action opens URL, returns title
   - snapshot action returns accessibility tree
   - click action clicks element by selector
@@ -86,58 +86,58 @@
   - All output is wrapped (external content markers present)
 
 ### T905 [US46] Role snapshot (accessibility tree)
-- [ ] Create `packages/mcp-browser/src/role-snapshot.ts`
-- [ ] Use Playwright's `page.accessibility.snapshot()` for accessibility tree
-- [ ] Format as indented text with role, name, value, state
-- [ ] Token budget: truncate large trees to configurable max chars (default: 20,000)
-- [ ] Filter noise: skip decorative/presentation roles
+- [x] Create `packages/mcp-browser/src/role-snapshot.ts`
+- [x] Use Playwright's `page.accessibility.snapshot()` for accessibility tree
+- [x] Format as indented text with role, name, value, state
+- [x] Token budget: truncate large trees to configurable max chars (default: 20,000)
+- [x] Filter noise: skip decorative/presentation roles
 - **Output**: Semantic page understanding for the agent
 
 ### T906 [US44] navigate + snapshot actions
-- [ ] `navigate`: go to URL, wait for load, return { title, url }
-- [ ] `snapshot`: capture accessibility tree, wrap as external content, return
-- [ ] Combine: navigate always returns snapshot alongside (so agent sees page after navigating)
+- [x] `navigate`: go to URL, wait for load, return { title, url }
+- [x] `snapshot`: capture accessibility tree, wrap as external content, return
+- [x] Combine: navigate always returns snapshot alongside (so agent sees page after navigating)
 - **Output**: Core browse loop: navigate -> see page
 
 ### T907 [US44] click + type + select actions
-- [ ] `click`: click by CSS selector OR by role+name (from snapshot)
-- [ ] `type`: clear field, type text into selector
-- [ ] `select`: select option from dropdown by value or label
-- [ ] All actions return updated snapshot after interaction
+- [x] `click`: click by CSS selector OR by role+name (from snapshot)
+- [x] `type`: clear field, type text into selector
+- [x] `select`: select option from dropdown by value or label
+- [x] All actions return updated snapshot after interaction
 - **Output**: Form interaction
 
 ### T908 [US44] screenshot + PDF actions
-- [ ] Create `packages/mcp-browser/src/screenshot.ts`
-- [ ] `screenshot`: capture page, save to `~/data/screenshots/{timestamp}.png`
-- [ ] Options: fullPage (default: true), element selector
-- [ ] `pdf`: save page as PDF to `~/data/screenshots/{timestamp}.pdf`
-- [ ] Return file path (served via gateway `/files/data/screenshots/`)
+- [x] Create `packages/mcp-browser/src/screenshot.ts`
+- [x] `screenshot`: capture page, save to `~/data/screenshots/{timestamp}.png`
+- [x] Options: fullPage (default: true), element selector
+- [x] `pdf`: save page as PDF to `~/data/screenshots/{timestamp}.pdf`
+- [x] Return file path (served via gateway `/files/data/screenshots/`)
 - **Output**: Visual page capture
 
 ### T909 [US44] evaluate action
-- [ ] Run arbitrary JavaScript in page context via `page.evaluate()`
-- [ ] Return serializable result (JSON)
+- [x] Run arbitrary JavaScript in page context via `page.evaluate()`
+- [x] Return serializable result (JSON)
 - [ ] Timeout: configurable (default: 5s for evaluation)
-- [ ] Wrap result as external content
+- [x] Wrap result as external content
 - **Output**: Programmatic page interaction
 
 ### T910 [US44] wait + scroll actions
-- [ ] `wait`: wait for selector to appear, or navigation to complete
-- [ ] `scroll`: scroll page or specific element (up/down/to-element)
-- [ ] Configurable timeout for wait (default: 30s)
+- [x] `wait`: wait for selector to appear, or navigation to complete
+- [x] `scroll`: scroll page or specific element (up/down/to-element)
+- [x] Configurable timeout for wait (default: 30s)
 - **Output**: Dynamic page interaction
 
 ### T911 [P] [US44] Tab management
-- [ ] `tabs`: list all open tabs (title, url per tab)
-- [ ] `tab_new`: open new tab (optionally navigate to URL)
-- [ ] `tab_close`: close tab by index
-- [ ] `tab_switch`: switch active tab by index
+- [x] `tabs`: list all open tabs (title, url per tab)
+- [x] `tab_new`: open new tab (optionally navigate to URL)
+- [x] `tab_close`: close tab by index
+- [x] `tab_switch`: switch active tab by index
 - **Output**: Multi-tab browsing
 
 ### T912 [P] [US44] Console message reading
-- [ ] `console`: return recent console messages (log, warn, error)
+- [x] `console`: return recent console messages (log, warn, error)
 - [ ] Filter by level
-- [ ] Wrap as external content
+- [x] Wrap as external content
 - **Output**: Debugging visibility for the agent
 
 ---
@@ -162,15 +162,15 @@
 - **Output**: Browser cannot access internal/dangerous URLs
 
 ### T914 [US45] External content wrapping
-- [ ] All browser output (snapshots, console, evaluate results, page text) wrapped
-- [ ] Use `wrapExternalContent({ source: "browser", includeWarning: true })` from 025
+- [x] All browser output (snapshots, console, evaluate results, page text) wrapped
+- [x] Use `wrapExternalContent({ source: "browser", includeWarning: true })` from 025
 - [ ] If 025 not yet shipped, inline minimal wrapper with TODO
 - **Output**: Browser content defensively wrapped
 
 ### T915 [US44] Screenshot file management
-- [ ] Screenshots saved to `~/data/screenshots/` (Everything Is a File)
-- [ ] Auto-create directory on first screenshot
-- [ ] Served via existing `/files/data/screenshots/*` gateway route
+- [x] Screenshots saved to `~/data/screenshots/` (Everything Is a File)
+- [x] Auto-create directory on first screenshot
+- [x] Served via existing `/files/data/screenshots/*` gateway route
 - [ ] Cleanup: optional max age (delete screenshots older than N days)
 - **Output**: Screenshots accessible from shell and API
 

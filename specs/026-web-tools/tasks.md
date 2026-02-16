@@ -15,14 +15,14 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T850a [US38] Write `tests/web-tools/web-cache.test.ts`:
+- [x] T850a [US38] Write `tests/web-tools/web-cache.test.ts`:
   - set() stores entry, get() retrieves it
   - Entries expire after TTL
   - clear() removes all entries
   - size() returns correct count
   - Expired entries not returned by get()
 
-- [ ] T851a [US37] Write `tests/web-tools/web-fetch.test.ts`:
+- [x] T851a [US37] Write `tests/web-tools/web-fetch.test.ts`:
   - Fetches URL and returns content
   - Cloudflare markdown path: returns markdown when server sends text/markdown
   - Readability path: extracts article from HTML
@@ -35,52 +35,52 @@
   - Content wrapped with external content markers (when wired)
 
 ### T850 [US38] WebCache
-- [ ] Create `packages/kernel/src/tools/web-cache.ts`
-- [ ] In-memory Map with TTL per entry
-- [ ] Auto-eviction: lazy on get() + periodic sweep
-- [ ] Cache key normalization (URL: strip trailing slash, sort query params)
-- [ ] Configurable default TTL (default: 15 minutes)
+- [x] Create `packages/kernel/src/tools/web-cache.ts`
+- [x] In-memory Map with TTL per entry
+- [x] Auto-eviction: lazy on get() + periodic sweep
+- [x] Cache key normalization (URL: strip trailing slash, sort query params)
+- [x] Configurable default TTL (default: 15 minutes)
 - **Output**: Shared cache for web fetch and search
 
 ### T851 [US37] Web fetch tool -- core
-- [ ] Create `packages/kernel/src/tools/web-fetch.ts`
-- [ ] `createWebFetchTool()` returns MCP tool definition
-- [ ] Input: `{ url, extractMode?, maxChars? }`
-- [ ] URL validation (must be http/https, no data: or file: URIs)
-- [ ] Cache check before fetch
-- [ ] Output: `{ url, title, content, extractedVia, charCount }`
+- [x] Create `packages/kernel/src/tools/web-fetch.ts`
+- [x] `createWebFetchTool()` returns MCP tool definition
+- [x] Input: `{ url, extractMode?, maxChars? }`
+- [x] URL validation (must be http/https, no data: or file: URIs)
+- [x] Cache check before fetch
+- [x] Output: `{ url, title, content, extractedVia, charCount }`
 - **Output**: web_fetch tool skeleton with cache integration
 
 ### T852 [US37] Cloudflare Markdown for Agents
-- [ ] Send `Accept: text/markdown` header on fetch
-- [ ] If response `Content-Type` is `text/markdown`, use body directly
+- [x] Send `Accept: text/markdown` header on fetch
+- [x] If response `Content-Type` is `text/markdown`, use body directly
 - [ ] Log `x-markdown-tokens` header for token budget debugging
-- [ ] No external dependency, pure fetch
+- [x] No external dependency, pure fetch
 - **Output**: Tier 1 extraction (zero cost, best quality when available)
 
 ### T853 [US37] Readability extraction
-- [ ] Create `packages/kernel/src/tools/web-utils.ts`
-- [ ] Parse HTML with `linkedom` (lightweight, no browser)
-- [ ] Extract article with `@mozilla/readability`
-- [ ] Convert to markdown with `turndown` (or return plain text based on extractMode)
-- [ ] Strip nav, ads, sidebars, footers automatically
+- [x] Create `packages/kernel/src/tools/web-utils.ts`
+- [x] Parse HTML with `linkedom` (lightweight, no browser)
+- [x] Extract article with `@mozilla/readability`
+- [x] Convert to markdown with `turndown` (or return plain text based on extractMode)
+- [x] Strip nav, ads, sidebars, footers automatically
 - **Output**: Tier 2 extraction (local, no API key, works on most sites)
 
 ### T854 [P] [US37] Firecrawl fallback
-- [ ] If readability returns empty/no content AND `FIRECRAWL_API_KEY` is set, try Firecrawl
-- [ ] POST `https://api.firecrawl.dev/v1/scrape` with `{ url, formats: ["markdown"] }`
-- [ ] Firecrawl handles JavaScript-rendered pages (SPAs, dynamic content)
-- [ ] Opt-in: gracefully skip if no API key configured
+- [x] If readability returns empty/no content AND `FIRECRAWL_API_KEY` is set, try Firecrawl
+- [x] POST `https://api.firecrawl.dev/v1/scrape` with `{ url, formats: ["markdown"] }`
+- [x] Firecrawl handles JavaScript-rendered pages (SPAs, dynamic content)
+- [x] Opt-in: gracefully skip if no API key configured
 - **Output**: Tier 3 extraction (paid, handles JS-heavy sites)
 
 ### T855 [US37] Register web_fetch on IPC server
-- [ ] Add `web_fetch` tool to `packages/kernel/src/ipc-server.ts`
-- [ ] Zod schema for input validation
-- [ ] Tool description for LLM: "Fetch and extract content from a web page URL"
+- [x] Add `web_fetch` tool to `packages/kernel/src/ipc-server.ts`
+- [x] Zod schema for input validation
+- [x] Tool description for LLM: "Fetch and extract content from a web page URL"
 - **Output**: Agent can use web_fetch tool
 
 ### T856 [P] Content truncation and budget
-- [ ] Truncate extracted content to maxChars (default: 50,000)
+- [x] Truncate extracted content to maxChars (default: 50,000)
 - [ ] Deduct wrapper overhead from content budget before truncation
 - [ ] Hard cap from config: `tools.web.fetch.maxCharsCap`
 - **Output**: Content fits within token budgets
@@ -91,7 +91,7 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T857a [US36] Write `tests/web-tools/web-search.test.ts`:
+- [x] T857a [US36] Write `tests/web-tools/web-search.test.ts`:
   - Brave: returns structured results (title, url, snippet)
   - Perplexity: returns conversational answer with citations
   - Grok: returns structured answer
@@ -102,35 +102,35 @@
   - Count parameter limits results
 
 ### T857 [US36] Brave Search provider
-- [ ] Endpoint: `https://api.search.brave.com/res/v1/web/search`
-- [ ] Auth: `X-Subscription-Token` header with API key
-- [ ] Parse response into SearchResult[] (title, url, snippet, age)
-- [ ] Freshness mapping: day -> `pd`, week -> `pw`, month -> `pm`, year -> `py`
+- [x] Endpoint: `https://api.search.brave.com/res/v1/web/search`
+- [x] Auth: `X-Subscription-Token` header with API key
+- [x] Parse response into SearchResult[] (title, url, snippet, age)
+- [x] Freshness mapping: day -> `pd`, week -> `pw`, month -> `pm`, year -> `py`
 - [ ] Country/language filtering support
 - **Output**: Brave search provider
 
 ### T858 [US36] Perplexity provider
-- [ ] Auto-detect endpoint from key prefix: `sk-or-` -> OpenRouter, `pplx-` -> direct
-- [ ] OpenRouter: `https://openrouter.ai/api/v1/chat/completions`
-- [ ] Direct: `https://api.perplexity.ai/chat/completions`
-- [ ] Model: `perplexity/sonar-pro` (conversational search)
-- [ ] Returns answer string with inline citations
-- [ ] Freshness: mapped to `search_recency_filter`
+- [x] Auto-detect endpoint from key prefix: `sk-or-` -> OpenRouter, `pplx-` -> direct
+- [x] OpenRouter: `https://openrouter.ai/api/v1/chat/completions`
+- [x] Direct: `https://api.perplexity.ai/chat/completions`
+- [x] Model: `perplexity/sonar-pro` (conversational search)
+- [x] Returns answer string with inline citations
+- [x] Freshness: mapped to `search_recency_filter`
 - **Output**: Perplexity search provider (conversational)
 
 ### T859 [P] [US36] Grok/xAI provider
-- [ ] Endpoint: `https://api.x.ai/v1/chat/completions`
-- [ ] Model: `grok-3` (or latest)
-- [ ] Auth: `Authorization: Bearer` with XAI_API_KEY
-- [ ] Returns structured answer with web grounding
+- [x] Endpoint: `https://api.x.ai/v1/chat/completions`
+- [x] Model: `grok-3` (or latest)
+- [x] Auth: `Authorization: Bearer` with XAI_API_KEY
+- [x] Returns structured answer with web grounding
 - **Output**: Grok search provider (real-time)
 
 ### T860 [US36] Register web_search on IPC server
-- [ ] Add `web_search` tool to `packages/kernel/src/ipc-server.ts`
-- [ ] Auto-detect provider from available API keys (priority: brave > perplexity > grok)
-- [ ] Allow explicit provider override in input
-- [ ] Zod schema: `{ query, count?, provider?, freshness? }`
-- [ ] Tool description: "Search the web for current information"
+- [x] Add `web_search` tool to `packages/kernel/src/ipc-server.ts`
+- [x] Auto-detect provider from available API keys (priority: brave > perplexity > grok)
+- [x] Allow explicit provider override in input
+- [x] Zod schema: `{ query, count?, provider?, freshness? }`
+- [x] Tool description: "Search the web for current information"
 - **Output**: Agent can use web_search tool
 
 ---
@@ -138,20 +138,20 @@
 ## Phase C: Integration (T861-T864)
 
 ### T861 [US37] Wire SSRF guard
-- [ ] All outbound HTTP in web_fetch goes through `fetchWithSsrfGuard()` (from 025 T825)
-- [ ] If SSRF guard not yet built, use plain fetch with TODO marker
+- [x] All outbound HTTP in web_fetch goes through `fetchWithSsrfGuard()` (from 025 T825)
+- [x] If SSRF guard not yet built, use plain fetch with TODO marker
 - **Output**: Web fetch protected against SSRF
 
 ### T862 [US37] Wire external content wrapping
-- [ ] web_fetch results wrapped with `wrapExternalContent({ source: "web_fetch" })` -- includes warning
+- [x] web_fetch results wrapped with `wrapExternalContent({ source: "web_fetch" })` -- includes warning
 - [ ] web_search results wrapped with `wrapExternalContent({ source: "web_search" })` -- no warning
-- [ ] If content wrapping not yet built (025 T820), use identity function with TODO
+- [x] If content wrapping not yet built (025 T820), use identity function with TODO
 - **Output**: Web content defensively wrapped
 
 ### T863 Config section
-- [ ] Add `tools.web` section to `home/system/config.json` template
-- [ ] Search: provider, API keys as ${VAR} refs
-- [ ] Fetch: maxChars, cacheTtlMinutes, firecrawlApiKey as ${VAR} ref
+- [x] Add `tools.web` section to `home/system/config.json` template
+- [x] Search: provider, API keys as ${VAR} refs
+- [x] Fetch: maxChars, cacheTtlMinutes, firecrawlApiKey as ${VAR} ref
 - **Output**: Web tools configurable via Everything Is a File
 
 ### T864 [P] System prompt update

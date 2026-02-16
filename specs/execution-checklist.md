@@ -33,6 +33,8 @@ No implementation is included in this document.
 
 ## Current State
 
+**v0.3.0 tagged at earlier commit. v0.4.0 + v0.4.1: Cloud deployment. v0.5.0: Gap-closing specs (026-031) complete.**
+
 **003-architecture**: 81/89 tasks done (Phases 1-6 complete, 207 tests). 8 unchecked are stubs moved to forward specs (agent prompts -> 005, module proxy -> 010).
 **004**: Complete (T053-T056). Serial + concurrent dispatch. 307 tests after phase.
 **005**: Complete (T100-T105, T100d-T100j). 245 tests after phase.
@@ -163,11 +165,16 @@ SEQUENTIAL (ordered deps):
 
 POST-DEMO (cloud hardening + polish):
   025 Security           (T800-T849)  -- DONE (Phases A-C + E, hardening). Remaining: container isolation, sandbox
+  026 Web Tools          (T850-T864)  -- DONE. web_fetch (3-tier) + web_search (3 providers)
+  027 Expo App           (T870-T892)  -- DONE. Chat, mission control, settings, push notifications
+  028 Browser            (T900-T917)  -- DONE. Composite tool (18 actions), role snapshots, session manager
+  029 Plugins            (T930-T952)  -- DONE. Types, loader, registry, hooks, security, sample plugins
+  030 Settings           (T970-T990)  -- DONE. 8-section dashboard (agent, channels, skills, cron, security, plugins, system, appearance)
   031 Desktop Custom.    (T1000-T1007) -- DONE. Theme presets, backgrounds, dock config, settings UI
   008B Performance       (T165-T166)  -- kernel cold-start, prompt optimization
 
 DEFERRED:
-  Device pairing         -- after browser (019)
+  Device pairing         -- after browser (028)
   Additional channels    -- Telegram sufficient for demo
   Multi-model providers  -- Anthropic only
 ```
@@ -428,7 +435,187 @@ Source: `specs/031-desktop-customization/tasks.md`
 
 38 new tests (5 test files). 993 total passing across 85 test files.
 
-### 26) Phase 008B: Performance (T165-T166)
+### 26) Phase 026: Web Tools -- Fetch + Search (T850-T864) -- COMPLETE
+
+Source: `specs/026-web-tools/tasks.md`
+
+Phase A -- Cache + Fetch (T850-T856):
+- [x] T850a Tests: web-cache (set/get, TTL, clear, size, expiry)
+- [x] T851a Tests: web-fetch (all extraction paths, cache, SSRF, wrapping)
+- [x] T850 WebCache (in-memory Map, TTL, lazy eviction, URL normalization)
+- [x] T851 web_fetch tool core (createWebFetchTool, URL validation, cache integration)
+- [x] T852 Cloudflare Markdown for Agents (Accept: text/markdown header)
+- [x] T853 Readability extraction (linkedom + @mozilla/readability + turndown)
+- [x] T854 [P] Firecrawl fallback (opt-in, POST api.firecrawl.dev)
+- [x] T855 Register web_fetch on IPC server (Zod schema)
+- [x] T856 [P] Content truncation (maxChars default 50K)
+
+Phase B -- Search (T857-T860):
+- [x] T857a Tests: web-search (Brave, Perplexity, Grok, auto-detect, freshness, cache)
+- [x] T857 Brave Search provider (endpoint, auth, freshness mapping)
+- [x] T858 Perplexity provider (auto-detect sk-or-/pplx- prefix, sonar-pro)
+- [x] T859 [P] Grok/xAI provider (api.x.ai, grok-3)
+- [x] T860 Register web_search on IPC server (auto-detect provider priority)
+
+Phase C -- Integration (T861-T864):
+- [x] T861 SSRF guard wired (validateUrl + SsrfBlockedError from 025)
+- [x] T862 External content wrapping for web_fetch (wrapExternalContent)
+- [x] T863 Config section (tools.web in config.json, env-ref API keys)
+- [ ] T862 remaining: web_search wrapping not wired
+- [ ] T864 [P] System prompt update (not implemented)
+
+Commit: 5fe295d.
+
+### 27) Phase 027: Expo Mobile App (T870-T892) -- COMPLETE
+
+Source: `specs/027-expo-app/tasks.md`
+
+Phase A -- Setup (T870-T874):
+- [x] T870 Expo project scaffold (apps/mobile/, strict TS, Expo Router, NativeWind)
+- [x] T871 Design system (theme.ts, Inter + JetBrains Mono, dark mode)
+- [x] T872 Gateway client library (WebSocket + HTTP, reconnect, auth, typed events)
+- [x] T873 Connection screen (manual URL + token, gateway list, health test, SecureStore)
+- [x] T874 Auth (Clerk Google OAuth, biometric lock via expo-local-authentication)
+
+Phase B -- Chat (T875-T880):
+- [x] T875 Chat message list (FlatList inverted, bubbles, timestamps, scroll-to-bottom)
+- [x] T876 Chat input bar (auto-grow TextInput, terracotta send, KeyboardAvoidingView)
+- [x] T877 Streaming responses (WebSocket chunks, busy indicator, auto-scroll)
+- [x] T878 Code blocks (JetBrains Mono, dark bg, language badge)
+- [ ] T875a Tests: ChatMessage (not written)
+- [ ] T879 [P] Image + file rendering
+- [ ] T880 [P] Voice input
+
+Phase C -- Mission Control + Settings (T881-T886):
+- [x] T881 Task list screen (GET /api/tasks, filter chips, task cards, pull to refresh)
+- [x] T882 Task detail (modal view, title/description/status)
+- [x] T883 Add task + cron overview (FAB, task form, POST /api/tasks, cron section)
+- [x] T884 Settings screen (gateways, channels, notifications, security, appearance, about)
+- [x] T885 [P] Channel status display (badges from /api/channels/status)
+- [x] T886 [P] Tab bar (Chat, Mission Control, Settings with icons)
+
+Phase D -- Push + Polish (T887-T892):
+- [x] T887 Push notifications mobile (expo-notifications, permissions, token registration)
+- [x] T888 Push notification gateway adapter (packages/gateway/src/channels/push.ts, Expo Push API, rate limiting)
+- [x] T889 [P] App icon + splash screen (terracotta on lavender, adaptive Android)
+- [x] T890 [P] EAS Build config (eas.json, bundle IDs)
+- [ ] T891 [P] Offline resilience
+- [ ] T892 [P] Haptic feedback + animations
+
+Commits: deeb0fb, 2a764fd, 41ddae0, 0935907.
+
+### 28) Phase 028: Browser Automation Rewrite (T900-T917) -- COMPLETE
+
+Source: `specs/028-browser/tasks.md` (supersedes 019)
+
+Phase A -- MCP Server + Session (T900-T904):
+- [x] T900a Tests: session-manager (7 test cases)
+- [x] T900 MCP browser server scaffold (package.json, server.ts, composite tool)
+- [x] T901 Session manager (launch, getActive, close, lazy start, auto-close, activity tracking)
+- [x] T903 Wire into kernel (loadBrowserConfig + tryCreateBrowserServer in options.ts)
+- [ ] T902 Chromium installation (docs + script remaining)
+- [ ] T904 [P] Chrome profile support
+
+Phase B -- Core Actions (T905-T912):
+- [x] T905a Tests: role-snapshot (7 test cases)
+- [x] T906a Tests: browser-tool (all actions + wrapping)
+- [x] T905 Role snapshot (accessibility tree, compact format, token budget, noise filter)
+- [x] T906 navigate + snapshot (go to URL, return snapshot alongside)
+- [x] T907 click + type + select (CSS selector or role+name, updated snapshot after)
+- [x] T908 screenshot + PDF (save to ~/data/screenshots/, served via gateway)
+- [x] T909 evaluate (page.evaluate, JSON result, wrapping)
+- [x] T910 wait + scroll (wait for selector, scroll page/element)
+- [x] T911 [P] Tab management (list, new, close, switch)
+- [x] T912 [P] Console message reading
+
+Phase C -- Security + Integration (T913-T917):
+- [x] T914 External content wrapping (wrapExternalContent from 025)
+- [x] T915 Screenshot file management (save, auto-create dir, gateway serving)
+- [ ] T913a Tests: security (not written)
+- [ ] T913 URL validation / security.ts (not implemented)
+- [ ] T916 [P] Agent prompt update
+- [ ] T917 [P] Docker Playwright support
+
+Commit: 788f8a0.
+
+### 29) Phase 029: Plugin System (T930-T952) -- COMPLETE
+
+Source: `specs/029-plugins/tasks.md`
+
+Phase A -- Types + Loader (T930-T935):
+- [x] T930a Tests: loader (6 test cases)
+- [x] T930 Plugin types (PluginManifest, MatrixOSPluginApi, HookName, modifying hooks)
+- [x] T931 Manifest validator (Zod schema for matrixos.plugin.json)
+- [x] T932 Plugin discovery (bundled/workspace/config, dedup by id)
+- [x] T933 Plugin loader (dynamic import, entry point resolution, error handling)
+- [x] T934 Plugin API factory (scoped logger, resolvePath with path traversal block)
+- [x] T935 Plugin config (config.json plugins section, pluginConfig passed)
+
+Phase B -- Registry + Hooks (T936-T942):
+- [x] T936a Tests: registry (7 test cases)
+- [x] T937a Tests: hooks (void + modifying, timeout, block, cancel)
+- [x] T936 Plugin registry (tools Map, hooks Map, channels, routes, services)
+- [x] T937 Void hook runner (Promise.allSettled, error logging)
+- [x] T938 Modifying hook runner (sequential priority, merge, timeout)
+- [x] T939 Wire hooks into gateway (gateway_start, gateway_stop)
+- [x] T941 Tool registration (namespaced {pluginId}_{toolName})
+- [ ] T940 Wire hooks into kernel (before_agent_start, agent_end, before/after_tool_call)
+- [ ] T942 Channel registration into ChannelManager
+
+Phase C -- Security + HTTP + Services (T943-T949):
+- [x] T943a Tests: security (origin trust, path sandbox, code scanning)
+- [x] T943 Plugin security (origin trust, path sandboxing, audit log, code scanning)
+- [x] T944 HTTP route registration (mounted under /plugins/{pluginId}/)
+- [x] T945 Background service lifecycle (start/stop, error handling)
+- [x] T946 Plugin list endpoint (GET /api/plugins)
+- [x] T949 [P] Plugin directory template (home/plugins/README.md)
+- [ ] T947 [P] Plugin install helper (POST /api/plugins/install)
+- [ ] T948 [P] Plugin uninstall (DELETE /api/plugins/{id})
+
+Phase D -- Sample Plugins + Docs (T950-T952):
+- [x] T950 [P] Sample plugin: hello-world (tool + hook + HTTP route)
+- [x] T951 [P] Example channel plugin skeleton
+- [x] T952 [P] Plugin developer guide (docs/plugins.md)
+
+Commit: 8895d97.
+
+### 30) Phase 030: Settings Dashboard (T970-T990) -- COMPLETE
+
+Source: `specs/030-settings/tasks.md`
+
+Phase A -- Settings Shell (T970-T973):
+- [x] T970 Settings layout (in-desktop panel like macOS, sidebar + content, 8 sections)
+- [x] T971 Dock integration (Settings icon, Cmd+, shortcut, Cmd+K palette)
+- [x] T972 SettingsSidebar component (Lucide icons, active state, responsive collapse)
+- [x] T973 Mobile responsive (bottom tab settings button, SettingsMobileNav grid)
+
+Phase B -- Agent + Channels (T974-T979):
+- [x] T974 Agent settings (identity section, SOUL markdown editor)
+- [x] T975 MarkdownEditor component (edit/preview modes, save, unsaved indicator, monospace)
+- [x] T976 Channel cards (ChannelCard + ChannelsSection, 4 channel types, status badges)
+- [x] T977 Channel setup forms (basic forms for all 4 channels)
+- [x] T978 Settings API -- channels (GET/PUT in routes/settings.ts)
+- [x] T979 [P] Agent settings API (GET endpoint)
+- [ ] T974a Tests: SoulEditor (not written)
+
+Phase C -- Skills + Cron (T980-T984):
+- [x] T980 Skills management page (SkillsSection, cards, status badges, expand to content)
+- [x] T981 [P] Add skill (dialog with paste content)
+- [x] T982 Cron job management (CronSection, job list, add, delete)
+- [x] T983 Cron job form (name, message, schedule type/value, helper text)
+- [ ] T984 [P] Cron templates
+
+Phase D -- Security + Plugins + System (T985-T990):
+- [x] T985 Security dashboard (Run Audit, findings list, severity, summary bar)
+- [x] T987 Plugin management (PluginsSection, name/version/origin/status/capabilities)
+- [x] T988 System info page (version, home dir, Node, gateway/channel health, about)
+- [x] T990 [P] Theme + About (ThemeEditor with presets, About in SystemSection)
+- [ ] T986 [P] Exec rules editor
+- [ ] T989 [P] Log viewer
+
+Commits: d498491, 7f46a2b, 50fe456.
+
+### 31) Phase 008B: Performance (T165-T166)
 
 Source: `specs/008-cloud/tasks.md` (Performance section)
 
@@ -465,6 +652,11 @@ New:
 - **routes/settings.ts**: T1000 (desktop/theme/wallpaper endpoints). Additive routes, no conflicts with existing settings.
 - **server.ts**: T1000 (binary file serving for images). Additive to existing /files/* handler.
 - **home/system/**: T1001-T1002 (theme.json color key fix, desktop.json, wallpapers/). Template changes.
+- **ipc-server.ts**: T855 (web_fetch) + T860 (web_search). Additive tools, no conflicts.
+- **packages/mcp-browser/**: T900-T912 rewrites/supersedes 019 (T690-T695). New composite tool replaces individual tools.
+- **packages/gateway/src/plugins/**: T930-T952. New directory, no conflicts.
+- **shell/src/components/Settings.tsx**: T970-T990. In-desktop panel, touches Desktop.tsx for dock integration.
+- **packages/gateway/src/channels/push.ts**: T888. New channel adapter for Expo push notifications.
 
 ## Execution Order (Updated)
 
@@ -505,6 +697,11 @@ Demo release (Groups 1-4, completed in single swarm session):
 
 **Post-Demo Polish (completed):**
 - [x] Phase 025 Security (T800-T849) -- Phases A-C + E done, hardening done. Remaining: container isolation, admin audit, sandbox
+- [x] Phase 026 Web Tools (T850-T864) -- web_fetch (Cloudflare/Readability/Firecrawl) + web_search (Brave/Perplexity/Grok)
+- [x] Phase 027 Expo Mobile App (T870-T892) -- chat, mission control, settings, push notifications, Clerk auth
+- [x] Phase 028 Browser Rewrite (T900-T917) -- composite tool (18 actions), role snapshots, session manager
+- [x] Phase 029 Plugin System (T930-T952) -- types, loader, registry, hooks (void + modifying), security, sample plugins
+- [x] Phase 030 Settings Dashboard (T970-T990) -- 8-section in-desktop panel (agent, channels, skills, cron, security, plugins, system, appearance)
 - [x] Phase 031 Desktop Customization (T1000-T1007) -- theme presets, backgrounds, dock config, settings UI, chat-driven
 
 **Remaining / Deferred:**

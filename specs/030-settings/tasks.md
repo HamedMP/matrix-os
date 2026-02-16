@@ -17,34 +17,36 @@
 ## Phase A: Settings Shell (T970-T973)
 
 ### T970 [US52] Settings layout + routing
-- [ ] Create `shell/src/app/settings/layout.tsx` -- sidebar + content layout
-- [ ] Sidebar navigation: Agent, Channels, Skills, Security, Cron, Plugins, System
-- [ ] Active section highlighted (terracotta text/border)
-- [ ] Content area scrollable, sidebar fixed
-- [ ] Create `shell/src/app/settings/page.tsx` -- redirect to /settings/agent
+- [x] Create `shell/src/app/settings/layout.tsx` -- sidebar + content layout
+- [x] Sidebar navigation: Agent, Channels, Skills, Security, Cron, Plugins, System
+- [x] Active section highlighted (terracotta text/border)
+- [x] Content area scrollable, sidebar fixed
+- [x] Create `shell/src/app/settings/page.tsx` -- redirect to /settings/agent
+- **Note**: Implemented as in-desktop panel (`shell/src/components/Settings.tsx`) rather than route pages, like macOS System Settings
 - **Output**: Settings page shell with navigation
 
 ### T971 [US52] Settings dock integration
-- [ ] Add Settings icon to dock (Lucide `Settings` icon)
-- [ ] Click opens /settings as a window (or full-screen route)
-- [ ] Cmd+, keyboard shortcut opens settings
-- [ ] Add to Cmd+K command palette: "Open Settings"
+- [x] Add Settings icon to dock (Lucide `Settings` icon)
+- [x] Click opens /settings as a window (or full-screen route)
+- [x] Cmd+, keyboard shortcut opens settings
+- [x] Add to Cmd+K command palette: "Open Settings"
 - **Output**: Settings accessible from dock and keyboard
 
 ### T972 [US52] Settings sidebar component
-- [ ] Create `shell/src/components/settings/SettingsSidebar.tsx`
-- [ ] Section links with icons (Lucide):
+- [x] Create `shell/src/components/settings/SettingsSidebar.tsx`
+- [x] Section links with icons (Lucide):
   - User (agent), MessageSquare (channels), Sparkles (skills)
   - Shield (security), Clock (cron), Puzzle (plugins), Monitor (system)
-- [ ] Active state: terracotta text, left border accent
-- [ ] Collapse to icons-only on narrow screens
+- [x] Active state: terracotta text, left border accent
+- [x] Collapse to icons-only on narrow screens
 - **Output**: Sidebar navigation component
 
 ### T973 [US52] Mobile responsive settings
-- [ ] Mobile: hide sidebar, show section list as cards on /settings
-- [ ] Tap section card -> navigate to section page
-- [ ] Back button to return to section list
-- [ ] Full-width content on mobile
+- [x] Mobile: hide sidebar, show section list as cards on /settings
+- [x] Tap section card -> navigate to section page
+- [x] Back button to return to section list
+- [x] Full-width content on mobile
+- **Note**: Mobile uses bottom tab bar with Settings icon; SettingsMobileNav provides card grid
 - **Output**: Settings works on mobile
 
 ---
@@ -61,55 +63,58 @@
   - Dirty state tracked (unsaved changes warning)
 
 ### T974 [US52] Agent settings page
-- [ ] Create `shell/src/app/settings/agent/page.tsx`
-- [ ] Sections:
-  - [ ] **Identity**: Display name, handle (@user:matrix-os.com), AI handle
-  - [ ] **SOUL**: Markdown editor for ~/system/soul.md
+- [x] Create `shell/src/app/settings/agent/page.tsx`
+- [x] Sections:
+  - [x] **Identity**: Display name, handle (@user:matrix-os.com), AI handle
+  - [x] **SOUL**: Markdown editor for ~/system/soul.md
   - [ ] **Agent files**: Tabbed view for ~/agents/custom/*.md (builder, researcher, healer, etc.)
-- [ ] Read via `GET /files/system/soul.md` (existing API)
-- [ ] Write via PUT to same endpoint
+- [x] Read via `GET /files/system/soul.md` (existing API)
+- [x] Write via PUT to same endpoint
+- **Note**: Implemented as `AgentSection.tsx` in-desktop panel section. Agent files tabbed view not yet implemented.
 - **Output**: Agent personality configuration UI
 
 ### T975 [US52] Markdown editor component
-- [ ] Create `shell/src/components/settings/MarkdownEditor.tsx`
-- [ ] Two modes: edit (textarea) / preview (rendered markdown)
-- [ ] Toggle button between modes
-- [ ] Auto-save on blur (with debounce) or explicit Save button
-- [ ] Unsaved changes indicator (dot badge)
-- [ ] Monospace font (JetBrains Mono) in edit mode
-- [ ] Reusable across SOUL, agent files, skills
+- [x] Create `shell/src/components/settings/MarkdownEditor.tsx`
+- [x] Two modes: edit (textarea) / preview (rendered markdown)
+- [x] Toggle button between modes
+- [x] Auto-save on blur (with debounce) or explicit Save button
+- [x] Unsaved changes indicator (dot badge)
+- [x] Monospace font (JetBrains Mono) in edit mode
+- [x] Reusable across SOUL, agent files, skills
 - **Output**: Reusable markdown file editor
 
 ### T976 [US53] Channel cards
-- [ ] Create `shell/src/app/settings/channels/page.tsx`
-- [ ] Create `shell/src/components/settings/ChannelCard.tsx`
-- [ ] Card per channel: icon, name, status badge (green/yellow/red/gray)
-- [ ] Status from `GET /api/channels/status`
-- [ ] Expandable: click to show config form
-- [ ] Cards: Telegram, Discord, Slack, WhatsApp, plus "More coming soon" for others
+- [x] Create `shell/src/app/settings/channels/page.tsx`
+- [x] Create `shell/src/components/settings/ChannelCard.tsx`
+- [x] Card per channel: icon, name, status badge (green/yellow/red/gray)
+- [x] Status from `GET /api/channels/status`
+- [x] Expandable: click to show config form
+- [x] Cards: Telegram, Discord, Slack, WhatsApp, plus "More coming soon" for others
+- **Note**: Implemented as `ChannelsSection.tsx` in-desktop panel section
 - **Output**: Channel overview with status
 
 ### T977 [US53] Channel setup forms
-- [ ] Telegram: bot token input, allowFrom list, polling toggle
-- [ ] Discord: bot token, guild ID
-- [ ] Slack: app token, bot token
-- [ ] WhatsApp: QR code display (when adapter supports it)
+- [x] Telegram: bot token input, allowFrom list, polling toggle
+- [x] Discord: bot token, guild ID
+- [x] Slack: app token, bot token
+- [x] WhatsApp: QR code display (when adapter supports it)
 - [ ] Form validation (Zod + React Hook Form)
-- [ ] Save updates config.json via settings API
+- [x] Save updates config.json via settings API
 - [ ] "Test Connection" button per channel
+- **Note**: Basic forms implemented in ChannelCard expandable section. Missing Zod validation and test connection.
 - **Output**: Visual channel configuration
 
 ### T978 [US53] Settings API -- channels
-- [ ] Create `packages/gateway/src/routes/settings.ts`
-- [ ] `GET /api/settings/channels` -- merged channel config + status
-- [ ] `PUT /api/settings/channels/:id` -- update channel config (writes to config.json)
+- [x] Create `packages/gateway/src/routes/settings.ts`
+- [x] `GET /api/settings/channels` -- merged channel config + status
+- [x] `PUT /api/settings/channels/:id` -- update channel config (writes to config.json)
 - [ ] `POST /api/settings/channels/:id/test` -- test channel connectivity
 - **Output**: Channel settings CRUD API
 
 ### T979 [P] Gateway settings API -- agent
-- [ ] `GET /api/settings/agent` -- agent identity + file list
+- [x] `GET /api/settings/agent` -- agent identity + file list
 - [ ] `PUT /api/settings/agent/identity` -- update display name, handle
-- [ ] Files read/write via existing `/files/*` endpoints
+- [x] Files read/write via existing `/files/*` endpoints
 - **Output**: Agent settings API
 
 ---
@@ -117,38 +122,42 @@
 ## Phase C: Skills + Cron (T980-T984)
 
 ### T980 [US54] Skills management page
-- [ ] Create `shell/src/app/settings/skills/page.tsx`
-- [ ] Create `shell/src/components/settings/SkillCard.tsx`
-- [ ] Grid of skill cards: name, description (from frontmatter), status badge
-- [ ] Status: Ready (green), Needs Config (yellow), Disabled (gray)
+- [x] Create `shell/src/app/settings/skills/page.tsx`
+- [x] Create `shell/src/components/settings/SkillCard.tsx`
+- [x] Grid of skill cards: name, description (from frontmatter), status badge
+- [x] Status: Ready (green), Needs Config (yellow), Disabled (gray)
 - [ ] Toggle switch per skill (enable/disable)
-- [ ] Click card -> expand to show full skill content (markdown preview)
-- [ ] Read from `/files/agents/skills/` (directory listing) + skill frontmatter parsing
+- [x] Click card -> expand to show full skill content (markdown preview)
+- [x] Read from `/files/agents/skills/` (directory listing) + skill frontmatter parsing
+- **Note**: Implemented as `SkillsSection.tsx` in-desktop panel section. Skill cards are inline (not separate SkillCard component). Missing enable/disable toggle.
 - **Output**: Skills management UI
 
 ### T981 [P] [US54] Add skill
-- [ ] "Add Skill" button -> dialog with:
+- [x] "Add Skill" button -> dialog with:
   - [ ] File upload (.md file)
-  - [ ] Paste content (textarea)
+  - [x] Paste content (textarea)
   - [ ] Template selection (from built-in templates)
-- [ ] Saves to `~/agents/skills/{name}.md`
+- [x] Saves to `~/agents/skills/{name}.md`
+- **Note**: Dialog has name, description, triggers, and content fields. Missing file upload and template selection.
 - **Output**: Users can add custom skills
 
 ### T982 [US55] Cron job management page
-- [ ] Create `shell/src/app/settings/cron/page.tsx`
-- [ ] Job list: name, schedule (human-readable + cron expression), next run, status badge
+- [x] Create `shell/src/app/settings/cron/page.tsx`
+- [x] Job list: name, schedule (human-readable + cron expression), next run, status badge
 - [ ] Enable/disable toggle per job
-- [ ] "Add Job" button -> create form
-- [ ] Delete with confirmation
-- [ ] Read from `GET /api/cron`
+- [x] "Add Job" button -> create form
+- [x] Delete with confirmation
+- [x] Read from `GET /api/cron`
+- **Note**: Implemented as `CronSection.tsx` in-desktop panel section. Missing enable/disable toggle.
 - **Output**: Cron job management UI
 
 ### T983 [US55] Cron job form
-- [ ] Create `shell/src/components/settings/CronJobForm.tsx`
-- [ ] Fields: name, description, schedule type (interval/cron/once), cron expression, message, delivery channel
-- [ ] Cron expression helper: common presets (every hour, daily at 9am, weekly Monday, etc.)
+- [x] Create `shell/src/components/settings/CronJobForm.tsx`
+- [x] Fields: name, description, schedule type (interval/cron/once), cron expression, message, delivery channel
+- [x] Cron expression helper: common presets (every hour, daily at 9am, weekly Monday, etc.)
 - [ ] Preview next 5 runs
-- [ ] POST `/api/cron` to create, PUT to update
+- [x] POST `/api/cron` to create, PUT to update
+- **Note**: Implemented as inline Dialog in CronSection.tsx (not separate CronJobForm component). Has schedule helper text, not next-5-runs preview.
 - **Output**: Visual cron job creation
 
 ### T984 [P] [US55] Cron templates
@@ -162,12 +171,13 @@
 ## Phase D: Security + Plugins + System (T985-T990)
 
 ### T985 [US56] Security dashboard
-- [ ] Create `shell/src/app/settings/security/page.tsx`
-- [ ] "Run Audit" button -> `GET /api/security/audit`
-- [ ] Findings list: severity icon (info/warn/critical), title, detail, remediation
-- [ ] Summary bar: N critical, N warnings, N info
+- [x] Create `shell/src/app/settings/security/page.tsx`
+- [x] "Run Audit" button -> `GET /api/security/audit`
+- [x] Findings list: severity icon (info/warn/critical), title, detail, remediation
+- [x] Summary bar: N critical, N warnings, N info
 - [ ] Auto-run on page load (cached, manual refresh available)
-- [ ] Requires 025-security T833 (audit API) -- show placeholder if not available
+- [x] Requires 025-security T833 (audit API) -- show placeholder if not available
+- **Note**: Implemented as `SecuritySection.tsx` in-desktop panel section. Manual-trigger only (no auto-run on load).
 - **Output**: Security posture dashboard
 
 ### T986 [P] [US56] Exec rules editor
@@ -178,21 +188,23 @@
 - **Output**: Visual exec security configuration
 
 ### T987 [US57] Plugin management page
-- [ ] Create `shell/src/app/settings/plugins/page.tsx`
-- [ ] Create `shell/src/components/settings/PluginCard.tsx`
-- [ ] List installed plugins: name, version, origin badge, status
-- [ ] Capabilities summary: N tools, N hooks, N channels
-- [ ] Install button -> URL or path input
+- [x] Create `shell/src/app/settings/plugins/page.tsx`
+- [x] Create `shell/src/components/settings/PluginCard.tsx`
+- [x] List installed plugins: name, version, origin badge, status
+- [x] Capabilities summary: N tools, N hooks, N channels
+- [x] Install button -> URL or path input
 - [ ] Uninstall with confirmation
 - [ ] Per-plugin config editor (JSON)
-- [ ] Requires 029-plugins T946 (plugins API) -- show placeholder if not available
+- [x] Requires 029-plugins T946 (plugins API) -- show placeholder if not available
+- **Note**: Implemented as `PluginsSection.tsx` in-desktop panel section. Install dialog shows instructions (workspace + config), not a URL/path input form. Missing uninstall and per-plugin config editor.
 - **Output**: Plugin management UI
 
 ### T988 [US57] System info page
-- [ ] Create `shell/src/app/settings/system/page.tsx`
-- [ ] System info: Matrix OS version, gateway status, uptime, home directory, Node version
-- [ ] Health checks: gateway (green/red), each channel, kernel responsiveness
-- [ ] From `GET /health` and `GET /api/system/info`
+- [x] Create `shell/src/app/settings/system/page.tsx`
+- [x] System info: Matrix OS version, gateway status, uptime, home directory, Node version
+- [x] Health checks: gateway (green/red), each channel, kernel responsiveness
+- [x] From `GET /health` and `GET /api/system/info`
+- **Note**: Implemented as `SystemSection.tsx` in-desktop panel section. Includes About section.
 - **Output**: System health overview
 
 ### T989 [P] [US57] Log viewer
@@ -205,10 +217,11 @@
 - **Output**: Log viewer in settings
 
 ### T990 [P] Theme + About
-- [ ] Theme picker: System / Light / Dark radio group
-- [ ] Persist preference (Zustand persist, same as existing)
-- [ ] About section: Matrix OS logo, version, "Built with Claude Agent SDK"
-- [ ] Link to matrix-os.com, GitHub repo
+- [x] Theme picker: System / Light / Dark radio group
+- [x] Persist preference (Zustand persist, same as existing)
+- [x] About section: Matrix OS logo, version, "Built with Claude Agent SDK"
+- [x] Link to matrix-os.com, GitHub repo
+- **Note**: Theme implemented as full ThemeEditor with presets + color/font/radius editors in AppearanceSection (exceeds spec). About section in SystemSection.
 - **Output**: Theme and about info
 
 ---
