@@ -1,0 +1,7 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "version": "1.0.0",
+  "description": "Example plugin that registers a tool, hook, and HTTP route",
+  "configSchema": {}
+}
