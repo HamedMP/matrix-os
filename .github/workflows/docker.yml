@@ -24,6 +24,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Configure git for tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@matrix-os.com"
+
       - run: pnpm install --frozen-lockfile
 
       - run: bun run test
