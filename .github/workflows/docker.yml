@@ -72,7 +72,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ env.VERSION }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -87,13 +89,14 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /root/matrix-os
+            cd /home/deploy/matrix-os
             git fetch --tags
             git checkout "$TAG_NAME"
             docker pull ghcr.io/hamedmp/matrix-os:latest
-            docker compose -f distro/docker-compose.platform.yml up -d --no-deps --build platform proxy
+            docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --no-deps --build platform proxy
             sleep 5
-            curl -sf http://localhost:9000/health || echo "WARN: health check failed"
+            curl -sf http://localhost:9000/health || echo "WARN: platform health check failed"
+            curl -sf http://localhost:8080/health || echo "WARN: proxy health check failed"
           envs: TAG_NAME
         env:
           TAG_NAME: ${{ github.ref_name }}
