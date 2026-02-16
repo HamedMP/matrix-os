@@ -36,7 +36,7 @@ function formatSchedule(schedule: CronJob["schedule"]): string {
   return "Unknown";
 }
 
-export default function CronPage() {
+export function CronSection() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
 
   useEffect(() => {

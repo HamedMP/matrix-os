@@ -31,7 +31,7 @@ const ORIGIN_STYLES: Record<string, string> = {
   config: "bg-yellow-500/10 text-yellow-600",
 };
 
-export default function PluginsPage() {
+export function PluginsSection() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [error, setError] = useState(false);
 
@@ -83,7 +83,7 @@ export default function PluginsPage() {
               c.routes > 0 && `${c.routes} routes`,
               c.services > 0 && `${c.services} services`,
               c.skills > 0 && `${c.skills} skills`,
-            ].filter(Boolean);
+            ].filter((x): x is string => Boolean(x));
 
             return (
               <Card key={plugin.id} className="gap-0">

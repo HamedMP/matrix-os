@@ -34,7 +34,7 @@ function parseSkillFrontmatter(name: string, raw: string): SkillInfo {
   return skill;
 }
 
-export default function SkillsPage() {
+export function SkillsSection() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { MarkdownEditor } from "@/components/settings/MarkdownEditor";
+import { MarkdownEditor } from "../MarkdownEditor";
 import { getGatewayUrl } from "@/lib/gateway";
 import { UserIcon } from "lucide-react";
 
@@ -15,7 +15,7 @@ interface Identity {
   displayName?: string;
 }
 
-export default function AgentSettingsPage() {
+export function AgentSection() {
   const [identity, setIdentity] = useState<Identity>({});
   const [soulContent, setSoulContent] = useState("");
   const [saving, setSaving] = useState(false);
@@ -55,7 +55,6 @@ export default function AgentSettingsPage() {
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <h2 className="text-lg font-semibold">Agent</h2>
 
-      {/* Identity */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">
@@ -89,7 +88,6 @@ export default function AgentSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* SOUL Editor */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">SOUL (Personality)</CardTitle>

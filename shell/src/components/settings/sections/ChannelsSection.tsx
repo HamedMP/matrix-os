@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChannelCard } from "@/components/settings/ChannelCard";
+import { ChannelCard } from "../ChannelCard";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
   MessageSquareIcon,
@@ -49,7 +49,7 @@ const CHANNEL_DEFS = [
   },
 ];
 
-export default function ChannelsPage() {
+export function ChannelsSection() {
   const [statuses, setStatuses] = useState<Record<string, string>>({});
 
   useEffect(() => {

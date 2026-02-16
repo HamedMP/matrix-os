@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MonitorIcon, ActivityIcon, InfoIcon, PaletteIcon } from "lucide-react";
+import { MonitorIcon, ActivityIcon, InfoIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
 
@@ -25,7 +25,7 @@ interface HealthStatus {
   plugins?: number;
 }
 
-export default function SystemPage() {
+export function SystemSection() {
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
 
@@ -45,7 +45,6 @@ export default function SystemPage() {
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <h2 className="text-lg font-semibold">System</h2>
 
-      {/* Health */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">
@@ -96,7 +95,6 @@ export default function SystemPage() {
         </CardContent>
       </Card>
 
-      {/* System Info */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">
@@ -120,7 +118,6 @@ export default function SystemPage() {
         </CardContent>
       </Card>
 
-      {/* About */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2">

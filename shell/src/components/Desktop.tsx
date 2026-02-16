@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { AppViewer } from "./AppViewer";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
+import { Settings } from "./Settings";
 import {
   Card,
   CardHeader,
@@ -154,10 +154,10 @@ interface DesktopProps {
 }
 
 export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
-  const router = useRouter();
   const [windows, setWindows] = useState<AppWindow[]>([]);
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [interacting, setInteracting] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const dragRef = useRef<{
     id: string;
@@ -495,7 +495,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         group: "Actions",
         shortcut: "Cmd+,",
         keywords: ["settings", "preferences", "config", "configure"],
-        execute: () => router.push("/settings"),
+        execute: () => setSettingsOpen((prev) => !prev),
       },
       ...modeCommands,
     ]);
@@ -585,8 +585,12 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  onClick={() => router.push("/settings")}
-                  className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+                  onClick={() => setSettingsOpen((prev) => !prev)}
+                  className={`flex size-10 items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                    settingsOpen
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card border-border/60"
+                  }`}
                 >
                   <SettingsIcon className="size-4" />
                 </button>
@@ -635,8 +639,12 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               <StoreIcon className="size-4" />
             </button>
             <button
-              onClick={() => router.push("/settings")}
-              className="flex shrink-0 size-9 items-center justify-center rounded-lg border border-border/60 bg-card transition-all active:scale-95"
+              onClick={() => setSettingsOpen((prev) => !prev)}
+              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                settingsOpen
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border/60"
+              }`}
               title="Settings"
             >
               <SettingsIcon className="size-4" />
@@ -780,6 +788,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           )}
         </div>
       </div>
+
+      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </TooltipProvider>
   );
 }

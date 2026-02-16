@@ -38,7 +38,7 @@ const SEVERITY_STYLES: Record<string, { badge: string; icon: React.ReactNode }> 
   },
 };
 
-export default function SecurityPage() {
+export function SecuritySection() {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
