@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -99,11 +100,21 @@ function Nav() {
                 <BookOpenIcon className="size-4" />
               </a>
             </Button>
-            <Button size="sm" className="rounded-xl text-xs px-4" asChild>
-              <a href="#get-started">
-                Get Started
-              </a>
-            </Button>
+            <SignedOut>
+              <Button size="sm" className="rounded-xl text-xs px-4" asChild>
+                <a href="#get-started">
+                  Get Started
+                </a>
+              </Button>
+            </SignedOut>
+            <SignedIn>
+              <Button size="sm" className="rounded-xl text-xs px-4" asChild>
+                <a href="/dashboard">
+                  Dashboard
+                  <ArrowRightIcon className="size-3 ml-1" />
+                </a>
+              </Button>
+            </SignedIn>
           </div>
         </div>
       </div>
@@ -149,12 +160,22 @@ function Hero() {
           </p>
 
           <div className="animate-fade-up delay-300 flex items-center justify-center gap-3 flex-wrap">
-            <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
-              <a href="/signup">
-                Get your instance
-                <ArrowRightIcon className="size-4 ml-1" />
-              </a>
-            </Button>
+            <SignedOut>
+              <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
+                <a href="/signup">
+                  Get your instance
+                  <ArrowRightIcon className="size-4 ml-1" />
+                </a>
+              </Button>
+            </SignedOut>
+            <SignedIn>
+              <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
+                <a href="/dashboard">
+                  Go to Dashboard
+                  <ArrowRightIcon className="size-4 ml-1" />
+                </a>
+              </Button>
+            </SignedIn>
             <Button variant="outline" size="lg" className="h-11 px-7 text-sm rounded-xl bg-card/60 backdrop-blur-sm" asChild>
               <a href="/whitepaper">
                 <BookOpenIcon className="size-4" />
@@ -1177,12 +1198,22 @@ function CTA() {
         </p>
 
         <div className="flex items-center justify-center gap-4 flex-wrap mb-8">
-          <Button size="lg" className="h-12 px-8 text-base rounded-xl" asChild>
-            <a href="/signup">
-              Get your instance
-              <ArrowRightIcon className="size-4 ml-1" />
-            </a>
-          </Button>
+          <SignedOut>
+            <Button size="lg" className="h-12 px-8 text-base rounded-xl" asChild>
+              <a href="/signup">
+                Get your instance
+                <ArrowRightIcon className="size-4 ml-1" />
+              </a>
+            </Button>
+          </SignedOut>
+          <SignedIn>
+            <Button size="lg" className="h-12 px-8 text-base rounded-xl" asChild>
+              <a href="/dashboard">
+                Go to Dashboard
+                <ArrowRightIcon className="size-4 ml-1" />
+              </a>
+            </Button>
+          </SignedIn>
           <Button variant="outline" size="lg" className="h-12 px-8 text-base rounded-xl bg-card/60" asChild>
             <a href="/whitepaper">
               <BookOpenIcon className="size-4" />

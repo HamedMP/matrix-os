@@ -13,7 +13,7 @@ export default function LoginPage() {
       }
       formContent={
         <SignIn
-          afterSignInUrl="/dashboard"
+          fallbackRedirectUrl="/dashboard"
           appearance={{
             elements: {
               rootBox: "w-full",

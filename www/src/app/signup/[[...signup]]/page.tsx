@@ -13,7 +13,7 @@ export default function SignUpPage() {
       }
       formContent={
         <SignUp
-          afterSignUpUrl="/dashboard"
+          fallbackRedirectUrl="/dashboard"
           appearance={{
             elements: {
               rootBox: "w-full",

@@ -22,7 +22,6 @@ export interface OrchestratorConfig {
   memoryLimit?: number;
   cpuQuota?: number;
   dataDir?: string;
-  extraEnv?: string[];
 }
 
 export interface Orchestrator {
@@ -45,10 +44,9 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     baseGatewayPort = 4001,
     baseShellPort = 3001,
     proxyUrl = 'http://proxy:8080',
-    memoryLimit = 512 * 1024 * 1024,
+    memoryLimit = 256 * 1024 * 1024,
     cpuQuota = 50000,
     dataDir = '/data/users',
-    extraEnv = [],
   } = config;
 
   async function ensureNetwork(): Promise<void> {
@@ -81,7 +79,6 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
           `PORT=4000`,
           `SHELL_PORT=3000`,
-          ...extraEnv,
         ],
         HostConfig: {
           Memory: memoryLimit,
@@ -144,16 +141,8 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       if (record.containerId) {
         const container = docker.getContainer(record.containerId);
-        try {
-          await container.stop();
-        } catch {
-          // Already stopped or removed
-        }
-        try {
-          await container.remove({ force: true });
-        } catch {
-          // Already removed
-        }
+        try { await container.stop(); } catch {}
+        try { await container.remove({ force: true }); } catch {}
       }
 
       releasePort(db, `${handle}-gw`);
@@ -168,7 +157,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       if (record.containerId) {
         const old = docker.getContainer(record.containerId);
         try { await old.stop(); } catch {}
-        await old.remove({ force: true });
+        try { await old.remove({ force: true }); } catch {}
       }
 
       await docker.pull(image);
@@ -186,7 +175,6 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
           `PORT=4000`,
           `SHELL_PORT=3000`,
-          ...extraEnv,
         ],
         HostConfig: {
           Memory: memoryLimit,
