@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Matrix OS",
+    "slug": "matrix-os-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "matrixos",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ece5f0"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.matrixos.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan QR codes to connect to your Matrix OS gateway",
+        "NSMicrophoneUsageDescription": "Voice input for chat messages",
+        "NSFaceIDUsageDescription": "Biometric authentication to secure your Matrix OS data"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ece5f0"
+      },
+      "package": "com.matrixos.mobile",
+      "permissions": ["CAMERA", "RECORD_AUDIO", "USE_BIOMETRIC", "VIBRATE"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-local-authentication",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Matrix OS to scan QR codes"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#c2703a"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
