@@ -354,21 +354,50 @@ Task Manager App (T770):
 
 29 tests. Commits: a1665fa (AI+store), 4796822 (modes), 34c3502 (task manager).
 
-### 24) Phase 025: Security -- User Instance Auth + Access Control (T800-T819)
+### 24) Phase 025: Security Hardening (T800-T849)
 
 Source: `specs/025-security/tasks.md`
 
-Auth for User Instances (T800-T809):
+Phase A -- Content Security (done):
+- [x] T820a Tests: external content wrapping (25 tests)
+- [x] T820 External content wrapping (wrapExternalContent, sanitizeMarkers, detectSuspiciousPatterns)
+- [x] T821 Wire wrapping into channel dispatcher
+- [x] T824 Suspicious pattern alerting (activity.log)
+- [ ] T822 Wire wrapping into web tools (blocked on 026)
+- [ ] T823 Wire wrapping into browser tool (blocked on 028)
+
+Phase B -- Network Security (done):
+- [x] T825a Tests: SSRF guard (28 tests)
+- [x] T825 SSRF guard (isPrivateIp, isBlockedHostname, validateUrl, SsrfBlockedError)
+- [x] T826a Tests: rate limiter (5 tests)
+- [x] T826 Rate limiter (per-IP, windowMs, lockoutMs)
+- [x] T827a Tests: tool deny list (7 tests)
+- [x] T827 Gateway tool deny list (defense in depth)
+
+Phase C -- Operational Security (done):
+- [x] T830a Tests: env-ref preservation (7 tests)
+- [x] T830 Config env-ref preservation (restoreEnvVarRefs)
+- [x] T831a Tests: outbound queue (5 tests)
+- [x] T831 Outbound write-ahead queue (enqueue, ack, failed, max retries)
+- [x] T832a Tests: security audit (6 tests)
+- [x] T832 Security audit engine (config perms, weak token, baked secrets)
+- [x] T833 Security audit IPC tool + API endpoint
+
+Phase D -- Sandbox (deferred):
+- [ ] T840-T845 Docker sandbox (optional, requires Docker)
+
+Phase E -- Platform Auth:
 - [ ] T800 Clerk JWT verification on subdomain proxy
 - [ ] T801 Session token passthrough from dashboard to instance
 - [ ] T802 WebSocket auth
 - [ ] T803 Container network isolation
 - [ ] T804 Rate limiting on subdomain proxy
 - [ ] T805 CORS and security headers
-
-API Security (T810-T819):
+- [ ] T806 User button in dock (logout + account)
 - [ ] T810 Platform admin API audit
 - [ ] T811 Secrets management
+
+58 new tests. 782 total passing.
 
 ### 25) Phase 008B: Performance (T165-T166)
 

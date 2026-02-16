@@ -10,6 +10,9 @@ import {
   type KernelEvent,
   type MatrixDB,
 } from "@matrix-os/kernel";
+import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
 
 export type SpawnFn = typeof spawnKernel;
@@ -107,10 +110,17 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     try {
       let message = entry.message;
       if (entry.context?.channel) {
-        const parts = [`[Channel: ${entry.context.channel}]`];
-        if (entry.context.senderName) parts.push(`[User: ${entry.context.senderName}]`);
-        else if (entry.context.senderId) parts.push(`[User: ${entry.context.senderId}]`);
-        message = `${parts.join(" ")} ${message}`;
+        const detection = detectSuspiciousPatterns(entry.message);
+        if (detection.suspicious) {
+          const ts = new Date().toISOString();
+          const sender = entry.context.senderName ?? entry.context.senderId ?? "unknown";
+          const line = `[${ts}] [security] Suspicious content from ${sender} via ${entry.context.channel}: ${detection.patterns.join(", ")}\n`;
+          try { appendFileSync(join(homePath, "system/activity.log"), line); } catch { /* log dir may not exist */ }
+        }
+        message = wrapExternalContent(entry.message, {
+          source: "channel",
+          from: entry.context.senderName ?? entry.context.senderId,
+        });
       }
 
       const config: KernelConfig = {

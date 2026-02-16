@@ -632,6 +632,12 @@ export function createGateway(config: GatewayConfig) {
     return c.json({ entries, totalCost: interactionLogger.totalCost(date) });
   });
 
+  app.get("/api/security/audit", async (c) => {
+    const { runSecurityAudit } = await import("@matrix-os/kernel/security/audit");
+    const report = await runSecurityAudit(homePath);
+    return c.json(report);
+  });
+
   app.get("/api/system/info", (c) => {
     const info = getSystemInfo(homePath);
     const today = new Date().toISOString().slice(0, 10);

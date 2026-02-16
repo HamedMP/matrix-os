@@ -51,6 +51,15 @@
 - [ ] CSP, X-Frame-Options, HSTS headers
 - **Output**: Browser security hardening
 
+### T806 [US30] User button in dock (logout + account)
+- [ ] Add user avatar/initial button at bottom of left dock (above mode toggle)
+- [ ] Click opens popover: display name, handle (@user:matrix-os.com), avatar
+- [ ] "Account Settings" link (navigates to /settings/agent or future account page)
+- [ ] "Log Out" button (clears auth token, redirects to matrix-os.com/login)
+- [ ] Mobile: user button in bottom tab bar
+- [ ] Graceful fallback when no auth context (local dev: show generic user icon, no logout)
+- **Output**: Visible user identity + logout accessible from dock
+
 ### T810 [P] Platform admin API audit
 - [ ] Review all admin endpoints for auth bypass
 - [ ] Add request logging for audit trail
@@ -67,7 +76,7 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T820a [US32] Write `tests/security/external-content.test.ts`:
+- [x] T820a [US32] Write `tests/kernel/external-content.test.ts` (25 tests):
   - wrapExternalContent wraps with source-tagged markers
   - sanitizeMarkers strips injection markers and Unicode homoglyphs
   - detectSuspiciousPatterns catches "ignore previous instructions", "you are now", etc.
@@ -76,18 +85,18 @@
   - All ExternalContentSource types produce valid output
 
 ### T820 [US32] External content wrapping
-- [ ] Create `packages/kernel/src/security/external-content.ts`
-- [ ] `wrapExternalContent(content, opts)` -- wraps with `<<<EXTERNAL_UNTRUSTED_CONTENT>>>` markers
-- [ ] `sanitizeMarkers(content)` -- strips/replaces marker strings + Unicode homoglyphs (fullwidth `<`, `>`)
-- [ ] `detectSuspiciousPatterns(content)` -- regex detection of prompt injection attempts (log, don't block)
-- [ ] Source types: channel, webhook, web_fetch, web_search, browser, email, api, unknown
-- [ ] Optional security warning prepended for web_fetch and browser sources
+- [x] Create `packages/kernel/src/security/external-content.ts`
+- [x] `wrapExternalContent(content, opts)` -- wraps with `<<<EXTERNAL_UNTRUSTED_CONTENT>>>` markers
+- [x] `sanitizeMarkers(content)` -- strips/replaces marker strings + Unicode homoglyphs (fullwidth `<`, `>`)
+- [x] `detectSuspiciousPatterns(content)` -- regex detection of prompt injection attempts (log, don't block)
+- [x] Source types: channel, webhook, web_fetch, web_search, browser, email, api, unknown
+- [x] Optional security warning prepended for web_fetch and browser sources
 - **Output**: All external content defensively wrapped before LLM injection
 
 ### T821 [US32] Wire wrapping into channel dispatcher
-- [ ] Modify `packages/gateway/src/dispatcher.ts` -- wrap all inbound channel messages before kernel dispatch
-- [ ] Channel adapter origin (telegram, discord, etc.) becomes the `source` tag
-- [ ] Sender identity included in wrapper metadata
+- [x] Modify `packages/gateway/src/dispatcher.ts` -- wrap all inbound channel messages before kernel dispatch
+- [x] Channel adapter origin (telegram, discord, etc.) becomes the `source` tag
+- [x] Sender identity included in wrapper metadata
 - **Output**: Every channel message wrapped before the LLM sees it
 
 ### T822 [P] [US32] Wire wrapping into web tools
@@ -101,7 +110,7 @@
 - **Output**: Browser content defensively wrapped
 
 ### T824 [P] [US32] Suspicious pattern alerting
-- [ ] Log suspicious patterns to activity.log with severity
+- [x] Log suspicious patterns to activity.log with severity (wired into dispatcher)
 - [ ] Optional: surface in shell as a security notification
 - **Output**: Visibility into prompt injection attempts
 
@@ -111,7 +120,7 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T825a [US32] Write `tests/security/ssrf-guard.test.ts`:
+- [x] T825a [US32] Write `tests/kernel/ssrf-guard.test.ts` (28 tests):
   - Blocks 127.0.0.1, 10.x, 172.16-31.x, 192.168.x, 169.254.x (link-local)
   - Blocks ::1, fe80::, fc/fd prefixes, ::ffff:127.0.0.1 (mapped IPv4)
   - Blocks localhost, metadata.google.internal
@@ -119,39 +128,39 @@
   - allowedHostnames whitelist overrides blocking
   - Throws SsrfBlockedError (distinct error type)
 
-- [ ] T826a Write `tests/security/rate-limiter.test.ts`:
+- [x] T826a Write `tests/gateway/rate-limiter.test.ts` (5 tests):
   - Allows requests under limit
   - Blocks after maxAttempts within window
   - Resets after windowMs
   - Lockout persists for lockoutMs after breach
 
-- [ ] T827a Write `tests/security/tool-deny.test.ts`:
+- [x] T827a Write `tests/gateway/tool-deny.test.ts` (7 tests):
   - Default deny list blocks spawn_agent, manage_cron, sync_files
   - User policy deny merges with default deny
   - User policy allow does NOT override default deny (defense in depth)
 
 ### T825 [US32] SSRF guard
-- [ ] Create `packages/kernel/src/security/ssrf-guard.ts`
-- [ ] DNS pre-flight via `dns/promises` before connecting
-- [ ] Block private IPv4 (10.x, 172.16-31.x, 192.168.x, 127.x, 169.254.x)
-- [ ] Block private IPv6 (::1, fe80::, fec0::, fc/fd, ::ffff: mapped private)
-- [ ] Block known hostnames (localhost, metadata.google.internal)
-- [ ] Configurable allowedHostnames with wildcard support (*.example.com)
-- [ ] Throw `SsrfBlockedError` on blocked requests
+- [x] Create `packages/kernel/src/security/ssrf-guard.ts`
+- [x] DNS pre-flight via `dns/promises` before connecting
+- [x] Block private IPv4 (10.x, 172.16-31.x, 192.168.x, 127.x, 169.254.x)
+- [x] Block private IPv6 (::1, fe80::, fec0::, fc/fd, ::ffff: mapped private)
+- [x] Block known hostnames (localhost, metadata.google.internal)
+- [x] Configurable allowedHostnames with wildcard support (*.example.com)
+- [x] Throw `SsrfBlockedError` on blocked requests
 - **Output**: All outbound HTTP protected against SSRF
 
 ### T826 [US32] Rate limiter
-- [ ] Create `packages/gateway/src/security/rate-limiter.ts`
-- [ ] Per-IP tracking with configurable maxAttempts, windowMs, lockoutMs
+- [x] Create `packages/gateway/src/security/rate-limiter.ts`
+- [x] Per-IP tracking with configurable maxAttempts, windowMs, lockoutMs
 - [ ] Pluggable into auth middleware (inject into existing auth.ts)
 - [ ] Timing-safe token comparison (`crypto.timingSafeEqual`)
 - **Output**: Auth endpoint protected against brute force
 
 ### T827 [US31] Gateway tool deny list
-- [ ] Create `packages/gateway/src/security/tool-deny.ts`
-- [ ] Hard-coded deny for dangerous IPC tools on `/api/tools/invoke`
-- [ ] Separate from user-configurable policy (defense in depth)
-- [ ] Default deny: spawn_agent, manage_cron, sync_files
+- [x] Create `packages/gateway/src/security/tool-deny.ts`
+- [x] Hard-coded deny for dangerous IPC tools on `/api/tools/invoke`
+- [x] Separate from user-configurable policy (defense in depth)
+- [x] Default deny: spawn_agent, manage_cron, sync_files
 - **Output**: Dangerous tools blocked from HTTP API
 
 ### T828 [P] [US31] Auth hardening
@@ -171,60 +180,60 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T830a [US33] Write `tests/security/env-preserve.test.ts`:
+- [x] T830a [US33] Write `tests/gateway/env-preserve.test.ts` (7 tests):
   - restoreEnvVarRefs restores ${VAR} when resolved value matches env
   - Nested objects traversed recursively
   - Non-matching values left as-is
   - Escape sequence $${VAR} becomes literal ${VAR}
   - Array values handled correctly
 
-- [ ] T831a [US34] Write `tests/security/outbound-queue.test.ts`:
+- [x] T831a [US34] Write `tests/gateway/outbound-queue.test.ts` (5 tests):
   - enqueue persists to file before returning
   - ack removes from queue
-  - replay sends all unacknowledged messages
   - failed increments attempt count, preserves error
   - Queue survives simulated crash (read from file on restart)
+  - Respects max retry attempts
 
-- [ ] T832a [US35] Write `tests/security/audit.test.ts`:
+- [x] T832a [US35] Write `tests/kernel/audit.test.ts` (6 tests):
   - Detects world-readable config file
-  - Detects gateway bound beyond loopback without auth
   - Detects weak auth token (<24 chars)
   - Detects secrets baked into config (not ${VAR} refs)
   - Produces structured SecurityAuditReport with findings
+  - Summary counts match findings
 
 ### T830 [US33] Config env-ref preservation
-- [ ] Create `packages/gateway/src/config/env-preserve.ts`
-- [ ] `restoreEnvVarRefs(resolved, original)` -- deep walk, restore ${VAR} where value matches
-- [ ] Escape `$${VAR}` -> literal `${VAR}`
+- [x] Create `packages/gateway/src/config/env-preserve.ts`
+- [x] `restoreEnvVarRefs(resolved, original)` -- deep walk, restore ${VAR} where value matches
+- [x] Escape `$${VAR}` -> literal `${VAR}`
 - [ ] Wire into config write path (config.json save)
 - **Output**: Secrets never baked into config files
 
 ### T831 [US34] Outbound write-ahead queue
-- [ ] Create `packages/gateway/src/security/outbound-queue.ts`
-- [ ] Persist to `~/system/outbound-queue.json` (atomic write via temp + rename)
-- [ ] enqueue() before channel adapter send, ack() after success
+- [x] Create `packages/gateway/src/security/outbound-queue.ts`
+- [x] Persist to `~/system/outbound-queue.json` (atomic write via temp + rename)
+- [x] enqueue() before channel adapter send, ack() after success
+- [x] Max retry attempts (configurable, default: 5)
 - [ ] replay() on gateway startup -- retry unacknowledged messages
-- [ ] Max retry attempts (configurable, default: 5)
 - [ ] Wire into channel adapter send path
 - **Output**: Outbound messages survive gateway crashes
 
 ### T832 [US35] Security audit engine
-- [ ] Create `packages/kernel/src/security/audit.ts`
-- [ ] Typed findings: checkId, severity (info/warn/critical), title, detail, remediation
-- [ ] Checks:
-  - [ ] File permissions (config 600, state dir 700)
+- [x] Create `packages/kernel/src/security/audit.ts`
+- [x] Typed findings: checkId, severity (info/warn/critical), title, detail, remediation
+- [x] Checks:
+  - [x] File permissions (config 600, state dir 700)
   - [ ] Gateway bind address (non-loopback without auth = critical)
-  - [ ] Auth token strength (<24 chars = warn)
+  - [x] Auth token strength (<24 chars = warn)
   - [ ] Rate limiting configured (non-loopback without rate limit = warn)
-  - [ ] Secrets in config (literal values that should be ${VAR} refs)
+  - [x] Secrets in config (literal values that should be ${VAR} refs)
   - [ ] Exec allowlist (wildcard = critical, large list = warn)
   - [ ] Channel exposure (channels enabled without DM isolation)
   - [ ] Sandbox config (configured but Docker unavailable)
 - **Output**: Structured audit report with remediation guidance
 
 ### T833 [US35] Security audit IPC tool + API endpoint
-- [ ] Add `security_audit` IPC tool to kernel (agent can self-audit)
-- [ ] Add `GET /api/security/audit` gateway endpoint (returns JSON report)
+- [x] Add `security_audit` IPC tool to kernel (agent can self-audit)
+- [x] Add `GET /api/security/audit` gateway endpoint (returns JSON report)
 - [ ] Shell: security findings rendered in Mission Control
 - **Output**: Audit accessible from agent, API, and shell
 

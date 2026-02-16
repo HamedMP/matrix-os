@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./security/external-content": "./src/security/external-content.ts",
+    "./security/audit": "./src/security/audit.ts",
+    "./security/ssrf-guard": "./src/security/ssrf-guard.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

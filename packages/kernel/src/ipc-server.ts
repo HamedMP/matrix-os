@@ -766,6 +766,22 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
           }
         },
       ),
+
+      tool(
+        "security_audit",
+        "Run a security audit on this Matrix OS instance. Returns findings with severity levels and remediation guidance.",
+        {},
+        async () => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot audit (no home path)" }] };
+          }
+          const { runSecurityAudit } = await import("./security/audit.js");
+          const report = await runSecurityAudit(homePath);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(report, null, 2) }],
+          };
+        },
+      ),
     ],
   });
 }
