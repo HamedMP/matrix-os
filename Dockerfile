@@ -2,9 +2,9 @@
 # Produces a container running gateway (port 4000) + shell (port 3000)
 
 # --------------------------------------------------
-# Stage 1: Build
+# Stage 1: Dependencies (cached unless lockfile changes)
 # --------------------------------------------------
-FROM node:22-alpine AS builder
+FROM node:22-alpine AS deps
 
 # Native addon build tools (node-pty, better-sqlite3)
 RUN apk add --no-cache python3 make g++ linux-headers
@@ -14,7 +14,7 @@ RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
 WORKDIR /app
 
-# Install dependencies (cached layer)
+# Copy only dependency manifests -- changes here bust the install cache
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/kernel/package.json packages/kernel/
 COPY packages/gateway/package.json packages/gateway/
@@ -27,6 +27,11 @@ RUN echo "shamefully-hoist=true" > .npmrc
 
 RUN pnpm install --frozen-lockfile
 
+# --------------------------------------------------
+# Stage 2: Build (source changes bust this, but deps are cached above)
+# --------------------------------------------------
+FROM deps AS builder
+
 # Copy source
 COPY packages/ packages/
 COPY shell/ shell/
@@ -38,17 +43,17 @@ ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------
-# Stage 2: Production
+# Stage 3: Runtime base (cached -- only changes when base image or system deps change)
 # --------------------------------------------------
-FROM node:22-alpine
+FROM node:22-alpine AS runtime
 
 # Runtime: git (home dir init + self-healing), build tools (node-pty native addon)
 RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
-# Claude Code CLI (required by Agent SDK -- it spawns claude as a subprocess)
-RUN npm install -g @anthropic-ai/claude-code
+# Claude Code CLI -- pin version so this layer caches
+RUN npm install -g @anthropic-ai/claude-code@2.1.42
 
 # Non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
 RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
@@ -57,8 +62,20 @@ RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
 
 WORKDIR /app
 
-# Copy entire built workspace from builder (includes node_modules with native addons)
-COPY --from=builder /app/ ./
+# --------------------------------------------------
+# Stage 4: Final image
+# --------------------------------------------------
+FROM runtime
+
+# Copy node_modules first (large, changes only when deps change)
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/.npmrc ./
+
+# Copy built source + Next.js output (changes every code push)
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/shell ./shell
+COPY --from=builder /app/home ./home
+COPY --from=builder /app/package.json ./
 
 ARG VERSION=dev
 RUN echo "$VERSION" > /app/VERSION
