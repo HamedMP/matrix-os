@@ -7,11 +7,14 @@ import {
   RefreshControl,
   TextInput,
   Alert,
+  StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { TaskCard, type Task } from "@/components/TaskCard";
 import { TaskDetail } from "@/components/TaskDetail";
+import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 type FilterStatus = "all" | "pending" | "in-progress" | "completed";
 
@@ -80,71 +83,72 @@ export default function MissionControlScreen() {
   );
 
   return (
-    <View className="flex-1 bg-background">
+    <View style={styles.container}>
       {/* Filter chips */}
-      <View className="flex-row gap-2 px-4 py-3">
-        {FILTERS.map((f) => (
-          <Pressable
-            key={f.value}
-            onPress={() => setFilter(f.value)}
-            className={`rounded-full px-4 py-1.5 ${
-              filter === f.value
-                ? "bg-primary"
-                : "border border-border bg-card"
-            }`}
-          >
-            <Text
-              className={`text-xs font-medium ${
-                filter === f.value
-                  ? "text-primary-foreground"
-                  : "text-foreground"
-              }`}
+      <View style={styles.filterRow}>
+        {FILTERS.map((f) => {
+          const isActive = filter === f.value;
+          return (
+            <Pressable
+              key={f.value}
+              onPress={() => setFilter(f.value)}
+              style={[
+                styles.filterChip,
+                isActive ? styles.filterChipActive : styles.filterChipInactive,
+              ]}
             >
-              {f.label}
-            </Text>
-          </Pressable>
-        ))}
+              <Text
+                style={[
+                  styles.filterChipText,
+                  isActive ? styles.filterChipTextActive : styles.filterChipTextInactive,
+                ]}
+              >
+                {f.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <FlatList
         data={filteredTasks}
         renderItem={renderTask}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100, gap: 8 }}
+        contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#c2703a"
+            tintColor={colors.light.primary}
           />
         }
         ListEmptyComponent={
-          <View className="items-center py-20">
-            <Text className="font-mono text-xs uppercase tracking-widest text-primary">
-              Tasks
-            </Text>
-            <Text className="mt-2 text-sm text-muted-foreground">
-              No tasks yet
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="clipboard-outline" size={36} color={colors.light.primary} />
+            </View>
+            <Text style={styles.emptyLabel}>Tasks</Text>
+            <Text style={styles.emptySubtitle}>No tasks yet</Text>
+            <Text style={styles.emptyDescription}>
+              Tap + to add a task, or ask your AI to create one in chat.
             </Text>
           </View>
         }
         ListFooterComponent={
           cronJobs.length > 0 ? (
-            <View className="mt-6">
-              <Text className="mb-2 font-mono text-xs uppercase tracking-widest text-primary">
-                Scheduled
-              </Text>
+            <View style={styles.cronSection}>
+              <Text style={styles.cronSectionLabel}>Scheduled</Text>
               {cronJobs.map((job: any, i: number) => (
-                <View
-                  key={job.id ?? i}
-                  className="mb-2 rounded-xl border border-border bg-card px-4 py-3"
-                >
-                  <Text className="text-sm font-medium text-foreground">
-                    {job.name ?? job.message ?? "Cron job"}
-                  </Text>
-                  <Text className="mt-1 font-mono text-xs text-muted-foreground">
-                    {job.schedule ?? job.cron ?? ""}
-                  </Text>
+                <View key={job.id ?? i} style={styles.cronCard}>
+                  <Ionicons name="time-outline" size={16} color={colors.light.primary} />
+                  <View style={styles.cronTextContainer}>
+                    <Text style={styles.cronName}>
+                      {job.name ?? job.message ?? "Cron job"}
+                    </Text>
+                    <Text style={styles.cronSchedule}>
+                      {job.schedule ?? job.cron ?? ""}
+                    </Text>
+                  </View>
                 </View>
               ))}
             </View>
@@ -152,36 +156,38 @@ export default function MissionControlScreen() {
         }
       />
 
-      {/* Add task FAB */}
+      {/* Add task FAB / form */}
       {showAddForm ? (
-        <View className="absolute bottom-6 left-4 right-4 rounded-xl border border-border bg-card p-4 shadow-lg">
+        <View style={styles.addForm}>
           <TextInput
-            className="mb-3 rounded-lg border border-border bg-background px-3 py-2.5 text-base text-foreground"
-            style={{ fontFamily: "Inter_400Regular" }}
+            style={styles.addFormInput}
             value={newTaskInput}
             onChangeText={setNewTaskInput}
             placeholder="What needs to be done?"
-            placeholderTextColor="#78716c"
+            placeholderTextColor={colors.light.mutedForeground}
             autoFocus
           />
-          <View className="flex-row gap-3">
+          <View style={styles.addFormButtons}>
             <Pressable
               onPress={() => setShowAddForm(false)}
-              className="flex-1 items-center rounded-lg border border-border py-2.5"
+              style={({ pressed }) => [styles.addFormCancel, pressed && styles.buttonPressed]}
             >
-              <Text className="text-sm text-muted-foreground">Cancel</Text>
+              <Text style={styles.addFormCancelText}>Cancel</Text>
             </Pressable>
             <Pressable
               onPress={handleAddTask}
               disabled={!newTaskInput.trim()}
-              className={`flex-1 items-center rounded-lg py-2.5 ${
-                newTaskInput.trim() ? "bg-primary" : "bg-muted"
-              }`}
+              style={({ pressed }) => [
+                styles.addFormSubmit,
+                newTaskInput.trim() ? styles.addFormSubmitActive : styles.addFormSubmitDisabled,
+                pressed && newTaskInput.trim() && styles.buttonPressed,
+              ]}
             >
               <Text
-                className={`text-sm font-medium ${
-                  newTaskInput.trim() ? "text-primary-foreground" : "text-muted-foreground"
-                }`}
+                style={[
+                  styles.addFormSubmitText,
+                  !newTaskInput.trim() && styles.addFormSubmitTextDisabled,
+                ]}
               >
                 Add Task
               </Text>
@@ -191,9 +197,9 @@ export default function MissionControlScreen() {
       ) : (
         <Pressable
           onPress={() => setShowAddForm(true)}
-          className="absolute bottom-6 right-6 size-14 items-center justify-center rounded-full bg-primary shadow-lg"
+          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
         >
-          <Text className="text-2xl font-bold text-primary-foreground">+</Text>
+          <Ionicons name="add" size={28} color={colors.light.primaryForeground} />
         </Pressable>
       )}
 
@@ -207,3 +213,207 @@ export default function MissionControlScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.light.background,
+  },
+  filterRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  filterChip: {
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 6,
+  },
+  filterChipActive: {
+    backgroundColor: colors.light.primary,
+  },
+  filterChipInactive: {
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+  },
+  filterChipText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+  },
+  filterChipTextActive: {
+    color: colors.light.primaryForeground,
+  },
+  filterChipTextInactive: {
+    color: colors.light.foreground,
+  },
+  listContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 100,
+    gap: spacing.sm,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    paddingVertical: 60,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
+    backgroundColor: colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+  },
+  emptyLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.light.primary,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  emptySubtitle: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 16,
+    color: colors.light.foreground,
+    marginBottom: spacing.sm,
+  },
+  emptyDescription: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  cronSection: {
+    marginTop: spacing.xl,
+  },
+  cronSectionLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.light.primary,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  cronCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  cronTextContainer: {
+    flex: 1,
+  },
+  cronName: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.foreground,
+  },
+  cronSchedule: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    color: colors.light.mutedForeground,
+    marginTop: 2,
+  },
+  addForm: {
+    position: "absolute",
+    bottom: 24,
+    left: spacing.lg,
+    right: spacing.lg,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    padding: spacing.lg,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  addFormInput: {
+    fontFamily: fonts.sans,
+    fontSize: 15,
+    color: colors.light.foreground,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.background,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    marginBottom: spacing.md,
+  },
+  addFormButtons: {
+    flexDirection: "row",
+    gap: spacing.md,
+  },
+  addFormCancel: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    paddingVertical: 10,
+  },
+  addFormCancelText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+  },
+  addFormSubmit: {
+    flex: 1,
+    alignItems: "center",
+    borderRadius: radius.md,
+    paddingVertical: 10,
+  },
+  addFormSubmitActive: {
+    backgroundColor: colors.light.primary,
+  },
+  addFormSubmitDisabled: {
+    backgroundColor: colors.light.muted,
+  },
+  addFormSubmitText: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 14,
+    color: colors.light.primaryForeground,
+  },
+  addFormSubmitTextDisabled: {
+    color: colors.light.mutedForeground,
+  },
+  buttonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
+  },
+  fab: {
+    position: "absolute",
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.light.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: colors.light.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  fabPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.95 }],
+  },
+});

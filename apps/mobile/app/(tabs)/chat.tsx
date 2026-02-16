@@ -5,12 +5,15 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
 import { InputBar } from "@/components/InputBar";
+import { colors, fonts, spacing } from "@/lib/theme";
 import type { ServerMessage } from "@/lib/gateway-client";
 
 export interface Message {
@@ -127,9 +130,11 @@ export default function ChatScreen() {
 
   const keyExtractor = useCallback((item: Message) => item.id, []);
 
+  const isConnected = connectionState === "connected";
+
   return (
     <KeyboardAvoidingView
-      className="flex-1 bg-background"
+      style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
@@ -139,25 +144,114 @@ export default function ChatScreen() {
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         inverted
-        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 8, gap: 8 }}
+        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
-          <View className="flex-1 items-center justify-center py-20">
-            <Text className="font-mono text-xs uppercase tracking-widest text-primary">
-              Matrix OS
-            </Text>
-            <Text className="mt-2 text-sm text-muted-foreground">
-              {connectionState === "connected"
-                ? "Send a message to start"
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name={isConnected ? "chatbubble-outline" : "cloud-offline-outline"}
+                size={40}
+                color={isConnected ? colors.light.primary : colors.light.mutedForeground}
+              />
+            </View>
+            <Text style={styles.emptyLabel}>Matrix OS</Text>
+            <Text style={styles.emptySubtitle}>
+              {isConnected
+                ? "Send a message to start a conversation"
                 : "Connecting to gateway..."}
             </Text>
+            {isConnected && (
+              <View style={styles.suggestionsContainer}>
+                <Text style={styles.suggestionsTitle}>Try asking</Text>
+                <View style={styles.suggestion}>
+                  <Text style={styles.suggestionText}>"What can you help me with?"</Text>
+                </View>
+                <View style={styles.suggestion}>
+                  <Text style={styles.suggestionText}>"Create a new task"</Text>
+                </View>
+                <View style={styles.suggestion}>
+                  <Text style={styles.suggestionText}>"Show me my schedule"</Text>
+                </View>
+              </View>
+            )}
           </View>
         }
       />
       <InputBar
         onSend={handleSend}
         busy={busy}
-        connected={connectionState === "connected"}
+        connected={isConnected}
       />
     </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.light.background,
+  },
+  listContent: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    gap: 8,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 20,
+    backgroundColor: colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+  },
+  emptyLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.light.primary,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  emptySubtitle: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+    textAlign: "center",
+  },
+  suggestionsContainer: {
+    marginTop: spacing["2xl"],
+    width: "100%",
+    gap: spacing.sm,
+  },
+  suggestionsTitle: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 12,
+    color: colors.light.mutedForeground,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: spacing.xs,
+  },
+  suggestion: {
+    backgroundColor: colors.light.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+  },
+  suggestionText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.foreground,
+  },
+});

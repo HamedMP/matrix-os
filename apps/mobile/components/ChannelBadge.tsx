@@ -1,29 +1,63 @@
-import { View, Text } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
+import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 interface ChannelBadgeProps {
   name: string;
   status: "connected" | "degraded" | "error" | "not_configured";
 }
 
-const STATUS_STYLES: Record<string, { dot: string; label: string }> = {
-  connected: { dot: "bg-success", label: "Connected" },
-  degraded: { dot: "bg-warning", label: "Degraded" },
-  error: { dot: "bg-destructive", label: "Error" },
-  not_configured: { dot: "bg-muted-foreground", label: "Not configured" },
+const STATUS_STYLES: Record<string, { color: string; label: string }> = {
+  connected: { color: colors.light.success, label: "Connected" },
+  degraded: { color: colors.light.warning, label: "Degraded" },
+  error: { color: colors.light.destructive, label: "Error" },
+  not_configured: { color: colors.light.mutedForeground, label: "Not configured" },
 };
 
 export function ChannelBadge({ name, status }: ChannelBadgeProps) {
-  const style = STATUS_STYLES[status] ?? STATUS_STYLES.not_configured;
+  const info = STATUS_STYLES[status] ?? STATUS_STYLES.not_configured;
 
   return (
-    <View className="flex-row items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
-      <Text className="text-sm font-medium capitalize text-foreground" style={{ fontFamily: "Inter_500Medium" }}>
-        {name}
-      </Text>
-      <View className="flex-row items-center gap-2">
-        <View className={`size-2 rounded-full ${style.dot}`} />
-        <Text className="text-xs text-muted-foreground">{style.label}</Text>
+    <View style={styles.container}>
+      <Text style={styles.name}>{name}</Text>
+      <View style={styles.statusRow}>
+        <View style={[styles.dot, { backgroundColor: info.color }]} />
+        <Text style={styles.label}>{info.label}</Text>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  name: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.foreground,
+    textTransform: "capitalize",
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  label: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    color: colors.light.mutedForeground,
+  },
+});

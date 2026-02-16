@@ -1,7 +1,7 @@
 import { useEffect, useState, createContext, useContext, useCallback } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, ActivityIndicator } from "react-native";
+import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import {
   useFonts,
@@ -18,6 +18,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { getActiveGateway, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
+import { colors, fonts } from "@/lib/theme";
 
 import "../global.css";
 
@@ -94,42 +95,74 @@ export default function RootLayout() {
 
   if (!fontsLoaded || !ready) {
     return (
-      <View className="flex-1 items-center justify-center bg-background">
-        <ActivityIndicator size="large" color="#c2703a" />
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingTitle}>Matrix OS</Text>
+        <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
 
   if (!authenticated) {
     return (
-      <View className="flex-1 items-center justify-center bg-background">
-        <ActivityIndicator size="large" color="#c2703a" />
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingTitle}>Matrix OS</Text>
+        <Text style={styles.loadingSubtitle}>Authenticating...</Text>
+        <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={styles.flex}>
       <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway }}>
         <Stack
           screenOptions={{
-            headerStyle: { backgroundColor: "#ece5f0" },
-            headerTintColor: "#1c1917",
-            headerTitleStyle: { fontFamily: "Inter_600SemiBold" },
-            contentStyle: { backgroundColor: "#ece5f0" },
+            headerStyle: { backgroundColor: colors.light.background },
+            headerTintColor: colors.light.foreground,
+            headerTitleStyle: { fontFamily: fonts.sansSemiBold },
+            contentStyle: { backgroundColor: colors.light.background },
           }}
         >
+          <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
             name="connect"
             options={{
               title: "Connect to Gateway",
               presentation: "modal",
+              headerStyle: { backgroundColor: colors.light.background },
             }}
           />
         </Stack>
-        <StatusBar style="auto" />
+        <StatusBar style="dark" />
       </GatewayContext.Provider>
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.light.background,
+  },
+  loadingTitle: {
+    fontFamily: fonts.sansBold,
+    fontSize: 28,
+    color: colors.light.foreground,
+    letterSpacing: -0.5,
+  },
+  loadingSubtitle: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+    marginTop: 8,
+  },
+  loadingSpinner: {
+    marginTop: 24,
+  },
+});

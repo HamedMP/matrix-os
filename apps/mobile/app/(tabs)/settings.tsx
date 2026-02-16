@@ -7,7 +7,9 @@ import {
   Switch,
   Linking,
   RefreshControl,
+  StyleSheet,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useGateway } from "../_layout";
 import { ChannelBadge } from "@/components/ChannelBadge";
@@ -17,14 +19,13 @@ import {
   type AppSettings,
 } from "@/lib/storage";
 import { isBiometricAvailable, getSupportedBiometricTypes, getBiometricLabel } from "@/lib/auth";
+import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <View className="mb-6">
-      <Text className="mb-2 font-mono text-xs uppercase tracking-widest text-primary">
-        {title}
-      </Text>
-      <View className="gap-2">{children}</View>
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionContent}>{children}</View>
     </View>
   );
 }
@@ -32,11 +33,13 @@ function SettingsSection({ title, children }: { title: string; children: React.R
 function SettingsRow({
   label,
   value,
+  icon,
   onPress,
   right,
 }: {
   label: string;
   value?: string;
+  icon?: keyof typeof Ionicons.glyphMap;
   onPress?: () => void;
   right?: React.ReactNode;
 }) {
@@ -44,15 +47,25 @@ function SettingsRow({
     <Pressable
       onPress={onPress}
       disabled={!onPress && !right}
-      className="flex-row items-center justify-between rounded-xl border border-border bg-card px-4 py-3"
+      style={({ pressed }) => [
+        styles.row,
+        pressed && onPress && styles.rowPressed,
+      ]}
     >
-      <Text className="text-sm text-foreground" style={{ fontFamily: "Inter_500Medium" }}>
-        {label}
-      </Text>
+      <View style={styles.rowLeft}>
+        {icon && (
+          <View style={styles.rowIcon}>
+            <Ionicons name={icon} size={18} color={colors.light.primary} />
+          </View>
+        )}
+        <Text style={styles.rowLabel}>{label}</Text>
+      </View>
       {value ? (
-        <Text className="text-sm text-muted-foreground">{value}</Text>
+        <Text style={styles.rowValue}>{value}</Text>
       ) : right ? (
         right
+      ) : onPress ? (
+        <Ionicons name="chevron-forward" size={16} color={colors.light.mutedForeground} />
       ) : null}
     </Pressable>
   );
@@ -121,22 +134,26 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
-      className="flex-1 bg-background"
-      contentContainerStyle={{ padding: 24 }}
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#c2703a" />
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
       }
     >
       <SettingsSection title="Gateway">
         <SettingsRow
           label={gateway?.name ?? "Not connected"}
+          icon="server-outline"
           value={connectionState === "connected" ? "Connected" : connectionState}
         />
         <Pressable
           onPress={() => router.push("/connect")}
-          className="items-center rounded-xl border border-border bg-card py-3"
+          style={({ pressed }) => [
+            styles.actionButton,
+            pressed && styles.rowPressed,
+          ]}
         >
-          <Text className="text-sm font-medium text-primary">Manage Gateways</Text>
+          <Text style={styles.actionButtonText}>Manage Gateways</Text>
         </Pressable>
       </SettingsSection>
 
@@ -150,22 +167,26 @@ export default function SettingsScreen() {
             />
           ))
         ) : (
-          <Text className="text-sm text-muted-foreground">
-            {connectionState === "connected"
-              ? "No channels configured"
-              : "Connect to view channels"}
-          </Text>
+          <View style={styles.emptyRow}>
+            <Ionicons name="radio-outline" size={16} color={colors.light.mutedForeground} />
+            <Text style={styles.emptyText}>
+              {connectionState === "connected"
+                ? "No channels configured"
+                : "Connect to view channels"}
+            </Text>
+          </View>
         )}
       </SettingsSection>
 
       <SettingsSection title="Notifications">
         <SettingsRow
           label="Push Notifications"
+          icon="notifications-outline"
           right={
             <Switch
               value={settings.notificationsEnabled}
               onValueChange={(v) => updateSetting("notificationsEnabled", v)}
-              trackColor={{ false: "#d8d0de", true: "#c2703a" }}
+              trackColor={{ false: colors.light.border, true: colors.light.primary }}
               thumbColor="#ffffff"
             />
           }
@@ -176,69 +197,210 @@ export default function SettingsScreen() {
         {biometricAvailable ? (
           <SettingsRow
             label={`${biometricLabel} Lock`}
+            icon="finger-print-outline"
             right={
               <Switch
                 value={settings.biometricEnabled}
                 onValueChange={(v) => updateSetting("biometricEnabled", v)}
-                trackColor={{ false: "#d8d0de", true: "#c2703a" }}
+                trackColor={{ false: colors.light.border, true: colors.light.primary }}
                 thumbColor="#ffffff"
               />
             }
           />
         ) : (
-          <Text className="text-sm text-muted-foreground">
-            No biometric authentication available
-          </Text>
+          <View style={styles.emptyRow}>
+            <Ionicons name="lock-closed-outline" size={16} color={colors.light.mutedForeground} />
+            <Text style={styles.emptyText}>No biometric authentication available</Text>
+          </View>
         )}
       </SettingsSection>
 
       <SettingsSection title="Appearance">
-        <View className="flex-row gap-2">
-          {(["system", "light", "dark"] as const).map((theme) => (
-            <Pressable
-              key={theme}
-              onPress={() => updateSetting("theme", theme)}
-              className={`flex-1 items-center rounded-xl py-2.5 ${
-                settings.theme === theme
-                  ? "bg-primary"
-                  : "border border-border bg-card"
-              }`}
-            >
-              <Text
-                className={`text-xs font-medium capitalize ${
-                  settings.theme === theme
-                    ? "text-primary-foreground"
-                    : "text-foreground"
-                }`}
+        <View style={styles.themeRow}>
+          {(["system", "light", "dark"] as const).map((theme) => {
+            const isActive = settings.theme === theme;
+            const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
+              system: "phone-portrait-outline",
+              light: "sunny-outline",
+              dark: "moon-outline",
+            };
+            return (
+              <Pressable
+                key={theme}
+                onPress={() => updateSetting("theme", theme)}
+                style={[
+                  styles.themeOption,
+                  isActive ? styles.themeOptionActive : styles.themeOptionInactive,
+                ]}
               >
-                {theme}
-              </Text>
-            </Pressable>
-          ))}
+                <Ionicons
+                  name={icons[theme]}
+                  size={16}
+                  color={isActive ? colors.light.primaryForeground : colors.light.foreground}
+                />
+                <Text
+                  style={[
+                    styles.themeOptionText,
+                    isActive ? styles.themeOptionTextActive : styles.themeOptionTextInactive,
+                  ]}
+                >
+                  {theme.charAt(0).toUpperCase() + theme.slice(1)}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </SettingsSection>
 
       <SettingsSection title="About">
-        <SettingsRow label="App Version" value="0.1.0" />
+        <SettingsRow label="App Version" icon="information-circle-outline" value="0.1.0" />
         {systemInfo && (
           <>
             <SettingsRow
               label="Gateway Version"
+              icon="code-slash-outline"
               value={String(systemInfo.version ?? "unknown")}
             />
             <SettingsRow
               label="Model"
+              icon="hardware-chip-outline"
               value={String(systemInfo.model ?? "unknown")}
             />
           </>
         )}
         <Pressable
           onPress={() => Linking.openURL("https://matrix-os.com")}
-          className="items-center rounded-xl border border-border bg-card py-3"
+          style={({ pressed }) => [
+            styles.actionButton,
+            pressed && styles.rowPressed,
+          ]}
         >
-          <Text className="text-sm font-medium text-primary">matrix-os.com</Text>
+          <Ionicons name="globe-outline" size={16} color={colors.light.primary} />
+          <Text style={styles.actionButtonText}>matrix-os.com</Text>
         </Pressable>
       </SettingsSection>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.light.background,
+  },
+  scrollContent: {
+    padding: spacing.xl,
+    paddingBottom: 48,
+  },
+  section: {
+    marginBottom: spacing.xl,
+  },
+  sectionTitle: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.light.primary,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  sectionContent: {
+    gap: spacing.sm,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  rowPressed: {
+    opacity: 0.8,
+  },
+  rowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    flex: 1,
+  },
+  rowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    backgroundColor: colors.light.secondary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowLabel: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.foreground,
+    flex: 1,
+  },
+  rowValue: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 13,
+    color: colors.light.mutedForeground,
+  },
+  emptyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  emptyText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 13,
+    color: colors.light.mutedForeground,
+  },
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    paddingVertical: spacing.md,
+  },
+  actionButtonText: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 14,
+    color: colors.light.primary,
+  },
+  themeRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  themeOption: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: radius.lg,
+    paddingVertical: 10,
+  },
+  themeOptionActive: {
+    backgroundColor: colors.light.primary,
+  },
+  themeOptionInactive: {
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+  },
+  themeOptionText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+  },
+  themeOptionTextActive: {
+    color: colors.light.primaryForeground,
+  },
+  themeOptionTextInactive: {
+    color: colors.light.foreground,
+  },
+});
