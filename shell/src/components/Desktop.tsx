@@ -884,7 +884,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 onMouseDown={() => bringToFront(win.id)}
               >
                 <CardHeader
-                  className="flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
+                  className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
                   onPointerDown={(e) => onDragStart(win.id, e)}
                   onPointerMove={onDragMove}
                   onPointerUp={onDragEnd}
