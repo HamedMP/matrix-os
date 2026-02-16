@@ -21,6 +21,10 @@ import {
   WrenchIcon,
   CheckIcon,
   MinusIcon,
+  SmartphoneIcon,
+  PuzzleIcon,
+  MonitorIcon,
+  SlidersHorizontalIcon,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -51,8 +55,8 @@ function Nav() {
         <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 backdrop-blur-xl px-5 py-2.5 shadow-sm">
           <a href="/" className="flex items-center gap-2.5 group">
             <img src="/logo.png" alt="Matrix OS" className="size-7 rounded-lg shadow-sm" />
-            <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
-              matrix-os
+            <span className="text-sm font-semibold tracking-tight text-foreground">
+              Matrix OS
             </span>
           </a>
 
@@ -284,10 +288,11 @@ function OsMockup() {
 function TechStrip() {
   const items = [
     "926 Tests Passing",
-    "14 IPC Tools",
-    "7 Skills",
+    "26 IPC Tools",
+    "20 Skills",
     "6 Agents",
-    "Telegram Connected",
+    "Expo Mobile App",
+    "Plugin System",
     "Claude Opus 4.6",
   ];
 
@@ -693,6 +698,100 @@ function BentoFeatures() {
             </div>
           </div>
 
+          {/* Mobile App */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
+            <div className="size-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center mb-4">
+              <SmartphoneIcon className="size-5 text-blue-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Mobile app</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+              Native iOS and Android via Expo. Clerk auth, streaming chat,
+              Mission Control, and push notifications. Your OS in your pocket.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {["iOS", "Android", "Clerk Auth", "Push"].map((tag) => (
+                <span
+                  key={tag}
+                  className="text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-full border border-border bg-secondary/50 text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Plugin System */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
+            <div className="size-10 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center mb-4">
+              <PuzzleIcon className="size-5 text-violet-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Plugin system</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+              Manifest-based discovery with void and modifying hooks, custom
+              routes, services, and built-in security scanning.
+            </p>
+            <div className="rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
+              <div><span className="text-primary">hooks:</span> void + modifying</div>
+              <div><span className="text-primary">routes:</span> custom endpoints</div>
+              <div><span className="text-primary">scan:</span> security audit</div>
+            </div>
+          </div>
+
+          {/* Browser Automation */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
+            <div className="size-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center mb-4">
+              <MonitorIcon className="size-5 text-amber-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Browser automation</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+              Playwright MCP with 18 composite actions, role-based snapshots,
+              and persistent session management.
+            </p>
+            <div className="rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
+              <div><span className="text-primary">actions:</span> 18 composites</div>
+              <div><span className="text-primary">snapshots:</span> role-based</div>
+              <div><span className="text-primary">sessions:</span> persistent</div>
+            </div>
+          </div>
+
+          {/* Web Tools */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
+            <div className="size-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-4">
+              <SearchIcon className="size-5 text-emerald-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Web tools</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+              web_fetch with Cloudflare Markdown, Readability, and Firecrawl
+              fallback. web_search via Brave, Perplexity, and Grok.
+            </p>
+            <div className="rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
+              <div><span className="text-primary">fetch:</span> CF / Readability / Firecrawl</div>
+              <div><span className="text-primary">search:</span> Brave / Perplexity / Grok</div>
+            </div>
+          </div>
+
+          {/* Settings Dashboard */}
+          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
+            <div className="size-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center mb-4">
+              <SlidersHorizontalIcon className="size-5 text-rose-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Settings dashboard</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+              macOS-style settings panel. Configure agent, channels, skills,
+              cron jobs, security, and plugins from one place.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {["Agent", "Channels", "Skills", "Cron", "Security", "Plugins"].map((tab) => (
+                <span
+                  key={tab}
+                  className="text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-full border border-border bg-secondary/50 text-muted-foreground"
+                >
+                  {tab}
+                </span>
+              ))}
+            </div>
+          </div>
+
           {/* Architecture metaphor card */}
           <div className="md:col-span-4 rounded-2xl border border-border bg-card overflow-hidden hover:shadow-lg hover:border-primary/20 transition-all duration-300">
             <div className="px-6 pt-6 pb-3">
@@ -708,7 +807,7 @@ function BentoFeatures() {
               {[
                 ["CPU", "Claude Opus 4.6"],
                 ["RAM", "Context window (1M tokens)"],
-                ["Kernel", "Main agent + 14 IPC tools"],
+                ["Kernel", "Main agent + 26 IPC tools"],
                 ["Processes", "5 sub-agents"],
                 ["Disk", "~/apps, ~/data, ~/system"],
                 ["Syscalls", "Read, Write, Edit, Bash"],
@@ -817,6 +916,11 @@ function OpenClawBridge() {
     "AI-to-AI communication",
     "Peer-to-peer device sync",
     "Test-driven (926 tests)",
+    "Native mobile app (Expo)",
+    "Plugin system with hooks",
+    "Browser automation",
+    "Web search and fetch tools",
+    "Settings dashboard",
   ];
 
   return (
@@ -955,7 +1059,7 @@ function OpenClawBridge() {
 
 function Web4() {
   return (
-    <section className="py-24 px-6">
+    <section id="web4" className="py-24 px-6">
       <div className="mx-auto max-w-5xl">
         <div className="rounded-3xl border border-border bg-card/80 backdrop-blur-sm overflow-hidden">
           <div className="p-8 sm:p-12 md:p-16 text-center">

@@ -134,8 +134,8 @@ export function WhitepaperContent() {
                 alt="Matrix OS"
                 className="size-7 rounded-lg shadow-sm"
               />
-              <span className="font-mono text-sm font-semibold tracking-tight text-foreground">
-                matrix-os
+              <span className="text-sm font-semibold tracking-tight text-foreground">
+                Matrix OS
               </span>
             </a>
 
