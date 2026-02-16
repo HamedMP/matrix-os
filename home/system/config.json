@@ -29,15 +29,35 @@
     "stt_provider": "elevenlabs",
     "auto_speak_responses": false
   },
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "brave",
+        "braveApiKey": "${BRAVE_API_KEY}",
+        "perplexityApiKey": "${PERPLEXITY_API_KEY}",
+        "grokApiKey": "${XAI_API_KEY}"
+      },
+      "fetch": {
+        "maxChars": 50000,
+        "cacheTtlMinutes": 15,
+        "firecrawlApiKey": "${FIRECRAWL_API_KEY}"
+      }
+    }
+  },
   "browser": {
     "enabled": false,
     "headless": true,
-    "timeout": 30000
+    "timeout": 30000,
+    "idleTimeout": 300000
   },
   "channels": {
     "telegram": { "enabled": false, "token": "", "allowFrom": [] },
     "whatsapp": { "enabled": false, "authDir": "system/whatsapp-auth", "allowFrom": [] },
     "discord": { "enabled": false, "token": "", "allowFrom": [] },
     "slack": { "enabled": false, "botToken": "", "appToken": "", "allowFrom": [] }
+  },
+  "plugins": {
+    "list": [],
+    "configs": {}
   }
 }

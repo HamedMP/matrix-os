@@ -16,15 +16,19 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
+    "@types/turndown": "^5.0.6",
     "drizzle-kit": "^0.31.9",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.39",
+    "@mozilla/readability": "^0.6.0",
     "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",
     "drizzle-orm": "^0.45.1",
+    "linkedom": "^0.18.12",
+    "turndown": "^7.2.2",
     "zod": "^4.0"
   }
 }
