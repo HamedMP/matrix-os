@@ -410,7 +410,7 @@ function HowItWorks() {
                 <div className="hidden md:block absolute top-10 -right-3 w-6 border-t border-dashed border-border" />
               )}
               <div className="rounded-2xl border border-border bg-card p-6 h-full hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-                <div className="text-4xl font-bold text-primary/15 font-mono mb-4 select-none">
+                <div className="text-4xl font-bold text-primary/30 font-mono mb-4 select-none">
                   {step.num}
                 </div>
                 <h3 className="text-lg font-semibold mb-2">{step.title}</h3>
@@ -438,40 +438,30 @@ function AgentShowcase() {
       name: "Builder",
       role: "Creates apps and features from your descriptions",
       example: '"Build me an expense tracker" -> writes ~/apps/expenses.html',
-      color: "text-primary",
-      bg: "bg-primary/10 border-primary/20",
     },
     {
       icon: SearchIcon,
       name: "Researcher",
       role: "Investigates problems, reads docs, gathers context",
       example: '"Why is my app slow?" -> analyzes code, suggests fixes',
-      color: "text-blue-600",
-      bg: "bg-blue-50 border-blue-200",
     },
     {
       icon: RocketIcon,
       name: "Deployer",
       role: "Ships code to production, manages infrastructure",
       example: '"Deploy this to the cloud" -> provisions and deploys',
-      color: "text-violet-600",
-      bg: "bg-violet-50 border-violet-200",
     },
     {
       icon: HeartPulseIcon,
       name: "Healer",
       role: "Detects failures and repairs the OS autonomously",
       example: "Corrupted file detected -> restored from git snapshot",
-      color: "text-success",
-      bg: "bg-emerald-50 border-emerald-200",
     },
     {
       icon: SparklesIcon,
       name: "Evolver",
       role: "Grows new capabilities, writes new agents and skills",
       example: '"I wish I could..." -> creates a new skill file',
-      color: "text-amber-600",
-      bg: "bg-amber-50 border-amber-200",
     },
   ];
 
@@ -509,7 +499,7 @@ function AgentShowcase() {
             <div className="flex flex-col gap-1.5">
               {agents.map((a) => (
                 <div key={a.name} className="flex items-center gap-1.5">
-                  <div className={`size-1.5 rounded-full ${a.color === "text-primary" ? "bg-primary" : a.color === "text-success" ? "bg-success" : a.color === "text-blue-600" ? "bg-blue-500" : a.color === "text-violet-600" ? "bg-violet-500" : "bg-amber-500"}`} />
+                  <div className="size-1.5 rounded-full bg-foreground/40" />
                   <span className="text-foreground">{a.name}</span>
                 </div>
               ))}
@@ -530,8 +520,8 @@ function AgentShowcase() {
                 key={agent.name}
                 className="rounded-2xl border border-border bg-card p-5 hover:shadow-lg hover:border-primary/20 transition-all duration-300"
               >
-                <div className={`size-10 rounded-xl border flex items-center justify-center mb-3 ${agent.bg}`}>
-                  <Icon className={`size-5 ${agent.color}`} />
+                <div className="size-10 rounded-xl border border-border bg-secondary/50 flex items-center justify-center mb-3">
+                  <Icon className="size-5 text-foreground/70" />
                 </div>
                 <h3 className="text-sm font-semibold mb-1">{agent.name}</h3>
                 <p className="text-xs text-muted-foreground leading-relaxed mb-3">
@@ -612,8 +602,8 @@ function BentoFeatures() {
 
           {/* Small: Self-Healing */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300 flex flex-col">
-            <div className="size-10 rounded-xl bg-success/10 border border-success/20 flex items-center justify-center mb-4">
-              <ShieldIcon className="size-5 text-success" />
+            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
+              <ShieldIcon className="size-5 text-foreground/70" />
             </div>
             <h3 className="text-lg font-semibold mb-1">Self-healing</h3>
             <p className="text-sm text-muted-foreground leading-relaxed flex-1">
@@ -687,21 +677,21 @@ function BentoFeatures() {
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300 flex flex-col">
             <h3 className="text-lg font-semibold mb-1">Test-driven</h3>
             <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-              Every component is tested before it ships. 926 tests across 80
+              Every component is tested before it ships. 993 tests across 85
               files. The OS trusts itself because it verifies itself.
             </p>
             <div className="mt-4 rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
               <div><span className="text-success">PASS</span> kernel/spawn.test.ts</div>
               <div><span className="text-success">PASS</span> gateway/dispatch.test.ts</div>
               <div><span className="text-success">PASS</span> cli/cli.test.ts</div>
-              <div className="pt-1 text-success">926 tests passed</div>
+              <div className="pt-1 text-success">993 tests passed</div>
             </div>
           </div>
 
           {/* Mobile App */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center mb-4">
-              <SmartphoneIcon className="size-5 text-blue-600" />
+            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
+              <SmartphoneIcon className="size-5 text-foreground/70" />
             </div>
             <h3 className="text-lg font-semibold mb-1">Mobile app</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
@@ -722,8 +712,8 @@ function BentoFeatures() {
 
           {/* Plugin System */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center mb-4">
-              <PuzzleIcon className="size-5 text-violet-600" />
+            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
+              <PuzzleIcon className="size-5 text-foreground/70" />
             </div>
             <h3 className="text-lg font-semibold mb-1">Plugin system</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
@@ -739,8 +729,8 @@ function BentoFeatures() {
 
           {/* Browser Automation */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center mb-4">
-              <MonitorIcon className="size-5 text-amber-600" />
+            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
+              <MonitorIcon className="size-5 text-foreground/70" />
             </div>
             <h3 className="text-lg font-semibold mb-1">Browser automation</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
@@ -756,8 +746,8 @@ function BentoFeatures() {
 
           {/* Web Tools */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-4">
-              <SearchIcon className="size-5 text-emerald-600" />
+            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
+              <SearchIcon className="size-5 text-foreground/70" />
             </div>
             <h3 className="text-lg font-semibold mb-1">Web tools</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
@@ -772,8 +762,8 @@ function BentoFeatures() {
 
           {/* Settings Dashboard */}
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center mb-4">
-              <SlidersHorizontalIcon className="size-5 text-rose-600" />
+            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
+              <SlidersHorizontalIcon className="size-5 text-foreground/70" />
             </div>
             <h3 className="text-lg font-semibold mb-1">Settings dashboard</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-4">
@@ -793,7 +783,7 @@ function BentoFeatures() {
           </div>
 
           {/* Architecture metaphor card */}
-          <div className="md:col-span-4 rounded-2xl border border-border bg-card overflow-hidden hover:shadow-lg hover:border-primary/20 transition-all duration-300">
+          <div className="md:col-span-6 rounded-2xl border border-border bg-card overflow-hidden hover:shadow-lg hover:border-primary/20 transition-all duration-300">
             <div className="px-6 pt-6 pb-3">
               <div className="flex items-center gap-2 mb-1">
                 <LayersIcon className="size-4 text-primary" />
