@@ -86,6 +86,18 @@ export default function Home() {
     [chat.submitMessage],
   );
 
+  const showEmbeddedInput = sidebarOpen || isCenterChat;
+
+  const embeddedInputBar = (
+    <InputBar
+      sessionId={chat.sessionId}
+      busy={chat.busy}
+      queueLength={chat.queue.length}
+      onSubmit={handleSubmit}
+      embedded
+    />
+  );
+
   return (
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
@@ -97,20 +109,22 @@ export default function Home() {
               <ThoughtCard />
             </div>
 
-            <div className="pointer-events-auto flex justify-center pb-2 md:pb-2">
-              <InputBar
-                sessionId={chat.sessionId}
-                busy={chat.busy}
-                queueLength={chat.queue.length}
-                onSubmit={handleSubmit}
-                chips={
-                  <SuggestionChips
-                    context={chipContext}
-                    onSelect={handleSubmit}
-                  />
-                }
-              />
-            </div>
+            {!showEmbeddedInput && (
+              <div className="pointer-events-auto flex justify-center pb-2 md:pb-2">
+                <InputBar
+                  sessionId={chat.sessionId}
+                  busy={chat.busy}
+                  queueLength={chat.queue.length}
+                  onSubmit={handleSubmit}
+                  chips={
+                    <SuggestionChips
+                      context={chipContext}
+                      onSelect={handleSubmit}
+                    />
+                  }
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -145,6 +159,7 @@ export default function Home() {
               onSwitchConversation={chat.switchConversation}
               onClose={() => {}}
               onSubmit={handleSubmit}
+              inputBar={embeddedInputBar}
             />
           </div>
         </div>
@@ -161,6 +176,7 @@ export default function Home() {
           onSwitchConversation={chat.switchConversation}
           onClose={() => setSidebarOpen(false)}
           onSubmit={handleSubmit}
+          inputBar={embeddedInputBar}
         />
       )}
 

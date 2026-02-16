@@ -25,6 +25,7 @@ export interface ImageClient {
 const MODEL_COSTS: Record<string, number> = {
   "fal-ai/flux/schnell": 0.003,
   "fal-ai/flux/dev": 0.025,
+  "fal-ai/z-image/turbo": 0.003,
 };
 
 export function createImageClient(apiKey: string): ImageClient {
@@ -43,10 +44,12 @@ export function createImageClient(apiKey: string): ImageClient {
       const fetchFn = opts.fetchFn ?? globalThis.fetch;
 
       const url = `https://fal.run/${model}`;
+      const isZImage = model.includes("z-image");
       const body = JSON.stringify({
         prompt,
         image_size: size,
         num_images: 1,
+        ...(isZImage && { num_inference_steps: 4, output_format: "png" }),
       });
 
       const response = await fetchFn(url, {

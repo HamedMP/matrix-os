@@ -21,7 +21,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon } from "lucide-react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { AmbientClock } from "./AmbientClock";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -53,6 +59,7 @@ interface LayoutWindow {
 interface AppEntry {
   name: string;
   path: string;
+  iconUrl?: string;
 }
 
 interface ModuleRegistryEntry {
@@ -67,6 +74,10 @@ interface ModuleMeta {
   entry?: string;
   entryPoint?: string;
   version?: string;
+}
+
+function nameToSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
 const MIN_WIDTH = 320;
@@ -121,35 +132,76 @@ function DockIcon({
   onClick,
   iconSize = 40,
   tooltipSide = "right",
+  iconUrl,
+  onUnpin,
+  onRegenerateIcon,
 }: {
   name: string;
   active: boolean;
   onClick: () => void;
   iconSize?: number;
   tooltipSide?: "left" | "right" | "top" | "bottom";
+  iconUrl?: string;
+  onUnpin?: () => void;
+  onRegenerateIcon?: () => void;
 }) {
   const initial = name.charAt(0).toUpperCase();
 
+  const btn = (
+    <button
+      onClick={onClick}
+      className={`relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all overflow-hidden ${
+        iconUrl ? "" : "bg-card border border-border/60"
+      }`}
+      style={{ width: iconSize, height: iconSize }}
+    >
+      {iconUrl ? (
+        <img src={iconUrl} alt={name} className="size-full object-cover rounded-xl" />
+      ) : (
+        <span className="text-sm font-semibold text-foreground">
+          {initial}
+        </span>
+      )}
+      {active && (
+        <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
+      )}
+    </button>
+  );
+
+  if (!onUnpin && !onRegenerateIcon) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{btn}</TooltipTrigger>
+        <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
-          className="relative flex items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
-          style={{ width: iconSize, height: iconSize }}
-        >
-          <span className="text-sm font-semibold text-foreground">
-            {initial}
-          </span>
-          {active && (
-            <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
-          )}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side={tooltipSide} sideOffset={8}>
-        {name}
-      </TooltipContent>
-    </Tooltip>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div>
+          <Tooltip>
+            <TooltipTrigger asChild>{btn}</TooltipTrigger>
+            <TooltipContent side={tooltipSide} sideOffset={8}>{name}</TooltipContent>
+          </Tooltip>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="z-[60]">
+        {onUnpin && (
+          <ContextMenuItem onSelect={onUnpin}>
+            <PinOffIcon className="size-3.5 mr-2" />
+            Unpin from Dock
+          </ContextMenuItem>
+        )}
+        {onRegenerateIcon && (
+          <ContextMenuItem onSelect={onRegenerateIcon}>
+            <RefreshCwIcon className="size-3.5 mr-2" />
+            Regenerate Icon
+          </ContextMenuItem>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -165,6 +217,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const dock = useDesktopConfigStore((s) => s.dock);
+  const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
+  const togglePin = useDesktopConfigStore((s) => s.togglePin);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
   const dockXOffset = dock.position === "left" ? dock.size + 20 : 20;
@@ -185,12 +239,69 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
     origH: number;
   } | null>(null);
 
+  const generatingRef = useRef(new Set<string>());
+
+  const checkAndGenerateIcon = useCallback((slug: string) => {
+    if (generatingRef.current.has(slug)) return;
+    const iconPath = `/files/system/icons/${slug}.png`;
+    fetch(`${GATEWAY_URL}${iconPath}`, { method: "HEAD" }).then((res) => {
+      if (res.ok) {
+        setApps((prev) =>
+          prev.map((a) =>
+            nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${iconPath}` } : a,
+          ),
+        );
+      } else {
+        generatingRef.current.add(slug);
+        fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, { method: "POST" })
+          .then((r) => {
+            if (!r.ok) {
+              r.json().then((d: { error?: string }) => console.warn(`Icon gen failed for "${slug}":`, d.error)).catch(() => {});
+              return;
+            }
+            return r.json().then((data: { iconUrl: string }) => {
+              setApps((prev) =>
+                prev.map((a) =>
+                  nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}` } : a,
+                ),
+              );
+            });
+          })
+          .catch((err) => console.warn(`Icon gen request failed for "${slug}":`, err))
+          .finally(() => generatingRef.current.delete(slug));
+      }
+    }).catch(() => {});
+  }, []);
+
+  const regenerateIcon = useCallback((slug: string) => {
+    generatingRef.current.add(slug);
+    fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, { method: "POST" })
+      .then((r) => {
+        if (!r.ok) {
+          r.json().then((d: { error?: string }) => console.warn(`Icon regen failed for "${slug}":`, d.error)).catch(() => {});
+          return;
+        }
+        return r.json().then((data: { iconUrl: string }) => {
+          const bustUrl = `${GATEWAY_URL}${data.iconUrl}?t=${Date.now()}`;
+          setApps((prev) =>
+            prev.map((a) =>
+              nameToSlug(a.name) === slug ? { ...a, iconUrl: bustUrl } : a,
+            ),
+          );
+        });
+      })
+      .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
+      .finally(() => generatingRef.current.delete(slug));
+  }, []);
+
   const addApp = useCallback((name: string, path: string) => {
     setApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
       return [...prev, { name, path }];
     });
-  }, []);
+    const slug = nameToSlug(name);
+    checkAndGenerateIcon(slug);
+  }, [checkAndGenerateIcon]);
 
   const openWindow = useCallback((name: string, path: string) => {
     setWindows((prev) => {
@@ -586,11 +697,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             </TooltipContent>
           </Tooltip>
 
-          {apps.length > 0 && (
+          {apps.filter((a) => pinnedApps.includes(a.path)).length > 0 && (
             <div className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"} />
           )}
 
-          {apps.map((app) => {
+          {apps.filter((a) => pinnedApps.includes(a.path)).map((app) => {
             const win = windows.find(
               (w) => w.path === app.path && !w.minimized,
             );
@@ -602,6 +713,9 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 onClick={() => openWindow(app.name, app.path)}
                 iconSize={dock.iconSize}
                 tooltipSide={tooltipSide}
+                iconUrl={app.iconUrl}
+                onUnpin={() => togglePin(app.path)}
+                onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
               />
             );
           })}
@@ -690,7 +804,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             <div className="shrink-0">
               <UserButton />
             </div>
-            {apps.map((app) => {
+            {apps.filter((a) => pinnedApps.includes(a.path)).map((app) => {
               const win = windows.find(
                 (w) => w.path === app.path && !w.minimized,
               );
@@ -718,6 +832,9 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               openWindows={new Set(windows.filter((w) => !w.minimized).map((w) => w.path))}
               onOpenApp={openWindow}
               onClose={() => setTaskBoardOpen(false)}
+              pinnedApps={pinnedApps}
+              onTogglePin={togglePin}
+              onRegenerateIcon={regenerateIcon}
             />
           )}
 

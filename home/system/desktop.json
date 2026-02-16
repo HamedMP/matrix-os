@@ -1,12 +1,16 @@
 {
   "background": {
-    "type": "solid",
-    "color": "#0a0a0a"
+    "type": "gradient",
+    "from": "#1a0a1e",
+    "to": "#2d0a1f",
+    "angle": 135
   },
   "dock": {
     "position": "left",
     "size": 56,
     "iconSize": 40,
     "autoHide": false
-  }
+  },
+  "pinnedApps": [],
+  "iconStyle": "3D rendered glossy icon, dark background, vibrant glowing neon accents, soft lighting, rounded square shape"
 }

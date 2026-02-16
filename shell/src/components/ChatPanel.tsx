@@ -47,6 +47,7 @@ export interface ChatPanelProps {
   onSwitchConversation: (id: string) => void;
   onClose: () => void;
   onSubmit?: (text: string) => void;
+  inputBar?: React.ReactNode;
 }
 
 function ToolMessage({ msg }: { msg: ChatMessage }) {
@@ -77,6 +78,7 @@ export function ChatPanel({
   onSwitchConversation,
   onClose,
   onSubmit,
+  inputBar,
 }: ChatPanelProps) {
   return (
     <aside className="flex fixed inset-0 z-50 w-full flex-col border-l border-border bg-card md:inset-y-0 md:left-auto md:right-0 md:w-[400px] md:shadow-2xl">
@@ -150,6 +152,11 @@ export function ChatPanel({
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
+      {inputBar && (
+        <div className="border-t border-border p-3">
+          {inputBar}
+        </div>
+      )}
     </aside>
   );
 }

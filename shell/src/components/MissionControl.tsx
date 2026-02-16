@@ -22,6 +22,7 @@ import {
 interface AppEntry {
   name: string;
   path: string;
+  iconUrl?: string;
 }
 
 interface MissionControlProps {
@@ -29,6 +30,9 @@ interface MissionControlProps {
   openWindows: Set<string>;
   onOpenApp: (name: string, path: string) => void;
   onClose: () => void;
+  pinnedApps: string[];
+  onTogglePin: (path: string) => void;
+  onRegenerateIcon: (slug: string) => void;
 }
 
 export function MissionControl({
@@ -36,6 +40,9 @@ export function MissionControl({
   openWindows,
   onOpenApp,
   onClose,
+  pinnedApps,
+  onTogglePin,
+  onRegenerateIcon,
 }: MissionControlProps) {
   const { tasks, provision, todo, inProgress, done, selectedTaskId, selectTask, addTask } =
     useTaskBoard();
@@ -114,18 +121,25 @@ export function MissionControl({
                   Apps
                 </h3>
               </div>
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1">
-                {apps.map((app) => (
-                  <AppTile
-                    key={app.path}
-                    name={app.name}
-                    isOpen={openWindows.has(app.path)}
-                    onClick={() => {
-                      onOpenApp(app.name, app.path);
-                      onClose();
-                    }}
-                  />
-                ))}
+              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-0.5">
+                {apps.map((app) => {
+                  const slug = app.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+                  return (
+                    <AppTile
+                      key={app.path}
+                      name={app.name}
+                      isOpen={openWindows.has(app.path)}
+                      onClick={() => {
+                        onOpenApp(app.name, app.path);
+                        onClose();
+                      }}
+                      pinned={pinnedApps.includes(app.path)}
+                      onTogglePin={() => onTogglePin(app.path)}
+                      iconUrl={app.iconUrl}
+                      onRegenerateIcon={() => onRegenerateIcon(slug)}
+                    />
+                  );
+                })}
               </div>
             </section>
           )}

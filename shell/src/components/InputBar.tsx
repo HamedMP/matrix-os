@@ -13,9 +13,10 @@ interface InputBarProps {
   queueLength?: number;
   onSubmit: (text: string) => void;
   chips?: ReactNode;
+  embedded?: boolean;
 }
 
-export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: InputBarProps) {
+export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, embedded }: InputBarProps) {
   const [input, setInput] = useState("");
   const { connected } = useSocket();
 
@@ -58,7 +59,11 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips }: 
       {chips}
       <form
         onSubmit={handleSubmit}
-        className="flex w-full max-w-full md:max-w-[560px] items-center gap-2 rounded-xl border border-border bg-card/90 px-3 py-2 shadow-lg backdrop-blur-sm"
+        className={
+          embedded
+            ? "flex w-full items-center gap-2 rounded-lg bg-muted/50 px-3 py-2"
+            : "flex w-full max-w-full md:max-w-[560px] items-center gap-2 rounded-xl border border-border bg-card/90 px-3 py-2 shadow-lg backdrop-blur-sm"
+        }
       >
         <Input
           value={input}

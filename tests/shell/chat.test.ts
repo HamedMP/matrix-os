@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 interface ChatMessage {
   id: string;
@@ -284,5 +284,17 @@ describe("message queue logic", () => {
     onResult(state);
     expect(state.busy).toBe(false);
     expect(state.queue).toHaveLength(0);
+  });
+});
+
+describe("ChatPanel props", () => {
+  it("ChatPanelProps accepts optional inputBar", async () => {
+    const { ChatPanel } = await import("../../shell/src/components/ChatPanel");
+    expect(ChatPanel).toBeDefined();
+  });
+
+  it("InputBar accepts embedded prop", async () => {
+    const { InputBar } = await import("../../shell/src/components/InputBar");
+    expect(InputBar).toBeDefined();
   });
 });

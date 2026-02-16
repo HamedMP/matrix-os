@@ -169,6 +169,53 @@ describe("Image Generation Client", () => {
       ).rejects.toThrow("not configured");
     });
 
+    it("supports z-image/turbo model with extra params", async () => {
+      const client = createImageClient("test-key");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          images: [{ url: "https://fal.ai/result/icon.png" }],
+        }),
+      });
+
+      await client.generateImage("app icon", {
+        model: "fal-ai/z-image/turbo",
+        imageDir,
+        fetchFn: mockFetch,
+        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("fal-ai/z-image/turbo"),
+        expect.any(Object),
+      );
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.num_inference_steps).toBe(4);
+      expect(body.output_format).toBe("png");
+    });
+
+    it("does not add z-image params for flux models", async () => {
+      const client = createImageClient("test-key");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          images: [{ url: "https://fal.ai/result/image.png" }],
+        }),
+      });
+
+      await client.generateImage("test prompt", {
+        imageDir,
+        fetchFn: mockFetch,
+        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.num_inference_steps).toBeUndefined();
+      expect(body.output_format).toBeUndefined();
+    });
+
     it("supports custom size", async () => {
       const client = createImageClient("test-key");
 

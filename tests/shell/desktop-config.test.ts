@@ -77,4 +77,45 @@ describe("Desktop config", () => {
     expect(saveDesktopConfig).toBeTypeOf("function");
     expect(WAVES_PATTERN).toBeTypeOf("string");
   });
+
+  it("default pinnedApps is empty array", () => {
+    const { pinnedApps } = useDesktopConfigStore.getState();
+    expect(pinnedApps).toEqual([]);
+  });
+
+  it("setPinnedApps updates store state", () => {
+    useDesktopConfigStore.getState().setPinnedApps(["apps/calc.html", "apps/notes.html"]);
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual(["apps/calc.html", "apps/notes.html"]);
+  });
+
+  it("togglePin adds a new path", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ background: { type: "pattern" }, dock: {}, pinnedApps: [] }),
+    }));
+
+    useDesktopConfigStore.getState().setPinnedApps([]);
+    useDesktopConfigStore.getState().togglePin("apps/calc.html");
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual(["apps/calc.html"]);
+  });
+
+  it("togglePin removes an existing path", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ background: { type: "pattern" }, dock: {}, pinnedApps: ["apps/calc.html"] }),
+    }));
+
+    useDesktopConfigStore.getState().setPinnedApps(["apps/calc.html", "apps/notes.html"]);
+    useDesktopConfigStore.getState().togglePin("apps/calc.html");
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual(["apps/notes.html"]);
+  });
+
+  it("DesktopConfig type includes pinnedApps", () => {
+    const config: DesktopConfig = {
+      background: { type: "pattern" },
+      dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+      pinnedApps: ["apps/test.html"],
+    };
+    expect(config.pinnedApps).toEqual(["apps/test.html"]);
+  });
 });

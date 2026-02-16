@@ -30,6 +30,7 @@ import {
   type Watchdog,
   type KernelEvent,
   loadHandle,
+  createImageClient,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
@@ -456,6 +457,14 @@ export function createGateway(config: GatewayConfig) {
     return c.json({ events });
   });
 
+  app.on("HEAD", "/files/*", (c) => {
+    const filePath = c.req.path.replace("/files/", "");
+    const fullPath = resolveWithinHome(homePath, filePath);
+    if (!fullPath) return c.text("Forbidden", 403);
+    if (!existsSync(fullPath)) return c.text("Not found", 404);
+    return c.body(null, 200);
+  });
+
   app.get("/files/*", (c) => {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWithinHome(homePath, filePath);
@@ -665,6 +674,48 @@ export function createGateway(config: GatewayConfig) {
 
   app.get("/api/apps", (c) => {
     return c.json(listApps(homePath));
+  });
+
+  app.post("/api/apps/:slug/icon", async (c) => {
+    const slug = c.req.param("slug");
+    if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+    const falKey = process.env.FAL_API_KEY ?? "";
+    if (!falKey) {
+      return c.json({ error: "FAL_API_KEY not configured" }, 503);
+    }
+    try {
+      let body: { style?: string } = {};
+      try { body = await c.req.json(); } catch { /* no body is fine */ }
+
+      let iconStyle = body.style ?? "";
+      if (!iconStyle) {
+        try {
+          const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+          iconStyle = desktop.iconStyle ?? "";
+        } catch { /* ignore */ }
+      }
+      if (!iconStyle) {
+        iconStyle = "3D rendered glossy icon, dark background, vibrant glowing neon accents, soft lighting, rounded square shape";
+      }
+
+      const client = createImageClient(falKey);
+      const name = slug.replace(/-/g, " ").replace(/_/g, " ");
+      const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
+      const iconsDir = join(homePath, "system/icons");
+      const result = await client.generateImage(prompt, {
+        model: "fal-ai/z-image/turbo",
+        size: "square",
+        imageDir: iconsDir,
+        saveAs: `${slug}.png`,
+      });
+      return c.json({ iconUrl: `/files/system/icons/${slug}.png`, cost: result.cost });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error(`Icon generation failed for "${slug}":`, message);
+      return c.json({ error: message }, 500);
+    }
   });
 
   app.get("/api/cron", (c) => {

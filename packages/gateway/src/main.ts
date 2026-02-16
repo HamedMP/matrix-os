@@ -1,7 +1,11 @@
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureHome, loadHandle } from "@matrix-os/kernel";
 import { createGateway } from "./server.js";
 
-const homePath = ensureHome(process.env.MATRIX_HOME);
+try { process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env")); } catch {}
+
+const homePath = ensureHome(process.env.MATRIX_HOME || undefined);
 const port = Number(process.env.PORT ?? 4000);
 
 const gateway = createGateway({ homePath, port });
