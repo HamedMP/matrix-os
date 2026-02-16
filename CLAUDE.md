@@ -45,6 +45,12 @@ Key principles:
 - `specs/011-new-computing/` -- New computing paradigms: Living Software, Socratic Computing, Intent-based (T300-T317)
 - `specs/012-onboarding/` -- Personalized onboarding: role discovery, setup proposal, multi-agent provisioning (T400-T412)
 - `specs/013-distro/` -- Linux distro + Docker deployment: Dockerfile, mkosi, systemd, cage kiosk (T500-T517)
+- `specs/025-security/` -- Security hardening: content wrapping, SSRF, audit, sandbox, outbound queue (T800-T849)
+- `specs/026-web-tools/` -- Web fetch + search: Cloudflare Markdown, Readability, Brave/Perplexity/Grok (T850-T869)
+- `specs/027-expo-app/` -- Expo mobile app: chat, mission control, push notifications (T870-T899)
+- `specs/028-browser/` -- Browser automation: Playwright MCP, role snapshots, composite tool (T900-T929)
+- `specs/029-plugins/` -- Plugin system: manifest, API, hooks (void + modifying), security (T930-T969)
+- `specs/030-settings/` -- Settings dashboard: agent, channels, skills, security, cron, plugins (T970-T999)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/` -- original architecture spec, plan, tasks (reference only)
