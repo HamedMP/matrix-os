@@ -14,16 +14,51 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "Matrix OS",
-  description: "Your AI operating system",
-  manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "Matrix OS",
-  },
-};
+const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
+
+export async function generateMetadata(): Promise<Metadata> {
+  let handle = "";
+  let displayName = "";
+  try {
+    const res = await fetch(`${gatewayUrl}/api/identity`, { next: { revalidate: 60 } });
+    if (res.ok) {
+      const data = await res.json();
+      handle = data.handle ?? "";
+      displayName = data.displayName ?? "";
+    }
+  } catch {
+    // Gateway not available (build time or offline)
+  }
+
+  const title = handle ? `Matrix OS — @${handle}` : "Matrix OS";
+  const description = displayName
+    ? `${displayName}'s AI operating system`
+    : "Your AI operating system";
+
+  return {
+    title,
+    description,
+    manifest: "/manifest.json",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: "Matrix OS",
+    },
+    openGraph: {
+      title,
+      description,
+      siteName: "Matrix OS",
+      type: "website",
+      images: [{ url: "/og.png", width: 1469, height: 1526, alt: "Matrix OS" }],
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+      images: ["/og.png"],
+    },
+  };
+}
 
 export const viewport: Viewport = {
   width: "device-width",
