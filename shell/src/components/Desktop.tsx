@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
@@ -19,7 +20,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { KanbanSquareIcon, StoreIcon, MonitorIcon } from "lucide-react";
+import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -153,6 +154,7 @@ interface DesktopProps {
 }
 
 export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
+  const router = useRouter();
   const [windows, setWindows] = useState<AppWindow[]>([]);
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [interacting, setInteracting] = useState(false);
@@ -487,10 +489,19 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         keywords: ["tasks", "kanban", "dashboard"],
         execute: () => toggleMcRef.current(),
       },
+      {
+        id: "action:open-settings",
+        label: "Open Settings",
+        group: "Actions",
+        shortcut: "Cmd+,",
+        keywords: ["settings", "preferences", "config", "configure"],
+        execute: () => router.push("/settings"),
+      },
       ...modeCommands,
     ]);
     return () => unregister([
       "action:toggle-mc",
+      "action:open-settings",
       ...allModes().map((m) => `mode:${m.id}`),
     ]);
   }, [register, unregister, allModes, setDesktopMode]);
@@ -574,6 +585,19 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  onClick={() => router.push("/settings")}
+                  className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+                >
+                  <SettingsIcon className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                Settings
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
                   onClick={cycleMode}
                   className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
                 >
@@ -609,6 +633,13 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               }`}
             >
               <StoreIcon className="size-4" />
+            </button>
+            <button
+              onClick={() => router.push("/settings")}
+              className="flex shrink-0 size-9 items-center justify-center rounded-lg border border-border/60 bg-card transition-all active:scale-95"
+              title="Settings"
+            >
+              <SettingsIcon className="size-4" />
             </button>
             <button
               onClick={cycleMode}

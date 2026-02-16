@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.12.0",
     "@streamdown/cjk": "^1.0.2",
     "@streamdown/code": "^1.0.2",
     "@streamdown/math": "^1.0.2",
