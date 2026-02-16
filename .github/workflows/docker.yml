@@ -88,8 +88,9 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /home/deploy/matrix-os
-            git fetch --tags
-            git checkout "$TAG_NAME"
+            git fetch origin main --tags
+            git checkout main
+            git pull origin main
             docker pull ghcr.io/hamedmp/matrix-os:latest
             docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --no-deps --build platform proxy
             sleep 5
