@@ -47,8 +47,8 @@
 - **Output**: Protection against abuse
 
 ### T805 [P] CORS and security headers
-- [ ] Strict CORS on subdomain proxy
-- [ ] CSP, X-Frame-Options, HSTS headers
+- [x] Strict CORS on subdomain proxy
+- [x] CSP, X-Frame-Options, HSTS headers
 - **Output**: Browser security hardening
 
 ### T806 [US30] User button in dock (logout + account)
@@ -152,8 +152,8 @@
 ### T826 [US32] Rate limiter
 - [x] Create `packages/gateway/src/security/rate-limiter.ts`
 - [x] Per-IP tracking with configurable maxAttempts, windowMs, lockoutMs
-- [ ] Pluggable into auth middleware (inject into existing auth.ts)
-- [ ] Timing-safe token comparison (`crypto.timingSafeEqual`)
+- [x] Pluggable into auth middleware (inject into existing auth.ts)
+- [x] Timing-safe token comparison (`crypto.timingSafeEqual`)
 - **Output**: Auth endpoint protected against brute force
 
 ### T827 [US31] Gateway tool deny list
@@ -164,14 +164,14 @@
 - **Output**: Dangerous tools blocked from HTTP API
 
 ### T828 [P] [US31] Auth hardening
-- [ ] Add timing-safe comparison to existing `packages/gateway/src/auth.ts`
+- [x] Add timing-safe comparison to existing `packages/gateway/src/auth.ts`
 - [ ] Support password mode (basic auth) alongside bearer token
 - [ ] Local loopback detection (skip auth for direct localhost connections, no X-Forwarded headers)
 - **Output**: Hardened auth middleware
 
 ### T829 [P] [US31] Security headers middleware
-- [ ] Hono middleware: CSP, X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security
-- [ ] CORS configuration per environment (local dev vs cloud)
+- [x] Hono middleware: CSP, X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security
+- [x] CORS configuration per environment (local dev vs cloud)
 - **Output**: Standard browser security headers
 
 ---
@@ -213,8 +213,8 @@
 - [x] Persist to `~/system/outbound-queue.json` (atomic write via temp + rename)
 - [x] enqueue() before channel adapter send, ack() after success
 - [x] Max retry attempts (configurable, default: 5)
-- [ ] replay() on gateway startup -- retry unacknowledged messages
-- [ ] Wire into channel adapter send path
+- [x] replay() on gateway startup -- retry unacknowledged messages
+- [x] Wire into channel adapter send path
 - **Output**: Outbound messages survive gateway crashes
 
 ### T832 [US35] Security audit engine

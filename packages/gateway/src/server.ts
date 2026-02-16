@@ -10,7 +10,9 @@ import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { resolveWithinHome } from "./path-security.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
+import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter } from "./channels/telegram.js";
+import { createPushAdapter } from "./channels/push.js";
 import { formatForChannel } from "./channels/format.js";
 import type { ChannelConfig, ChannelId } from "./channels/types.js";
 import { createCronStore } from "./cron/store.js";
@@ -31,6 +33,7 @@ import {
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
+import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
@@ -177,11 +180,17 @@ export function createGateway(config: GatewayConfig) {
     }
   } catch { /* no channel config */ }
 
+  const outboundQueue = createOutboundQueue(homePath);
+
+  const pushAdapter = createPushAdapter();
+
   const channelManager: ChannelManager = createChannelManager({
     config: channelsConfig,
     adapters: {
       telegram: createTelegramAdapter(),
+      push: pushAdapter,
     },
+    outboundQueue,
     onMessage: (msg) => {
       const sessionKey = `${msg.source}:${msg.senderId}`;
       let responseText = "";
@@ -223,7 +232,9 @@ export function createGateway(config: GatewayConfig) {
     },
   });
 
-  channelManager.start();
+  channelManager.start().then(() => {
+    channelManager.replay().catch(() => {});
+  });
 
   // Cron service -- scheduled tasks from ~/system/cron.json
   const cronStore = createCronStore(join(homePath, "system", "cron.json"));
@@ -292,6 +303,7 @@ export function createGateway(config: GatewayConfig) {
   });
 
   app.use("*", cors());
+  app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
   app.get(
@@ -664,6 +676,24 @@ export function createGateway(config: GatewayConfig) {
     } catch {
       return c.json({ total: 0, byAction: {} });
     }
+  });
+
+  app.post("/api/push/register", async (c) => {
+    const body = await c.req.json<{ token: string; platform: string }>();
+    if (!body.token || !body.platform) {
+      return c.json({ error: "token and platform are required" }, 400);
+    }
+    pushAdapter.registerToken(body.token, body.platform);
+    return c.json({ ok: true });
+  });
+
+  app.delete("/api/push/register", async (c) => {
+    const body = await c.req.json<{ token: string }>();
+    if (!body.token) {
+      return c.json({ error: "token is required" }, 400);
+    }
+    pushAdapter.removeToken(body.token);
+    return c.json({ ok: true });
   });
 
   app.get("/health", (c) => c.json({

@@ -5,26 +5,36 @@ import type {
   ChannelMessage,
   ChannelReply,
 } from "./types.js";
+import type { OutboundQueue } from "../security/outbound-queue.js";
 
 export interface ChannelManagerConfig {
   config: Partial<Record<ChannelId, ChannelConfig>>;
   adapters: Partial<Record<ChannelId, ChannelAdapter>>;
   onMessage: (msg: ChannelMessage) => void;
+  outboundQueue?: OutboundQueue;
 }
 
 export interface ChannelManager {
   start(): Promise<void>;
   stop(): Promise<void>;
   send(reply: ChannelReply): Promise<void>;
+  replay(): Promise<{ replayed: number; failed: number }>;
   status(): Record<string, string>;
 }
 
 export function createChannelManager(
   opts: ChannelManagerConfig,
 ): ChannelManager {
-  const { config, adapters, onMessage } = opts;
+  const { config, adapters, onMessage, outboundQueue } = opts;
   const started = new Set<ChannelId>();
   const errors = new Set<ChannelId>();
+
+  async function sendDirect(reply: ChannelReply): Promise<void> {
+    const adapter = adapters[reply.channelId];
+    if (adapter) {
+      await adapter.send(reply);
+    }
+  }
 
   return {
     async start() {
@@ -57,10 +67,48 @@ export function createChannelManager(
     },
 
     async send(reply) {
-      const adapter = adapters[reply.channelId];
-      if (adapter) {
-        await adapter.send(reply);
+      if (!outboundQueue) {
+        return sendDirect(reply);
       }
+
+      const msgId = outboundQueue.enqueue({
+        channel: reply.channelId,
+        target: reply.chatId,
+        content: reply.text,
+      });
+
+      try {
+        await sendDirect(reply);
+        outboundQueue.ack(msgId);
+      } catch (err) {
+        outboundQueue.failed(msgId, err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+
+    async replay() {
+      if (!outboundQueue) return { replayed: 0, failed: 0 };
+
+      const pending = outboundQueue.pending();
+      let replayed = 0;
+      let failed = 0;
+
+      for (const msg of pending) {
+        try {
+          await sendDirect({
+            channelId: msg.channel as ChannelId,
+            chatId: msg.target,
+            text: msg.content,
+          });
+          outboundQueue.ack(msg.id);
+          replayed++;
+        } catch (err) {
+          outboundQueue.failed(msg.id, err instanceof Error ? err.message : String(err));
+          failed++;
+        }
+      }
+
+      return { replayed, failed };
     },
 
     status() {

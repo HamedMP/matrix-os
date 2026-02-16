@@ -160,7 +160,7 @@ SEQUENTIAL (ordered deps):
   024 App Ecosystem       (T760-T779)  -- after prebuilt apps + approval gates
 
 POST-DEMO (cloud hardening):
-  025 Security           (T800-T819)  -- Clerk JWT on subdomains, WS auth, isolation
+  025 Security           (T800-T849)  -- DONE (Phases A-C + E, hardening). Remaining: container isolation, sandbox
   008B Performance       (T165-T166)  -- kernel cold-start, prompt optimization
 
 DEFERRED:
@@ -386,18 +386,29 @@ Phase C -- Operational Security (done):
 Phase D -- Sandbox (deferred):
 - [ ] T840-T845 Docker sandbox (optional, requires Docker)
 
-Phase E -- Platform Auth:
-- [ ] T800 Clerk JWT verification on subdomain proxy
-- [ ] T801 Session token passthrough from dashboard to instance
-- [ ] T802 WebSocket auth
-- [ ] T803 Container network isolation
+Phase E -- Platform Auth (done):
+- [x] T800 Clerk JWT verification on subdomain proxy
+- [x] T801 Session token passthrough (.matrix-os.com shared cookie domain)
+- [x] T802 WebSocket auth
+- [x] T806 User button in dock (avatar, identity, Account Settings, Log Out)
+
+Hardening (done):
+- [x] T805/T829 Security headers middleware (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, X-XSS-Protection)
+- [x] T828 Auth hardening: timing-safe token comparison (crypto.timingSafeEqual)
+- [x] T826 Rate limiter wired into auth middleware (10 req/min, 5-min lockout)
+- [x] T831 Outbound queue wired into channel send path + replay on startup
+
+Remaining (deferred):
+- [ ] T803 Container network isolation (Docker networking)
 - [ ] T804 Rate limiting on subdomain proxy
-- [ ] T805 CORS and security headers
-- [ ] T806 User button in dock (logout + account)
 - [ ] T810 Platform admin API audit
 - [ ] T811 Secrets management
+- [ ] T828 remaining: password mode, loopback detection
+- [ ] T830 remaining: wire env-preserve into config write path
+- [ ] T834 Credential file permissions
+- [ ] T835 Log redaction
 
-58 new tests. 782 total passing.
+82 new tests (10 test files). 862 total passing.
 
 ### 25) Phase 008B: Performance (T165-T166)
 
@@ -472,7 +483,7 @@ Demo release (Groups 1-4, completed in single swarm session):
 - [x] 024 App Ecosystem (T760-T779)
 
 **Remaining / Deferred:**
-- [ ] Phase 025 Security (T800-T819) -- Clerk JWT on subdomains, WS auth, container isolation
+- [x] Phase 025 Security (T800-T849) -- Phases A-C + E done, hardening done. Remaining: container isolation, admin audit, sandbox
 - [ ] Phase 008B Performance (T165-T166) -- kernel cold-start optimization
 - [ ] Phase 008B remaining: T136 deployment docs, T152 cost dashboard, T154 community panel, T155-T156 Matrix homeserver, T159 production deployment script
 - [ ] Phase 013A Docker (T502-T506)
