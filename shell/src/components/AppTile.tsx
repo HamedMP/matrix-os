@@ -43,12 +43,13 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           )}
         </div>
         {onTogglePin && (
-          <button
+          <span
+            role="button"
             onClick={(e) => {
               e.stopPropagation();
               onTogglePin();
             }}
-            className={`absolute -top-1.5 -right-1.5 z-10 size-5 flex items-center justify-center rounded-full border transition-all ${
+            className={`absolute -top-1.5 -right-1.5 z-10 size-5 flex items-center justify-center rounded-full border transition-all cursor-pointer ${
               pinned
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-card text-muted-foreground border-border opacity-0 group-hover:opacity-100"
@@ -56,7 +57,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
             title={pinned ? "Unpin from dock" : "Pin to dock"}
           >
             <PinIcon className="size-2.5" />
-          </button>
+          </span>
         )}
       </div>
       <span className="text-[11px] text-muted-foreground truncate max-w-[72px]">
