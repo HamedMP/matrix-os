@@ -163,132 +163,171 @@ code, pre { font-family: var(--font-mono); }
   vertical-align: text-bottom;
 }
 
-/* Whitepaper prose typography */
+/* ── Paper surface: cream card floating on page background ── */
+.paper-surface {
+  background: #fffff8;
+  border: 1px solid rgba(0,0,0,0.05);
+  border-radius: 0.5rem;
+  padding: 3rem 3.5rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03), 0 2px 8px rgba(0,0,0,0.02);
+}
+@media (max-width: 768px) {
+  .paper-surface {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    padding: 2rem 1.25rem;
+  }
+}
+
+/* ── Tufte-inspired prose typography ── */
 .prose-paper {
-  max-width: 680px;
-  font-family: var(--font-serif), Georgia, serif;
+  font-family: var(--font-serif), "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   font-kerning: normal;
   text-rendering: optimizeLegibility;
   font-feature-settings: "kern" 1, "liga" 1;
   hanging-punctuation: first last;
+  color: #111;
 }
 .prose-paper section[id] {
   scroll-margin-top: 6rem;
 }
+
+/* Headings: sans-serif for contrast */
 .prose-paper h2 {
   font-family: var(--font-sans);
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.1;
   margin-top: 3.5rem;
   margin-bottom: 1.25rem;
   padding-bottom: 0.625rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(0,0,0,0.08);
 }
 .prose-paper section:first-of-type h2 {
   margin-top: 0;
 }
 .prose-paper h3 {
   font-family: var(--font-sans);
-  font-size: 1.125rem;
+  font-size: 1.1rem;
   font-weight: 600;
+  font-style: italic;
+  line-height: 1.15;
   margin-top: 2rem;
   margin-bottom: 0.75rem;
-  padding-left: 0.875rem;
-  border-left: 3px solid var(--primary);
 }
+
+/* Body text: constrained width leaves room for margin notes */
 .prose-paper p {
   font-size: 1.0625rem;
   line-height: 1.45;
-  color: var(--foreground);
   margin-bottom: 1rem;
+  max-width: 600px;
 }
 .prose-paper ol {
   list-style: decimal;
   padding-left: 1.5rem;
-  margin-bottom: 1.125rem;
+  margin-bottom: 1rem;
+  max-width: 600px;
 }
 .prose-paper ul {
   list-style: disc;
   padding-left: 1.5rem;
-  margin-bottom: 1.125rem;
+  margin-bottom: 1rem;
+  max-width: 600px;
 }
 .prose-paper li {
   font-size: 1.0625rem;
   line-height: 1.45;
   margin-bottom: 0.5rem;
 }
-.prose-paper li strong {
-  color: var(--foreground);
-}
+.prose-paper strong { font-weight: 600; }
+.prose-paper em { font-style: italic; }
+
+/* Inline code */
 .prose-paper code {
   font-family: var(--font-mono);
   font-size: 0.8125rem;
-  background: var(--secondary);
+  background: rgba(0,0,0,0.04);
   padding: 0.15rem 0.4rem;
   border-radius: 0.25rem;
-  border: 1px solid var(--border);
 }
+
+/* Table */
 .prose-paper table {
   width: 100%;
+  max-width: 600px;
   border-collapse: separate;
   border-spacing: 0;
   margin: 1.5rem 0;
   font-size: 0.9375rem;
   border-radius: 0.5rem;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(0,0,0,0.08);
 }
 .prose-paper th,
 .prose-paper td {
   padding: 0.625rem 1rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
   text-align: left;
 }
 .prose-paper th {
   font-family: var(--font-sans);
-  background: var(--secondary);
+  background: rgba(0,0,0,0.03);
   font-weight: 600;
   font-size: 0.8125rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted-foreground);
+  color: #666;
 }
-.prose-paper tr:last-child td {
-  border-bottom: none;
-}
-.prose-paper tr:nth-child(even) td {
-  background: var(--secondary);
-  background: color-mix(in srgb, var(--secondary) 40%, transparent);
-}
+.prose-paper tr:last-child td { border-bottom: none; }
+.prose-paper tr:nth-child(even) td { background: rgba(0,0,0,0.015); }
+
+/* Superscripts */
 .prose-paper sup {
   font-size: 0.7em;
   color: var(--primary);
-  cursor: default;
+  line-height: 0;
 }
-.prose-paper strong {
-  font-weight: 600;
+
+/* Links: Tufte-style subtle underline, inherits text color */
+.prose-paper a:not(.cite-number) {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 0.05em;
+  text-underline-offset: 0.15em;
 }
-.prose-paper em {
-  font-style: italic;
+.prose-paper a:not(.cite-number):hover {
+  color: var(--primary);
 }
-/* Abstract section: distinct lead styling */
+
+/* New thought: small-caps lead-in (Tufte signature) */
+.newthought {
+  font-variant: small-caps;
+  font-size: 1.15em;
+  letter-spacing: 0.05em;
+}
+
+/* ── Abstract ── */
 .prose-paper .paper-abstract p {
   font-size: 1.0625rem;
   line-height: 1.5;
-  color: var(--muted-foreground);
+  color: #555;
   font-style: italic;
-  border-left: 3px solid var(--primary);
+  border-left: 3px solid rgba(0,0,0,0.12);
   padding-left: 1.25rem;
   margin-bottom: 1.5rem;
 }
-/* Key insight callout */
+
+/* ── Insight callout: Tufte blockquote style ── */
 .prose-paper .paper-insight {
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
-  border-radius: 0.75rem;
-  padding: 1.25rem 1.5rem;
-  margin: 1.75rem 0;
+  background: rgba(0,0,0,0.02);
+  border-left: 3px solid rgba(0,0,0,0.12);
+  border-radius: 0;
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  max-width: 600px;
 }
 .prose-paper .paper-insight p {
   margin-bottom: 0;
@@ -296,73 +335,76 @@ code, pre { font-family: var(--font-mono); }
   line-height: 1.45;
 }
 
-/* Citation links and tooltips */
-.cite-link {
-  position: relative;
-  text-decoration: none;
-  cursor: pointer;
-  display: inline;
-}
-.cite-link sup {
-  font-size: 0.75em;
+/* ── Sidenotes (Tufte margin notes) ── */
+.sidenote-checkbox { display: none; }
+.sidenote-toggle { cursor: pointer; }
+.sidenote-toggle sup {
   color: var(--primary);
-  font-weight: 500;
-  transition: color 0.15s;
+  font-weight: 600;
 }
-.cite-link:hover sup {
-  color: var(--foreground);
-  text-decoration: underline;
-}
-.cite-tooltip {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 300px;
-  padding: 0.75rem 0.875rem;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1), 0 1px 4px rgba(0,0,0,0.06);
+.sidenote {
   font-family: var(--font-sans);
   font-size: 0.8125rem;
-  font-style: normal;
-  line-height: 1.45;
-  color: var(--foreground);
-  z-index: 50;
-  pointer-events: auto;
-  user-select: text;
-  animation: cite-fade-in 0.15s ease-out;
+  line-height: 1.4;
+  color: #555;
+  vertical-align: baseline;
 }
-.cite-tooltip-above {
-  bottom: calc(100% + 6px);
-  padding-bottom: calc(0.75rem + 6px);
-  margin-bottom: -6px;
-}
-.cite-tooltip-below {
-  top: calc(100% + 6px);
-  padding-top: calc(0.75rem + 6px);
-  margin-top: -6px;
-}
-.cite-tooltip-num {
+.sidenote sup {
+  font-size: 0.85em;
   font-weight: 600;
   color: var(--primary);
-  margin-right: 0.375rem;
+  margin-right: 0.25em;
 }
-@keyframes cite-fade-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Wide screens: notes float into right margin */
+@media (min-width: 1200px) {
+  .sidenote {
+    float: right;
+    clear: right;
+    margin-right: -270px;
+    width: 220px;
+    margin-top: 0.2rem;
+    margin-bottom: 1rem;
+    display: block;
+  }
+  .sidenote-toggle { cursor: default; }
 }
-/* Reference list numbering */
+
+/* Narrow screens: notes hidden, toggled inline */
+@media (max-width: 1199px) {
+  .sidenote { display: none; }
+  .sidenote-toggle sup {
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-thickness: 0.05em;
+    text-underline-offset: 0.15em;
+  }
+  .sidenote-checkbox:checked + .sidenote {
+    display: block;
+    float: none;
+    width: auto;
+    max-width: 600px;
+    margin: 0.5rem 0 0.75rem 1rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0,0,0,0.025);
+    border-left: 2px solid rgba(0,0,0,0.1);
+  }
+}
+
+/* ── Reference list ── */
 .prose-paper ol.ref-list {
   list-style: none;
   padding-left: 0;
   counter-reset: ref-counter;
+  max-width: 600px;
 }
 .prose-paper ol.ref-list li {
   counter-increment: ref-counter;
   padding-left: 2.5rem;
   position: relative;
   scroll-margin-top: 6rem;
+  font-size: 0.9375rem;
+  line-height: 1.4;
 }
 .prose-paper ol.ref-list li::before {
   content: "[" counter(ref-counter) "]";
@@ -373,9 +415,8 @@ code, pre { font-family: var(--font-mono); }
   font-size: 0.8125rem;
   font-family: var(--font-mono);
 }
-/* Highlight target reference when jumped to */
 .prose-paper ol.ref-list li:target {
-  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  background: rgba(0,0,0,0.04);
   border-radius: 0.375rem;
   margin-left: -0.5rem;
   padding-left: 3rem;
@@ -383,20 +424,27 @@ code, pre { font-family: var(--font-mono); }
   padding-bottom: 0.25rem;
 }
 
-/* Print styles for whitepaper PDF */
+/* ── Print ── */
 @media print {
   body {
     background: white !important;
     background-image: none !important;
     color: black !important;
   }
+  .paper-surface {
+    background: white !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+  .prose-paper { color: black; }
   .prose-paper h2 { border-color: #ccc; }
-  .prose-paper h3 { border-left-color: #999; }
   .prose-paper p, .prose-paper li { color: #1a1a1a; }
-  .prose-paper .paper-abstract p { color: #333; border-left-color: #999; }
-  .prose-paper code { background: #f0f0f0; border-color: #ddd; }
+  .prose-paper .paper-abstract p { color: #333; }
+  .prose-paper code { background: #f0f0f0; }
   .prose-paper th { background: #f0f0f0; }
   .prose-paper th, .prose-paper td { border-color: #ccc; }
   .prose-paper table { border-color: #ccc; }
-  .prose-paper .paper-insight { background: #f8f8f8; border-color: #ddd; }
+  .prose-paper .paper-insight { background: #f5f5f5; }
+  .sidenote { display: block; float: right; clear: right; margin-right: -270px; width: 220px; color: #666; }
 }

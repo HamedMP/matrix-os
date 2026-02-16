@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { type ReactNode, useState, useEffect, useRef, useCallback, useId } from "react";
 import { Button } from "@/components/ui/button";
 import {
   PrinterIcon,
@@ -10,60 +10,37 @@ import {
   XIcon,
 } from "lucide-react";
 
-const references: Record<number, string> = {
-  1: 'McIlroy, Pinson, Tague. "UNIX Time-Sharing System: Foreword." Bell System Technical Journal, 57(6), 1978.',
-  2: 'Pike, Presotto, Dorward, et al. "Plan 9 from Bell Labs." Computing Systems, 8(3), 1995.',
-  3: 'Kay, A.C. "A Personal Computer for Children of All Ages." Proceedings of the ACM Annual Conference, 1972.',
-  4: 'Victor, B. "Inventing on Principle." CUSEC 2012.',
-  5: "Victor, B. et al. Dynamicland. dynamicland.org, 2018-present.",
-  6: 'Anthropic. "Claude Agent SDK Documentation." docs.anthropic.com, 2025.',
-  7: 'Matrix.org Foundation. "Matrix Specification." spec.matrix.org, 2024.',
-  8: "Koza, J.R. Genetic Programming. MIT Press, 1992.",
-  9: "Maturana, H.R., Varela, F.J. Autopoiesis and Cognition. Reidel, 1980.",
-  10: "Yuan, J. Mercury OS. mercuryos.com, 2019.",
-  11: "Case, A. Calm Technology. O'Reilly Media, 2015.",
-  12: "Bruner, J.S. Toward a Theory of Instruction. Harvard University Press, 1966.",
+function ExtLink({ href, children }: { href: string; children: ReactNode }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+}
+
+const references: Record<number, ReactNode> = {
+  1: <>McIlroy, Pinson, Tague. &quot;UNIX Time-Sharing System: Foreword.&quot; <em>Bell System Technical Journal</em>, 57(6), 1978.</>,
+  2: <>Pike, Presotto, Dorward, et al. &quot;Plan 9 from Bell Labs.&quot; <em>Computing Systems</em>, 8(3), 1995.</>,
+  3: <>Kay, A.C. &quot;A Personal Computer for Children of All Ages.&quot; <em>Proceedings of the ACM Annual Conference</em>, 1972.</>,
+  4: <>Victor, B. &quot;Inventing on Principle.&quot; <em>CUSEC 2012</em>. <ExtLink href="https://www.youtube.com/watch?v=NGYGl_xxfXA">youtube.com/watch?v=NGYGl_xxfXA</ExtLink>.</>,
+  5: <>Victor, B. et al. <em>Dynamicland</em>. <ExtLink href="https://dynamicland.org">dynamicland.org</ExtLink>, 2018&ndash;present.</>,
+  6: <>Anthropic. &quot;Claude Agent SDK Documentation.&quot; <ExtLink href="https://platform.claude.com/docs/en/agent-sdk/overview">platform.claude.com</ExtLink>, 2025.</>,
+  7: <>Matrix.org Foundation. &quot;Matrix Specification.&quot; <ExtLink href="https://spec.matrix.org">spec.matrix.org</ExtLink>, 2024.</>,
+  8: <>Koza, J.R. <em>Genetic Programming</em>. MIT Press, 1992.</>,
+  9: <>Maturana, H.R., Varela, F.J. <em>Autopoiesis and Cognition</em>. Reidel, 1980.</>,
+  10: <>Yuan, J. <em>Mercury OS</em>. <ExtLink href="https://mercuryos.com">mercuryos.com</ExtLink>, 2019.</>,
+  11: <>Case, A. <em>Calm Technology</em>. O&apos;Reilly Media, 2015.</>,
+  12: <>Bruner, J.S. <em>Toward a Theory of Instruction</em>. Harvard University Press, 1966.</>,
 };
 
 function Cite({ n }: { n: number }) {
-  const [show, setShow] = useState(false);
-  const [above, setAbove] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  const hideTimeout = useRef<ReturnType<typeof setTimeout>>(null);
-
-  function handleEnter() {
-    if (hideTimeout.current) clearTimeout(hideTimeout.current);
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      setAbove(rect.top > 200);
-    }
-    setShow(true);
-  }
-
-  function handleLeave() {
-    hideTimeout.current = setTimeout(() => setShow(false), 150);
-  }
-
+  const id = useId();
   return (
-    <span
-      ref={ref}
-      className="cite-link"
-      onMouseEnter={handleEnter}
-      onMouseLeave={handleLeave}
-    >
-      <a href={`#ref-${n}`}>
+    <span className="sidenote-wrapper">
+      <label htmlFor={`sn${id}`} className="sidenote-toggle">
         <sup>[{n}]</sup>
-      </a>
-      {show && (
-        <span
-          className={`cite-tooltip ${above ? "cite-tooltip-above" : "cite-tooltip-below"}`}
-          onMouseEnter={handleEnter}
-          onMouseLeave={handleLeave}
-        >
-          <span className="cite-tooltip-num">[{n}]</span>
-          {references[n]}
-        </span>
-      )}
+      </label>
+      <input type="checkbox" id={`sn${id}`} className="sidenote-checkbox" />
+      <span className="sidenote">
+        <sup>{n}</sup>
+        {references[n]}
+      </span>
     </span>
   );
 }
@@ -132,8 +109,8 @@ const sections = [
   { id: "references", label: "References" },
 ];
 
-const WORD_COUNT = "~4,500";
-const READING_TIME = "18 min read";
+const WORD_COUNT = "~5,000";
+const READING_TIME = "20 min read";
 
 function copyLink() {
   navigator.clipboard.writeText("https://matrix-os.com/whitepaper");
@@ -201,8 +178,8 @@ export function WhitepaperContent() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-5xl px-4 pt-24 pb-20">
-        <div className="lg:grid lg:grid-cols-[220px_1fr] lg:gap-12">
+      <div className="mx-auto max-w-7xl px-4 pt-24 pb-20">
+        <div className="lg:grid lg:grid-cols-[200px_1fr] lg:gap-10">
           {/* TOC sidebar */}
           <aside
             className={`${tocOpen ? "block" : "hidden"} lg:block print:hidden`}
@@ -235,21 +212,22 @@ export function WhitepaperContent() {
           </aside>
 
           {/* Main content */}
+          <div className="paper-surface">
           <article className="prose-paper">
             {/* Title block */}
-            <div className="mb-14 border-b border-border pb-10">
-              <p className="mb-3 font-mono text-xs uppercase tracking-widest text-primary">
+            <div className="mb-14 pb-10" style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
+              <p className="mb-3 font-sans text-xs uppercase tracking-[0.12em]" style={{ color: "#999" }}>
                 Whitepaper
               </p>
-              <h1 className="mb-5 text-3xl font-bold tracking-tight sm:text-4xl lg:text-[2.5rem] lg:leading-[1.15]">
+              <h1 className="mb-5 font-sans text-3xl font-bold tracking-tight sm:text-4xl lg:text-[2.5rem] lg:leading-[1.15]">
                 Matrix OS: A Unified AI Operating System
               </h1>
-              <p className="mb-5 text-lg leading-relaxed text-muted-foreground sm:text-xl sm:leading-relaxed">
+              <p className="mb-5 text-lg leading-relaxed sm:text-xl sm:leading-relaxed" style={{ color: "#555", maxWidth: 600 }}>
                 From conversation to software in seconds. An architecture where
                 the AI is the kernel, files are the truth, and every device is a
                 peer.
               </p>
-              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+              <div className="flex flex-wrap gap-4 text-xs" style={{ color: "#999" }}>
                 <span>{READING_TIME}</span>
                 <span>{WORD_COUNT} words</span>
                 <span>February 2026</span>
@@ -280,7 +258,7 @@ export function WhitepaperContent() {
             <section id="introduction">
               <h2>1. Introduction</h2>
               <p>
-                Modern computing is fragmented. A typical user relies on dozens
+                <span className="newthought">Modern computing is fragmented.</span> A typical user relies on dozens
                 of disconnected services: a messaging app, a social network, a
                 cloud storage provider, an email client, a project management
                 tool, a note-taking app, a calendar. Each has its own account,
@@ -402,7 +380,7 @@ export function WhitepaperContent() {
 
               <h3>3.1 The Core Metaphor</h3>
               <p>
-                Matrix OS maps the Claude Agent SDK onto computer architecture:
+                <span className="newthought">Matrix OS maps</span> the Claude Agent SDK onto computer architecture:
               </p>
               <table>
                 <thead>
@@ -653,8 +631,20 @@ export function WhitepaperContent() {
                 (protected files, watchdog, evolver), SOUL and skills, Telegram
                 channel, cron and heartbeat, onboarding and Mission Control,
                 single-user cloud deployment, multi-tenant platform with Clerk
-                auth, observability, identity system, git sync, and mobile
-                responsive PWA.
+                auth, observability, identity system, git sync, mobile
+                responsive PWA, security hardening (content wrapping, SSRF
+                guard, audit engine, timing-safe auth, security headers,
+                outbound queue), web tools (web_fetch with Cloudflare
+                Markdown/Readability/Firecrawl fallback chain, web_search with
+                Brave/Perplexity/Grok providers), Expo mobile app (Clerk Google
+                OAuth, chat with streaming, Mission Control, push notification
+                channel adapter), browser automation (Playwright MCP with
+                composite tool covering 18 actions, role-based accessibility
+                snapshots, session management), plugin system (manifest-based
+                discovery, loader, registry, void and modifying hook runners,
+                HTTP routes, background services), and a settings dashboard
+                (macOS-style panel with sections for agent SOUL, channels,
+                skills, cron, security audit, plugins, and system health).
               </p>
 
               <h3>5.3 SDK Decisions</h3>
@@ -687,7 +677,7 @@ export function WhitepaperContent() {
             <section id="web4-vision">
               <h2>6. The Web 4 Vision</h2>
               <p>
-                Every era of computing has unified previously separate things.
+                <span className="newthought">Every era of computing</span> has unified previously separate things.
                 Web 1 published static information. Web 2 created platforms for
                 social interaction, but siloed identity and data across dozens of
                 services. Web 3 attempted decentralization through
@@ -773,6 +763,19 @@ export function WhitepaperContent() {
                 926 tests verify the implementation.
               </p>
               <p>
+                The plugin architecture enables third-party extensions through
+                manifest-based discovery, void and modifying hook runners, HTTP
+                routes, and background services. Browser automation via
+                Playwright MCP provides a composite tool covering 18 actions
+                with role-based accessibility snapshots. Web fetch and search
+                tools give the kernel access to external information through
+                multi-provider fallback chains. A native Expo mobile app
+                delivers chat with streaming, Mission Control, and push
+                notifications with Clerk authentication. A settings dashboard
+                provides no-code configuration for agent SOUL, channels, skills,
+                cron schedules, security audit, and plugins.
+              </p>
+              <p>
                 The file-first architecture proves its value in sharing and
                 backup. An application is a file you can email. The entire OS
                 state is a folder you can copy. Git provides full version
@@ -812,11 +815,14 @@ export function WhitepaperContent() {
                 Intent-Based Interfaces) are specified but not yet fully
                 implemented. Full Matrix protocol federation (server-to-server,
                 AI-to-AI messaging, cross-instance discovery) is designed but
-                awaits implementation. The mobile experience is currently a
-                responsive PWA; a native mobile app (Expo/React Native) and
-                eventually an Android launcher are planned. Cost optimization
-                through local model fallback (smaller models for routine tasks,
-                Opus for complex reasoning) is a natural next step.
+                awaits implementation. The Expo mobile app ships with Clerk
+                authentication, chat with streaming, Mission Control, and push
+                notifications; an Android launcher that replaces the home screen
+                entirely remains future work. Memory and RAG (vector search over
+                conversation history and file content) is an upcoming area of
+                development. Cost optimization through local model fallback
+                (smaller models for routine tasks, Opus for complex reasoning)
+                is a natural next step.
               </p>
             </section>
 
@@ -824,7 +830,7 @@ export function WhitepaperContent() {
             <section id="conclusion">
               <h2>8. Conclusion</h2>
               <p>
-                Matrix OS demonstrates that an AI agent with full machine
+                <span className="newthought">Matrix OS demonstrates</span> that an AI agent with full machine
                 control, a file-first architecture, and a multi-channel gateway
                 can serve as a complete operating system. The system generates
                 real software from conversation, persists everything as files,
@@ -855,71 +861,21 @@ export function WhitepaperContent() {
             <section id="references">
               <h2>References</h2>
               <ol className="ref-list text-sm">
-                <li id="ref-1">
-                  McIlroy, M.D., Pinson, E.N., Tague, B.A. &quot;UNIX
-                  Time-Sharing System: Foreword.&quot;{" "}
-                  <em>The Bell System Technical Journal</em>, 57(6), 1978.
-                </li>
-                <li id="ref-2">
-                  Pike, R., Presotto, D., Dorward, S., et al. &quot;Plan 9 from
-                  Bell Labs.&quot; <em>Computing Systems</em>, 8(3), 1995.
-                </li>
-                <li id="ref-3">
-                  Kay, A.C. &quot;A Personal Computer for Children of All
-                  Ages.&quot; <em>Proceedings of the ACM Annual Conference</em>,
-                  1972.
-                </li>
-                <li id="ref-4">
-                  Victor, B. &quot;Inventing on Principle.&quot;{" "}
-                  <em>CUSEC 2012</em>. vimeo.com/36579366.
-                </li>
-                <li id="ref-5">
-                  Victor, B. et al. <em>Dynamicland</em>. dynamicland.org,
-                  2018-present.
-                </li>
-                <li id="ref-6">
-                  Anthropic. &quot;Claude Agent SDK Documentation.&quot;{" "}
-                  docs.anthropic.com, 2025.
-                </li>
-                <li id="ref-7">
-                  Matrix.org Foundation. &quot;Matrix Specification.&quot;{" "}
-                  spec.matrix.org, 2024.
-                </li>
-                <li id="ref-8">
-                  Koza, J.R. <em>Genetic Programming</em>. MIT Press, 1992.
-                </li>
-                <li id="ref-9">
-                  Maturana, H.R., Varela, F.J.{" "}
-                  <em>Autopoiesis and Cognition: The Realization of the
-                  Living</em>
-                  . Reidel, 1980.
-                </li>
-                <li id="ref-10">
-                  Yuan, J. <em>Mercury OS</em>. mercuryos.com, 2019.
-                </li>
-                <li id="ref-11">
-                  Case, A. <em>Calm Technology</em>. O&apos;Reilly Media, 2015.
-                </li>
-                <li id="ref-12">
-                  Bruner, J.S.{" "}
-                  <em>Toward a Theory of Instruction</em>. Harvard University
-                  Press, 1966.
-                </li>
+                {Object.entries(references).map(([key, content]) => (
+                  <li key={key} id={`ref-${key}`}>{content}</li>
+                ))}
               </ol>
             </section>
 
             {/* Back to top */}
-            <div className="mt-16 border-t border-border pt-8 print:hidden">
-              <div className="flex items-center justify-between">
-                <a
-                  href="/"
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
+            <div className="mt-16 pt-8 print:hidden" style={{ borderTop: "1px solid rgba(0,0,0,0.08)" }}>
+              <div className="flex items-center justify-between font-sans text-sm" style={{ color: "#999" }}>
+                <a href="/" className="hover:text-foreground transition-colors">
                   matrix-os.com
                 </a>
                 <a
                   href="#"
-                  className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 hover:text-foreground transition-colors"
                 >
                   <ChevronUpIcon className="size-3.5" />
                   Back to top
@@ -927,6 +883,7 @@ export function WhitepaperContent() {
               </div>
             </div>
           </article>
+          </div>
         </div>
       </div>
     </>
