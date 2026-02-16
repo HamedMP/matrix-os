@@ -23,11 +23,19 @@ describe("T805: Security headers middleware", () => {
     expect(responseHeaders.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
-  it("sets X-Frame-Options", async () => {
+  it("sets X-Frame-Options to SAMEORIGIN for API routes", async () => {
     const mw = securityHeadersMiddleware();
     const { ctx, responseHeaders } = mockContext("/api/message");
     await mw(ctx, async () => {});
-    expect(responseHeaders.get("X-Frame-Options")).toBe("DENY");
+    expect(responseHeaders.get("X-Frame-Options")).toBe("SAMEORIGIN");
+  });
+
+  it("skips X-Frame-Options for /files/ paths (app iframes)", async () => {
+    const mw = securityHeadersMiddleware();
+    const { ctx, responseHeaders } = mockContext("/files/modules/hello/index.html");
+    await mw(ctx, async () => {});
+    expect(responseHeaders.has("X-Frame-Options")).toBe(false);
+    expect(responseHeaders.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
   it("sets Referrer-Policy", async () => {
