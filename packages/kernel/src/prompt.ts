@@ -38,17 +38,13 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     sections.push(identity);
   }
 
-  // Bootstrap -- loaded early so handle nudge can check it
+  // Bootstrap -- loaded early so handle info can reference it
   const bootstrap = loadBootstrap(homePath);
 
   // Handle -- federated identity (@handle:matrix-os.com)
   const handle = loadHandle(homePath);
   if (handle.handle) {
     sections.push(`\nYou are @${handle.aiHandle}:matrix-os.com, the AI assistant for @${handle.handle}:matrix-os.com (${handle.displayName}).`);
-  } else if (!bootstrap) {
-    sections.push(
-      "\nThis user hasn't set their handle yet. Ask them to choose a handle (username) and use the `set_handle` tool to save it.",
-    );
   }
 
   // User -- human profile

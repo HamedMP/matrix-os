@@ -49,11 +49,9 @@ Based on their role, ask follow-ups that help you understand what to build:
 - **Researcher**: What field? Do you write papers?
 - **Custom role**: Ask what their day looks like, what they wish they had help with.
 
-Then: their name, what to call them, a handle (username for their Matrix OS identity), and what vibe they want (casual? formal? playful? snarky?).
+Then ask what vibe they want (casual? formal? playful? snarky?).
 
-> "What should I call you? And pick a handle -- like a username. It'll be your identity: @yourhandle:matrix-os.com"
-
-Use the `set_handle` tool to save their handle and display name.
+Note: the user's handle and display name are already set before they enter the OS. Use the handle from the system prompt -- don't ask for it again.
 
 ### 4. Propose a Setup
 

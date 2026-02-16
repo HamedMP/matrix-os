@@ -159,21 +159,20 @@ describe("T216: Handle setup nudge", () => {
     if (tempHome) rmSync(tempHome, { recursive: true, force: true });
   });
 
-  it("nudges handle setup when handle is empty and no bootstrap", () => {
+  it("does not nudge handle setup when handle is empty (handle set before entering OS)", () => {
     tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-handle-")));
     mkdirSync(join(tempHome, "system"), { recursive: true });
     writeFileSync(
       join(tempHome, "system", "handle.json"),
       JSON.stringify({ handle: "", aiHandle: "", displayName: "", createdAt: "" }),
     );
-    // No bootstrap.md -- onboarding already done
 
     const prompt = buildSystemPrompt(tempHome);
-    expect(prompt).toContain("set_handle");
+    expect(prompt).not.toContain("set_handle");
     expect(prompt).not.toContain("@:matrix-os.com");
   });
 
-  it("does not nudge when handle is set", () => {
+  it("includes handle identity when handle is set", () => {
     tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-handle2-")));
     mkdirSync(join(tempHome, "system"), { recursive: true });
     writeFileSync(
@@ -183,20 +182,6 @@ describe("T216: Handle setup nudge", () => {
 
     const prompt = buildSystemPrompt(tempHome);
     expect(prompt).toContain("@hamed_ai:matrix-os.com");
-    expect(prompt).not.toContain("set_handle");
-  });
-
-  it("does not nudge during bootstrap (handle setup is part of onboarding)", () => {
-    tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-handle3-")));
-    mkdirSync(join(tempHome, "system"), { recursive: true });
-    writeFileSync(
-      join(tempHome, "system", "handle.json"),
-      JSON.stringify({ handle: "", aiHandle: "", displayName: "", createdAt: "" }),
-    );
-    // Bootstrap present -- onboarding not done yet
-    writeFileSync(join(tempHome, "system", "bootstrap.md"), "# Bootstrap");
-
-    const prompt = buildSystemPrompt(tempHome);
     expect(prompt).not.toContain("set_handle");
   });
 });
