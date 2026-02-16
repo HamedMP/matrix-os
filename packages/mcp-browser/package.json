@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/browser.ts",
-    "./server": "./src/server.ts"
+    ".": "./src/browser-tool.ts",
+    "./server": "./src/server.ts",
+    "./session-manager": "./src/session-manager.ts",
+    "./role-snapshot": "./src/role-snapshot.ts"
   },
   "scripts": {
     "build": "tsc"
@@ -16,6 +18,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.39",
+    "@matrix-os/kernel": "workspace:*",
     "zod": "^4.0"
   },
   "optionalDependencies": {

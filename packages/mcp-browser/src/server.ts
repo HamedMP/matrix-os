@@ -1,80 +1,109 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
-import { createBrowserService, type BrowserConfig } from "./browser.js";
+import { createBrowserTool, type BrowserAction } from "./browser-tool.js";
 
-export function createBrowserMcpServer(config: BrowserConfig) {
-  let browserInstance: unknown = null;
+export interface BrowserServerConfig {
+  homePath: string;
+  headless?: boolean;
+  timeout?: number;
+  idleTimeout?: number;
+}
 
-  async function lazyBrowser() {
-    if (browserInstance) return browserInstance;
+export function createBrowserMcpServer(config: BrowserServerConfig) {
+  async function getLauncher() {
     try {
       const pw = await import("playwright");
-      browserInstance = await pw.chromium.launch({ headless: config.headless ?? true });
-      return browserInstance;
+      return (opts?: { headless?: boolean }) =>
+        pw.chromium.launch({ headless: opts?.headless ?? config.headless ?? true });
     } catch {
       return null;
     }
   }
 
-  async function getService() {
-    const browser = await lazyBrowser();
-    return createBrowserService(config, browser as never);
+  let browserTool: ReturnType<typeof createBrowserTool> | undefined;
+
+  async function ensureTool() {
+    if (browserTool) return browserTool;
+    const launcher = await getLauncher();
+    if (!launcher) {
+      throw new Error("Browser not available. Install Playwright: pnpm --filter mcp-browser exec playwright install chromium");
+    }
+    browserTool = createBrowserTool({
+      homePath: config.homePath,
+      launcher: launcher as never,
+      headless: config.headless,
+      idleTimeoutMs: config.idleTimeout ?? 300_000,
+      timeout: config.timeout ?? 30_000,
+    });
+    return browserTool;
   }
+
+  const ACTIONS: BrowserAction[] = [
+    "launch", "close", "navigate", "screenshot", "snapshot",
+    "click", "type", "select", "scroll", "evaluate",
+    "wait", "tabs", "tab_new", "tab_close", "tab_switch",
+    "pdf", "console", "status",
+  ];
 
   return createSdkMcpServer({
     name: "matrix-os-browser",
     tools: [
       tool(
-        "browse_web",
-        "Browse the web: navigate to a URL, take screenshots, extract text, or search. Screenshots are saved to ~/data/screenshots/.",
+        "browser",
+        "Web browser: navigate pages, take screenshots, fill forms, extract data via accessibility snapshots. Actions: launch, close, navigate, snapshot, click, type, select, scroll, evaluate, wait, screenshot, pdf, tabs, tab_new, tab_close, tab_switch, console, status.",
         {
-          url: z.string().optional().describe("URL to navigate to (required for navigate, screenshot, extract)"),
-          action: z.enum(["navigate", "screenshot", "extract", "search"]).describe("What to do"),
-          selector: z.string().optional().describe("CSS selector to extract text from (for extract action)"),
-          query: z.string().optional().describe("Search query (for search action)"),
-          save_as: z.string().optional().describe("Custom filename for screenshot (without extension)"),
+          action: z.enum(ACTIONS as [BrowserAction, ...BrowserAction[]]).describe("Browser action to perform"),
+          url: z.string().optional().describe("URL to navigate to"),
+          selector: z.string().optional().describe("CSS selector for click/type/select/wait"),
+          role: z.string().optional().describe("ARIA role for click (from snapshot)"),
+          name: z.string().optional().describe("Accessible name for click (from snapshot)"),
+          text: z.string().optional().describe("Text to type into input"),
+          value: z.string().optional().describe("Value for select option or tab index"),
+          expression: z.string().optional().describe("JavaScript expression for evaluate"),
+          timeout: z.number().optional().describe("Wait timeout in ms (default: 30000)"),
+          full_page: z.boolean().optional().describe("Full page screenshot (default: true)"),
+          path: z.string().optional().describe("Custom save path for screenshot/pdf"),
         },
-        async ({ url, action, selector, query, save_as }) => {
+        async (input) => {
           try {
-            const svc = await getService();
+            const bt = await ensureTool();
+            const result = await bt.execute({
+              action: input.action,
+              url: input.url,
+              selector: input.selector,
+              role: input.role,
+              name: input.name,
+              text: input.text,
+              value: input.value,
+              expression: input.expression,
+              timeout: input.timeout,
+              fullPage: input.full_page,
+              path: input.path,
+            });
 
-            switch (action) {
-              case "navigate": {
-                if (!url) return textResult("navigate requires a url");
-                const nav = await svc.navigate(url);
-                return textResult(
-                  `Title: ${nav.title}\nURL: ${nav.url}\nStatus: ${nav.status}\n\n${nav.text}`,
-                );
-              }
-              case "screenshot": {
-                if (!url) return textResult("screenshot requires a url");
-                const shot = await svc.screenshot(url, { saveAs: save_as });
-                return textResult(`Screenshot saved to ${shot.path}`);
-              }
-              case "extract": {
-                if (!url) return textResult("extract requires a url");
-                const ext = await svc.extract(url, selector);
-                return textResult(ext.text);
-              }
-              case "search": {
-                if (!query) return textResult("search requires a query");
-                const srch = await svc.search(query);
-                if (srch.results.length === 0) return textResult("No results found");
-                const formatted = srch.results
-                  .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
-                  .join("\n\n");
-                return textResult(formatted);
-              }
-            }
+            const parts: string[] = [];
+            if (result.title) parts.push(`Title: ${result.title}`);
+            if (result.url) parts.push(`URL: ${result.url}`);
+            if (result.screenshotPath) parts.push(`Saved: ${result.screenshotPath}`);
+            if (result.content) parts.push(result.content);
+            if (result.error) parts.push(`Error: ${result.error}`);
+
+            return {
+              content: [{
+                type: "text" as const,
+                text: parts.length > 0 ? parts.join("\n") : `${result.action}: ${result.success ? "OK" : "FAILED"}`,
+              }],
+            };
           } catch (e) {
-            return textResult(`Browser error: ${e instanceof Error ? e.message : String(e)}`);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Browser error: ${e instanceof Error ? e.message : String(e)}`,
+              }],
+            };
           }
         },
       ),
     ],
   });
-}
-
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }] };
 }
