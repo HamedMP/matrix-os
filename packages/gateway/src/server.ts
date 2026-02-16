@@ -27,6 +27,7 @@ import {
   type Heartbeat,
   type Watchdog,
   type KernelEvent,
+  loadHandle,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
@@ -611,6 +612,10 @@ export function createGateway(config: GatewayConfig) {
 
   app.get("/api/channels/status", (c) => {
     return c.json(channelManager.status());
+  });
+
+  app.get("/api/identity", (c) => {
+    return c.json(loadHandle(homePath));
   });
 
   app.get("/api/profile", (c) => {

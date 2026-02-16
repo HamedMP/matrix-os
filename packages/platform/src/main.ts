@@ -13,13 +13,14 @@ import {
 import { createOrchestrator, type Orchestrator } from './orchestrator.js';
 import { createLifecycleManager, type LifecycleManager } from './lifecycle.js';
 import { createSocialApi } from './social.js';
+import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 
-export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) {
-  const { db, orchestrator } = deps;
+export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth }) {
+  const { db, orchestrator, clerkAuth } = deps;
   const app = new Hono();
 
   // Health check (unauthenticated)
@@ -34,6 +35,21 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator }) 
     const handle = match[1];
     const record = getContainer(db, handle);
     if (!record) return c.json({ error: 'Unknown instance' }, 404);
+
+    // Clerk JWT verification (skip for public paths and when auth not configured)
+    if (clerkAuth && !clerkAuth.isPublicPath(c.req.path) && record.clerkUserId) {
+      const token = clerkAuth.extractToken(
+        c.req.header('authorization'),
+        c.req.header('cookie'),
+      );
+      if (!token) {
+        return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
+      }
+      const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
+      if (!result.authenticated) {
+        return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
+      }
+    }
 
     if (record.status === 'stopped') {
       try {
@@ -228,14 +244,27 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const lifecycle = createLifecycleManager({ db, orchestrator });
   lifecycle.start();
 
-  const app = createApp({ db, orchestrator });
+  // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
+  let clerkAuth: ClerkAuth | undefined;
+  if (process.env.CLERK_SECRET_KEY) {
+    const { createClerkClient } = await import('@clerk/backend');
+    const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+    clerkAuth = createClerkAuth({
+      verifyToken: async (token: string) => {
+        const payload = await clerk.verifyToken(token);
+        return payload as { sub: string; [key: string]: unknown };
+      },
+    });
+  }
+
+  const app = createApp({ db, orchestrator, clerkAuth });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
   });
 
   // WebSocket upgrade handler for subdomain proxy
-  (server as import('node:http').Server).on('upgrade', (req: IncomingMessage, socket, head) => {
+  (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
     const host = req.headers.host ?? '';
     const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
     if (!match || match[1] === 'api' || match[1] === 'www') {
@@ -248,6 +277,23 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (!record) {
       socket.destroy();
       return;
+    }
+
+    // Verify Clerk JWT for WebSocket connections
+    if (clerkAuth && record.clerkUserId) {
+      const token = clerkAuth.extractToken(
+        req.headers.authorization,
+        req.headers.cookie,
+      );
+      if (!token) {
+        socket.destroy();
+        return;
+      }
+      const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
+      if (!result.authenticated) {
+        socket.destroy();
+        return;
+      }
     }
 
     // Proxy WebSocket upgrade to the user container's gateway (port 4000)

@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { KanbanSquareIcon, StoreIcon, MonitorIcon } from "lucide-react";
+import { UserButton } from "./UserButton";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -568,7 +569,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             );
           })}
 
-          <div className="mt-auto">
+          <div className="mt-auto flex flex-col items-center gap-2">
+            <UserButton />
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -615,6 +617,9 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             >
               <MonitorIcon className="size-4" />
             </button>
+            <div className="shrink-0">
+              <UserButton />
+            </div>
             {apps.map((app) => {
               const win = windows.find(
                 (w) => w.path === app.path && !w.minimized,

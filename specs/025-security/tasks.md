@@ -17,22 +17,22 @@
 ## Phase E: Platform Auth (T800-T811) -- existing
 
 ### T800 [US30] Clerk JWT verification on subdomain proxy
-- [ ] Platform subdomain middleware verifies Clerk session token (cookie or header)
-- [ ] Only the instance owner (matching clerkUserId) can access their subdomain
-- [ ] Unauthenticated requests get redirected to matrix-os.com/login
-- [ ] /health endpoint remains public (for monitoring)
+- [x] Platform subdomain middleware verifies Clerk session token (cookie or header)
+- [x] Only the instance owner (matching clerkUserId) can access their subdomain
+- [x] Unauthenticated requests get redirected to matrix-os.com/login
+- [x] /health endpoint remains public (for monitoring)
 - **Output**: Subdomain access gated by Clerk auth
 
 ### T801 [US30] Session token passthrough from dashboard to instance
-- [ ] Dashboard "Open Matrix OS" link includes auth context (Clerk session cookie)
-- [ ] Cross-domain cookie strategy (matrix-os.com -> hamedmp.matrix-os.com)
-- [ ] Alternative: short-lived signed URL or token exchange
-- **Output**: Seamless login from dashboard to instance
+- [x] Dashboard "Open Matrix OS" link includes auth context (Clerk session cookie)
+- [x] Cross-domain cookie strategy (matrix-os.com -> hamedmp.matrix-os.com)
+- [x] Alternative: short-lived signed URL or token exchange
+- **Output**: Seamless login from dashboard to instance (via shared .matrix-os.com cookie domain)
 
 ### T802 [US30] WebSocket auth
-- [ ] WS upgrade requests carry auth token (cookie or query param)
-- [ ] Platform WS proxy verifies token before proxying
-- [ ] Invalid/expired tokens get disconnected
+- [x] WS upgrade requests carry auth token (cookie or query param)
+- [x] Platform WS proxy verifies token before proxying
+- [x] Invalid/expired tokens get disconnected
 - **Output**: Authenticated WebSocket connections only
 
 ### T803 [US31] Container network isolation
@@ -52,12 +52,12 @@
 - **Output**: Browser security hardening
 
 ### T806 [US30] User button in dock (logout + account)
-- [ ] Add user avatar/initial button at bottom of left dock (above mode toggle)
-- [ ] Click opens popover: display name, handle (@user:matrix-os.com), avatar
-- [ ] "Account Settings" link (navigates to /settings/agent or future account page)
-- [ ] "Log Out" button (clears auth token, redirects to matrix-os.com/login)
-- [ ] Mobile: user button in bottom tab bar
-- [ ] Graceful fallback when no auth context (local dev: show generic user icon, no logout)
+- [x] Add user avatar/initial button at bottom of left dock (above mode toggle)
+- [x] Click opens popover: display name, handle (@user:matrix-os.com), avatar
+- [x] "Account Settings" link (navigates to /settings/agent or future account page)
+- [x] "Log Out" button (clears auth token, redirects to matrix-os.com/login)
+- [x] Mobile: user button in bottom tab bar
+- [x] Graceful fallback when no auth context (local dev: show generic user icon, no logout)
 - **Output**: Visible user identity + logout accessible from dock
 
 ### T810 [P] Platform admin API audit
