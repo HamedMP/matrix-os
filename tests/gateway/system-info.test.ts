@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { getSystemInfo } from "../../packages/gateway/src/system-info.js";
+import { getSystemInfo, getVersion } from "../../packages/gateway/src/system-info.js";
 
 function tmpHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "sysinfo-")));
@@ -67,5 +67,16 @@ describe("T135: System info", () => {
     const info = getSystemInfo(homePath);
     expect(info.skills).toBe(2);
     rmSync(homePath, { recursive: true, force: true });
+  });
+});
+
+describe("getVersion", () => {
+  it("falls back to package.json version in dev", () => {
+    const version = getVersion();
+    expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it("returns a non-empty string", () => {
+    expect(getVersion().length).toBeGreaterThan(0);
   });
 });

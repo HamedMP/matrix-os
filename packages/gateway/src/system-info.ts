@@ -3,6 +3,22 @@ import { join } from "node:path";
 
 const startTime = Date.now();
 
+export function getVersion(): string {
+  try {
+    return readFileSync("/app/VERSION", "utf-8").trim();
+  } catch {}
+  try {
+    const pkg = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "..", "..", "..", "package.json"),
+        "utf-8",
+      ),
+    );
+    return pkg.version ?? "0.0.0";
+  } catch {}
+  return "0.0.0";
+}
+
 export interface SystemInfo {
   version: string;
   uptime: number;
@@ -43,7 +59,7 @@ export function getSystemInfo(homePath: string): SystemInfo {
   }
 
   return {
-    version: "0.1.0",
+    version: getVersion(),
     uptime: Math.floor((Date.now() - startTime) / 1000),
     modules,
     channels,

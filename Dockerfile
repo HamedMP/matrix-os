@@ -58,6 +58,9 @@ WORKDIR /app
 # Copy entire built workspace from builder (includes node_modules with native addons)
 COPY --from=builder /app/ ./
 
+ARG VERSION=dev
+RUN echo "$VERSION" > /app/VERSION
+
 # Default environment
 ENV NODE_ENV=production
 ENV PORT=4000
