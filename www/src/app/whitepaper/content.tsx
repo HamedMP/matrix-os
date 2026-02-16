@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   PrinterIcon,
@@ -9,6 +9,115 @@ import {
   MenuIcon,
   XIcon,
 } from "lucide-react";
+
+const references: Record<number, string> = {
+  1: 'McIlroy, Pinson, Tague. "UNIX Time-Sharing System: Foreword." Bell System Technical Journal, 57(6), 1978.',
+  2: 'Pike, Presotto, Dorward, et al. "Plan 9 from Bell Labs." Computing Systems, 8(3), 1995.',
+  3: 'Kay, A.C. "A Personal Computer for Children of All Ages." Proceedings of the ACM Annual Conference, 1972.',
+  4: 'Victor, B. "Inventing on Principle." CUSEC 2012.',
+  5: "Victor, B. et al. Dynamicland. dynamicland.org, 2018-present.",
+  6: 'Anthropic. "Claude Agent SDK Documentation." docs.anthropic.com, 2025.',
+  7: 'Matrix.org Foundation. "Matrix Specification." spec.matrix.org, 2024.',
+  8: "Koza, J.R. Genetic Programming. MIT Press, 1992.",
+  9: "Maturana, H.R., Varela, F.J. Autopoiesis and Cognition. Reidel, 1980.",
+  10: "Yuan, J. Mercury OS. mercuryos.com, 2019.",
+  11: "Case, A. Calm Technology. O'Reilly Media, 2015.",
+  12: "Bruner, J.S. Toward a Theory of Instruction. Harvard University Press, 1966.",
+};
+
+function Cite({ n }: { n: number }) {
+  const [show, setShow] = useState(false);
+  const [above, setAbove] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const hideTimeout = useRef<ReturnType<typeof setTimeout>>(null);
+
+  function handleEnter() {
+    if (hideTimeout.current) clearTimeout(hideTimeout.current);
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setAbove(rect.top > 200);
+    }
+    setShow(true);
+  }
+
+  function handleLeave() {
+    hideTimeout.current = setTimeout(() => setShow(false), 150);
+  }
+
+  return (
+    <span
+      ref={ref}
+      className="cite-link"
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+    >
+      <a href={`#ref-${n}`}>
+        <sup>[{n}]</sup>
+      </a>
+      {show && (
+        <span
+          className={`cite-tooltip ${above ? "cite-tooltip-above" : "cite-tooltip-below"}`}
+          onMouseEnter={handleEnter}
+          onMouseLeave={handleLeave}
+        >
+          <span className="cite-tooltip-num">[{n}]</span>
+          {references[n]}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function useActiveSection(ids: string[]): string | undefined {
+  const [active, setActive] = useState<string | undefined>(ids[0]);
+  const visibleRef = useRef(new Set<string>());
+
+  const findClosest = useCallback(() => {
+    let closest: string | undefined;
+    let minDist = Infinity;
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const dist = Math.abs(el.getBoundingClientRect().top - 100);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = id;
+      }
+    }
+    return closest;
+  }, [ids]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            visibleRef.current.add(entry.target.id);
+          } else {
+            visibleRef.current.delete(entry.target.id);
+          }
+        }
+
+        if (visibleRef.current.size === 0) {
+          setActive(findClosest());
+        } else {
+          const first = ids.find((id) => visibleRef.current.has(id));
+          setActive(first);
+        }
+      },
+      { rootMargin: "-80px 0px -60% 0px", threshold: 0 },
+    );
+
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+
+    return () => observer.disconnect();
+  }, [ids, findClosest]);
+
+  return active;
+}
 
 const sections = [
   { id: "abstract", label: "Abstract" },
@@ -30,8 +139,11 @@ function copyLink() {
   navigator.clipboard.writeText("https://matrix-os.com/whitepaper");
 }
 
+const sectionIds = sections.map((s) => s.id);
+
 export function WhitepaperContent() {
   const [tocOpen, setTocOpen] = useState(false);
+  const activeSection = useActiveSection(sectionIds);
 
   return (
     <>
@@ -96,21 +208,28 @@ export function WhitepaperContent() {
             className={`${tocOpen ? "block" : "hidden"} lg:block print:hidden`}
           >
             <nav className="sticky top-24">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
                 Contents
               </p>
-              <ul className="space-y-1.5">
-                {sections.map((s) => (
-                  <li key={s.id}>
-                    <a
-                      href={`#${s.id}`}
-                      onClick={() => setTocOpen(false)}
-                      className="block text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {s.label}
-                    </a>
-                  </li>
-                ))}
+              <ul className="relative space-y-0.5 border-l border-border">
+                {sections.map((s) => {
+                  const isActive = activeSection === s.id;
+                  return (
+                    <li key={s.id}>
+                      <a
+                        href={`#${s.id}`}
+                        onClick={() => setTocOpen(false)}
+                        className={`-ml-px block border-l-2 py-1 pl-4 text-[13px] leading-snug transition-all duration-200 ${
+                          isActive
+                            ? "border-primary font-medium text-foreground"
+                            : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
+                        }`}
+                      >
+                        {s.label}
+                      </a>
+                    </li>
+                  );
+                })}
               </ul>
             </nav>
           </aside>
@@ -118,14 +237,14 @@ export function WhitepaperContent() {
           {/* Main content */}
           <article className="prose-paper">
             {/* Title block */}
-            <div className="mb-12 border-b border-border pb-8">
-              <p className="mb-2 font-mono text-xs uppercase tracking-widest text-primary">
+            <div className="mb-14 border-b border-border pb-10">
+              <p className="mb-3 font-mono text-xs uppercase tracking-widest text-primary">
                 Whitepaper
               </p>
-              <h1 className="mb-4 text-3xl font-bold tracking-tight sm:text-4xl">
+              <h1 className="mb-5 text-3xl font-bold tracking-tight sm:text-4xl lg:text-[2.5rem] lg:leading-[1.15]">
                 Matrix OS: A Unified AI Operating System
               </h1>
-              <p className="mb-4 text-lg leading-relaxed text-muted-foreground">
+              <p className="mb-5 text-lg leading-relaxed text-muted-foreground sm:text-xl sm:leading-relaxed">
                 From conversation to software in seconds. An architecture where
                 the AI is the kernel, files are the truth, and every device is a
                 peer.
@@ -138,7 +257,7 @@ export function WhitepaperContent() {
             </div>
 
             {/* --- Abstract --- */}
-            <section id="abstract">
+            <section id="abstract" className="paper-abstract">
               <h2>Abstract</h2>
               <p>
                 Matrix OS is a unified AI operating system that treats the Claude
@@ -207,9 +326,9 @@ export function WhitepaperContent() {
               <h3>2.1 The Unix Philosophy and Plan 9</h3>
               <p>
                 The idea that &quot;everything is a file&quot; originates with
-                Unix<sup>[1]</sup>. Devices, processes, and network connections
+                Unix<Cite n={1} />. Devices, processes, and network connections
                 are all represented as file descriptors. Plan 9 from Bell
-                Labs<sup>[2]</sup> extended this further: every resource in the
+                Labs<Cite n={2} /> extended this further: every resource in the
                 system: including the network, the graphics display, and remote
                 machines: was accessible through a file-system interface.
                 Matrix OS inherits this philosophy directly. Applications,
@@ -220,14 +339,14 @@ export function WhitepaperContent() {
 
               <h3>2.2 Personal Computing and Dynamic Media</h3>
               <p>
-                Alan Kay&apos;s Dynabook vision<sup>[3]</sup> imagined a
+                Alan Kay&apos;s Dynabook vision<Cite n={3} /> imagined a
                 personal computer as a &quot;dynamic medium for creative
                 thought.&quot; Xerox PARC realized portions of this with
                 Smalltalk, where the programming environment and the user
                 environment were the same thing: the system was always
                 inspectable and modifiable. Bret Victor&apos;s work on direct
-                manipulation interfaces<sup>[4]</sup> and Dynamicland&apos;s
-                spatial computing<sup>[5]</sup> continued this tradition, asking
+                manipulation interfaces<Cite n={4} /> and Dynamicland&apos;s
+                spatial computing<Cite n={5} /> continued this tradition, asking
                 what computing looks like when the boundary between creation and
                 use dissolves. Matrix OS occupies this lineage: the user
                 interacts with the same system the developer would, at whatever
@@ -241,7 +360,7 @@ export function WhitepaperContent() {
                 systems. Agent frameworks such as LangChain, CrewAI, and
                 AutoGen orchestrate LLM calls with tool use, but they run as
                 applications within a traditional OS, not as the OS itself.
-                Anthropic&apos;s Claude Agent SDK<sup>[6]</sup> provides the
+                Anthropic&apos;s Claude Agent SDK<Cite n={6} /> provides the
                 primitive Matrix OS builds on: a model that can invoke tools
                 (Read, Write, Edit, Bash), spawn sub-agents, and maintain
                 multi-turn conversations with resume capability. Matrix OS maps
@@ -251,7 +370,7 @@ export function WhitepaperContent() {
 
               <h3>2.4 Federated Communication</h3>
               <p>
-                The Matrix protocol<sup>[7]</sup> is an open standard for
+                The Matrix protocol<Cite n={7} /> is an open standard for
                 decentralized, real-time communication. It provides federated
                 identity (globally unique user IDs), end-to-end encryption
                 (Olm/Megolm), and extensible event types. ActivityPub powers the
@@ -265,8 +384,8 @@ export function WhitepaperContent() {
               <h3>2.5 Self-Modifying Systems</h3>
               <p>
                 The idea that software can modify itself is not new. Genetic
-                programming<sup>[8]</sup> evolves programs through selection.
-                Autopoietic systems (Maturana and Varela<sup>[9]</sup>)
+                programming<Cite n={8} /> evolves programs through selection.
+                Autopoietic systems (Maturana and Varela<Cite n={9} />)
                 self-produce their own components. Lisp systems have long
                 supported runtime modification. What is new is combining
                 self-modification with a large language model that understands
@@ -327,13 +446,15 @@ export function WhitepaperContent() {
                   </tr>
                 </tbody>
               </table>
-              <p>
-                This is not a loose analogy. The mapping is structural. The
-                kernel (main agent) receives requests, routes them, spawns
-                sub-agents (processes), and writes results to the file system
-                (disk). Context window management is memory management. Prompt
-                caching is page caching. Session resume is process hibernation.
-              </p>
+              <div className="paper-insight">
+                <p>
+                  This is not a loose analogy. The mapping is structural. The
+                  kernel (main agent) receives requests, routes them, spawns
+                  sub-agents (processes), and writes results to the file system
+                  (disk). Context window management is memory management. Prompt
+                  caching is page caching. Session resume is process hibernation.
+                </p>
+              </div>
 
               <h3>3.2 Six Design Principles</h3>
               <ol>
@@ -368,7 +489,7 @@ export function WhitepaperContent() {
                 </li>
                 <li>
                   <strong>Test-Driven Development.</strong> Every component is
-                  tested before implementation. 479 tests, near-total coverage.
+                  tested before implementation. 926 tests, near-total coverage.
                   The OS trusts itself because it verifies itself.
                 </li>
               </ol>
@@ -389,8 +510,8 @@ export function WhitepaperContent() {
               <p>
                 A cron service and heartbeat runner live in the gateway, enabling
                 proactive behavior: scheduled tasks, periodic kernel invocation,
-                and active-hours awareness. The kernel is not purely reactive --
-                it can reach out through any channel on a schedule.
+                and active-hours awareness. The kernel is not purely reactive.
+                It can reach out through any channel on a schedule.
               </p>
 
               <h3>3.4 SOUL and Identity</h3>
@@ -422,13 +543,15 @@ export function WhitepaperContent() {
             {/* --- 4. Novel Paradigms --- */}
             <section id="novel-paradigms">
               <h2>4. Novel Computing Paradigms</h2>
-              <p>
-                Matrix OS has a property no other system has: the AI and the
-                software are in the same system, continuously. The kernel can
-                read everything, write everything, remember everything, and be
-                reached from everywhere. This enables three computing paradigms
-                that cannot exist in conventional systems.
-              </p>
+              <div className="paper-insight">
+                <p>
+                  Matrix OS has a property no other system has: the AI and the
+                  software are in the same system, continuously. The kernel can
+                  read everything, write everything, remember everything, and be
+                  reached from everywhere. This enables three computing paradigms
+                  that cannot exist in conventional systems.
+                </p>
+              </div>
 
               <h3>4.1 Living Software</h3>
               <p>
@@ -481,9 +604,9 @@ export function WhitepaperContent() {
                 context.
               </p>
               <p>
-                This draws on Mercury OS<sup>[10]</sup> (concept OS with
-                intent-based flows), Dynamicland<sup>[5]</sup> (computing
-                without fixed interfaces), and Calm Technology<sup>[11]</sup>
+                This draws on Mercury OS<Cite n={10} /> (concept OS with
+                intent-based flows), Dynamicland<Cite n={5} /> (computing
+                without fixed interfaces), and Calm Technology<Cite n={11} />
                 (technology that informs without demanding attention). Matrix OS
                 adds the missing ingredient: an AI kernel that can read the
                 intent, the data, and the channel, and generate the appropriate
@@ -492,10 +615,8 @@ export function WhitepaperContent() {
 
               <h3>4.4 Progressive Depth (Bruner&apos;s Modes)</h3>
               <p>
-                Drawing on Jerome Bruner&apos;s theory of instruction<sup>
-                  [12]
-                </sup>
-                , Matrix OS presents three interaction modes: enactive
+                Drawing on Jerome Bruner&apos;s theory of instruction
+                <Cite n={12} />, Matrix OS presents three interaction modes: enactive
                 (action-based: voice, gestures, direct manipulation), iconic
                 (image-based: visual applications, dashboards, spatial shell),
                 and symbolic (language-based: code, terminal, file editing). A
@@ -523,8 +644,8 @@ export function WhitepaperContent() {
               <h3>5.2 Development Process</h3>
               <p>
                 The system was built in phases following strict TDD. Each
-                phase produces a demoable increment. At the time of writing, 479
-                tests pass across 44 test files. Completed phases include: the
+                phase produces a demoable increment. At the time of writing, 926
+                tests pass across 80 test files. Completed phases include: the
                 kernel (agent SDK integration, IPC tools, hooks), the gateway
                 (HTTP/WebSocket, concurrent dispatch, channels), the shell
                 (desktop UI, chat panel, terminal, Mission Control), self-healing
@@ -573,12 +694,14 @@ export function WhitepaperContent() {
                 cryptographic primitives but delivered complexity without
                 improving the user experience.
               </p>
-              <p>
-                Web 4 is the unification. Operating system, messaging, social
-                media, AI assistant, applications, games, and identity: all one
-                thing. Not stitched together with APIs and OAuth tokens. Actually
-                one thing.
-              </p>
+              <div className="paper-insight">
+                <p>
+                  Web 4 is the unification. Operating system, messaging, social
+                  media, AI assistant, applications, games, and identity: all one
+                  thing. Not stitched together with APIs and OAuth tokens. Actually
+                  one thing.
+                </p>
+              </div>
 
               <h3>6.1 Federated Identity</h3>
               <p>
@@ -647,7 +770,7 @@ export function WhitepaperContent() {
                 repairs failures. The same kernel is reachable from a web
                 desktop and Telegram. Cron and heartbeat enable proactive
                 behavior. SOUL produces consistent personality across channels.
-                479 tests verify the implementation.
+                926 tests verify the implementation.
               </p>
               <p>
                 The file-first architecture proves its value in sharing and
@@ -720,62 +843,64 @@ export function WhitepaperContent() {
                 not an AI feature added to an OS, but an OS where AI is the
                 fundamental computational substrate.
               </p>
-              <p>
-                This is Web 4: where software does not exist until you need it,
-                and once it does, it is yours.
-              </p>
+              <div className="paper-insight">
+                <p>
+                  This is Web 4: where software does not exist until you need it,
+                  and once it does, it is yours.
+                </p>
+              </div>
             </section>
 
             {/* --- References --- */}
             <section id="references">
               <h2>References</h2>
-              <ol className="text-sm">
-                <li>
+              <ol className="ref-list text-sm">
+                <li id="ref-1">
                   McIlroy, M.D., Pinson, E.N., Tague, B.A. &quot;UNIX
                   Time-Sharing System: Foreword.&quot;{" "}
                   <em>The Bell System Technical Journal</em>, 57(6), 1978.
                 </li>
-                <li>
+                <li id="ref-2">
                   Pike, R., Presotto, D., Dorward, S., et al. &quot;Plan 9 from
                   Bell Labs.&quot; <em>Computing Systems</em>, 8(3), 1995.
                 </li>
-                <li>
+                <li id="ref-3">
                   Kay, A.C. &quot;A Personal Computer for Children of All
                   Ages.&quot; <em>Proceedings of the ACM Annual Conference</em>,
                   1972.
                 </li>
-                <li>
+                <li id="ref-4">
                   Victor, B. &quot;Inventing on Principle.&quot;{" "}
                   <em>CUSEC 2012</em>. vimeo.com/36579366.
                 </li>
-                <li>
+                <li id="ref-5">
                   Victor, B. et al. <em>Dynamicland</em>. dynamicland.org,
                   2018-present.
                 </li>
-                <li>
+                <li id="ref-6">
                   Anthropic. &quot;Claude Agent SDK Documentation.&quot;{" "}
                   docs.anthropic.com, 2025.
                 </li>
-                <li>
+                <li id="ref-7">
                   Matrix.org Foundation. &quot;Matrix Specification.&quot;{" "}
                   spec.matrix.org, 2024.
                 </li>
-                <li>
+                <li id="ref-8">
                   Koza, J.R. <em>Genetic Programming</em>. MIT Press, 1992.
                 </li>
-                <li>
+                <li id="ref-9">
                   Maturana, H.R., Varela, F.J.{" "}
                   <em>Autopoiesis and Cognition: The Realization of the
                   Living</em>
                   . Reidel, 1980.
                 </li>
-                <li>
+                <li id="ref-10">
                   Yuan, J. <em>Mercury OS</em>. mercuryos.com, 2019.
                 </li>
-                <li>
+                <li id="ref-11">
                   Case, A. <em>Calm Technology</em>. O&apos;Reilly Media, 2015.
                 </li>
-                <li>
+                <li id="ref-12">
                   Bruner, J.S.{" "}
                   <em>Toward a Theory of Instruction</em>. Harvard University
                   Press, 1966.
