@@ -24,7 +24,7 @@ import { colors, fonts } from "@/lib/theme";
 
 import "../global.css";
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const tokenCache = {
   async getToken(key: string) {
@@ -100,7 +100,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded && ready) {
-      SplashScreen.hideAsync();
+      SplashScreen.hideAsync().catch(() => {});
     }
   }, [fontsLoaded, ready]);
 
