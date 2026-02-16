@@ -144,7 +144,7 @@ export function WhitepaperContent() {
                 Matrix OS is a unified AI operating system that treats the Claude
                 Agent SDK as a literal kernel. Software is generated from natural
                 language conversation, persisted as files, and delivered through
-                any channel -- a web desktop, Telegram, WhatsApp, Discord, Slack,
+                any channel: a web desktop, Telegram, WhatsApp, Discord, Slack,
                 or the Matrix federation protocol. The system produces real
                 software in real time, heals itself when things break, expands
                 its own capabilities by writing new agents and skills, and syncs
@@ -210,8 +210,8 @@ export function WhitepaperContent() {
                 Unix<sup>[1]</sup>. Devices, processes, and network connections
                 are all represented as file descriptors. Plan 9 from Bell
                 Labs<sup>[2]</sup> extended this further: every resource in the
-                system -- including the network, the graphics display, and remote
-                machines -- was accessible through a file-system interface.
+                system: including the network, the graphics display, and remote
+                machines: was accessible through a file-system interface.
                 Matrix OS inherits this philosophy directly. Applications,
                 configuration, user data, agent definitions, and the AI&apos;s
                 personality are all files on disk. Sharing an app means sending a
@@ -224,7 +224,7 @@ export function WhitepaperContent() {
                 personal computer as a &quot;dynamic medium for creative
                 thought.&quot; Xerox PARC realized portions of this with
                 Smalltalk, where the programming environment and the user
-                environment were the same thing -- the system was always
+                environment were the same thing: the system was always
                 inspectable and modifiable. Bret Victor&apos;s work on direct
                 manipulation interfaces<sup>[4]</sup> and Dynamicland&apos;s
                 spatial computing<sup>[5]</sup> continued this tradition, asking
@@ -270,7 +270,7 @@ export function WhitepaperContent() {
                 self-produce their own components. Lisp systems have long
                 supported runtime modification. What is new is combining
                 self-modification with a large language model that understands
-                intent. Matrix OS does not evolve through random mutation -- it
+                intent. Matrix OS does not evolve through random mutation: it
                 evolves through reasoned, goal-directed modification, mediated by
                 a model that can read the entire system state and write
                 improvements.
@@ -345,13 +345,13 @@ export function WhitepaperContent() {
                 </li>
                 <li>
                   <strong>Agent Is the Kernel.</strong> The Claude Agent SDK is
-                  not a feature of the OS -- it is the OS kernel. It has full
+                  not a feature of the OS: it is the OS kernel. It has full
                   machine control and makes all routing decisions.
                 </li>
                 <li>
                   <strong>Headless Core, Multi-Shell.</strong> The core works
                   without a UI. The web desktop, messaging channels, CLI, and
-                  API are all shells -- interchangeable renderers that read the
+                  API are all shells: interchangeable renderers that read the
                   same files.
                 </li>
                 <li>
@@ -383,7 +383,7 @@ export function WhitepaperContent() {
                 invokes tools, spawns sub-agents, and writes results to the file
                 system. The <strong>shell</strong> (Next.js 16 frontend) watches
                 the file system via WebSocket and renders what it finds. The
-                shell discovers applications -- it does not know what exists
+                shell discovers applications: it does not know what exists
                 ahead of time.
               </p>
               <p>
@@ -473,7 +473,7 @@ export function WhitepaperContent() {
               <p>
                 No applications. Only persistent intentions that the system
                 fulfills in whatever form is appropriate. &quot;Track my
-                expenses&quot; is not an application -- it is an intent that
+                expenses&quot; is not an application: it is an intent that
                 resolves differently depending on context: at a desktop, a visual
                 dashboard; on Telegram, a text summary; at the end of the month,
                 a generated report. The file system is the memory, not the UI.
@@ -543,7 +543,7 @@ export function WhitepaperContent() {
                 <code>resume</code> was chosen over V2 because V2 silently drops
                 critical options (MCP servers, agent definitions, system prompt).{" "}
                 <code>allowedTools</code> was found to be auto-approve, not a
-                filter -- requiring use of <code>disallowedTools</code> for
+                filter: requiring use of <code>disallowedTools</code> for
                 access control. <code>bypassPermissions</code> propagates to all
                 sub-agents, necessitating PreToolUse hooks for fine-grained
                 restrictions. Prompt caching (<code>cache_control</code>) on
@@ -575,7 +575,7 @@ export function WhitepaperContent() {
               </p>
               <p>
                 Web 4 is the unification. Operating system, messaging, social
-                media, AI assistant, applications, games, and identity -- all one
+                media, AI assistant, applications, games, and identity: all one
                 thing. Not stitched together with APIs and OAuth tokens. Actually
                 one thing.
               </p>
@@ -614,7 +614,7 @@ export function WhitepaperContent() {
               <h3>6.3 Peer-to-Peer Sync</h3>
               <p>
                 Matrix OS does not run on &quot;a computer.&quot; It runs on all
-                of them. Laptop, desktop, phone, cloud server -- all are peers.
+                of them. Laptop, desktop, phone, cloud server: all are peers.
                 There is no primary or secondary. Git is the sync fabric for
                 files. Matrix protocol is the sync fabric for conversations. A
                 change made on the laptop appears on the phone. An app built on
@@ -713,7 +713,7 @@ export function WhitepaperContent() {
               </p>
               <p>
                 The core insight is structural: the Claude Agent SDK already
-                provides the primitives of an operating system -- tool use is
+                provides the primitives of an operating system: tool use is
                 system calls, sub-agents are processes, the context window is
                 RAM, the file system is disk. Matrix OS makes this mapping
                 explicit and builds a complete system on top of it. The result is

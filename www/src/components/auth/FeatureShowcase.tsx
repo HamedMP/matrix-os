@@ -33,7 +33,7 @@ const features = [
     icon: FolderTreeIcon,
     title: "Everything is a file",
     description:
-      "Apps, config, AI personality -- all stored as real files. Back up your OS by copying a folder.",
+      "Apps, config, AI personality: all stored as real files. Back up your OS by copying a folder.",
     visual: (
       <div className="grid grid-cols-2 gap-1 font-mono text-[11px] text-muted-foreground">
         {[
@@ -72,7 +72,7 @@ const features = [
     icon: MonitorSmartphoneIcon,
     title: "Multi-channel",
     description:
-      "Same kernel, every platform. Web desktop, Telegram, WhatsApp, Discord, Slack -- all connected to one identity.",
+      "Same kernel, every platform. Web desktop, Telegram, WhatsApp, Discord, Slack. All connected to one identity.",
     visual: (
       <div className="flex flex-wrap gap-1.5">
         {["Web", "Telegram", "WhatsApp", "Discord", "Slack"].map((ch) => (

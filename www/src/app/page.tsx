@@ -19,6 +19,8 @@ import {
   MessageSquareIcon,
   BrainIcon,
   WrenchIcon,
+  CheckIcon,
+  MinusIcon,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -32,6 +34,7 @@ export default function LandingPage() {
       <AgentShowcase />
       <BentoFeatures />
       <SkillsShowcase />
+      <OpenClawBridge />
       <Web4 />
       <CTA />
       <Footer />
@@ -59,6 +62,9 @@ function Nav() {
             </Button>
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
               <a href="#features">Features</a>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+              <a href="#vs-openclaw">vs OpenClaw</a>
             </Button>
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
               <a href="#web4">Web 4</a>
@@ -277,7 +283,7 @@ function OsMockup() {
 
 function TechStrip() {
   const items = [
-    "546 Tests Passing",
+    "926 Tests Passing",
     "14 IPC Tools",
     "7 Skills",
     "6 Agents",
@@ -676,14 +682,14 @@ function BentoFeatures() {
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300 flex flex-col">
             <h3 className="text-lg font-semibold mb-1">Test-driven</h3>
             <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-              Every component is tested before it ships. 546 tests across 47
+              Every component is tested before it ships. 926 tests across 80
               files. The OS trusts itself because it verifies itself.
             </p>
             <div className="mt-4 rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
               <div><span className="text-success">PASS</span> kernel/spawn.test.ts</div>
               <div><span className="text-success">PASS</span> gateway/dispatch.test.ts</div>
               <div><span className="text-success">PASS</span> cli/cli.test.ts</div>
-              <div className="pt-1 text-success">546 tests passed</div>
+              <div className="pt-1 text-success">926 tests passed</div>
             </div>
           </div>
 
@@ -782,6 +788,162 @@ function SkillsShowcase() {
             <span className="text-[10px] text-muted-foreground mt-1">
               Describe it, the OS writes it
             </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────────── OpenClaw Bridge ─────────────────────── */
+
+function OpenClawBridge() {
+  const sharedFeatures = [
+    "Multi-channel messaging",
+    "Skills & plugins",
+    "Persistent memory",
+    "Browser automation",
+    "Full system access",
+    "Proactive scheduling",
+    "Self-hosted & private",
+    "Open source",
+  ];
+
+  const matrixOnlyFeatures = [
+    "Visual desktop OS",
+    "Self-healing & repair",
+    "Self-expanding agents",
+    "Federated identity",
+    "AI-to-AI communication",
+    "Peer-to-peer device sync",
+    "Test-driven (926 tests)",
+  ];
+
+  return (
+    <section id="vs-openclaw" className="py-24 px-6">
+      <div className="mx-auto max-w-5xl">
+        <div className="rounded-3xl border border-border bg-card/80 backdrop-blur-sm overflow-hidden">
+          <div className="p-8 sm:p-12 md:p-16">
+            {/* Header */}
+            <div className="text-center mb-12">
+              <Badge
+                variant="outline"
+                className="mb-6 border-primary/30 bg-primary/10 text-primary font-mono text-[10px] tracking-[0.2em] uppercase backdrop-blur-sm py-1.5 px-4"
+              >
+                Sound Familiar?
+              </Badge>
+
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
+                The best personal AI{" "}
+                <br className="hidden sm:block" />
+                <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">
+                  just got acquired.
+                </span>
+              </h2>
+
+              <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+                OpenClaw proved that AI should run on your machine, work from any
+                chat app, and write its own skills. Then OpenAI acquired its creator.{" "}
+                <span className="text-foreground font-medium">
+                  The open-source vision needed a new home.
+                </span>
+              </p>
+            </div>
+
+            {/* Comparison table */}
+            <div className="rounded-2xl border border-border overflow-hidden mb-12">
+              {/* Table header */}
+              <div className="grid grid-cols-[1fr_90px_90px] sm:grid-cols-[1fr_150px_150px] border-b border-border bg-secondary/30">
+                <div className="px-4 sm:px-5 py-3" />
+                <div className="px-3 sm:px-5 py-3 flex items-center justify-center border-l border-border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/openclaw-icon.png"
+                    alt="OpenClaw"
+                    className="size-5 rounded-sm mr-1.5 hidden sm:block"
+                    loading="lazy"
+                  />
+                  <span className="text-xs sm:text-sm font-semibold text-muted-foreground whitespace-nowrap">
+                    OpenClaw
+                  </span>
+                </div>
+                <div className="px-3 sm:px-5 py-3 flex items-center justify-center border-l border-primary/20 bg-primary/5">
+                  <img
+                    src="/logo.png"
+                    alt="Matrix OS"
+                    className="size-5 rounded-sm mr-1.5 hidden sm:block"
+                  />
+                  <span className="text-xs sm:text-sm font-semibold text-primary whitespace-nowrap">
+                    Matrix OS
+                  </span>
+                </div>
+              </div>
+
+              {/* Shared features */}
+              {sharedFeatures.map((feature) => (
+                <div
+                  key={feature}
+                  className="grid grid-cols-[1fr_90px_90px] sm:grid-cols-[1fr_150px_150px] border-b border-border/40"
+                >
+                  <div className="px-4 sm:px-5 py-2.5 text-xs sm:text-sm text-muted-foreground">
+                    {feature}
+                  </div>
+                  <div className="px-3 sm:px-5 py-2.5 flex items-center justify-center border-l border-border">
+                    <CheckIcon className="size-4 text-emerald-500" />
+                  </div>
+                  <div className="px-3 sm:px-5 py-2.5 flex items-center justify-center border-l border-primary/20 bg-primary/[0.03]">
+                    <CheckIcon className="size-4 text-emerald-500" />
+                  </div>
+                </div>
+              ))}
+
+              {/* Divider */}
+              <div className="grid grid-cols-[1fr_90px_90px] sm:grid-cols-[1fr_150px_150px] border-b border-border bg-secondary/50">
+                <div className="px-4 sm:px-5 py-2 text-[10px] font-mono uppercase tracking-widest text-primary font-semibold">
+                  And then some
+                </div>
+                <div className="px-3 sm:px-5 py-2 border-l border-border" />
+                <div className="px-3 sm:px-5 py-2 border-l border-primary/20 bg-primary/5" />
+              </div>
+
+              {/* Matrix OS only features */}
+              {matrixOnlyFeatures.map((feature, i) => (
+                <div
+                  key={feature}
+                  className={`grid grid-cols-[1fr_90px_90px] sm:grid-cols-[1fr_150px_150px] border-b border-border/40 ${
+                    i === matrixOnlyFeatures.length - 1 ? "border-b-0" : ""
+                  }`}
+                >
+                  <div className="px-4 sm:px-5 py-2.5 text-xs sm:text-sm text-foreground font-medium">
+                    {feature}
+                  </div>
+                  <div className="px-3 sm:px-5 py-2.5 flex items-center justify-center border-l border-border">
+                    <MinusIcon className="size-3.5 text-muted-foreground/25" />
+                  </div>
+                  <div className="px-3 sm:px-5 py-2.5 flex items-center justify-center border-l border-primary/20 bg-primary/[0.06]">
+                    <CheckIcon className="size-4 text-primary" />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Closing */}
+            <div className="text-center">
+              <p className="text-xl sm:text-2xl font-bold tracking-tight mb-2">
+                We didn&apos;t just match it.
+              </p>
+              <p className="text-muted-foreground mb-8 max-w-lg mx-auto leading-relaxed">
+                We built an operating system around it. Still open source.
+                Still self-hosted.{" "}
+                <span className="text-foreground font-medium">Still yours.</span>
+              </p>
+              <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
+                <a href="/signup">
+                  Try Matrix OS
+                  <ArrowRightIcon className="size-4 ml-1" />
+                </a>
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -939,7 +1101,7 @@ function CTA() {
             />
           </a>
           <Badge variant="outline" className="text-xs font-mono">
-            546 tests passing
+            926 tests passing
           </Badge>
         </div>
 
