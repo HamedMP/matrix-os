@@ -39,6 +39,15 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import {
+  createPluginRegistry,
+  loadAllPlugins,
+  createHookRunner,
+  type PluginRegistry,
+  type HookRunner,
+  type LoadedPlugin,
+} from "./plugins/index.js";
+import { createSettingsRoutes } from "./routes/settings.js";
 import type { WSContext } from "hono/ws";
 
 export interface GatewayConfig {
@@ -282,6 +291,19 @@ export function createGateway(config: GatewayConfig) {
   } catch { /* no approval config */ }
 
   const interactionLogger: InteractionLogger = createInteractionLogger(homePath);
+
+  // Plugin system
+  const pluginRegistry: PluginRegistry = createPluginRegistry();
+  const hookRunner: HookRunner = createHookRunner(pluginRegistry);
+  let loadedPlugins: LoadedPlugin[] = [];
+
+  let pluginsConfig: { list?: string[]; configs?: Record<string, Record<string, unknown>> } = {};
+  try {
+    if (existsSync(configPath)) {
+      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+      pluginsConfig = cfg.plugins ?? {};
+    }
+  } catch { /* no plugins config */ }
 
   const provisioner = createProvisioner({
     homePath,
@@ -696,14 +718,73 @@ export function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
+  // T978-T979: Settings API routes
+  const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
+  app.route("/api/settings", settingsRoutes);
+
+  // T946: Plugin list endpoint
+  app.get("/api/plugins", (c) => {
+    return c.json(
+      loadedPlugins.map((p) => ({
+        id: p.manifest.id,
+        name: p.manifest.name ?? p.manifest.id,
+        version: p.manifest.version ?? "0.0.0",
+        description: p.manifest.description,
+        origin: p.origin,
+        status: p.status,
+        error: p.error,
+        contributions: pluginRegistry.getPluginContributions(p.manifest.id),
+      })),
+    );
+  });
+
   app.get("/health", (c) => c.json({
     status: "ok",
     cronJobs: cronService.listJobs().length,
     channels: channelManager.status(),
+    plugins: loadedPlugins.length,
   }));
+
+  // Load plugins and mount their HTTP routes
+  async function initPlugins() {
+    try {
+      loadedPlugins = await loadAllPlugins({
+        homePath,
+        configPaths: pluginsConfig.list,
+        registry: pluginRegistry,
+        systemConfig: {},
+        pluginConfigs: pluginsConfig.configs,
+      });
+
+      // T944: Mount plugin HTTP routes
+      for (const route of pluginRegistry.getRoutes()) {
+        const fullPath = `/plugins/${route.pluginId}${route.path}`;
+        const method = route.method.toLowerCase() as "get" | "post" | "put" | "delete" | "patch";
+        app[method](fullPath, route.handler);
+      }
+
+      // T945: Start background services
+      for (const svc of pluginRegistry.getServices()) {
+        try {
+          await svc.start();
+        } catch (err) {
+          console.error(`[plugin:${svc.pluginId}] Service ${svc.name} failed to start: ${err}`);
+        }
+      }
+
+      // T939: Fire gateway_start hook
+      await hookRunner.fireVoidHook("gateway_start", { port });
+    } catch (err) {
+      console.error("[plugins] Failed to initialize plugins:", err);
+    }
+  }
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
+
+  initPlugins().catch((err) => {
+    console.error("[plugins] Plugin init error:", err);
+  });
 
   return {
     app,
@@ -715,7 +796,18 @@ export function createGateway(config: GatewayConfig) {
     channelManager,
     cronService,
     proactiveHeartbeat,
+    pluginRegistry,
+    hookRunner,
     async close() {
+      // T939: Fire gateway_stop hook
+      await hookRunner.fireVoidHook("gateway_stop", {}).catch(() => {});
+
+      // T945: Stop services in reverse order
+      const services = pluginRegistry.getServices();
+      for (let i = services.length - 1; i >= 0; i--) {
+        try { await services[i].stop(); } catch { /* ignore */ }
+      }
+
       heartbeat.stop();
       watchdog.stop();
       proactiveHeartbeat.stop();
