@@ -166,11 +166,17 @@ code, pre { font-family: var(--font-mono); }
 /* Whitepaper prose typography */
 .prose-paper {
   max-width: 680px;
+  font-family: var(--font-serif), Georgia, serif;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1;
+  hanging-punctuation: first last;
 }
 .prose-paper section[id] {
   scroll-margin-top: 6rem;
 }
 .prose-paper h2 {
+  font-family: var(--font-sans);
   font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -183,6 +189,7 @@ code, pre { font-family: var(--font-mono); }
   margin-top: 0;
 }
 .prose-paper h3 {
+  font-family: var(--font-sans);
   font-size: 1.125rem;
   font-weight: 600;
   margin-top: 2rem;
@@ -191,10 +198,10 @@ code, pre { font-family: var(--font-mono); }
   border-left: 3px solid var(--primary);
 }
 .prose-paper p {
-  font-size: 1rem;
-  line-height: 1.8;
+  font-size: 1.0625rem;
+  line-height: 1.45;
   color: var(--foreground);
-  margin-bottom: 1.125rem;
+  margin-bottom: 1rem;
 }
 .prose-paper ol {
   list-style: decimal;
@@ -207,9 +214,9 @@ code, pre { font-family: var(--font-mono); }
   margin-bottom: 1.125rem;
 }
 .prose-paper li {
-  font-size: 1rem;
-  line-height: 1.8;
-  margin-bottom: 0.625rem;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  margin-bottom: 0.5rem;
 }
 .prose-paper li strong {
   color: var(--foreground);
@@ -239,11 +246,12 @@ code, pre { font-family: var(--font-mono); }
   text-align: left;
 }
 .prose-paper th {
+  font-family: var(--font-sans);
   background: var(--secondary);
   font-weight: 600;
   font-size: 0.8125rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--muted-foreground);
 }
 .prose-paper tr:last-child td {
@@ -267,7 +275,7 @@ code, pre { font-family: var(--font-mono); }
 /* Abstract section: distinct lead styling */
 .prose-paper .paper-abstract p {
   font-size: 1.0625rem;
-  line-height: 1.85;
+  line-height: 1.5;
   color: var(--muted-foreground);
   font-style: italic;
   border-left: 3px solid var(--primary);
@@ -285,6 +293,7 @@ code, pre { font-family: var(--font-mono); }
 .prose-paper .paper-insight p {
   margin-bottom: 0;
   font-size: 0.9375rem;
+  line-height: 1.45;
 }
 
 /* Citation links and tooltips */
@@ -314,9 +323,10 @@ code, pre { font-family: var(--font-mono); }
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   box-shadow: 0 4px 16px rgba(0,0,0,0.1), 0 1px 4px rgba(0,0,0,0.06);
+  font-family: var(--font-sans);
   font-size: 0.8125rem;
   font-style: normal;
-  line-height: 1.55;
+  line-height: 1.45;
   color: var(--foreground);
   z-index: 50;
   pointer-events: auto;
