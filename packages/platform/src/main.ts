@@ -67,7 +67,9 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
     const path = c.req.path;
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const targetUrl = `http://matrixos-${handle}:3000${path}${qs}`;
+    const isGatewayPath = path.startsWith('/api/') || path.startsWith('/ws') || path.startsWith('/files/') || path.startsWith('/modules/') || path === '/health';
+    const targetPort = isGatewayPath ? 4000 : 3000;
+    const targetUrl = `http://matrixos-${handle}:${targetPort}${path}${qs}`;
 
     try {
       const headers = new Headers();
