@@ -8,6 +8,8 @@ import {
   ChevronUpIcon,
   MenuIcon,
   XIcon,
+  GithubIcon,
+  BookOpenIcon,
 } from "lucide-react";
 
 function ExtLink({ href, children }: { href: string; children: ReactNode }) {
@@ -143,6 +145,26 @@ export function WhitepaperContent() {
               <span className="hidden sm:inline text-xs text-muted-foreground">
                 {READING_TIME}
               </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-foreground"
+                asChild
+              >
+                <a href="https://github.com/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" title="GitHub">
+                  <GithubIcon className="size-4" />
+                </a>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-foreground"
+                asChild
+              >
+                <a href="https://deepwiki.com/HamedMP/matrix-os/" target="_blank" rel="noopener noreferrer" title="DeepWiki">
+                  <BookOpenIcon className="size-4" />
+                </a>
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

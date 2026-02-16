@@ -84,8 +84,19 @@ function Nav() {
                 href="https://github.com/HamedMP/matrix-os"
                 target="_blank"
                 rel="noopener noreferrer"
+                title="GitHub"
               >
                 <GithubIcon className="size-4" />
+              </a>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" asChild>
+              <a
+                href="https://deepwiki.com/HamedMP/matrix-os/"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="DeepWiki"
+              >
+                <BookOpenIcon className="size-4" />
               </a>
             </Button>
             <Button size="sm" className="rounded-xl text-xs px-4" asChild>
@@ -1246,6 +1257,14 @@ function Footer() {
             className="hover:text-foreground transition-colors"
           >
             GitHub
+          </a>
+          <a
+            href="https://deepwiki.com/HamedMP/matrix-os/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground transition-colors"
+          >
+            DeepWiki
           </a>
           <a
             href="/whitepaper"
