@@ -9,6 +9,7 @@ export interface ModeConfig {
   description: string;
   showDock: boolean;
   showWindows: boolean;
+  showBottomPanel: boolean;
   chatPosition: "sidebar" | "center";
   terminalProminent?: boolean;
 }
@@ -20,6 +21,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     description: "Full desktop with dock, windows, and sidebar chat",
     showDock: true,
     showWindows: true,
+    showBottomPanel: false,
     chatPosition: "sidebar",
   },
   ambient: {
@@ -28,6 +30,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     description: "Minimal mode with clock and centered chat",
     showDock: false,
     showWindows: false,
+    showBottomPanel: false,
     chatPosition: "center",
   },
   dev: {
@@ -36,6 +39,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     description: "Developer mode with prominent terminal and sidebar chat",
     showDock: true,
     showWindows: true,
+    showBottomPanel: true,
     chatPosition: "sidebar",
     terminalProminent: true,
   },
@@ -45,6 +49,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     description: "Chat-centered mode for focused conversation",
     showDock: false,
     showWindows: false,
+    showBottomPanel: false,
     chatPosition: "center",
   },
 };

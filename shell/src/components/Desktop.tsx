@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/tooltip";
 import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
+import { AmbientClock } from "./AmbientClock";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -581,7 +582,19 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           })}
 
           <div className="mt-auto flex flex-col items-center gap-2">
-            <UserButton />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={cycleMode}
+                  className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+                >
+                  <MonitorIcon className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                {modeConfig.label} mode
+              </TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -599,19 +612,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 Settings
               </TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={cycleMode}
-                  className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
-                >
-                  <MonitorIcon className="size-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>
-                {modeConfig.label} mode
-              </TooltipContent>
-            </Tooltip>
+            <UserButton />
           </div>
         </aside>}
 
@@ -639,6 +640,13 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               <StoreIcon className="size-4" />
             </button>
             <button
+              onClick={cycleMode}
+              className="flex shrink-0 size-9 items-center justify-center rounded-lg border border-border/60 bg-card transition-all active:scale-95"
+              title={`${modeConfig.label} mode`}
+            >
+              <MonitorIcon className="size-4" />
+            </button>
+            <button
               onClick={() => setSettingsOpen((prev) => !prev)}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
@@ -648,13 +656,6 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               title="Settings"
             >
               <SettingsIcon className="size-4" />
-            </button>
-            <button
-              onClick={cycleMode}
-              className="flex shrink-0 size-9 items-center justify-center rounded-lg border border-border/60 bg-card transition-all active:scale-95"
-              title={`${modeConfig.label} mode`}
-            >
-              <MonitorIcon className="size-4" />
             </button>
             <div className="shrink-0">
               <UserButton />
@@ -690,21 +691,25 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             />
           )}
 
-          {!modeConfig.showWindows && (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-1">
-                    {modeConfig.label} mode
-                  </p>
-                  <button
-                    onClick={cycleMode}
-                    className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-                  >
-                    Switch mode
-                  </button>
-                </div>
+          {!modeConfig.showWindows && modeConfig.id === "ambient" && (
+            <AmbientClock onSwitchMode={cycleMode} />
+          )}
+
+          {!modeConfig.showWindows && modeConfig.id !== "ambient" && (
+            <div className="flex h-full items-center justify-center">
+              <div className="text-center">
+                <p className="text-sm text-muted-foreground mb-1">
+                  {modeConfig.label} mode
+                </p>
+                <button
+                  onClick={cycleMode}
+                  className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                >
+                  Switch mode
+                </button>
               </div>
-            )}
+            </div>
+          )}
 
           {modeConfig.showWindows && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (

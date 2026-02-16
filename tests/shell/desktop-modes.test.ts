@@ -29,6 +29,7 @@ describe("Desktop Mode Store", () => {
     expect(config.label).toBe("Desktop");
     expect(config.showDock).toBe(true);
     expect(config.showWindows).toBe(true);
+    expect(config.showBottomPanel).toBe(false);
     expect(config.chatPosition).toBe("sidebar");
   });
 
@@ -37,6 +38,7 @@ describe("Desktop Mode Store", () => {
     expect(config.label).toBe("Ambient");
     expect(config.showDock).toBe(false);
     expect(config.showWindows).toBe(false);
+    expect(config.showBottomPanel).toBe(false);
     expect(config.chatPosition).toBe("center");
   });
 
@@ -45,6 +47,7 @@ describe("Desktop Mode Store", () => {
     expect(config.label).toBe("Dev");
     expect(config.showDock).toBe(true);
     expect(config.showWindows).toBe(true);
+    expect(config.showBottomPanel).toBe(true);
     expect(config.chatPosition).toBe("sidebar");
     expect(config.terminalProminent).toBe(true);
   });
@@ -54,6 +57,7 @@ describe("Desktop Mode Store", () => {
     expect(config.label).toBe("Conversational");
     expect(config.showDock).toBe(false);
     expect(config.showWindows).toBe(false);
+    expect(config.showBottomPanel).toBe(false);
     expect(config.chatPosition).toBe("center");
   });
 

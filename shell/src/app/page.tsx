@@ -112,9 +112,11 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="hidden md:block">
-          <BottomPanel />
-        </div>
+        {modeConfig.showBottomPanel && (
+          <div className="hidden md:block">
+            <BottomPanel />
+          </div>
+        )}
       </div>
 
       {!isCenterChat && !sidebarOpen && (
