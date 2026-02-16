@@ -194,6 +194,8 @@ export function createGateway(config: GatewayConfig) {
 
   const pushAdapter = createPushAdapter();
 
+  const channelSessions = new Map<string, string>();
+
   const channelManager: ChannelManager = createChannelManager({
     config: channelsConfig,
     adapters: {
@@ -203,18 +205,22 @@ export function createGateway(config: GatewayConfig) {
     outboundQueue,
     onMessage: (msg) => {
       const sessionKey = `${msg.source}:${msg.senderId}`;
+      const existingSessionId = channelSessions.get(sessionKey);
       let responseText = "";
 
       dispatcher
-        .dispatch(msg.text, sessionKey, (event) => {
+        .dispatch(msg.text, existingSessionId, (event) => {
           if (event.type === "init") {
+            channelSessions.set(sessionKey, event.sessionId);
             conversations.begin(event.sessionId);
             conversations.addUserMessage(event.sessionId, msg.text);
           } else if (event.type === "text") {
             responseText += event.text;
-            conversations.appendAssistantText(sessionKey, event.text);
+            const sid = channelSessions.get(sessionKey);
+            if (sid) conversations.appendAssistantText(sid, event.text);
           } else if (event.type === "result") {
-            conversations.finalize(sessionKey);
+            const sid = channelSessions.get(sessionKey);
+            if (sid) conversations.finalize(sid);
           }
         }, {
           channel: msg.source,

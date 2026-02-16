@@ -50,14 +50,30 @@ const CHANNEL_DEFS = [
 ];
 
 export function ChannelsSection() {
-  const [statuses, setStatuses] = useState<Record<string, string>>({});
+  const [channels, setChannels] = useState<Record<string, Record<string, unknown>>>({});
 
   useEffect(() => {
-    fetch(`${GATEWAY}/api/channels/status`)
+    fetch(`${GATEWAY}/api/settings/channels`)
       .then((r) => r.ok ? r.json() : {})
-      .then(setStatuses)
+      .then(setChannels)
       .catch(() => {});
   }, []);
+
+  async function handleSave(channelId: string, values: Record<string, string>): Promise<boolean> {
+    const payload = { ...values, enabled: true };
+    const res = await fetch(`${GATEWAY}/api/settings/channels/${channelId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    setChannels((prev) => ({
+      ...prev,
+      [channelId]: { ...prev[channelId], ...payload, status: data.status ?? "configured" },
+    }));
+    return true;
+  }
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -73,8 +89,10 @@ export function ChannelsSection() {
             id={ch.id}
             name={ch.name}
             icon={ch.icon}
-            status={statuses[ch.id] ?? "not configured"}
+            status={(channels[ch.id]?.status as string) ?? "not configured"}
+            config={channels[ch.id]}
             fields={ch.fields}
+            onSave={(values) => handleSave(ch.id, values)}
           />
         ))}
       </div>

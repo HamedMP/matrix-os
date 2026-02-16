@@ -19,6 +19,7 @@ export interface ChannelManager {
   stop(): Promise<void>;
   send(reply: ChannelReply): Promise<void>;
   replay(): Promise<{ replayed: number; failed: number }>;
+  restartChannel(id: ChannelId, newConfig: ChannelConfig): Promise<void>;
   status(): Record<string, string>;
 }
 
@@ -53,6 +54,28 @@ export function createChannelManager(
         } catch {
           errors.add(channelId);
         }
+      }
+    },
+
+    async restartChannel(id: ChannelId, newConfig: ChannelConfig) {
+      const adapter = adapters[id];
+      if (!adapter) return;
+
+      if (started.has(id)) {
+        await adapter.stop();
+        started.delete(id);
+      }
+      errors.delete(id);
+      config[id] = newConfig;
+
+      if (!newConfig.enabled) return;
+
+      adapter.onMessage = onMessage;
+      try {
+        await adapter.start(newConfig);
+        started.add(id);
+      } catch {
+        errors.add(id);
       }
     },
 

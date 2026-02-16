@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ChannelManager } from "../channels/manager.js";
+import type { ChannelConfig, ChannelId } from "../channels/types.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "pattern" },
@@ -49,14 +50,21 @@ export function createSettingsRoutes(opts: {
   });
 
   app.put("/channels/:id", async (c) => {
-    const channelId = c.req.param("id");
+    const channelId = c.req.param("id") as ChannelId;
     const body = await c.req.json<Record<string, unknown>>();
     const cfg = readConfig();
     const channels = (cfg.channels ?? {}) as Record<string, Record<string, unknown>>;
     channels[channelId] = { ...channels[channelId], ...body };
     cfg.channels = channels;
     writeConfig(cfg);
-    return c.json({ ok: true });
+
+    const channelCfg = channels[channelId] as unknown as ChannelConfig;
+    try {
+      await channelManager.restartChannel(channelId, channelCfg);
+    } catch { /* status will show error */ }
+
+    const status = channelManager.status();
+    return c.json({ ok: true, status: status[channelId] ?? "not configured" });
   });
 
   app.get("/agent", (c) => {

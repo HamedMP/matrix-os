@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, CheckIcon, LoaderIcon } from "lucide-react";
 
 interface ChannelCardProps {
   id: string;
@@ -15,7 +15,7 @@ interface ChannelCardProps {
   status: string;
   config?: Record<string, unknown>;
   fields: Array<{ key: string; label: string; type?: string; placeholder?: string }>;
-  onSave?: (config: Record<string, string>) => void;
+  onSave?: (config: Record<string, string>) => Promise<boolean>;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -28,15 +28,47 @@ const STATUS_STYLES: Record<string, string> = {
 
 export function ChannelCard({ id, name, icon, status, config, fields, onSave }: ChannelCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const f of fields) {
-      init[f.key] = config?.[f.key] as string ?? "";
+      init[f.key] = (config?.[f.key] as string) ?? "";
     }
     return init;
   });
 
+  useEffect(() => {
+    if (!config) return;
+    const updated: Record<string, string> = {};
+    for (const f of fields) {
+      updated[f.key] = (config[f.key] as string) ?? "";
+    }
+    setValues(updated);
+  }, [config, fields]);
+
   const statusClass = STATUS_STYLES[status] ?? STATUS_STYLES.disabled;
+
+  async function handleSave() {
+    if (!onSave) return;
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      const ok = await onSave(values);
+      if (ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } else {
+        setError("Failed to save");
+      }
+    } catch {
+      setError("Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <Card className="gap-0">
@@ -76,12 +108,20 @@ export function ChannelCard({ id, name, icon, status, config, fields, onSave }: 
               />
             </div>
           ))}
+          {error && <p className="text-xs text-red-500">{error}</p>}
           <Button
             size="sm"
             className="h-8 text-xs"
-            onClick={() => onSave?.(values)}
+            disabled={saving}
+            onClick={handleSave}
           >
-            Save
+            {saving ? (
+              <><LoaderIcon className="size-3 animate-spin mr-1" /> Saving...</>
+            ) : saved ? (
+              <><CheckIcon className="size-3 mr-1" /> Saved</>
+            ) : (
+              "Save"
+            )}
           </Button>
         </CardContent>
       )}
