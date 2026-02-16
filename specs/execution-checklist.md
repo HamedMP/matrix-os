@@ -24,6 +24,7 @@ This is a consolidation of tasks and checklists from:
 - `specs/022-whitepaper/*`
 - `specs/023-landing-page/*`
 - `specs/024-app-ecosystem/*`
+- `specs/025-security/*`
 - `specs/web4-vision.md`
 - `specs/matrixos-vision.md`
 
@@ -37,7 +38,7 @@ No implementation is included in this document.
 **006**: Telegram path done (T106-T112, T117, T119). WhatsApp/Discord/Slack deferred. 292 tests after phase.
 **007**: Complete (T120-T129). Cron service + heartbeat runner + IPC tool. 349 tests after phase.
 **008A**: T130-T135 done. T136 (deployment docs) remaining. 362 tests after phase.
-**008B**: Platform service built (Clerk auth, orchestrator, lifecycle, admin, social). T140-T164 scope. Auth uses Clerk + Inngest (not Passkeys/TOTP from original spec). Security hardened: platform API auth middleware (T160), Inngest 409 idempotency (T161), lifecycle manager wired (T162), PostHog flush (T163), real health check (T164).
+**008B**: Platform service built (Clerk auth, orchestrator, lifecycle, admin, social). T140-T166 scope. Auth uses Clerk + Inngest (not Passkeys/TOTP from original spec). Security hardened: platform API auth middleware (T160), Inngest 409 idempotency (T161), lifecycle manager wired (T162), PostHog flush (T163), real health check (T164). Subdomain routing + WS proxy working (T147). Performance tasks T165-T166 added (kernel cold-start optimization).
 **009 P0**: T200-T204 done. T205 crash loop deferred.
 **009 P1**: T210-T216, T220-T222, T224, T230-T234 done. T223 conflict resolution deferred.
 **010**: Not started. See sections below.
@@ -58,6 +59,7 @@ No implementation is included in this document.
 **024**: Complete (T760-T770). AI button, app store, desktop modes, task manager. 29 tests.
 
 **v0.3.0 tagged at earlier commit. 666 tests passing across 59 test files (demo release complete).**
+**v0.4.0 + v0.4.1: Cloud deployment fixes -- local Docker build, GHCR namespace (hamedmp), subdomain routing, WS proxy, API proxy key handling, container boot speed, gateway URL detection for cloud. Security spec added (025).**
 
 ## Critical Fixes (from 2026-02-13 audit)
 
@@ -156,6 +158,10 @@ SEQUENTIAL (ordered deps):
   015 Approval Gates      (T630-T636)  -- after multi-session (shares shell patterns)
   019 Browser             (T690-T699)  -- after voice (per user request)
   024 App Ecosystem       (T760-T779)  -- after prebuilt apps + approval gates
+
+POST-DEMO (cloud hardening):
+  025 Security           (T800-T819)  -- Clerk JWT on subdomains, WS auth, isolation
+  008B Performance       (T165-T166)  -- kernel cold-start, prompt optimization
 
 DEFERRED:
   Device pairing         -- after browser (019)
@@ -348,6 +354,31 @@ Task Manager App (T770):
 
 29 tests. Commits: a1665fa (AI+store), 4796822 (modes), 34c3502 (task manager).
 
+### 24) Phase 025: Security -- User Instance Auth + Access Control (T800-T819)
+
+Source: `specs/025-security/tasks.md`
+
+Auth for User Instances (T800-T809):
+- [ ] T800 Clerk JWT verification on subdomain proxy
+- [ ] T801 Session token passthrough from dashboard to instance
+- [ ] T802 WebSocket auth
+- [ ] T803 Container network isolation
+- [ ] T804 Rate limiting on subdomain proxy
+- [ ] T805 CORS and security headers
+
+API Security (T810-T819):
+- [ ] T810 Platform admin API audit
+- [ ] T811 Secrets management
+
+### 25) Phase 008B: Performance (T165-T166)
+
+Source: `specs/008-cloud/tasks.md` (Performance section)
+
+Measured latency: kernel cold-start (~12s) dominates. Cloudflare Tunnel ~115ms, proxy ~0.3s, Docker network negligible.
+
+- [ ] T165 Investigate Agent SDK persistent process / session reuse
+- [ ] T166 Optimize system prompt token count
+
 ---
 
 ## Cross-Cutting Security + Quality Checklist
@@ -412,6 +443,9 @@ Demo release (Groups 1-4, completed in single swarm session):
 - [x] 024 App Ecosystem (T760-T779)
 
 **Remaining / Deferred:**
+- [ ] Phase 025 Security (T800-T819) -- Clerk JWT on subdomains, WS auth, container isolation
+- [ ] Phase 008B Performance (T165-T166) -- kernel cold-start optimization
+- [ ] Phase 008B remaining: T136 deployment docs, T152 cost dashboard, T154 community panel, T155-T156 Matrix homeserver, T159 production deployment script
 - [ ] Phase 013A Docker (T502-T506)
 - [ ] Phase 011 new computing (T300-T317)
 - [ ] Phase 013B distro image (T510-T517)
