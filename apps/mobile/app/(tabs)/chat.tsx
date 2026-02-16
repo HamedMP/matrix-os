@@ -9,6 +9,7 @@ import {
   type ListRenderItemInfo,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useAuth } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
@@ -31,6 +32,7 @@ function nextId(): string {
 
 export default function ChatScreen() {
   const { client, connectionState, gateway } = useGateway();
+  const { isSignedIn } = useAuth();
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
@@ -38,10 +40,10 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList<Message>>(null);
 
   useEffect(() => {
-    if (!gateway) {
+    if (!gateway && !isSignedIn) {
       router.replace("/connect");
     }
-  }, [gateway, router]);
+  }, [gateway, isSignedIn, router]);
 
   useEffect(() => {
     if (!client) return;
@@ -158,7 +160,9 @@ export default function ChatScreen() {
             <Text style={styles.emptySubtitle}>
               {isConnected
                 ? "Send a message to start a conversation"
-                : "Connecting to gateway..."}
+                : gateway
+                  ? "Connecting to gateway..."
+                  : "No gateway connected"}
             </Text>
             {isConnected && (
               <View style={styles.suggestionsContainer}>

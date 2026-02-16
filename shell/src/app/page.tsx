@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useTheme } from "@/hooks/useTheme";
+import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useChatState } from "@/hooks/useChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
@@ -21,6 +22,7 @@ import { MessageSquareIcon } from "lucide-react";
 
 export default function Home() {
   useTheme();
+  useDesktopConfig();
 
   const chat = useChatState();
   const modeConfig = useDesktopMode((s) => s.getModeConfig(s.mode));

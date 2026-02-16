@@ -1,7 +1,18 @@
 import { Hono } from "hono";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ChannelManager } from "../channels/manager.js";
+
+const DESKTOP_DEFAULTS = {
+  background: { type: "pattern" },
+  dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+};
+
+const THEME_DEFAULTS = {};
+
+function isValidFilename(name: string): boolean {
+  return /^[a-zA-Z0-9_.-]+$/.test(name) && !name.includes("..");
+}
 
 export function createSettingsRoutes(opts: {
   homePath: string;
@@ -61,7 +72,6 @@ export function createSettingsRoutes(opts: {
   app.get("/skills", (c) => {
     const skillsDir = join(homePath, "agents/skills");
     if (!existsSync(skillsDir)) return c.json([]);
-    const { readdirSync } = require("node:fs");
     const files = readdirSync(skillsDir).filter((f: string) => f.endsWith(".md"));
     const skills = files.map((f: string) => {
       const content = readFileSync(join(skillsDir, f), "utf-8");
@@ -75,6 +85,101 @@ export function createSettingsRoutes(opts: {
       };
     });
     return c.json(skills);
+  });
+
+  // --- Desktop config ---
+
+  const desktopPath = join(homePath, "system/desktop.json");
+
+  app.get("/desktop", (c) => {
+    try {
+      if (existsSync(desktopPath)) {
+        return c.json(JSON.parse(readFileSync(desktopPath, "utf-8")));
+      }
+    } catch { /* fallback to defaults */ }
+    return c.json(DESKTOP_DEFAULTS);
+  });
+
+  app.put("/desktop", async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    writeFileSync(desktopPath, JSON.stringify(body, null, 2) + "\n");
+    return c.json({ ok: true });
+  });
+
+  // --- Theme config ---
+
+  const themePath = join(homePath, "system/theme.json");
+
+  app.get("/theme", (c) => {
+    try {
+      if (existsSync(themePath)) {
+        return c.json(JSON.parse(readFileSync(themePath, "utf-8")));
+      }
+    } catch { /* fallback to defaults */ }
+    return c.json(THEME_DEFAULTS);
+  });
+
+  app.put("/theme", async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    writeFileSync(themePath, JSON.stringify(body, null, 2) + "\n");
+    return c.json({ ok: true });
+  });
+
+  // --- Wallpapers ---
+
+  const wallpapersDir = join(homePath, "system/wallpapers");
+
+  app.get("/wallpapers", (c) => {
+    if (!existsSync(wallpapersDir)) return c.json([]);
+    const files = readdirSync(wallpapersDir);
+    return c.json(
+      files.map((name) => ({
+        name,
+        url: `/files/system/wallpapers/${name}`,
+      })),
+    );
+  });
+
+  app.post("/wallpaper", async (c) => {
+    let body: { name: string; data: string };
+    try {
+      body = await c.req.json<{ name: string; data: string }>();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    if (!body.name || !body.data) {
+      return c.json({ error: "name and data are required" }, 400);
+    }
+    if (!isValidFilename(body.name)) {
+      return c.json({ error: "Invalid filename" }, 400);
+    }
+    mkdirSync(wallpapersDir, { recursive: true });
+    const filePath = join(wallpapersDir, body.name);
+    writeFileSync(filePath, Buffer.from(body.data, "base64"));
+    return c.json({ ok: true });
+  });
+
+  app.delete("/wallpaper/:name", (c) => {
+    const name = c.req.param("name");
+    if (!isValidFilename(name)) {
+      return c.json({ error: "Invalid filename" }, 400);
+    }
+    const filePath = join(wallpapersDir, name);
+    if (!existsSync(filePath)) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    unlinkSync(filePath);
+    return c.json({ ok: true });
   });
 
   return app;

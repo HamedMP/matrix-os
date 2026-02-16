@@ -12,7 +12,7 @@
   },
   "packageManager": "pnpm@10.6.2",
   "scripts": {
-    "dev": "bun run --filter './packages/*' dev & bun run --filter './shell' dev",
+    "dev": "bun run --filter '@matrix-os/gateway' dev & bun run --filter '@matrix-os/proxy' dev & bun run --filter './shell' dev",
     "dev:kernel": "bun run --filter '@matrix-os/kernel' dev",
     "dev:gateway": "bun run --filter '@matrix-os/gateway' dev",
     "dev:shell": "bun run --filter shell dev",

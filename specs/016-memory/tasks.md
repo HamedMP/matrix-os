@@ -26,7 +26,7 @@ Key files:
 
 ## Tests (TDD -- write FIRST)
 
-- [ ] T640a [P] [US-MEM1] Write `tests/kernel/memory.test.ts`:
+- [x] T640a [P] [US-MEM1] Write `tests/kernel/memory.test.ts`:
   - `createMemoryStore(db)` initializes FTS5 table
   - `remember(content, opts)` inserts memory entry
   - `recall(query, limit)` returns relevant memories ranked by FTS5 score
@@ -36,7 +36,7 @@ Key files:
   - Category filtering: `recall(query, { category: "preference" })` only searches preferences
   - Memory export: writes .md file to memory directory
 
-- [ ] T640b [P] [US-MEM1] Write `tests/kernel/prompt-memory.test.ts`:
+- [x] T640b [P] [US-MEM1] Write `tests/kernel/prompt-memory.test.ts`:
   - `buildSystemPrompt()` includes relevant memories section when memories exist
   - Memory section stays within token budget (doesn't crowd out other sections)
   - Empty memories = no memory section in prompt
@@ -45,14 +45,14 @@ Key files:
 
 ### Schema
 
-- [ ] T641 [US-MEM1] Add memory table to `packages/kernel/src/db.ts`:
+- [x] T641 [US-MEM1] Add memory table to `packages/kernel/src/db.ts`:
   - Table: `memories` -- `id TEXT PRIMARY KEY, content TEXT NOT NULL, source TEXT, category TEXT DEFAULT 'fact', created_at TEXT, updated_at TEXT`
   - FTS5 virtual table: `memories_fts` on `content` column
   - Migration: create table + FTS5 on DB init (same pattern as tasks table)
 
 ### Memory Store
 
-- [ ] T642 [US-MEM1] Implement `createMemoryStore(db)` in `packages/kernel/src/memory.ts`:
+- [x] T642 [US-MEM1] Implement `createMemoryStore(db)` in `packages/kernel/src/memory.ts`:
   - `remember(content, opts?: { source?, category? })`: insert into memories + FTS5. Check for duplicates (same content within edit distance). Returns memory ID.
   - `recall(query, opts?: { limit?, category? })`: FTS5 MATCH query, return ranked results. Default limit: 10.
   - `forget(id)`: delete from memories + FTS5.
@@ -62,7 +62,7 @@ Key files:
 
 ### IPC Tools
 
-- [ ] T643 [US-MEM1] Add memory IPC tools to `ipc-server.ts`:
+- [x] T643 [US-MEM1] Add memory IPC tools to `ipc-server.ts`:
   - `remember` -- `{ content: string, category?: string }`. Stores a memory. Use when user says "remember that...", "I prefer...", "my X is Y".
   - `recall` -- `{ query: string, limit?: number, category?: string }`. Searches memories. Use when kernel needs context that might have been stored before.
   - `forget` -- `{ id: string }`. Removes a specific memory. Use when user says "forget that", "that's no longer true".
@@ -70,7 +70,7 @@ Key files:
 
 ### Auto-Extraction (Optional, Configurable)
 
-- [ ] T644 [US-MEM1] Auto-memory extraction in `packages/kernel/src/memory.ts`:
+- [x] T644 [US-MEM1] Auto-memory extraction in `packages/kernel/src/memory.ts`:
   - `extractMemories(conversation: ConversationMessage[])`: analyze conversation for memorable facts.
   - Pattern matching for: "I prefer X", "My name is X", "I always want X", "Remember that X", explicit instructions.
   - Returns `{ content, category }[]` candidates.
@@ -79,7 +79,7 @@ Key files:
 
 ### System Prompt Integration
 
-- [ ] T645 [US-MEM1] Inject memories into system prompt in `packages/kernel/src/prompt.ts`:
+- [x] T645 [US-MEM1] Inject memories into system prompt in `packages/kernel/src/prompt.ts`:
   - Before conversation starts, call `recall(userMessage, { limit: 5 })` with the user's latest message.
   - Format as section: `## Relevant Memories\n- [preference] User prefers dark themes\n- [fact] User's timezone is CET`.
   - Budget: max 300 tokens for memory section (within existing 7K budget).
@@ -87,7 +87,7 @@ Key files:
 
 ### File Export
 
-- [ ] T646 [US-MEM1] Memory directory in home template:
+- [x] T646 [US-MEM1] Memory directory in home template:
   - Add `home/system/memory/` directory (empty, with .gitkeep).
   - `exportToFiles()` called periodically (on gateway shutdown, or after N new memories).
   - Each file: `{category}-{id-prefix}.md` with frontmatter.
@@ -103,8 +103,8 @@ Key files:
 
 ## Checkpoint
 
-- [ ] User says "Remember that I prefer dark themes" -- kernel stores memory.
-- [ ] New conversation: ask "What theme do I like?" -- kernel recalls memory and answers correctly.
-- [ ] "Forget that preference" -- memory deleted.
-- [ ] `~/system/memory/` contains .md files matching stored memories.
-- [ ] `bun run test` passes.
+- [x] User says "Remember that I prefer dark themes" -- kernel stores memory.
+- [x] New conversation: ask "What theme do I like?" -- kernel recalls memory and answers correctly.
+- [x] "Forget that preference" -- memory deleted.
+- [x] `~/system/memory/` contains .md files matching stored memories.
+- [x] `bun run test` passes.

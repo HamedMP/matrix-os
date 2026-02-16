@@ -4,14 +4,14 @@ import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 
-interface Theme {
+export interface Theme {
   name: string;
   colors: Record<string, string>;
   fonts: Record<string, string>;
   radius: string;
 }
 
-const DEFAULT_THEME: Theme = {
+export const DEFAULT_THEME: Theme = {
   name: "default",
   colors: {
     background: "#ece5f0",
@@ -70,6 +70,15 @@ export function useTheme() {
   });
 
   return theme;
+}
+
+export async function saveTheme(theme: Theme): Promise<void> {
+  const gatewayUrl = getGatewayUrl();
+  await fetch(`${gatewayUrl}/api/settings/theme`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(theme),
+  });
 }
 
 async function fetchTheme(): Promise<Theme> {

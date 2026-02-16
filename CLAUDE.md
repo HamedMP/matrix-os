@@ -51,6 +51,7 @@ Key principles:
 - `specs/028-browser/`: Browser automation: Playwright MCP, role snapshots, composite tool (T900-T929)
 - `specs/029-plugins/`: Plugin system: manifest, API, hooks (void + modifying), security (T930-T969)
 - `specs/030-settings/`: Settings dashboard: agent, channels, skills, security, cron, plugins (T970-T999)
+- `specs/031-desktop-customization/`: Desktop customization: theme presets, backgrounds, dock config, settings UI (T1000-T1007)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/`: original architecture spec, plan, tasks (reference only)
@@ -180,7 +181,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 926 passing (80 test files) | **Through Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 993 passing (85 test files) | **Through Phase 031 desktop customization + Phase 025 security + Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -199,6 +200,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 012**: Onboarding: persona engine (7 roles + keyword matching), setup plan (Zod schema), provisioner (batch dispatch + kanban task board), IPC tools, skill templates (study-timer, budget-helper), bootstrap.md flow, system prompt integration, Mission Control (kanban/grid toggle, cron section, add task, AppTile, TaskDetail, ui: cards/ui: options/ui: status blocks, zustand preferences), Cmd+K command palette (shadcn CommandDialog, Zustand command registry, global keyboard shortcuts)
 - **Phase 009 P1 Sync+Mobile**: Git sync (auto-sync, sync_files IPC tool), mobile responsive shell, PWA manifest
 - **Phase 008B**: Multi-tenant platform: platform service (Hono :9000, Drizzle, dockerode orchestrator, lifecycle manager, social API), Clerk auth + Inngest provisioning in www/, admin dashboard, Cloudflare Tunnel + docker-compose.platform.yml
+- **Phase 031**: Desktop customization: 6 theme presets, background system (pattern/solid/gradient/wallpaper), dock config (position/size/autoHide), Appearance settings UI, chat-driven customization via knowledge file. 38 tests (5 test files).
 
 ### In Progress
 - **013A Docker** (T500-T506): Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  PaletteIcon,
   UserIcon,
   MessageSquareIcon,
   SparklesIcon,
@@ -10,6 +11,7 @@ import {
   PuzzleIcon,
   MonitorIcon,
 } from "lucide-react";
+import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
 import { ChannelsSection } from "./settings/sections/ChannelsSection";
 import { SkillsSection } from "./settings/sections/SkillsSection";
@@ -17,8 +19,10 @@ import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
+import { useDesktopConfigStore } from "@/stores/desktop-config";
 
 const sections = [
+  { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "agent", label: "Agent", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
@@ -69,7 +73,9 @@ interface SettingsProps {
 }
 
 export function Settings({ open, onOpenChange }: SettingsProps) {
-  const [activeSection, setActiveSection] = useState<SectionId>("agent");
+  const [activeSection, setActiveSection] = useState<SectionId>("appearance");
+  const dockPosition = useDesktopConfigStore((s) => s.dock.position);
+  const dockSize = useDesktopConfigStore((s) => s.dock.size);
 
   useEffect(() => {
     if (!open) return;
@@ -84,7 +90,7 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
 
   useEffect(() => {
     if (!open) {
-      setActiveSection("agent");
+      setActiveSection("appearance");
     }
   }, [open]);
 
@@ -99,7 +105,13 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
         }}
       />
 
-      <div className="relative flex h-full z-10 overflow-hidden md:pl-14">
+      <div
+        className="relative flex h-full z-10 overflow-hidden"
+        style={{
+          paddingLeft: dockPosition === "left" ? dockSize : undefined,
+          paddingRight: dockPosition === "right" ? dockSize : undefined,
+        }}
+      >
         <div className="flex flex-col flex-1 bg-card/95 backdrop-blur-xl m-4 md:m-8 rounded-2xl shadow-2xl overflow-hidden">
           <header className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none">
             <TrafficLights onClose={() => onOpenChange(false)} />
@@ -132,6 +144,7 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
             </aside>
 
             <main className="flex-1 overflow-y-auto">
+              {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "agent" && <AgentSection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "skills" && <SkillsSection />}

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
+import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
@@ -26,8 +27,6 @@ import { AmbientClock } from "./AmbientClock";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
-
-const DOCK_WIDTH = 56;
 
 export interface AppWindow {
   id: string;
@@ -120,10 +119,14 @@ function DockIcon({
   name,
   active,
   onClick,
+  iconSize = 40,
+  tooltipSide = "right",
 }: {
   name: string;
   active: boolean;
   onClick: () => void;
+  iconSize?: number;
+  tooltipSide?: "left" | "right" | "top" | "bottom";
 }) {
   const initial = name.charAt(0).toUpperCase();
 
@@ -132,7 +135,8 @@ function DockIcon({
       <TooltipTrigger asChild>
         <button
           onClick={onClick}
-          className="relative flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+          className="relative flex items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+          style={{ width: iconSize, height: iconSize }}
         >
           <span className="text-sm font-semibold text-foreground">
             {initial}
@@ -142,7 +146,7 @@ function DockIcon({
           )}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8}>
+      <TooltipContent side={tooltipSide} sideOffset={8}>
         {name}
       </TooltipContent>
     </Tooltip>
@@ -159,6 +163,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const dock = useDesktopConfigStore((s) => s.dock);
+  const isHorizontal = dock.position === "bottom";
+  const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
+  const dockXOffset = dock.position === "left" ? dock.size + 20 : 20;
 
   const dragRef = useRef<{
     id: string;
@@ -199,7 +208,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           title: name,
           path,
-          x: DOCK_WIDTH + 20 + prev.length * 30,
+          x: dockXOffset + prev.length * 30,
           y: 20 + prev.length * 30,
           width: 640,
           height: 480,
@@ -208,7 +217,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         },
       ];
     });
-  }, []);
+  }, [dockXOffset]);
 
   const closedPathsRef = useRef(new Set<string>());
 
@@ -522,25 +531,38 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="relative flex-1 flex flex-col md:flex-row">
-        {/* Desktop dock (left sidebar) -- hidden in ambient/conversational modes */}
+        {/* Desktop dock -- hidden in ambient/conversational modes */}
         {modeConfig.showDock && <aside
-          className="hidden md:flex flex-col items-center gap-2 py-3 border-r border-border/40 bg-card/40 backdrop-blur-sm z-[55]"
-          style={{ width: DOCK_WIDTH }}
+          className={[
+            "hidden md:flex items-center gap-2 bg-card/40 backdrop-blur-sm z-[55] transition-transform duration-200",
+            isHorizontal ? "flex-row px-3 border-t border-border/40 order-last" : "flex-col py-3 border-border/40",
+            dock.position === "left" && "border-r",
+            dock.position === "right" && "border-l order-last",
+            dock.autoHide && "group",
+            dock.autoHide && dock.position === "left" && "-translate-x-full hover:translate-x-0",
+            dock.autoHide && dock.position === "right" && "translate-x-full hover:translate-x-0",
+            dock.autoHide && dock.position === "bottom" && "translate-y-full hover:translate-y-0",
+          ].filter(Boolean).join(" ")}
+          style={isHorizontal
+            ? { width: "100%", height: dock.size }
+            : { width: dock.size }
+          }
         >
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 onClick={() => setTaskBoardOpen((prev) => !prev)}
-                className={`flex size-10 items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                   taskBoardOpen
                     ? "bg-primary text-primary-foreground border-primary"
                     : "bg-card border-border/60"
                 }`}
+                style={{ width: dock.iconSize, height: dock.iconSize }}
               >
                 <KanbanSquareIcon className="size-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>
+            <TooltipContent side={tooltipSide} sideOffset={8}>
               Tasks
             </TooltipContent>
           </Tooltip>
@@ -549,22 +571,23 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             <TooltipTrigger asChild>
               <button
                 onClick={onToggleStore}
-                className={`flex size-10 items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                   storeOpen
                     ? "bg-primary text-primary-foreground border-primary"
                     : "bg-card border-border/60"
                 }`}
+                style={{ width: dock.iconSize, height: dock.iconSize }}
               >
                 <StoreIcon className="size-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>
+            <TooltipContent side={tooltipSide} sideOffset={8}>
               App Store
             </TooltipContent>
           </Tooltip>
 
           {apps.length > 0 && (
-            <div className="w-6 border-t border-border/40" />
+            <div className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"} />
           )}
 
           {apps.map((app) => {
@@ -577,21 +600,27 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 name={app.name}
                 active={!!win}
                 onClick={() => openWindow(app.name, app.path)}
+                iconSize={dock.iconSize}
+                tooltipSide={tooltipSide}
               />
             );
           })}
 
-          <div className="mt-auto flex flex-col items-center gap-2">
+          <div className={isHorizontal
+            ? "ml-auto flex flex-row items-center gap-2"
+            : "mt-auto flex flex-col items-center gap-2"
+          }>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   onClick={cycleMode}
-                  className="flex size-10 items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+                  className="flex items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
+                  style={{ width: dock.iconSize, height: dock.iconSize }}
                 >
                   <MonitorIcon className="size-4" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>
+              <TooltipContent side={tooltipSide} sideOffset={8}>
                 {modeConfig.label} mode
               </TooltipContent>
             </Tooltip>
@@ -599,16 +628,17 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               <TooltipTrigger asChild>
                 <button
                   onClick={() => setSettingsOpen((prev) => !prev)}
-                  className={`flex size-10 items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                  className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                     settingsOpen
                       ? "bg-primary text-primary-foreground border-primary"
                       : "bg-card border-border/60"
                   }`}
+                  style={{ width: dock.iconSize, height: dock.iconSize }}
                 >
                   <SettingsIcon className="size-4" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>
+              <TooltipContent side={tooltipSide} sideOffset={8}>
                 Settings
               </TooltipContent>
             </Tooltip>

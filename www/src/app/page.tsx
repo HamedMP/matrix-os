@@ -902,10 +902,12 @@ function OpenClawBridge() {
     "Skills & plugins",
     "Persistent memory",
     "Browser automation",
+    "Web search & fetch",
     "Full system access",
     "Proactive scheduling",
     "Self-hosted & private",
     "Open source",
+    "Test-driven",
   ];
 
   const matrixOnlyFeatures = [
@@ -915,12 +917,10 @@ function OpenClawBridge() {
     "Federated identity",
     "AI-to-AI communication",
     "Peer-to-peer device sync",
-    "Test-driven (926 tests)",
     "Native mobile app (Expo)",
     "Plugin system with hooks",
-    "Browser automation",
-    "Web search and fetch tools",
     "Settings dashboard",
+    "Web 4 platform vision",
   ];
 
   return (
@@ -934,22 +934,22 @@ function OpenClawBridge() {
                 variant="outline"
                 className="mb-6 border-primary/30 bg-primary/10 text-primary font-mono text-[10px] tracking-[0.2em] uppercase backdrop-blur-sm py-1.5 px-4"
               >
-                Sound Familiar?
+                Inspired By
               </Badge>
 
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight">
-                The best personal AI{" "}
+                Standing on the shoulders{" "}
                 <br className="hidden sm:block" />
                 <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">
-                  just got acquired.
+                  of open source.
                 </span>
               </h2>
 
               <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
                 OpenClaw proved that AI should run on your machine, work from any
-                chat app, and write its own skills. Then OpenAI acquired its creator.{" "}
+                chat app, and write its own skills.{" "}
                 <span className="text-foreground font-medium">
-                  The open-source vision needed a new home.
+                  Matrix OS takes that foundation further: a full operating system.
                 </span>
               </p>
             </div>

@@ -1,0 +1,12 @@
+{
+  "background": {
+    "type": "solid",
+    "color": "#0a0a0a"
+  },
+  "dock": {
+    "position": "left",
+    "size": 56,
+    "iconSize": 40,
+    "autoHide": false
+  }
+}

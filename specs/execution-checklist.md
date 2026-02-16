@@ -25,6 +25,7 @@ This is a consolidation of tasks and checklists from:
 - `specs/023-landing-page/*`
 - `specs/024-app-ecosystem/*`
 - `specs/025-security/*`
+- `specs/031-desktop-customization/*`
 - `specs/web4-vision.md`
 - `specs/matrixos-vision.md`
 
@@ -57,6 +58,7 @@ No implementation is included in this document.
 **022**: Complete (T730-T739). Whitepaper.
 **023**: Complete (T740-T752). Landing page narrative + agent showcase.
 **024**: Complete (T760-T770). AI button, app store, desktop modes, task manager. 29 tests.
+**031**: Complete (T1000-T1007). Desktop customization: theme presets, background system, dock config, settings UI, chat-driven customization. 38 tests (5 test files).
 
 **v0.3.0 tagged at earlier commit. 666 tests passing across 59 test files (demo release complete).**
 **v0.4.0 + v0.4.1: Cloud deployment fixes -- local Docker build, GHCR namespace (hamedmp), subdomain routing, WS proxy, API proxy key handling, container boot speed, gateway URL detection for cloud. Security spec added (025).**
@@ -159,8 +161,9 @@ SEQUENTIAL (ordered deps):
   019 Browser             (T690-T699)  -- after voice (per user request)
   024 App Ecosystem       (T760-T779)  -- after prebuilt apps + approval gates
 
-POST-DEMO (cloud hardening):
+POST-DEMO (cloud hardening + polish):
   025 Security           (T800-T849)  -- DONE (Phases A-C + E, hardening). Remaining: container isolation, sandbox
+  031 Desktop Custom.    (T1000-T1007) -- DONE. Theme presets, backgrounds, dock config, settings UI
   008B Performance       (T165-T166)  -- kernel cold-start, prompt optimization
 
 DEFERRED:
@@ -410,7 +413,22 @@ Remaining (deferred):
 
 82 new tests (10 test files). 862 total passing.
 
-### 25) Phase 008B: Performance (T165-T166)
+### 25) Phase 031: Desktop Customization (T1000-T1007) -- COMPLETE
+
+Source: `specs/031-desktop-customization/tasks.md`
+
+- [x] T1000 Gateway endpoints: GET/PUT settings/desktop, settings/theme, wallpaper CRUD, binary file serving (11 tests)
+- [x] T1001 Theme presets (6 presets) + saveTheme + home template fixes (5 tests)
+- [x] T1002 Desktop config store + hook + background system (11 tests)
+- [x] T1003 shadcn UI primitives: Slider + Switch
+- [x] T1004 Appearance settings UI: ThemeEditor, BackgroundEditor, DockEditor, ColorPicker, AppearanceSection (11 tests)
+- [x] T1005 Dock customization in Desktop.tsx (dynamic position/size/autoHide)
+- [x] T1006 Chat-driven customization knowledge file (replaces theme-system.md)
+- [x] T1007 Spec document + appearance tests
+
+38 new tests (5 test files). 993 total passing across 85 test files.
+
+### 26) Phase 008B: Performance (T165-T166)
 
 Source: `specs/008-cloud/tasks.md` (Performance section)
 
@@ -444,6 +462,9 @@ New:
 - **ConversationStore**: T621 (multi-session). Extended interface, backwards compatible.
 - **server.ts**: T633 (approval WS) + T665 (usage endpoint) + T670 (voice WS). New endpoints, no conflicts.
 - **home/ template**: T720 (prebuilt apps). Large change to template. Coordinate with T718 (icons).
+- **routes/settings.ts**: T1000 (desktop/theme/wallpaper endpoints). Additive routes, no conflicts with existing settings.
+- **server.ts**: T1000 (binary file serving for images). Additive to existing /files/* handler.
+- **home/system/**: T1001-T1002 (theme.json color key fix, desktop.json, wallpapers/). Template changes.
 
 ## Execution Order (Updated)
 
@@ -482,8 +503,11 @@ Demo release (Groups 1-4, completed in single swarm session):
 - [x] 019 Browser Automation (T690-T699)
 - [x] 024 App Ecosystem (T760-T779)
 
-**Remaining / Deferred:**
+**Post-Demo Polish (completed):**
 - [x] Phase 025 Security (T800-T849) -- Phases A-C + E done, hardening done. Remaining: container isolation, admin audit, sandbox
+- [x] Phase 031 Desktop Customization (T1000-T1007) -- theme presets, backgrounds, dock config, settings UI, chat-driven
+
+**Remaining / Deferred:**
 - [ ] Phase 008B Performance (T165-T166) -- kernel cold-start optimization
 - [ ] Phase 008B remaining: T136 deployment docs, T152 cost dashboard, T154 community panel, T155-T156 Matrix homeserver, T159 production deployment script
 - [ ] Phase 013A Docker (T502-T506)

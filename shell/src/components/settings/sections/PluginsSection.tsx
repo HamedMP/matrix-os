@@ -3,8 +3,16 @@
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { getGatewayUrl } from "@/lib/gateway";
-import { PuzzleIcon } from "lucide-react";
+import { PuzzleIcon, PlusIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
 
@@ -31,9 +39,18 @@ const ORIGIN_STYLES: Record<string, string> = {
   config: "bg-yellow-500/10 text-yellow-600",
 };
 
+const CONFIG_EXAMPLE = `{
+  "plugins": {
+    "list": [
+      "~/plugins/my-plugin"
+    ]
+  }
+}`;
+
 export function PluginsSection() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [error, setError] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     fetch(`${GATEWAY}/api/plugins`)
@@ -47,7 +64,13 @@ export function PluginsSection() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <h2 className="text-lg font-semibold">Plugins</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Plugins</h2>
+        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setDialogOpen(true)}>
+          <PlusIcon className="size-3 mr-1" />
+          Install Plugin
+        </Button>
+      </div>
 
       {error && (
         <Card>
@@ -126,6 +149,38 @@ export function PluginsSection() {
           })}
         </div>
       )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Install Plugin</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium mb-1">Option 1: Workspace plugins</p>
+              <p className="text-xs text-muted-foreground">
+                Place your plugin folder in <code className="bg-muted px-1 rounded">~/plugins/</code>.
+                It will be auto-discovered on the next gateway restart.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-medium mb-1">Option 2: Config path</p>
+              <p className="text-xs text-muted-foreground mb-2">
+                Add the plugin path to your <code className="bg-muted px-1 rounded">config.json</code> under
+                the <code className="bg-muted px-1 rounded">plugins.list</code> array:
+              </p>
+              <pre className="text-xs bg-muted/30 p-3 rounded-md overflow-x-auto">
+                {CONFIG_EXAMPLE}
+              </pre>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Plugins must include a <code className="bg-muted px-1 rounded">plugin.json</code> manifest
+              with an id, version, and entry point. See the docs for the full plugin API.
+            </p>
+          </div>
+          <DialogFooter showCloseButton />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

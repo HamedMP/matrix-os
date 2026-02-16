@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, normalize, resolve } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
@@ -468,10 +468,9 @@ export function createGateway(config: GatewayConfig) {
       return c.text("Not found", 404);
     }
 
-    const content = readFileSync(fullPath, "utf-8");
-    const ext = filePath.split(".").pop();
+    const ext = filePath.split(".").pop() ?? "";
 
-    const mimeTypes: Record<string, string> = {
+    const textMimeTypes: Record<string, string> = {
       html: "text/html",
       json: "application/json",
       js: "application/javascript",
@@ -480,9 +479,37 @@ export function createGateway(config: GatewayConfig) {
       txt: "text/plain",
     };
 
+    const imageMimeTypes: Record<string, string> = {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      svg: "image/svg+xml",
+    };
+
+    if (imageMimeTypes[ext]) {
+      const buffer = readFileSync(fullPath);
+      return c.body(buffer, 200, {
+        "Content-Type": imageMimeTypes[ext],
+      });
+    }
+
+    const content = readFileSync(fullPath, "utf-8");
     return c.body(content, 200, {
-      "Content-Type": mimeTypes[ext ?? ""] ?? "text/plain",
+      "Content-Type": textMimeTypes[ext] ?? "text/plain",
     });
+  });
+
+  app.put("/files/*", async (c) => {
+    const filePath = c.req.path.replace("/files/", "");
+    const fullPath = resolveWithinHome(homePath, filePath);
+    if (!fullPath) return c.text("Invalid path", 403);
+    const content = await c.req.text();
+    const dir = dirname(fullPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(fullPath, content, "utf-8");
+    return c.json({ ok: true });
   });
 
   app.post("/api/bridge/data", async (c) => {
@@ -642,6 +669,46 @@ export function createGateway(config: GatewayConfig) {
 
   app.get("/api/cron", (c) => {
     return c.json(cronService.listJobs());
+  });
+
+  app.post("/api/cron", async (c) => {
+    const body = await c.req.json<{
+      name: string;
+      message: string;
+      schedule: { type: string; intervalMs?: number; cron?: string; at?: string };
+      target?: { channel: string; chatId: string };
+    }>();
+    if (!body.name || !body.message || !body.schedule?.type) {
+      return c.json({ error: "name, message, and schedule.type are required" }, 400);
+    }
+    const { type } = body.schedule;
+    let schedule: import("./cron/types.js").CronSchedule;
+    if (type === "interval" && body.schedule.intervalMs) {
+      schedule = { type: "interval", intervalMs: body.schedule.intervalMs };
+    } else if (type === "cron" && body.schedule.cron) {
+      schedule = { type: "cron", cron: body.schedule.cron };
+    } else if (type === "once" && body.schedule.at) {
+      schedule = { type: "once", at: body.schedule.at };
+    } else {
+      return c.json({ error: "Invalid schedule" }, 400);
+    }
+    const job: import("./cron/types.js").CronJob = {
+      id: crypto.randomUUID(),
+      name: body.name,
+      message: body.message,
+      schedule,
+      target: body.target as import("./cron/types.js").CronTarget | undefined,
+      createdAt: new Date().toISOString(),
+    };
+    cronService.addJob(job);
+    return c.json(job, 201);
+  });
+
+  app.delete("/api/cron/:id", (c) => {
+    const id = c.req.param("id");
+    const removed = cronService.removeJob(id);
+    if (!removed) return c.json({ error: "Not found" }, 404);
+    return c.json({ ok: true });
   });
 
   app.get("/api/channels/status", (c) => {

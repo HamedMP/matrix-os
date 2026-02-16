@@ -28,7 +28,12 @@
         "backgroundColor": "#ece5f0"
       },
       "package": "com.matrixos.mobile",
-      "permissions": ["CAMERA", "RECORD_AUDIO", "USE_BIOMETRIC", "VIBRATE"]
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "USE_BIOMETRIC",
+        "VIBRATE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -50,7 +55,8 @@
           "icon": "./assets/notification-icon.png",
           "color": "#c2703a"
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
