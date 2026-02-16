@@ -124,10 +124,10 @@ export function SecuritySection() {
           </div>
 
           <div className="space-y-3">
-            {report.findings.map((finding) => {
+            {report.findings.map((finding, i) => {
               const style = SEVERITY_STYLES[finding.severity] ?? SEVERITY_STYLES.info;
               return (
-                <Card key={finding.id} className="gap-0">
+                <Card key={`${finding.id}-${i}`} className="gap-0">
                   <CardHeader className="py-3 px-4">
                     <div className="flex items-center gap-3">
                       {style.icon}
