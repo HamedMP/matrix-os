@@ -3,6 +3,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
+import * as SecureStore from "expo-secure-store";
 import {
   useFonts,
   Inter_400Regular,
@@ -15,6 +16,7 @@ import {
   JetBrainsMono_700Bold,
 } from "@expo-google-fonts/jetbrains-mono";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { ClerkProvider } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { getActiveGateway, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
@@ -23,6 +25,15 @@ import { colors, fonts } from "@/lib/theme";
 import "../global.css";
 
 SplashScreen.preventAutoHideAsync();
+
+const tokenCache = {
+  async getToken(key: string) {
+    return SecureStore.getItemAsync(key);
+  },
+  async saveToken(key: string, value: string) {
+    return SecureStore.setItemAsync(key, value);
+  },
+};
 
 interface GatewayContextValue {
   client: GatewayClient | null;
@@ -113,30 +124,40 @@ export default function RootLayout() {
   }
 
   return (
-    <GestureHandlerRootView style={styles.flex}>
-      <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway }}>
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.light.background },
-            headerTintColor: colors.light.foreground,
-            headerTitleStyle: { fontFamily: fonts.sansSemiBold },
-            contentStyle: { backgroundColor: colors.light.background },
-          }}
-        >
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="connect"
-            options={{
-              title: "Connect to Gateway",
-              presentation: "modal",
+    <ClerkProvider tokenCache={tokenCache}>
+      <GestureHandlerRootView style={styles.flex}>
+        <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway }}>
+          <Stack
+            screenOptions={{
               headerStyle: { backgroundColor: colors.light.background },
+              headerTintColor: colors.light.foreground,
+              headerTitleStyle: { fontFamily: fonts.sansSemiBold },
+              contentStyle: { backgroundColor: colors.light.background },
             }}
-          />
-        </Stack>
-        <StatusBar style="dark" />
-      </GatewayContext.Provider>
-    </GestureHandlerRootView>
+          >
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="connect"
+              options={{
+                title: "Self-hosted Gateway",
+                presentation: "modal",
+                headerStyle: { backgroundColor: colors.light.background },
+              }}
+            />
+            <Stack.Screen
+              name="sign-in"
+              options={{
+                title: "Sign In",
+                presentation: "modal",
+                headerStyle: { backgroundColor: colors.light.background },
+              }}
+            />
+          </Stack>
+          <StatusBar style="dark" />
+        </GatewayContext.Provider>
+      </GestureHandlerRootView>
+    </ClerkProvider>
   );
 }
 

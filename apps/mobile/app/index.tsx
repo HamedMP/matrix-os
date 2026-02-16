@@ -2,21 +2,23 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from "@clerk/clerk-expo";
 import { useGateway } from "./_layout";
 import { useEffect } from "react";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 export default function Index() {
   const { gateway } = useGateway();
+  const { isSignedIn } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (gateway) {
+    if (gateway || isSignedIn) {
       router.replace("/(tabs)/chat");
     }
-  }, [gateway, router]);
+  }, [gateway, isSignedIn, router]);
 
-  if (gateway) {
+  if (gateway || isSignedIn) {
     return null;
   }
 
@@ -36,25 +38,25 @@ export default function Index() {
 
         <View style={styles.actions}>
           <Pressable
-            onPress={() => router.push("/connect")}
+            onPress={() => router.push("/sign-in")}
             style={({ pressed }) => [
               styles.primaryButton,
               pressed && styles.buttonPressed,
             ]}
           >
-            <Ionicons name="link" size={20} color={colors.light.primaryForeground} />
-            <Text style={styles.primaryButtonText}>Connect to Gateway</Text>
+            <Ionicons name="person-circle-outline" size={20} color={colors.light.primaryForeground} />
+            <Text style={styles.primaryButtonText}>Sign In</Text>
           </Pressable>
 
           <Pressable
-            onPress={() => {}}
+            onPress={() => router.push("/connect")}
             style={({ pressed }) => [
               styles.secondaryButton,
               pressed && styles.buttonPressed,
             ]}
           >
-            <Ionicons name="person-circle-outline" size={20} color={colors.light.foreground} />
-            <Text style={styles.secondaryButtonText}>Sign in with Clerk</Text>
+            <Ionicons name="link" size={20} color={colors.light.foreground} />
+            <Text style={styles.secondaryButtonText}>Self-hosted Setup</Text>
           </Pressable>
         </View>
 
