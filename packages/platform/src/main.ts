@@ -292,7 +292,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     extraEnv,
   });
 
-  const lifecycle = createLifecycleManager({ db, orchestrator });
+  const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
+  const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
   lifecycle.start();
 
   // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
