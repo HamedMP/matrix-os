@@ -2,9 +2,9 @@
 # Produces a container running gateway (port 4000) + shell (port 3000)
 
 # --------------------------------------------------
-# Stage 1: Dependencies (cached unless lockfile changes)
+# Stage 1: Build (deps + source + Next.js build in one stage)
 # --------------------------------------------------
-FROM node:22-alpine AS deps
+FROM node:22-alpine AS builder
 
 # Native addon build tools (node-pty, better-sqlite3)
 RUN apk add --no-cache python3 make g++ linux-headers
@@ -27,11 +27,6 @@ RUN echo "shamefully-hoist=true" > .npmrc
 
 RUN pnpm install --frozen-lockfile
 
-# --------------------------------------------------
-# Stage 2: Build (source changes bust this, but deps are cached above)
-# --------------------------------------------------
-FROM deps AS builder
-
 # Copy source
 COPY packages/ packages/
 COPY shell/ shell/
@@ -43,7 +38,7 @@ ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------
-# Stage 3: Runtime base (cached -- only changes when base image or system deps change)
+# Stage 2: Runtime base (cached -- only changes when base image or system deps change)
 # --------------------------------------------------
 FROM node:22-alpine AS runtime
 
@@ -63,19 +58,22 @@ RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
 WORKDIR /app
 
 # --------------------------------------------------
-# Stage 4: Final image
+# Stage 3: Final image
 # --------------------------------------------------
 FROM runtime
 
-# Copy node_modules first (large, changes only when deps change)
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/.npmrc ./
+# Copy node_modules (large, changes only when deps change)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.npmrc ./
 
-# Copy built source + Next.js output (changes every code push)
+# Copy built source + Next.js output
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/shell ./shell
 COPY --from=builder /app/home ./home
 COPY --from=builder /app/package.json ./
+
+# Next.js needs writable cache dirs at runtime
+RUN chown -R matrixos:matrixos /app/shell/.next/cache /app/shell/.next/server
 
 ARG VERSION=dev
 RUN echo "$VERSION" > /app/VERSION
