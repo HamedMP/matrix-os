@@ -10,7 +10,8 @@ export interface LifecycleConfig {
   db: PlatformDB;
   orchestrator: Orchestrator;
   checkIntervalMs?: number;
-  idleTimeoutMs?: number;
+  maxRunning?: number;
+  safetyFloorMs?: number;
 }
 
 export interface LifecycleManager {
@@ -26,25 +27,32 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
     db,
     orchestrator,
     checkIntervalMs = 5 * 60 * 1000,
-    idleTimeoutMs = 30 * 60 * 1000,
+    maxRunning = 20,
+    safetyFloorMs = 5 * 60 * 1000,
   } = config;
 
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   async function checkIdle(): Promise<string[]> {
     const running = listContainers(db, 'running');
+    if (running.length < maxRunning) return [];
+
     const now = Date.now();
+    const overage = running.length - maxRunning + 1;
+
+    const candidates = running
+      .filter((c) => now - new Date(c.lastActive).getTime() > safetyFloorMs)
+      .sort((a, b) => new Date(a.lastActive).getTime() - new Date(b.lastActive).getTime());
+
+    const toEvict = candidates.slice(0, overage);
     const stopped: string[] = [];
 
-    for (const container of running) {
-      const lastActive = new Date(container.lastActive).getTime();
-      if (now - lastActive > idleTimeoutMs) {
-        try {
-          await orchestrator.stop(container.handle);
-          stopped.push(container.handle);
-        } catch {
-          // Container may already be stopped
-        }
+    for (const container of toEvict) {
+      try {
+        await orchestrator.stop(container.handle);
+        stopped.push(container.handle);
+      } catch {
+        // Container may already be stopped
       }
     }
 
