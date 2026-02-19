@@ -105,7 +105,7 @@ export function createVoiceService(
       const url = "https://api.elevenlabs.io/v1/speech-to-text";
 
       const formData = new FormData();
-      const blob = new Blob([audioBuffer], { type: "audio/webm" });
+      const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/webm" });
       formData.append("audio", blob, "recording.webm");
       formData.append("model_id", "scribe_v1");
 

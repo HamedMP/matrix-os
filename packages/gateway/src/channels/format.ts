@@ -68,5 +68,7 @@ export function formatForChannel(channelId: ChannelId, text: string): string {
       return toSlackMrkdwn(text);
     case "whatsapp":
       return toWhatsApp(text);
+    default:
+      return text;
   }
 }

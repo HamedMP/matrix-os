@@ -197,6 +197,75 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     return c.json({ exists: true, status: info.status });
   });
 
+  // --- Admin dashboard ---
+
+  app.get('/admin/dashboard', async (c) => {
+    await orchestrator.syncStates();
+    const all = orchestrator.listAll();
+    const running = all.filter((r) => r.status === 'running');
+    const stopped = all.filter((r) => r.status !== 'running');
+
+    const containerResults = await Promise.all(
+      running.map(async (r) => {
+        const base = `http://matrixos-${r.handle}:4000`;
+        const timeout = 3000;
+
+        const fetchJson = async (url: string) => {
+          try {
+            const ac = new AbortController();
+            const timer = setTimeout(() => ac.abort(), timeout);
+            const res = await fetch(url, { signal: ac.signal });
+            clearTimeout(timer);
+            if (!res.ok) return null;
+            return await res.json();
+          } catch {
+            return null;
+          }
+        };
+
+        const [health, systemInfo, conversations] = await Promise.all([
+          fetchJson(`${base}/health`),
+          fetchJson(`${base}/api/system/info`),
+          fetchJson(`${base}/api/conversations`),
+        ]);
+
+        return {
+          handle: r.handle,
+          status: r.status,
+          lastActive: r.lastActive,
+          health,
+          systemInfo,
+          conversationCount: Array.isArray(conversations) ? conversations.length : null,
+        };
+      }),
+    );
+
+    let usageSummary = null;
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 3000);
+      const res = await fetch('http://proxy:8080/usage/summary', { signal: ac.signal });
+      clearTimeout(timer);
+      if (res.ok) usageSummary = await res.json();
+    } catch { /* proxy may not be reachable */ }
+
+    return c.json({
+      timestamp: new Date().toISOString(),
+      summary: {
+        total: all.length,
+        running: running.length,
+        stopped: stopped.length,
+      },
+      containers: containerResults,
+      stoppedContainers: stopped.map((r) => ({
+        handle: r.handle,
+        status: r.status,
+        lastActive: r.lastActive,
+      })),
+      usageSummary,
+    });
+  });
+
   // --- Social API ---
 
   const social = createSocialApi(db);
@@ -303,7 +372,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
     clerkAuth = createClerkAuth({
       verifyToken: async (token: string) => {
-        const payload = await clerk.verifyToken(token);
+        const payload = await (clerk as unknown as { verifyToken(t: string): Promise<unknown> }).verifyToken(token);
         return payload as { sub: string; [key: string]: unknown };
       },
     });
@@ -333,21 +402,21 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     // Verify Clerk JWT for WebSocket connections -- disabled until cookie domain configured
     // TODO: re-enable with subdomain cookie sharing
-    if (false && clerkAuth && record.clerkUserId) {
-      const token = clerkAuth.extractToken(
-        req.headers.authorization,
-        req.headers.cookie,
-      );
-      if (!token) {
-        socket.destroy();
-        return;
-      }
-      const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
-      if (!result.authenticated) {
-        socket.destroy();
-        return;
-      }
-    }
+    // if (clerkAuth && record.clerkUserId) {
+    //   const token = clerkAuth.extractToken(
+    //     req.headers.authorization,
+    //     req.headers.cookie,
+    //   );
+    //   if (!token) {
+    //     socket.destroy();
+    //     return;
+    //   }
+    //   const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
+    //   if (!result.authenticated) {
+    //     socket.destroy();
+    //     return;
+    //   }
+    // }
 
     // Proxy WebSocket upgrade to the user container's gateway (port 4000)
     const upstream = createConnection({ host: `matrixos-${handle}`, port: 4000 }, () => {
