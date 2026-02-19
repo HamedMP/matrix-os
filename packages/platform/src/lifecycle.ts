@@ -11,6 +11,7 @@ export interface LifecycleConfig {
   orchestrator: Orchestrator;
   checkIntervalMs?: number;
   maxRunning?: number;
+  idleTimeoutMs?: number;
   safetyFloorMs?: number;
 }
 
@@ -28,6 +29,7 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
     orchestrator,
     checkIntervalMs = 5 * 60 * 1000,
     maxRunning = 20,
+    idleTimeoutMs,
     safetyFloorMs = 5 * 60 * 1000,
   } = config;
 
@@ -35,24 +37,41 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
 
   async function checkIdle(): Promise<string[]> {
     const running = listContainers(db, 'running');
-    if (running.length < maxRunning) return [];
-
     const now = Date.now();
-    const overage = running.length - maxRunning + 1;
-
-    const candidates = running
-      .filter((c) => now - new Date(c.lastActive).getTime() > safetyFloorMs)
-      .sort((a, b) => new Date(a.lastActive).getTime() - new Date(b.lastActive).getTime());
-
-    const toEvict = candidates.slice(0, overage);
     const stopped: string[] = [];
+    const alreadyStopped = new Set<string>();
 
-    for (const container of toEvict) {
-      try {
-        await orchestrator.stop(container.handle);
-        stopped.push(container.handle);
-      } catch {
-        // Container may already be stopped
+    // Phase 1: stop containers idle past idleTimeoutMs
+    if (idleTimeoutMs !== undefined) {
+      for (const c of running) {
+        if (now - new Date(c.lastActive).getTime() > idleTimeoutMs) {
+          try {
+            await orchestrator.stop(c.handle);
+            stopped.push(c.handle);
+            alreadyStopped.add(c.handle);
+          } catch {
+            // Container may already be stopped
+          }
+        }
+      }
+    }
+
+    // Phase 2: capacity-based eviction when over maxRunning
+    const stillRunning = running.length - alreadyStopped.size;
+    if (stillRunning >= maxRunning) {
+      const overage = stillRunning - maxRunning + 1;
+      const candidates = running
+        .filter((c) => !alreadyStopped.has(c.handle))
+        .filter((c) => now - new Date(c.lastActive).getTime() > safetyFloorMs)
+        .sort((a, b) => new Date(a.lastActive).getTime() - new Date(b.lastActive).getTime());
+
+      for (const container of candidates.slice(0, overage)) {
+        try {
+          await orchestrator.stop(container.handle);
+          stopped.push(container.handle);
+        } catch {
+          // Container may already be stopped
+        }
       }
     }
 

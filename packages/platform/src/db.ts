@@ -13,7 +13,7 @@ const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 let _db: PlatformDB;
 let _sqlite: InstanceType<typeof Database>;
 
-export function createPlatformDb(path: string = DB_PATH): PlatformDB {
+export function createPlatformDb(path: string = DB_PATH) {
   if (path !== ':memory:') {
     const dir = dirname(path);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

@@ -115,42 +115,44 @@ export function kernelOptions(config: KernelConfig) {
       PreToolUse: [
         {
           matcher: "Bash|Write|Edit",
-          hooks: [safetyGuardHook],
+          hooks: [safetyGuardHook as (...args: unknown[]) => Promise<unknown>],
         },
         {
           matcher: "Write|Edit",
-          hooks: [protectedFilesHook],
+          hooks: [protectedFilesHook as (...args: unknown[]) => Promise<unknown>],
         },
       ],
       PostToolUse: [
         {
           matcher: "Write|Edit",
-          hooks: [updateStateHook, gitSnapshotHook, notifyShellHook],
+          hooks: [updateStateHook, gitSnapshotHook, notifyShellHook].map(
+            (h) => h as (...args: unknown[]) => Promise<unknown>,
+          ),
         },
         {
           matcher: "Bash",
-          hooks: [logActivityHook],
+          hooks: [logActivityHook as (...args: unknown[]) => Promise<unknown>],
         },
       ],
       Stop: [
         {
           matcher: ".*",
-          hooks: [persistSessionHook],
+          hooks: [persistSessionHook as (...args: unknown[]) => Promise<unknown>],
         },
       ],
       SubagentStop: [
         {
           matcher: ".*",
-          hooks: [onSubagentComplete],
+          hooks: [onSubagentComplete as (...args: unknown[]) => Promise<unknown>],
         },
       ],
       PreCompact: [
         {
           matcher: ".*",
-          hooks: [preCompactHook],
+          hooks: [preCompactHook as (...args: unknown[]) => Promise<unknown>],
         },
       ],
-    },
+    } as Record<string, { matcher: string; hooks: ((...args: unknown[]) => Promise<unknown>)[] }[]>,
     ...(sessionId && { resume: sessionId }),
   };
 }

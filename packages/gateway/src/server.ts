@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -24,6 +24,7 @@ import {
   restoreModule,
   checkModuleHealth,
   createWatchdog,
+  createTask,
   listTasks,
   getTask,
   type Heartbeat,
@@ -97,7 +98,7 @@ function send(ws: WSContext, msg: ServerMessage) {
   ws.send(JSON.stringify(msg));
 }
 
-export function createGateway(config: GatewayConfig) {
+export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000 } = config;
   const homePath = resolve(rawHomePath);
 
@@ -468,6 +469,7 @@ export function createGateway(config: GatewayConfig) {
     const fullPath = resolveWithinHome(homePath, filePath);
     if (!fullPath) return c.text("Forbidden", 403);
     if (!existsSync(fullPath)) return c.text("Not found", 404);
+    if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
     return c.body(null, 200);
   });
 
@@ -481,6 +483,10 @@ export function createGateway(config: GatewayConfig) {
 
     if (!existsSync(fullPath)) {
       return c.text("Not found", 404);
+    }
+
+    if (statSync(fullPath).isDirectory()) {
+      return c.text("Is a directory", 400);
     }
 
     const ext = filePath.split(".").pop() ?? "";
@@ -560,7 +566,7 @@ export function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/conversations", async (c) => {
-    const body = await c.req.json<{ channel?: string }>().catch(() => ({}));
+    const body = await c.req.json<{ channel?: string }>().catch((): { channel?: string } => ({}));
     const id = conversations.create(body.channel);
     return c.json({ id }, 201);
   });
@@ -824,7 +830,7 @@ export function createGateway(config: GatewayConfig) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status);
+        return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status as 400);
       }
 
       return c.json({ ok: true });
@@ -930,12 +936,12 @@ export function createGateway(config: GatewayConfig) {
     }
   }
 
-  const server = serve({ fetch: app.fetch, port });
-  injectWebSocket(server);
-
-  initPlugins().catch((err) => {
+  await initPlugins().catch((err) => {
     console.error("[plugins] Plugin init error:", err);
   });
+
+  const server = serve({ fetch: app.fetch, port });
+  injectWebSocket(server);
 
   return {
     app,

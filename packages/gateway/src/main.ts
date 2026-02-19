@@ -8,7 +8,7 @@ try { process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../.
 const homePath = ensureHome(process.env.MATRIX_HOME || undefined);
 const port = Number(process.env.PORT ?? 4000);
 
-const gateway = createGateway({ homePath, port });
+const gateway = await createGateway({ homePath, port });
 
 console.log(`Matrix OS gateway running on http://localhost:${port}`);
 console.log(`Home directory: ${homePath}`);

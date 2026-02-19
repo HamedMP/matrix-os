@@ -31,7 +31,7 @@ export async function* spawnKernel(
       options: {
         ...options,
         includePartialMessages: true,
-      },
+      } as Parameters<typeof query>[0]["options"],
     });
 
     let activeTool: string | null = null;
