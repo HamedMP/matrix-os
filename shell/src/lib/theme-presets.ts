@@ -8,6 +8,7 @@ const FONTS = {
 export const THEME_PRESETS: Theme[] = [
   {
     name: "default",
+    mode: "light",
     colors: {
       background: "#ece5f0",
       foreground: "#1c1917",
@@ -35,33 +36,35 @@ export const THEME_PRESETS: Theme[] = [
   },
   {
     name: "dark",
+    mode: "dark",
     colors: {
-      background: "#0a0a0a",
-      foreground: "#fafafa",
-      card: "#171717",
-      "card-foreground": "#fafafa",
-      popover: "#171717",
-      "popover-foreground": "#fafafa",
-      primary: "#3b82f6",
+      background: "#1a1a2e",
+      foreground: "#e0e0e0",
+      card: "#232340",
+      "card-foreground": "#e0e0e0",
+      popover: "#232340",
+      "popover-foreground": "#e0e0e0",
+      primary: "#7c6ff7",
       "primary-foreground": "#ffffff",
-      secondary: "#262626",
-      "secondary-foreground": "#a3a3a3",
-      muted: "#262626",
-      "muted-foreground": "#737373",
-      accent: "#262626",
-      "accent-foreground": "#a3a3a3",
+      secondary: "#2a2a45",
+      "secondary-foreground": "#b0b0c0",
+      muted: "#2a2a45",
+      "muted-foreground": "#8888a0",
+      accent: "#2a2a45",
+      "accent-foreground": "#b0b0c0",
       destructive: "#ef4444",
-      success: "#22c55e",
-      warning: "#eab308",
-      border: "#262626",
-      input: "#262626",
-      ring: "#3b82f6",
+      success: "#34d399",
+      warning: "#fbbf24",
+      border: "#3a3a5c",
+      input: "#3a3a5c",
+      ring: "#7c6ff7",
     },
     fonts: { ...FONTS },
     radius: "0.75rem",
   },
   {
     name: "nord",
+    mode: "dark",
     colors: {
       background: "#2e3440",
       foreground: "#eceff4",
@@ -89,6 +92,7 @@ export const THEME_PRESETS: Theme[] = [
   },
   {
     name: "dracula",
+    mode: "dark",
     colors: {
       background: "#282a36",
       foreground: "#f8f8f2",
@@ -116,6 +120,7 @@ export const THEME_PRESETS: Theme[] = [
   },
   {
     name: "solarized-light",
+    mode: "light",
     colors: {
       background: "#fdf6e3",
       foreground: "#073642",
@@ -143,6 +148,7 @@ export const THEME_PRESETS: Theme[] = [
   },
   {
     name: "solarized-dark",
+    mode: "dark",
     colors: {
       background: "#002b36",
       foreground: "#fdf6e3",

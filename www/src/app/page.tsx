@@ -329,7 +329,7 @@ function OsMockup() {
 
 function TechStrip() {
   const items = [
-    "926 Tests Passing",
+    "1,012 Tests Passing",
     "26 IPC Tools",
     "20 Skills",
     "6 Agents",
@@ -719,14 +719,14 @@ function BentoFeatures() {
           <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300 flex flex-col">
             <h3 className="text-lg font-semibold mb-1">Test-driven</h3>
             <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-              Every component is tested before it ships. 993 tests across 85
+              Every component is tested before it ships. 1,012 tests across 86
               files. The OS trusts itself because it verifies itself.
             </p>
             <div className="mt-4 rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
               <div><span className="text-success">PASS</span> kernel/spawn.test.ts</div>
               <div><span className="text-success">PASS</span> gateway/dispatch.test.ts</div>
               <div><span className="text-success">PASS</span> cli/cli.test.ts</div>
-              <div className="pt-1 text-success">993 tests passed</div>
+              <div className="pt-1 text-success">1,012 tests passed</div>
             </div>
           </div>
 
@@ -1247,7 +1247,7 @@ function CTA() {
             />
           </a>
           <Badge variant="outline" className="text-xs font-mono">
-            926 tests passing
+            1,012 tests passing
           </Badge>
         </div>
 
