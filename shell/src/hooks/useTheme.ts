@@ -6,6 +6,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 
 export interface Theme {
   name: string;
+  mode?: "light" | "dark";
   colors: Record<string, string>;
   fonts: Record<string, string>;
   radius: string;
@@ -45,6 +46,15 @@ export const DEFAULT_THEME: Theme = {
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
 
+  // Set mode attribute so CSS and apps can detect light/dark
+  const mode = theme.mode ?? inferMode(theme);
+  root.setAttribute("data-theme", mode);
+  if (mode === "dark") {
+    root.classList.add("dark");
+  } else {
+    root.classList.remove("dark");
+  }
+
   for (const [key, value] of Object.entries(theme.colors)) {
     root.style.setProperty(`--${key}`, value);
   }
@@ -56,8 +66,25 @@ function applyTheme(theme: Theme) {
   root.style.setProperty("--radius", theme.radius);
 }
 
+/** Infer light/dark mode from the background color luminance */
+function inferMode(theme: Theme): "light" | "dark" {
+  const bg = theme.colors.background || "#ffffff";
+  const hex = bg.replace("#", "");
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  // Relative luminance approximation
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < 0.5 ? "dark" : "light";
+}
+
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
+
+  // Fetch theme from server on mount
+  useEffect(() => {
+    fetchTheme().then(setTheme);
+  }, []);
 
   useEffect(() => {
     applyTheme(theme);

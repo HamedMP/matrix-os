@@ -71,7 +71,7 @@ describe("getPreset", () => {
     const dark = getPreset("dark");
     expect(dark).toBeDefined();
     expect(dark!.name).toBe("dark");
-    expect(dark!.colors.background).toBe("#0a0a0a");
+    expect(dark!.colors.background).toBe("#1a1a2e");
   });
 
   it("returns default preset", () => {

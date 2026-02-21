@@ -73,6 +73,7 @@ interface ModuleMeta {
   name: string;
   entry?: string;
   entryPoint?: string;
+  icon?: string;
   version?: string;
 }
 
@@ -294,13 +295,15 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       .finally(() => generatingRef.current.delete(slug));
   }, []);
 
-  const addApp = useCallback((name: string, path: string) => {
+  const addApp = useCallback((name: string, path: string, moduleIconUrl?: string) => {
     setApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
-      return [...prev, { name, path }];
+      return [...prev, { name, path, iconUrl: moduleIconUrl }];
     });
-    const slug = nameToSlug(name);
-    checkAndGenerateIcon(slug);
+    if (!moduleIconUrl) {
+      const slug = nameToSlug(name);
+      checkAndGenerateIcon(slug);
+    }
   }, [checkAndGenerateIcon]);
 
   const openWindow = useCallback((name: string, path: string) => {
@@ -365,7 +368,10 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
           const path = `modules/${mod.name}/${entryFile}`;
 
-          addApp(meta.name, path);
+          const moduleIconUrl = meta.icon
+            ? `${GATEWAY_URL}/files/modules/${mod.name}/${meta.icon}`
+            : undefined;
+          addApp(meta.name, path, moduleIconUrl);
 
           const saved = layoutMap.get(path);
           if (saved) {
