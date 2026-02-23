@@ -48,7 +48,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     baseGatewayPort = 4001,
     baseShellPort = 3001,
     proxyUrl = 'http://proxy:8080',
-    memoryLimit = 256 * 1024 * 1024,
+    memoryLimit = 1024 * 1024 * 1024,
     cpuQuota = 50000,
     dataDir = '/data/users',
     platformSecret = '',
