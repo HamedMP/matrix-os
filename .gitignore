@@ -12,3 +12,7 @@ coverage/
 
 # Local platform data
 packages/platform/data/
+
+# Playwright
+shell/e2e/test-results/
+shell/e2e/playwright-report/
