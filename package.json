@@ -9,7 +9,7 @@
     "mos": "./bin/matrixos.ts"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "packageManager": "pnpm@10.6.2",
   "scripts": {

@@ -17,7 +17,7 @@ Completed: kernel, gateway, shell, self-healing, self-evolution, concurrent disp
 ## Tech Stack
 
 - **Language**: TypeScript 5.5+, strict mode, ES modules
-- **Runtime**: Node.js 22+
+- **Runtime**: Node.js 24+
 - **AI**: Claude Agent SDK V1 `query()` with `resume` + Opus 4.6
 - **Frontend**: Next.js 16, React 19
 - **Backend**: Hono (HTTP/WebSocket gateway)

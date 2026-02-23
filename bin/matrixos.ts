@@ -123,9 +123,9 @@ async function runDoctor(args: { gateway: string; token?: string }) {
   const major = parseInt(nodeVersion.slice(1), 10);
   checks.push({
     name: "Node.js version",
-    passed: major >= 22,
+    passed: major >= 24,
     detail: nodeVersion,
-    fix: major < 22 ? "Install Node.js 22+ from https://nodejs.org" : undefined,
+    fix: major < 24 ? "Install Node.js 24+ from https://nodejs.org" : undefined,
   });
 
   // pnpm installed

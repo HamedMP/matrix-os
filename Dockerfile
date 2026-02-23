@@ -4,7 +4,7 @@
 # --------------------------------------------------
 # Stage 1: Build (deps + source + Next.js build in one stage)
 # --------------------------------------------------
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Native addon build tools (node-pty, better-sqlite3)
 RUN apk add --no-cache python3 make g++ linux-headers
@@ -40,7 +40,7 @@ RUN cd shell && node ../node_modules/next/dist/bin/next build
 # --------------------------------------------------
 # Stage 2: Runtime base (cached -- only changes when base image or system deps change)
 # --------------------------------------------------
-FROM node:22-alpine AS runtime
+FROM node:24-alpine AS runtime
 
 # Runtime: git (home dir init + self-healing), build tools (node-pty native addon)
 RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec

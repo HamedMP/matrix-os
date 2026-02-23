@@ -2,11 +2,11 @@
 
 ## Prerequisites
 
-**Recommended**: Install [Flox](https://flox.dev) and run `flox activate` in the repo root. This provisions Node.js 22, pnpm, bun, and git automatically.
+**Recommended**: Install [Flox](https://flox.dev) and run `flox activate` in the repo root. This provisions Node.js 24, pnpm, bun, and git automatically.
 
 **Manual setup** (if not using Flox):
 
-- Node.js 22+
+- Node.js 24+
 - pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
 - bun (for running scripts)
 - git
@@ -20,7 +20,7 @@ cd matrix-os
 # With Flox:
 flox activate
 
-# Or manually ensure Node 22, pnpm, and bun are installed
+# Or manually ensure Node 24, pnpm, and bun are installed
 
 pnpm install
 ```

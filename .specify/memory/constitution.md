@@ -49,7 +49,7 @@ Start with the simplest implementation that works. Single-process async concurre
 ## Technology Constraints
 
 - **Language**: TypeScript, strict mode, ES modules
-- **Runtime**: Node.js 22+
+- **Runtime**: Node.js 24+
 - **AI Kernel**: Claude Agent SDK V1 `query()` with `resume` (V2 drops critical options) + Opus 4.6
 - **Frontend**: React + Nextjs
 - **Database**: SQLite via Drizzle ORM (better-sqlite3 driver, WAL mode)
