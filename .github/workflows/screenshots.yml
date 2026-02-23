@@ -32,12 +32,17 @@ jobs:
 
       - name: Build shell
         run: cd shell && pnpm build
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install chromium
 
       - name: Run Playwright tests
         run: cd shell && pnpm exec playwright test
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
 
       - name: Check for snapshot changes
         id: snapshots
