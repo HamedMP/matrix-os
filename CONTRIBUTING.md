@@ -128,7 +128,7 @@ When a PR changes files in `shell/`, the Screenshots workflow runs Playwright te
 - Use pnpm for installing packages, bun for running scripts
 - Never use npm
 
-See `CLAUDE.md` for the full development rules and architecture details.
+See `CLAUDE.md` for development rules, and `specs/` for active architecture specs (`specs/003-architecture/` is reference-only archive).
 
 ## Deployment
 
