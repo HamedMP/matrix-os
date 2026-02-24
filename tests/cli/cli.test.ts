@@ -132,7 +132,7 @@ describe("T680a: formatStatus", () => {
 describe("T680a: formatDoctor", () => {
   it("renders pass/fail diagnostic results", () => {
     const checks: DoctorCheck[] = [
-      { name: "Node.js version", passed: true, detail: "v22.0.0" },
+      { name: "Node.js version", passed: true, detail: "v24.0.0" },
       { name: "pnpm installed", passed: true, detail: "10.6.2" },
       { name: "ANTHROPIC_API_KEY", passed: false, detail: "Not set", fix: "export ANTHROPIC_API_KEY=sk-..." },
       { name: "Gateway reachable", passed: true, detail: "http://localhost:4000" },
@@ -151,7 +151,7 @@ describe("T680a: formatDoctor", () => {
 
   it("renders all-pass results", () => {
     const checks: DoctorCheck[] = [
-      { name: "Node.js version", passed: true, detail: "v22.0.0" },
+      { name: "Node.js version", passed: true, detail: "v24.0.0" },
       { name: "pnpm installed", passed: true, detail: "10.6.2" },
     ];
 

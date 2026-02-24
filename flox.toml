@@ -1,0 +1,10 @@
+[install]
+nodejs_24.pkg-path = "nodejs_24"
+pnpm.pkg-path = "pnpm"
+bun.pkg-path = "bun"
+git.pkg-path = "git"
+
+[hook]
+on-activate = """
+corepack enable
+"""

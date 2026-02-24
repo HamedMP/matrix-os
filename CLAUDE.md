@@ -70,7 +70,7 @@ Key principles:
 ## Tech Stack
 
 - **Language**: TypeScript 5.5+, strict mode, ES modules
-- **Runtime**: Node.js 22+
+- **Runtime**: Node.js 24+
 - **AI**: Claude Agent SDK V1 `query()` with `resume` + Opus 4.6
 - **Frontend**: Next.js 16, React 19
 - **Backend**: Hono (HTTP/WebSocket gateway + channel adapters)
@@ -112,7 +112,7 @@ distro/              # Docker, cloudflared, systemd deployment configs
 ## Running the Platform
 
 ### Prerequisites
-- Node.js 22+
+- Node.js 24+
 - pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
 - `ANTHROPIC_API_KEY` env var set (for kernel AI features)
 

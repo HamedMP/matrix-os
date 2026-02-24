@@ -120,7 +120,7 @@ Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, m
 | Layer | Technology |
 |-------|-----------|
 | Language | TypeScript 5.5+, strict mode, ES modules |
-| Runtime | Node.js 22+ |
+| Runtime | Node.js 24+ |
 | AI | Claude Agent SDK V1 (`query()` + `resume`), Opus 4.6 |
 | Frontend | Next.js 16, React 19 |
 | Backend | Hono (HTTP/WebSocket gateway) |
@@ -155,7 +155,7 @@ distro/              # Docker, cloudflared, systemd deployment configs
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 24+
 - pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
 - `ANTHROPIC_API_KEY` environment variable
 

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:screenshots": "playwright test"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.0",
@@ -34,6 +35,8 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@clerk/testing": "^1.14.1",
+    "@playwright/test": "^1.52.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
