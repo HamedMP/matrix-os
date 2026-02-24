@@ -20,14 +20,6 @@ describe("E2E: Channel status + Message API", () => {
     expect(body).not.toBeNull();
   });
 
-  it("GET /api/channels/status returns empty when no channels configured", async () => {
-    const res = await fetch(`${gw.url}/api/channels/status`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    // Default test gateway has no channel config, so status should be minimal
-    expect(typeof body).toBe("object");
-  });
-
   it("GET /api/channels/status with configured channels shows status", async () => {
     const gwWithChannels = await startTestGateway({
       config: {

@@ -141,13 +141,15 @@ describe("E2E: Chat message roundtrip", () => {
       });
 
       // Wait for file:change event (watcher may take a moment)
+      let change: Record<string, unknown> | undefined;
       try {
-        const change = await ws.waitFor("file:change", 5_000);
-        expect(change.type).toBe("file:change");
-        expect(change.path).toBeDefined();
+        change = await ws.waitFor("file:change", 5_000);
       } catch {
         // File watcher may not fire in time in test environment - this is acceptable.
-        // The test verifies the watcher integration when it works.
+      }
+      if (change) {
+        expect(change.type).toBe("file:change");
+        expect(change.path).toBeDefined();
       }
     } finally {
       ws.close();
