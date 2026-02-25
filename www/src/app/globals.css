@@ -1,5 +1,26 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+@source "../node_modules/fumadocs-ui/dist/**/*.js";
+
+/* ── Sidebar tab highlight colors ── */
+:root {
+  --guide-color: hsl(220, 91%, 54%);
+  --developer-color: hsl(142, 71%, 45%);
+}
+
+.dark {
+  --guide-color: hsl(220, 100%, 72%);
+  --developer-color: hsl(142, 80%, 60%);
+}
+
+/* Reset body background for dark mode (wave pattern is light-only) */
+.dark body {
+  background-color: var(--color-fd-background);
+  background-image: none;
+}
 
 :root {
   --font-sans: "Inter", system-ui, sans-serif;

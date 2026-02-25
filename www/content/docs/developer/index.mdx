@@ -1,0 +1,40 @@
+---
+title: Developer Overview
+description: Technical reference for building on and contributing to Matrix OS.
+---
+
+## Developer Documentation
+
+This section covers the technical internals of Matrix OS for developers who want to understand the architecture, contribute to the project, or build extensions.
+
+## Tech Stack
+
+- **Language**: TypeScript 5.5+ (strict mode, ES modules)
+- **Runtime**: Node.js 24+
+- **AI**: Claude Agent SDK V1 with Opus 4.6
+- **Frontend**: Next.js 16, React 19
+- **Backend**: Hono (HTTP/WebSocket gateway)
+- **Database**: SQLite via Drizzle ORM (WAL mode)
+- **Validation**: Zod 4
+- **Testing**: Vitest (99-100% coverage target)
+- **Package Manager**: pnpm (install), bun (scripts)
+
+## Key Concepts
+
+### Agent Is the Kernel
+
+The Claude Agent SDK `query()` with `resume` serves as the kernel. Every user action flows through AI agents that understand context and take action. The kernel dispatches to specialized sub-agents: Builder, Researcher, Deployer, Healer, and Evolver.
+
+### IPC via MCP
+
+The kernel communicates with the system through 26 IPC tools exposed as an in-process MCP server. Tools include file operations, git snapshots, skill loading, cron management, and more.
+
+### Hooks
+
+Hooks intercept agent actions before and after execution. They provide permission checks, git snapshots, healing triggers, and protected file enforcement.
+
+## Next Steps
+
+- [Architecture](/docs/developer/architecture) -- How the system fits together
+- [Testing](/docs/developer/testing) -- Test strategy and running tests
+- [Contributing](/docs/developer/contributing) -- How to contribute

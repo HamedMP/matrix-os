@@ -1,0 +1,54 @@
+---
+title: Contributing
+description: How to contribute to Matrix OS.
+---
+
+## Getting Set Up
+
+1. Fork and clone the repository
+2. Install dependencies: `pnpm install`
+3. Run tests to verify: `bun run test`
+4. Start dev servers: `bun run dev`
+
+## Development Rules
+
+- **TDD**: Write failing tests first, then implement
+- **Conventional Commits**: Use type prefixes (`feat:`, `fix:`, `test:`, `chore:`, `refactor:`, etc.)
+- **TypeScript strict mode**: No `any` types, full type safety
+- **ES modules**: `"type": "module"` everywhere
+- **Minimal comments**: Code should be self-documenting
+- **No over-engineering**: Solve the current problem, not hypothetical future ones
+
+## Project Structure
+
+```
+packages/kernel/     # AI kernel
+packages/gateway/    # HTTP/WebSocket gateway
+shell/               # Next.js web desktop
+www/                 # matrix-os.com website
+home/                # File system template
+tests/               # Test suites
+specs/               # Architecture specs
+```
+
+## Commit Style
+
+- Concise commit messages focused on "why" not "what"
+- Use conventional commit prefixes: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
+- Tag releases with SemVer: `v0.1.0`, `v0.2.0`
+
+## Spec-Driven Development
+
+Major features start with a spec in `specs/`. Each spec contains:
+- `spec.md`: Architecture document
+- `tasks.md`: Task breakdown with IDs (e.g., T100-T105)
+
+Read existing specs to understand the pattern before proposing new features.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | -- | Required for AI features |
+| `MATRIX_HOME` | `~/matrixos/` | Home directory path |
+| `PORT` | `4000` | Gateway port |

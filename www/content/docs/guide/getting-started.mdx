@@ -1,0 +1,99 @@
+---
+title: Getting Started
+description: Set up Matrix OS locally and start your first conversation with the AI kernel.
+---
+
+## Prerequisites
+
+- **Node.js 24+** (check with `node --version`)
+- **pnpm** -- enable via corepack:
+  ```bash
+  corepack enable && corepack prepare pnpm@latest --activate
+  ```
+- **Anthropic API key** -- get one at [console.anthropic.com](https://console.anthropic.com)
+
+## Installation
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/AiOS-world/matrix-os.git
+cd matrix-os
+pnpm install
+```
+
+Set your API key:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+## Running the Dev Servers
+
+Start both the gateway and web shell:
+
+```bash
+bun run dev
+```
+
+This starts:
+- **Gateway** at `http://localhost:4000` -- the Hono backend (kernel, channels, file server)
+- **Shell** at `http://localhost:3000` -- the Next.js web desktop
+
+On first boot, the gateway creates your home directory at `~/matrixos/` with default agents, skills, config, and SOUL identity.
+
+### Running Individually
+
+```bash
+bun run dev:gateway   # Gateway only (http://localhost:4000)
+bun run dev:shell     # Shell only (http://localhost:3000)
+```
+
+## Your First Conversation
+
+Open `http://localhost:3000` in your browser. You'll see the Matrix OS desktop with a chat panel.
+
+Type something like:
+
+> Build me a todo app
+
+The AI kernel dispatches your request to the Builder agent, which:
+1. Creates the app files in `~/matrixos/apps/todo/`
+2. Registers it in the dock
+3. Opens the app in an AppViewer window
+
+Everything it creates is a file you own. Check `~/matrixos/apps/todo/` to see the generated code.
+
+## Project Structure
+
+```
+packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
+packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
+shell/               # Next.js web desktop
+www/                 # matrix-os.com website (you're reading its docs)
+home/                # File system template (copied on first boot)
+tests/               # Vitest test suites
+specs/               # Architecture specs
+```
+
+## Running Tests
+
+```bash
+bun run test              # Unit tests (~993 tests)
+bun run test:coverage     # With coverage report
+bun run test:integration  # Integration tests (needs API key, uses haiku)
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | -- | Required for AI features |
+| `MATRIX_HOME` | `~/matrixos/` | Home directory path |
+| `PORT` | `4000` | Gateway port |
+
+## Next Steps
+
+- Explore the agents in `~/matrixos/agents/custom/`
+- Create a custom skill in `~/matrixos/agents/skills/`
+- Connect a Telegram bot via `~/matrixos/system/config.json`

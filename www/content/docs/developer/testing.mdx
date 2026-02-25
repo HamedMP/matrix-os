@@ -1,0 +1,48 @@
+---
+title: Testing
+description: Test strategy, running tests, and coverage targets.
+---
+
+## Test Strategy
+
+Matrix OS follows strict TDD (Test-Driven Development). Tests are written first, then implementation follows (Red -> Green -> Refactor).
+
+**Coverage target**: 99-100% across all packages.
+
+## Running Tests
+
+```bash
+bun run test              # Unit tests (~993 tests, ~11s)
+bun run test:watch        # Watch mode
+bun run test:coverage     # With coverage report
+bun run test:integration  # Integration tests (needs API key, uses haiku)
+```
+
+## Test Structure
+
+Tests live in `tests/` at the project root, organized by package:
+
+```
+tests/
+  kernel/           # Kernel unit tests
+  gateway/          # Gateway unit tests
+  shell/            # Shell component tests
+  integration/      # Integration tests (real API calls)
+```
+
+## Writing Tests
+
+Use Vitest with the following conventions:
+
+- One test file per source module
+- Descriptive `describe` blocks matching module structure
+- Use `vi.mock()` for external dependencies
+- Integration tests are separated and use Claude Haiku to keep costs under $0.10 per run
+
+## Integration Tests
+
+Integration tests make real API calls to Claude. They require:
+
+- `ANTHROPIC_API_KEY` environment variable
+- Use the `haiku` model to minimize cost
+- Run separately with `bun run test:integration`

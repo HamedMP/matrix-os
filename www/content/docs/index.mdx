@@ -1,0 +1,105 @@
+---
+title: Matrix OS Documentation
+description: The AI operating system where software writes itself.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+Matrix OS is an AI-native operating system that combines your OS, messaging, social network, and AI assistant into a single platform. Describe what you need in natural language -- it writes the software into existence.
+
+<Callout type="info" title="Built on Claude Agent SDK">
+  Matrix OS uses the Claude Agent SDK as its kernel. Every action flows through AI agents that understand context and take action. Everything is a file you own.
+</Callout>
+
+## Quick Start
+
+<Steps>
+  <Step>
+    ### Install dependencies
+
+    ```bash
+    git clone https://github.com/AiOS-world/matrix-os.git
+    cd matrix-os && pnpm install
+    ```
+  </Step>
+  <Step>
+    ### Set your API key
+
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...
+    ```
+  </Step>
+  <Step>
+    ### Start the OS
+
+    ```bash
+    bun run dev
+    ```
+
+    Open `http://localhost:3000` and start talking to your OS.
+  </Step>
+</Steps>
+
+## Choose Your Path
+
+<Cards>
+  <Card
+    title="Getting Started"
+    description="Set up Matrix OS locally and start your first conversation with the AI kernel."
+    href="/docs/guide/getting-started"
+  />
+  <Card
+    title="Architecture"
+    description="How the gateway, kernel, agents, and shell fit together."
+    href="/docs/developer/architecture"
+  />
+  <Card
+    title="Testing"
+    description="Test strategy, running tests, and coverage targets."
+    href="/docs/developer/testing"
+  />
+  <Card
+    title="Contributing"
+    description="How to set up, develop, and contribute to Matrix OS."
+    href="/docs/developer/contributing"
+  />
+</Cards>
+
+## Core Principles
+
+<Cards>
+  <Card title="Everything Is a File">
+    The file system is the single source of truth. Config, agents, skills, themes, data -- all files you own.
+  </Card>
+  <Card title="Agent Is the Kernel">
+    Claude Agent SDK `query()` with `resume` IS the kernel. Every user action flows through AI agents.
+  </Card>
+  <Card title="Headless Core, Multi-Shell">
+    The core works without a UI. The web desktop is one of many shells (Telegram, CLI, Discord, mobile).
+  </Card>
+  <Card title="Self-Healing">
+    The OS patches itself when things break and creates new capabilities on demand.
+  </Card>
+</Cards>
+
+## Architecture Overview
+
+```
+Browser / Telegram / Discord / Slack / WhatsApp
+  |
+  +--- Gateway (Hono) --- Dispatcher --- Kernel (Agent SDK)
+  |       |                                  |
+  |       +-- Channels                       +-- 5 Agents
+  |       +-- Cron / Heartbeat               +-- 26 IPC Tools
+  |       +-- File Server                    +-- 8 Hooks
+  |
+  +--- Home Directory (~/matrixos/)
+```
+
+## Web 4 Vision
+
+Matrix OS is the foundation for **Web 4**: a world where your AI runs on all your devices, syncs via peer-to-peer git, communicates through federated identity (`@you:matrix-os.com`), and your AI agent has its own identity that negotiates with other AIs on your behalf.
+
+Read the full [Web 4 vision](/whitepaper).

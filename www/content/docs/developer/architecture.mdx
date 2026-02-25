@@ -1,0 +1,62 @@
+---
+title: Architecture
+description: How the gateway, kernel, agents, and shell fit together.
+---
+
+## System Architecture
+
+```
+Browser / Telegram / Discord / Slack / WhatsApp
+  |
+  +--- Gateway (Hono) --- Dispatcher --- Kernel (Agent SDK)
+  |       |                                  |
+  |       +-- Channels                       +-- Agents (Builder, Researcher, Deployer, Healer, Evolver)
+  |       +-- Cron / Heartbeat               +-- IPC Tools (file ops, git, skills, cron)
+  |       +-- File Server                    +-- Hooks (permissions, git snapshots, healing)
+  |
+  +--- Home Directory (~/matrixos/)
+          +-- agents/       Custom agent prompts + skills
+          +-- apps/         Generated applications
+          +-- system/       Config, theme, SOUL identity
+          +-- data/         Application data
+```
+
+## Packages
+
+### `packages/kernel/`
+
+The AI kernel. Contains the Agent SDK integration, agent definitions, IPC MCP server, hooks, SOUL identity system, and skills loader.
+
+### `packages/gateway/`
+
+Hono HTTP/WebSocket gateway. Routes messages to the kernel via a serial dispatch queue. Manages channel adapters (Telegram, WhatsApp, Discord, Slack), cron jobs, heartbeat, and the file server.
+
+### `shell/`
+
+Next.js 16 web desktop. One of many possible shells. Renders the desktop UI with windows, dock, chat panel, terminal, and settings.
+
+### `home/`
+
+File system template copied on first boot. Contains default agents, skills, theme, SOUL identity, and config.
+
+## The Computer Metaphor
+
+| Component | Maps To |
+|-----------|---------|
+| CPU | Claude Opus 4.6 |
+| RAM | Context window (1M tokens) |
+| Kernel | Main agent + 26 IPC tools |
+| Processes | 5 sub-agents |
+| Disk | ~/apps, ~/data, ~/system |
+| Syscalls | Read, Write, Edit, Bash |
+| Drivers | MCP servers |
+| IPC | File coordination |
+
+## Dispatch Flow
+
+1. Message arrives (WebSocket, REST, or channel adapter)
+2. Gateway's dispatcher adds it to the serial queue
+3. Dispatcher invokes the kernel with the message + context
+4. Kernel decides which agent to dispatch to
+5. Agent executes with IPC tools, hooks intercept actions
+6. Response streams back through the gateway to the client

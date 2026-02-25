@@ -77,6 +77,9 @@ function Nav() {
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
               <a href="/whitepaper">Whitepaper</a>
             </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+              <a href="/docs">Docs</a>
+            </Button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1314,6 +1317,12 @@ function Footer() {
             className="hover:text-foreground transition-colors"
           >
             DeepWiki
+          </a>
+          <a
+            href="/docs"
+            className="hover:text-foreground transition-colors"
+          >
+            Docs
           </a>
           <a
             href="/whitepaper"

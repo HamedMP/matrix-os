@@ -1,0 +1,68 @@
+---
+title: Introduction
+description: Matrix OS is Web 4 -- a unified AI operating system where software is generated from conversation.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## What is Matrix OS?
+
+Matrix OS is an AI-native operating system that combines your OS, messaging, social network, and AI assistant into a single platform. You describe what you need in natural language. It writes the software into existence.
+
+Built on the Claude Agent SDK, Matrix OS treats AI as the kernel. Everything is a file. The system heals itself, evolves its own capabilities, and is reachable through multiple channels: a web desktop, Telegram, WhatsApp, Discord, Slack, and the Matrix protocol.
+
+<Callout type="info" title="Everything you create is a file you own">
+  Apps live in `~/matrixos/apps/`, config in `~/matrixos/system/`, agent prompts in `~/matrixos/agents/`. Back up your OS by copying a folder.
+</Callout>
+
+## Core Principles
+
+<Cards>
+  <Card title="Everything Is a File">
+    The file system is the single source of truth. Config, agents, skills, themes, data -- all files you own.
+  </Card>
+  <Card title="Agent Is the Kernel">
+    The Claude Agent SDK is the kernel. Every user action flows through AI agents that understand context and take action.
+  </Card>
+  <Card title="Headless Core, Multi-Shell">
+    The core works without a UI. The web desktop is one of many shells (Telegram, CLI, mobile).
+  </Card>
+  <Card title="Self-Healing and Self-Expanding">
+    The OS patches itself when things break and creates new capabilities on demand.
+  </Card>
+</Cards>
+
+## Architecture
+
+```
+Browser / Telegram / Discord / Slack / WhatsApp
+  |
+  +--- Gateway (Hono) --- Dispatcher --- Kernel (Agent SDK)
+  |       |                                  |
+  |       +-- Channels                       +-- Agents (Builder, Researcher, Deployer, Healer, Evolver)
+  |       +-- Cron / Heartbeat               +-- IPC Tools (file ops, git, skills, cron)
+  |       +-- File Server                    +-- Hooks (permissions, git snapshots, healing)
+  |
+  +--- Home Directory (~/matrixos/)
+          +-- agents/       Custom agent prompts + skills
+          +-- apps/         Generated applications
+          +-- system/       Config, theme, SOUL identity
+          +-- data/         Application data
+```
+
+## Web 4 Vision
+
+Matrix OS is the foundation for **Web 4**: a world where your AI runs on all your devices, syncs via peer-to-peer git, communicates through federated identity (`@you:matrix-os.com`), and your AI agent has its own identity (`@you_ai:matrix-os.com`) that can negotiate with other AIs on your behalf.
+
+Read the full [Web 4 vision](/whitepaper) for the complete picture.
+
+## Next Steps
+
+<Cards>
+  <Card
+    title="Getting Started"
+    description="Set up Matrix OS locally in 5 minutes"
+    href="/docs/guide/getting-started"
+  />
+</Cards>
