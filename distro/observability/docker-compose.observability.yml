@@ -7,8 +7,8 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./alerting/rules.yml:/etc/prometheus/rules.yml:ro
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerting/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus-data:/prometheus
     healthcheck:
       test: wget -qO- http://localhost:9090/-/healthy || exit 1
@@ -25,14 +25,9 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./loki.yml:/etc/loki/local-config.yaml:ro
+      - ./observability/loki.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
     command: -config.file=/etc/loki/local-config.yaml
-    healthcheck:
-      test: wget -qO- http://localhost:3100/ready || exit 1
-      interval: 15s
-      timeout: 5s
-      start_period: 20s
     restart: unless-stopped
     networks:
       - observability
@@ -43,24 +38,22 @@ services:
     ports:
       - "3200:3000"
     volumes:
-      - ./provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-      - ./provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
-      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - ./observability/provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./observability/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_SECURITY_ADMIN_PASSWORD=matrixos
     healthcheck:
-      test: wget -qO- http://localhost:3000/api/health || exit 1
+      test: curl -sf http://localhost:3000/api/health || exit 1
       interval: 15s
       timeout: 5s
-      start_period: 15s
+      start_period: 30s
     depends_on:
-      prometheus:
-        condition: service_healthy
-      loki:
-        condition: service_healthy
+      - prometheus
+      - loki
     restart: unless-stopped
     networks:
       - observability
@@ -69,13 +62,12 @@ services:
   promtail:
     image: grafana/promtail:latest
     volumes:
-      - ./promtail.yml:/etc/promtail/config.yml:ro
+      - ./observability/promtail.yml:/etc/promtail/config.yml:ro
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command: -config.file=/etc/promtail/config.yml
     depends_on:
-      loki:
-        condition: service_healthy
+      - loki
     restart: unless-stopped
     networks:
       - observability

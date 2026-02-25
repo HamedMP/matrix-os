@@ -1,0 +1,47 @@
+# Local testing: observability stack only, scrapes host gateway
+# Usage: docker compose -f distro/observability/docker-compose.local.yml up -d
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.local.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerting/rules.yml:/etc/prometheus/rules.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: wget -qO- http://localhost:9090/-/healthy || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki.yml:/etc/loki/local-config.yaml:ro
+    command: -config.file=/etc/loki/local-config.yaml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3200:3000"
+    volumes:
+      - ./provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ADMIN_PASSWORD=matrixos
+    depends_on:
+      - prometheus
+      - loki
+    healthcheck:
+      test: curl -sf http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
