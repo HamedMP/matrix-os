@@ -248,6 +248,7 @@ Release process: `docs/dev/releases.md`
 - Next.js 16: `proxy.ts` replaces `middleware.ts`, Turbopack by default, React Compiler stable, `cacheComponents` replaces PPR
 - TDD: write failing tests FIRST, then implement (Red -> Green -> Refactor)
 - Spike before spec: test undocumented SDK behavior with throwaway code before committing
+- Conventional Commits: all commit messages and PR titles must use a type prefix (`feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`, `style:`, `perf:`, `build:`, `revert:`)
 - Commit after completing each phase or major feature
 - Tag releases after completing major milestones (see Releases section)
 - No emojis in code or docs
@@ -256,3 +257,4 @@ Release process: `docs/dev/releases.md`
 - No over-engineering: solve the current problem
 - Keep kernel system prompt under 7K tokens
 - Always use Drizzle ORM for database access: never raw SQL queries with better-sqlite3 directly
+- **Documentation**: when adding a new feature, update `www/content/docs/` accordingly. Specs and plans should include a docs update step. The docs site at matrix-os.com/docs (Fumadocs in `www/`) is the public-facing reference -- keep it in sync with the codebase

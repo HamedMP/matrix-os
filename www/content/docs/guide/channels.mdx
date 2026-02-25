@@ -1,0 +1,80 @@
+---
+title: Multi-Channel Support
+description: Connect to Matrix OS via web, Telegram, WhatsApp, Discord, Slack, and CLI.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Headless Core, Multi-Shell
+
+Matrix OS is headless by design. The kernel doesn't know or care which shell you're using. Every channel -- web desktop, Telegram, Discord, WhatsApp, Slack, CLI -- connects to the same kernel through the gateway.
+
+```
+Web Desktop (localhost:3000)     Telegram Bot     Discord Bot     CLI
+      |                              |                |            |
+      +--- WebSocket /ws ---+        |                |            |
+                             |       |                |            |
+                    Gateway (localhost:4000)
+                             |
+                    Dispatcher -> Kernel
+```
+
+## Channel Architecture
+
+The `ChannelManager` in `packages/gateway/src/channels/` manages the lifecycle of all channel adapters. Each adapter implements the `ChannelAdapter` interface:
+
+- **`start()`** -- begin listening (polling, webhooks, or WebSocket connections)
+- **`stop()`** -- gracefully shut down
+- **`send()`** -- format and send a message to the channel
+
+Messages from any channel flow through the dispatcher to the kernel. The kernel's response is formatted for the originating channel via `formatForChannel()`.
+
+## Available Channels
+
+| Channel | Status | Transport | Configuration |
+|---------|--------|-----------|---------------|
+| Web Desktop | Built-in | WebSocket | Automatic |
+| Telegram | Adapter | Long polling | `config.json` -> `channels.telegram.token` |
+| Discord | Adapter | Gateway WebSocket | `config.json` -> `channels.discord.token` |
+| Slack | Adapter | Socket Mode | `config.json` -> `channels.slack.token` |
+| WhatsApp | Adapter | Baileys (Web) | `config.json` -> `channels.whatsapp` |
+| CLI | Built-in | stdin/stdout | `bin/matrixos.ts` |
+
+## Configuring Channels
+
+All channel configuration lives in `~/matrixos/system/config.json` (everything is a file):
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+      "allowFrom": [123456789]
+    }
+  }
+}
+```
+
+The `allowFrom` field restricts which user IDs can interact with the bot, providing basic access control.
+
+<Callout type="info" title="Hot reload">
+  Channel config changes are detected by the file watcher. Add a new channel token and the adapter starts automatically -- no restart needed.
+</Callout>
+
+## Channel-Aware Dispatch
+
+The dispatcher uses a `DispatchContext` that includes the originating channel. This context flows through to the kernel, so agents can tailor their responses. For example, Telegram messages are formatted with Markdown, while Discord uses embeds.
+
+The `formatForChannel()` function handles platform-specific formatting:
+- **Telegram**: Markdown with inline code and bold
+- **Discord**: Rich embeds with fields
+- **Slack**: Block Kit with sections and actions
+- **WhatsApp**: Plain text with limited formatting
+
+## Proactive Channels
+
+Channels aren't just for receiving messages. The **CronService** and **HeartbeatRunner** can proactively send messages through any channel:
+
+- **Cron jobs** defined in `~/matrixos/system/cron.json` trigger kernel invocations on a schedule
+- **Heartbeat** periodically invokes the kernel during active hours to check for tasks, health, and notifications
+- Proactive messages are sent back through the channel that the user most recently interacted with

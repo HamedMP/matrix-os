@@ -1,0 +1,78 @@
+---
+title: Developer Overview
+description: Technical reference for building on and contributing to Matrix OS.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This section covers the technical internals of Matrix OS for developers who want to understand the architecture, contribute to the project, or build extensions.
+
+<Callout type="info" title="AI-generated documentation">
+  For a comprehensive, always-up-to-date reference generated from the source code, see the [Matrix OS DeepWiki](https://deepwiki.com/HamedMP/matrix-os/).
+</Callout>
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | TypeScript 5.5+ (strict mode, ES modules) |
+| Runtime | Node.js 24+ |
+| AI | Claude Agent SDK V1 (`query()` + `resume`) with Opus 4.6 |
+| Frontend | Next.js 16, React 19 |
+| Backend | Hono (HTTP/WebSocket gateway) |
+| Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
+| Federation | Matrix protocol (matrix-js-sdk) |
+| Database | SQLite via Drizzle ORM (better-sqlite3, WAL mode) |
+| Validation | Zod 4 (`zod/v4` import) |
+| Scheduling | node-cron + native timers |
+| Testing | Vitest (99-100% coverage target, `@vitest/coverage-v8`) |
+| Package Manager | pnpm (install), bun (scripts) |
+
+## Key Concepts
+
+### Kernel = Agent SDK
+
+The `spawnKernel()` function in `packages/kernel/src/spawn.ts` is the entry point. It calls `query()` for initial prompts and `resume` for multi-turn conversations. The `kernelOptions()` function in `packages/kernel/src/options.ts` configures the kernel with the system prompt, IPC servers, agent definitions, and hooks.
+
+### IPC via MCP
+
+The kernel communicates with the system through 26 IPC tools exposed as an in-process MCP server via `createSdkMcpServer()`. Each tool is defined with `tool()`, a Zod schema for input validation, and an async handler.
+
+### Hooks
+
+Hooks intercept agent actions at defined lifecycle points. `PreToolUse` hooks run before tool execution (safety guards, protected files). `PostToolUse` hooks run after (git snapshots, state updates, shell notifications). A `Stop` hook persists the session.
+
+### Dispatch Queue
+
+The gateway's dispatcher manages a serial FIFO queue by default, ensuring only one kernel call runs at a time to prevent file system corruption. It can be configured for concurrent dispatch with `maxConcurrency`, where each process registers in the SQLite `tasks` table.
+
+## Developer Resources
+
+<Cards>
+  <Card
+    title="Architecture"
+    description="Detailed system architecture: kernel, gateway, dispatcher, request flow."
+    href="/docs/developer/architecture"
+  />
+  <Card
+    title="IPC Tools & Hooks"
+    description="All 26 IPC tools, the hook lifecycle, and the permission model."
+    href="/docs/developer/ipc-tools"
+  />
+  <Card
+    title="Testing"
+    description="TDD approach, running tests, coverage targets, and test structure."
+    href="/docs/developer/testing"
+  />
+  <Card
+    title="Contributing"
+    description="Setup, development rules, commit conventions, and spec-driven development."
+    href="/docs/developer/contributing"
+  />
+  <Card
+    title="DeepWiki"
+    description="AI-generated documentation from the Matrix OS source code."
+    href="https://deepwiki.com/HamedMP/matrix-os/"
+  />
+</Cards>

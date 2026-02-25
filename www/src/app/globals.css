@@ -1,5 +1,70 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "fumadocs-ui/css/purple.css";
+@import "fumadocs-ui/css/preset.css";
+
+@source "../node_modules/fumadocs-ui/dist/**/*.js";
+
+/* ── Matrix OS violet overrides (match landing page #ece5f0) ── */
+@theme {
+  --color-fd-background: hsl(278, 24%, 92%);
+  --color-fd-primary: hsl(270, 60%, 50%);
+  --color-fd-border: hsla(278, 20%, 78%, 0.5);
+  --color-fd-accent: hsl(278, 30%, 86%);
+  --color-fd-accent-foreground: hsl(278, 60%, 20%);
+  --color-fd-muted: hsl(278, 28%, 91%);
+  --color-fd-muted-foreground: hsl(278, 30%, 45%);
+  --color-fd-foreground: hsl(278, 40%, 16%);
+  --color-fd-secondary: hsl(278, 30%, 88%);
+  --color-fd-secondary-foreground: hsl(278, 40%, 10%);
+  --color-fd-card: hsl(278, 30%, 90%);
+  --color-fd-card-foreground: hsl(278, 50%, 16%);
+  --color-fd-popover: hsl(278, 28%, 95%);
+  --color-fd-popover-foreground: hsl(278, 50%, 16%);
+  --color-fd-primary-foreground: hsl(0, 0%, 100%);
+  --color-fd-ring: hsl(270, 60%, 50%);
+}
+
+.dark {
+  --color-fd-background: hsl(278, 18%, 7%);
+  --color-fd-primary: hsl(270, 100%, 82%);
+  --color-fd-border: hsla(278, 20%, 50%, 0.12);
+  --color-fd-accent: hsla(278, 20%, 50%, 0.1);
+  --color-fd-accent-foreground: hsl(278, 20%, 88%);
+  --color-fd-muted: hsl(278, 14%, 12%);
+  --color-fd-muted-foreground: hsl(278, 12%, 60%);
+  --color-fd-foreground: hsl(0, 0%, 95%);
+  --color-fd-secondary: hsl(278, 14%, 14%);
+  --color-fd-secondary-foreground: hsl(0, 0%, 93%);
+  --color-fd-card: hsl(278, 14%, 10%);
+  --color-fd-card-foreground: hsl(0, 0%, 95%);
+  --color-fd-popover: hsl(278, 14%, 9%);
+  --color-fd-popover-foreground: hsl(0, 0%, 93%);
+  --color-fd-primary-foreground: hsl(278, 30%, 8%);
+  --color-fd-ring: hsl(270, 100%, 82%);
+}
+
+/* ── Sidebar tab highlight colors ── */
+:root {
+  --guide-color: hsl(270, 60%, 50%);
+  --developer-color: hsl(142, 71%, 45%);
+}
+
+.dark {
+  --guide-color: hsl(270, 80%, 78%);
+  --developer-color: hsl(142, 80%, 60%);
+}
+
+/* Reset body background for dark mode (wave pattern is light-only) */
+.dark body {
+  background-color: var(--color-fd-background);
+  background-image: none;
+}
+
+/* Prevent overscroll bounce on docs pages */
+html, body {
+  overscroll-behavior: none;
+}
 
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
@@ -27,6 +92,29 @@
   --border: #d8d0de;
   --input: #d8d0de;
   --ring: #c2703a;
+}
+
+.dark {
+  --background: #13111a;
+  --foreground: #f0eff2;
+  --card: #1a1724;
+  --card-foreground: #f0eff2;
+  --popover: #16141e;
+  --popover-foreground: #e8e6ec;
+  --primary: #d4a574;
+  --primary-foreground: #1a1724;
+  --secondary: #1e1b28;
+  --secondary-foreground: #e8e6ec;
+  --muted: #1e1b28;
+  --muted-foreground: #9b96a6;
+  --accent: #1e1b28;
+  --accent-foreground: #e8e6ec;
+  --destructive: #ef4444;
+  --success: #22c55e;
+  --warning: #eab308;
+  --border: rgba(139, 120, 160, 0.15);
+  --input: rgba(139, 120, 160, 0.2);
+  --ring: #d4a574;
 }
 
 @theme inline {

@@ -2,3 +2,6 @@
 # clerk configuration (can include secrets)
 /.clerk/
 .env.local
+
+# fumadocs auto-generated content
+.source/

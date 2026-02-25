@@ -60,7 +60,7 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${sourceSerif.variable}`}>
           {children}
           <Analytics />

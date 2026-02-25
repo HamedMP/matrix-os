@@ -90,15 +90,17 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 - Commit working increments -- each phase should produce a demoable state
 - Pre-seed demo apps to avoid generation latency during recordings
 - Keep the system prompt under 7K tokens (3% of context budget)
+- **Documentation-driven development**: every new feature, spec, or plan must include a step to update the public docs at `www/content/docs/`. The docs site (matrix-os.com/docs, built with Fumadocs) is the canonical public reference. When planning a task or writing a spec, include documentation updates as an explicit deliverable alongside tests and implementation
 
 ## Governance
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 1.3.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-12
+**Version**: 1.4.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-25
 
 ### Amendment Log
 
 - **1.1.0** (2026-02-11): Added TDD principle (VI). Changed AI Kernel from V2 to V1 `query()` with `resume` based on spike testing. Added Vitest, pnpm/bun to tech constraints.
 - **1.2.0** (2026-02-11): Added prompt caching strategy (90% input cost savings), 1M context window beta, compaction API, 99-100% test coverage target.
 - **1.3.0** (2026-02-12): Expanded vision to include personal AI assistant capabilities. Added: SOUL identity (`soul.md`), skills system (`agents/skills/`), multi-channel messaging (Telegram, WhatsApp, Discord, Slack), cron scheduling, proactive heartbeat, cloud deployment. Expanded Principle III with channel shells. Added channel/scheduling tech constraints. Inspired by OpenClaw/Moltbot and Nanobot (both MIT, open source). Matrix OS is now both a visual OS and a personal AI assistant.
+- **1.4.0** (2026-02-25): Added documentation-driven development rule. Every feature, spec, and plan must include public docs updates at `www/content/docs/` (Fumadocs site at matrix-os.com/docs) as an explicit deliverable.
