@@ -16,8 +16,8 @@ describe("Desktop Mode Store", () => {
     expect(useDesktopMode.getState().mode).toBe("ambient");
   });
 
-  it("supports all 4 modes", () => {
-    const modes: DesktopMode[] = ["desktop", "ambient", "dev", "conversational"];
+  it("supports all 5 modes", () => {
+    const modes: DesktopMode[] = ["desktop", "canvas", "ambient", "dev", "conversational"];
     for (const mode of modes) {
       useDesktopMode.getState().setMode(mode);
       expect(useDesktopMode.getState().mode).toBe(mode);
@@ -61,9 +61,18 @@ describe("Desktop Mode Store", () => {
     expect(config.chatPosition).toBe("center");
   });
 
-  it("allModes returns all 4 modes", () => {
+  it("getModeConfig returns correct config for canvas mode", () => {
+    const config = useDesktopMode.getState().getModeConfig("canvas");
+    expect(config.label).toBe("Canvas");
+    expect(config.showDock).toBe(true);
+    expect(config.showWindows).toBe(true);
+    expect(config.showBottomPanel).toBe(false);
+    expect(config.chatPosition).toBe("sidebar");
+  });
+
+  it("allModes returns all 5 modes", () => {
     const modes = useDesktopMode.getState().allModes();
-    expect(modes).toHaveLength(4);
-    expect(modes.map((m) => m.id)).toEqual(["desktop", "ambient", "dev", "conversational"]);
+    expect(modes).toHaveLength(5);
+    expect(modes.map((m) => m.id)).toEqual(["desktop", "canvas", "ambient", "dev", "conversational"]);
   });
 });
