@@ -3,46 +3,57 @@ title: Getting Started
 description: Set up Matrix OS locally and start your first conversation with the AI kernel.
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
 ## Prerequisites
 
-- **Node.js 24+** (check with `node --version`)
+- **Node.js 24+** -- check with `node --version`
 - **pnpm** -- enable via corepack:
   ```bash
   corepack enable && corepack prepare pnpm@latest --activate
   ```
 - **Anthropic API key** -- get one at [console.anthropic.com](https://console.anthropic.com)
 
+<Callout type="warn" title="Node.js version">
+  Matrix OS requires Node.js 24 or later. The `bin/matrixos.ts doctor` command verifies your environment automatically.
+</Callout>
+
 ## Installation
 
-Clone the repository and install dependencies:
+<Steps>
+  <Step>
+    ### Clone and install
 
-```bash
-git clone https://github.com/AiOS-world/matrix-os.git
-cd matrix-os
-pnpm install
-```
+    ```bash
+    git clone https://github.com/hamedmp/matrix-os.git
+    cd matrix-os
+    pnpm install
+    ```
+  </Step>
+  <Step>
+    ### Set your API key
 
-Set your API key:
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...
+    ```
+  </Step>
+  <Step>
+    ### Start the OS
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+    ```bash
+    bun run dev
+    ```
 
-## Running the Dev Servers
+    This starts two servers concurrently:
+    - **Gateway** at `http://localhost:4000` -- the Hono backend (kernel, channels, file server, WebSocket)
+    - **Shell** at `http://localhost:3000` -- the Next.js web desktop
 
-Start both the gateway and web shell:
+    On first boot, the gateway copies the `home/` template to `~/matrixos/`, initializes git, and sets up default agents, skills, config, and SOUL identity.
+  </Step>
+</Steps>
 
-```bash
-bun run dev
-```
-
-This starts:
-- **Gateway** at `http://localhost:4000` -- the Hono backend (kernel, channels, file server)
-- **Shell** at `http://localhost:3000` -- the Next.js web desktop
-
-On first boot, the gateway creates your home directory at `~/matrixos/` with default agents, skills, config, and SOUL identity.
-
-### Running Individually
+### Running Servers Individually
 
 ```bash
 bun run dev:gateway   # Gateway only (http://localhost:4000)
@@ -51,35 +62,44 @@ bun run dev:shell     # Shell only (http://localhost:3000)
 
 ## Your First Conversation
 
-Open `http://localhost:3000` in your browser. You'll see the Matrix OS desktop with a chat panel.
+Open `http://localhost:3000` in your browser. You'll see the Matrix OS desktop with a chat panel, dock, and input bar.
 
 Type something like:
 
-> Build me a todo app
+> Build me an expense tracker with categories
 
-The AI kernel dispatches your request to the Builder agent, which:
-1. Creates the app files in `~/matrixos/apps/todo/`
-2. Registers it in the dock
-3. Opens the app in an AppViewer window
+Here's what happens:
 
-Everything it creates is a file you own. Check `~/matrixos/apps/todo/` to see the generated code.
+1. Your message hits the gateway's `/ws` WebSocket endpoint
+2. The dispatcher adds it to the serial queue and creates a task in SQLite
+3. `spawnKernel()` builds a system prompt with SOUL, identity, skills TOC, and active processes
+4. The kernel invokes Claude Agent SDK `query()` and selects the **Builder** agent
+5. Builder uses IPC tools to create files in `~/matrixos/apps/`
+6. `gitSnapshotHook` commits the changes automatically
+7. The file watcher detects new files and the shell renders the app in an AppViewer window
+8. Response tokens stream back to the chat panel in real time
+
+Everything it creates is a file you own. Check `~/matrixos/apps/` to see the generated code.
 
 ## Project Structure
 
 ```
 packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
 packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
-shell/               # Next.js web desktop
+packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode)
+shell/               # Next.js 16 web desktop (one of many shells)
 www/                 # matrix-os.com website (you're reading its docs)
 home/                # File system template (copied on first boot)
-tests/               # Vitest test suites
-specs/               # Architecture specs
+tests/               # Vitest test suites (993+ tests)
+specs/               # Architecture specifications
+distro/              # Docker, cloudflared, systemd configs
 ```
 
 ## Running Tests
 
 ```bash
-bun run test              # Unit tests (~993 tests)
+bun run test              # Unit tests (~993 tests, ~11s)
+bun run test:watch        # Watch mode
 bun run test:coverage     # With coverage report
 bun run test:integration  # Integration tests (needs API key, uses haiku)
 ```
@@ -88,12 +108,18 @@ bun run test:integration  # Integration tests (needs API key, uses haiku)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | -- | Required for AI features |
+| `ANTHROPIC_API_KEY` | -- | Required for kernel AI features |
 | `MATRIX_HOME` | `~/matrixos/` | Home directory path |
+| `MATRIX_AUTH_TOKEN` | -- | Bearer token for web shell auth (cloud deployments) |
 | `PORT` | `4000` | Gateway port |
+| `NEXT_PUBLIC_GATEWAY_WS` | `ws://localhost:4000/ws` | Shell WebSocket URL |
+| `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:4000` | Shell HTTP URL |
+| `GATEWAY_URL` | `http://localhost:4000` | Next.js proxy target |
+
+Channel tokens (Telegram, Discord, Slack, WhatsApp) are configured in `~/matrixos/system/config.json` -- everything is a file.
 
 ## Next Steps
 
-- Explore the agents in `~/matrixos/agents/custom/`
-- Create a custom skill in `~/matrixos/agents/skills/`
-- Connect a Telegram bot via `~/matrixos/system/config.json`
+- Explore the [Agent System](/docs/guide/agents) to understand the five core agents
+- Read about the [File System](/docs/guide/file-system) to understand `~/matrixos/`
+- Connect a [Channel](/docs/guide/channels) like Telegram or Discord

@@ -1,54 +1,131 @@
 ---
 title: Contributing
-description: How to contribute to Matrix OS.
+description: How to set up, develop, and contribute to Matrix OS.
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
 
 ## Getting Set Up
 
-1. Fork and clone the repository
-2. Install dependencies: `pnpm install`
-3. Run tests to verify: `bun run test`
-4. Start dev servers: `bun run dev`
+<Steps>
+  <Step>
+    ### Fork and clone
+
+    ```bash
+    git clone https://github.com/hamedmp/matrix-os.git
+    cd matrix-os
+    ```
+  </Step>
+  <Step>
+    ### Install dependencies
+
+    ```bash
+    corepack enable && corepack prepare pnpm@latest --activate
+    pnpm install
+    ```
+  </Step>
+  <Step>
+    ### Verify your environment
+
+    ```bash
+    bun run test     # Should pass 993+ tests
+    bun run dev      # Gateway on :4000, Shell on :3000
+    ```
+  </Step>
+</Steps>
 
 ## Development Rules
 
-- **TDD**: Write failing tests first, then implement
-- **Conventional Commits**: Use type prefixes (`feat:`, `fix:`, `test:`, `chore:`, `refactor:`, etc.)
+- **TDD**: Write failing tests first, then implement (Red -> Green -> Refactor)
 - **TypeScript strict mode**: No `any` types, full type safety
 - **ES modules**: `"type": "module"` everywhere
 - **Minimal comments**: Code should be self-documenting
 - **No over-engineering**: Solve the current problem, not hypothetical future ones
+- **No emojis** in code or docs unless explicitly requested
+- **Drizzle ORM** for all database access (never raw better-sqlite3 queries)
+- **pnpm** for installing, **bun** for running scripts
+
+## Commit Conventions
+
+All commits and PR titles use [Conventional Commits](https://www.conventionalcommits.org/):
+
+| Prefix | Use |
+|--------|-----|
+| `feat:` | New feature |
+| `fix:` | Bug fix |
+| `test:` | Adding or updating tests |
+| `refactor:` | Code restructuring (no behavior change) |
+| `chore:` | Dependencies, tooling, config |
+| `ci:` | CI/CD changes |
+| `docs:` | Documentation |
+| `perf:` | Performance improvement |
+
+Commit messages should be concise and focus on **why**, not **what**.
+
+## Spec-Driven Development
+
+Major features start with a spec in `specs/`. Each spec directory contains:
+
+- **`spec.md`** -- architecture document describing the design
+- **`tasks.md`** -- task breakdown with IDs (e.g., T100-T105)
+
+The spec numbering follows a sequential scheme:
+```
+specs/003-architecture/   # Phase 3 (archive)
+specs/004-concurrent/     # Phase 7: Multiprocessing
+specs/005-soul-skills/    # Phase 9: SOUL + Skills
+specs/006-channels/       # Phase 10: Multi-channel
+...
+specs/031-desktop-customization/  # Desktop theming
+```
+
+Read existing specs to understand the pattern before proposing new features.
+
+## Coordination Rules
+
+When working on a spec:
+
+- Avoid modifying files outside your spec scope without lead approval
+- **Shared files** (`ipc-server.ts`, `config.json`, `prompt.ts`, `server.ts`) -- new additions should be additive, never modify existing structures
+- All tests must pass before declaring a task complete
+- Commit after each completed task group with descriptive messages
+
+<Callout type="info" title="Keep the system prompt lean">
+  The kernel system prompt must stay under 7K tokens. Use skills (demand-loaded) and knowledge files instead of bloating the base prompt.
+</Callout>
 
 ## Project Structure
 
 ```
-packages/kernel/     # AI kernel
-packages/gateway/    # HTTP/WebSocket gateway
-shell/               # Next.js web desktop
+packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
+packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
+packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode)
+shell/               # Next.js 16 web desktop (one of many shells)
 www/                 # matrix-os.com website
-home/                # File system template
-tests/               # Test suites
-specs/               # Architecture specs
+home/                # File system template (copied on first boot)
+tests/               # Vitest test suites (993+ tests)
+specs/               # Architecture specifications
+distro/              # Docker, cloudflared, systemd deployment configs
 ```
-
-## Commit Style
-
-- Concise commit messages focused on "why" not "what"
-- Use conventional commit prefixes: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
-- Tag releases with SemVer: `v0.1.0`, `v0.2.0`
-
-## Spec-Driven Development
-
-Major features start with a spec in `specs/`. Each spec contains:
-- `spec.md`: Architecture document
-- `tasks.md`: Task breakdown with IDs (e.g., T100-T105)
-
-Read existing specs to understand the pattern before proposing new features.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | -- | Required for AI features |
+| `ANTHROPIC_API_KEY` | -- | Required for kernel AI features |
 | `MATRIX_HOME` | `~/matrixos/` | Home directory path |
+| `MATRIX_AUTH_TOKEN` | -- | Bearer token for web shell auth |
 | `PORT` | `4000` | Gateway port |
+| `NEXT_PUBLIC_GATEWAY_WS` | `ws://localhost:4000/ws` | Shell WebSocket URL |
+| `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:4000` | Shell HTTP URL |
+
+## Releases
+
+Tags follow SemVer with `v` prefix (`v0.1.0`, `v0.2.0`). Pre-1.0: minor = features, patch = fixes.
+
+```bash
+bun run test                                          # verify
+git tag -a v0.X.0 -m "Description"                    # tag
+git push origin v0.X.0                                # push tag
+```

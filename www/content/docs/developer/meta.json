@@ -3,5 +3,5 @@
   "title": "Developer",
   "description": "Build on and contribute to Matrix OS",
   "icon": "Terminal",
-  "pages": ["index", "architecture", "testing", "contributing"]
+  "pages": ["index", "architecture", "ipc-tools", "testing", "contributing"]
 }

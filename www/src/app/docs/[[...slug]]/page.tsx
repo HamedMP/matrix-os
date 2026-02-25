@@ -5,6 +5,7 @@ import {
   DocsBody,
 } from 'fumadocs-ui/layouts/docs/page';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
+import { Mermaid } from '@/components/mdx/mermaid';
 import { source, getPageImage } from '@/lib/source';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -45,7 +46,7 @@ export default async function Page(props: {
         />
       </div>
       <DocsBody>
-        <Mdx components={defaultMdxComponents} />
+        <Mdx components={{ ...defaultMdxComponents, Mermaid }} />
       </DocsBody>
       <Feedback onSendAction={onFeedback} />
     </DocsPage>

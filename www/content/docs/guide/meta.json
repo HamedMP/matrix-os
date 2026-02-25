@@ -3,5 +3,5 @@
   "title": "Guide",
   "description": "Learn how to use Matrix OS",
   "icon": "BookOpen",
-  "pages": ["index", "getting-started"]
+  "pages": ["index", "getting-started", "agents", "file-system", "channels"]
 }
