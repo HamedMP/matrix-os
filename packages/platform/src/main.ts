@@ -15,6 +15,8 @@ import { createOrchestrator, type Orchestrator } from './orchestrator.js';
 import { createLifecycleManager, type LifecycleManager } from './lifecycle.js';
 import { createSocialApi } from './social.js';
 import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
+import { metricsRegistry } from './metrics.js';
+import { createStatsCollector } from './stats-collector.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -26,6 +28,14 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  // Prometheus metrics (unauthenticated for scraping)
+  app.get('/metrics', async (c) => {
+    const metrics = await metricsRegistry.metrics();
+    return c.text(metrics, 200, {
+      'Content-Type': metricsRegistry.contentType,
+    });
+  });
 
   // Subdomain proxy: {handle}.matrix-os.com -> user container (before auth)
   app.use('*', async (c, next) => {
@@ -364,6 +374,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
   const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
   lifecycle.start();
+
+  const statsCollector = createStatsCollector({
+    docker,
+    listRunning: () => listContainers(db, 'running'),
+  });
+  statsCollector.start();
 
   // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
   let clerkAuth: ClerkAuth | undefined;

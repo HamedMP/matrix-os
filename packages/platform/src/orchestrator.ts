@@ -11,6 +11,7 @@ import {
   listContainers,
   deleteContainer,
 } from './db.js';
+import { provisionDuration } from './metrics.js';
 
 export interface OrchestratorConfig {
   db: PlatformDB;
@@ -88,6 +89,8 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const existing = getContainer(db, handle);
       if (existing) throw new Error(`Container already exists for handle: ${handle}`);
 
+      const end = provisionDuration.startTimer();
+
       await ensureNetwork();
 
       const gatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
@@ -126,6 +129,8 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         shellPort,
         status: 'running',
       });
+
+      end();
 
       return getContainer(db, handle)!;
     },

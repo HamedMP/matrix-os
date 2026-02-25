@@ -52,6 +52,10 @@ Key principles:
 - `specs/029-plugins/`: Plugin system: manifest, API, hooks (void + modifying), security (T930-T969)
 - `specs/030-settings/`: Settings dashboard: agent, channels, skills, security, cron, plugins (T970-T999)
 - `specs/031-desktop-customization/`: Desktop customization: theme presets, backgrounds, dock config, settings UI (T1000-T1007)
+- `specs/032-e2e-testing/`: E2E test suite for gateway HTTP/WS endpoints (T1100-T1119)
+- `specs/033-docs/`: Public documentation site: Fumadocs in www/, developer + user guides (T1100-T1108)
+- `specs/034-observability/`: Container observability: Prometheus metrics, Grafana dashboards, Loki logs, alerting (T1200-T1229)
+- `specs/035-canvas-desktop/`: Canvas desktop mode: infinite pan/zoom canvas, app grouping, minimap (T1250-T1279)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/`: original architecture spec, plan, tasks (reference only)
@@ -90,7 +94,7 @@ packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
 packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode)
 packages/proxy/      # Shared API proxy (Hono :8080, usage tracking)
 shell/               # Next.js 16 frontend (desktop shell: one of many shells)
-www/                 # matrix-os.com (Next.js on Vercel, Clerk auth, Inngest)
+www/                 # matrix-os.com + /docs (Next.js on Vercel, Clerk auth, Inngest, Fumadocs)
 home/                # File system template (copied on first boot)
 tests/               # Vitest test suites
 spike/               # Throwaway SDK experiments
@@ -204,8 +208,11 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ### In Progress
 - **013A Docker** (T500-T506): Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
+- **033 Docs** (T1100-T1108): Fumadocs documentation site at www/content/docs/ (feat/docs-site branch)
 
 ### Next Up (see specs/ for details)
+- **034 Observability** (T1200-T1229): Prometheus metrics, Grafana dashboards, Loki log aggregation, alerting
+- **035 Canvas Desktop** (T1250-T1279): Infinite pan/zoom canvas mode, app grouping, minimap, toolbar
 - **011 New Computing** (T300-T317): Living Software, Socratic Computing, Intent-based Interfaces
 - **013B Distro** (T510-T517): mkosi, systemd services, Plymouth, Raspberry Pi
 - **010 Demo** (T057-T064): pre-seed apps, demo script, recording
