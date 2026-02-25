@@ -51,6 +51,13 @@ import {
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import type { WSContext } from "hono/ws";
+import {
+  metricsRegistry,
+  httpRequestsTotal,
+  httpRequestDuration,
+  wsConnectionsActive,
+  normalizePath,
+} from "./metrics.js";
 
 export interface GatewayConfig {
   homePath: string;
@@ -336,6 +343,24 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
+  app.use("*", async (c, next) => {
+    const start = performance.now();
+    await next();
+    const duration = (performance.now() - start) / 1000;
+    const path = normalizePath(c.req.path);
+    const method = c.req.method;
+    const status = String(c.res.status);
+    httpRequestsTotal.inc({ method, path, status });
+    httpRequestDuration.observe({ method, path }, duration);
+  });
+
+  app.get("/metrics", async (c) => {
+    const output = await metricsRegistry.metrics();
+    return c.text(output, 200, {
+      "Content-Type": metricsRegistry.contentType,
+    });
+  });
+
   app.get(
     "/ws",
     upgradeWebSocket(() => {
@@ -346,6 +371,7 @@ export async function createGateway(config: GatewayConfig) {
       return {
         onOpen(_evt, ws) {
           clients.add(ws);
+          wsConnectionsActive.inc();
           approvalBridge = createApprovalBridge({
             send: (msg) => send(ws, msg),
             timeout: approvalPolicy.timeout,
@@ -409,6 +435,7 @@ export async function createGateway(config: GatewayConfig) {
 
         onClose(_evt, ws) {
           clients.delete(ws);
+          wsConnectionsActive.dec();
         },
       };
     }),
@@ -606,6 +633,29 @@ export async function createGateway(config: GatewayConfig) {
     }
     const layoutPath = join(homePath, "system/layout.json");
     writeFileSync(layoutPath, JSON.stringify(body, null, 2));
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/canvas", (c) => {
+    const canvasPath = join(homePath, "system/canvas.json");
+    if (!existsSync(canvasPath)) {
+      return c.json({});
+    }
+    try {
+      const data = JSON.parse(readFileSync(canvasPath, "utf-8"));
+      return c.json(data);
+    } catch {
+      return c.json({});
+    }
+  });
+
+  app.put("/api/canvas", async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    if (!body || typeof body !== "object" || !body.transform) {
+      return c.json({ error: "Invalid canvas data: requires transform object" }, 400);
+    }
+    const canvasPath = join(homePath, "system/canvas.json");
+    writeFileSync(canvasPath, JSON.stringify(body, null, 2));
     return c.json({ ok: true });
   });
 

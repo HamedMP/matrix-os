@@ -37,3 +37,14 @@ export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";
 export type { ApprovalBridge, ApprovalRequest, ApprovalResponse } from "./approval.js";
+export {
+  metricsRegistry,
+  httpRequestsTotal,
+  httpRequestDuration,
+  kernelDispatchTotal,
+  kernelDispatchDuration,
+  wsConnectionsActive,
+  aiCostTotal,
+  aiTokensTotal,
+  normalizePath,
+} from "./metrics.js";

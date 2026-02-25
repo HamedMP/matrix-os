@@ -17,6 +17,7 @@
   "dependencies": {
     "@hono/node-server": "^1.19.9",
     "better-sqlite3": "^12.6.2",
-    "hono": "^4.11.9"
+    "hono": "^4.11.9",
+    "prom-client": "^15.1.3"
   }
 }

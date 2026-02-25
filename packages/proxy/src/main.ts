@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary } from './db.js';
 import { calculateCost } from './cost.js';
+import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
 
 const ANTHROPIC_API = process.env.ANTHROPIC_API_URL ?? 'https://api.anthropic.com';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY ?? '';
@@ -21,6 +22,13 @@ const instances = new Map<string, Instance>();
 
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }));
+
+app.get('/metrics', async (c) => {
+  const output = await proxyMetricsRegistry.metrics();
+  return c.text(output, 200, {
+    'Content-Type': proxyMetricsRegistry.contentType,
+  });
+});
 
 // Instance management
 app.post('/instances/register', async (c) => {
@@ -84,6 +92,7 @@ app.all('/v1/*', async (c) => {
   // Check quota
   const quota = checkQuota(userId);
   if (!quota.allowed) {
+    quotaRejections.inc({ user_id: userId });
     return c.json({
       type: 'error',
       error: { type: 'quota_exceeded', message: 'Usage quota exceeded' },
@@ -175,6 +184,11 @@ app.all('/v1/*', async (c) => {
     sessionId, status: upstream.status,
   });
 
+  apiCallsTotal.inc({ user_id: userId, model, status: String(upstream.status) });
+  if (costUsd > 0) {
+    apiCostTotal.inc({ user_id: userId, model }, costUsd);
+  }
+
   return new Response(responseText, {
     status: upstream.status,
     headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' },
@@ -234,6 +248,11 @@ async function collectStreamUsage(
     cacheReadTokens, cacheWriteTokens, costUsd,
     sessionId, status,
   });
+
+  apiCallsTotal.inc({ user_id: userId, model, status: String(status) });
+  if (costUsd > 0) {
+    apiCostTotal.inc({ user_id: userId, model }, costUsd);
+  }
 }
 
 serve({ fetch: app.fetch, port: PORT }, () => {

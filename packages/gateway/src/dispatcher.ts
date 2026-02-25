@@ -8,12 +8,20 @@ import {
   failTask,
   type KernelConfig,
   type KernelEvent,
+  type KernelResult,
   type MatrixDB,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
+import { createInteractionLogger } from "./logger.js";
+import {
+  kernelDispatchTotal,
+  kernelDispatchDuration,
+  aiCostTotal,
+  aiTokensTotal,
+} from "./metrics.js";
 
 export type SpawnFn = typeof spawnKernel;
 
@@ -80,6 +88,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
   ensureHome(homePath);
   const db = createDB(`${homePath}/system/matrix.db`);
+  const interactionLogger = createInteractionLogger(homePath);
 
   const queue: InternalEntry[] = [];
   let active = 0;
@@ -107,6 +116,12 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     });
     claimTask(db, processId, "dispatcher");
 
+    const startTime = Date.now();
+    const source = entry.context?.channel ?? "web";
+    const toolsUsed: string[] = [];
+    let resultSessionId = "";
+    let resultData: KernelResult | undefined;
+
     try {
       let message = entry.message;
       if (entry.context?.channel) {
@@ -133,11 +148,62 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
       for await (const event of spawnFn(message, config)) {
         entry.onEvent(event);
+        if (event.type === "init") {
+          resultSessionId = event.sessionId;
+        } else if (event.type === "tool_start") {
+          toolsUsed.push(event.tool);
+        } else if (event.type === "result") {
+          resultData = event.data;
+        }
       }
 
       completeTask(db, processId, { message: entry.message });
+
+      const durationMs = Date.now() - startTime;
+      const durationSec = durationMs / 1000;
+      kernelDispatchTotal.inc({ source, status: "ok" });
+      kernelDispatchDuration.observe({ source }, durationSec);
+      if (resultData) {
+        if (resultData.cost > 0) {
+          aiCostTotal.inc({ model: opts.model ?? "unknown" }, resultData.cost);
+        }
+      }
+
+      try {
+        interactionLogger.log({
+          source,
+          sessionId: resultSessionId || entry.sessionId || "",
+          prompt: entry.message,
+          toolsUsed,
+          tokensIn: 0,
+          tokensOut: 0,
+          costUsd: resultData?.cost ?? 0,
+          durationMs,
+          result: "ok",
+        });
+      } catch { /* logger failure must not break dispatch */ }
+
       entry.resolve();
     } catch (error) {
+      const durationMs = Date.now() - startTime;
+      const durationSec = durationMs / 1000;
+      kernelDispatchTotal.inc({ source, status: "error" });
+      kernelDispatchDuration.observe({ source }, durationSec);
+
+      try {
+        interactionLogger.log({
+          source,
+          sessionId: resultSessionId || entry.sessionId || "",
+          prompt: entry.message,
+          toolsUsed,
+          tokensIn: 0,
+          tokensOut: 0,
+          costUsd: resultData?.cost ?? 0,
+          durationMs,
+          result: "error",
+        });
+      } catch { /* logger failure must not break dispatch */ }
+
       failTask(db, processId, (error as Error).message);
       entry.reject(error as Error);
     } finally {

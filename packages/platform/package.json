@@ -20,6 +20,7 @@
     "better-sqlite3": "^12.6.2",
     "dockerode": "^4.0.7",
     "drizzle-orm": "^0.45.1",
-    "hono": "^4.11.9"
+    "hono": "^4.11.9",
+    "prom-client": "^15.1.3"
   }
 }
