@@ -564,6 +564,95 @@ Clerk session cookies are scoped to `matrix-os.com` by default. For subdomain au
 
 To re-enable: configure Clerk Dashboard -> Domains with `matrix-os.com` as primary and cookie domain `.matrix-os.com`, then uncomment the JWT verification blocks in `packages/platform/src/main.ts`.
 
+## Observability Stack
+
+Matrix OS ships a Grafana + Prometheus + Loki observability overlay. It runs alongside the platform services and provides metrics, log aggregation, and alerting out of the box.
+
+### Starting the Stack
+
+```bash
+docker compose \
+  -f distro/docker-compose.platform.yml \
+  -f distro/observability/docker-compose.observability.yml \
+  --env-file .env up -d
+```
+
+This starts four additional containers: Prometheus, Grafana, Loki, and Promtail.
+
+### Default Ports
+
+| Service    | Port  | Purpose                          |
+|------------|-------|----------------------------------|
+| Grafana    | 3200  | Dashboards and alerting UI       |
+| Prometheus | 9090  | Metrics storage and queries      |
+| Loki       | 3100  | Log aggregation (queried via Grafana) |
+
+### Accessing Grafana
+
+Open `http://<server-ip>:3200` (or via Cloudflare Tunnel if configured).
+
+- **Anonymous access** is enabled by default (read-only Viewer role).
+- **Admin login**: username `admin`, password `matrixos`.
+- Data sources (Prometheus + Loki) are auto-provisioned on first start.
+
+### Pre-built Dashboards
+
+Three dashboards are provisioned automatically:
+
+1. **Platform Overview** -- container count (running/stopped), total cost today, active WebSocket connections, provision success rate, request/dispatch/error rate timeseries.
+2. **Container Detail** -- per-container CPU, memory, network I/O, request rate, dispatch duration percentiles, cost, and recent logs. Use the `handle` dropdown to select a container.
+3. **Cost & Usage** -- daily/weekly cost trends, per-user cost breakdown, model distribution, tokens in/out, quota utilization.
+
+### Adding Custom Dashboards
+
+Drop a Grafana dashboard JSON file into `distro/observability/dashboards/` and restart the stack. Grafana's provisioning config watches that directory and loads any `.json` file automatically.
+
+```bash
+# Example: add a custom dashboard
+cp my-dashboard.json distro/observability/dashboards/
+docker compose \
+  -f distro/docker-compose.platform.yml \
+  -f distro/observability/docker-compose.observability.yml \
+  restart grafana
+```
+
+### Alerting
+
+Alert rules are defined in `distro/observability/alerting/rules.yml` and loaded by Prometheus at startup. Pre-configured alerts:
+
+| Alert                  | Condition                              | Severity |
+|------------------------|----------------------------------------|----------|
+| ContainerOOM           | Memory > 90% of limit for 5m          | critical |
+| ContainerDown          | Health check failing for 2m            | critical |
+| HighCostRate           | Daily cost > $10/user                  | warning  |
+| HighErrorRate          | 5xx > 5% of requests for 5m           | warning  |
+| DispatchQueueBacklog   | Queue depth > 10 for 5m               | warning  |
+
+To add or modify alerts, edit `distro/observability/alerting/rules.yml` and restart Prometheus:
+
+```bash
+docker compose \
+  -f distro/docker-compose.platform.yml \
+  -f distro/observability/docker-compose.observability.yml \
+  restart prometheus
+```
+
+### Metrics Endpoints
+
+Each service exposes a `/metrics` endpoint in Prometheus text format:
+
+```bash
+curl http://localhost:4000/metrics   # gateway
+curl http://localhost:9000/metrics   # platform
+curl http://localhost:8080/metrics   # proxy
+```
+
+Prometheus scrapes these every 15 seconds (configured in `distro/observability/prometheus.yml`).
+
+### Logs
+
+Promtail tails interaction logs (`~/matrixos/system/logs/*.jsonl`), activity logs (`~/matrixos/system/activity.log`), and Docker container stdout/stderr. All logs are searchable in Grafana via the Loki data source.
+
 ## Troubleshooting
 
 ### Platform won't start

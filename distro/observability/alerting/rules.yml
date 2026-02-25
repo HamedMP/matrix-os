@@ -1,0 +1,46 @@
+groups:
+  - name: matrixos
+    rules:
+      - alert: ContainerOOM
+        expr: platform_container_memory_bytes / platform_container_memory_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.handle }} memory > 90%"
+          description: "Container {{ $labels.handle }} is using {{ $value | humanizePercentage }} of its memory limit for more than 5 minutes."
+
+      - alert: ContainerDown
+        expr: up{job="gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway is down"
+          description: "The gateway service has been unreachable for more than 2 minutes."
+
+      - alert: HighCostRate
+        expr: increase(proxy_api_cost_usd_total[1d]) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily cost exceeds $10"
+          description: "Total API cost in the last 24 hours is ${{ $value | printf \"%.2f\" }}, exceeding the $10 threshold."
+
+      - alert: HighErrorRate
+        expr: rate(gateway_http_requests_total{status=~"5.."}[5m]) / rate(gateway_http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Error rate > 5%"
+          description: "HTTP 5xx error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: DispatchQueueBacklog
+        expr: gateway_kernel_dispatch_total - gateway_kernel_dispatch_total offset 5m > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High dispatch backlog"
+          description: "More than 50 dispatches accumulated in the last 5 minutes, indicating potential queue backlog."
