@@ -2,13 +2,16 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
+import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
-import { useDesktopMode } from "@/stores/desktop-mode";
+import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { AppViewer } from "./AppViewer";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { Settings } from "./Settings";
+import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
   Card,
   CardHeader,
@@ -27,40 +30,12 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon } from "lucide-react";
+import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { AmbientClock } from "./AmbientClock";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
-
-export interface AppWindow {
-  id: string;
-  title: string;
-  path: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  minimized: boolean;
-  zIndex: number;
-}
-
-interface LayoutWindow {
-  path: string;
-  title: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  state: "open" | "minimized" | "closed";
-}
-
-interface AppEntry {
-  name: string;
-  path: string;
-  iconUrl?: string;
-}
 
 interface ModuleRegistryEntry {
   name: string;
@@ -83,8 +58,6 @@ function nameToSlug(name: string): string {
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
-
-let nextZ = 1;
 
 function TrafficLights({
   onClose,
@@ -206,14 +179,109 @@ function DockIcon({
   );
 }
 
+function ModeSwitcher({
+  iconSize,
+  tooltipSide,
+}: {
+  iconSize: number;
+  tooltipSide: "left" | "right" | "top";
+}) {
+  const [open, setOpen] = useState(false);
+  const mode = useDesktopMode((s) => s.mode);
+  const setMode = useDesktopMode((s) => s.setMode);
+  const allModes = useDesktopMode((s) => s.allModes);
+  const getModeConfig = useDesktopMode((s) => s.getModeConfig);
+  const modeConfig = getModeConfig(mode);
+  const modes = allModes();
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onClickOutside);
+    return () => document.removeEventListener("pointerdown", onClickOutside);
+  }, [open]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((prev) => !prev)}
+        className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+          open ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/60"
+        }`}
+        style={{ width: iconSize, height: iconSize }}
+        aria-label={`${modeConfig.label} mode`}
+      >
+        <MonitorIcon className="size-4" />
+      </button>
+      {open && (
+        <div
+          className={[
+            "absolute flex flex-col min-w-[160px] py-1 rounded-lg bg-card border border-border shadow-xl z-[60]",
+            tooltipSide === "right" && "left-full top-0 ml-2",
+            tooltipSide === "left" && "right-full top-0 mr-2",
+            tooltipSide === "top" && "bottom-full left-1/2 -translate-x-1/2 mb-2",
+          ].filter(Boolean).join(" ")}
+        >
+          {modes.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => {
+                setMode(m.id);
+                setOpen(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-muted ${
+                mode === m.id ? "text-foreground font-medium" : "text-muted-foreground"
+              }`}
+            >
+              {mode === m.id ? (
+                <CheckIcon className="size-3 shrink-0" />
+              ) : (
+                <span className="size-3 shrink-0" />
+              )}
+              <span>{m.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface DesktopProps {
   storeOpen?: boolean;
   onToggleStore?: () => void;
 }
 
 export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
-  const [windows, setWindows] = useState<AppWindow[]>([]);
-  const [apps, setApps] = useState<AppEntry[]>([]);
+  const windows = useWindowManager((s) => s.windows);
+  const apps = useWindowManager((s) => s.apps);
+  const wmOpenWindow = useWindowManager((s) => s.openWindow);
+  const wmCloseWindow = useWindowManager((s) => s.closeWindow);
+  const wmMinimizeWindow = useWindowManager((s) => s.minimizeWindow);
+  const wmFocusWindow = useWindowManager((s) => s.focusWindow);
+  const wmMoveWindow = useWindowManager((s) => s.moveWindow);
+  const wmResizeWindow = useWindowManager((s) => s.resizeWindow);
+  const wmGetWindow = useWindowManager((s) => s.getWindow);
+  const wmSetApps = useWindowManager((s) => s.setApps);
+  const wmSetWindows = useWindowManager((s) => s.setWindows);
+  const wmLoadLayout = useWindowManager((s) => s.loadLayout);
+
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -247,7 +315,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
     const iconPath = `/files/system/icons/${slug}.png`;
     fetch(`${GATEWAY_URL}${iconPath}`, { method: "HEAD" }).then((res) => {
       if (res.ok) {
-        setApps((prev) =>
+        wmSetApps((prev) =>
           prev.map((a) =>
             nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${iconPath}` } : a,
           ),
@@ -261,7 +329,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               return;
             }
             return r.json().then((data: { iconUrl: string }) => {
-              setApps((prev) =>
+              wmSetApps((prev) =>
                 prev.map((a) =>
                   nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}` } : a,
                 ),
@@ -272,7 +340,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           .finally(() => generatingRef.current.delete(slug));
       }
     }).catch(() => {});
-  }, []);
+  }, [wmSetApps]);
 
   const regenerateIcon = useCallback((slug: string) => {
     generatingRef.current.add(slug);
@@ -284,7 +352,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         }
         return r.json().then((data: { iconUrl: string }) => {
           const bustUrl = `${GATEWAY_URL}${data.iconUrl}?t=${Date.now()}`;
-          setApps((prev) =>
+          wmSetApps((prev) =>
             prev.map((a) =>
               nameToSlug(a.name) === slug ? { ...a, iconUrl: bustUrl } : a,
             ),
@@ -293,10 +361,10 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       })
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
       .finally(() => generatingRef.current.delete(slug));
-  }, []);
+  }, [wmSetApps]);
 
   const addApp = useCallback((name: string, path: string, moduleIconUrl?: string) => {
-    setApps((prev) => {
+    wmSetApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
       return [...prev, { name, path, iconUrl: moduleIconUrl }];
     });
@@ -304,36 +372,20 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       const slug = nameToSlug(name);
       checkAndGenerateIcon(slug);
     }
-  }, [checkAndGenerateIcon]);
+  }, [wmSetApps, checkAndGenerateIcon]);
 
   const openWindow = useCallback((name: string, path: string) => {
-    setWindows((prev) => {
-      const existing = prev.find((w) => w.path === path);
-      if (existing) {
-        return prev.map((w) =>
-          w.path === path
-            ? { ...w, minimized: false, zIndex: nextZ++ }
-            : w,
-        );
+    wmOpenWindow(name, path, dockXOffset);
+    // In canvas mode, reposition new windows to the center of the current viewport
+    if (useDesktopMode.getState().mode === "canvas") {
+      const { screenToCanvas } = useCanvasTransform.getState();
+      const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
+      const win = useWindowManager.getState().windows.find((w) => w.path === path);
+      if (win) {
+        wmMoveWindow(win.id, center.x - win.width / 2, center.y - win.height / 2);
       }
-      return [
-        ...prev,
-        {
-          id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          title: name,
-          path,
-          x: dockXOffset + prev.length * 30,
-          y: 20 + prev.length * 30,
-          width: 640,
-          height: 480,
-          minimized: false,
-          zIndex: nextZ++,
-        },
-      ];
-    });
-  }, [dockXOffset]);
-
-  const closedPathsRef = useRef(new Set<string>());
+    }
+  }, [wmOpenWindow, dockXOffset, wmMoveWindow]);
 
   const loadModules = useCallback(async () => {
     try {
@@ -350,11 +402,12 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       if (!modulesRes?.ok) return;
       const registry: ModuleRegistryEntry[] = await modulesRes.json();
 
+      const layoutToLoad: LayoutWindow[] = [];
+
       for (const mod of registry) {
         if (mod.status !== "active") continue;
 
         try {
-          // Try module.json first (standard), fall back to manifest.json
           let metaRes = await fetch(
             `${GATEWAY_URL}/files/modules/${mod.name}/module.json`,
           );
@@ -375,27 +428,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
 
           const saved = layoutMap.get(path);
           if (saved) {
-            if (saved.state === "closed") {
-              closedPathsRef.current.add(path);
-              continue;
-            }
-            setWindows((prev) => {
-              if (prev.find((w) => w.path === path)) return prev;
-              return [
-                ...prev,
-                {
-                  id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                  title: saved.title,
-                  path,
-                  x: saved.x,
-                  y: saved.y,
-                  width: saved.width,
-                  height: saved.height,
-                  minimized: saved.state === "minimized",
-                  zIndex: nextZ++,
-                },
-              ];
-            });
+            layoutToLoad.push(saved);
           } else {
             openWindow(meta.name, path);
           }
@@ -403,54 +436,18 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           // module.json missing or invalid, skip
         }
       }
+
+      if (layoutToLoad.length > 0) {
+        wmLoadLayout(layoutToLoad);
+      }
     } catch {
       // modules.json not available yet
     }
-  }, [addApp, openWindow]);
+  }, [addApp, openWindow, wmLoadLayout]);
 
   useEffect(() => {
     loadModules();
   }, [loadModules]);
-
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => {
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      const layoutWindows: LayoutWindow[] = windows.map((w) => ({
-        path: w.path,
-        title: w.title,
-        x: w.x,
-        y: w.y,
-        width: w.width,
-        height: w.height,
-        state: w.minimized ? "minimized" : "open",
-      }));
-
-      for (const path of closedPathsRef.current) {
-        if (!layoutWindows.find((lw) => lw.path === path)) {
-          const app = apps.find((a) => a.path === path);
-          layoutWindows.push({
-            path,
-            title: app?.name ?? path,
-            x: 0,
-            y: 0,
-            width: 640,
-            height: 480,
-            state: "closed",
-          });
-        }
-      }
-
-      fetch(`${GATEWAY_URL}/api/layout`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ windows: layoutWindows }),
-      }).catch(() => {});
-    }, 500);
-
-    return () => clearTimeout(saveTimerRef.current);
-  }, [windows, apps]);
 
   useFileWatcher(
     useCallback(
@@ -463,44 +460,22 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         if (path.startsWith("apps/")) {
           const name = path.replace("apps/", "").replace(".html", "");
           if (event === "unlink") {
-            setApps((prev) => prev.filter((a) => a.path !== path));
-            setWindows((prev) => prev.filter((w) => w.path !== path));
+            wmSetApps((prev) => prev.filter((a) => a.path !== path));
+            wmSetWindows((prev) => prev.filter((w) => w.path !== path));
           } else {
             addApp(name, path);
             openWindow(name, path);
           }
         }
       },
-      [loadModules, addApp, openWindow],
+      [loadModules, addApp, openWindow, wmSetApps, wmSetWindows],
     ),
   );
-
-  const bringToFront = useCallback((id: string) => {
-    setWindows((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, zIndex: nextZ++ } : w)),
-    );
-  }, []);
-
-  const closeWindow = useCallback((id: string) => {
-    setWindows((prev) => {
-      const win = prev.find((w) => w.id === id);
-      if (win) closedPathsRef.current.add(win.path);
-      return prev.filter((w) => w.id !== id);
-    });
-  }, []);
-
-  const minimizeWindow = useCallback((id: string) => {
-    setWindows((prev) =>
-      prev.map((w) =>
-        w.id === id ? { ...w, minimized: true } : w,
-      ),
-    );
-  }, []);
 
   const onDragStart = useCallback(
     (id: string, e: React.PointerEvent) => {
       e.preventDefault();
-      const win = windows.find((w) => w.id === id);
+      const win = wmGetWindow(id);
       if (!win) return;
       dragRef.current = {
         id,
@@ -510,27 +485,17 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         origY: win.y,
       };
       setInteracting(true);
-      bringToFront(id);
+      wmFocusWindow(id);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [windows, bringToFront],
+    [wmGetWindow, wmFocusWindow],
   );
 
   const onDragMove = useCallback((e: React.PointerEvent) => {
     if (!dragRef.current) return;
     const { id, startX, startY, origX, origY } = dragRef.current;
-    setWindows((prev) =>
-      prev.map((w) =>
-        w.id === id
-          ? {
-              ...w,
-              x: origX + (e.clientX - startX),
-              y: origY + (e.clientY - startY),
-            }
-          : w,
-      ),
-    );
-  }, []);
+    wmMoveWindow(id, origX + (e.clientX - startX), origY + (e.clientY - startY));
+  }, [wmMoveWindow]);
 
   const onDragEnd = useCallback(() => {
     dragRef.current = null;
@@ -541,7 +506,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
     (id: string, e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const win = windows.find((w) => w.id === id);
+      const win = wmGetWindow(id);
       if (!win) return;
       resizeRef.current = {
         id,
@@ -551,27 +516,21 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         origH: win.height,
       };
       setInteracting(true);
-      bringToFront(id);
+      wmFocusWindow(id);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [windows, bringToFront],
+    [wmGetWindow, wmFocusWindow],
   );
 
   const onResizeMove = useCallback((e: React.PointerEvent) => {
     if (!resizeRef.current) return;
     const { id, startX, startY, origW, origH } = resizeRef.current;
-    setWindows((prev) =>
-      prev.map((w) =>
-        w.id === id
-          ? {
-              ...w,
-              width: Math.max(MIN_WIDTH, origW + (e.clientX - startX)),
-              height: Math.max(MIN_HEIGHT, origH + (e.clientY - startY)),
-            }
-          : w,
-      ),
+    wmResizeWindow(
+      id,
+      Math.max(MIN_WIDTH, origW + (e.clientX - startX)),
+      Math.max(MIN_HEIGHT, origH + (e.clientY - startY)),
     );
-  }, []);
+  }, [wmResizeWindow]);
 
   const onResizeEnd = useCallback(() => {
     resizeRef.current = null;
@@ -730,20 +689,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             ? "ml-auto flex flex-row items-center gap-2"
             : "mt-auto flex flex-col items-center gap-2"
           }>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={cycleMode}
-                  className="flex items-center justify-center rounded-xl bg-card border border-border/60 shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all"
-                  style={{ width: dock.iconSize, height: dock.iconSize }}
-                >
-                  <MonitorIcon className="size-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side={tooltipSide} sideOffset={8}>
-                {modeConfig.label} mode
-              </TooltipContent>
-            </Tooltip>
+            <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -789,13 +735,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             >
               <StoreIcon className="size-4" />
             </button>
-            <button
-              onClick={cycleMode}
-              className="flex shrink-0 size-9 items-center justify-center rounded-lg border border-border/60 bg-card transition-all active:scale-95"
-              title={`${modeConfig.label} mode`}
-            >
-              <MonitorIcon className="size-4" />
-            </button>
+            <ModeSwitcher iconSize={36} tooltipSide="top" />
             <button
               onClick={() => setSettingsOpen((prev) => !prev)}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
@@ -864,7 +804,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             </div>
           )}
 
-          {modeConfig.showWindows && windows.filter((w) => !w.minimized).length === 0 &&
+          {modeConfig.showWindows && desktopMode === "canvas" && (
+            <CanvasRenderer />
+          )}
+
+          {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="flex h-full items-center justify-center">
                 <p className="text-sm text-muted-foreground">
@@ -875,7 +819,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             )}
 
           {/* Desktop: positioned windows; Mobile: full-screen cards */}
-          {modeConfig.showWindows && windows.map((win) =>
+          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) =>
             win.minimized ? null : (
               <Card
                 key={win.id}
@@ -887,7 +831,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                   "--win-h": `${win.height}px`,
                   zIndex: win.zIndex,
                 } as React.CSSProperties}
-                onMouseDown={() => bringToFront(win.id)}
+                onMouseDown={() => wmFocusWindow(win.id)}
               >
                 <CardHeader
                   className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
@@ -896,8 +840,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                   onPointerUp={onDragEnd}
                 >
                   <TrafficLights
-                    onClose={() => closeWindow(win.id)}
-                    onMinimize={() => minimizeWindow(win.id)}
+                    onClose={() => wmCloseWindow(win.id)}
+                    onMinimize={() => wmMinimizeWindow(win.id)}
                   />
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}

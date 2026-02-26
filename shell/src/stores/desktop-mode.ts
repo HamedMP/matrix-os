@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type DesktopMode = "desktop" | "ambient" | "dev" | "conversational";
+export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev" | "conversational";
 
 export interface ModeConfig {
   id: DesktopMode;
@@ -19,6 +19,15 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     id: "desktop",
     label: "Desktop",
     description: "Full desktop with dock, windows, and sidebar chat",
+    showDock: true,
+    showWindows: true,
+    showBottomPanel: false,
+    chatPosition: "sidebar",
+  },
+  canvas: {
+    id: "canvas",
+    label: "Canvas",
+    description: "Spatial canvas with zoom, pan, and app grouping",
     showDock: true,
     showWindows: true,
     showBottomPanel: false,

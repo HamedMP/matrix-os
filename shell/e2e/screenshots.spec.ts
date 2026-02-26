@@ -44,7 +44,7 @@ test.describe("Visual regression", () => {
 
   test("mission control", async ({ page }) => {
     // Mission control / Tasks button in the dock (KanbanSquareIcon)
-    const tasksButton = page.locator("aside button", { has: page.locator("svg.lucide-kanban-square") }).first();
+    const tasksButton = page.locator("aside button", { has: page.locator("svg.lucide-square-kanban") }).first();
     await tasksButton.click();
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("mission-control.png", {
