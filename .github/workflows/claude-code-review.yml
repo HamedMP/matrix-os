@@ -39,4 +39,4 @@ jobs:
             Use the gh CLI to read the PR diff and post inline comments on specific lines.
           claude_args: |
             --max-turns 10
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh api:*),Read,Glob,Grep"
+            --allowedTools "Bash(gh pr:*),Bash(gh api:*),Read,Glob,Grep"
