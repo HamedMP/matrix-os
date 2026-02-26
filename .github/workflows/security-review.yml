@@ -1,0 +1,60 @@
+name: Security Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - "packages/gateway/src/**"
+      - "packages/kernel/src/**"
+      - "packages/platform/src/**"
+      - "shell/src/lib/**"
+      - "shell/proxy.ts"
+      - ".github/workflows/**"
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Security Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Perform a security-focused review of this PR. Check for:
+
+            ## OWASP Top 10
+            - SQL Injection (we use Drizzle ORM - check for raw queries)
+            - Cross-Site Scripting (XSS) in shell components
+            - Broken Authentication (auth middleware, MATRIX_AUTH_TOKEN)
+            - Sensitive Data Exposure (API keys, tokens in logs)
+            - Broken Access Control (file path traversal, IPC tool access)
+            - Server-Side Request Forgery (SSRF) in gateway proxy/fetch
+            - Security Misconfiguration (permissive CORS, missing headers)
+
+            ## Project-Specific
+            - Agent SDK tool restrictions (bypassPermissions, allowedTools)
+            - File system access outside home directory
+            - Channel adapter input sanitization (Telegram, Discord, etc.)
+            - WebSocket message validation
+            - GitHub Actions workflow injection
+
+            Rate findings as CRITICAL, HIGH, MEDIUM, or LOW.
+            Only report real issues, not theoretical concerns.
+            Use inline comments on the specific lines.
+          claude_args: |
+            --max-turns 10
+            --allowedTools "Bash(gh pr:*),Bash(gh api:*),Read,Glob,Grep"

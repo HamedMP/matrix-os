@@ -1,0 +1,96 @@
+name: Flaky Test Retry
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  detect-flaky:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect flaky test failures
+        id: detect
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            The CI workflow failed: ${{ github.event.workflow_run.html_url }}
+
+            Check the logs: gh run view ${{ github.event.workflow_run.id }} --log-failed
+
+            Determine if this looks like a flaky/transient failure by checking for:
+            - Timeout errors or socket hang ups
+            - Network/download failures (e.g. fetching dependencies)
+            - Race conditions
+            - Intermittent "Expected X but got Y" failures
+            - Infrastructure errors (runner issues, disk space, etc.)
+
+            Return structured JSON only.
+          claude_args: |
+            --max-turns 3
+            --allowedTools "Bash(gh run view:*),Bash(gh run download:*),Read"
+            --json-schema '{"type":"object","properties":{"is_flaky":{"type":"boolean","description":"Whether this appears to be a flaky/transient failure"},"confidence":{"type":"number","minimum":0,"maximum":1,"description":"Confidence level"},"summary":{"type":"string","description":"One-sentence explanation"}},"required":["is_flaky","confidence","summary"]}'
+
+      - name: Retry flaky tests
+        if: |
+          fromJSON(steps.detect.outputs.structured_output).is_flaky == true &&
+          fromJSON(steps.detect.outputs.structured_output).confidence >= 0.7
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          STRUCTURED_OUTPUT: ${{ steps.detect.outputs.structured_output }}
+        run: |
+          CONFIDENCE=$(echo "$STRUCTURED_OUTPUT" | jq -r '.confidence')
+          SUMMARY=$(echo "$STRUCTURED_OUTPUT" | jq -r '.summary')
+          echo "Flaky test detected (confidence: $CONFIDENCE)"
+          echo "Summary: $SUMMARY"
+          gh workflow run "CI" --ref "$HEAD_BRANCH"
+
+      - name: Comment on PR
+        if: github.event.workflow_run.event == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STRUCTURED_OUTPUT: ${{ steps.detect.outputs.structured_output }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          IS_FLAKY=$(echo "$STRUCTURED_OUTPUT" | jq -r '.is_flaky')
+          CONFIDENCE=$(echo "$STRUCTURED_OUTPUT" | jq -r '.confidence')
+          SUMMARY=$(echo "$STRUCTURED_OUTPUT" | jq -r '.summary')
+
+          pr_number=$(gh pr list --head "$HEAD_BRANCH" --json number --jq '.[0].number')
+
+          if [ -n "$pr_number" ]; then
+            if [ "$IS_FLAKY" = "true" ]; then
+              TITLE="Flaky Test Detected"
+              if [ "$(echo "$CONFIDENCE >= 0.7" | bc -l)" = "1" ]; then
+                ACTION="Automatically retrying the workflow."
+              else
+                ACTION="Confidence too low ($CONFIDENCE) to auto-retry. Manual review recommended."
+              fi
+            else
+              TITLE="Test Failure"
+              ACTION="This appears to be a real bug - manual intervention needed."
+            fi
+
+            gh pr comment "$pr_number" --body "## $TITLE
+
+          **Analysis**: $SUMMARY
+          **Confidence**: $CONFIDENCE
+
+          $ACTION
+
+          [View workflow run]($RUN_URL)"
+          fi
