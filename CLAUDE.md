@@ -265,3 +265,4 @@ Release process: `docs/dev/releases.md`
 - Keep kernel system prompt under 7K tokens
 - Always use Drizzle ORM for database access: never raw SQL queries with better-sqlite3 directly
 - **Documentation**: when adding a new feature, update `www/content/docs/` accordingly. Specs and plans should include a docs update step. The docs site at matrix-os.com/docs (Fumadocs in `www/`) is the public-facing reference -- keep it in sync with the codebase
+
