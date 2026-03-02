@@ -92,10 +92,18 @@ jobs:
             git checkout main
             git pull origin main
             docker pull ghcr.io/hamedmp/matrix-os:latest
-            docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --no-deps --build platform proxy
+            docker compose \
+              -f distro/docker-compose.platform.yml \
+              -f distro/observability/docker-compose.observability.yml \
+              --env-file .env up -d --build platform proxy
+            docker compose \
+              -f distro/docker-compose.platform.yml \
+              -f distro/observability/docker-compose.observability.yml \
+              --env-file .env up -d prometheus loki promtail grafana
             sleep 5
             curl -sf http://localhost:9000/health || echo "WARN: platform health check failed"
             curl -sf http://localhost:8080/health || echo "WARN: proxy health check failed"
+            curl -sf http://localhost:3200/api/health || echo "WARN: grafana health check failed"
           envs: TAG_NAME
         env:
           TAG_NAME: ${{ github.ref_name }}
