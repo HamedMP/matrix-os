@@ -5,6 +5,7 @@ import posthog from "posthog-js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { fetchContainers, containerAction } from "./actions";
 
 interface Container {
   handle: string;
@@ -17,17 +18,15 @@ interface Container {
 
 export function AdminDashboard({
   containers: initial,
-  apiUrl,
 }: {
   containers: Container[];
-  apiUrl: string;
 }) {
   const [containers, setContainers] = useState(initial);
   const [loading, setLoading] = useState<string | null>(null);
 
   async function refresh() {
-    const res = await fetch(`${apiUrl}/containers`);
-    if (res.ok) setContainers(await res.json());
+    const data = await fetchContainers();
+    setContainers(data);
   }
 
   async function action(handle: string, method: string, path: string) {
@@ -48,7 +47,7 @@ export function AdminDashboard({
       method,
     });
 
-    await fetch(`${apiUrl}${path}`, { method });
+    await containerAction(method, path);
     await refresh();
     setLoading(null);
   }

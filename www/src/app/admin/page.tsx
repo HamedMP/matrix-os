@@ -3,11 +3,17 @@ import { redirect } from "next/navigation";
 import { AdminDashboard } from "./admin-dashboard";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
+const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
 
 async function getContainers() {
   try {
+    const headers: Record<string, string> = { "cache-control": "no-store" };
+    if (PLATFORM_SECRET) {
+      headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
+    }
     const res = await fetch(`${PLATFORM_API_URL}/containers`, {
       cache: "no-store",
+      headers,
     });
     if (!res.ok) return [];
     return await res.json();
@@ -27,5 +33,5 @@ export default async function AdminPage() {
 
   const containers = await getContainers();
 
-  return <AdminDashboard containers={containers} apiUrl={PLATFORM_API_URL} />;
+  return <AdminDashboard containers={containers} />;
 }

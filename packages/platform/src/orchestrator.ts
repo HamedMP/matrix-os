@@ -70,7 +70,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `MATRIX_IMAGE=${image}`,
       `PROXY_URL=${proxyUrl}`,
       `ANTHROPIC_BASE_URL=${proxyUrl}`,
-      `ANTHROPIC_API_KEY=sk-proxy-managed`,
+      `ANTHROPIC_API_KEY=sk-proxy-${handle}`,
       `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
       `PORT=4000`,
       `SHELL_PORT=3000`,
@@ -112,6 +112,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
           NetworkMode: network,
           RestartPolicy: { Name: 'unless-stopped' },
+          Init: true,
         },
         ExposedPorts: {
           '4000/tcp': {},
@@ -202,6 +203,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
           NetworkMode: network,
           RestartPolicy: { Name: 'unless-stopped' },
+          Init: true,
         },
         ExposedPorts: {
           '4000/tcp': {},

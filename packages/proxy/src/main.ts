@@ -86,7 +86,12 @@ app.post('/quotas/:userId', async (c) => {
 
 // Proxy all /v1/* requests to Anthropic
 app.all('/v1/*', async (c) => {
-  const userId = c.req.header('x-matrix-user') ?? 'anonymous';
+  // Identify user: explicit header, or extract from proxy API key (sk-proxy-{handle})
+  const providedKey = c.req.header('x-api-key') ?? '';
+  const proxyKeyMatch = providedKey.match(/^sk-proxy-(.+)$/);
+  const userId = c.req.header('x-matrix-user')
+    || (proxyKeyMatch ? proxyKeyMatch[1] : null)
+    || 'anonymous';
   const sessionId = c.req.header('x-matrix-session') ?? undefined;
 
   // Check quota
@@ -101,7 +106,6 @@ app.all('/v1/*', async (c) => {
   }
 
   // Use user's key if provided and valid, otherwise use shared key
-  const providedKey = c.req.header('x-api-key');
   const apiKey = (providedKey && providedKey.startsWith('sk-ant-')) ? providedKey : ANTHROPIC_KEY;
   if (!apiKey) {
     return c.json({ type: 'error', error: { type: 'auth_error', message: 'No API key configured' } }, 401);
@@ -126,12 +130,14 @@ app.all('/v1/*', async (c) => {
     requestBody = await c.req.text();
   }
 
-  // Check if streaming is requested in the body
+  // Parse request body for model and stream flag
   let bodyStreamFlag = false;
+  let requestModel = 'unknown';
   if (requestBody) {
     try {
       const parsed = JSON.parse(requestBody);
       bodyStreamFlag = parsed.stream === true;
+      if (parsed.model) requestModel = parsed.model;
     } catch {}
   }
 
@@ -146,7 +152,7 @@ app.all('/v1/*', async (c) => {
     const [passthrough, collector] = upstream.body.tee();
 
     // Collect usage from stream in background
-    collectStreamUsage(collector, userId, sessionId, upstream.status).catch(() => {});
+    collectStreamUsage(collector, userId, sessionId, upstream.status, requestModel).catch(() => {});
 
     return new Response(passthrough, {
       status: upstream.status,
@@ -159,7 +165,7 @@ app.all('/v1/*', async (c) => {
 
   // Non-streaming: read full response, log usage, return
   const responseText = await upstream.text();
-  let model = 'unknown';
+  let model = requestModel;
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
@@ -199,12 +205,13 @@ async function collectStreamUsage(
   stream: ReadableStream<Uint8Array>,
   userId: string,
   sessionId: string | undefined,
-  status: number
+  status: number,
+  requestModel: string,
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let model = 'unknown';
+  let model = requestModel;
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
@@ -227,6 +234,7 @@ async function collectStreamUsage(
         try {
           const event = JSON.parse(data);
           if (event.model) model = event.model;
+          if (event.type === 'message_start' && event.message?.model) model = event.message.model;
           if (event.type === 'message_delta' && event.usage) {
             outputTokens = event.usage.output_tokens ?? outputTokens;
           }

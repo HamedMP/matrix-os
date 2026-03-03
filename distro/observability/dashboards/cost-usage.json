@@ -22,29 +22,124 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_api_cost_usd_total[1d]))",
+          "legendFormat": "Cost Today",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost Today",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_api_calls_total[1d]))",
+          "legendFormat": "Calls Today",
+          "refId": "A"
+        }
+      ],
+      "title": "API Calls Today",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_quota_rejections_total[1d]))",
+          "legendFormat": "Rejections",
+          "refId": "A"
+        }
+      ],
+      "title": "Quota Rejections Today",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
             "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
             "axisLabel": "USD",
             "axisPlacement": "auto",
-            "barAlignment": 0,
             "drawStyle": "bars",
             "fillOpacity": 50,
             "gradientMode": "scheme",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false,
-            "lineInterpolation": "smooth",
             "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
             "showPoints": "never",
-            "spanNulls": false,
             "stacking": { "group": "A", "mode": "normal" },
             "thresholdsStyle": { "mode": "off" }
           },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [{ "color": "green", "value": null }]
@@ -53,23 +148,22 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "id": 1,
-      "interval": "1d",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 4,
+      "interval": "1h",
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(proxy_api_cost_usd_total[1d]))",
-          "legendFormat": "Daily Cost",
+          "expr": "sum by (user_id) (increase(proxy_api_cost_usd_total[1h]))",
+          "legendFormat": "{{user_id}}",
           "refId": "A"
         }
       ],
-      "title": "Daily Cost Trend",
+      "title": "Cost by User Over Time",
       "type": "timeseries"
     },
     {
@@ -82,7 +176,6 @@
             "cellOptions": { "type": "auto" },
             "inspect": false
           },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -110,8 +203,8 @@
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "id": 2,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 5,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -124,7 +217,6 @@
         "showHeader": true,
         "sortBy": [{ "desc": true, "displayName": "Cost (USD)" }]
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -153,28 +245,21 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+          "custom": {
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false }
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
-      "id": 3,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 6,
       "options": {
         "displayLabels": ["name", "percent"],
         "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
         "pieType": "donut",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "tooltip": { "mode": "single" }
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -193,125 +278,38 @@
           "color": { "mode": "palette-classic" },
           "custom": {
             "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "tokens/s",
+            "axisLabel": "calls/min",
             "axisPlacement": "auto",
-            "barAlignment": 0,
             "drawStyle": "line",
             "fillOpacity": 15,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
             "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
+            "stacking": { "group": "A", "mode": "normal" },
             "thresholdsStyle": { "mode": "off" }
           },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "Input" },
-            "properties": [
-              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Output" },
-            "properties": [
-              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
-            ]
           }
-        ]
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
-      "id": 4,
-      "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(gateway_ai_tokens_total{direction=\"input\"}[5m]))",
-          "legendFormat": "Input",
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(gateway_ai_tokens_total{direction=\"output\"}[5m]))",
-          "legendFormat": "Output",
-          "refId": "B"
-        }
-      ],
-      "title": "Tokens In/Out Trend",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "USD",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false,
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          },
-          "unit": "currencyUSD"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
-      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 7,
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "single", "sort": "none" }
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
       },
-      "pluginVersion": "10.0.0",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(gateway_ai_cost_usd_total[5m])) / sum(rate(gateway_kernel_dispatch_total[5m]))",
-          "legendFormat": "Avg Cost/Dispatch",
+          "expr": "sum by (model) (rate(proxy_api_calls_total[5m])) * 60",
+          "legendFormat": "{{model}}",
           "refId": "A"
         }
       ],
-      "title": "Cost Per Dispatch (Average)",
+      "title": "API Call Rate by Model",
       "type": "timeseries"
     }
   ],
@@ -324,5 +322,5 @@
   "timezone": "browser",
   "title": "MatrixOS Cost and Usage",
   "uid": "matrixos-cost-usage",
-  "version": 1
+  "version": 2
 }

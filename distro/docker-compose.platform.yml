@@ -57,6 +57,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
     entrypoint: ["node", "--import=tsx"]
     command: ["packages/proxy/src/main.ts"]
     environment:

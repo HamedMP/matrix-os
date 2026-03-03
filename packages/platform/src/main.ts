@@ -105,6 +105,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
     if (c.req.path === '/health') return next();
+    if (c.req.path === '/metrics') return next();
     if (c.req.path.endsWith('/self-upgrade') && c.req.method === 'POST') return next();
     if (!PLATFORM_SECRET) return next();
     const auth = c.req.header('authorization');
