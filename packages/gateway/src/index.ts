@@ -30,6 +30,26 @@ export { createInteractionLogger } from "./logger.js";
 export type { InteractionLogger, InteractionEntry, InteractionInput } from "./logger.js";
 export { createGitSync, createAutoSync } from "./git-sync.js";
 export type { GitSync, GitStatus, GitResult, AutoSync, AutoSyncOptions } from "./git-sync.js";
+export { createS3SyncDaemon, parseSyncignore } from "./s3-sync.js";
+export type { S3SyncDaemon, S3SyncConfig, S3FileVersion, ReconcileStats } from "./s3-sync.js";
+export { createGitAutoCommit, createSnapshotManager, createFileHistory } from "./git-versioning.js";
+export { createBridgeSql } from "./bridge-sql.js";
+export type { BridgeSql, QueryResult, ExecResult } from "./bridge-sql.js";
+export { createPostgresManager } from "./postgres-manager.js";
+export type { PostgresManager, PostgresConfig, AppDatabaseInfo, PostgresStatus } from "./postgres-manager.js";
+export { createStorageTracker } from "./storage-tracker.js";
+export type { StorageTracker, StorageUsage } from "./storage-tracker.js";
+export type {
+  GitAutoCommit,
+  AutoCommitResult,
+  SnapshotManager,
+  SnapshotResult,
+  SnapshotEntry,
+  FileHistory,
+  HistoryEntry,
+  HistoryOptions,
+  RestoreResult,
+} from "./git-versioning.js";
 export { authMiddleware } from "./auth.js";
 export { getSystemInfo } from "./system-info.js";
 export type { SystemInfo } from "./system-info.js";
