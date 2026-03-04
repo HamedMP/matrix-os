@@ -786,6 +786,120 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
         },
       ),
 
+      tool(
+        "publish_app",
+        "Publish an app to the Matrix OS App Store. Validates the manifest, creates a registry entry, and returns the public URL.",
+        {
+          app_name: z.string().describe("Name of the app directory under ~/apps/"),
+          description: z.string().optional().describe("Override description for store listing"),
+          tags: z.array(z.string()).optional().describe("Tags for the app listing"),
+        },
+        async ({ app_name, description, tags }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot publish (no home path)" }] };
+          }
+          try {
+            const { validateForPublish, preparePublishPayload } = await import("@matrix-os/gateway/app-publish");
+            const { loadHandle } = await import("./identity.js");
+            const appDir = join(homePath, "apps", app_name);
+            if (!existsSync(appDir)) {
+              return { content: [{ type: "text" as const, text: `App "${app_name}" not found in ~/apps/` }] };
+            }
+
+            const validation = validateForPublish(appDir);
+            if (!validation.valid) {
+              return { content: [{ type: "text" as const, text: `Publish validation failed: ${validation.error}` }] };
+            }
+
+            const handle = loadHandle(homePath);
+            const authorId = handle ? `@${handle.handle}` : "@local";
+            const payload = preparePublishPayload(appDir, authorId);
+            if (!payload) {
+              return { content: [{ type: "text" as const, text: "Failed to prepare publish payload" }] };
+            }
+
+            if (description) payload.description = description;
+            if (tags) payload.tags = JSON.stringify(tags);
+
+            const url = `matrix-os.com/store/${authorId}/${payload.slug}`;
+            return {
+              content: [{
+                type: "text" as const,
+                text: `App "${payload.name}" ready to publish!\nSlug: ${payload.slug}\nVersion: ${payload.version}\nURL: ${url}\n\nPayload: ${JSON.stringify(payload, null, 2)}`,
+              }],
+            };
+          } catch (e) {
+            return { content: [{ type: "text" as const, text: `Publish error: ${e instanceof Error ? e.message : String(e)}` }] };
+          }
+        },
+      ),
+
+      tool(
+        "fork_app",
+        "Fork a public app from the store into this user's ~/apps/ directory. Creates a writable copy with forked_from attribution.",
+        {
+          source_path: z.string().describe("Path to the source app files"),
+          slug: z.string().describe("Slug name for the forked app"),
+          author: z.string().describe("Original author handle (e.g. @hamed)"),
+          version: z.string().optional().describe("Version being forked (default: 1.0.0)"),
+        },
+        async ({ source_path, slug, author, version }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot fork (no home path)" }] };
+          }
+          try {
+            const { forkApp } = await import("@matrix-os/gateway/app-fork");
+            const result = forkApp({
+              sourceDir: source_path,
+              homePath,
+              slug,
+              author,
+              version: version ?? "1.0.0",
+            });
+            if (!result.success) {
+              return { content: [{ type: "text" as const, text: `Fork failed: ${result.error}` }] };
+            }
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Forked "${slug}" from ${author} to ${result.targetDir}\nYou can now modify this app freely.`,
+              }],
+            };
+          } catch (e) {
+            return { content: [{ type: "text" as const, text: `Fork error: ${e instanceof Error ? e.message : String(e)}` }] };
+          }
+        },
+      ),
+
+      tool(
+        "install_app",
+        "Install an app from the store into this user's ~/apps/ directory. Creates a copy without fork attribution.",
+        {
+          source_path: z.string().describe("Path to the source app files"),
+          slug: z.string().describe("Slug name for the installed app"),
+        },
+        async ({ source_path, slug }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot install (no home path)" }] };
+          }
+          try {
+            const { installApp } = await import("@matrix-os/gateway/app-fork");
+            const result = installApp({ sourceDir: source_path, homePath, slug });
+            if (!result.success) {
+              return { content: [{ type: "text" as const, text: `Install failed: ${result.error}` }] };
+            }
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Installed "${slug}" to ${result.targetDir}`,
+              }],
+            };
+          } catch (e) {
+            return { content: [{ type: "text" as const, text: `Install error: ${e instanceof Error ? e.message : String(e)}` }] };
+          }
+        },
+      ),
+
       ...createWebTools(homePath),
     ],
   });

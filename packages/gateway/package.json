@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./app-publish": "./src/app-publish.ts",
+    "./app-fork": "./src/app-fork.ts",
+    "./app-manifest": "./src/app-manifest.ts"
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",

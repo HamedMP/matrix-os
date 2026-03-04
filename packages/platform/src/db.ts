@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq, desc, sql, max } from 'drizzle-orm';
 import * as schema from './schema.js';
 import { containers, portAssignments } from './schema.js';
+import { runAppRegistryMigrations } from './app-registry.js';
 
 export type PlatformDB = ReturnType<typeof createPlatformDb>;
 
@@ -75,6 +76,8 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
       handle TEXT
     )
   `).run();
+
+  runAppRegistryMigrations(sqlite);
 }
 
 export type ContainerRecord = typeof containers.$inferSelect;

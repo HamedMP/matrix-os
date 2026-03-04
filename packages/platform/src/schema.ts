@@ -22,3 +22,5 @@ export const portAssignments = sqliteTable('port_assignments', {
   port: integer('port').primaryKey(),
   handle: text('handle'),
 });
+
+export { appsRegistry, appRatings, appInstalls } from './app-registry.js';

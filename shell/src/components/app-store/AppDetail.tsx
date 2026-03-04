@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { StarRating } from "./StarRating";
-import { XIcon, DownloadIcon, SparklesIcon } from "lucide-react";
+import { XIcon, DownloadIcon, SparklesIcon, GitForkIcon } from "lucide-react";
 import type { AppStoreEntry } from "@/stores/app-store";
 
 function formatDownloads(n: number): string {
@@ -15,11 +15,13 @@ interface AppDetailProps {
   installed: boolean;
   onClose: () => void;
   onInstall: () => void;
+  onFork?: () => void;
 }
 
-export function AppDetail({ entry, installed, onClose, onInstall }: AppDetailProps) {
+export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppDetailProps) {
   const isBundled = entry.source === "bundled";
   const showOpen = isBundled || installed;
+  const isRegistryApp = entry.source === "registry" || entry.source === "community";
 
   return (
     <div className="w-[380px] h-full bg-card border-l border-border flex flex-col overflow-hidden">
@@ -60,20 +62,33 @@ export function AppDetail({ entry, installed, onClose, onInstall }: AppDetailPro
             )}
           </div>
 
-          <Button
-            className="mt-4 w-full max-w-[200px] rounded-full"
-            variant={showOpen ? "outline" : "default"}
-            onClick={onInstall}
-          >
-            {showOpen ? (
-              "Open"
-            ) : (
-              <>
-                <DownloadIcon className="size-4 mr-2" />
-                Get
-              </>
+          <div className="flex gap-2 mt-4 w-full max-w-[240px]">
+            <Button
+              className="flex-1 rounded-full"
+              variant={showOpen ? "outline" : "default"}
+              onClick={onInstall}
+            >
+              {showOpen ? (
+                "Open"
+              ) : (
+                <>
+                  <DownloadIcon className="size-4 mr-2" />
+                  Get
+                </>
+              )}
+            </Button>
+
+            {isRegistryApp && onFork && !installed && (
+              <Button
+                className="rounded-full"
+                variant="outline"
+                onClick={onFork}
+              >
+                <GitForkIcon className="size-4 mr-1" />
+                Fork
+              </Button>
             )}
-          </Button>
+          </div>
         </div>
 
         <div className="p-5 space-y-4">
@@ -87,11 +102,14 @@ export function AppDetail({ entry, installed, onClose, onInstall }: AppDetailPro
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <InfoItem label="Author" value={entry.author} />
+            <InfoItem label="Author" value={entry.authorId ?? entry.author} />
             <InfoItem label="Source" value={entry.source} />
             {entry.version && <InfoItem label="Version" value={entry.version} />}
             {entry.downloads !== undefined && (
               <InfoItem label="Downloads" value={formatDownloads(entry.downloads)} />
+            )}
+            {entry.forksCount !== undefined && entry.forksCount > 0 && (
+              <InfoItem label="Forks" value={String(entry.forksCount)} />
             )}
           </div>
 

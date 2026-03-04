@@ -7,7 +7,7 @@ export interface AppStoreEntry {
   description: string;
   category: string;
   author: string;
-  source: "bundled" | "url" | "prompt" | "community";
+  source: "bundled" | "url" | "prompt" | "community" | "registry";
   prompt?: string;
   url?: string;
   longDescription?: string;
@@ -21,6 +21,10 @@ export interface AppStoreEntry {
   featured?: boolean;
   featuredTagline?: string;
   new?: boolean;
+  slug?: string;
+  authorId?: string;
+  forksCount?: number;
+  isPublic?: boolean;
 }
 
 export const CATEGORIES = [
