@@ -1,0 +1,9 @@
+{
+  "name": "Snake",
+  "description": "Classic snake game with increasing speed",
+  "runtime": "static",
+  "category": "games",
+  "icon": "snake",
+  "author": "system",
+  "version": "1.0.0"
+}

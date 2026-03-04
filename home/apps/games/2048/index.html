@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2048</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+.header {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.header span { color: #888; }
+.header .value { color: #f59e0b; font-variant-numeric: tabular-nums; }
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, 80px);
+  grid-template-rows: repeat(4, 80px);
+  gap: 8px;
+  padding: 8px;
+  background: #1a1a1a;
+  border-radius: 8px;
+  position: relative;
+}
+.cell {
+  width: 80px;
+  height: 80px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 700;
+  background: #222;
+  transition: all 0.12s ease;
+}
+.overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.85);
+  border-radius: 8px;
+  z-index: 10;
+}
+.overlay h1 { font-size: 28px; margin-bottom: 8px; color: #f59e0b; }
+.overlay .sub { font-size: 16px; color: #888; margin-bottom: 16px; }
+.overlay button {
+  padding: 10px 28px;
+  font-size: 16px;
+  background: #f59e0b;
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.overlay button:hover { background: #d97706; }
+.hidden { display: none !important; }
+.controls { margin-top: 12px; font-size: 12px; color: #555; }
+.new-tile { animation: popIn 0.2s ease; }
+.merged-tile { animation: pulse 0.2s ease; }
+@keyframes popIn {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div><span>Score </span><span class="value" id="score">0</span></div>
+  <div><span>Best </span><span class="value" id="best">0</span></div>
+</div>
+
+<div class="board" id="board"></div>
+
+<div class="controls">Arrow keys or swipe to play</div>
+
+<div class="overlay" id="startScreen">
+  <h1>2048</h1>
+  <div class="sub">Merge tiles to win</div>
+  <button id="startBtn">Play</button>
+</div>
+
+<div class="overlay hidden" id="winScreen">
+  <h1>You Win!</h1>
+  <div class="sub" id="winScore"></div>
+  <button id="winBtn">Play Again</button>
+</div>
+
+<div class="overlay hidden" id="loseScreen">
+  <h1>Game Over</h1>
+  <div class="sub" id="loseScore"></div>
+  <button id="loseBtn">Try Again</button>
+</div>
+
+<script>
+const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+const SIZE = 4;
+let grid, score, best = 0, won = false;
+
+const COLORS = {
+  0: { bg: '#222', fg: '#222' },
+  2: { bg: '#2d2d2d', fg: '#e0e0e0' },
+  4: { bg: '#3a3a2a', fg: '#e0e0e0' },
+  8: { bg: '#6b4423', fg: '#fff' },
+  16: { bg: '#8b4513', fg: '#fff' },
+  32: { bg: '#a0522d', fg: '#fff' },
+  64: { bg: '#b22222', fg: '#fff' },
+  128: { bg: '#d4a017', fg: '#fff' },
+  256: { bg: '#d4a017', fg: '#fff' },
+  512: { bg: '#daa520', fg: '#fff' },
+  1024: { bg: '#ffd700', fg: '#000' },
+  2048: { bg: '#f59e0b', fg: '#000' },
+};
+
+function getColor(val) {
+  return COLORS[val] || { bg: '#f59e0b', fg: '#000' };
+}
+
+async function loadBest() {
+  try {
+    const res = await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', app: '2048', key: 'best' }),
+    });
+    const data = await res.json();
+    if (data && typeof data === 'number') best = data;
+  } catch {}
+  document.getElementById('best').textContent = best;
+}
+
+async function saveBest() {
+  try {
+    await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'write', app: '2048', key: 'best', value: best }),
+    });
+  } catch {}
+}
+
+function playSound(freq, dur) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq;
+    g.gain.value = 0.06;
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+    o.connect(g);
+    g.connect(ac.destination);
+    o.start();
+    o.stop(ac.currentTime + dur);
+  } catch {}
+}
+
+function emptyGrid() {
+  return Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+}
+
+function addRandom() {
+  const empty = [];
+  for (let r = 0; r < SIZE; r++)
+    for (let c = 0; c < SIZE; c++)
+      if (grid[r][c] === 0) empty.push([r, c]);
+  if (empty.length === 0) return false;
+  const [r, c] = empty[Math.floor(Math.random() * empty.length)];
+  grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+  return [r, c];
+}
+
+function render(newTiles, mergedTiles) {
+  const board = document.getElementById('board');
+  while (board.firstChild) board.removeChild(board.firstChild);
+
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const val = grid[r][c];
+      const color = getColor(val);
+      cell.style.background = color.bg;
+      cell.style.color = color.fg;
+      cell.textContent = val || '';
+      cell.style.fontSize = val >= 1024 ? '18px' : val >= 128 ? '20px' : '24px';
+      if (newTiles && newTiles.some(t => t[0] === r && t[1] === c)) {
+        cell.classList.add('new-tile');
+      }
+      if (mergedTiles && mergedTiles.some(t => t[0] === r && t[1] === c)) {
+        cell.classList.add('merged-tile');
+      }
+      board.appendChild(cell);
+    }
+  }
+  document.getElementById('score').textContent = score;
+}
+
+function slide(row) {
+  let arr = row.filter(v => v !== 0);
+  const merged = [];
+  for (let i = 0; i < arr.length - 1; i++) {
+    if (arr[i] === arr[i + 1]) {
+      arr[i] *= 2;
+      score += arr[i];
+      arr[i + 1] = 0;
+      merged.push(i);
+    }
+  }
+  arr = arr.filter(v => v !== 0);
+  while (arr.length < SIZE) arr.push(0);
+  return { result: arr, merged };
+}
+
+function move(dir) {
+  const prev = grid.map(r => [...r]);
+  const mergedPositions = [];
+
+  if (dir === 'left' || dir === 'right') {
+    for (let r = 0; r < SIZE; r++) {
+      let row = [...grid[r]];
+      if (dir === 'right') row.reverse();
+      const { result, merged } = slide(row);
+      if (dir === 'right') result.reverse();
+      grid[r] = result;
+      merged.forEach(i => {
+        const c = dir === 'right' ? SIZE - 1 - i : i;
+        mergedPositions.push([r, c]);
+      });
+    }
+  } else {
+    for (let c = 0; c < SIZE; c++) {
+      let col = [];
+      for (let r = 0; r < SIZE; r++) col.push(grid[r][c]);
+      if (dir === 'down') col.reverse();
+      const { result, merged } = slide(col);
+      if (dir === 'down') result.reverse();
+      for (let r = 0; r < SIZE; r++) grid[r][c] = result[r];
+      merged.forEach(i => {
+        const r = dir === 'down' ? SIZE - 1 - i : i;
+        mergedPositions.push([r, c]);
+      });
+    }
+  }
+
+  let changed = false;
+  for (let r = 0; r < SIZE; r++)
+    for (let c = 0; c < SIZE; c++)
+      if (prev[r][c] !== grid[r][c]) changed = true;
+
+  if (!changed) return;
+
+  if (mergedPositions.length > 0) playSound(440, 0.08);
+
+  const newPos = addRandom();
+  render(newPos ? [newPos] : [], mergedPositions);
+
+  if (score > best) {
+    best = score;
+    document.getElementById('best').textContent = best;
+    saveBest();
+  }
+
+  if (!won && grid.some(r => r.some(v => v === 2048))) {
+    won = true;
+    document.getElementById('winScore').textContent = 'Score: ' + score;
+    document.getElementById('winScreen').classList.remove('hidden');
+    return;
+  }
+
+  if (isGameOver()) {
+    document.getElementById('loseScore').textContent = 'Score: ' + score;
+    document.getElementById('loseScreen').classList.remove('hidden');
+    playSound(200, 0.3);
+  }
+}
+
+function isGameOver() {
+  for (let r = 0; r < SIZE; r++)
+    for (let c = 0; c < SIZE; c++) {
+      if (grid[r][c] === 0) return false;
+      if (c < SIZE - 1 && grid[r][c] === grid[r][c + 1]) return false;
+      if (r < SIZE - 1 && grid[r][c] === grid[r + 1][c]) return false;
+    }
+  return true;
+}
+
+function newGame() {
+  document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('winScreen').classList.add('hidden');
+  document.getElementById('loseScreen').classList.add('hidden');
+  grid = emptyGrid();
+  score = 0;
+  won = false;
+  addRandom();
+  const pos = addRandom();
+  render(pos ? [pos] : []);
+}
+
+document.getElementById('startBtn').addEventListener('click', newGame);
+document.getElementById('winBtn').addEventListener('click', newGame);
+document.getElementById('loseBtn').addEventListener('click', newGame);
+
+document.addEventListener('keydown', (e) => {
+  const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+    a: 'left', d: 'right', w: 'up', s: 'down' };
+  const dir = map[e.key];
+  if (dir) { e.preventDefault(); move(dir); }
+});
+
+let touchStart = null;
+document.addEventListener('touchstart', (e) => {
+  touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+document.addEventListener('touchend', (e) => {
+  if (!touchStart) return;
+  const dx = e.changedTouches[0].clientX - touchStart.x;
+  const dy = e.changedTouches[0].clientY - touchStart.y;
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  if (Math.max(absDx, absDy) < 30) return;
+  if (absDx > absDy) move(dx > 0 ? 'right' : 'left');
+  else move(dy > 0 ? 'down' : 'up');
+  touchStart = null;
+});
+
+loadBest();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "Tetris",
+  "description": "Classic block-stacking puzzle",
+  "runtime": "static",
+  "category": "games",
+  "icon": "tetris",
+  "author": "system",
+  "version": "1.0.0"
+}

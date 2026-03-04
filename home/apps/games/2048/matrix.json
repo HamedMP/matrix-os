@@ -1,0 +1,9 @@
+{
+  "name": "2048",
+  "description": "Merge tiles to reach 2048",
+  "runtime": "static",
+  "category": "games",
+  "icon": "2048",
+  "author": "system",
+  "version": "1.0.0"
+}

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Games</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  padding: 24px;
+  min-height: 100vh;
+}
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: #fff;
+}
+.subtitle {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 20px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.game-card {
+  background: #161616;
+  border: 1px solid #222;
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.game-card:hover {
+  background: #1a1a1a;
+  border-color: #333;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.game-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+  display: block;
+}
+.game-name {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: #fff;
+}
+.game-desc {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.3;
+}
+</style>
+</head>
+<body>
+
+<h1>Games</h1>
+<p class="subtitle">Click a game to play</p>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const GAMES = [
+  { name: 'Solitaire', desc: 'Classic Klondike card game', icon: '\u2660', path: 'solitaire/index.html' },
+  { name: 'Chess', desc: 'Play against AI', icon: '\u265E', path: 'chess/index.html' },
+  { name: 'Tetris', desc: 'Block stacking puzzle', icon: '\u25A3', path: 'tetris/index.html' },
+  { name: 'Snake', desc: 'Classic arcade game', icon: '\u2740', path: 'snake/index.html' },
+  { name: '2048', desc: 'Merge tiles to win', icon: '\u2B1A', path: '2048/index.html' },
+  { name: 'Minesweeper', desc: 'Clear the minefield', icon: '\u2739', path: 'minesweeper/index.html' },
+];
+
+const grid = document.getElementById('grid');
+
+for (const game of GAMES) {
+  const card = document.createElement('div');
+  card.className = 'game-card';
+
+  const icon = document.createElement('span');
+  icon.className = 'game-icon';
+  icon.textContent = game.icon;
+  card.appendChild(icon);
+
+  const name = document.createElement('div');
+  name.className = 'game-name';
+  name.textContent = game.name;
+  card.appendChild(name);
+
+  const desc = document.createElement('div');
+  desc.className = 'game-desc';
+  desc.textContent = game.desc;
+  card.appendChild(desc);
+
+  card.addEventListener('click', () => {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'matrix:open-app', path: '/files/apps/games/' + game.path, name: game.name }, '*');
+      } else {
+        window.location.href = game.path;
+      }
+    } catch {
+      window.location.href = game.path;
+    }
+  });
+
+  grid.appendChild(card);
+}
+</script>
+</body>
+</html>

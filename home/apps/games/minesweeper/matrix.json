@@ -1,0 +1,9 @@
+{
+  "name": "Minesweeper",
+  "description": "Classic mine-clearing puzzle",
+  "runtime": "static",
+  "category": "games",
+  "icon": "bomb",
+  "author": "system",
+  "version": "1.0.0"
+}

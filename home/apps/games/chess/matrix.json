@@ -1,0 +1,9 @@
+{
+  "name": "Chess",
+  "description": "Classic chess with AI opponent",
+  "runtime": "static",
+  "category": "games",
+  "icon": "chess",
+  "author": "system",
+  "version": "1.0.0"
+}

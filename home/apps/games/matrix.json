@@ -1,0 +1,9 @@
+{
+  "name": "Games",
+  "description": "Game collection with classics and puzzles",
+  "runtime": "static",
+  "category": "games",
+  "icon": "gamepad",
+  "author": "system",
+  "version": "1.0.0"
+}

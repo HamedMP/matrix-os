@@ -1,0 +1,9 @@
+{
+  "name": "Solitaire",
+  "description": "Classic Klondike solitaire card game",
+  "runtime": "static",
+  "category": "games",
+  "icon": "cards",
+  "author": "system",
+  "version": "1.0.0"
+}
