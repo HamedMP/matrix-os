@@ -1,0 +1,7 @@
+{
+  "name": "Profile",
+  "description": "Your public profile page at handle.matrix-os.com",
+  "runtime": "static",
+  "category": "social",
+  "version": "1.0.0"
+}

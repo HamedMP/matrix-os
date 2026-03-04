@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile - Matrix OS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #fafafa;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 3rem 1.5rem;
+    }
+    .profile { max-width: 600px; width: 100%; text-align: center; }
+    .avatar {
+      width: 96px; height: 96px; border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2.5rem; font-weight: bold;
+      margin: 0 auto 1.5rem;
+    }
+    h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .handle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
+    .bio { color: #d4d4d8; font-size: 1rem; line-height: 1.6; margin-bottom: 2rem; }
+    .apps-section { margin-top: 2rem; }
+    .apps-section h2 {
+      font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.1em; color: #71717a; margin-bottom: 1rem;
+    }
+    .apps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 0.75rem;
+    }
+    .app-card {
+      background: #18181b; border: 1px solid #27272a;
+      border-radius: 12px; padding: 1rem; text-align: left;
+    }
+    .app-card .name { font-weight: 600; font-size: 0.875rem; }
+    .app-card .desc { color: #a1a1aa; font-size: 0.75rem; margin-top: 0.25rem; }
+    .powered-by { margin-top: 3rem; color: #52525b; font-size: 0.75rem; }
+    .powered-by a { color: #6366f1; text-decoration: none; }
+    .powered-by a:hover { text-decoration: underline; }
+    .links { display: flex; gap: 0.75rem; justify-content: center; margin-top: 1rem; }
+    .links a {
+      color: #a1a1aa; font-size: 0.875rem; text-decoration: none;
+      padding: 0.5rem 1rem; border: 1px solid #27272a; border-radius: 8px;
+    }
+    .links a:hover { color: #fafafa; border-color: #52525b; }
+  </style>
+</head>
+<body>
+  <div class="profile">
+    <div class="avatar" id="avatar">?</div>
+    <h1 id="display-name">Loading...</h1>
+    <p class="handle" id="handle-text"></p>
+    <p class="bio" id="bio">Welcome to my Matrix OS profile.</p>
+    <div class="links" id="links"></div>
+
+    <div class="apps-section">
+      <h2>Published Apps</h2>
+      <div class="apps-grid" id="apps-grid">
+        <p style="color:#71717a;font-size:0.875rem">Loading...</p>
+      </div>
+    </div>
+
+    <p class="powered-by">
+      Powered by <a href="https://matrix-os.com">Matrix OS</a>
+    </p>
+  </div>
+
+  <script>
+    (async () => {
+      try {
+        const profileRes = await fetch('/api/profile');
+        if (profileRes.ok) {
+          const profile = await profileRes.json();
+          if (profile.displayName) {
+            document.getElementById('display-name').textContent = profile.displayName;
+          }
+          if (profile.handle) {
+            document.getElementById('avatar').textContent = profile.handle.charAt(0).toUpperCase();
+            document.getElementById('handle-text').textContent = '@' + profile.handle + ':matrix-os.com';
+          }
+          if (profile.bio) {
+            document.getElementById('bio').textContent = profile.bio;
+          }
+        }
+      } catch {}
+
+      try {
+        const handleRes = await fetch('/api/profile');
+        if (!handleRes.ok) return;
+        const profile = await handleRes.json();
+        if (!profile.handle) return;
+
+        const appsRes = await fetch('/api/store/apps?author=@' + encodeURIComponent(profile.handle));
+        if (!appsRes.ok) return;
+        const data = await appsRes.json();
+        const grid = document.getElementById('apps-grid');
+        grid.textContent = '';
+        if (!data.apps || data.apps.length === 0) {
+          const p = document.createElement('p');
+          p.style.cssText = 'color:#71717a;font-size:0.875rem';
+          p.textContent = 'No published apps yet.';
+          grid.appendChild(p);
+          return;
+        }
+        for (const app of data.apps) {
+          const card = document.createElement('div');
+          card.className = 'app-card';
+          const nameEl = document.createElement('div');
+          nameEl.className = 'name';
+          nameEl.textContent = app.name;
+          const descEl = document.createElement('div');
+          descEl.className = 'desc';
+          descEl.textContent = app.description || '';
+          card.appendChild(nameEl);
+          card.appendChild(descEl);
+          grid.appendChild(card);
+        }
+      } catch {}
+    })();
+  </script>
+</body>
+</html>
