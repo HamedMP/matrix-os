@@ -193,4 +193,84 @@ describe('platform/orchestrator', () => {
     await orch.syncStates();
     expect(orch.getInfo('alice')!.status).toBe('stopped');
   });
+
+  describe('rollingRestart', () => {
+    it('upgrades all running containers sequentially', async () => {
+      const { docker, mockContainer } = createMockDocker();
+      let containerId = 0;
+      docker.createContainer.mockImplementation(async () => ({
+        id: `container-${++containerId}`,
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+      }));
+      const orch = createOrchestrator({ db, docker: docker as any });
+
+      await orch.provision('alice', 'clerk_1');
+      await orch.provision('bob', 'clerk_2');
+      await orch.provision('charlie', 'clerk_3');
+      await orch.stop('charlie');
+
+      const result = await orch.rollingRestart();
+
+      expect(result.total).toBe(2);
+      expect(result.succeeded).toBe(2);
+      expect(result.failed).toBe(0);
+      expect(result.results).toHaveLength(2);
+      expect(result.results.every((r) => r.status === 'upgraded')).toBe(true);
+      expect(docker.pull).toHaveBeenCalledOnce();
+    });
+
+    it('skips stopped containers', async () => {
+      const { docker } = createMockDocker();
+      const orch = createOrchestrator({ db, docker: docker as any });
+
+      await orch.provision('alice', 'clerk_1');
+      await orch.stop('alice');
+
+      const result = await orch.rollingRestart();
+
+      expect(result.total).toBe(0);
+      expect(result.succeeded).toBe(0);
+      expect(result.skipped).toEqual(['alice']);
+    });
+
+    it('continues on failure and reports errors', async () => {
+      const { docker } = createMockDocker();
+      let callCount = 0;
+      docker.createContainer.mockImplementation(async () => {
+        callCount++;
+        if (callCount === 3) throw new Error('disk full');
+        return {
+          id: `container-${callCount}`,
+          start: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
+          remove: vi.fn().mockResolvedValue(undefined),
+        };
+      });
+      const orch = createOrchestrator({ db, docker: docker as any });
+
+      await orch.provision('alice', 'clerk_1');
+      await orch.provision('bob', 'clerk_2');
+
+      const result = await orch.rollingRestart();
+
+      expect(result.total).toBe(2);
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(1);
+      expect(result.results.find((r) => r.status === 'failed')?.error).toBe('disk full');
+    });
+
+    it('returns empty result when no containers exist', async () => {
+      const { docker } = createMockDocker();
+      const orch = createOrchestrator({ db, docker: docker as any });
+
+      const result = await orch.rollingRestart();
+
+      expect(result.total).toBe(0);
+      expect(result.succeeded).toBe(0);
+      expect(result.failed).toBe(0);
+      expect(docker.pull).not.toHaveBeenCalled();
+    });
+  });
 });

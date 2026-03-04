@@ -28,12 +28,22 @@ export interface OrchestratorConfig {
   extraEnv?: string[];
 }
 
+export interface RollingRestartResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: string[];
+  results: { handle: string; status: 'upgraded' | 'failed'; error?: string }[];
+  durationMs: number;
+}
+
 export interface Orchestrator {
   provision(handle: string, clerkUserId: string): Promise<ContainerRecord>;
   start(handle: string): Promise<void>;
   stop(handle: string): Promise<void>;
   destroy(handle: string): Promise<void>;
   upgrade(handle: string): Promise<ContainerRecord>;
+  rollingRestart(): Promise<RollingRestartResult>;
   getInfo(handle: string): ContainerRecord | undefined;
   getImage(): string;
   listAll(status?: string): ContainerRecord[];
@@ -215,6 +225,79 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       updateContainerStatus(db, handle, 'running', container.id);
 
       return getContainer(db, handle)!;
+    },
+
+    async rollingRestart() {
+      const start = Date.now();
+      const all = listContainers(db);
+      const running = all.filter((r) => r.status === 'running');
+      const stopped = all.filter((r) => r.status !== 'running');
+
+      if (running.length === 0) {
+        return {
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: stopped.map((r) => r.handle),
+          results: [],
+          durationMs: Date.now() - start,
+        };
+      }
+
+      await docker.pull(image);
+
+      const results: RollingRestartResult['results'] = [];
+      for (const record of running) {
+        try {
+          if (record.containerId) {
+            const old = docker.getContainer(record.containerId);
+            try { await old.stop(); } catch {}
+            try { await old.remove({ force: true }); } catch {}
+          }
+
+          const containerName = `matrixos-${record.handle}`;
+          const container = await docker.createContainer({
+            Image: image,
+            name: containerName,
+            Env: buildEnv(record.handle),
+            HostConfig: {
+              Memory: memoryLimit,
+              CpuQuota: cpuQuota,
+              PortBindings: {
+                '4000/tcp': [{ HostPort: String(record.port) }],
+                '3000/tcp': [{ HostPort: String(record.shellPort) }],
+              },
+              Binds: [`${dataDir}/${record.handle}/matrixos:/home/matrixos/home`],
+              NetworkMode: network,
+              RestartPolicy: { Name: 'unless-stopped' },
+              Init: true,
+            },
+            ExposedPorts: {
+              '4000/tcp': {},
+              '3000/tcp': {},
+            },
+          });
+
+          await container.start();
+          updateContainerStatus(db, record.handle, 'running', container.id);
+          results.push({ handle: record.handle, status: 'upgraded' });
+        } catch (e) {
+          results.push({
+            handle: record.handle,
+            status: 'failed',
+            error: (e as Error).message,
+          });
+        }
+      }
+
+      return {
+        total: running.length,
+        succeeded: results.filter((r) => r.status === 'upgraded').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+        skipped: stopped.map((r) => r.handle),
+        results,
+        durationMs: Date.now() - start,
+      };
     },
 
     getInfo(handle) {

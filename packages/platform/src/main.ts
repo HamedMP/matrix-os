@@ -181,6 +181,11 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     }
   });
 
+  app.post('/containers/rolling-restart', async (c) => {
+    const result = await orchestrator.rollingRestart();
+    return c.json(result);
+  });
+
   app.delete('/containers/:handle', async (c) => {
     try {
       await orchestrator.destroy(c.req.param('handle'));

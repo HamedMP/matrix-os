@@ -104,6 +104,10 @@ jobs:
             curl -sf http://localhost:9000/health || echo "WARN: platform health check failed"
             curl -sf http://localhost:8080/health || echo "WARN: proxy health check failed"
             curl -sf http://localhost:3200/api/health || echo "WARN: grafana health check failed"
+            echo "Rolling restart user containers..."
+            curl -sf -X POST http://localhost:9000/containers/rolling-restart \
+              -H "Authorization: Bearer $PLATFORM_SECRET" \
+              || echo "WARN: rolling restart failed (may have no running containers)"
           envs: TAG_NAME
         env:
           TAG_NAME: ${{ github.ref_name }}

@@ -20,6 +20,7 @@ function createMockDocker() {
       createNetwork: vi.fn().mockResolvedValue({}),
       createContainer: vi.fn().mockResolvedValue(mockContainer),
       getContainer: vi.fn().mockReturnValue(mockContainer),
+      pull: vi.fn().mockResolvedValue(undefined),
     },
     mockContainer,
   };
@@ -118,6 +119,27 @@ describe('platform/api', () => {
     const info = await app.request('/containers/alice');
     const body = await info.json();
     expect(body.status).toBe('stopped');
+  });
+
+  it('POST /containers/rolling-restart upgrades running containers', async () => {
+    await app.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
+    });
+    await app.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: 'bob', clerkUserId: 'c2' }),
+    });
+
+    const res = await app.request('/containers/rolling-restart', { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.total).toBe(2);
+    expect(body.succeeded).toBe(2);
+    expect(body.failed).toBe(0);
+    expect(body.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('DELETE /containers/:handle destroys a container', async () => {
