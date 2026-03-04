@@ -1,0 +1,143 @@
+---
+title: Apps
+description: The app platform, container-based runtime, pre-installed games, utilities, and bundled desktop apps.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+Matrix OS runs any kind of app -- from single-file HTML to full-stack Next.js, Python, or Rust apps. Each app lives in `~/matrixos/apps/` as files you own.
+
+## App Types
+
+| Type | Runtime | Build Step | Example |
+|------|---------|------------|---------|
+| Static HTML | Served directly by gateway | None | Calculator, games |
+| Node (Vite/Next.js) | `pnpm dev` process | `pnpm install` | Dashboards, CRMs |
+| Python (Flask/FastAPI) | `python main.py` | `pip install -r requirements.txt` | Data tools, ML apps |
+| Rust/Go | Compiled binary | Build step | Performance-critical services |
+| Docker | Container | Image pull | Chromium browser, VS Code |
+
+## App Manifest (matrix.json)
+
+Every non-trivial app has a `matrix.json` manifest in its directory:
+
+```json
+{
+  "name": "My Dashboard",
+  "description": "Sales analytics dashboard",
+  "runtime": "node",
+  "entry": "pnpm dev",
+  "port": 3100,
+  "framework": "nextjs",
+  "permissions": ["network", "database"],
+  "resources": { "memory": "256MB", "cpu": 0.5 }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Display name in dock and window title |
+| `description` | No | Short description for the app store |
+| `runtime` | No | `static` (default), `node`, `python`, `rust`, `docker` |
+| `entry` | No | Start command (e.g., `pnpm dev`, `python main.py`) |
+| `port` | No | Port the app listens on (auto-assigned from 3100-3999 if omitted) |
+| `framework` | No | Framework hint: `nextjs`, `vite`, `flask`, etc. |
+| `permissions` | No | Capabilities: `network`, `database`, `filesystem` |
+| `resources` | No | Resource limits: `memory` (default 256MB), `cpu` (default 0.5) |
+| `autoStart` | No | Start automatically on gateway boot (default `false`) |
+
+<Callout type="info" title="Backward compatibility">
+  Apps with `matrix.md` (the older convention) still work. The gateway reads `matrix.md` if `matrix.json` is absent and converts it internally.
+</Callout>
+
+## App Lifecycle
+
+The gateway manages app processes through the app manager:
+
+1. **Registration**: new directory detected in `~/apps/` or uploaded via API
+2. **Start**: gateway spawns the process based on `runtime` and `entry`
+3. **Health check**: gateway polls the app port until it responds (timeout 30s)
+4. **Running**: gateway reverse-proxies requests from `/modules/{name}/*` to the app port
+5. **Stop**: graceful shutdown via SIGTERM, then SIGKILL after 5s
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/apps` | GET | List all apps with status (running/stopped/error) |
+| `/api/apps/:name/start` | POST | Start an app |
+| `/api/apps/:name/stop` | POST | Stop an app |
+| `/modules/:name/*` | * | Reverse proxy to running app |
+
+## Pre-Installed Games
+
+Matrix OS ships with polished games in `~/apps/games/`:
+
+- **Solitaire** -- Klondike with drag-and-drop, win animations, undo
+- **Chess** -- vs AI (stockfish.js with 3 difficulty levels) or vs friend
+- **Backgammon** -- vs AI, animated dice, doubling cube
+- **Snake** -- classic gameplay, increasing speed, high scores
+- **2048** -- swipe/keyboard input, tile merge animations
+- **Minesweeper** -- 3 difficulty levels, flag/chord click
+- **Tetris** -- 7-bag randomizer, ghost piece, hold, level progression
+
+All games persist high scores via the [bridge API](/docs/guide/file-system) and are accessible from the Game Launcher app.
+
+## Core Utility Apps
+
+- **File Manager** -- browse `~/matrixos/`, create/rename/delete files, drag-drop upload, file preview
+- **Calculator** -- scientific calculator with keyboard input and history
+- **Calendar** -- month/week/day views, events from cron jobs
+- **Clock/Weather** -- analog + digital clock, weather via free API, ambient mode
+
+## Bundled Desktop Apps
+
+Two heavyweight apps make Matrix OS feel like a real desktop:
+
+### Chromium Browser
+
+Full Chromium running headless via Kasm/noVNC, rendered in a Matrix OS window. The AI agent connects to the same Chromium instance via Playwright for web automation, scraping, and form filling.
+
+### VS Code (code-server)
+
+Full VS Code via `code-server`, served in an iframe. Connected to your `~/matrixos/` files with pre-installed extensions for TypeScript, Python, Markdown, and Git.
+
+<Callout type="warn" title="Resource requirements">
+  Browser and VS Code each require ~512MB RAM. They are available as premium features on cloud deployments.
+</Callout>
+
+## Building Apps with AI
+
+Ask the AI to build apps by describing what you want:
+
+> Build me an expense tracker with categories and charts
+
+The Builder agent selects the best approach (HTML for simple apps, React for complex ones) and uses domain-specific [skills](/docs/developer/skills) to follow best practices. Apps appear in the dock within seconds.
+
+### AI Skills for App Building
+
+The AI has pre-loaded skills for building Matrix OS apps:
+
+| Skill | Purpose |
+|-------|---------|
+| `build-for-matrix` | Master skill: manifest format, bridge API, theming, permissions |
+| `build-react-app` | React module scaffold, state management, bridge API integration |
+| `build-html-app` | Single-file HTML apps, CDN imports, inline theming |
+| `build-nextjs-app` | Next.js 16 scaffold with App Router and server components |
+| `build-vite-app` | Vite + React scaffold with HMR |
+| `build-python-app` | FastAPI/Flask scaffold with virtualenv |
+| `build-dashboard` | Data visualization with Chart.js/recharts, responsive grids |
+| `build-crud-app` | CRUD patterns with bridge API, list/detail views, forms |
+| `build-game` | Canvas 2D games, p5.js, physics, score persistence |
+| `design-matrix-app` | UX/UI guidelines for Matrix OS apps |
+
+## Deploying Apps from External Sources
+
+You can bring apps from outside Matrix OS:
+
+- **CLI**: `matrix push ./my-app` -- uploads a directory to `~/apps/`
+- **Upload API**: `POST /api/apps` with multipart form data
+- **Drag and drop**: drop a folder or zip file onto the desktop
+- **Chat**: paste code or describe what to install
+- **Git**: push to your `~/matrixos/` git remote
