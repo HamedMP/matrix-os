@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./security/external-content": "./src/security/external-content.ts",
     "./security/audit": "./src/security/audit.ts",
-    "./security/ssrf-guard": "./src/security/ssrf-guard.ts"
+    "./security/ssrf-guard": "./src/security/ssrf-guard.ts",
+    "./skill-registry": "./src/skill-registry.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
