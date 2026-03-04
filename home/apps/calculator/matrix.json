@@ -1,0 +1,9 @@
+{
+  "name": "Calculator",
+  "description": "Scientific calculator with history",
+  "runtime": "static",
+  "category": "utility",
+  "icon": "calculator",
+  "author": "system",
+  "version": "1.0.0"
+}

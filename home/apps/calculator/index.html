@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calculator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  overflow: hidden;
+}
+.calc {
+  width: 280px;
+  background: #141414;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.display {
+  background: #1a1a1a;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  text-align: right;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.display .expr {
+  font-size: 13px;
+  color: #666;
+  min-height: 18px;
+  word-break: break-all;
+}
+.display .result {
+  font-size: 32px;
+  font-weight: 600;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history {
+  max-height: 60px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #555;
+  text-align: right;
+}
+.history div {
+  padding: 1px 0;
+  cursor: pointer;
+}
+.history div:hover { color: #888; }
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.btn {
+  height: 44px;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-family: inherit;
+}
+.btn.num {
+  background: #2a2a2a;
+  color: #fff;
+}
+.btn.num:hover { background: #333; }
+.btn.op {
+  background: #333;
+  color: #f59e0b;
+}
+.btn.op:hover { background: #3a3a3a; }
+.btn.fn {
+  background: #1e1e1e;
+  color: #888;
+  font-size: 13px;
+}
+.btn.fn:hover { background: #282828; }
+.btn.eq {
+  background: #f59e0b;
+  color: #000;
+}
+.btn.eq:hover { background: #d97706; }
+.btn.wide { grid-column: span 2; }
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.mode-toggle button {
+  flex: 1;
+  padding: 4px;
+  font-size: 11px;
+  background: #1e1e1e;
+  color: #666;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.mode-toggle button.active {
+  background: #333;
+  color: #e0e0e0;
+}
+</style>
+</head>
+<body>
+
+<div class="calc">
+  <div class="history" id="history"></div>
+  <div class="display">
+    <div class="expr" id="expr"></div>
+    <div class="result" id="result">0</div>
+  </div>
+
+  <div class="mode-toggle">
+    <button class="active" id="modeBasic">Basic</button>
+    <button id="modeSci">Scientific</button>
+  </div>
+
+  <div class="buttons" id="basicBtns">
+    <button class="btn fn" data-action="clear">AC</button>
+    <button class="btn fn" data-action="toggle">&plusmn;</button>
+    <button class="btn fn" data-action="percent">%</button>
+    <button class="btn op" data-action="op" data-op="/">&divide;</button>
+
+    <button class="btn num" data-action="digit" data-val="7">7</button>
+    <button class="btn num" data-action="digit" data-val="8">8</button>
+    <button class="btn num" data-action="digit" data-val="9">9</button>
+    <button class="btn op" data-action="op" data-op="*">&times;</button>
+
+    <button class="btn num" data-action="digit" data-val="4">4</button>
+    <button class="btn num" data-action="digit" data-val="5">5</button>
+    <button class="btn num" data-action="digit" data-val="6">6</button>
+    <button class="btn op" data-action="op" data-op="-">&minus;</button>
+
+    <button class="btn num" data-action="digit" data-val="1">1</button>
+    <button class="btn num" data-action="digit" data-val="2">2</button>
+    <button class="btn num" data-action="digit" data-val="3">3</button>
+    <button class="btn op" data-action="op" data-op="+">+</button>
+
+    <button class="btn num wide" data-action="digit" data-val="0">0</button>
+    <button class="btn num" data-action="decimal">.</button>
+    <button class="btn eq" data-action="equals">=</button>
+  </div>
+
+  <div class="buttons hidden" id="sciBtns">
+    <button class="btn fn" data-action="clear">AC</button>
+    <button class="btn fn" data-action="paren">(</button>
+    <button class="btn fn" data-action="paren">)</button>
+    <button class="btn op" data-action="op" data-op="/">&divide;</button>
+
+    <button class="btn fn" data-action="func" data-fn="sin">sin</button>
+    <button class="btn fn" data-action="func" data-fn="cos">cos</button>
+    <button class="btn fn" data-action="func" data-fn="tan">tan</button>
+    <button class="btn op" data-action="op" data-op="*">&times;</button>
+
+    <button class="btn fn" data-action="func" data-fn="log">log</button>
+    <button class="btn fn" data-action="func" data-fn="ln">ln</button>
+    <button class="btn fn" data-action="func" data-fn="sqrt">&radic;</button>
+    <button class="btn op" data-action="op" data-op="-">&minus;</button>
+
+    <button class="btn fn" data-action="func" data-fn="pow">x^y</button>
+    <button class="btn fn" data-action="const" data-val="3.14159265">&#960;</button>
+    <button class="btn fn" data-action="const" data-val="2.71828183">e</button>
+    <button class="btn op" data-action="op" data-op="+">+</button>
+
+    <button class="btn num" data-action="digit" data-val="7">7</button>
+    <button class="btn num" data-action="digit" data-val="8">8</button>
+    <button class="btn num" data-action="digit" data-val="9">9</button>
+    <button class="btn fn" data-action="backspace">&larr;</button>
+
+    <button class="btn num" data-action="digit" data-val="4">4</button>
+    <button class="btn num" data-action="digit" data-val="5">5</button>
+    <button class="btn num" data-action="digit" data-val="6">6</button>
+    <button class="btn fn" data-action="toggle">&plusmn;</button>
+
+    <button class="btn num" data-action="digit" data-val="1">1</button>
+    <button class="btn num" data-action="digit" data-val="2">2</button>
+    <button class="btn num" data-action="digit" data-val="3">3</button>
+    <button class="btn fn" data-action="percent">%</button>
+
+    <button class="btn num wide" data-action="digit" data-val="0">0</button>
+    <button class="btn num" data-action="decimal">.</button>
+    <button class="btn eq" data-action="equals">=</button>
+  </div>
+</div>
+
+<script>
+let current = '0';
+let expression = '';
+let hasResult = false;
+let historyItems = [];
+const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+
+function updateDisplay() {
+  document.getElementById('result').textContent = current;
+  document.getElementById('expr').textContent = expression;
+}
+
+function renderHistory() {
+  const el = document.getElementById('history');
+  while (el.firstChild) el.removeChild(el.firstChild);
+  for (const item of historyItems.slice(-5)) {
+    const div = document.createElement('div');
+    div.textContent = item.expr + ' = ' + item.result;
+    div.addEventListener('click', () => {
+      current = item.result;
+      expression = '';
+      hasResult = true;
+      updateDisplay();
+    });
+    el.appendChild(div);
+  }
+}
+
+function handleAction(action, data) {
+  if (action === 'digit') {
+    if (hasResult) { current = ''; hasResult = false; }
+    if (current === '0' && data !== '.') current = '';
+    current += data;
+  } else if (action === 'decimal') {
+    if (hasResult) { current = '0'; hasResult = false; }
+    if (!current.includes('.')) current += '.';
+  } else if (action === 'op') {
+    expression += current + ' ' + data + ' ';
+    current = '0';
+    hasResult = false;
+  } else if (action === 'equals') {
+    const fullExpr = expression + current;
+    try {
+      const sanitized = fullExpr.replace(/[^0-9+\-*/.() ]/g, '');
+      const result = Function('"use strict"; return (' + sanitized + ')')();
+      const formatted = Number.isFinite(result) ? parseFloat(result.toPrecision(12)).toString() : 'Error';
+      historyItems.push({ expr: fullExpr, result: formatted });
+      current = formatted;
+      expression = '';
+      hasResult = true;
+      renderHistory();
+      saveHistory();
+    } catch {
+      current = 'Error';
+      expression = '';
+      hasResult = true;
+    }
+  } else if (action === 'clear') {
+    current = '0';
+    expression = '';
+    hasResult = false;
+  } else if (action === 'toggle') {
+    if (current !== '0' && current !== 'Error') {
+      current = current.startsWith('-') ? current.slice(1) : '-' + current;
+    }
+  } else if (action === 'percent') {
+    current = String(parseFloat(current) / 100);
+  } else if (action === 'backspace') {
+    if (current.length > 1) current = current.slice(0, -1);
+    else current = '0';
+  } else if (action === 'paren') {
+    expression += data;
+    current = '0';
+  } else if (action === 'func') {
+    const val = parseFloat(current);
+    let result;
+    if (data === 'sin') result = Math.sin(val);
+    else if (data === 'cos') result = Math.cos(val);
+    else if (data === 'tan') result = Math.tan(val);
+    else if (data === 'log') result = Math.log10(val);
+    else if (data === 'ln') result = Math.log(val);
+    else if (data === 'sqrt') result = Math.sqrt(val);
+    else if (data === 'pow') { expression += current + ' ** '; current = '0'; updateDisplay(); return; }
+    if (result !== undefined) {
+      current = Number.isFinite(result) ? parseFloat(result.toPrecision(12)).toString() : 'Error';
+      hasResult = true;
+    }
+  } else if (action === 'const') {
+    current = data;
+    hasResult = true;
+  }
+  updateDisplay();
+}
+
+async function saveHistory() {
+  try {
+    await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'write', app: 'calculator', key: 'history', value: historyItems.slice(-20) }),
+    });
+  } catch {}
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', app: 'calculator', key: 'history' }),
+    });
+    const data = await res.json();
+    if (Array.isArray(data)) { historyItems = data; renderHistory(); }
+  } catch {}
+}
+
+// Button handlers
+for (const panel of ['basicBtns', 'sciBtns']) {
+  for (const btn of document.getElementById(panel).querySelectorAll('.btn')) {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      const data = btn.dataset.val || btn.dataset.op || btn.dataset.fn || btn.textContent;
+      handleAction(action, data);
+    });
+  }
+}
+
+// Keyboard
+document.addEventListener('keydown', (e) => {
+  if (e.key >= '0' && e.key <= '9') handleAction('digit', e.key);
+  else if (e.key === '.') handleAction('decimal', '.');
+  else if (e.key === '+') handleAction('op', '+');
+  else if (e.key === '-') handleAction('op', '-');
+  else if (e.key === '*') handleAction('op', '*');
+  else if (e.key === '/') { e.preventDefault(); handleAction('op', '/'); }
+  else if (e.key === 'Enter' || e.key === '=') handleAction('equals', null);
+  else if (e.key === 'Escape') handleAction('clear', null);
+  else if (e.key === 'Backspace') handleAction('backspace', null);
+});
+
+// Mode toggle
+document.getElementById('modeBasic').addEventListener('click', () => {
+  document.getElementById('basicBtns').classList.remove('hidden');
+  document.getElementById('sciBtns').classList.add('hidden');
+  document.getElementById('modeBasic').classList.add('active');
+  document.getElementById('modeSci').classList.remove('active');
+});
+document.getElementById('modeSci').addEventListener('click', () => {
+  document.getElementById('sciBtns').classList.remove('hidden');
+  document.getElementById('basicBtns').classList.add('hidden');
+  document.getElementById('modeSci').classList.add('active');
+  document.getElementById('modeBasic').classList.remove('active');
+});
+
+loadHistory();
+updateDisplay();
+</script>
+</body>
+</html>

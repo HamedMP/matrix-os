@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clock</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+canvas {
+  margin-bottom: 16px;
+}
+.digital {
+  font-size: 48px;
+  font-weight: 200;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.date {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 20px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.tabs button {
+  padding: 6px 16px;
+  font-size: 12px;
+  background: #1a1a1a;
+  color: #666;
+  border: 1px solid #222;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.tabs button.active { background: #333; color: #e0e0e0; border-color: #333; }
+.timer-display {
+  font-size: 36px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  color: #3b82f6;
+  margin-bottom: 12px;
+}
+.timer-controls {
+  display: flex;
+  gap: 8px;
+}
+.timer-controls button {
+  padding: 8px 20px;
+  font-size: 14px;
+  background: #222;
+  color: #e0e0e0;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+}
+.timer-controls button.start { background: #22c55e; color: #000; }
+.timer-controls button.stop { background: #ef4444; color: #fff; }
+.hidden { display: none !important; }
+.timezone {
+  font-size: 12px;
+  color: #555;
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+
+<div id="clockView">
+  <canvas id="analog" width="200" height="200"></canvas>
+  <div class="digital" id="digital">00:00:00</div>
+  <div class="date" id="dateStr"></div>
+</div>
+
+<div id="timerView" class="hidden">
+  <div class="timer-display" id="timerDisplay">00:00.00</div>
+  <div class="timer-controls">
+    <button class="start" id="timerStart">Start</button>
+    <button id="timerLap">Lap</button>
+    <button id="timerReset">Reset</button>
+  </div>
+  <div id="laps" style="margin-top: 12px; font-size: 13px; color: #666; max-height: 120px; overflow-y: auto;"></div>
+</div>
+
+<div class="tabs">
+  <button class="active" id="tabClock">Clock</button>
+  <button id="tabTimer">Stopwatch</button>
+</div>
+
+<div class="timezone" id="tz"></div>
+
+<script>
+const analogCanvas = document.getElementById('analog');
+const analogCtx = analogCanvas.getContext('2d');
+const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+
+function drawClock() {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const s = now.getSeconds();
+  const ms = now.getMilliseconds();
+
+  // Digital
+  const timeStr = [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
+  document.getElementById('digital').textContent = timeStr;
+
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('dateStr').textContent =
+    days[now.getDay()] + ', ' + months[now.getMonth()] + ' ' + now.getDate() + ', ' + now.getFullYear();
+
+  // Analog
+  const ctx = analogCtx;
+  const cx = 100, cy = 100, r = 90;
+
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, 200, 200);
+
+  // Face
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#141414';
+  ctx.fill();
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Hour markers
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    const inner = i % 3 === 0 ? 68 : 74;
+    const outer = 82;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
+    ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+    ctx.strokeStyle = i % 3 === 0 ? '#888' : '#444';
+    ctx.lineWidth = i % 3 === 0 ? 2 : 1;
+    ctx.stroke();
+  }
+
+  // Hour hand
+  const hAngle = ((h % 12) / 12 + m / 720) * Math.PI * 2 - Math.PI / 2;
+  drawHand(ctx, cx, cy, hAngle, 45, 3, '#e0e0e0');
+
+  // Minute hand
+  const mAngle = (m / 60 + s / 3600) * Math.PI * 2 - Math.PI / 2;
+  drawHand(ctx, cx, cy, mAngle, 62, 2, '#e0e0e0');
+
+  // Second hand
+  const sAngle = ((s + ms / 1000) / 60) * Math.PI * 2 - Math.PI / 2;
+  drawHand(ctx, cx, cy, sAngle, 70, 1, '#ef4444');
+
+  // Center dot
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#ef4444';
+  ctx.fill();
+}
+
+function drawHand(ctx, cx, cy, angle, length, width, color) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(angle) * length, cy + Math.sin(angle) * length);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+// Stopwatch
+let timerRunning = false;
+let timerStart = 0;
+let timerElapsed = 0;
+let timerInterval;
+let laps = [];
+
+function formatTimer(ms) {
+  const total = Math.floor(ms);
+  const min = Math.floor(total / 60000);
+  const sec = Math.floor((total % 60000) / 1000);
+  const centis = Math.floor((total % 1000) / 10);
+  return String(min).padStart(2, '0') + ':' + String(sec).padStart(2, '0') + '.' + String(centis).padStart(2, '0');
+}
+
+function updateTimer() {
+  const elapsed = timerElapsed + (timerRunning ? Date.now() - timerStart : 0);
+  document.getElementById('timerDisplay').textContent = formatTimer(elapsed);
+}
+
+document.getElementById('timerStart').addEventListener('click', () => {
+  if (timerRunning) {
+    timerElapsed += Date.now() - timerStart;
+    timerRunning = false;
+    clearInterval(timerInterval);
+    document.getElementById('timerStart').textContent = 'Start';
+    document.getElementById('timerStart').className = 'start';
+  } else {
+    timerStart = Date.now();
+    timerRunning = true;
+    timerInterval = setInterval(updateTimer, 10);
+    document.getElementById('timerStart').textContent = 'Stop';
+    document.getElementById('timerStart').className = 'stop';
+  }
+});
+
+document.getElementById('timerLap').addEventListener('click', () => {
+  if (!timerRunning) return;
+  const elapsed = timerElapsed + Date.now() - timerStart;
+  laps.push(elapsed);
+  const el = document.getElementById('laps');
+  const div = document.createElement('div');
+  div.textContent = 'Lap ' + laps.length + ': ' + formatTimer(elapsed);
+  el.insertBefore(div, el.firstChild);
+});
+
+document.getElementById('timerReset').addEventListener('click', () => {
+  timerRunning = false;
+  timerElapsed = 0;
+  timerStart = 0;
+  laps = [];
+  clearInterval(timerInterval);
+  document.getElementById('timerDisplay').textContent = '00:00.00';
+  document.getElementById('timerStart').textContent = 'Start';
+  document.getElementById('timerStart').className = 'start';
+  const el = document.getElementById('laps');
+  while (el.firstChild) el.removeChild(el.firstChild);
+});
+
+// Tab switching
+document.getElementById('tabClock').addEventListener('click', () => {
+  document.getElementById('clockView').classList.remove('hidden');
+  document.getElementById('timerView').classList.add('hidden');
+  document.getElementById('tabClock').classList.add('active');
+  document.getElementById('tabTimer').classList.remove('active');
+});
+document.getElementById('tabTimer').addEventListener('click', () => {
+  document.getElementById('timerView').classList.remove('hidden');
+  document.getElementById('clockView').classList.add('hidden');
+  document.getElementById('tabTimer').classList.add('active');
+  document.getElementById('tabClock').classList.remove('active');
+});
+
+// Timezone display
+try {
+  document.getElementById('tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
+} catch {}
+
+// Save/load best lap time
+async function saveBestLap() {
+  if (laps.length === 0) return;
+  const best = Math.min(...laps);
+  try {
+    await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'write', app: 'clock', key: 'bestLap', value: best }),
+    });
+  } catch {}
+}
+
+// Main loop
+function tick() {
+  drawClock();
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>

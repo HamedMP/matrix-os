@@ -1,0 +1,9 @@
+{
+  "name": "Clock",
+  "description": "Analog and digital clock with timer",
+  "runtime": "static",
+  "category": "utility",
+  "icon": "clock",
+  "author": "system",
+  "version": "1.0.0"
+}
