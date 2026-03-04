@@ -6,6 +6,8 @@ export interface KernelResult {
   result?: string;
   cost: number;
   turns: number;
+  tokensIn: number;
+  tokensOut: number;
   errors?: string[];
 }
 
@@ -65,10 +67,13 @@ export async function* spawnKernel(
       }
 
       if (msg.type === "result") {
+        const usage = msg.usage as { input_tokens?: number; output_tokens?: number } | undefined;
         const base = {
           sessionId: msg.session_id,
           cost: msg.total_cost_usd,
           turns: msg.num_turns,
+          tokensIn: usage?.input_tokens ?? 0,
+          tokensOut: usage?.output_tokens ?? 0,
         };
 
         if (msg.subtype === "success") {

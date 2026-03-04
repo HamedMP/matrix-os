@@ -32,6 +32,7 @@ import {
   type KernelEvent,
   loadHandle,
   createImageClient,
+  createUsageTracker,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
@@ -890,18 +891,18 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
+  const usageTracker = createUsageTracker(homePath);
+
   app.get("/api/usage", (c) => {
     try {
-      const { createUsageTracker } = require("@matrix-os/kernel");
-      const tracker = createUsageTracker(homePath);
       const period = (c.req.query("period") ?? "daily") as string;
       const date = c.req.query("date") as string | undefined;
       const month = c.req.query("month") as string | undefined;
 
       if (period === "monthly") {
-        return c.json(tracker.getMonthly(month));
+        return c.json(usageTracker.getMonthly(month));
       }
-      return c.json(tracker.getDaily(date));
+      return c.json(usageTracker.getDaily(date));
     } catch {
       return c.json({ total: 0, byAction: {} });
     }

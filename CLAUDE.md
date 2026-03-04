@@ -265,3 +265,10 @@ Release process: `docs/dev/releases.md`
 - Keep kernel system prompt under 7K tokens
 - Always use Drizzle ORM for database access: never raw SQL queries with better-sqlite3 directly
 - **Documentation**: when adding a new feature, update `www/content/docs/` accordingly. Specs and plans should include a docs update step. The docs site at matrix-os.com/docs (Fumadocs in `www/`) is the public-facing reference -- keep it in sync with the codebase
+
+## Swarm / Multi-Agent Rules
+
+- **NEVER use worktree isolation** for agents (`isolation: "worktree"` is BANNED). Worktrees lose uncommitted changes on cleanup. Always run agents directly on the repo.
+- **Agents MUST commit their progress** as they go. Instruct every spawned agent to `git add` + `git commit` after completing each phase or major feature. Never rely on uncommitted changes surviving agent shutdown.
+- **NEVER call TeamDelete**. Leave team files in place. Teams are cheap (just JSON files). Losing worktrees or agent state is expensive. Only clean up manually if explicitly asked by the user.
+- Agents all work on **main** (or whichever current branch) in parallel. No feature branches for swarm agents -- keep it simple.

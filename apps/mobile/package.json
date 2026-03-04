@@ -15,6 +15,7 @@
     "@expo-google-fonts/inter": "^0.2.3",
     "@expo-google-fonts/jetbrains-mono": "^0.2.3",
     "@gorhom/bottom-sheet": "^5.1.4",
+    "@react-native-async-storage/async-storage": "^3.0.1",
     "expo": "~54.0.0",
     "expo-auth-session": "~7.0.10",
     "expo-blur": "~15.0.0",

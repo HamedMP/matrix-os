@@ -7,6 +7,7 @@ import {
   loadSkills,
   loadSkillBody,
   buildSkillsToc,
+  clearSkillCache,
   type SkillDefinition,
 } from "../../packages/kernel/src/skills.js";
 
@@ -16,6 +17,7 @@ describe("T100b: Skills system", () => {
   beforeEach(() => {
     homePath = resolve(mkdtempSync(join(tmpdir(), "skills-test-")));
     mkdirSync(join(homePath, "agents", "skills"), { recursive: true });
+    clearSkillCache();
   });
 
   afterEach(() => {
@@ -201,6 +203,8 @@ Step 2: Format response.`,
           category: "productivity",
           tools_needed: ["WebSearch"],
           channel_hints: ["any"],
+          examples: [],
+          composable_with: [],
         },
         {
           name: "summarize",
@@ -210,6 +214,8 @@ Step 2: Format response.`,
           category: "productivity",
           tools_needed: [],
           channel_hints: ["any"],
+          examples: [],
+          composable_with: [],
         },
       ];
 

@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Platform,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
 
@@ -23,6 +24,7 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed || !connected) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSend(trimmed);
     setText("");
   }, [text, connected, onSend]);

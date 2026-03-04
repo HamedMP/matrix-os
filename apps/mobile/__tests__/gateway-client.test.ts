@@ -49,4 +49,19 @@ describe("GatewayClient", () => {
     unsub();
     // handler should no longer be registered
   });
+
+  it("reports isConnected as false when not connected", () => {
+    const client = new GatewayClient("http://localhost:4000");
+    expect(client.isConnected).toBe(false);
+  });
+
+  it("sendMessage returns false when not connected", () => {
+    const client = new GatewayClient("http://localhost:4000");
+    expect(client.sendMessage("hello")).toBe(false);
+  });
+
+  it("send returns false when not connected", () => {
+    const client = new GatewayClient("http://localhost:4000");
+    expect(client.send({ type: "message", text: "test" })).toBe(false);
+  });
 });

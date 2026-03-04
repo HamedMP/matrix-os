@@ -16,6 +16,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
 import { createInteractionLogger } from "./logger.js";
+import { createUsageTracker } from "@matrix-os/kernel";
 import {
   kernelDispatchTotal,
   kernelDispatchDuration,
@@ -89,6 +90,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
   ensureHome(homePath);
   const db = createDB(`${homePath}/system/matrix.db`);
   const interactionLogger = createInteractionLogger(homePath);
+  const usageTracker = createUsageTracker(homePath);
 
   const queue: InternalEntry[] = [];
   let active = 0;
@@ -169,19 +171,39 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         }
       }
 
+      const tokensIn = resultData?.tokensIn ?? 0;
+      const tokensOut = resultData?.tokensOut ?? 0;
+      const model = opts.model ?? "unknown";
+      if (tokensIn > 0) aiTokensTotal.inc({ model, direction: "in" }, tokensIn);
+      if (tokensOut > 0) aiTokensTotal.inc({ model, direction: "out" }, tokensOut);
+
       try {
         interactionLogger.log({
           source,
           sessionId: resultSessionId || entry.sessionId || "",
           prompt: entry.message,
           toolsUsed,
-          tokensIn: 0,
-          tokensOut: 0,
+          tokensIn,
+          tokensOut,
           costUsd: resultData?.cost ?? 0,
           durationMs,
           result: "ok",
+          senderId: entry.context?.senderId,
+          model: opts.model,
         });
       } catch { /* logger failure must not break dispatch */ }
+
+      const costUsd = resultData?.cost ?? 0;
+      if (costUsd > 0) {
+        try {
+          usageTracker.track("dispatch", costUsd, {
+            senderId: entry.context?.senderId,
+            model: opts.model,
+            tokensIn,
+            tokensOut,
+          });
+        } catch { /* usage tracker failure must not break dispatch */ }
+      }
 
       entry.resolve();
     } catch (error) {
@@ -190,17 +212,25 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       kernelDispatchTotal.inc({ source, status: "error" });
       kernelDispatchDuration.observe({ source }, durationSec);
 
+      const err = error as Error;
       try {
         interactionLogger.log({
           source,
           sessionId: resultSessionId || entry.sessionId || "",
           prompt: entry.message,
           toolsUsed,
-          tokensIn: 0,
-          tokensOut: 0,
+          tokensIn: resultData?.tokensIn ?? 0,
+          tokensOut: resultData?.tokensOut ?? 0,
           costUsd: resultData?.cost ?? 0,
           durationMs,
           result: "error",
+          senderId: entry.context?.senderId,
+          model: opts.model,
+          error: {
+            name: err.name,
+            message: err.message,
+            stack: err.stack,
+          },
         });
       } catch { /* logger failure must not break dispatch */ }
 
@@ -213,9 +243,14 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
   }
 
   async function runBatch(entry: Extract<InternalEntry, { kind: "batch" }>) {
+    const batchId = crypto.randomUUID();
     try {
       const settled = await Promise.allSettled(
         entry.entries.map(async (batchEntry) => {
+          const startTime = Date.now();
+          let batchResultData: KernelResult | undefined;
+          let batchSessionId = "";
+
           const config: KernelConfig = {
             db,
             homePath,
@@ -225,6 +260,37 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
           for await (const event of spawnFn(batchEntry.message, config)) {
             batchEntry.onEvent(event);
+            if (event.type === "init") batchSessionId = event.sessionId;
+            if (event.type === "result") batchResultData = event.data;
+          }
+
+          const durationMs = Date.now() - startTime;
+          try {
+            interactionLogger.log({
+              source: "batch",
+              sessionId: batchSessionId,
+              prompt: batchEntry.message,
+              toolsUsed: [],
+              tokensIn: batchResultData?.tokensIn ?? 0,
+              tokensOut: batchResultData?.tokensOut ?? 0,
+              costUsd: batchResultData?.cost ?? 0,
+              durationMs,
+              result: "ok",
+              batch: true,
+              batchId,
+              model: opts.model,
+            });
+          } catch { /* logger failure must not break dispatch */ }
+
+          const batchCost = batchResultData?.cost ?? 0;
+          if (batchCost > 0) {
+            try {
+              usageTracker.track("dispatch", batchCost, {
+                model: opts.model,
+                tokensIn: batchResultData?.tokensIn ?? 0,
+                tokensOut: batchResultData?.tokensOut ?? 0,
+              });
+            } catch { /* usage tracker failure must not break dispatch */ }
           }
         }),
       );
@@ -234,10 +300,28 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         if (result.status === "fulfilled") {
           return { taskId, status: "fulfilled" as const };
         }
+        const err = result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+        try {
+          interactionLogger.log({
+            source: "batch",
+            sessionId: "",
+            prompt: entry.entries[i].message,
+            toolsUsed: [],
+            tokensIn: 0,
+            tokensOut: 0,
+            costUsd: 0,
+            durationMs: 0,
+            result: "error",
+            batch: true,
+            batchId,
+            model: opts.model,
+            error: { name: err.name, message: err.message, stack: err.stack },
+          });
+        } catch { /* logger failure must not break dispatch */ }
         return {
           taskId,
           status: "rejected" as const,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          error: err.message,
         };
       });
 

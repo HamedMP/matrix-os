@@ -1,4 +1,6 @@
-import { View, Text, Pressable, Modal, ScrollView, StyleSheet } from "react-native";
+import { useState, useCallback } from "react";
+import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, StyleSheet } from "react-native";
+import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
 import type { Task } from "./TaskCard";
@@ -6,6 +8,7 @@ import type { Task } from "./TaskCard";
 interface TaskDetailProps {
   task: Task;
   onClose: () => void;
+  onStatusChange?: (taskId: string, status: string) => Promise<void>;
 }
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }> = {
@@ -14,8 +17,29 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }>
   completed: { bg: "rgba(34, 197, 94, 0.1)", text: colors.light.success, label: "Done" },
 };
 
-export function TaskDetail({ task, onClose }: TaskDetailProps) {
+export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
   const statusInfo = STATUS_COLORS[task.status] ?? STATUS_COLORS.pending;
+  const [updating, setUpdating] = useState(false);
+  const isCompleted = task.status === "completed";
+
+  const handleToggleStatus = useCallback(async () => {
+    if (!onStatusChange || updating) return;
+    setUpdating(true);
+    try {
+      const newStatus = isCompleted ? "pending" : "completed";
+      await onStatusChange(task.id, newStatus);
+      if (!isCompleted) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      onClose();
+    } catch {
+      // silently handle
+    } finally {
+      setUpdating(false);
+    }
+  }, [onStatusChange, updating, isCompleted, task.id, onClose]);
 
   return (
     <Modal
@@ -25,6 +49,7 @@ export function TaskDetail({ task, onClose }: TaskDetailProps) {
       onRequestClose={onClose}
     >
       <View style={styles.container}>
+        <View style={styles.dragHandle} />
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Task Detail</Text>
           <Pressable
@@ -75,6 +100,40 @@ export function TaskDetail({ task, onClose }: TaskDetailProps) {
             )}
           </View>
         </ScrollView>
+
+        {onStatusChange && (
+          <View style={styles.actionBar}>
+            <Pressable
+              onPress={handleToggleStatus}
+              disabled={updating}
+              style={({ pressed }) => [
+                styles.actionButton,
+                isCompleted ? styles.actionReopen : styles.actionComplete,
+                pressed && !updating && styles.actionPressed,
+              ]}
+            >
+              {updating ? (
+                <ActivityIndicator size="small" color={colors.light.primaryForeground} />
+              ) : (
+                <>
+                  <Ionicons
+                    name={isCompleted ? "refresh-outline" : "checkmark-circle-outline"}
+                    size={18}
+                    color={isCompleted ? colors.light.foreground : colors.light.primaryForeground}
+                  />
+                  <Text
+                    style={[
+                      styles.actionText,
+                      isCompleted ? styles.actionTextReopen : styles.actionTextComplete,
+                    ]}
+                  >
+                    {isCompleted ? "Reopen Task" : "Mark Complete"}
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -165,5 +224,51 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.light.border,
     marginHorizontal: spacing.lg,
+  },
+  dragHandle: {
+    width: 36,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: colors.light.border,
+    alignSelf: "center",
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  actionBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.light.border,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    paddingBottom: spacing["2xl"],
+  },
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+  },
+  actionComplete: {
+    backgroundColor: colors.light.primary,
+  },
+  actionReopen: {
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+  },
+  actionPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
+  },
+  actionText: {
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 15,
+  },
+  actionTextComplete: {
+    color: colors.light.primaryForeground,
+  },
+  actionTextReopen: {
+    color: colors.light.foreground,
   },
 });

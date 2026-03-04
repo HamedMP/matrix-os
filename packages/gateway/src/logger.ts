@@ -2,6 +2,21 @@ import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const MAX_PROMPT_LENGTH = 500;
+const MAX_TOOL_INPUT_LENGTH = 500;
+const MAX_STACK_LENGTH = 1000;
+
+export interface ToolDetail {
+  name: string;
+  durationMs: number;
+  inputPreview: string;
+  status: string;
+}
+
+export interface ErrorDetail {
+  name: string;
+  message: string;
+  stack?: string;
+}
 
 export interface InteractionInput {
   source: string;
@@ -13,6 +28,13 @@ export interface InteractionInput {
   costUsd: number;
   durationMs: number;
   result: string;
+  senderId?: string;
+  model?: string;
+  agentName?: string;
+  tools?: ToolDetail[];
+  error?: ErrorDetail;
+  batch?: boolean;
+  batchId?: string;
 }
 
 export interface InteractionEntry extends InteractionInput {
@@ -29,9 +51,26 @@ function logPath(homePath: string, date: string): string {
   return join(homePath, "system", "logs", `${date}.jsonl`);
 }
 
-function truncatePrompt(prompt: string): string {
-  if (prompt.length <= MAX_PROMPT_LENGTH) return prompt;
-  return prompt.slice(0, MAX_PROMPT_LENGTH) + "...";
+function truncate(str: string, max: number): string {
+  if (str.length <= max) return str;
+  return str.slice(0, max) + "...";
+}
+
+function sanitizeTools(tools?: ToolDetail[]): ToolDetail[] | undefined {
+  if (!tools) return undefined;
+  return tools.map((t) => ({
+    ...t,
+    inputPreview: truncate(t.inputPreview, MAX_TOOL_INPUT_LENGTH),
+  }));
+}
+
+function sanitizeError(error?: ErrorDetail): ErrorDetail | undefined {
+  if (!error) return undefined;
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack ? truncate(error.stack, MAX_STACK_LENGTH) : undefined,
+  };
 }
 
 export function createInteractionLogger(homePath: string): InteractionLogger {
@@ -46,7 +85,9 @@ export function createInteractionLogger(homePath: string): InteractionLogger {
     log(input: InteractionInput) {
       const entry: InteractionEntry = {
         ...input,
-        prompt: truncatePrompt(input.prompt),
+        prompt: truncate(input.prompt, MAX_PROMPT_LENGTH),
+        tools: sanitizeTools(input.tools),
+        error: sanitizeError(input.error),
         timestamp: new Date().toISOString(),
       };
 

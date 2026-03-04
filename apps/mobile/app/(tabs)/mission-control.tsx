@@ -208,6 +208,11 @@ export default function MissionControlScreen() {
         <TaskDetail
           task={selectedTask}
           onClose={() => setSelectedTask(null)}
+          onStatusChange={async (taskId, status) => {
+            if (!client) return;
+            await client.updateTask(taskId, { status });
+            await fetchData();
+          }}
         />
       )}
     </View>

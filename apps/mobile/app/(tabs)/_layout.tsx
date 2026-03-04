@@ -32,7 +32,7 @@ function ConnectionDot({ connected }: { connected: boolean }) {
 }
 
 export default function TabsLayout() {
-  const { connectionState } = useGateway();
+  const { connectionState, unreadCount } = useGateway();
   const isConnected = connectionState === "connected";
 
   return (
@@ -53,6 +53,8 @@ export default function TabsLayout() {
         options={{
           title: "Chat",
           tabBarIcon: ({ focused }) => <TabIcon name="chat" focused={focused} />,
+          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
+          tabBarBadgeStyle: unreadCount > 0 ? styles.badge : undefined,
         }}
       />
       <Tabs.Screen
@@ -112,5 +114,12 @@ const styles = StyleSheet.create({
   },
   dotDisconnected: {
     backgroundColor: colors.light.destructive,
+  },
+  badge: {
+    backgroundColor: colors.light.primary,
+    fontSize: 10,
+    minWidth: 18,
+    height: 18,
+    lineHeight: 18,
   },
 });

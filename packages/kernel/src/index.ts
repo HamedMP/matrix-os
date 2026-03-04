@@ -7,7 +7,16 @@ export type { MatrixDB } from "./db.js";
 export { ensureHome } from "./boot.js";
 export { buildSystemPrompt, estimateTokens } from "./prompt.js";
 export { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
-export { loadSkills, loadSkillBody, buildSkillsToc } from "./skills.js";
+export {
+  loadSkills,
+  loadSkillBody,
+  buildSkillsToc,
+  loadComposableSkills,
+  clearSkillCache,
+  cacheKnowledgeFiles,
+  getKnowledge,
+  clearKnowledgeCache,
+} from "./skills.js";
 export type { SkillDefinition } from "./skills.js";
 export {
   loadHealthCheckTargets,
@@ -24,7 +33,7 @@ export type {
   Heartbeat,
 } from "./heartbeat.js";
 export { createTask, claimTask, completeTask, failTask, listTasks, getTask } from "./ipc.js";
-export { createGitSnapshotHook, createApprovalHook } from "./hooks.js";
+export { createGitSnapshotHook, createApprovalHook, createFileAuditHook } from "./hooks.js";
 export type { RequestApprovalFn } from "./hooks.js";
 export { shouldRequireApproval, DEFAULT_APPROVAL_POLICY } from "./approval.js";
 export type { ApprovalPolicy, ToolPattern } from "./approval.js";
@@ -57,3 +66,7 @@ export { createUsageTracker } from "./usage.js";
 export type { UsageTracker, UsageEntry, UsageSummary } from "./usage.js";
 export { loadAppMeta } from "./app-meta.js";
 export type { AppMeta } from "./app-meta.js";
+export { createAuditLogger, rotateActivityLog, cleanOldLogs } from "./audit.js";
+export type { AuditLogger, AuditEntry, AuditLogEntry } from "./audit.js";
+export { detectAppType, createReactScaffold, registerModule } from "./build-pipeline.js";
+export type { ModuleEntry } from "./build-pipeline.js";

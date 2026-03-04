@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { shouldRequireApproval, type ApprovalPolicy } from "./approval.js";
+import { createAuditLogger, type AuditLogger } from "./audit.js";
 
 export interface HookInput {
   hook_event_name: string;
@@ -141,6 +142,35 @@ export async function preCompactHook(input: HookInput): Promise<HookOutput> {
   // In full implementation: write state snapshot to ~/system/state.md
   // before compaction so summarized context includes pointer to full state
   return {};
+}
+
+const FILE_MUTATION_TOOLS = new Set(["Write", "Edit"]);
+
+export function createFileAuditHook(
+  logDir: string,
+): (input: HookInput) => Promise<HookOutput> {
+  const auditLogger = createAuditLogger(logDir);
+
+  return async (input: HookInput): Promise<HookOutput> => {
+    if (input.hook_event_name !== "PostToolUse") return {};
+    if (!input.tool_name || !FILE_MUTATION_TOOLS.has(input.tool_name)) return {};
+
+    const toolInput = input.tool_input as Record<string, unknown> | undefined;
+    if (!toolInput?.file_path) return {};
+
+    const filePath = String(toolInput.file_path);
+    const content = toolInput.content ?? toolInput.new_string ?? "";
+    const sizeBytes = typeof content === "string" ? Buffer.byteLength(content) : 0;
+
+    auditLogger.log({
+      op: "write",
+      path: filePath,
+      sizeBytes,
+      actor: "kernel",
+    });
+
+    return {};
+  };
 }
 
 export type RequestApprovalFn = (toolName: string, args: unknown) => Promise<boolean>;

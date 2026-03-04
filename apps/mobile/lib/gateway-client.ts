@@ -122,14 +122,20 @@ export class GatewayClient {
     this.setState("disconnected");
   }
 
-  send(msg: ClientMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
-    }
+  get isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  sendMessage(text: string, sessionId?: string): void {
-    this.send({ type: "message", text, sessionId });
+  send(msg: ClientMessage): boolean {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(msg));
+      return true;
+    }
+    return false;
+  }
+
+  sendMessage(text: string, sessionId?: string): boolean {
+    return this.send({ type: "message", text, sessionId });
   }
 
   switchSession(sessionId: string): void {
@@ -195,6 +201,15 @@ export class GatewayClient {
     return res.json();
   }
 
+  async updateTask(id: string, updates: Record<string, unknown>): Promise<unknown> {
+    const res = await fetch(`${this.httpUrl}/api/tasks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: this.authHeaders(),
+      body: JSON.stringify(updates),
+    });
+    return res.json();
+  }
+
   async getCron(): Promise<unknown[]> {
     const res = await fetch(`${this.httpUrl}/api/cron`, {
       headers: this.authHeaders(),
@@ -213,6 +228,18 @@ export class GatewayClient {
     const res = await fetch(`${this.httpUrl}/api/system/info`, {
       headers: this.authHeaders(),
     });
+    return res.json();
+  }
+
+  async getMessages(sessionId?: string, before?: number, limit = 20): Promise<unknown[]> {
+    const params = new URLSearchParams();
+    if (sessionId) params.set("sessionId", sessionId);
+    if (before) params.set("before", String(before));
+    params.set("limit", String(limit));
+    const res = await fetch(`${this.httpUrl}/api/messages?${params}`, {
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) return [];
     return res.json();
   }
 

@@ -1,5 +1,5 @@
-import { useEffect, useState, createContext, useContext, useCallback } from "react";
-import { Stack } from "expo-router";
+import { useEffect, useState, createContext, useContext, useCallback, useRef } from "react";
+import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
@@ -20,6 +20,7 @@ import { ClerkProvider } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { getActiveGateway, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
+import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { colors, fonts } from "@/lib/theme";
 
 import "../global.css";
@@ -40,6 +41,9 @@ interface GatewayContextValue {
   connectionState: ConnectionState;
   gateway: GatewayConnection | null;
   setGateway: (gw: GatewayConnection) => void;
+  unreadCount: number;
+  incrementUnread: () => void;
+  clearUnread: () => void;
 }
 
 const GatewayContext = createContext<GatewayContextValue>({
@@ -47,6 +51,9 @@ const GatewayContext = createContext<GatewayContextValue>({
   connectionState: "disconnected",
   gateway: null,
   setGateway: () => {},
+  unreadCount: 0,
+  incrementUnread: () => {},
+  clearUnread: () => {},
 });
 
 export function useGateway() {
@@ -68,6 +75,15 @@ export default function RootLayout() {
   const [gateway, setGatewayState] = useState<GatewayConnection | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [ready, setReady] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const incrementUnread = useCallback(() => {
+    setUnreadCount((c) => c + 1);
+  }, []);
+
+  const clearUnread = useCallback(() => {
+    setUnreadCount(0);
+  }, []);
 
   const setGateway = useCallback((gw: GatewayConnection) => {
     client?.disconnect();
@@ -126,7 +142,7 @@ export default function RootLayout() {
   return (
     <ClerkProvider tokenCache={tokenCache}>
       <GestureHandlerRootView style={styles.flex}>
-        <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway }}>
+        <GatewayContext.Provider value={{ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }}>
           <Stack
             screenOptions={{
               headerStyle: { backgroundColor: colors.light.background },
@@ -154,11 +170,27 @@ export default function RootLayout() {
               }}
             />
           </Stack>
+          <NotificationRouter />
           <StatusBar style="dark" />
         </GatewayContext.Provider>
       </GestureHandlerRootView>
     </ClerkProvider>
   );
+}
+
+function NotificationRouter() {
+  const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
+  useEffect(() => {
+    const sub = addNotificationResponseListener((response) => {
+      handleNotificationTap(response, routerRef.current);
+    });
+    return () => sub.remove();
+  }, []);
+
+  return null;
 }
 
 const styles = StyleSheet.create({

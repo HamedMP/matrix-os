@@ -8,14 +8,25 @@ import {
   StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
 import { InputBar } from "@/components/InputBar";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { colors, fonts, spacing } from "@/lib/theme";
 import type { ServerMessage } from "@/lib/gateway-client";
+import {
+  getCachedMessages,
+  setCachedMessages,
+  getOutboundQueue,
+  addToOutboundQueue,
+  clearOutboundQueue,
+  getRetryDelay,
+  canRetry,
+  type QueuedMessage,
+} from "@/lib/offline";
 
 export interface Message {
   id: string;
@@ -31,19 +42,83 @@ function nextId(): string {
 }
 
 export default function ChatScreen() {
-  const { client, connectionState, gateway } = useGateway();
+  const { client, connectionState, gateway, clearUnread, incrementUnread } = useGateway();
   const { isSignedIn } = useAuth();
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const [sessionId, setSessionId] = useState<string>();
+  const [queueCount, setQueueCount] = useState(0);
   const flatListRef = useRef<FlatList<Message>>(null);
+  const prevConnectionState = useRef(connectionState);
+  const isFocusedRef = useRef(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      isFocusedRef.current = true;
+      clearUnread();
+      return () => {
+        isFocusedRef.current = false;
+      };
+    }, [clearUnread]),
+  );
 
   useEffect(() => {
     if (!gateway && !isSignedIn) {
       router.replace("/connect");
     }
   }, [gateway, isSignedIn, router]);
+
+  // Load cached messages on mount
+  useEffect(() => {
+    getCachedMessages().then((cached) => {
+      if (cached.length > 0) {
+        setMessages(cached);
+      }
+    });
+    getOutboundQueue().then((q) => setQueueCount(q.length));
+  }, []);
+
+  // Save messages to cache when they change
+  useEffect(() => {
+    if (messages.length > 0) {
+      setCachedMessages(messages);
+    }
+  }, [messages]);
+
+  // Flush outbound queue on reconnect
+  useEffect(() => {
+    if (
+      connectionState === "connected" &&
+      prevConnectionState.current !== "connected" &&
+      client
+    ) {
+      flushQueue();
+    }
+    prevConnectionState.current = connectionState;
+  }, [connectionState, client]);
+
+  async function flushQueue() {
+    if (!client) return;
+    const queue = await getOutboundQueue();
+    if (queue.length === 0) return;
+
+    const failed: QueuedMessage[] = [];
+    for (const msg of queue) {
+      const sent = client.sendMessage(msg.text, msg.sessionId);
+      if (!sent) {
+        if (canRetry(msg)) {
+          failed.push({ ...msg, retries: msg.retries + 1 });
+        }
+      }
+    }
+
+    await clearOutboundQueue();
+    for (const msg of failed) {
+      await addToOutboundQueue(msg);
+    }
+    setQueueCount(failed.length);
+  }
 
   useEffect(() => {
     if (!client) return;
@@ -59,6 +134,9 @@ export default function ChatScreen() {
             const last = prev[0];
             if (last?.role === "assistant" && !last.tool) {
               return [{ ...last, content: last.content + msg.text }, ...prev.slice(1)];
+            }
+            if (!isFocusedRef.current) {
+              incrementUnread();
             }
             return [
               { id: nextId(), role: "assistant", content: msg.text, timestamp: Date.now() },
@@ -110,24 +188,63 @@ export default function ChatScreen() {
   }, [client]);
 
   const handleSend = useCallback(
-    (text: string) => {
+    async (text: string) => {
       if (!client || !text.trim()) return;
+      const trimmed = text.trim();
       const userMsg: Message = {
         id: nextId(),
         role: "user",
-        content: text.trim(),
+        content: trimmed,
         timestamp: Date.now(),
       };
       setMessages((prev) => [userMsg, ...prev]);
-      setBusy(true);
-      client.sendMessage(text.trim(), sessionId);
+
+      const sent = client.sendMessage(trimmed, sessionId);
+      if (sent) {
+        setBusy(true);
+      } else {
+        const queued: QueuedMessage = {
+          id: userMsg.id,
+          text: trimmed,
+          sessionId,
+          retries: 0,
+          createdAt: Date.now(),
+        };
+        await addToOutboundQueue(queued);
+        setQueueCount((c) => c + 1);
+      }
     },
     [client, sessionId],
   );
 
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
+  const handleLoadOlder = useCallback(async () => {
+    if (!client || loadingOlder || !hasMore || messages.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const oldest = messages[messages.length - 1];
+      const older = (await client.getMessages(sessionId, oldest.timestamp)) as Message[];
+      if (older.length === 0) {
+        setHasMore(false);
+      } else {
+        setMessages((prev) => [...prev, ...older]);
+      }
+    } catch {
+      // silently handle
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [client, loadingOlder, hasMore, messages, sessionId]);
+
+  const gatewayHttpUrl = client?.httpUrl;
+
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<Message>) => <ChatMessage message={item} />,
-    [],
+    ({ item }: ListRenderItemInfo<Message>) => (
+      <ChatMessage message={item} gatewayUrl={gatewayHttpUrl} />
+    ),
+    [gatewayHttpUrl],
   );
 
   const keyExtractor = useCallback((item: Message) => item.id, []);
@@ -140,6 +257,11 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
+      <ConnectionBanner
+        state={connectionState}
+        queueCount={queueCount}
+        onRetry={() => client?.connect()}
+      />
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -147,6 +269,15 @@ export default function ChatScreen() {
         keyExtractor={keyExtractor}
         inverted
         contentContainerStyle={styles.listContent}
+        onEndReached={handleLoadOlder}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={
+          loadingOlder ? (
+            <View style={styles.loadingOlder}>
+              <Text style={styles.loadingOlderText}>Loading older messages...</Text>
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIcon}>
@@ -257,5 +388,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     fontSize: 14,
     color: colors.light.foreground,
+  },
+  loadingOlder: {
+    alignItems: "center",
+    paddingVertical: spacing.md,
+  },
+  loadingOlderText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 12,
+    color: colors.light.mutedForeground,
   },
 });

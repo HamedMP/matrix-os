@@ -77,6 +77,7 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [channels, setChannels] = useState<Record<string, { status: string }>>({});
   const [systemInfo, setSystemInfo] = useState<Record<string, unknown> | null>(null);
+  const [aiProfile, setAiProfile] = useState<string | null>(null);
   const [biometricLabel, setBiometricLabel] = useState("Biometric");
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,12 +101,14 @@ export default function SettingsScreen() {
   const fetchRemote = useCallback(async () => {
     if (!client || connectionState !== "connected") return;
     try {
-      const [chStatus, sysInfo] = await Promise.all([
+      const [chStatus, sysInfo, profile] = await Promise.all([
         client.getChannelStatus(),
         client.getSystemInfo(),
+        client.getAiProfile(),
       ]);
       setChannels(chStatus as Record<string, { status: string }>);
       setSystemInfo(sysInfo as Record<string, unknown>);
+      setAiProfile(profile);
     } catch {
       // silently handle
     }
@@ -155,6 +158,25 @@ export default function SettingsScreen() {
         >
           <Text style={styles.actionButtonText}>Manage Gateways</Text>
         </Pressable>
+      </SettingsSection>
+
+      <SettingsSection title="Agent">
+        {aiProfile ? (
+          <View style={styles.profileCard}>
+            <Text style={styles.profileText} numberOfLines={8}>
+              {aiProfile}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.emptyRow}>
+            <Ionicons name="person-circle-outline" size={16} color={colors.light.mutedForeground} />
+            <Text style={styles.emptyText}>
+              {connectionState === "connected"
+                ? "No agent profile configured"
+                : "Connect to view agent profile"}
+            </Text>
+          </View>
+        )}
       </SettingsSection>
 
       <SettingsSection title="Channels">
@@ -402,5 +424,18 @@ const styles = StyleSheet.create({
   },
   themeOptionTextInactive: {
     color: colors.light.foreground,
+  },
+  profileCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    backgroundColor: colors.light.card,
+    padding: spacing.lg,
+  },
+  profileText: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    color: colors.light.foreground,
+    lineHeight: 18,
   },
 });

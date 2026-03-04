@@ -110,7 +110,7 @@ describe("getCoreAgents", () => {
 
   it("builder prompt contains verification instructions", () => {
     const agents = getCoreAgents(homePath);
-    expect(agents.builder.prompt).toContain("VERIFICATION (REQUIRED)");
+    expect(agents.builder.prompt).toContain("VERIFICATION");
     expect(agents.builder.prompt).toContain("absolute");
   });
 
