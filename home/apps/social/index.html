@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Social - Matrix OS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: var(--matrix-bg, #0a0a0a);
+      --fg: var(--matrix-fg, #e5e5e5);
+      --accent: var(--matrix-accent, #3b82f6);
+      --border: var(--matrix-border, #27272a);
+      --card-bg: var(--matrix-card-bg, #18181b);
+    }
+    body {
+      font-family: var(--matrix-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+    }
+    .app {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+    nav {
+      display: flex;
+      gap: 1rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+    nav a {
+      color: var(--fg);
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.9rem;
+      opacity: 0.7;
+      cursor: pointer;
+    }
+    nav a.active, nav a:hover {
+      opacity: 1;
+      background: var(--card-bg);
+    }
+    .post-card {
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+      background: var(--card-bg);
+    }
+    .post-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .handle {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .timestamp {
+      font-size: 0.75rem;
+      opacity: 0.5;
+      margin-left: auto;
+    }
+    .post-content {
+      font-size: 0.95rem;
+      line-height: 1.5;
+      margin-bottom: 0.75rem;
+    }
+    .post-actions {
+      display: flex;
+      gap: 1.5rem;
+    }
+    .action-btn {
+      background: none;
+      border: none;
+      color: var(--fg);
+      opacity: 0.6;
+      cursor: pointer;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    .action-btn:hover {
+      opacity: 1;
+      color: var(--accent);
+    }
+    .compose {
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      background: var(--card-bg);
+    }
+    .compose textarea {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--fg);
+      font-size: 0.95rem;
+      resize: none;
+      outline: none;
+      min-height: 80px;
+      font-family: inherit;
+    }
+    .compose-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.5rem;
+    }
+    .char-count {
+      font-size: 0.75rem;
+      opacity: 0.5;
+    }
+    .post-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1.5rem;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .post-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      opacity: 0.6;
+    }
+    .empty-state h3 {
+      margin-bottom: 0.5rem;
+    }
+    .empty-state p {
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <nav>
+      <a class="active" data-tab="feed">Feed</a>
+      <a data-tab="explore">Explore</a>
+      <a data-tab="profile">Profile</a>
+    </nav>
+
+    <div id="feed-view">
+      <div class="compose">
+        <textarea id="compose-text" placeholder="What's happening?"></textarea>
+        <div class="compose-footer">
+          <span class="char-count"><span id="char-count">0</span>/500</span>
+          <button class="post-btn" id="post-btn" disabled>Post</button>
+        </div>
+      </div>
+      <div id="feed-list">
+        <div class="empty-state">
+          <h3>Your feed is empty</h3>
+          <p>Follow other users to see their posts here.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="explore-view" style="display:none;">
+      <div class="empty-state">
+        <h3>Explore</h3>
+        <p>Discover trending posts and users on Matrix OS.</p>
+      </div>
+    </div>
+
+    <div id="profile-view" style="display:none;">
+      <div class="empty-state">
+        <h3>Your Profile</h3>
+        <p>Set up your profile to connect with others.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const textarea = document.getElementById('compose-text');
+    const charCount = document.getElementById('char-count');
+    const postBtn = document.getElementById('post-btn');
+    const tabs = document.querySelectorAll('nav a');
+    const views = {
+      feed: document.getElementById('feed-view'),
+      explore: document.getElementById('explore-view'),
+      profile: document.getElementById('profile-view'),
+    };
+
+    textarea.addEventListener('input', () => {
+      const len = textarea.value.length;
+      charCount.textContent = len;
+      postBtn.disabled = len === 0 || len > 500;
+    });
+
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        Object.values(views).forEach(v => v.style.display = 'none');
+        views[tab.dataset.tab].style.display = '';
+      });
+    });
+
+    postBtn.addEventListener('click', async () => {
+      const content = textarea.value.trim();
+      if (!content) return;
+      try {
+        await fetch('/api/social/posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ authorId: '@me', content, type: 'text' }),
+        });
+        textarea.value = '';
+        charCount.textContent = '0';
+        postBtn.disabled = true;
+      } catch (e) {
+        console.error('Failed to post:', e);
+      }
+    });
+  </script>
+</body>
+</html>

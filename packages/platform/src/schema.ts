@@ -24,3 +24,5 @@ export const portAssignments = sqliteTable('port_assignments', {
 });
 
 export { appsRegistry, appRatings, appInstalls } from './app-registry.js';
+export { matrixUsers } from './matrix-provisioning.js';
+export { posts, comments, likes, follows } from './social-feed.js';

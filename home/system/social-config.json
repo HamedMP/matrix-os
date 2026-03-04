@@ -1,0 +1,8 @@
+{
+  "share_app_publishes": false,
+  "share_app_forks": false,
+  "share_game_scores": false,
+  "share_ai_activity": false,
+  "share_profile_updates": false,
+  "auto_post_frequency": "none"
+}

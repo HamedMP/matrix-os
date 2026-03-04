@@ -1,0 +1,10 @@
+{
+  "name": "Social",
+  "description": "Social network: feed, profiles, follows, posts",
+  "runtime": "static",
+  "category": "social",
+  "icon": "users",
+  "author": "system",
+  "version": "1.0.0",
+  "permissions": ["network"]
+}

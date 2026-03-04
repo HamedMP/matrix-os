@@ -15,6 +15,7 @@ import { createOrchestrator, type Orchestrator } from './orchestrator.js';
 import { createLifecycleManager, type LifecycleManager } from './lifecycle.js';
 import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
+import { createSocialFeedApi } from './social-api.js';
 import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
@@ -287,7 +288,11 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
   app.route('/api/store', createStoreApi(db));
 
-  // --- Social API ---
+  // --- Social Feed API (public) ---
+
+  app.route('/api/social', createSocialFeedApi(db));
+
+  // --- Social API (legacy: container-level profiles/messaging) ---
 
   const social = createSocialApi(db);
 

@@ -6,11 +6,34 @@
 #   - Credentials at /etc/cloudflared/credentials.json
 #   - DNS: CNAME *.matrix-os.com -> <tunnel-id>.cfargotunnel.com
 #   - DNS: CNAME api.matrix-os.com -> <tunnel-id>.cfargotunnel.com
+#   - DNS: CNAME matrix.matrix-os.com -> <tunnel-id>.cfargotunnel.com
 #
 # User containers are created dynamically by the platform orchestrator
 # via dockerode -- they are NOT defined in this compose file.
 
 services:
+  conduit:
+    image: matrixconduit/matrix-conduit:latest
+    environment:
+      - CONDUIT_SERVER_NAME=matrix-os.com
+      - CONDUIT_DATABASE_PATH=/var/lib/matrix-conduit
+      - CONDUIT_DATABASE_BACKEND=rocksdb
+      - CONDUIT_PORT=6167
+      - CONDUIT_ALLOW_REGISTRATION=false
+      - CONDUIT_ALLOW_FEDERATION=true
+      - CONDUIT_MAX_REQUEST_SIZE=20000000
+      - CONDUIT_TRUSTED_SERVERS=["matrix.org"]
+    volumes:
+      - conduit-data:/var/lib/matrix-conduit
+    healthcheck:
+      test: wget -qO- http://localhost:6167/_matrix/client/versions || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - matrixos-net
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel run
@@ -80,6 +103,7 @@ services:
 
 volumes:
   cloudflared-creds:
+  conduit-data:
   platform-data:
   proxy-data:
   user-data:
