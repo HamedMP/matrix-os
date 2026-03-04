@@ -1,0 +1,17 @@
+{
+  "name": "Browser",
+  "description": "Chromium web browser",
+  "runtime": "docker",
+  "entry": "chromium",
+  "port": 6901,
+  "category": "utility",
+  "icon": "globe",
+  "author": "system",
+  "version": "1.0.0",
+  "permissions": ["network"],
+  "resources": {
+    "memory": "512MB",
+    "cpu": 1.0
+  },
+  "autoStart": false
+}

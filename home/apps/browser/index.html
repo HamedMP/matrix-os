@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #141414;
+  border-bottom: 1px solid #222;
+}
+.toolbar button {
+  padding: 4px 8px;
+  background: #222;
+  color: #888;
+  border: 1px solid #333;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.toolbar button:hover { background: #333; color: #e0e0e0; }
+.url-bar {
+  flex: 1;
+  padding: 6px 12px;
+  background: #1a1a1a;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.url-bar:focus { outline: none; border-color: #3b82f6; }
+.content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+}
+.content h2 { font-size: 18px; color: #888; }
+.content p { font-size: 13px; color: #555; max-width: 400px; text-align: center; line-height: 1.5; }
+iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button id="backBtn" title="Back">&larr;</button>
+  <button id="fwdBtn" title="Forward">&rarr;</button>
+  <button id="reloadBtn" title="Reload">&#8635;</button>
+  <input type="text" class="url-bar" id="urlBar" placeholder="Enter URL..." value="">
+</div>
+
+<div class="content" id="placeholder">
+  <h2>Browser</h2>
+  <p>This app requires Chromium running in the container. In cloud deployment mode, it connects via noVNC to a headless Chromium instance.</p>
+  <p>For now, enter a URL above to open it in an iframe (limited by same-origin policy).</p>
+</div>
+
+<iframe id="frame" class="hidden"></iframe>
+
+<script>
+const urlBar = document.getElementById('urlBar');
+const frame = document.getElementById('frame');
+const placeholder = document.getElementById('placeholder');
+
+function navigate(url) {
+  if (!url) return;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
+  urlBar.value = url;
+  frame.src = url;
+  frame.classList.remove('hidden');
+  placeholder.classList.add('hidden');
+}
+
+urlBar.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    navigate(urlBar.value.trim());
+  }
+});
+
+document.getElementById('backBtn').addEventListener('click', () => {
+  try { frame.contentWindow.history.back(); } catch {}
+});
+
+document.getElementById('fwdBtn').addEventListener('click', () => {
+  try { frame.contentWindow.history.forward(); } catch {}
+});
+
+document.getElementById('reloadBtn').addEventListener('click', () => {
+  try { frame.contentWindow.location.reload(); } catch {}
+});
+</script>
+</body>
+</html>

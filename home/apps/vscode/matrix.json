@@ -1,0 +1,17 @@
+{
+  "name": "VS Code",
+  "description": "Code editor powered by code-server",
+  "runtime": "node",
+  "entry": "code-server --bind-addr 0.0.0.0:3101 --auth none ~/matrixos",
+  "port": 3101,
+  "category": "productivity",
+  "icon": "code",
+  "author": "system",
+  "version": "1.0.0",
+  "permissions": ["network", "filesystem"],
+  "resources": {
+    "memory": "512MB",
+    "cpu": 1.0
+  },
+  "autoStart": false
+}
