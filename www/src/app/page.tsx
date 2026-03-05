@@ -24,8 +24,6 @@ import {
   MinusIcon,
   SmartphoneIcon,
   PuzzleIcon,
-  MonitorIcon,
-  SlidersHorizontalIcon,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -54,23 +52,23 @@ function Nav() {
     <nav className="fixed top-0 left-0 right-0 z-50">
       <div className="mx-auto max-w-5xl px-4 pt-4">
         <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 backdrop-blur-xl px-5 py-2.5 shadow-sm">
-          <a href="/" className="flex items-center gap-2.5 group">
+          <a href="/" className="flex items-center gap-2.5 group flex-1">
             <img src="/logo.png" alt="Matrix OS" className="size-7 rounded-lg shadow-sm" />
             <span className="text-sm font-semibold tracking-tight text-foreground">
               Matrix OS
             </span>
           </a>
 
-          <div className="hidden sm:flex items-center gap-0.5">
+          <div className="flex items-center gap-0.5">
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
               <a href="/docs">Docs</a>
             </Button>
-            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs" asChild>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex" asChild>
               <a href="/whitepaper">Whitepaper</a>
             </Button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-1 justify-end">
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" asChild>
               <a
                 href="https://github.com/HamedMP/matrix-os"
@@ -89,6 +87,16 @@ function Nav() {
                 title="DeepWiki"
               >
                 <BookOpenIcon className="size-4" />
+              </a>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" asChild>
+              <a
+                href="https://discord.gg/cSBBQWtPwV"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Discord"
+              >
+                <svg viewBox="0 0 24 24" className="size-4 fill-current"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z" /></svg>
               </a>
             </Button>
             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" asChild>
@@ -140,31 +148,22 @@ function Hero() {
       <div className="relative mx-auto max-w-5xl">
         {/* Text block */}
         <div className="text-center mb-16">
-          <div className="animate-fade-up">
-            <Badge
-              variant="outline"
-              className="mb-6 border-primary/30 bg-card/80 text-primary font-mono text-[10px] tracking-[0.2em] uppercase backdrop-blur-sm py-1.5 px-4"
-            >
-              Built with Claude Opus 4.6
-            </Badge>
-          </div>
-
-          <h1 className="animate-fade-up delay-100 text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 leading-[1.1]">
+          <h1 className="animate-fade-up text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 leading-[1.1]">
             Your computer is stuck in 1984.
             <br />
             <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">This one isn't.</span>
           </h1>
 
-          <p className="animate-fade-up delay-200 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto mb-10 leading-relaxed">
-            Matrix OS is an AI operating system where software writes itself.
-            Describe what you need. Watch it appear. Everything is a file you own.
+          <p className="animate-fade-up delay-100 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto mb-10 leading-relaxed">
+            Describe what you need. Watch it appear on your desktop.
+            Real software, generated in seconds, saved as files you own.
           </p>
 
-          <div className="animate-fade-up delay-300 flex items-center justify-center gap-3 flex-wrap">
+          <div className="animate-fade-up delay-200 flex items-center justify-center gap-3 flex-wrap">
             <SignedOut>
               <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
                 <a href="/signup">
-                  Get your instance
+                  Get your free instance
                   <ArrowRightIcon className="size-4 ml-1" />
                 </a>
               </Button>
@@ -178,19 +177,13 @@ function Hero() {
               </Button>
             </SignedIn>
             <Button variant="outline" size="lg" className="h-11 px-7 text-sm rounded-xl bg-card/60 backdrop-blur-sm" asChild>
-              <a href="/whitepaper">
-                <BookOpenIcon className="size-4" />
-                Whitepaper
-              </a>
-            </Button>
-            <Button variant="outline" size="lg" className="h-11 px-7 text-sm rounded-xl bg-card/60 backdrop-blur-sm" asChild>
               <a
                 href="https://github.com/HamedMP/matrix-os"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 <GithubIcon className="size-4" />
-                Source
+                Star on GitHub
               </a>
             </Button>
           </div>
@@ -320,26 +313,41 @@ function OsMockup() {
 
 function TechStrip() {
   const items = [
+    "Ships in seconds",
     "1,012 Tests Passing",
-    "26 IPC Tools",
-    "20 Skills",
-    "6 Agents",
-    "Expo Mobile App",
-    "Plugin System",
-    "Claude Opus 4.6",
+    "5 AI Agents",
+    "Web + Telegram + Discord",
+    "Self-healing",
+    "Open Source",
+    "Built with Opus 4.6",
   ];
 
   return (
     <section className="py-10 px-6">
-      <div className="mx-auto max-w-4xl flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
-        {items.map((item) => (
-          <span
-            key={item}
-            className="text-xs font-mono tracking-wide text-muted-foreground/70 uppercase"
-          >
-            {item}
-          </span>
-        ))}
+      <div className="mx-auto max-w-4xl flex flex-col items-center gap-4">
+        <a
+          href="https://github.com/HamedMP/matrix-os"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="https://img.shields.io/github/stars/HamedMP/matrix-os?style=flat&logo=github&label=Stars"
+            alt="GitHub stars"
+            className="h-5"
+            loading="lazy"
+          />
+        </a>
+        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
+          {items.map((item) => (
+            <span
+              key={item}
+              className="text-xs font-mono tracking-wide text-muted-foreground/70 uppercase"
+            >
+              {item}
+            </span>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -358,10 +366,18 @@ function Problem() {
           <br />
           Files scattered across services you don't control.
         </h2>
-        <p className="text-lg text-muted-foreground leading-relaxed max-w-xl mx-auto">
+        <p className="text-lg text-muted-foreground leading-relaxed max-w-xl mx-auto mb-10">
           What if your OS understood you? What if software wrote itself?
           What if every device you own was the same computer?
         </p>
+        <SignedOut>
+          <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
+            <a href="/signup">
+              See how it works
+              <ArrowRightIcon className="size-4 ml-1" />
+            </a>
+          </Button>
+        </SignedOut>
       </div>
     </section>
   );
@@ -757,61 +773,6 @@ function BentoFeatures() {
               <div><span className="text-primary">hooks:</span> void + modifying</div>
               <div><span className="text-primary">routes:</span> custom endpoints</div>
               <div><span className="text-primary">scan:</span> security audit</div>
-            </div>
-          </div>
-
-          {/* Browser Automation */}
-          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
-              <MonitorIcon className="size-5 text-foreground/70" />
-            </div>
-            <h3 className="text-lg font-semibold mb-1">Browser automation</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-              Playwright MCP with 18 composite actions, role-based snapshots,
-              and persistent session management.
-            </p>
-            <div className="rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
-              <div><span className="text-primary">actions:</span> 18 composites</div>
-              <div><span className="text-primary">snapshots:</span> role-based</div>
-              <div><span className="text-primary">sessions:</span> persistent</div>
-            </div>
-          </div>
-
-          {/* Web Tools */}
-          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
-              <SearchIcon className="size-5 text-foreground/70" />
-            </div>
-            <h3 className="text-lg font-semibold mb-1">Web tools</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-              web_fetch with Cloudflare Markdown, Readability, and Firecrawl
-              fallback. web_search via Brave, Perplexity, and Grok.
-            </p>
-            <div className="rounded-lg bg-secondary/70 border border-border/50 px-3 py-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
-              <div><span className="text-primary">fetch:</span> CF / Readability / Firecrawl</div>
-              <div><span className="text-primary">search:</span> Brave / Perplexity / Grok</div>
-            </div>
-          </div>
-
-          {/* Settings Dashboard */}
-          <div className="md:col-span-2 rounded-2xl border border-border bg-card p-6 hover:shadow-lg hover:border-primary/20 transition-all duration-300">
-            <div className="size-10 rounded-xl bg-secondary/50 border border-border flex items-center justify-center mb-4">
-              <SlidersHorizontalIcon className="size-5 text-foreground/70" />
-            </div>
-            <h3 className="text-lg font-semibold mb-1">Settings dashboard</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-              macOS-style settings panel. Configure agent, channels, skills,
-              cron jobs, security, and plugins from one place.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {["Agent", "Channels", "Skills", "Cron", "Security", "Plugins"].map((tab) => (
-                <span
-                  key={tab}
-                  className="text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded-full border border-border bg-secondary/50 text-muted-foreground"
-                >
-                  {tab}
-                </span>
-              ))}
             </div>
           </div>
 
@@ -1223,25 +1184,6 @@ function CTA() {
           </Button>
         </div>
 
-        <div className="flex items-center justify-center gap-4 flex-wrap mb-10">
-          <a
-            href="https://github.com/HamedMP/matrix-os"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="https://img.shields.io/github/stars/HamedMP/matrix-os?style=flat&logo=github&label=Stars"
-              alt="GitHub stars"
-              className="h-5"
-              loading="lazy"
-            />
-          </a>
-          <Badge variant="outline" className="text-xs font-mono">
-            1,012 tests passing
-          </Badge>
-        </div>
-
         <p className="text-[11px] text-muted-foreground mb-8">
           Built for the{" "}
           <a
@@ -1273,71 +1215,80 @@ function CTA() {
 
 function Footer() {
   return (
-    <footer className="py-10 px-6 border-t border-border/60">
-      <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <img src="/logo.png" alt="Matrix OS" className="size-5 rounded" />
-          <span className="font-mono text-xs text-muted-foreground">
-            matrix-os.com
+    <footer className="py-12 px-6 border-t border-border/60">
+      <div className="mx-auto max-w-6xl">
+        {/* Footer CTA */}
+        <div className="text-center mb-10">
+          <p className="text-sm text-muted-foreground mb-4">
+            Ready to try the AI operating system?
+          </p>
+          <SignedOut>
+            <Button size="sm" className="rounded-xl text-xs px-6" asChild>
+              <a href="/signup">
+                Get your free instance
+                <ArrowRightIcon className="size-3 ml-1" />
+              </a>
+            </Button>
+          </SignedOut>
+          <SignedIn>
+            <Button size="sm" className="rounded-xl text-xs px-6" asChild>
+              <a href="/dashboard">
+                Go to Dashboard
+                <ArrowRightIcon className="size-3 ml-1" />
+              </a>
+            </Button>
+          </SignedIn>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="Matrix OS" className="size-5 rounded" />
+            <span className="font-mono text-xs text-muted-foreground">
+              matrix-os.com
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
+            <a
+              href="https://discord.gg/cSBBQWtPwV"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-foreground transition-colors"
+            >
+              Discord
+            </a>
+            <a
+              href="https://x.com/joinmatrixos"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-foreground transition-colors"
+            >
+              X / Twitter
+            </a>
+            <a
+              href="https://github.com/HamedMP/matrix-os"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-foreground transition-colors"
+            >
+              GitHub
+            </a>
+            <a
+              href="/docs"
+              className="hover:text-foreground transition-colors"
+            >
+              Docs
+            </a>
+            <a
+              href="/whitepaper"
+              className="hover:text-foreground transition-colors"
+            >
+              Whitepaper
+            </a>
+          </div>
+          <span className="text-[10px] text-muted-foreground/60">
+            Built with Claude Opus 4.6
           </span>
         </div>
-        <div className="flex items-center gap-6 text-xs text-muted-foreground">
-          <a
-            href="https://x.com/joinmatrixos"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors"
-          >
-            X / Twitter
-          </a>
-          <a
-            href="https://github.com/HamedMP/matrix-os"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors"
-          >
-            GitHub
-          </a>
-          <a
-            href="https://deepwiki.com/HamedMP/matrix-os/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors"
-          >
-            DeepWiki
-          </a>
-          <a
-            href="/docs"
-            className="hover:text-foreground transition-colors"
-          >
-            Docs
-          </a>
-          <a
-            href="/whitepaper"
-            className="hover:text-foreground transition-colors"
-          >
-            Whitepaper
-          </a>
-          <a
-            href="https://spec.matrix.org/latest/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors"
-          >
-            Matrix Protocol
-          </a>
-          <a
-            href="https://cv.inc/e/claude-code-hackathon"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors"
-          >
-            Hackathon
-          </a>
-        </div>
-        <span className="text-[10px] text-muted-foreground/60">
-          Built with Claude Opus 4.6
-        </span>
       </div>
     </footer>
   );

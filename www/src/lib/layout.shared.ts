@@ -7,6 +7,11 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
+        text: 'Discord',
+        url: 'https://discord.gg/cSBBQWtPwV',
+        external: true,
+      },
+      {
         text: 'Whitepaper',
         url: '/whitepaper',
       },
