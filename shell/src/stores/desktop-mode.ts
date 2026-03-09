@@ -65,6 +65,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
 
 interface DesktopModeStore {
   mode: DesktopMode;
+  previousMode: DesktopMode | null;
   setMode: (mode: DesktopMode) => void;
   getModeConfig: (mode: DesktopMode) => ModeConfig;
   allModes: () => ModeConfig[];
@@ -72,9 +73,10 @@ interface DesktopModeStore {
 
 export const useDesktopMode = create<DesktopModeStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       mode: "desktop" as DesktopMode,
-      setMode: (mode: DesktopMode) => set({ mode }),
+      previousMode: null as DesktopMode | null,
+      setMode: (mode: DesktopMode) => set({ previousMode: get().mode, mode }),
       getModeConfig: (mode: DesktopMode) => MODE_CONFIGS[mode],
       allModes: () => Object.values(MODE_CONFIGS),
     }),

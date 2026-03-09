@@ -4,7 +4,7 @@ import { useDesktopMode, type DesktopMode } from "../../shell/src/stores/desktop
 
 describe("Desktop Mode Store", () => {
   beforeEach(() => {
-    useDesktopMode.setState({ mode: "desktop" });
+    useDesktopMode.setState({ mode: "desktop", previousMode: null });
   });
 
   it("defaults to 'desktop' mode", () => {
@@ -74,5 +74,15 @@ describe("Desktop Mode Store", () => {
     const modes = useDesktopMode.getState().allModes();
     expect(modes).toHaveLength(5);
     expect(modes.map((m) => m.id)).toEqual(["desktop", "canvas", "ambient", "dev", "conversational"]);
+  });
+
+  it("setMode tracks previousMode", () => {
+    expect(useDesktopMode.getState().previousMode).toBeNull();
+    useDesktopMode.getState().setMode("canvas");
+    expect(useDesktopMode.getState().previousMode).toBe("desktop");
+    expect(useDesktopMode.getState().mode).toBe("canvas");
+    useDesktopMode.getState().setMode("ambient");
+    expect(useDesktopMode.getState().previousMode).toBe("canvas");
+    expect(useDesktopMode.getState().mode).toBe("ambient");
   });
 });

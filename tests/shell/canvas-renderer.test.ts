@@ -9,7 +9,7 @@ vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise
 function resetStores() {
   useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), apps: [] });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
-  useDesktopMode.setState({ mode: "desktop" });
+  useDesktopMode.setState({ mode: "desktop", previousMode: null });
 }
 
 describe("Canvas Renderer Integration", () => {

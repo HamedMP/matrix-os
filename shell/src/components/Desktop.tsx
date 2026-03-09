@@ -6,7 +6,6 @@ import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { AppViewer } from "./AppViewer";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
@@ -281,6 +280,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   const wmSetApps = useWindowManager((s) => s.setApps);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
   const wmLoadLayout = useWindowManager((s) => s.loadLayout);
+  const wmCascadeWindows = useWindowManager((s) => s.cascadeWindows);
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -376,16 +376,10 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
 
   const openWindow = useCallback((name: string, path: string) => {
     wmOpenWindow(name, path, dockXOffset);
-    // In canvas mode, reposition new windows to the center of the current viewport
-    if (useDesktopMode.getState().mode === "canvas") {
-      const { screenToCanvas } = useCanvasTransform.getState();
-      const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
-      const win = useWindowManager.getState().windows.find((w) => w.path === path);
-      if (win) {
-        wmMoveWindow(win.id, center.x - win.width / 2, center.y - win.height / 2);
-      }
-    }
-  }, [wmOpenWindow, dockXOffset, wmMoveWindow]);
+    // Don't reposition windows to canvas coordinates - the canvas transform
+    // handles visual positioning. Mutating actual window positions causes
+    // windows to end up off-screen when switching back to desktop mode.
+  }, [wmOpenWindow, dockXOffset]);
 
   const loadModules = useCallback(async () => {
     try {
@@ -542,10 +536,20 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
   const desktopMode = useDesktopMode((s) => s.mode);
+  const previousMode = useDesktopMode((s) => s.previousMode);
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const allModes = useDesktopMode((s) => s.allModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(desktopMode);
+
+  // When switching from canvas to a non-canvas mode, cascade windows to fit
+  // the viewport. Canvas positions (from autoArrange) use a wide grid that
+  // extends off-screen in desktop mode where there's no zoom/pan transform.
+  useEffect(() => {
+    if (desktopMode !== "canvas" && previousMode === "canvas") {
+      wmCascadeWindows(dockXOffset, 20, 30);
+    }
+  }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
 
   const modes = allModes();
   const cycleMode = useCallback(() => {

@@ -52,6 +52,7 @@ interface WindowManagerActions {
   loadLayout: (saved: LayoutWindow[]) => void;
   setWindows: (updater: AppWindow[] | ((prev: AppWindow[]) => AppWindow[])) => void;
   setApps: (updater: AppEntry[] | ((prev: AppEntry[]) => AppEntry[])) => void;
+  cascadeWindows: (startX: number, startY: number, gap: number) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -237,6 +238,16 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     setApps: (updater) => {
       set((state) => ({
         apps: typeof updater === "function" ? updater(state.apps) : updater,
+      }));
+    },
+
+    cascadeWindows: (startX, startY, gap) => {
+      set((state) => ({
+        windows: state.windows.map((w, i) => ({
+          ...w,
+          x: startX + i * gap,
+          y: startY + i * gap,
+        })),
       }));
     },
   })),

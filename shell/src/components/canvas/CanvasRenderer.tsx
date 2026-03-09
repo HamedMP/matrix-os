@@ -44,17 +44,24 @@ export function CanvasRenderer() {
     fetch(`${GATEWAY_URL}/api/canvas`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: CanvasData | null) => {
-        if (data?.transform) {
-          setTransform(data.transform.zoom, data.transform.panX, data.transform.panY);
-        }
         if (data?.groups && data.groups.length > 0) {
           setGroups(data.groups);
         }
         if (data?.labels && data.labels.length > 0) {
           setLabels(data.labels);
         }
-        if (!data?.transform && windows.length > 0) {
-          autoArrange(windows);
+        // Always fitAll on mount to ensure windows are visible.
+        // Previously we restored saved transform, but that causes users
+        // to get stuck in a zoomed-in state after mode switching.
+        const currentWindows = useWindowManager.getState().windows;
+        if (currentWindows.length > 0) {
+          fitAll(
+            currentWindows.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
+            window.innerWidth,
+            window.innerHeight,
+          );
+        } else {
+          setTransform(1, 0, 0);
         }
       })
       .catch(() => {});
