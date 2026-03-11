@@ -53,7 +53,10 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     sections.push("\n## User\n");
     sections.push(user);
   }
-  if (bootstrap) {
+
+  // Bootstrap -- only inject on genuine first run (user.md Name field still empty)
+  const onboarded = user && !/^- \*\*Name:\*\*\s*$/m.test(user);
+  if (bootstrap && !onboarded) {
     sections.push("\n## First Run\n");
     sections.push(bootstrap);
     sections.push(

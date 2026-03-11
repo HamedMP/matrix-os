@@ -76,10 +76,29 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("## Identity");
   });
 
-  it("includes bootstrap on first run", () => {
+  it("includes bootstrap on first run (user.md still template)", () => {
     const prompt = buildSystemPrompt(homePath);
     expect(prompt).toContain("## First Run");
     expect(prompt).toContain("fresh install");
+  });
+
+  it("skips bootstrap when user has been onboarded (Name filled in)", () => {
+    const tempHome = resolve(mkdtempSync(join(tmpdir(), "prompt-onboarded-")));
+    mkdirSync(join(tempHome, "system"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "system", "bootstrap.md"),
+      "# Bootstrap\nFresh install instructions...",
+    );
+    writeFileSync(
+      join(tempHome, "system", "user.md"),
+      "# User\n\n- **Name:** Hamed\n- **Role:** Developer\n",
+    );
+
+    const prompt = buildSystemPrompt(tempHome);
+    expect(prompt).not.toContain("## First Run");
+    expect(prompt).not.toContain("fresh install");
+
+    rmSync(tempHome, { recursive: true, force: true });
   });
 
   it("injects SOUL before state (L0 cache position)", () => {
