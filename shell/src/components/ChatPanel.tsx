@@ -1,6 +1,7 @@
 "use client";
 
-import type { ChatMessage } from "@/lib/chat";
+import { useMemo } from "react";
+import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
   ConversationContent,
@@ -11,7 +12,7 @@ import {
   MessageContent,
 } from "@/components/ai-elements/message";
 import { RichContent } from "@/components/ui-blocks";
-import { Tool } from "@/components/ai-elements/tool";
+import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
@@ -23,8 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  WrenchIcon,
-  CheckCircleIcon,
   LoaderCircleIcon,
   PlusIcon,
   PanelRightCloseIcon,
@@ -48,24 +47,6 @@ export interface ChatPanelProps {
   onClose: () => void;
   onSubmit?: (text: string) => void;
   inputBar?: React.ReactNode;
-}
-
-function ToolMessage({ msg }: { msg: ChatMessage }) {
-  const isRunning = msg.content.startsWith("Using ");
-
-  return (
-    <Tool>
-      <div className="flex w-full items-center gap-2 p-3">
-        <WrenchIcon className="size-4 text-muted-foreground" />
-        <span className="text-sm font-medium">{msg.tool}</span>
-        {isRunning ? (
-          <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" />
-        ) : (
-          <CheckCircleIcon className="size-4 text-green-600" />
-        )}
-      </div>
-    </Tool>
-  );
 }
 
 export function ChatPanel({
@@ -121,27 +102,31 @@ export function ChatPanel({
 
       <Conversation>
         <ConversationContent className="gap-4 px-4 py-3">
-          {messages.map((msg) => (
-            <div key={msg.id}>
-              {msg.role === "user" ? (
-                <Message from="user">
-                  <MessageContent>{msg.content}</MessageContent>
-                </Message>
-              ) : msg.tool ? (
-                <ToolMessage msg={msg} />
-              ) : msg.role === "system" ? (
-                <div className="text-xs px-3 py-1 rounded bg-background text-muted-foreground">
-                  {msg.content}
-                </div>
-              ) : (
-                <Message from="assistant">
-                  <MessageContent>
-                    <RichContent onAction={onSubmit}>{msg.content}</RichContent>
-                  </MessageContent>
-                </Message>
-              )}
-            </div>
-          ))}
+          {useMemo(() => groupMessages(messages), [messages]).map((group, i) => {
+            if (group.type === "tool_group") {
+              return <ToolCallGroup key={`tg-${i}`} tools={group.messages} />;
+            }
+            const msg = group.message;
+            return (
+              <div key={msg.id}>
+                {msg.role === "user" ? (
+                  <Message from="user">
+                    <MessageContent>{msg.content}</MessageContent>
+                  </Message>
+                ) : msg.role === "system" ? (
+                  <div className="text-xs px-3 py-1 rounded bg-background text-muted-foreground">
+                    {msg.content}
+                  </div>
+                ) : (
+                  <Message from="assistant">
+                    <MessageContent>
+                      <RichContent onAction={onSubmit}>{msg.content}</RichContent>
+                    </MessageContent>
+                  </Message>
+                )}
+              </div>
+            );
+          })}
 
           {busy && (
             <div className="flex items-center gap-2 text-xs px-3 py-1 text-muted-foreground">

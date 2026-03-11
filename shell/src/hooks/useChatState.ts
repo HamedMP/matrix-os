@@ -8,12 +8,17 @@ import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
 
+interface QueuedMessage {
+  text: string;
+  requestId: string;
+}
+
 export interface ChatState {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
   connected: boolean;
-  queue: string[];
+  queue: QueuedMessage[];
   conversations: ReturnType<typeof useConversation>["conversations"];
   submitMessage: (text: string) => void;
   newChat: () => Promise<void>;
@@ -24,7 +29,7 @@ export function useChatState(): ChatState {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const [queue, setQueue] = useState<string[]>([]);
+  const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const { connected, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
@@ -62,7 +67,12 @@ export function useChatState(): ChatState {
         setQueue((prev) => {
           if (prev.length === 0) return prev;
           const [next, ...rest] = prev;
-          send({ type: "message", text: next, sessionId: sessionRef.current });
+          send({
+            type: "message",
+            text: next.text,
+            sessionId: sessionRef.current,
+            requestId: next.requestId,
+          });
           setBusy(true);
           return rest;
         });
@@ -81,6 +91,8 @@ export function useChatState(): ChatState {
     (text: string) => {
       if (!text) return;
 
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
       setMessages((prev) => [
         ...prev,
         {
@@ -88,13 +100,14 @@ export function useChatState(): ChatState {
           role: "user",
           content: text,
           timestamp: Date.now(),
+          requestId,
         },
       ]);
 
       if (busy) {
-        setQueue((prev) => [...prev, text]);
+        setQueue((prev) => [...prev, { text, requestId }]);
       } else {
-        send({ type: "message", text, sessionId });
+        send({ type: "message", text, sessionId, requestId });
         setBusy(true);
       }
     },

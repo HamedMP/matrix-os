@@ -4,12 +4,12 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getGatewayWs } from "@/lib/gateway";
 
 export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string }
-  | { type: "kernel:text"; text: string }
-  | { type: "kernel:tool_start"; tool: string }
-  | { type: "kernel:tool_end" }
-  | { type: "kernel:result"; data: Record<string, unknown> }
-  | { type: "kernel:error"; message: string }
+  | { type: "kernel:init"; sessionId: string; requestId?: string }
+  | { type: "kernel:text"; text: string; requestId?: string }
+  | { type: "kernel:tool_start"; tool: string; requestId?: string }
+  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
+  | { type: "kernel:result"; data: Record<string, unknown>; requestId?: string }
+  | { type: "kernel:error"; message: string; requestId?: string }
   | { type: "file:change"; path: string; event: "add" | "change" | "unlink" }
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
@@ -71,7 +71,7 @@ export function useSocket() {
     };
   }, []);
 
-  const send = useCallback((msg: { type: string; text?: string; sessionId?: string }) => {
+  const send = useCallback((msg: { type: string; text?: string; sessionId?: string; requestId?: string }) => {
     if (globalSocket?.readyState === WebSocket.OPEN) {
       globalSocket.send(JSON.stringify(msg));
     }

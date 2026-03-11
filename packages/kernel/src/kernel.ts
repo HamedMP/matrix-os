@@ -15,7 +15,7 @@ export type KernelEvent =
   | { type: "init"; sessionId: string }
   | { type: "text"; text: string }
   | { type: "tool_start"; tool: string }
-  | { type: "tool_end" }
+  | { type: "tool_end"; input?: Record<string, unknown> }
   | { type: "result"; data: KernelResult };
 
 export async function* spawnKernel(
@@ -37,6 +37,7 @@ export async function* spawnKernel(
     });
 
     let activeTool: string | null = null;
+    let toolInputBuf = "";
 
     for await (const msg of response) {
       if (msg.type === "system" && "subtype" in msg && msg.subtype === "init") {
@@ -52,16 +53,24 @@ export async function* spawnKernel(
             .content_block;
           if (block?.type === "tool_use") {
             activeTool = block.name;
+            toolInputBuf = "";
             yield { type: "tool_start", tool: activeTool };
           }
         } else if (event.type === "content_block_delta") {
           const delta = (event as Record<string, Record<string, string>>).delta;
           if (delta?.type === "text_delta") {
             yield { type: "text", text: delta.text };
+          } else if (delta?.type === "input_json_delta" && activeTool) {
+            toolInputBuf += delta.partial_json ?? "";
           }
         } else if (event.type === "content_block_stop" && activeTool) {
-          yield { type: "tool_end" };
+          let input: Record<string, unknown> | undefined;
+          if (toolInputBuf) {
+            try { input = JSON.parse(toolInputBuf); } catch { /* partial JSON */ }
+          }
+          yield { type: "tool_end", input };
           activeTool = null;
+          toolInputBuf = "";
         }
         continue;
       }

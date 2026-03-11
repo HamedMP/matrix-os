@@ -2,11 +2,11 @@
 
 ## Phase A: Chat UX (5 tasks)
 
-- [ ] T2000 - Group tool calls in ChatPanel (collapsible ToolCallGroup component)
-- [ ] T2001 - Show tool context (file path for Edit/Read, command preview for Bash)
-- [ ] T2002 - Request ID tagging for parallel response multiplexing
-- [ ] T2003 - Parallel response rendering in ChatPanel (per-request sections)
-- [ ] T2004 - Verify input always sendable during busy + add test
+- [x] T2000 - Group tool calls in ChatPanel (collapsible ToolCallGroup component)
+- [x] T2001 - Show tool context (file path for Edit/Read, command preview for Bash)
+- [x] T2002 - Request ID tagging for parallel response multiplexing
+- [x] T2003 - Parallel response rendering in ChatPanel (per-request sections)
+- [x] T2004 - Verify input always sendable during busy + add test
 
 ## Phase B: Pre-installed Games (8 tasks)
 

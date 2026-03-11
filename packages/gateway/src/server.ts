@@ -70,17 +70,17 @@ export interface GatewayConfig {
 }
 
 type ClientMessage =
-  | { type: "message"; text: string; sessionId?: string }
+  | { type: "message"; text: string; sessionId?: string; requestId?: string }
   | { type: "switch_session"; sessionId: string }
   | { type: "approval_response"; id: string; approved: boolean };
 
 export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string }
-  | { type: "kernel:text"; text: string }
-  | { type: "kernel:tool_start"; tool: string }
-  | { type: "kernel:tool_end" }
-  | { type: "kernel:result"; data: unknown }
-  | { type: "kernel:error"; message: string }
+  | { type: "kernel:init"; sessionId: string; requestId?: string }
+  | { type: "kernel:text"; text: string; requestId?: string }
+  | { type: "kernel:tool_start"; tool: string; requestId?: string }
+  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
+  | { type: "kernel:result"; data: unknown; requestId?: string }
+  | { type: "kernel:error"; message: string; requestId?: string }
   | { type: "file:change"; path: string; event: string }
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
@@ -89,18 +89,18 @@ export type ServerMessage =
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number };
 
-function kernelEventToServerMessage(event: KernelEvent): ServerMessage {
+function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
     case "init":
-      return { type: "kernel:init", sessionId: event.sessionId };
+      return { type: "kernel:init", sessionId: event.sessionId, requestId };
     case "text":
-      return { type: "kernel:text", text: event.text };
+      return { type: "kernel:text", text: event.text, requestId };
     case "tool_start":
-      return { type: "kernel:tool_start", tool: event.tool };
+      return { type: "kernel:tool_start", tool: event.tool, requestId };
     case "tool_end":
-      return { type: "kernel:tool_end" };
+      return { type: "kernel:tool_end", input: event.input, requestId };
     case "result":
-      return { type: "kernel:result", data: event.data };
+      return { type: "kernel:result", data: event.data, requestId };
   }
 }
 
@@ -405,10 +405,11 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "message") {
             pendingText = parsed.text;
+            const requestId = parsed.requestId;
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
-                const msg = kernelEventToServerMessage(event);
+                const msg = kernelEventToServerMessage(event, requestId);
                 send(ws, msg);
 
                 if (msg.type === "kernel:init") {
@@ -431,6 +432,7 @@ export async function createGateway(config: GatewayConfig) {
                 send(ws, {
                   type: "kernel:error",
                   message: err.message ?? "Kernel error",
+                  requestId,
                 });
               });
           }
