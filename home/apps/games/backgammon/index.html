@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backgammon</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+.back-btn {
+  position: fixed; top: 10px; left: 12px;
+  font-size: 22px; color: rgba(255,255,255,0.5);
+  text-decoration: none; z-index: 20;
+  width: 32px; height: 32px; display: flex;
+  align-items: center; justify-content: center;
+  border-radius: 6px; background: rgba(255,255,255,0.05);
+}
+.back-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.header {
+  display: flex; gap: 16px; margin-bottom: 6px;
+  align-items: center; width: 100%; max-width: 780px;
+  justify-content: center; padding: 0 40px;
+}
+.header .status {
+  font-size: 14px; font-weight: 600; color: #d4a574;
+  min-width: 140px; text-align: center;
+}
+.header .pips {
+  font-size: 12px; color: #888; white-space: nowrap;
+}
+.header .stats {
+  font-size: 11px; color: #555; white-space: nowrap;
+}
+canvas { border-radius: 6px; display: block; }
+.controls {
+  display: flex; gap: 10px; margin-top: 8px; align-items: center;
+}
+.controls button {
+  padding: 8px 22px; font-size: 13px; font-weight: 600;
+  border-radius: 6px; cursor: pointer; border: none;
+  transition: all 0.15s ease;
+}
+.btn-roll {
+  background: linear-gradient(135deg, #d4a574, #b8854a);
+  color: #1a0e06; box-shadow: 0 2px 8px rgba(212,165,116,0.3);
+}
+.btn-roll:hover { background: linear-gradient(135deg, #e0b584, #c4955a); transform: translateY(-1px); }
+.btn-roll:disabled { opacity: 0.35; cursor: default; transform: none; box-shadow: none; }
+.btn-new {
+  background: #1a1a1a; color: #aaa; border: 1px solid #333;
+}
+.btn-new:hover { background: #252525; color: #ddd; }
+.msg { font-size: 12px; color: #666; margin-top: 4px; min-height: 18px; text-align: center; }
+.overlay {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.88); z-index: 15;
+  backdrop-filter: blur(4px);
+}
+.overlay h1 { font-size: 32px; margin-bottom: 6px; color: #d4a574; letter-spacing: 1px; }
+.overlay .sub { font-size: 15px; color: #777; margin-bottom: 20px; }
+.overlay button {
+  padding: 12px 36px; font-size: 16px; font-weight: 700;
+  background: linear-gradient(135deg, #d4a574, #b8854a);
+  color: #1a0e06; border: none; border-radius: 8px; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(212,165,116,0.3);
+  transition: all 0.2s ease;
+}
+.overlay button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(212,165,116,0.4); }
+.hidden { display: none !important; }
+@keyframes diceShake {
+  0%   { transform: rotate(0deg) scale(1); }
+  20%  { transform: rotate(-18deg) scale(1.12); }
+  40%  { transform: rotate(14deg) scale(0.92); }
+  60%  { transform: rotate(-10deg) scale(1.06); }
+  80%  { transform: rotate(6deg) scale(0.98); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+</style>
+</head>
+<body>
+
+<a class="back-btn" href="../index.html" title="Back to games">&#8592;</a>
+
+<div class="header">
+  <span class="stats" id="stats"></span>
+  <span class="status" id="turnInfo">Your turn</span>
+  <span class="pips" id="pipInfo"></span>
+</div>
+
+<canvas id="board"></canvas>
+<div class="msg" id="status"></div>
+
+<div class="controls">
+  <button class="btn-roll" id="rollBtn">Roll Dice</button>
+  <button class="btn-new" id="newBtn">New Game</button>
+</div>
+
+<div class="overlay" id="startScreen">
+  <h1>Backgammon</h1>
+  <div class="sub">Classic board game with dice</div>
+  <button id="startBtn">Play</button>
+</div>
+
+<div class="overlay hidden" id="endScreen">
+  <h1 id="endTitle"></h1>
+  <div class="sub" id="endSub"></div>
+  <button id="endBtn">Play Again</button>
+</div>
+
+<script>
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+
+// Responsive sizing
+const DPR = window.devicePixelRatio || 1;
+const BASE_W = 780, BASE_H = 480;
+canvas.width = BASE_W * DPR;
+canvas.height = BASE_H * DPR;
+canvas.style.width = BASE_W + 'px';
+canvas.style.height = BASE_H + 'px';
+ctx.scale(DPR, DPR);
+
+const W = BASE_W, H = BASE_H;
+const FRAME = 8;
+const BOARD_L = 36, BOARD_T = 28, BOARD_B = H - 28;
+const BAR_W = 24;
+const POINT_W = 52;
+const HALF_POINTS = 6;
+const LEFT_W = HALF_POINTS * POINT_W;
+const BAR_X = BOARD_L + LEFT_W + BAR_W / 2;
+const RIGHT_START = BOARD_L + LEFT_W + BAR_W;
+const BOARD_R = RIGHT_START + LEFT_W;
+const TRAY_W = 36;
+const TRAY_X = BOARD_R + 10;
+const CHECKER_R = 20;
+const BOARD_MID = (BOARD_T + BOARD_B) / 2;
+const TRI_H = 180;
+
+const WHITE = 'w', BLACK = 'b';
+
+const C = {
+  frameDark: '#2a1810', frameLight: '#3d2518',
+  felt: '#1a120c', feltLight: '#221810',
+  triA: '#8B4513', triB: '#6B1010',
+  barFelt: '#15100a',
+  trayBg: '#15100a', trayBorder: '#3d2518',
+  white: '#f2ece3', whiteEdge: '#d5cfc6', whiteShadow: '#b0a898',
+  black: '#1c1c1c', blackEdge: '#3a3a3a', blackShadow: '#0a0a0a',
+  selected: '#f0c040', validMove: 'rgba(80, 200, 90, 0.55)',
+  diceface: '#fcf8f0', diceDot: '#181818', diceShadow: 'rgba(0,0,0,0.3)',
+  usedDice: '#2a2a2a', usedDot: '#444',
+  textDim: '#555', textMid: '#888',
+};
+
+// State
+let board, dice, usedDice, turn, selected, validMoves, gameOver, rolling;
+let stats = { wins: 0, losses: 0 };
+
+function initBoard() {
+  board = new Array(26).fill(0);
+  // White (positive): moves 24 -> 1, bears off past 0
+  board[24] = 2; board[13] = 5; board[8] = 3; board[6] = 5;
+  // Black (negative): moves 1 -> 24, bears off past 25
+  board[1] = -2; board[12] = -5; board[17] = -3; board[19] = -5;
+  board[0] = 0;  // white bar
+  board[25] = 0; // black bar
+  dice = []; usedDice = [];
+  turn = WHITE; selected = null; validMoves = [];
+  gameOver = false; rolling = false;
+  document.getElementById('endScreen').classList.add('hidden');
+  document.getElementById('status').textContent = '';
+  document.getElementById('rollBtn').disabled = false;
+  updateInfo(); draw();
+}
+
+// --- Game logic ---
+function whiteOnBar() { return board[0]; }
+function blackOnBar() { return board[25]; }
+
+function countOnBoard(color) {
+  let c = 0;
+  for (let i = 1; i <= 24; i++) {
+    if (color === WHITE && board[i] > 0) c += board[i];
+    if (color === BLACK && board[i] < 0) c += Math.abs(board[i]);
+  }
+  c += color === WHITE ? board[0] : board[25];
+  return c;
+}
+function borneOff(color) { return 15 - countOnBoard(color); }
+
+function pipCount(color) {
+  let p = 0;
+  if (color === WHITE) {
+    p += board[0] * 25;
+    for (let i = 1; i <= 24; i++) if (board[i] > 0) p += board[i] * i;
+  } else {
+    p += board[25] * 25;
+    for (let i = 1; i <= 24; i++) if (board[i] < 0) p += Math.abs(board[i]) * (25 - i);
+  }
+  return p;
+}
+
+function allInHome(color) {
+  if (color === WHITE) {
+    if (board[0] > 0) return false;
+    for (let i = 7; i <= 24; i++) if (board[i] > 0) return false;
+    return true;
+  } else {
+    if (board[25] > 0) return false;
+    for (let i = 1; i <= 18; i++) if (board[i] < 0) return false;
+    return true;
+  }
+}
+
+function remainingDice() {
+  const all = [...dice];
+  for (const u of usedDice) { const idx = all.indexOf(u); if (idx >= 0) all.splice(idx, 1); }
+  return all;
+}
+
+function getDestination(from, die, color) {
+  if (color === WHITE) {
+    if (from === 0) { const to = 25 - die; return (to >= 1 && to <= 24) ? to : null; }
+    const to = from - die;
+    if (to >= 1) return to;
+    if (allInHome(WHITE)) {
+      if (to === 0) return -1;
+      let highest = 0;
+      for (let i = 6; i >= 1; i--) { if (board[i] > 0) { highest = i; break; } }
+      if (from === highest && to < 0) return -1;
+    }
+    return null;
+  } else {
+    if (from === 25) { const to = die; return (to >= 1 && to <= 24) ? to : null; }
+    const to = from + die;
+    if (to <= 24) return to;
+    if (allInHome(BLACK)) {
+      if (to === 25) return 26;
+      let lowest = 25;
+      for (let i = 24; i >= 19; i--) { if (board[i] < 0) { lowest = i; break; } }
+      if (from === lowest && to > 24) return 26;
+    }
+    return null;
+  }
+}
+
+function canMoveTo(to, color) {
+  if (to === -1 || to === 26) return true;
+  return color === WHITE ? board[to] >= -1 : board[to] <= 1;
+}
+
+function getValidMovesForChecker(from) {
+  const moves = [], rem = remainingDice(), seen = new Set();
+  for (const d of rem) {
+    const to = getDestination(from, d, turn);
+    if (to !== null && canMoveTo(to, turn) && !seen.has(to)) {
+      seen.add(to); moves.push({ from, to, die: d });
+    }
+  }
+  return moves;
+}
+
+function hasAnyMoves(color) {
+  const rem = remainingDice();
+  if (rem.length === 0) return false;
+  const barPos = color === WHITE ? 0 : 25;
+  const onBar = color === WHITE ? board[0] : board[25];
+  if (onBar > 0) {
+    const saveTurn = turn; turn = color;
+    const moves = getValidMovesForChecker(barPos);
+    turn = saveTurn;
+    return moves.length > 0;
+  }
+  const saveTurn = turn; turn = color;
+  for (let i = 1; i <= 24; i++) {
+    if (color === WHITE && board[i] > 0 && getValidMovesForChecker(i).length > 0) { turn = saveTurn; return true; }
+    if (color === BLACK && board[i] < 0 && getValidMovesForChecker(i).length > 0) { turn = saveTurn; return true; }
+  }
+  turn = saveTurn;
+  return false;
+}
+
+function executeMove(from, to, color) {
+  if (from === 0) board[0]--;
+  else if (from === 25) board[25]--;
+  else if (color === WHITE) board[from]--;
+  else board[from]++;
+
+  if (to === -1 || to === 26) return false;
+
+  let hit = false;
+  if (color === WHITE && board[to] === -1) { board[to] = 0; board[25]++; hit = true; }
+  else if (color === BLACK && board[to] === 1) { board[to] = 0; board[0]++; hit = true; }
+
+  if (color === WHITE) board[to]++;
+  else board[to]--;
+  return hit;
+}
+
+function checkWin() {
+  if (borneOff(WHITE) === 15) {
+    gameOver = true; showEnd('You Win!', 'All checkers borne off');
+    playSound('win'); saveResult('win'); return true;
+  }
+  if (borneOff(BLACK) === 15) {
+    gameOver = true; showEnd('You Lose', 'AI bore off all checkers');
+    playSound('lose'); saveResult('loss'); return true;
+  }
+  return false;
+}
+
+function showEnd(title, sub) {
+  document.getElementById('endTitle').textContent = title;
+  document.getElementById('endSub').textContent = sub;
+  document.getElementById('endScreen').classList.remove('hidden');
+}
+
+// --- Dice rolling ---
+function rollDice() {
+  if (rolling || gameOver) return;
+  if (dice.length > 0 && remainingDice().length > 0) return;
+  rolling = true;
+  document.getElementById('rollBtn').disabled = true;
+
+  const d1 = Math.floor(Math.random() * 6) + 1;
+  const d2 = Math.floor(Math.random() * 6) + 1;
+  dice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+  usedDice = [];
+  playSound('roll');
+
+  let frames = 0;
+  const anim = setInterval(() => {
+    frames++;
+    draw(true);
+    if (frames >= 10) {
+      clearInterval(anim);
+      rolling = false;
+      draw();
+      if (turn === WHITE) {
+        if (!hasAnyMoves(WHITE)) {
+          document.getElementById('status').textContent = 'No valid moves -- turn passes.';
+          setTimeout(endTurn, 900);
+        } else {
+          document.getElementById('status').textContent = 'Select a checker to move.';
+        }
+      } else {
+        setTimeout(aiTurn, 200);
+      }
+    }
+  }, 40);
+}
+
+function endTurn() {
+  dice = []; usedDice = [];
+  selected = null; validMoves = [];
+  turn = turn === WHITE ? BLACK : WHITE;
+  updateInfo();
+  if (turn === WHITE) {
+    document.getElementById('rollBtn').disabled = false;
+    document.getElementById('status').textContent = 'Roll the dice.';
+  } else {
+    document.getElementById('rollBtn').disabled = true;
+    document.getElementById('status').textContent = 'AI is thinking...';
+    setTimeout(rollDice, 500);
+  }
+  draw();
+}
+
+function updateInfo() {
+  document.getElementById('turnInfo').textContent = turn === WHITE ? 'Your turn' : 'AI thinking...';
+  document.getElementById('pipInfo').textContent = 'You ' + pipCount(WHITE) + ' pip  /  AI ' + pipCount(BLACK) + ' pip';
+}
+
+// --- Drawing ---
+function pointX(pt) {
+  // Bottom row: 1-6 right half, 7-12 left half
+  // Top row: 13-18 left half, 19-24 right half
+  if (pt >= 13 && pt <= 18) return BOARD_L + (pt - 13) * POINT_W + POINT_W / 2;
+  if (pt >= 19 && pt <= 24) return RIGHT_START + (pt - 19) * POINT_W + POINT_W / 2;
+  if (pt >= 7 && pt <= 12) return BOARD_L + (12 - pt) * POINT_W + POINT_W / 2;
+  if (pt >= 1 && pt <= 6) return RIGHT_START + (6 - pt) * POINT_W + POINT_W / 2;
+  return 0;
+}
+
+function isTop(pt) { return pt >= 13 && pt <= 24; }
+
+function checkerY(pt, idx) {
+  const spacing = Math.min(CHECKER_R * 2 + 2, TRI_H / Math.max(5, 1));
+  if (isTop(pt)) return BOARD_T + CHECKER_R + 6 + idx * (CHECKER_R * 2 + 2);
+  return BOARD_B - CHECKER_R - 6 - idx * (CHECKER_R * 2 + 2);
+}
+
+function draw(shaking) {
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Outer frame with wood gradient
+  const frameGrad = ctx.createLinearGradient(BOARD_L - FRAME, BOARD_T - FRAME, BOARD_R + TRAY_W + 20, BOARD_B + FRAME);
+  frameGrad.addColorStop(0, '#3d2518');
+  frameGrad.addColorStop(0.5, '#2a1810');
+  frameGrad.addColorStop(1, '#1e1008');
+  ctx.fillStyle = frameGrad;
+  roundRect(ctx, BOARD_L - FRAME, BOARD_T - FRAME, BOARD_R - BOARD_L + FRAME * 2, BOARD_B - BOARD_T + FRAME * 2, 6);
+  ctx.fill();
+
+  // Inner felt
+  ctx.fillStyle = C.felt;
+  ctx.fillRect(BOARD_L, BOARD_T, BOARD_R - BOARD_L, BOARD_B - BOARD_T);
+
+  // Subtle felt texture lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.015)';
+  ctx.lineWidth = 0.5;
+  for (let y = BOARD_T; y < BOARD_B; y += 6) {
+    ctx.beginPath(); ctx.moveTo(BOARD_L, y); ctx.lineTo(BOARD_R, y); ctx.stroke();
+  }
+
+  // Bar
+  const barGrad = ctx.createLinearGradient(BAR_X - BAR_W / 2, 0, BAR_X + BAR_W / 2, 0);
+  barGrad.addColorStop(0, '#2a1810');
+  barGrad.addColorStop(0.5, '#3d2518');
+  barGrad.addColorStop(1, '#2a1810');
+  ctx.fillStyle = barGrad;
+  ctx.fillRect(BAR_X - BAR_W / 2, BOARD_T, BAR_W, BOARD_B - BOARD_T);
+
+  // Draw triangles
+  for (let i = 1; i <= 24; i++) {
+    const cx = pointX(i);
+    const top = isTop(i);
+    const isA = i % 2 === 0;
+    const triGrad = top
+      ? ctx.createLinearGradient(cx, BOARD_T, cx, BOARD_T + TRI_H)
+      : ctx.createLinearGradient(cx, BOARD_B, cx, BOARD_B - TRI_H);
+    const baseColor = isA ? C.triA : C.triB;
+    triGrad.addColorStop(0, baseColor);
+    triGrad.addColorStop(1, shadeColor(baseColor, -30));
+
+    ctx.fillStyle = triGrad;
+    ctx.beginPath();
+    if (top) {
+      ctx.moveTo(cx - POINT_W / 2 + 3, BOARD_T);
+      ctx.lineTo(cx + POINT_W / 2 - 3, BOARD_T);
+      ctx.lineTo(cx, BOARD_T + TRI_H);
+    } else {
+      ctx.moveTo(cx - POINT_W / 2 + 3, BOARD_B);
+      ctx.lineTo(cx + POINT_W / 2 - 3, BOARD_B);
+      ctx.lineTo(cx, BOARD_B - TRI_H);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Point label
+    ctx.fillStyle = C.textDim;
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(i, cx, top ? BOARD_T - 4 : BOARD_B + 13);
+  }
+
+  // Bearing-off tray
+  const trayGrad = ctx.createLinearGradient(TRAY_X, BOARD_T, TRAY_X + TRAY_W, BOARD_T);
+  trayGrad.addColorStop(0, '#2a1810');
+  trayGrad.addColorStop(0.5, '#3d2518');
+  trayGrad.addColorStop(1, '#2a1810');
+  ctx.fillStyle = trayGrad;
+  roundRect(ctx, TRAY_X, BOARD_T - FRAME, TRAY_W, BOARD_B - BOARD_T + FRAME * 2, 4);
+  ctx.fill();
+  ctx.strokeStyle = '#4a3020';
+  ctx.lineWidth = 1;
+  roundRect(ctx, TRAY_X, BOARD_T - FRAME, TRAY_W, BOARD_B - BOARD_T + FRAME * 2, 4);
+  ctx.stroke();
+  // Tray divider
+  ctx.strokeStyle = '#3d2518';
+  ctx.beginPath(); ctx.moveTo(TRAY_X + 2, BOARD_MID); ctx.lineTo(TRAY_X + TRAY_W - 2, BOARD_MID); ctx.stroke();
+
+  // Valid move highlights
+  for (const m of validMoves) {
+    if (m.to === -1 || m.to === 26) {
+      const yy = m.to === -1 ? BOARD_MID + 50 : BOARD_MID - 50;
+      ctx.fillStyle = C.validMove;
+      ctx.beginPath(); ctx.arc(TRAY_X + TRAY_W / 2, yy, CHECKER_R + 3, 0, Math.PI * 2); ctx.fill();
+    } else {
+      const cx = pointX(m.to);
+      const cnt = Math.abs(board[m.to]);
+      const yy = checkerY(m.to, cnt);
+      ctx.fillStyle = C.validMove;
+      ctx.beginPath(); ctx.arc(cx, yy, CHECKER_R + 3, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Draw checkers on points
+  for (let i = 1; i <= 24; i++) {
+    const cnt = Math.abs(board[i]);
+    if (cnt === 0) continue;
+    const color = board[i] > 0 ? WHITE : BLACK;
+    const cx = pointX(i);
+    const show = Math.min(cnt, 5);
+    for (let j = 0; j < show; j++) {
+      const yy = checkerY(i, j);
+      const isSel = selected === i && j === show - 1;
+      drawChecker(cx, yy, color, isSel);
+    }
+    if (cnt > 5) {
+      const yy = checkerY(i, show - 1);
+      ctx.fillStyle = color === WHITE ? '#2a1810' : '#e0d8d0';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(cnt, cx, yy);
+    }
+  }
+
+  // Bar checkers
+  drawBarCheckers(WHITE, board[0], BOARD_B - 50, 1);
+  drawBarCheckers(BLACK, board[25], BOARD_T + 50, -1);
+
+  // Borne-off checkers
+  drawBorneOff(WHITE, borneOff(WHITE), BOARD_MID + 20, 1);
+  drawBorneOff(BLACK, borneOff(BLACK), BOARD_MID - 20, -1);
+
+  // Dice
+  if (dice.length > 0) drawDiceSet(shaking);
+
+  updateInfo();
+}
+
+function drawBarCheckers(color, count, startY, dir) {
+  if (count <= 0) return;
+  const show = Math.min(count, 3);
+  for (let j = 0; j < show; j++) {
+    const yy = startY + j * (CHECKER_R * 2 + 4) * dir;
+    drawChecker(BAR_X, yy, color, selected === (color === WHITE ? 0 : 25) && j === show - 1);
+  }
+  if (count > 3) {
+    ctx.fillStyle = color === WHITE ? '#2a1810' : '#e0d8d0';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(count, BAR_X, startY + (show - 1) * (CHECKER_R * 2 + 4) * dir);
+  }
+}
+
+function drawBorneOff(color, count, startY, dir) {
+  if (count <= 0) return;
+  const show = Math.min(count, 8);
+  for (let j = 0; j < show; j++) {
+    const yy = startY + j * 10 * dir;
+    ctx.fillStyle = color === WHITE ? C.white : C.black;
+    roundRect(ctx, TRAY_X + 4, yy - 3, TRAY_W - 8, 7, 2);
+    ctx.fill();
+    ctx.strokeStyle = color === WHITE ? C.whiteEdge : C.blackEdge;
+    ctx.lineWidth = 0.5;
+    roundRect(ctx, TRAY_X + 4, yy - 3, TRAY_W - 8, 7, 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = C.textMid;
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(count, TRAY_X + TRAY_W / 2, startY + show * 10 * dir + 4 * dir);
+}
+
+function drawChecker(x, y, color, isSel) {
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(x + 1, y + 2, CHECKER_R, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fill();
+
+  // Main body with 3D radial gradient
+  const grad = ctx.createRadialGradient(x - 4, y - 5, 2, x, y, CHECKER_R);
+  if (color === WHITE) {
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.6, '#f2ece3');
+    grad.addColorStop(1, '#c8bfb2');
+  } else {
+    grad.addColorStop(0, '#4a4a4a');
+    grad.addColorStop(0.6, '#2a2a2a');
+    grad.addColorStop(1, '#0e0e0e');
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, CHECKER_R, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Edge ring
+  ctx.strokeStyle = color === WHITE ? 'rgba(180,170,155,0.6)' : 'rgba(80,80,80,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Inner decorative ring
+  ctx.beginPath();
+  ctx.arc(x, y, CHECKER_R - 6, 0, Math.PI * 2);
+  ctx.strokeStyle = color === WHITE ? 'rgba(200,190,175,0.4)' : 'rgba(70,70,70,0.4)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Selection glow
+  if (isSel) {
+    ctx.beginPath();
+    ctx.arc(x, y, CHECKER_R + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = C.selected;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = C.selected;
+    ctx.shadowBlur = 12;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawDiceSet(shaking) {
+  const rem = remainingDice();
+  const diceY = BOARD_MID;
+  const baseX = turn === WHITE ? RIGHT_START + LEFT_W / 2 : BOARD_L + LEFT_W / 2;
+
+  if (shaking) {
+    ctx.save();
+    ctx.translate(baseX, diceY);
+    const angle = (Math.random() - 0.5) * 0.5;
+    const sc = 0.88 + Math.random() * 0.24;
+    ctx.rotate(angle);
+    ctx.scale(sc, sc);
+    drawDie(-25, -20, Math.floor(Math.random() * 6) + 1, false);
+    drawDie(11, -20, Math.floor(Math.random() * 6) + 1, false);
+    ctx.restore();
+    return;
+  }
+
+  const show = dice[0] === dice[1] ? [dice[0], dice[1]] : dice;
+  for (let i = 0; i < show.length; i++) {
+    const dx = baseX + i * 44 - 22;
+    let used = false;
+    if (dice[0] === dice[1]) {
+      const usedCount = usedDice.filter(d => d === show[i]).length;
+      used = (i === 0 && usedCount >= 1) || (i === 1 && usedCount >= 2);
+      if (usedCount >= dice.length) used = true;
+    } else {
+      const usedOfVal = usedDice.filter(d => d === show[i]).length;
+      const diceOfVal = dice.filter(d => d === show[i]).length;
+      if (show[0] !== show[1]) {
+        used = usedDice.includes(show[i]);
+      } else {
+        used = i < usedOfVal;
+      }
+    }
+    drawDie(dx, diceY - 20, show[i], used);
+  }
+  if (dice[0] === dice[1]) {
+    ctx.fillStyle = C.textMid;
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(rem.length + ' moves left', baseX + 11, diceY + 30);
+  }
+}
+
+function drawDie(x, y, val, used) {
+  const s = 38, r = 6;
+  // Shadow
+  ctx.fillStyle = C.diceShadow;
+  roundRect(ctx, x + 2, y + 3, s, s, r);
+  ctx.fill();
+
+  // Face
+  const faceGrad = ctx.createLinearGradient(x, y, x + s, y + s);
+  if (used) {
+    faceGrad.addColorStop(0, '#2a2a2a');
+    faceGrad.addColorStop(1, '#1a1a1a');
+  } else {
+    faceGrad.addColorStop(0, '#fff8ee');
+    faceGrad.addColorStop(1, '#e8ddd0');
+  }
+  ctx.fillStyle = faceGrad;
+  roundRect(ctx, x, y, s, s, r);
+  ctx.fill();
+
+  ctx.strokeStyle = used ? '#3a3a3a' : '#b8a890';
+  ctx.lineWidth = 1;
+  roundRect(ctx, x, y, s, s, r);
+  ctx.stroke();
+
+  // Pips
+  const cx = x + s / 2, cy = y + s / 2, off = 9, dr = 3.5;
+  ctx.fillStyle = used ? C.usedDot : C.diceDot;
+  const positions = {
+    1: [[cx, cy]],
+    2: [[cx - off, cy - off], [cx + off, cy + off]],
+    3: [[cx - off, cy - off], [cx, cy], [cx + off, cy + off]],
+    4: [[cx - off, cy - off], [cx + off, cy - off], [cx - off, cy + off], [cx + off, cy + off]],
+    5: [[cx - off, cy - off], [cx + off, cy - off], [cx, cy], [cx - off, cy + off], [cx + off, cy + off]],
+    6: [[cx - off, cy - off], [cx + off, cy - off], [cx - off, cy], [cx + off, cy], [cx - off, cy + off], [cx + off, cy + off]],
+  };
+  for (const [px, py] of (positions[val] || [])) {
+    ctx.beginPath(); ctx.arc(px, py, dr, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function shadeColor(hex, amount) {
+  let r = parseInt(hex.slice(1, 3), 16) + amount;
+  let g = parseInt(hex.slice(3, 5), 16) + amount;
+  let b = parseInt(hex.slice(5, 7), 16) + amount;
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+}
+
+// --- Click handling ---
+canvas.addEventListener('click', (e) => {
+  if (gameOver || rolling || turn !== WHITE) return;
+  if (remainingDice().length === 0) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  const my = (e.clientY - rect.top) * (H / rect.height);
+
+  // Must enter from bar first
+  if (board[0] > 0) {
+    if (selected !== 0) {
+      selected = 0;
+      validMoves = getValidMovesForChecker(0);
+      if (validMoves.length === 0) {
+        document.getElementById('status').textContent = 'No way to enter from bar.';
+        selected = null; validMoves = [];
+      } else {
+        document.getElementById('status').textContent = 'Enter from the bar first.';
+      }
+      draw();
+    }
+    // If selected=0, check if clicking a valid destination
+    if (selected === 0) {
+      const clicked = getClickedPoint(mx, my);
+      if (clicked !== null) {
+        const move = validMoves.find(m => m.to === clicked);
+        if (move) { applyPlayerMove(move); return; }
+      }
+    }
+    if (selected !== 0) draw();
+    return;
+  }
+
+  // Bearing-off tray click
+  if (selected !== null && mx > TRAY_X && mx < TRAY_X + TRAY_W) {
+    const bearMove = validMoves.find(m => m.to === -1);
+    if (bearMove) { applyPlayerMove(bearMove); return; }
+  }
+
+  const clicked = getClickedPoint(mx, my);
+  if (clicked !== null) {
+    // Check if valid destination for current selection
+    if (selected !== null) {
+      const move = validMoves.find(m => m.to === clicked);
+      if (move) { applyPlayerMove(move); return; }
+    }
+    // Select own checker
+    if (board[clicked] > 0) {
+      selected = clicked;
+      validMoves = getValidMovesForChecker(clicked);
+      if (validMoves.length === 0) {
+        document.getElementById('status').textContent = 'No moves for this checker.';
+      } else {
+        document.getElementById('status').textContent = 'Click a highlighted point to move.';
+      }
+      draw(); return;
+    }
+  }
+
+  selected = null; validMoves = [];
+  draw();
+});
+
+function getClickedPoint(mx, my) {
+  for (let i = 1; i <= 24; i++) {
+    const cx = pointX(i);
+    if (Math.abs(mx - cx) < POINT_W / 2) {
+      if (isTop(i) && my < BOARD_MID) return i;
+      if (!isTop(i) && my > BOARD_MID) return i;
+    }
+  }
+  return null;
+}
+
+function applyPlayerMove(move) {
+  const hit = executeMove(move.from, move.to, WHITE);
+  usedDice.push(move.die);
+  selected = null; validMoves = [];
+
+  playSound(hit ? 'hit' : 'move');
+  if (checkWin()) { draw(); return; }
+
+  if (remainingDice().length > 0 && hasAnyMoves(WHITE)) {
+    document.getElementById('status').textContent = 'Select next move.';
+    draw();
+  } else {
+    if (remainingDice().length > 0) document.getElementById('status').textContent = 'No more valid moves.';
+    draw();
+    setTimeout(endTurn, 400);
+  }
+}
+
+// --- AI ---
+function aiTurn() {
+  if (gameOver) return;
+  const rem = remainingDice();
+  if (rem.length === 0 || !hasAnyMoves(BLACK)) {
+    if (rem.length > 0) document.getElementById('status').textContent = 'AI has no valid moves.';
+    setTimeout(endTurn, 500);
+    return;
+  }
+
+  const saveTurn = turn; turn = BLACK;
+  const move = findBestAiMove();
+  turn = saveTurn;
+
+  if (!move) { setTimeout(endTurn, 500); return; }
+
+  const hit = executeMove(move.from, move.to, BLACK);
+  usedDice.push(move.die);
+  playSound(hit ? 'hit' : 'move');
+  draw();
+
+  if (checkWin()) return;
+  if (remainingDice().length > 0 && hasAnyMoves(BLACK)) {
+    setTimeout(aiTurn, 350);
+  } else {
+    setTimeout(endTurn, 400);
+  }
+}
+
+function findBestAiMove() {
+  const saveTurn = turn; turn = BLACK;
+  const onBar = board[25];
+  let allMoves = [];
+
+  if (onBar > 0) {
+    allMoves = getValidMovesForChecker(25);
+  } else {
+    for (let i = 1; i <= 24; i++) {
+      if (board[i] < 0) allMoves.push(...getValidMovesForChecker(i));
+    }
+  }
+  turn = saveTurn;
+  return allMoves.length > 0 ? pickBestMove(allMoves) : null;
+}
+
+function pickBestMove(moves) {
+  let best = -Infinity, bestMove = moves[0];
+  for (const m of moves) {
+    let s = 0;
+    if (m.to === 26) { s += 10; }
+    else if (m.to >= 1 && m.to <= 24) {
+      if (board[m.to] === 1) s += 5;   // Hit blot
+      if (board[m.to] === -1) s += 3;  // Make point
+      s += m.to * 0.08;                // Advance toward home
+      if (m.to >= 19) s += 2;          // Home board
+      // Penalize leaving blot in opponent home
+      const afterCount = Math.abs(board[m.from]) - 1;
+      if (afterCount === 1 || (afterCount === 0 && Math.abs(board[m.from]) === 1)) {
+        // Check if source becomes single
+      }
+      const destCount = Math.abs(board[m.to]) + 1;
+      if (destCount === 1 && m.to <= 12) s -= 4;
+      s += 1; // pip advancement
+    }
+    s += (Math.random() - 0.5) * 3;
+    if (s > best) { best = s; bestMove = m; }
+  }
+  return bestMove;
+}
+
+// --- Sound ---
+function playSound(type) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    const t = ac.currentTime;
+    switch (type) {
+      case 'roll':
+        o.type = 'triangle'; o.frequency.value = 220;
+        o.frequency.linearRampToValueAtTime(80, t + 0.25);
+        g.gain.value = 0.07; g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        o.start(); o.stop(t + 0.25);
+        // Second rattle
+        const o1 = ac.createOscillator(); const g1 = ac.createGain();
+        o1.connect(g1); g1.connect(ac.destination);
+        o1.type = 'square'; o1.frequency.value = 180;
+        o1.frequency.linearRampToValueAtTime(60, t + 0.3);
+        g1.gain.value = 0.03; g1.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+        o1.start(t + 0.05); o1.stop(t + 0.3);
+        break;
+      case 'move':
+        o.type = 'sine'; o.frequency.value = 500;
+        o.frequency.linearRampToValueAtTime(350, t + 0.06);
+        g.gain.value = 0.05; g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+        o.start(); o.stop(t + 0.06);
+        break;
+      case 'hit':
+        o.type = 'square'; o.frequency.value = 280;
+        o.frequency.linearRampToValueAtTime(90, t + 0.18);
+        g.gain.value = 0.06; g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+        o.start(); o.stop(t + 0.18);
+        break;
+      case 'win':
+        o.type = 'sine'; o.frequency.value = 523;
+        g.gain.value = 0.06; g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+        o.start(); o.stop(t + 0.15);
+        [659, 784].forEach((f, i) => {
+          const ox = ac.createOscillator(); const gx = ac.createGain();
+          ox.type = 'sine'; ox.frequency.value = f;
+          ox.connect(gx); gx.connect(ac.destination);
+          gx.gain.value = 0.06; gx.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+          ox.start(t + 0.15 * (i + 1)); ox.stop(t + 0.15 * (i + 1) + 0.2);
+        });
+        break;
+      case 'lose':
+        o.type = 'sawtooth'; o.frequency.value = 200;
+        o.frequency.linearRampToValueAtTime(100, t + 0.4);
+        g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+        o.start(); o.stop(t + 0.4);
+        break;
+    }
+  } catch {}
+}
+
+// --- Bridge persistence ---
+async function loadStats() {
+  try {
+    const res = await fetch(BRIDGE_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', app: 'backgammon', key: 'stats' }),
+    });
+    const data = await res.json();
+    if (data && typeof data.wins === 'number') stats = data;
+    updateStatsDisplay();
+  } catch {}
+}
+
+async function saveResult(result) {
+  if (result === 'win') stats.wins++; else stats.losses++;
+  updateStatsDisplay();
+  try {
+    await fetch(BRIDGE_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'write', app: 'backgammon', key: 'stats', value: stats }),
+    });
+  } catch {}
+}
+
+function updateStatsDisplay() {
+  const total = stats.wins + stats.losses;
+  document.getElementById('stats').textContent = total > 0
+    ? 'W ' + stats.wins + ' / L ' + stats.losses + ' (' + Math.round(stats.wins / total * 100) + '%)'
+    : '';
+}
+
+// --- Init ---
+function startGame() {
+  document.getElementById('startScreen').classList.add('hidden');
+  initBoard();
+  document.getElementById('status').textContent = 'Roll the dice to begin.';
+}
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('endBtn').addEventListener('click', () => {
+  document.getElementById('endScreen').classList.add('hidden');
+  initBoard();
+  document.getElementById('status').textContent = 'Roll the dice to begin.';
+});
+document.getElementById('newBtn').addEventListener('click', () => {
+  initBoard();
+  document.getElementById('status').textContent = 'Roll the dice to begin.';
+});
+document.getElementById('rollBtn').addEventListener('click', rollDice);
+
+loadStats();
+initBoard();
+</script>
+</body>
+</html>

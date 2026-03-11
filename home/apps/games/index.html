@@ -26,7 +26,7 @@ h1 {
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 12px;
 }
 .game-card {
@@ -60,6 +60,11 @@ h1 {
   color: #666;
   line-height: 1.3;
 }
+.game-score {
+  font-size: 10px;
+  color: #4ade80;
+  margin-top: 4px;
+}
 </style>
 </head>
 <body>
@@ -77,9 +82,51 @@ const GAMES = [
   { name: 'Snake', desc: 'Classic arcade game', icon: '\u2740', path: 'snake/index.html' },
   { name: '2048', desc: 'Merge tiles to win', icon: '\u2B1A', path: '2048/index.html' },
   { name: 'Minesweeper', desc: 'Clear the minefield', icon: '\u2739', path: 'minesweeper/index.html' },
+  { name: 'Backgammon', desc: 'Play against AI', icon: '\u2680', path: 'backgammon/index.html' },
 ];
 
+const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+
+const SCORE_CONFIG = {
+  'Snake':       { app: 'snake', key: 'highscore' },
+  '2048':        { app: '2048', key: 'best' },
+  'Tetris':      { app: 'tetris', key: 'best' },
+  'Chess':       { app: 'chess', key: 'stats' },
+  'Minesweeper': { app: 'minesweeper', key: 'best-beginner' },
+  'Solitaire':   { app: 'solitaire', key: 'wins' },
+  'Backgammon':  { app: 'backgammon', key: 'stats' },
+};
+
+function formatScore(gameName, value) {
+  if (value == null) return '';
+  if (gameName === 'Chess' && typeof value === 'object') {
+    return 'W/L/D: ' + (value.wins || 0) + '/' + (value.losses || 0) + '/' + (value.draws || 0);
+  }
+  if (gameName === 'Backgammon' && typeof value === 'object') {
+    return 'W/L: ' + (value.wins || 0) + '/' + (value.losses || 0);
+  }
+  if (gameName === 'Minesweeper') return 'Best: ' + value + 's';
+  if (gameName === 'Solitaire') return 'Wins: ' + value;
+  return 'Best: ' + value;
+}
+
+async function fetchScore(app, key) {
+  try {
+    const res = await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', app, key }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.value != null ? data.value : null;
+  } catch {
+    return null;
+  }
+}
+
 const grid = document.getElementById('grid');
+const scoreElements = {};
 
 for (const game of GAMES) {
   const card = document.createElement('div');
@@ -100,19 +147,25 @@ for (const game of GAMES) {
   desc.textContent = game.desc;
   card.appendChild(desc);
 
+  const scoreEl = document.createElement('div');
+  scoreEl.className = 'game-score';
+  card.appendChild(scoreEl);
+  scoreElements[game.name] = scoreEl;
+
   card.addEventListener('click', () => {
-    try {
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ type: 'matrix:open-app', path: '/files/apps/games/' + game.path, name: game.name }, '*');
-      } else {
-        window.location.href = game.path;
-      }
-    } catch {
-      window.location.href = game.path;
-    }
+    window.location.href = game.path;
   });
 
   grid.appendChild(card);
+}
+
+for (const game of GAMES) {
+  const cfg = SCORE_CONFIG[game.name];
+  if (!cfg) continue;
+  fetchScore(cfg.app, cfg.key).then(value => {
+    const text = formatScore(game.name, value);
+    if (text) scoreElements[game.name].textContent = text;
+  });
 }
 </script>
 </body>

@@ -1,0 +1,9 @@
+{
+  "name": "Backgammon",
+  "description": "Classic board game with dice",
+  "runtime": "static",
+  "category": "games",
+  "icon": "dice",
+  "author": "system",
+  "version": "1.0.0"
+}
