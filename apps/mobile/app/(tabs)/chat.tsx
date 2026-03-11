@@ -5,12 +5,19 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
 import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
 import { InputBar } from "@/components/InputBar";
@@ -40,6 +47,47 @@ let messageCounter = 0;
 function nextId(): string {
   return `msg-${Date.now()}-${++messageCounter}`;
 }
+
+function TypingIndicator() {
+  const opacity = useSharedValue(0.3);
+
+  useEffect(() => {
+    opacity.value = withRepeat(withTiming(1, { duration: 600 }), -1, true);
+  }, []);
+
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+
+  return (
+    <Animated.View style={[typingStyles.container, style]}>
+      <View style={typingStyles.dot} />
+      <View style={typingStyles.dot} />
+      <View style={typingStyles.dot} />
+    </Animated.View>
+  );
+}
+
+const typingStyles = StyleSheet.create({
+  container: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    backgroundColor: colors.light.card,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    borderRadius: 16,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 10,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.light.mutedForeground,
+  },
+});
 
 export default function ChatScreen() {
   const { client, connectionState, gateway, clearUnread, incrementUnread } = useGateway();
@@ -271,6 +319,7 @@ export default function ChatScreen() {
         contentContainerStyle={styles.listContent}
         onEndReached={handleLoadOlder}
         onEndReachedThreshold={0.3}
+        ListHeaderComponent={busy ? <TypingIndicator /> : null}
         ListFooterComponent={
           loadingOlder ? (
             <View style={styles.loadingOlder}>
@@ -298,15 +347,24 @@ export default function ChatScreen() {
             {isConnected && (
               <View style={styles.suggestionsContainer}>
                 <Text style={styles.suggestionsTitle}>Try asking</Text>
-                <View style={styles.suggestion}>
+                <Pressable
+                  onPress={() => handleSend("What can you help me with?")}
+                  style={({ pressed }) => [styles.suggestion, pressed && { opacity: 0.7 }]}
+                >
                   <Text style={styles.suggestionText}>"What can you help me with?"</Text>
-                </View>
-                <View style={styles.suggestion}>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleSend("Create a new task")}
+                  style={({ pressed }) => [styles.suggestion, pressed && { opacity: 0.7 }]}
+                >
                   <Text style={styles.suggestionText}>"Create a new task"</Text>
-                </View>
-                <View style={styles.suggestion}>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleSend("Show me my schedule")}
+                  style={({ pressed }) => [styles.suggestion, pressed && { opacity: 0.7 }]}
+                >
                   <Text style={styles.suggestionText}>"Show me my schedule"</Text>
-                </View>
+                </Pressable>
               </View>
             )}
           </View>

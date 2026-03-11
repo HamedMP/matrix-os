@@ -1,4 +1,5 @@
 import { View, Text, Pressable, StyleSheet } from "react-native";
+import Animated, { FadeInUp } from "react-native-reanimated";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 export interface Task {
@@ -25,6 +26,7 @@ export function TaskCard({ task, onPress }: TaskCardProps) {
   const statusInfo = STATUS_COLORS[task.status] ?? STATUS_COLORS.pending;
 
   return (
+    <Animated.View entering={FadeInUp.duration(250)}>
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
@@ -51,6 +53,7 @@ export function TaskCard({ task, onPress }: TaskCardProps) {
         )}
       </View>
     </Pressable>
+    </Animated.View>
   );
 }
 

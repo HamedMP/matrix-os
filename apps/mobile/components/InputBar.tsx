@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Platform,
 } from "react-native";
+import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
@@ -32,7 +33,7 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
   const canSend = text.trim().length > 0 && connected && !busy;
 
   return (
-    <View style={styles.container}>
+    <BlurView tint="systemChromeMaterial" intensity={80} style={styles.container}>
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
@@ -72,7 +73,7 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
           )}
         </Pressable>
       </View>
-    </View>
+    </BlurView>
   );
 }
 
@@ -80,7 +81,7 @@ const styles = StyleSheet.create({
   container: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    overflow: "hidden" as const,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: Platform.OS === "ios" ? spacing["2xl"] : spacing.md,
@@ -92,7 +93,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: colors.light.border,
-    backgroundColor: colors.light.background,
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
     paddingHorizontal: spacing.md,
     paddingVertical: Platform.OS === "ios" ? 8 : 4,
   },

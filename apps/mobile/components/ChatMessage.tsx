@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { View, Text, ScrollView, Pressable, Image, Linking, StyleSheet } from "react-native";
+import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
@@ -33,32 +34,163 @@ const roleTextStyles: Record<Message["role"], object> = {
   tool: { color: colors.light.mutedForeground, fontSize: 12, fontFamily: fonts.mono },
 };
 
+const timestampAlignStyles: Record<Message["role"], object> = {
+  user: { alignSelf: "flex-end" as const },
+  assistant: { alignSelf: "flex-start" as const },
+  system: { alignSelf: "center" as const },
+  tool: { alignSelf: "flex-start" as const },
+};
+
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg)$/i;
+
+function renderMarkdown(text: string, baseStyle: object): React.ReactNode[] {
+  const elements: React.ReactNode[] = [];
+  const lines = text.split("\n");
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+
+    if (li > 0) {
+      elements.push(<Text key={`nl-${li}`}>{"\n"}</Text>);
+    }
+
+    // Bullet lists
+    const bulletMatch = line.match(/^(\s*)[-*]\s+(.*)/);
+    if (bulletMatch) {
+      const indent = bulletMatch[1].length;
+      const bulletContent = bulletMatch[2];
+      elements.push(
+        <Text key={`bullet-${li}`} style={baseStyle}>
+          <Text>{"  ".repeat(indent) + "  \u2022  "}</Text>
+          {renderInlineMarkdown(bulletContent, baseStyle, `b-${li}`)}
+        </Text>,
+      );
+      continue;
+    }
+
+    elements.push(...renderInlineMarkdown(line, baseStyle, `l-${li}`));
+  }
+
+  return elements;
+}
+
+function renderInlineMarkdown(
+  text: string,
+  baseStyle: object,
+  keyPrefix: string,
+): React.ReactNode[] {
+  const elements: React.ReactNode[] = [];
+  // Match: **bold**, *italic*, `inline code`, [text](url)
+  const inlineRe = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  let lastIndex = 0;
+  let match;
+  let idx = 0;
+
+  while ((match = inlineRe.exec(text)) !== null) {
+    // Text before match
+    if (match.index > lastIndex) {
+      elements.push(
+        <Text key={`${keyPrefix}-t${idx}`} style={baseStyle}>
+          {text.slice(lastIndex, match.index)}
+        </Text>,
+      );
+      idx++;
+    }
+
+    if (match[2] !== undefined) {
+      // Bold: **text**
+      elements.push(
+        <Text key={`${keyPrefix}-b${idx}`} style={[baseStyle, { fontFamily: fonts.sansBold }]}>
+          {match[2]}
+        </Text>,
+      );
+    } else if (match[3] !== undefined) {
+      // Italic: *text*
+      elements.push(
+        <Text key={`${keyPrefix}-i${idx}`} style={[baseStyle, { fontStyle: "italic" }]}>
+          {match[3]}
+        </Text>,
+      );
+    } else if (match[4] !== undefined) {
+      // Inline code: `code`
+      elements.push(
+        <Text
+          key={`${keyPrefix}-c${idx}`}
+          style={[
+            baseStyle,
+            {
+              fontFamily: fonts.mono,
+              fontSize: 13,
+              backgroundColor: "rgba(28, 25, 23, 0.08)",
+            },
+          ]}
+        >
+          {match[4]}
+        </Text>,
+      );
+    } else if (match[5] !== undefined && match[6] !== undefined) {
+      // Link: [text](url)
+      const url = match[6];
+      elements.push(
+        <Text
+          key={`${keyPrefix}-a${idx}`}
+          style={[baseStyle, { color: colors.light.primary, textDecorationLine: "underline" }]}
+          onPress={() => Linking.openURL(url)}
+        >
+          {match[5]}
+        </Text>,
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+    idx++;
+  }
+
+  // Remaining text after last match
+  if (lastIndex < text.length) {
+    elements.push(
+      <Text key={`${keyPrefix}-t${idx}`} style={baseStyle}>
+        {text.slice(lastIndex)}
+      </Text>,
+    );
+  }
+
+  return elements;
+}
 
 export function ChatMessage({ message, gatewayUrl }: { message: Message; gatewayUrl?: string }) {
   const isCode = message.content.includes("```");
   const imageMatches = extractImageLinks(message.content);
   const fileMatches = extractFileLinks(message.content);
 
+  const entering = message.role === "user"
+    ? FadeInRight.duration(200)
+    : FadeInLeft.duration(200);
+
   return (
-    <View style={[styles.bubble, roleContainerStyles[message.role]]}>
-      {message.tool && (
-        <Text style={styles.toolLabel}>{message.tool}</Text>
-      )}
-      {imageMatches.length > 0 && gatewayUrl && (
-        <ImageAttachments images={imageMatches} gatewayUrl={gatewayUrl} />
-      )}
-      {isCode ? (
-        <CodeContent content={message.content} role={message.role} />
-      ) : (
-        <Text style={[styles.text, roleTextStyles[message.role]]}>
-          {message.content}
-        </Text>
-      )}
-      {fileMatches.length > 0 && gatewayUrl && (
-        <FileAttachments files={fileMatches} gatewayUrl={gatewayUrl} />
-      )}
-    </View>
+    <Animated.View entering={entering}>
+      <View style={[styles.bubble, roleContainerStyles[message.role]]}>
+        {message.tool && (
+          <Text style={styles.toolLabel}>{message.tool}</Text>
+        )}
+        {imageMatches.length > 0 && gatewayUrl && (
+          <ImageAttachments images={imageMatches} gatewayUrl={gatewayUrl} />
+        )}
+        {isCode ? (
+          <CodeContent content={message.content} role={message.role} />
+        ) : (
+          <Text style={[styles.text, roleTextStyles[message.role]]}>
+            {renderMarkdown(message.content, { ...styles.text, ...roleTextStyles[message.role] })}
+          </Text>
+        )}
+        {fileMatches.length > 0 && gatewayUrl && (
+          <FileAttachments files={fileMatches} gatewayUrl={gatewayUrl} />
+        )}
+      </View>
+      <Text style={[styles.timestamp, timestampAlignStyles[message.role]]}>
+        {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      </Text>
+    </Animated.View>
   );
 }
 
@@ -166,7 +298,7 @@ function CodeContent({ content, role }: { content: string; role: Message["role"]
         if (part.trim()) {
           return (
             <Text key={i} style={[styles.text, roleTextStyles[role]]}>
-              {part}
+              {renderMarkdown(part, { ...styles.text, ...roleTextStyles[role] })}
             </Text>
           );
         }
@@ -195,6 +327,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 14,
     lineHeight: 20,
+  },
+  timestamp: {
+    fontFamily: fonts.sans,
+    fontSize: 10,
+    color: colors.light.mutedForeground,
+    marginTop: 2,
+    marginHorizontal: 4,
   },
   codeContainer: {
     gap: 6,

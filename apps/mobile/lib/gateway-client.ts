@@ -210,6 +210,13 @@ export class GatewayClient {
     return res.json();
   }
 
+  async deleteTask(id: string): Promise<void> {
+    await fetch(`${this.httpUrl}/api/tasks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: this.authHeaders(),
+    });
+  }
+
   async getCron(): Promise<unknown[]> {
     const res = await fetch(`${this.httpUrl}/api/cron`, {
       headers: this.authHeaders(),

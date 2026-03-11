@@ -10,6 +10,9 @@ import {
   StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
+import { Swipeable } from "react-native-gesture-handler";
+import Animated, { ZoomIn } from "react-native-reanimated";
+import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { TaskCard, type Task } from "@/components/TaskCard";
@@ -24,6 +27,103 @@ const FILTERS: { label: string; value: FilterStatus }[] = [
   { label: "In Progress", value: "in-progress" },
   { label: "Done", value: "completed" },
 ];
+
+function parseCronNextRun(schedule: string): string | null {
+  if (!schedule) return null;
+  const now = new Date();
+
+  const intervalMatch = schedule.match(/^every\s+(\d+)\s*(m|min|minutes?|h|hours?|s|seconds?)$/i);
+  if (intervalMatch) {
+    const value = parseInt(intervalMatch[1], 10);
+    const unit = intervalMatch[2].toLowerCase();
+    let ms = 0;
+    if (unit.startsWith("s")) ms = value * 1000;
+    else if (unit.startsWith("m")) ms = value * 60 * 1000;
+    else if (unit.startsWith("h")) ms = value * 60 * 60 * 1000;
+    return formatRelativeTime(ms);
+  }
+
+  const cronParts = schedule.trim().split(/\s+/);
+  if (cronParts.length === 5) {
+    const [minute, hour] = cronParts;
+    if (minute !== "*" && hour !== "*") {
+      const targetMinute = parseInt(minute, 10);
+      const targetHour = parseInt(hour, 10);
+      if (!isNaN(targetMinute) && !isNaN(targetHour)) {
+        const next = new Date(now);
+        next.setHours(targetHour, targetMinute, 0, 0);
+        if (next <= now) next.setDate(next.getDate() + 1);
+        const diffMs = next.getTime() - now.getTime();
+        return formatRelativeTime(diffMs);
+      }
+    }
+  }
+
+  return null;
+}
+
+function formatRelativeTime(ms: number): string {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return "soon";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  if (hours < 48) return "tomorrow";
+  const days = Math.round(hours / 24);
+  return `in ${days}d`;
+}
+
+interface SwipeableTaskCardProps {
+  task: Task;
+  onPress: () => void;
+  onComplete: () => void;
+  onDelete: () => void;
+}
+
+function SwipeableTaskCard({ task, onPress, onComplete, onDelete }: SwipeableTaskCardProps) {
+  const swipeableRef = useRef<Swipeable>(null);
+
+  const renderLeftActions = () => (
+    <View style={swipeStyles.completeAction}>
+      <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+      <Text style={swipeStyles.actionText}>
+        {task.status === "completed" ? "Reopen" : "Complete"}
+      </Text>
+    </View>
+  );
+
+  const renderRightActions = () => (
+    <View style={swipeStyles.deleteAction}>
+      <Ionicons name="trash-outline" size={20} color="#fff" />
+      <Text style={swipeStyles.actionText}>Delete</Text>
+    </View>
+  );
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      renderLeftActions={renderLeftActions}
+      renderRightActions={renderRightActions}
+      onSwipeableOpen={(direction) => {
+        if (direction === "left") {
+          Haptics.notificationAsync(
+            task.status === "completed"
+              ? Haptics.NotificationFeedbackType.Warning
+              : Haptics.NotificationFeedbackType.Success,
+          );
+          onComplete();
+        }
+        if (direction === "right") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          onDelete();
+        }
+        swipeableRef.current?.close();
+      }}
+    >
+      <TaskCard task={task} onPress={onPress} />
+    </Swipeable>
+  );
+}
 
 export default function MissionControlScreen() {
   const { client, connectionState } = useGateway();
@@ -54,6 +154,7 @@ export default function MissionControlScreen() {
   }, [fetchData]);
 
   const handleRefresh = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setRefreshing(true);
     await fetchData();
     setRefreshing(false);
@@ -71,23 +172,70 @@ export default function MissionControlScreen() {
     }
   }, [client, newTaskInput, fetchData]);
 
+  const handleCompleteTask = useCallback(async (task: Task) => {
+    if (!client) return;
+    try {
+      const newStatus = task.status === "completed" ? "pending" : "completed";
+      await client.updateTask(task.id, { status: newStatus });
+      await fetchData();
+    } catch {
+      Alert.alert("Error", "Failed to update task");
+    }
+  }, [client, fetchData]);
+
+  const handleDeleteTask = useCallback(async (task: Task) => {
+    if (!client) return;
+    Alert.alert(
+      "Delete Task",
+      `Delete "${task.input}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await client.deleteTask(task.id);
+              setTasks((prev) => prev.filter((t) => t.id !== task.id));
+            } catch {
+              Alert.alert("Error", "Failed to delete task");
+            }
+          },
+        },
+      ],
+    );
+  }, [client]);
+
+  const counts = {
+    all: tasks.length,
+    pending: tasks.filter((t) => t.status === "pending").length,
+    "in-progress": tasks.filter((t) => t.status === "in-progress").length,
+    completed: tasks.filter((t) => t.status === "completed").length,
+  };
+
   const filteredTasks = filter === "all"
     ? tasks
     : tasks.filter((t) => t.status === filter);
 
   const renderTask = useCallback(
     ({ item }: ListRenderItemInfo<Task>) => (
-      <TaskCard task={item} onPress={() => setSelectedTask(item)} />
+      <SwipeableTaskCard
+        task={item}
+        onPress={() => setSelectedTask(item)}
+        onComplete={() => handleCompleteTask(item)}
+        onDelete={() => handleDeleteTask(item)}
+      />
     ),
-    [],
+    [handleCompleteTask, handleDeleteTask],
   );
 
   return (
     <View style={styles.container}>
-      {/* Filter chips */}
+      {/* Filter chips with count badges */}
       <View style={styles.filterRow}>
         {FILTERS.map((f) => {
           const isActive = filter === f.value;
+          const count = counts[f.value];
           return (
             <Pressable
               key={f.value}
@@ -103,7 +251,7 @@ export default function MissionControlScreen() {
                   isActive ? styles.filterChipTextActive : styles.filterChipTextInactive,
                 ]}
               >
-                {f.label}
+                {f.label} ({count})
               </Text>
             </Pressable>
           );
@@ -135,24 +283,52 @@ export default function MissionControlScreen() {
           </View>
         }
         ListFooterComponent={
-          cronJobs.length > 0 ? (
-            <View style={styles.cronSection}>
-              <Text style={styles.cronSectionLabel}>Scheduled</Text>
-              {cronJobs.map((job: any, i: number) => (
-                <View key={job.id ?? i} style={styles.cronCard}>
-                  <Ionicons name="time-outline" size={16} color={colors.light.primary} />
-                  <View style={styles.cronTextContainer}>
-                    <Text style={styles.cronName}>
-                      {job.name ?? job.message ?? "Cron job"}
-                    </Text>
-                    <Text style={styles.cronSchedule}>
-                      {job.schedule ?? job.cron ?? ""}
+          <View style={styles.cronSection}>
+            <Text style={styles.cronSectionLabel}>Scheduled</Text>
+            {cronJobs.length > 0 ? (
+              cronJobs.map((job: any, i: number) => {
+                const isActive = job.enabled !== false;
+                const nextRun = parseCronNextRun(job.schedule ?? job.cron ?? "");
+                return (
+                  <View key={job.id ?? i} style={styles.cronCard}>
+                    <View style={styles.cronIconContainer}>
+                      <View
+                        style={[
+                          styles.cronStatusDot,
+                          isActive ? styles.cronStatusActive : styles.cronStatusPaused,
+                        ]}
+                      />
+                      <Ionicons name="time-outline" size={16} color={colors.light.primary} />
+                    </View>
+                    <View style={styles.cronTextContainer}>
+                      <Text style={styles.cronName}>
+                        {job.name ?? job.message ?? "Cron job"}
+                      </Text>
+                      <View style={styles.cronMetaRow}>
+                        <Text style={styles.cronSchedule}>
+                          {job.schedule ?? job.cron ?? ""}
+                        </Text>
+                        {nextRun && (
+                          <Text style={styles.cronNextRun}>{nextRun}</Text>
+                        )}
+                      </View>
+                    </View>
+                    <Text style={[styles.cronBadge, isActive ? styles.cronBadgeActive : styles.cronBadgePaused]}>
+                      {isActive ? "Active" : "Paused"}
                     </Text>
                   </View>
-                </View>
-              ))}
-            </View>
-          ) : null
+                );
+              })
+            ) : (
+              <View style={styles.cronEmptyContainer}>
+                <Ionicons name="calendar-outline" size={24} color={colors.light.mutedForeground} />
+                <Text style={styles.cronEmptyText}>No scheduled jobs</Text>
+                <Text style={styles.cronEmptySubtext}>
+                  Ask your AI to set up recurring tasks or reminders.
+                </Text>
+              </View>
+            )}
+          </View>
         }
       />
 
@@ -195,12 +371,14 @@ export default function MissionControlScreen() {
           </View>
         </View>
       ) : (
-        <Pressable
-          onPress={() => setShowAddForm(true)}
-          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
-        >
-          <Ionicons name="add" size={28} color={colors.light.primaryForeground} />
-        </Pressable>
+        <Animated.View entering={ZoomIn.springify()}>
+          <Pressable
+            onPress={() => setShowAddForm(true)}
+            style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+          >
+            <Ionicons name="add" size={28} color={colors.light.primaryForeground} />
+          </Pressable>
+        </Animated.View>
       )}
 
       {/* Task detail bottom sheet */}
@@ -218,6 +396,32 @@ export default function MissionControlScreen() {
     </View>
   );
 }
+
+const swipeStyles = StyleSheet.create({
+  completeAction: {
+    backgroundColor: colors.light.success,
+    justifyContent: "center",
+    alignItems: "center",
+    width: 90,
+    borderRadius: radius.lg,
+    flexDirection: "column",
+    gap: 4,
+  },
+  deleteAction: {
+    backgroundColor: colors.light.destructive,
+    justifyContent: "center",
+    alignItems: "center",
+    width: 90,
+    borderRadius: radius.lg,
+    flexDirection: "column",
+    gap: 4,
+  },
+  actionText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 11,
+    color: "#fff",
+  },
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -318,6 +522,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
+  cronIconContainer: {
+    position: "relative",
+  },
+  cronStatusDot: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    zIndex: 1,
+    borderWidth: 1.5,
+    borderColor: colors.light.card,
+  },
+  cronStatusActive: {
+    backgroundColor: colors.light.success,
+  },
+  cronStatusPaused: {
+    backgroundColor: colors.light.mutedForeground,
+  },
   cronTextContainer: {
     flex: 1,
   },
@@ -326,11 +550,61 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.light.foreground,
   },
+  cronMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: 2,
+  },
   cronSchedule: {
     fontFamily: fonts.mono,
     fontSize: 12,
     color: colors.light.mutedForeground,
-    marginTop: 2,
+  },
+  cronNextRun: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 11,
+    color: colors.light.primary,
+  },
+  cronBadge: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 10,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    overflow: "hidden",
+  },
+  cronBadgeActive: {
+    backgroundColor: "rgba(34, 197, 94, 0.1)",
+    color: colors.light.success,
+  },
+  cronBadgePaused: {
+    backgroundColor: "rgba(120, 113, 108, 0.1)",
+    color: colors.light.mutedForeground,
+  },
+  cronEmptyContainer: {
+    alignItems: "center",
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.light.border,
+    borderStyle: "dashed",
+    backgroundColor: colors.light.card,
+  },
+  cronEmptyText: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 14,
+    color: colors.light.mutedForeground,
+    marginTop: spacing.sm,
+  },
+  cronEmptySubtext: {
+    fontFamily: fonts.sans,
+    fontSize: 12,
+    color: colors.light.mutedForeground,
+    textAlign: "center",
+    marginTop: spacing.xs,
+    lineHeight: 18,
   },
   addForm: {
     position: "absolute",

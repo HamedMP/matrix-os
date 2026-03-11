@@ -1,5 +1,6 @@
 import { Tabs } from "expo-router";
 import { View, StyleSheet, Platform } from "react-native";
+import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { colors, fonts } from "@/lib/theme";
@@ -39,6 +40,9 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         tabBarStyle: styles.tabBar,
+        tabBarBackground: () => (
+          <BlurView tint="systemChromeMaterial" intensity={80} style={StyleSheet.absoluteFill} />
+        ),
         tabBarActiveTintColor: colors.light.primary,
         tabBarInactiveTintColor: colors.light.mutedForeground,
         tabBarLabelStyle: styles.tabBarLabel,
@@ -77,7 +81,7 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    position: "absolute" as const,
     borderTopColor: colors.light.border,
     borderTopWidth: StyleSheet.hairlineWidth,
     height: Platform.OS === "ios" ? 88 : 64,

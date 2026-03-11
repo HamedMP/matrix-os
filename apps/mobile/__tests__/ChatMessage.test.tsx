@@ -83,7 +83,7 @@ describe("ChatMessage", () => {
         gatewayUrl="http://localhost:4000"
       />,
     );
-    expect(screen.getByText("report.pdf")).toBeTruthy();
+    expect(screen.getAllByText("report.pdf").length).toBeGreaterThanOrEqual(1);
   });
 
   it("does not show image for non-image file links", () => {
@@ -94,7 +94,7 @@ describe("ChatMessage", () => {
         gatewayUrl="http://localhost:4000"
       />,
     );
-    expect(screen.getByText("data.csv")).toBeTruthy();
+    expect(screen.getAllByText("data.csv").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryAllByLabelText("Image")).toHaveLength(0);
   });
 });
