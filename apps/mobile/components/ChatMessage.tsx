@@ -277,7 +277,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
         </Pressable>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator>
-        <Text style={styles.codeText}>{code}</Text>
+        <Text selectable style={styles.codeText}>{code}</Text>
       </ScrollView>
     </View>
   );
@@ -312,6 +312,7 @@ const styles = StyleSheet.create({
   bubble: {
     maxWidth: "85%",
     borderRadius: 16,
+    borderCurve: "continuous" as const,
     paddingHorizontal: spacing.lg,
     paddingVertical: 10,
   },
@@ -341,6 +342,7 @@ const styles = StyleSheet.create({
   codeBlock: {
     backgroundColor: "rgba(28, 25, 23, 0.08)",
     borderRadius: radius.sm,
+    borderCurve: "continuous" as const,
     padding: spacing.md,
     marginVertical: 4,
   },
@@ -397,6 +399,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     borderRadius: radius.sm,
+    borderCurve: "continuous" as const,
     backgroundColor: "rgba(28, 25, 23, 0.04)",
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,

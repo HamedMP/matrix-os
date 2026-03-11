@@ -4,7 +4,6 @@ import {
   Text,
   FlatList,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   type ListRenderItemInfo,
@@ -76,6 +75,7 @@ const typingStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.light.border,
     borderRadius: 16,
+    borderCurve: "continuous" as const,
     paddingHorizontal: spacing.lg,
     paddingVertical: 10,
     marginHorizontal: spacing.lg,
@@ -302,8 +302,8 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={process.env.EXPO_OS === "ios" ? 90 : 0}
     >
       <ConnectionBanner
         state={connectionState}
@@ -316,6 +316,7 @@ export default function ChatScreen() {
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         inverted
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.listContent}
         onEndReached={handleLoadOlder}
         onEndReachedThreshold={0.3}
@@ -400,6 +401,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 20,
+    borderCurve: "continuous" as const,
     backgroundColor: colors.light.card,
     alignItems: "center",
     justifyContent: "center",
@@ -437,6 +439,7 @@ const styles = StyleSheet.create({
   suggestion: {
     backgroundColor: colors.light.card,
     borderRadius: 12,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     paddingVertical: 12,

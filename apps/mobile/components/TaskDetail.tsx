@@ -28,10 +28,12 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
     try {
       const newStatus = isCompleted ? "pending" : "completed";
       await onStatusChange(task.id, newStatus);
-      if (!isCompleted) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } else {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (process.env.EXPO_OS === "ios") {
+        if (!isCompleted) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } else {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        }
       }
       onClose();
     } catch {
@@ -61,14 +63,14 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
           </Pressable>
         </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.scrollContent}>
           <View style={[styles.statusBadge, { backgroundColor: statusInfo.bg }]}>
             <Text style={[styles.statusText, { color: statusInfo.text }]}>
               {statusInfo.label}
             </Text>
           </View>
 
-          <Text style={styles.taskTitle}>{task.input}</Text>
+          <Text selectable style={styles.taskTitle}>{task.input}</Text>
 
           <View style={styles.detailsList}>
             <View style={styles.detailRow}>
@@ -78,7 +80,7 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
             <View style={styles.separator} />
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>ID</Text>
-              <Text style={styles.detailValue}>{task.id}</Text>
+              <Text selectable style={styles.detailValue}>{task.id}</Text>
             </View>
             {task.priority !== undefined && (
               <>
@@ -94,7 +96,7 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
                 <View style={styles.separator} />
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Created</Text>
-                  <Text style={styles.detailValue}>{task.createdAt}</Text>
+                  <Text selectable style={styles.detailValue}>{task.createdAt}</Text>
                 </View>
               </>
             )}
@@ -163,6 +165,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     borderRadius: radius.sm,
+    borderCurve: "continuous" as const,
     backgroundColor: colors.light.muted,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
@@ -198,6 +201,7 @@ const styles = StyleSheet.create({
   },
   detailsList: {
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
@@ -229,6 +233,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 5,
     borderRadius: 3,
+    borderCurve: "continuous" as const,
     backgroundColor: colors.light.border,
     alignSelf: "center",
     marginTop: spacing.sm,
@@ -247,6 +252,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: spacing.sm,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     paddingVertical: spacing.md,
   },
   actionComplete: {

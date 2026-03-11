@@ -61,7 +61,7 @@ function SettingsRow({
         <Text style={styles.rowLabel}>{label}</Text>
       </View>
       {value ? (
-        <Text style={styles.rowValue}>{value}</Text>
+        <Text selectable style={styles.rowValue}>{value}</Text>
       ) : right ? (
         right
       ) : onPress ? (
@@ -139,6 +139,7 @@ export default function SettingsScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
+      contentInsetAdjustmentBehavior="automatic"
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.light.primary} />
       }
@@ -163,7 +164,7 @@ export default function SettingsScreen() {
       <SettingsSection title="Agent">
         {aiProfile ? (
           <View style={styles.profileCard}>
-            <Text style={styles.profileText} numberOfLines={8}>
+            <Text selectable style={styles.profileText} numberOfLines={8}>
               {aiProfile}
             </Text>
           </View>
@@ -333,6 +334,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
@@ -352,6 +354,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: radius.sm,
+    borderCurve: "continuous" as const,
     backgroundColor: colors.light.secondary,
     alignItems: "center",
     justifyContent: "center",
@@ -384,6 +387,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
@@ -405,6 +409,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     paddingVertical: 10,
   },
   themeOptionActive: {
@@ -427,6 +432,7 @@ const styles = StyleSheet.create({
   },
   profileCard: {
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,

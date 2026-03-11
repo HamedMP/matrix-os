@@ -33,6 +33,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,

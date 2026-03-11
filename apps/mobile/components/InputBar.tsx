@@ -6,7 +6,6 @@ import {
   Text,
   ActivityIndicator,
   StyleSheet,
-  Platform,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
@@ -25,7 +24,9 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed || !connected) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (process.env.EXPO_OS === "ios") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     onSend(trimmed);
     setText("");
   }, [text, connected, onSend]);
@@ -84,18 +85,19 @@ const styles = StyleSheet.create({
     overflow: "hidden" as const,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
-    paddingBottom: Platform.OS === "ios" ? spacing["2xl"] : spacing.md,
+    paddingBottom: process.env.EXPO_OS === "ios" ? spacing["2xl"] : spacing.md,
   },
   inputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: spacing.sm,
     borderRadius: radius.xl,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: "rgba(255, 255, 255, 0.6)",
     paddingHorizontal: spacing.md,
-    paddingVertical: Platform.OS === "ios" ? 8 : 4,
+    paddingVertical: process.env.EXPO_OS === "ios" ? 8 : 4,
   },
   input: {
     flex: 1,
@@ -104,7 +106,7 @@ const styles = StyleSheet.create({
     color: colors.light.foreground,
     minHeight: 36,
     maxHeight: 100,
-    paddingVertical: Platform.OS === "ios" ? 8 : 6,
+    paddingVertical: process.env.EXPO_OS === "ios" ? 8 : 6,
   },
   sendButton: {
     width: 34,

@@ -60,16 +60,13 @@ export function TaskCard({ task, onPress }: TaskCardProps) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    boxShadow: "0 1px 4px rgba(0, 0, 0, 0.04)",
   },
   cardPressed: {
     opacity: 0.7,

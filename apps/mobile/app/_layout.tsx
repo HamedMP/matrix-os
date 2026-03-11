@@ -1,4 +1,4 @@
-import { useEffect, useState, createContext, useContext, useCallback, useRef } from "react";
+import { use, useEffect, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
@@ -57,7 +57,7 @@ const GatewayContext = createContext<GatewayContextValue>({
 });
 
 export function useGateway() {
-  return useContext(GatewayContext);
+  return use(GatewayContext);
 }
 
 export default function RootLayout() {

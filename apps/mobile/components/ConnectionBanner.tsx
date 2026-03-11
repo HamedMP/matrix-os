@@ -53,6 +53,7 @@ const styles = StyleSheet.create({
   retryButton: {
     marginLeft: spacing.sm,
     borderRadius: 4,
+    borderCurve: "continuous" as const,
     backgroundColor: "rgba(255, 255, 255, 0.2)",
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,

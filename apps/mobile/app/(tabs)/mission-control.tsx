@@ -106,15 +106,19 @@ function SwipeableTaskCard({ task, onPress, onComplete, onDelete }: SwipeableTas
       renderRightActions={renderRightActions}
       onSwipeableOpen={(direction) => {
         if (direction === "left") {
-          Haptics.notificationAsync(
-            task.status === "completed"
-              ? Haptics.NotificationFeedbackType.Warning
-              : Haptics.NotificationFeedbackType.Success,
-          );
+          if (process.env.EXPO_OS === "ios") {
+            Haptics.notificationAsync(
+              task.status === "completed"
+                ? Haptics.NotificationFeedbackType.Warning
+                : Haptics.NotificationFeedbackType.Success,
+            );
+          }
           onComplete();
         }
         if (direction === "right") {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          if (process.env.EXPO_OS === "ios") {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          }
           onDelete();
         }
         swipeableRef.current?.close();
@@ -154,7 +158,9 @@ export default function MissionControlScreen() {
   }, [fetchData]);
 
   const handleRefresh = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (process.env.EXPO_OS === "ios") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
     setRefreshing(true);
     await fetchData();
     setRefreshing(false);
@@ -262,6 +268,7 @@ export default function MissionControlScreen() {
         data={filteredTasks}
         renderItem={renderTask}
         keyExtractor={(item) => item.id}
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
@@ -404,6 +411,7 @@ const swipeStyles = StyleSheet.create({
     alignItems: "center",
     width: 90,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     flexDirection: "column",
     gap: 4,
   },
@@ -413,6 +421,7 @@ const swipeStyles = StyleSheet.create({
     alignItems: "center",
     width: 90,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     flexDirection: "column",
     gap: 4,
   },
@@ -471,6 +480,7 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 18,
+    borderCurve: "continuous" as const,
     backgroundColor: colors.light.card,
     alignItems: "center",
     justifyContent: "center",
@@ -516,6 +526,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginBottom: spacing.sm,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
@@ -587,6 +598,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
     paddingHorizontal: spacing.lg,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     borderStyle: "dashed",
@@ -612,21 +624,19 @@ const styles = StyleSheet.create({
     left: spacing.lg,
     right: spacing.lg,
     borderRadius: radius.xl,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
     padding: spacing.lg,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 8,
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.12)",
   },
   addFormInput: {
     fontFamily: fonts.sans,
     fontSize: 15,
     color: colors.light.foreground,
     borderRadius: radius.md,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.background,
@@ -642,6 +652,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     borderRadius: radius.md,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     paddingVertical: 10,
@@ -655,6 +666,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     borderRadius: radius.md,
+    borderCurve: "continuous" as const,
     paddingVertical: 10,
   },
   addFormSubmitActive: {
@@ -685,11 +697,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.light.primary,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: colors.light.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    boxShadow: "0 4px 8px rgba(194, 112, 58, 0.3)",
   },
   fabPressed: {
     opacity: 0.85,

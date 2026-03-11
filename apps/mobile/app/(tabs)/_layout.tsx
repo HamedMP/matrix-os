@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { View, StyleSheet, Platform } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
@@ -84,8 +84,8 @@ const styles = StyleSheet.create({
     position: "absolute" as const,
     borderTopColor: colors.light.border,
     borderTopWidth: StyleSheet.hairlineWidth,
-    height: Platform.OS === "ios" ? 88 : 64,
-    paddingBottom: Platform.OS === "ios" ? 28 : 8,
+    height: process.env.EXPO_OS === "ios" ? 88 : 64,
+    paddingBottom: process.env.EXPO_OS === "ios" ? 28 : 8,
     paddingTop: 8,
   },
   tabBarLabel: {

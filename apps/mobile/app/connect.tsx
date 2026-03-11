@@ -9,7 +9,6 @@ import {
   Alert,
   StyleSheet,
   KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -118,11 +117,12 @@ export default function ConnectScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
     >
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
+        contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
@@ -317,6 +317,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
@@ -344,6 +345,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     borderWidth: 1,
     borderColor: colors.light.border,
     backgroundColor: colors.light.card,
@@ -361,18 +363,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     borderRadius: radius.lg,
+    borderCurve: "continuous" as const,
     backgroundColor: colors.light.primary,
     paddingVertical: 14,
-    shadowColor: colors.light.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 3,
+    boxShadow: "0 3px 6px rgba(194, 112, 58, 0.2)",
   },
   connectButtonDisabled: {
     backgroundColor: colors.light.muted,
-    shadowOpacity: 0,
-    elevation: 0,
+    boxShadow: "none",
   },
   connectButtonText: {
     fontFamily: fonts.sansSemiBold,
