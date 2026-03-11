@@ -383,9 +383,10 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
 
   const loadModules = useCallback(async () => {
     try {
-      const [layoutRes, modulesRes] = await Promise.all([
+      const [layoutRes, modulesRes, appsRes] = await Promise.all([
         fetch(`${GATEWAY_URL}/api/layout`).catch(() => null),
         fetch(`${GATEWAY_URL}/files/system/modules.json`).catch(() => null),
+        fetch(`${GATEWAY_URL}/api/apps`).catch(() => null),
       ]);
 
       const savedLayout: { windows?: LayoutWindow[] } =
@@ -393,41 +394,60 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       const savedWindows = savedLayout.windows ?? [];
       const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
 
-      if (!modulesRes?.ok) return;
-      const registry: ModuleRegistryEntry[] = await modulesRes.json();
-
       const layoutToLoad: LayoutWindow[] = [];
 
-      for (const mod of registry) {
-        if (mod.status !== "active") continue;
+      // Load pre-installed apps from /api/apps (apps/ directory)
+      if (appsRes?.ok) {
+        const appsList: { name: string; path: string; icon?: string }[] = await appsRes.json();
+        for (const app of appsList) {
+          // path from API is like "/files/apps/calculator/index.html"
+          // strip leading "/files/" to get relative path for AppViewer
+          const relativePath = app.path.replace(/^\/files\//, "");
+          addApp(app.name, relativePath);
 
-        try {
-          let metaRes = await fetch(
-            `${GATEWAY_URL}/files/modules/${mod.name}/module.json`,
-          );
-          if (!metaRes.ok) {
-            metaRes = await fetch(
-              `${GATEWAY_URL}/files/modules/${mod.name}/manifest.json`,
-            );
-          }
-          if (!metaRes.ok) continue;
-          const meta: ModuleMeta = await metaRes.json();
-          const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
-          const path = `modules/${mod.name}/${entryFile}`;
-
-          const moduleIconUrl = meta.icon
-            ? `${GATEWAY_URL}/files/modules/${mod.name}/${meta.icon}`
-            : undefined;
-          addApp(meta.name, path, moduleIconUrl);
-
-          const saved = layoutMap.get(path);
+          const saved = layoutMap.get(relativePath);
           if (saved) {
             layoutToLoad.push(saved);
-          } else {
-            openWindow(meta.name, path);
           }
-        } catch {
-          // module.json missing or invalid, skip
+          // Don't auto-open pre-installed apps - let users open from dock/store
+        }
+      }
+
+      // Load modules from modules.json (Node/Python apps with ports)
+      if (modulesRes?.ok) {
+        const registry: ModuleRegistryEntry[] = await modulesRes.json();
+
+        for (const mod of registry) {
+          if (mod.status !== "active") continue;
+
+          try {
+            let metaRes = await fetch(
+              `${GATEWAY_URL}/files/modules/${mod.name}/module.json`,
+            );
+            if (!metaRes.ok) {
+              metaRes = await fetch(
+                `${GATEWAY_URL}/files/modules/${mod.name}/manifest.json`,
+              );
+            }
+            if (!metaRes.ok) continue;
+            const meta: ModuleMeta = await metaRes.json();
+            const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
+            const path = `modules/${mod.name}/${entryFile}`;
+
+            const moduleIconUrl = meta.icon
+              ? `${GATEWAY_URL}/files/modules/${mod.name}/${meta.icon}`
+              : undefined;
+            addApp(meta.name, path, moduleIconUrl);
+
+            const saved = layoutMap.get(path);
+            if (saved) {
+              layoutToLoad.push(saved);
+            } else {
+              openWindow(meta.name, path);
+            }
+          } catch {
+            // module.json missing or invalid, skip
+          }
         }
       }
 
@@ -435,7 +455,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         wmLoadLayout(layoutToLoad);
       }
     } catch {
-      // modules.json not available yet
+      // modules.json or apps not available yet
     }
   }, [addApp, openWindow, wmLoadLayout]);
 
