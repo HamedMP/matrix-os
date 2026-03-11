@@ -73,4 +73,56 @@ function runMigrations(sqlite: InstanceType<typeof Database>) {
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
     USING fts5(content, content_rowid='rowid')
   `).run();
+
+  // Social tables
+  sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS social_posts (
+      id TEXT PRIMARY KEY,
+      author_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      type TEXT NOT NULL,
+      media_urls TEXT,
+      app_ref TEXT,
+      parent_id TEXT,
+      likes_count INTEGER NOT NULL DEFAULT 0,
+      comments_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+
+  sqlite.prepare("CREATE INDEX IF NOT EXISTS idx_posts_author ON social_posts(author_id)").run();
+  sqlite.prepare("CREATE INDEX IF NOT EXISTS idx_posts_type ON social_posts(type)").run();
+  sqlite.prepare("CREATE INDEX IF NOT EXISTS idx_posts_created ON social_posts(created_at)").run();
+  sqlite.prepare("CREATE INDEX IF NOT EXISTS idx_posts_likes ON social_posts(likes_count)").run();
+  sqlite.prepare("CREATE INDEX IF NOT EXISTS idx_posts_parent ON social_posts(parent_id)").run();
+
+  sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS social_likes (
+      post_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+
+  sqlite.prepare(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_likes_post_user ON social_likes(post_id, user_id)",
+  ).run();
+
+  sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS social_follows (
+      follower_id TEXT NOT NULL,
+      followee_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+
+  sqlite.prepare(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_follows_pair ON social_follows(follower_id, followee_id)",
+  ).run();
+  sqlite.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_follows_follower ON social_follows(follower_id)",
+  ).run();
+  sqlite.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_follows_followee ON social_follows(followee_id)",
+  ).run();
 }

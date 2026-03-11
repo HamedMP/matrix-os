@@ -51,6 +51,8 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { createSocialRoutes, insertPost } from "./social.js";
+import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
 import {
   metricsRegistry,
@@ -929,6 +931,20 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
+
+  // T2030-T2037: Social API routes
+  const getCurrentUser = () => {
+    const identity = loadHandle(homePath);
+    return identity.handle || "@me";
+  };
+  const socialRoutes = createSocialRoutes(dispatcher.db, getCurrentUser);
+  app.route("/api/social", socialRoutes);
+
+  // T2036: Activity auto-posting
+  const activityService = createActivityService({
+    homePath,
+    createPost: (post) => insertPost(dispatcher.db, post),
+  });
 
   // T946: Plugin list endpoint
   app.get("/api/plugins", (c) => {

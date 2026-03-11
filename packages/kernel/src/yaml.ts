@@ -36,15 +36,23 @@ export function parse(yamlStr: string): Record<string, unknown> {
       }
 
       // Parse value
-      const numVal = Number(rawVal);
-      if (!Number.isNaN(numVal) && rawVal !== "") {
-        result[key] = numVal;
-      } else if (rawVal === "true") {
-        result[key] = true;
-      } else if (rawVal === "false") {
-        result[key] = false;
+      if (rawVal === "[]") {
+        result[key] = [];
+      } else if (rawVal.startsWith("[") && rawVal.endsWith("]")) {
+        // Inline array: [a, b, c]
+        const inner = rawVal.slice(1, -1).trim();
+        result[key] = inner === "" ? [] : inner.split(",").map((s) => s.trim());
       } else {
-        result[key] = rawVal;
+        const numVal = Number(rawVal);
+        if (!Number.isNaN(numVal) && rawVal !== "") {
+          result[key] = numVal;
+        } else if (rawVal === "true") {
+          result[key] = true;
+        } else if (rawVal === "false") {
+          result[key] = false;
+        } else {
+          result[key] = rawVal;
+        }
       }
 
       currentKey = key;

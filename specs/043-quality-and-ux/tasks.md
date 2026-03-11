@@ -32,14 +32,14 @@
 
 ## Phase D: Social Network Backend (8 tasks)
 
-- [ ] T2030 - Social database schema (posts, follows, likes tables via Drizzle)
-- [ ] T2031 - Social API: posts CRUD (GET/POST/DELETE /api/social/posts)
-- [ ] T2032 - Social API: feed (GET /api/social/feed, paginated, follow-based)
-- [ ] T2033 - Social API: follows (POST/DELETE/GET followers/following)
-- [ ] T2034 - Social API: likes (POST toggle, GET likers)
-- [ ] T2035 - Social API: user discovery (GET /api/social/users, profiles+stats)
-- [ ] T2036 - Activity auto-posting (app creation, game scores -> social posts)
-- [ ] T2037 - Social config file (~/system/social-config.json controls)
+- [x] T2030 - Social database schema (posts, follows, likes tables via Drizzle)
+- [x] T2031 - Social API: posts CRUD (GET/POST/DELETE /api/social/posts)
+- [x] T2032 - Social API: feed (GET /api/social/feed, paginated, follow-based)
+- [x] T2033 - Social API: follows (POST/DELETE/GET followers/following)
+- [x] T2034 - Social API: likes (POST toggle, GET likers)
+- [x] T2035 - Social API: user discovery (GET /api/social/users, profiles+stats)
+- [x] T2036 - Activity auto-posting (app creation, game scores -> social posts)
+- [x] T2037 - Social config file (~/system/social-config.json controls)
 
 ## Phase E: Social & Messaging Apps (6 tasks)
 
