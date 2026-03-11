@@ -1,0 +1,42 @@
+jest.mock("expo-haptics", () => ({
+  impactAsync: jest.fn(),
+  notificationAsync: jest.fn(),
+  ImpactFeedbackStyle: { Light: "light", Medium: "medium", Heavy: "heavy" },
+  NotificationFeedbackType: {
+    Success: "success",
+    Error: "error",
+    Warning: "warning",
+  },
+}));
+
+jest.mock("expo-clipboard", () => ({
+  setStringAsync: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock("@expo/vector-icons", () => {
+  const { Text } = require("react-native");
+  return {
+    Ionicons: (props) => {
+      const mockReact = require("react");
+      return mockReact.createElement(
+        Text,
+        { testID: `icon-${props.name}` },
+        props.name,
+      );
+    },
+  };
+});
+
+jest.mock("expo-blur", () => {
+  const { View } = require("react-native");
+  return {
+    BlurView: (props) => {
+      const mockReact = require("react");
+      return mockReact.createElement(
+        View,
+        { testID: "blur-view", ...props },
+        props.children,
+      );
+    },
+  };
+});
