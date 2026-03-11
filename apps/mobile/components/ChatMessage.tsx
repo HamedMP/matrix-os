@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, memo } from "react";
 import { View, Text, ScrollView, Pressable, Image, Linking, StyleSheet } from "react-native";
 import Animated, { FadeInLeft, FadeInRight } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
@@ -40,6 +40,9 @@ const timestampAlignStyles: Record<Message["role"], object> = {
   system: { alignSelf: "center" as const },
   tool: { alignSelf: "flex-start" as const },
 };
+
+const ENTERING_USER = FadeInRight.duration(200);
+const ENTERING_OTHER = FadeInLeft.duration(200);
 
 const IMAGE_EXTENSIONS = /\.(png|jpg|jpeg|gif|webp|svg)$/i;
 
@@ -158,14 +161,14 @@ function renderInlineMarkdown(
   return elements;
 }
 
-export function ChatMessage({ message, gatewayUrl }: { message: Message; gatewayUrl?: string }) {
+export const ChatMessage = memo(function ChatMessage({ message, gatewayUrl }: { message: Message; gatewayUrl?: string }) {
   const isCode = message.content.includes("```");
   const imageMatches = extractImageLinks(message.content);
   const fileMatches = extractFileLinks(message.content);
 
   const entering = message.role === "user"
-    ? FadeInRight.duration(200)
-    : FadeInLeft.duration(200);
+    ? ENTERING_USER
+    : ENTERING_OTHER;
 
   return (
     <Animated.View entering={entering}>
@@ -192,7 +195,11 @@ export function ChatMessage({ message, gatewayUrl }: { message: Message; gateway
       </Text>
     </Animated.View>
   );
-}
+}, (prev, next) =>
+  prev.message.id === next.message.id &&
+  prev.message.content === next.message.content &&
+  prev.gatewayUrl === next.gatewayUrl,
+);
 
 function extractImageLinks(content: string): { alt: string; path: string }[] {
   const results: { alt: string; path: string }[] = [];

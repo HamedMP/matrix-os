@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -212,12 +212,12 @@ export default function MissionControlScreen() {
     );
   }, [client]);
 
-  const counts = {
+  const counts = useMemo(() => ({
     all: tasks.length,
     pending: tasks.filter((t) => t.status === "pending").length,
     "in-progress": tasks.filter((t) => t.status === "in-progress").length,
     completed: tasks.filter((t) => t.status === "completed").length,
-  };
+  }), [tasks]);
 
   const filteredTasks = filter === "all"
     ? tasks
@@ -395,8 +395,12 @@ export default function MissionControlScreen() {
           onClose={() => setSelectedTask(null)}
           onStatusChange={async (taskId, status) => {
             if (!client) return;
-            await client.updateTask(taskId, { status });
-            await fetchData();
+            try {
+              await client.updateTask(taskId, { status });
+              await fetchData();
+            } catch {
+              Alert.alert("Error", "Failed to update task status");
+            }
           }}
         />
       )}

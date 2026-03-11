@@ -16,6 +16,7 @@ import Animated, {
   useAnimatedStyle,
   withRepeat,
   withTiming,
+  cancelAnimation,
 } from "react-native-reanimated";
 import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
@@ -52,6 +53,7 @@ function TypingIndicator() {
 
   useEffect(() => {
     opacity.value = withRepeat(withTiming(1, { duration: 600 }), -1, true);
+    return () => cancelAnimation(opacity);
   }, []);
 
   const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
@@ -127,11 +129,11 @@ export default function ChatScreen() {
     getOutboundQueue().then((q) => setQueueCount(q.length));
   }, []);
 
-  // Save messages to cache when they change
+  // Save messages to cache (debounced to avoid writes during streaming)
   useEffect(() => {
-    if (messages.length > 0) {
-      setCachedMessages(messages);
-    }
+    if (messages.length === 0) return;
+    const timer = setTimeout(() => setCachedMessages(messages), 1000);
+    return () => clearTimeout(timer);
   }, [messages]);
 
   // Flush outbound queue on reconnect
@@ -141,32 +143,30 @@ export default function ChatScreen() {
       prevConnectionState.current !== "connected" &&
       client
     ) {
-      flushQueue();
+      const c = client;
+      (async () => {
+        const queue = await getOutboundQueue();
+        if (queue.length === 0) return;
+
+        const failed: QueuedMessage[] = [];
+        for (const msg of queue) {
+          const sent = c.sendMessage(msg.text, msg.sessionId);
+          if (!sent) {
+            if (canRetry(msg)) {
+              failed.push({ ...msg, retries: msg.retries + 1 });
+            }
+          }
+        }
+
+        await clearOutboundQueue();
+        for (const msg of failed) {
+          await addToOutboundQueue(msg);
+        }
+        setQueueCount(failed.length);
+      })();
     }
     prevConnectionState.current = connectionState;
   }, [connectionState, client]);
-
-  async function flushQueue() {
-    if (!client) return;
-    const queue = await getOutboundQueue();
-    if (queue.length === 0) return;
-
-    const failed: QueuedMessage[] = [];
-    for (const msg of queue) {
-      const sent = client.sendMessage(msg.text, msg.sessionId);
-      if (!sent) {
-        if (canRetry(msg)) {
-          failed.push({ ...msg, retries: msg.retries + 1 });
-        }
-      }
-    }
-
-    await clearOutboundQueue();
-    for (const msg of failed) {
-      await addToOutboundQueue(msg);
-    }
-    setQueueCount(failed.length);
-  }
 
   useEffect(() => {
     if (!client) return;
@@ -206,7 +206,7 @@ export default function ChatScreen() {
           break;
         case "kernel:tool_end":
           setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.role === "tool" && m.content.startsWith("Using "));
+            const idx = prev.findLastIndex((m) => m.role === "tool" && m.content.startsWith("Using "));
             if (idx >= 0) {
               const updated = { ...prev[idx], content: prev[idx].content.replace("Using ", "Used ") };
               return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)];

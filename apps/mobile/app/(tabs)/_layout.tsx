@@ -5,14 +5,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { colors, fonts } from "@/lib/theme";
 
-function TabIcon({ name, focused }: { name: string; focused: boolean }) {
-  const iconMap: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
-    chat: { outline: "chatbubble-outline", filled: "chatbubble" },
-    "mission-control": { outline: "grid-outline", filled: "grid" },
-    settings: { outline: "settings-outline", filled: "settings" },
-  };
+const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
+  chat: { outline: "chatbubble-outline", filled: "chatbubble" },
+  "mission-control": { outline: "grid-outline", filled: "grid" },
+  settings: { outline: "settings-outline", filled: "settings" },
+};
 
-  const icons = iconMap[name];
+function TabIcon({ name, focused }: { name: string; focused: boolean }) {
+  const icons = TAB_ICONS[name];
   if (!icons) return null;
 
   return (
