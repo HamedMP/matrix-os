@@ -5,6 +5,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.docker.example
 
 .DS_STORE
 coverage/
@@ -48,3 +49,11 @@ shell/e2e/playwright-report/
 .zencoder/
 skills/
 skills-lock.json
+
+# LaTeX build artifacts
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.pdf
