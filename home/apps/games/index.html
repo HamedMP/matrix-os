@@ -3,170 +3,774 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Games</title>
+<title>Game Center</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #0a0a0a;
-  color: #e0e0e0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  padding: 24px;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-fg, #1c1917);
+  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
   min-height: 100vh;
+  padding: 20px;
 }
-h1 {
-  font-size: 22px;
+
+.header {
+  max-width: 960px;
+  margin: 0 auto 20px;
+}
+
+.header h1 {
+  font-size: 24px;
   font-weight: 700;
   margin-bottom: 4px;
-  color: #fff;
 }
-.subtitle {
+
+.header .subtitle {
   font-size: 13px;
-  color: #666;
-  margin-bottom: 20px;
+  color: var(--matrix-muted-fg, #78716c);
+  margin-bottom: 16px;
 }
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 12px;
-}
-.game-card {
-  background: #161616;
-  border: 1px solid #222;
+
+.search-bar {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--matrix-card-bg, #ffffff);
+  color: var(--matrix-fg, #1c1917);
+  border: 1px solid var(--matrix-border, #d8d0de);
   border-radius: 10px;
-  padding: 16px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.search-bar:focus {
+  border-color: var(--matrix-accent, #c2703a);
+}
+
+.search-bar::placeholder {
+  color: var(--matrix-muted-fg, #78716c);
+}
+
+.filter-bar {
+  max-width: 960px;
+  margin: 0 auto 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filter-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.filter-tab {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--matrix-border, #d8d0de);
+  background: var(--matrix-card-bg, #ffffff);
+  color: var(--matrix-fg, #1c1917);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.filter-tab:hover {
+  border-color: var(--matrix-accent, #c2703a);
+}
+
+.filter-tab.active {
+  background: var(--matrix-accent, #c2703a);
+  color: #ffffff;
+  border-color: var(--matrix-accent, #c2703a);
+}
+
+.sort-select {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--matrix-border, #d8d0de);
+  background: var(--matrix-card-bg, #ffffff);
+  color: var(--matrix-fg, #1c1917);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.section-title {
+  max-width: 960px;
+  margin: 0 auto 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--matrix-muted-fg, #78716c);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.grid {
+  max-width: 960px;
+  margin: 0 auto 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.game-card {
+  background: var(--matrix-card-bg, #ffffff);
+  border: 1px solid var(--matrix-border, #d8d0de);
+  border-radius: 14px;
+  padding: 20px 16px 16px;
   text-align: center;
   cursor: pointer;
   transition: all 0.15s ease;
+  position: relative;
 }
+
 .game-card:hover {
-  background: #1a1a1a;
-  border-color: #333;
+  border-color: var(--matrix-accent, #c2703a);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
+
 .game-icon {
-  font-size: 36px;
-  margin-bottom: 8px;
+  font-size: 40px;
+  margin-bottom: 10px;
   display: block;
+  line-height: 1;
 }
+
 .game-name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  margin-bottom: 2px;
-  color: #fff;
+  margin-bottom: 3px;
 }
+
 .game-desc {
-  font-size: 11px;
-  color: #666;
-  line-height: 1.3;
+  font-size: 12px;
+  color: var(--matrix-muted-fg, #78716c);
+  line-height: 1.4;
+  margin-bottom: 8px;
 }
-.game-score {
+
+.game-tags {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.tag-badge {
   font-size: 10px;
-  color: #4ade80;
-  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(194, 112, 58, 0.1);
+  color: var(--matrix-accent, #c2703a);
+  border: 1px solid rgba(194, 112, 58, 0.2);
+}
+
+.game-score {
+  font-size: 12px;
+  color: var(--matrix-accent, #c2703a);
+  font-weight: 600;
+}
+
+.new-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #22c55e;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.play-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 20px;
+  border-radius: 8px;
+  background: var(--matrix-accent, #c2703a);
+  color: #ffffff;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-family: inherit;
+}
+
+.play-btn:hover {
+  opacity: 0.9;
+}
+
+.empty-state {
+  max-width: 960px;
+  margin: 0 auto;
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--matrix-muted-fg, #78716c);
+}
+
+.empty-state h2 {
+  font-size: 18px;
+  margin-bottom: 8px;
+  color: var(--matrix-fg, #1c1917);
+}
+
+.empty-state p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.leaderboard-section {
+  max-width: 960px;
+  margin: 0 auto 24px;
+}
+
+.leaderboard-list {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.leaderboard-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--matrix-card-bg, #ffffff);
+  border: 1px solid var(--matrix-border, #d8d0de);
+  border-radius: 10px;
+  min-width: 180px;
+  flex-shrink: 0;
+}
+
+.lb-rank {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--matrix-accent, #c2703a);
+  min-width: 24px;
+}
+
+.lb-info {
+  flex: 1;
+}
+
+.lb-game {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lb-score {
+  font-size: 12px;
+  color: var(--matrix-muted-fg, #78716c);
+}
+
+@media (max-width: 600px) {
+  body { padding: 14px; }
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  .game-card { padding: 14px 12px 12px; }
+  .game-icon { font-size: 32px; }
+}
+
+@media (max-width: 400px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 </style>
 </head>
 <body>
 
-<h1>Games</h1>
-<p class="subtitle">Click a game to play</p>
+<div class="header">
+  <h1>Game Center</h1>
+  <p class="subtitle">Browse, discover, and play games</p>
+  <input type="text" class="search-bar" id="search" placeholder="Search games...">
+</div>
 
+<div class="filter-bar">
+  <div class="filter-tabs" id="filterTabs"></div>
+  <select class="sort-select" id="sortSelect">
+    <option value="az">A-Z</option>
+    <option value="recent">Recently Played</option>
+    <option value="score">Highest Score</option>
+  </select>
+</div>
+
+<div id="recentSection" style="display:none">
+  <div class="section-title">Recently Played</div>
+  <div class="grid" id="recentGrid"></div>
+</div>
+
+<div id="leaderboardSection" style="display:none">
+  <div class="section-title">Leaderboard</div>
+  <div class="leaderboard-section">
+    <div class="leaderboard-list" id="leaderboardList"></div>
+  </div>
+</div>
+
+<div class="section-title" id="allGamesLabel">All Games</div>
 <div class="grid" id="grid"></div>
 
+<div class="empty-state" id="emptyState" style="display:none">
+  <h2>No games found</h2>
+  <p>No games match your search. Ask your AI to build one!</p>
+</div>
+
+<div class="empty-state" id="noGamesState" style="display:none">
+  <h2>No games installed</h2>
+  <p>Ask your AI to build one! Try: "Build me a game"</p>
+</div>
+
 <script>
-const GAMES = [
-  { name: 'Solitaire', desc: 'Classic Klondike card game', icon: '\u2660', path: 'solitaire/index.html' },
-  { name: 'Chess', desc: 'Play against AI', icon: '\u265E', path: 'chess/index.html' },
-  { name: 'Tetris', desc: 'Block stacking puzzle', icon: '\u25A3', path: 'tetris/index.html' },
-  { name: 'Snake', desc: 'Classic arcade game', icon: '\u2740', path: 'snake/index.html' },
-  { name: '2048', desc: 'Merge tiles to win', icon: '\u2B1A', path: '2048/index.html' },
-  { name: 'Minesweeper', desc: 'Clear the minefield', icon: '\u2739', path: 'minesweeper/index.html' },
-  { name: 'Backgammon', desc: 'Play against AI', icon: '\u2680', path: 'backgammon/index.html' },
-];
-
 const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+const APPS_URL = window.location.origin + '/api/apps';
+const LEADERBOARD_URL = window.location.origin + '/api/games/leaderboard';
 
-const SCORE_CONFIG = {
-  'Snake':       { app: 'snake', key: 'highscore' },
-  '2048':        { app: '2048', key: 'best' },
-  'Tetris':      { app: 'tetris', key: 'best' },
-  'Chess':       { app: 'chess', key: 'stats' },
-  'Minesweeper': { app: 'minesweeper', key: 'best-beginner' },
-  'Solitaire':   { app: 'solitaire', key: 'wins' },
-  'Backgammon':  { app: 'backgammon', key: 'stats' },
+const GAME_ICONS = {
+  snake: '\u2740',
+  '2048': '\u2B1A',
+  tetris: '\u25A3',
+  chess: '\u265E',
+  solitaire: '\u2660',
+  minesweeper: '\u2739',
+  backgammon: '\u2680',
 };
 
-function formatScore(gameName, value) {
+const SCORE_CONFIG = {
+  snake: { app: 'snake', key: 'highscore' },
+  '2048': { app: '2048', key: 'best' },
+  tetris: { app: 'tetris', key: 'best' },
+  chess: { app: 'chess', key: 'stats' },
+  minesweeper: { app: 'minesweeper', key: 'best-beginner' },
+  solitaire: { app: 'solitaire', key: 'wins' },
+  backgammon: { app: 'backgammon', key: 'stats' },
+};
+
+const CATEGORIES = ['All', 'Puzzle', 'Board', 'Arcade', 'Strategy', 'Card'];
+
+let allGames = [];
+let recentGames = [];
+let scores = {};
+let leaderboard = [];
+let activeCategory = 'All';
+let searchQuery = '';
+let sortMode = 'az';
+
+function slugFromPath(path) {
+  const match = path.match(/\/files\/apps\/games\/([^/]+)\//);
+  return match ? match[1] : '';
+}
+
+function formatScore(slug, value) {
   if (value == null) return '';
-  if (gameName === 'Chess' && typeof value === 'object') {
-    return 'W/L/D: ' + (value.wins || 0) + '/' + (value.losses || 0) + '/' + (value.draws || 0);
+  if ((slug === 'chess' || slug === 'backgammon') && typeof value === 'object') {
+    const w = value.wins || 0;
+    const l = value.losses || 0;
+    if (slug === 'chess') {
+      const d = value.draws || 0;
+      return 'W/L/D: ' + w + '/' + l + '/' + d;
+    }
+    return 'W/L: ' + w + '/' + l;
   }
-  if (gameName === 'Backgammon' && typeof value === 'object') {
-    return 'W/L: ' + (value.wins || 0) + '/' + (value.losses || 0);
-  }
-  if (gameName === 'Minesweeper') return 'Best: ' + value + 's';
-  if (gameName === 'Solitaire') return 'Wins: ' + value;
+  if (slug === 'minesweeper') return 'Best: ' + value + 's';
+  if (slug === 'solitaire') return 'Wins: ' + value;
   return 'Best: ' + value;
 }
 
-async function fetchScore(app, key) {
+async function bridgeRead(app, key) {
   try {
     const res = await fetch(BRIDGE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'read', app, key }),
+      body: JSON.stringify({ action: 'read', app: app, key: key }),
     });
     if (!res.ok) return null;
     const data = await res.json();
-    return data.value != null ? data.value : null;
+    return data != null ? (data.value != null ? data.value : data) : null;
   } catch {
     return null;
   }
 }
 
-const grid = document.getElementById('grid');
-const scoreElements = {};
+async function bridgeWrite(app, key, value) {
+  try {
+    await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'write', app: app, key: key, value: JSON.stringify(value) }),
+    });
+  } catch {}
+}
 
-for (const game of GAMES) {
-  const card = document.createElement('div');
+async function fetchGames() {
+  try {
+    const res = await fetch(APPS_URL);
+    if (!res.ok) return [];
+    const apps = await res.json();
+    return apps.filter(function(a) {
+      return a.category === 'games' && a.file !== 'games/index.html' && a.name !== 'Game Center';
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function fetchLeaderboard() {
+  try {
+    const res = await fetch(LEADERBOARD_URL);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRecentGames() {
+  const data = await bridgeRead('game-center', 'recent');
+  if (data) {
+    try {
+      return typeof data === 'string' ? JSON.parse(data) : data;
+    } catch {}
+  }
+  return [];
+}
+
+async function saveRecentGame(slug) {
+  let recent = await fetchRecentGames();
+  recent = recent.filter(function(r) { return r !== slug; });
+  recent.unshift(slug);
+  if (recent.length > 5) recent = recent.slice(0, 5);
+  recentGames = recent;
+  await bridgeWrite('game-center', 'recent', recent);
+}
+
+function isNewGame(game) {
+  if (game.createdAt) {
+    const created = new Date(game.createdAt).getTime();
+    return Date.now() - created < 24 * 60 * 60 * 1000;
+  }
+  return false;
+}
+
+function getFilteredGames() {
+  let games = allGames;
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    games = games.filter(function(g) {
+      return g.name.toLowerCase().indexOf(q) >= 0 ||
+        (g.description || '').toLowerCase().indexOf(q) >= 0 ||
+        (g.tags || []).some(function(t) { return t.toLowerCase().indexOf(q) >= 0; });
+    });
+  }
+
+  if (activeCategory !== 'All') {
+    const cat = activeCategory.toLowerCase();
+    games = games.filter(function(g) {
+      return (g.tags || []).some(function(t) { return t.toLowerCase() === cat; });
+    });
+  }
+
+  if (sortMode === 'az') {
+    games = games.slice().sort(function(a, b) { return a.name.localeCompare(b.name); });
+  } else if (sortMode === 'recent') {
+    games = games.slice().sort(function(a, b) {
+      var ai = recentGames.indexOf(slugFromPath(a.path));
+      var bi = recentGames.indexOf(slugFromPath(b.path));
+      if (ai === -1 && bi === -1) return a.name.localeCompare(b.name);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+  } else if (sortMode === 'score') {
+    games = games.slice().sort(function(a, b) {
+      var sa = getNumericScore(slugFromPath(a.path));
+      var sb = getNumericScore(slugFromPath(b.path));
+      return sb - sa;
+    });
+  }
+
+  return games;
+}
+
+function getNumericScore(slug) {
+  var val = scores[slug];
+  if (val == null) return 0;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'object' && val.wins != null) return val.wins;
+  return 0;
+}
+
+function openGame(game) {
+  var slug = slugFromPath(game.path);
+  saveRecentGame(slug);
+
+  if (window.MatrixOS && typeof window.MatrixOS.openApp === 'function') {
+    window.MatrixOS.openApp(game.name, game.path);
+  } else {
+    window.location.href = slug + '/index.html';
+  }
+}
+
+function renderFilterTabs() {
+  var container = document.getElementById('filterTabs');
+  container.innerHTML = '';
+  CATEGORIES.forEach(function(cat) {
+    var btn = document.createElement('button');
+    btn.className = 'filter-tab' + (cat === activeCategory ? ' active' : '');
+    btn.textContent = cat;
+    btn.addEventListener('click', function() {
+      activeCategory = cat;
+      renderFilterTabs();
+      renderGames();
+    });
+    container.appendChild(btn);
+  });
+}
+
+function renderGameCard(game, container) {
+  var slug = slugFromPath(game.path);
+  var card = document.createElement('div');
   card.className = 'game-card';
 
-  const icon = document.createElement('span');
+  if (isNewGame(game)) {
+    var newBadge = document.createElement('span');
+    newBadge.className = 'new-badge';
+    newBadge.textContent = 'New!';
+    card.appendChild(newBadge);
+  }
+
+  var icon = document.createElement('span');
   icon.className = 'game-icon';
-  icon.textContent = game.icon;
+  icon.textContent = GAME_ICONS[slug] || '\u{1F3AE}';
   card.appendChild(icon);
 
-  const name = document.createElement('div');
+  var name = document.createElement('div');
   name.className = 'game-name';
   name.textContent = game.name;
   card.appendChild(name);
 
-  const desc = document.createElement('div');
+  var desc = document.createElement('div');
   desc.className = 'game-desc';
-  desc.textContent = game.desc;
+  desc.textContent = game.description || '';
   card.appendChild(desc);
 
-  const scoreEl = document.createElement('div');
+  if (game.tags && game.tags.length > 0) {
+    var tagsEl = document.createElement('div');
+    tagsEl.className = 'game-tags';
+    game.tags.forEach(function(tag) {
+      var badge = document.createElement('span');
+      badge.className = 'tag-badge';
+      badge.textContent = tag;
+      tagsEl.appendChild(badge);
+    });
+    card.appendChild(tagsEl);
+  }
+
+  var scoreEl = document.createElement('div');
   scoreEl.className = 'game-score';
+  scoreEl.dataset.slug = slug;
+  var scoreText = formatScore(slug, scores[slug]);
+  if (scoreText) scoreEl.textContent = scoreText;
   card.appendChild(scoreEl);
-  scoreElements[game.name] = scoreEl;
 
-  card.addEventListener('click', () => {
-    window.location.href = game.path;
+  var playBtn = document.createElement('button');
+  playBtn.className = 'play-btn';
+  playBtn.textContent = 'Play';
+  playBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    openGame(game);
+  });
+  card.appendChild(playBtn);
+
+  card.addEventListener('click', function() {
+    openGame(game);
   });
 
-  grid.appendChild(card);
+  container.appendChild(card);
 }
 
-for (const game of GAMES) {
-  const cfg = SCORE_CONFIG[game.name];
-  if (!cfg) continue;
-  fetchScore(cfg.app, cfg.key).then(value => {
-    const text = formatScore(game.name, value);
-    if (text) scoreElements[game.name].textContent = text;
+function renderRecentSection() {
+  var section = document.getElementById('recentSection');
+  var grid = document.getElementById('recentGrid');
+  grid.innerHTML = '';
+
+  if (recentGames.length === 0 || searchQuery || activeCategory !== 'All') {
+    section.style.display = 'none';
+    return;
+  }
+
+  var recentApps = recentGames
+    .map(function(slug) {
+      return allGames.find(function(g) { return slugFromPath(g.path) === slug; });
+    })
+    .filter(Boolean);
+
+  if (recentApps.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = '';
+  recentApps.forEach(function(game) {
+    renderGameCard(game, grid);
   });
 }
+
+function renderLeaderboard() {
+  var section = document.getElementById('leaderboardSection');
+  var list = document.getElementById('leaderboardList');
+  list.innerHTML = '';
+
+  if (leaderboard.length === 0 || searchQuery) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = '';
+  leaderboard.slice(0, 5).forEach(function(entry, i) {
+    var item = document.createElement('div');
+    item.className = 'leaderboard-item';
+
+    var rank = document.createElement('div');
+    rank.className = 'lb-rank';
+    rank.textContent = '#' + (i + 1);
+    item.appendChild(rank);
+
+    var info = document.createElement('div');
+    info.className = 'lb-info';
+
+    var gameName = document.createElement('div');
+    gameName.className = 'lb-game';
+    var matchedGame = allGames.find(function(g) { return slugFromPath(g.path) === entry.game; });
+    gameName.textContent = matchedGame ? matchedGame.name : entry.game;
+    info.appendChild(gameName);
+
+    var score = document.createElement('div');
+    score.className = 'lb-score';
+    score.textContent = 'Score: ' + entry.score;
+    info.appendChild(score);
+
+    item.appendChild(info);
+    list.appendChild(item);
+  });
+}
+
+function renderGames() {
+  var filtered = getFilteredGames();
+  var grid = document.getElementById('grid');
+  var emptyState = document.getElementById('emptyState');
+  var noGamesState = document.getElementById('noGamesState');
+  var label = document.getElementById('allGamesLabel');
+
+  grid.innerHTML = '';
+
+  if (allGames.length === 0) {
+    grid.style.display = 'none';
+    label.style.display = 'none';
+    emptyState.style.display = 'none';
+    noGamesState.style.display = '';
+    return;
+  }
+
+  noGamesState.style.display = 'none';
+
+  if (filtered.length === 0) {
+    grid.style.display = 'none';
+    label.style.display = 'none';
+    emptyState.style.display = '';
+    return;
+  }
+
+  grid.style.display = '';
+  label.style.display = '';
+  emptyState.style.display = 'none';
+
+  filtered.forEach(function(game) {
+    renderGameCard(game, grid);
+  });
+
+  renderRecentSection();
+  renderLeaderboard();
+}
+
+async function fetchScores() {
+  var promises = allGames.map(function(game) {
+    var slug = slugFromPath(game.path);
+    var cfg = SCORE_CONFIG[slug];
+    if (!cfg) return Promise.resolve();
+    return bridgeRead(cfg.app, cfg.key).then(function(value) {
+      if (value != null) {
+        scores[slug] = value;
+        var el = document.querySelector('.game-score[data-slug="' + slug + '"]');
+        if (el) {
+          var text = formatScore(slug, value);
+          if (text) el.textContent = text;
+        }
+      }
+    });
+  });
+  await Promise.all(promises);
+}
+
+async function init() {
+  renderFilterTabs();
+
+  var gamesPromise = fetchGames();
+  var recentPromise = fetchRecentGames();
+  var leaderboardPromise = fetchLeaderboard();
+
+  allGames = await gamesPromise;
+
+  // Attach tags from manifest (listApps may not include tags yet, but manifests have them)
+  // The /api/apps endpoint returns what loadAppManifest returns -- tags may not be in schema yet
+  // So we augment from the known config
+  var knownTags = {
+    snake: ['arcade'],
+    '2048': ['puzzle'],
+    tetris: ['arcade', 'puzzle'],
+    chess: ['board', 'strategy'],
+    solitaire: ['card'],
+    minesweeper: ['puzzle'],
+    backgammon: ['board'],
+  };
+  allGames.forEach(function(game) {
+    var slug = slugFromPath(game.path);
+    if (!game.tags && knownTags[slug]) {
+      game.tags = knownTags[slug];
+    }
+  });
+
+  recentGames = await recentPromise;
+  leaderboard = await leaderboardPromise;
+
+  renderGames();
+  fetchScores();
+}
+
+document.getElementById('search').addEventListener('input', function(e) {
+  searchQuery = e.target.value.trim();
+  renderGames();
+});
+
+document.getElementById('sortSelect').addEventListener('change', function(e) {
+  sortMode = e.target.value;
+  renderGames();
+});
+
+init();
 </script>
 </body>
 </html>

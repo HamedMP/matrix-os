@@ -12,8 +12,8 @@ describe("T1420-T1427: Pre-installed games", () => {
     it("has a valid matrix.json", () => {
       const manifest = JSON.parse(readFileSync(join(GAMES_DIR, "matrix.json"), "utf-8"));
       const parsed = parseAppManifest(manifest);
-      expect(parsed.name).toBe("Games");
-      expect(parsed.category).toBe("games");
+      expect(parsed.name).toBe("Game Center");
+      expect(parsed.category).toBe("utilities");
       expect(parsed.runtime).toBe("static");
     });
 

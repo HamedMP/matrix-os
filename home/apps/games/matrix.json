@@ -1,9 +1,9 @@
 {
-  "name": "Games",
-  "description": "Game collection with classics and puzzles",
+  "name": "Game Center",
+  "description": "Browse, discover, and play games",
   "runtime": "static",
-  "category": "games",
-  "icon": "gamepad",
+  "category": "utilities",
+  "icon": "game-center",
   "author": "system",
-  "version": "1.0.0"
+  "version": "2.0.0"
 }
