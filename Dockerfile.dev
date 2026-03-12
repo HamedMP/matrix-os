@@ -1,0 +1,20 @@
+# Matrix OS -- Development container
+# Source code is bind-mounted from the host, not copied.
+# HMR via tsx watch (gateway) + next dev with Turbopack (shell).
+
+FROM node:24-alpine
+
+# System deps for native addons (node-pty, better-sqlite3)
+RUN apk add --no-cache git python3 make g++ linux-headers bash
+
+# pnpm via corepack
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# No source copy - bind mounted from host
+# No build step - dev servers run live
+
+EXPOSE 3000 4000
+
+ENTRYPOINT ["/app/distro/docker-dev-entrypoint.sh"]
