@@ -1,0 +1,45 @@
+:root {
+  --matrix-bg: #ece5f0;
+  --matrix-fg: #1c1917;
+  --matrix-card: #ffffff;
+  --matrix-card-fg: #1c1917;
+  --matrix-primary: #c2703a;
+  --matrix-primary-fg: #ffffff;
+  --matrix-secondary: #f0eaf4;
+  --matrix-secondary-fg: #44403c;
+  --matrix-muted: #f0eaf4;
+  --matrix-muted-fg: #78716c;
+  --matrix-border: #d8d0de;
+  --matrix-input: #d8d0de;
+  --matrix-ring: #c2703a;
+  --matrix-accent: #f0eaf4;
+  --matrix-accent-fg: #44403c;
+  --matrix-popover: #ffffff;
+  --matrix-popover-fg: #1c1917;
+  --matrix-destructive: #ef4444;
+  --matrix-success: #22c55e;
+  --matrix-warning: #eab308;
+  --matrix-font-sans: "Inter", system-ui, sans-serif;
+  --matrix-font-mono: "JetBrains Mono", monospace;
+  --matrix-radius: 0.75rem;
+  --matrix-radius-sm: calc(var(--matrix-radius) - 4px);
+  --matrix-radius-md: calc(var(--matrix-radius) - 2px);
+  --matrix-radius-lg: var(--matrix-radius);
+  --matrix-radius-xl: calc(var(--matrix-radius) + 4px);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
