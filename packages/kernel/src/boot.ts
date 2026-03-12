@@ -1,6 +1,10 @@
-import { existsSync, cpSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
+import {
+  existsSync, cpSync, mkdirSync, readdirSync, statSync,
+  readFileSync, writeFileSync, appendFileSync,
+} from "node:fs";
+import { join, resolve, relative, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const DEFAULT_HOME = join(
   process.env.HOME ?? process.env.USERPROFILE ?? ".",
@@ -15,10 +19,16 @@ const TEMPLATE_DIR = resolve(
   "home",
 );
 
-export function ensureHome(homePath: string = DEFAULT_HOME): string {
+export interface SyncReport {
+  added: string[];
+  updated: string[];
+  skipped: string[];
+}
+
+export function ensureHome(homePath: string = DEFAULT_HOME): SyncReport & { homePath: string } {
   if (existsSync(homePath)) {
-    syncTemplate(homePath);
-    return homePath;
+    const report = syncTemplate(homePath);
+    return { ...report, homePath };
   }
 
   mkdirSync(homePath, { recursive: true });
@@ -26,47 +36,153 @@ export function ensureHome(homePath: string = DEFAULT_HOME): string {
 
   initGit(homePath);
 
-  return homePath;
+  return { homePath, added: [], updated: [], skipped: [] };
 }
 
-/**
- * Sync new template files into an existing home directory.
- * Only adds files that don't already exist - never overwrites user data.
- */
-function syncTemplate(homePath: string): void {
-  if (!existsSync(TEMPLATE_DIR)) return;
+const EXCLUDED_NAMES = new Set([".gitkeep", ".DS_Store", ".template-manifest.json"]);
+const EXCLUDED_DIRS = new Set(["node_modules", ".cache", "tmp"]);
 
-  let added = 0;
-  copyMissing(TEMPLATE_DIR, homePath);
+export function generateTemplateManifest(templateDir: string): Record<string, string> {
+  const manifest: Record<string, string> = {};
 
-  if (added > 0) {
-    gitCommit(homePath, `OS update: added ${added} new file${added > 1 ? "s" : ""}`);
-  }
+  function walk(dir: string, prefix: string) {
+    if (!existsSync(dir)) return;
 
-  function copyMissing(src: string, dest: string): void {
-    if (!existsSync(src)) return;
-
-    const entries = readdirSync(src);
+    const entries = readdirSync(dir);
     for (const entry of entries) {
-      const srcPath = join(src, entry);
-      const destPath = join(dest, entry);
-      const stat = statSync(srcPath);
+      if (EXCLUDED_NAMES.has(entry)) continue;
+      if (EXCLUDED_DIRS.has(entry)) continue;
+
+      const fullPath = join(dir, entry);
+      const relPath = prefix ? `${prefix}/${entry}` : entry;
+      const stat = statSync(fullPath);
 
       if (stat.isDirectory()) {
-        if (!existsSync(destPath)) {
-          cpSync(srcPath, destPath, { recursive: true });
-          const fileCount = countFiles(srcPath);
-          added += fileCount;
-        } else {
-          copyMissing(srcPath, destPath);
-        }
-      } else if (!existsSync(destPath)) {
-        mkdirSync(dest, { recursive: true });
-        cpSync(srcPath, destPath);
-        added++;
+        walk(fullPath, relPath);
+      } else {
+        const content = readFileSync(fullPath);
+        const hash = createHash("sha256").update(content).digest("hex");
+        manifest[relPath] = hash;
       }
     }
   }
+
+  walk(templateDir, "");
+  return manifest;
+}
+
+function hashFile(filePath: string): string {
+  const content = readFileSync(filePath);
+  return createHash("sha256").update(content).digest("hex");
+}
+
+export function smartSyncTemplate(
+  homePath: string,
+  templateDir: string,
+): SyncReport {
+  const report: SyncReport = { added: [], updated: [], skipped: [] };
+  const logLines: string[] = [];
+  const now = new Date().toISOString();
+
+  logLines.push(`[${now}] Template sync started`);
+
+  // Load template manifest
+  const templateManifestPath = join(templateDir, ".template-manifest.json");
+  if (!existsSync(templateManifestPath)) {
+    logLines.push(`[${now}] No template manifest found, skipping sync`);
+    logLines.push(`[${now}] Template sync completed: 0 updated, 0 added, 0 skipped`);
+    writeSyncLog(homePath, logLines);
+    return report;
+  }
+
+  const templateManifest: Record<string, string> = JSON.parse(
+    readFileSync(templateManifestPath, "utf-8"),
+  );
+
+  // Load installed manifest (what was last synced to user's home)
+  const installedManifestPath = join(homePath, ".template-manifest.json");
+  let installedManifest: Record<string, string> = {};
+  if (existsSync(installedManifestPath)) {
+    installedManifest = JSON.parse(readFileSync(installedManifestPath, "utf-8"));
+  }
+
+  for (const [relPath, templateHash] of Object.entries(templateManifest)) {
+    const homeFilePath = join(homePath, relPath);
+    const templateFilePath = join(templateDir, relPath);
+
+    if (!existsSync(homeFilePath)) {
+      // File doesn't exist in home -> ADD it
+      const dir = dirname(homeFilePath);
+      mkdirSync(dir, { recursive: true });
+      cpSync(templateFilePath, homeFilePath);
+      installedManifest[relPath] = templateHash;
+      report.added.push(relPath);
+      logLines.push(`[${now}] Added: ${relPath}`);
+    } else {
+      const userHash = hashFile(homeFilePath);
+      const installedHash = installedManifest[relPath];
+
+      if (installedHash === undefined) {
+        // File exists in home but not tracked in installed manifest.
+        // If user's content matches template, just track it; otherwise skip (conservative).
+        if (userHash === templateHash) {
+          installedManifest[relPath] = templateHash;
+          // No action needed, content is identical
+        } else {
+          report.skipped.push(relPath);
+          logLines.push(`[${now}] Skipped: ${relPath} (customized by user)`);
+        }
+      } else if (userHash === installedHash) {
+        // User hasn't touched it -> UPDATE from template
+        if (templateHash !== installedHash) {
+          cpSync(templateFilePath, homeFilePath);
+          installedManifest[relPath] = templateHash;
+          report.updated.push(relPath);
+          logLines.push(`[${now}] Updated: ${relPath}`);
+        }
+        // If templateHash === installedHash, file is already current, nothing to do
+      } else {
+        // User customized the file -> SKIP
+        report.skipped.push(relPath);
+        logLines.push(`[${now}] Skipped: ${relPath} (customized by user)`);
+      }
+    }
+  }
+
+  // Write updated installed manifest
+  writeFileSync(installedManifestPath, JSON.stringify(installedManifest, null, 2));
+
+  const summary = `${report.updated.length} updated, ${report.added.length} added, ${report.skipped.length} skipped`;
+  logLines.push(`[${now}] Template sync completed: ${summary}`);
+
+  writeSyncLog(homePath, logLines);
+
+  return report;
+}
+
+function writeSyncLog(homePath: string, lines: string[]) {
+  const logDir = join(homePath, "system", "logs");
+  mkdirSync(logDir, { recursive: true });
+
+  const logPath = join(logDir, "template-sync.log");
+  const content = lines.join("\n") + "\n";
+  appendFileSync(logPath, content);
+}
+
+function syncTemplate(homePath: string): SyncReport {
+  if (!existsSync(TEMPLATE_DIR)) {
+    return { added: [], updated: [], skipped: [] };
+  }
+
+  const report = smartSyncTemplate(homePath, TEMPLATE_DIR);
+
+  const totalChanges = report.added.length + report.updated.length;
+  if (totalChanges > 0) {
+    const msg = `OS update: ${report.updated.length} files updated, ${report.added.length} new, ${report.skipped.length} skipped (customized)`;
+    gitCommit(homePath, msg);
+  }
+
+  return report;
 }
 
 function countFiles(dir: string): number {

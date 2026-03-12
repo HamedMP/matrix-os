@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const startTime = Date.now();
 
@@ -26,6 +26,8 @@ export interface SystemInfo {
   modules: number;
   channels: Record<string, boolean>;
   skills: number;
+  templateVersion: string;
+  installedVersion: string;
 }
 
 export function getSystemInfo(homePath: string): SystemInfo {
@@ -59,6 +61,24 @@ export function getSystemInfo(homePath: string): SystemInfo {
     } catch { /* ignore */ }
   }
 
+  let templateVersion = "unknown";
+  const templateVersionPath = resolve(
+    import.meta.dirname, "..", "..", "..", "home", ".matrix-version",
+  );
+  try {
+    if (existsSync(templateVersionPath)) {
+      templateVersion = readFileSync(templateVersionPath, "utf-8").trim();
+    }
+  } catch { /* ignore */ }
+
+  let installedVersion = "unknown";
+  const installedVersionPath = join(homePath, ".matrix-version");
+  try {
+    if (existsSync(installedVersionPath)) {
+      installedVersion = readFileSync(installedVersionPath, "utf-8").trim();
+    }
+  } catch { /* ignore */ }
+
   return {
     version: getVersion(),
     image: process.env.MATRIX_IMAGE ?? "unknown",
@@ -66,5 +86,7 @@ export function getSystemInfo(homePath: string): SystemInfo {
     modules,
     channels,
     skills,
+    templateVersion,
+    installedVersion,
   };
 }

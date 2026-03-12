@@ -67,6 +67,7 @@ export interface GatewayConfig {
   port?: number;
   model?: string;
   maxTurns?: number;
+  syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
 
 type ClientMessage =
@@ -87,7 +88,8 @@ export type ServerMessage =
   | { type: "provision:start"; appCount: number }
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
-  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number };
+  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
+  | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -109,8 +111,9 @@ function send(ws: WSContext, msg: ServerMessage) {
 }
 
 export async function createGateway(config: GatewayConfig) {
-  const { homePath: rawHomePath, port = 4000 } = config;
+  const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
+  let syncReportSent = false;
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -379,6 +382,15 @@ export async function createGateway(config: GatewayConfig) {
             send: (msg) => send(ws, msg),
             timeout: approvalPolicy.timeout,
           });
+
+          // T2093: Send sync report once per boot
+          if (syncReport && !syncReportSent) {
+            syncReportSent = true;
+            send(ws, {
+              type: "os:sync-report",
+              payload: syncReport,
+            });
+          }
         },
 
         onMessage(evt, ws) {
@@ -962,6 +974,18 @@ export async function createGateway(config: GatewayConfig) {
         contributions: pluginRegistry.getPluginContributions(p.manifest.id),
       })),
     );
+  });
+
+  // T2063: Leaderboard API routes
+  const { getLeaderboard } = await import("./leaderboard.js");
+
+  app.get("/api/games/leaderboard", (c) => {
+    return c.json(getLeaderboard(homePath));
+  });
+
+  app.get("/api/games/leaderboard/:game", (c) => {
+    const game = c.req.param("game");
+    return c.json(getLeaderboard(homePath, game));
   });
 
   app.get("/health", (c) => c.json({

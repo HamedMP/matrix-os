@@ -10,7 +10,8 @@ export {
   socialFollows,
 } from "./schema.js";
 export type { SocialPost, SocialLike, SocialFollow } from "./schema.js";
-export { ensureHome } from "./boot.js";
+export { ensureHome, generateTemplateManifest, smartSyncTemplate } from "./boot.js";
+export type { SyncReport } from "./boot.js";
 export { buildSystemPrompt, estimateTokens } from "./prompt.js";
 export { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 export {

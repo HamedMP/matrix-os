@@ -22,7 +22,7 @@ describe("ensureHome", () => {
   it("creates home directory from template on first boot", () => {
     const homePath = join(tmpDir, "home");
     const result = ensureHome(homePath);
-    expect(result).toBe(homePath);
+    expect(result.homePath).toBe(homePath);
     expect(existsSync(homePath)).toBe(true);
     // Should have copied template contents (at minimum system/ dir)
     expect(existsSync(join(homePath, "system"))).toBe(true);
@@ -35,7 +35,7 @@ describe("ensureHome", () => {
     writeFileSync(join(homePath, "system", "config.json"), '{"custom": true}');
 
     const result = ensureHome(homePath);
-    expect(result).toBe(homePath);
+    expect(result.homePath).toBe(homePath);
 
     // User's custom config should be preserved
     const config = readFileSync(join(homePath, "system", "config.json"), "utf-8");
