@@ -145,6 +145,33 @@ bun run dev: shell     # Next.js shell on http://localhost:3000
 
 The gateway boots the home directory at `~/matrixos/` on first run (copies from `home/` template, initializes git).
 
+### Docker Development (Primary)
+
+Requires [OrbStack](https://orbstack.dev) on macOS.
+
+```bash
+# Start dev environment (gateway + shell with HMR)
+docker compose -f docker-compose.dev.yml up
+
+# Full stack (+ platform, proxy, Matrix)
+docker compose -f docker-compose.dev.yml --profile full up
+
+# With observability (+ Grafana, Prometheus, Loki)
+docker compose -f docker-compose.dev.yml --profile full --profile obs up
+
+# Multi-user testing (alice + bob)
+docker compose -f docker-compose.dev.yml --profile multi --profile full up
+
+# Run tests inside container
+docker compose -f docker-compose.dev.yml exec dev bun run test
+
+# Run Docker scenario tests
+./scripts/docker-test/run-all.sh
+
+# Reset to clean state
+docker compose -f docker-compose.dev.yml down -v
+```
+
 ### Environment Variables
 - `ANTHROPIC_API_KEY`: required for kernel AI features
 - `MATRIX_HOME`: custom home directory path (default: `~/matrixos/`)
