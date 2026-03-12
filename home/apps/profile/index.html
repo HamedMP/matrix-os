@@ -7,9 +7,9 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0a0a0a;
-      color: #fafafa;
+      font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+      background: var(--matrix-bg, #ece5f0);
+      color: var(--matrix-fg, #1c1917);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
@@ -19,18 +19,19 @@
     .profile { max-width: 600px; width: 100%; text-align: center; }
     .avatar {
       width: 96px; height: 96px; border-radius: 50%;
-      background: linear-gradient(135deg, #6366f1, #a855f7);
+      background: var(--matrix-accent, #c2703a);
+      color: #ffffff;
       display: flex; align-items: center; justify-content: center;
       font-size: 2.5rem; font-weight: bold;
       margin: 0 auto 1.5rem;
     }
     h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
-    .handle { color: #a1a1aa; font-size: 0.875rem; margin-bottom: 1rem; }
-    .bio { color: #d4d4d8; font-size: 1rem; line-height: 1.6; margin-bottom: 2rem; }
+    .handle { color: var(--matrix-muted-fg, #78716c); font-size: 0.875rem; margin-bottom: 1rem; }
+    .bio { color: var(--matrix-fg, #1c1917); opacity: 0.8; font-size: 1rem; line-height: 1.6; margin-bottom: 2rem; }
     .apps-section { margin-top: 2rem; }
     .apps-section h2 {
       font-size: 0.75rem; text-transform: uppercase;
-      letter-spacing: 0.1em; color: #71717a; margin-bottom: 1rem;
+      letter-spacing: 0.1em; color: var(--matrix-muted-fg, #78716c); margin-bottom: 1rem;
     }
     .apps-grid {
       display: grid;
@@ -38,20 +39,20 @@
       gap: 0.75rem;
     }
     .app-card {
-      background: #18181b; border: 1px solid #27272a;
+      background: var(--matrix-card-bg, #ffffff); border: 1px solid var(--matrix-border, #d8d0de);
       border-radius: 12px; padding: 1rem; text-align: left;
     }
     .app-card .name { font-weight: 600; font-size: 0.875rem; }
-    .app-card .desc { color: #a1a1aa; font-size: 0.75rem; margin-top: 0.25rem; }
-    .powered-by { margin-top: 3rem; color: #52525b; font-size: 0.75rem; }
-    .powered-by a { color: #6366f1; text-decoration: none; }
+    .app-card .desc { color: var(--matrix-muted-fg, #78716c); font-size: 0.75rem; margin-top: 0.25rem; }
+    .powered-by { margin-top: 3rem; color: var(--matrix-muted-fg, #78716c); font-size: 0.75rem; }
+    .powered-by a { color: var(--matrix-accent, #c2703a); text-decoration: none; }
     .powered-by a:hover { text-decoration: underline; }
     .links { display: flex; gap: 0.75rem; justify-content: center; margin-top: 1rem; }
     .links a {
-      color: #a1a1aa; font-size: 0.875rem; text-decoration: none;
-      padding: 0.5rem 1rem; border: 1px solid #27272a; border-radius: 8px;
+      color: var(--matrix-muted-fg, #78716c); font-size: 0.875rem; text-decoration: none;
+      padding: 0.5rem 1rem; border: 1px solid var(--matrix-border, #d8d0de); border-radius: 8px;
     }
-    .links a:hover { color: #fafafa; border-color: #52525b; }
+    .links a:hover { color: var(--matrix-fg, #1c1917); border-color: var(--matrix-accent, #c2703a); }
   </style>
 </head>
 <body>

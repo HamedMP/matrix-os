@@ -13,8 +13,8 @@
   --radius: 10px;
 }
 body {
-  background: #0a0a0a; color: #e0e0e0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--matrix-bg, #ece5f0); color: var(--matrix-fg, #1c1917);
+  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 100vh; overflow: hidden; user-select: none;
   -webkit-user-select: none; -webkit-touch-callout: none;
@@ -24,27 +24,27 @@ body {
 .back-btn {
   position: fixed; top: 14px; left: 14px; z-index: 100;
   width: 36px; height: 36px; border-radius: 8px;
-  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-  color: #999; font-size: 20px; cursor: pointer;
+  background: var(--matrix-card-bg, #ffffff); border: 1px solid var(--matrix-border, #d8d0de);
+  color: var(--matrix-muted-fg, #78716c); font-size: 20px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.2s, color 0.2s;
   text-decoration: none;
 }
-.back-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.back-btn:hover { background: var(--matrix-border, #d8d0de); color: var(--matrix-fg, #1c1917); }
 
 /* Header */
 .header {
   display: flex; align-items: center; gap: 16px;
   width: var(--board-size); margin-bottom: 14px; justify-content: space-between;
 }
-.title { font-size: 32px; font-weight: 800; color: #e2e8f0; letter-spacing: -1px; }
+.title { font-size: 32px; font-weight: 800; color: var(--matrix-fg, #1c1917); letter-spacing: -1px; }
 .score-group { display: flex; gap: 8px; }
 .score-box {
-  background: #1a1a1a; border-radius: 8px; padding: 8px 14px;
+  background: var(--matrix-card-bg, #ffffff); border: 1px solid var(--matrix-border, #d8d0de); border-radius: 8px; padding: 8px 14px;
   text-align: center; min-width: 72px; position: relative; overflow: hidden;
 }
-.score-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #666; font-weight: 600; }
-.score-value { font-size: 20px; font-weight: 700; color: #f6e05e; font-variant-numeric: tabular-nums; }
+.score-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--matrix-muted-fg, #78716c); font-weight: 600; }
+.score-value { font-size: 20px; font-weight: 700; color: var(--matrix-accent, #c2703a); font-variant-numeric: tabular-nums; }
 .score-pop {
   position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -50%); color: #f6e05e;

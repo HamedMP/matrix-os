@@ -7,9 +7,9 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #0a0a0a;
-  color: #e0e0e0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-fg, #1c1917);
+  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -26,8 +26,8 @@ body {
   left: 12px;
   width: 32px;
   height: 32px;
-  background: #1a1a1a;
-  border: 1px solid #333;
+  background: var(--matrix-card-bg, #ffffff);
+  border: 1px solid var(--matrix-border, #d8d0de);
   border-radius: 6px;
   color: #888;
   font-size: 18px;

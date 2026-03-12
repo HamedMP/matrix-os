@@ -6,11 +6,11 @@
 <title>Pomodoro</title>
 <style>
 :root {
-  --bg: #0a0a0a;
-  --fg: #e0e0e0;
-  --accent: #E91E63;
-  --surface: #1a1a1a;
-  --border: #333;
+  --bg: var(--matrix-bg, #ece5f0);
+  --fg: var(--matrix-fg, #1c1917);
+  --accent: var(--matrix-accent, #c2703a);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d8d0de);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -89,9 +89,9 @@ h1 { font-size: 1.4em; margin-bottom: 24px; }
   border-radius: 8px;
   padding: 12px;
 }
-.stat-card .label { font-size: 12px; color: #999; }
+.stat-card .label { font-size: 12px; color: var(--matrix-muted-fg, #78716c); }
 .stat-card .value { font-size: 1.3em; font-weight: 600; margin-top: 4px; }
-.status { font-size: 14px; color: #999; margin-bottom: 8px; }
+.status { font-size: 14px; color: var(--matrix-muted-fg, #78716c); margin-bottom: 8px; }
 </style>
 </head>
 <body>

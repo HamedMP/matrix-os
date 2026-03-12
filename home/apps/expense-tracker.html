@@ -6,11 +6,11 @@
 <title>Expense Tracker</title>
 <style>
 :root {
-  --bg: #0a0a0a;
-  --fg: #e0e0e0;
-  --accent: #4CAF50;
-  --surface: #1a1a1a;
-  --border: #333;
+  --bg: var(--matrix-bg, #ece5f0);
+  --fg: var(--matrix-fg, #1c1917);
+  --accent: var(--matrix-accent, #c2703a);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d8d0de);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -22,7 +22,7 @@ body {
   margin: 0 auto;
 }
 h1 { font-size: 1.4em; margin-bottom: 16px; }
-h2 { font-size: 1.1em; margin: 16px 0 8px; color: var(--accent); }
+h2 { font-size: 1.1em; margin: 16px 0 8px; color: var(--fg); }
 .form-row {
   display: flex;
   gap: 8px;
@@ -63,7 +63,7 @@ button:hover { opacity: 0.9; }
   border-radius: 8px;
   padding: 12px;
 }
-.summary-card .label { font-size: 12px; color: #999; }
+.summary-card .label { font-size: 12px; color: var(--matrix-muted-fg, #78716c); }
 .summary-card .value { font-size: 1.3em; font-weight: 600; margin-top: 4px; }
 .expense-list { list-style: none; }
 .expense-item {
@@ -77,22 +77,22 @@ button:hover { opacity: 0.9; }
 .expense-item .amount { font-weight: 600; white-space: nowrap; }
 .expense-item .cat {
   font-size: 12px;
-  color: #999;
-  background: var(--surface);
+  color: var(--matrix-muted-fg, #78716c);
+  background: var(--bg);
   padding: 2px 8px;
   border-radius: 10px;
 }
-.expense-item .date { font-size: 12px; color: #666; }
+.expense-item .date { font-size: 12px; color: var(--matrix-muted-fg, #78716c); }
 .delete-btn {
   background: transparent;
-  color: #999;
+  color: var(--matrix-muted-fg, #78716c);
   border: none;
   cursor: pointer;
   padding: 4px 8px;
   font-size: 12px;
 }
-.delete-btn:hover { color: #e53935; }
-.empty { color: #666; text-align: center; padding: 32px 0; }
+.delete-btn:hover { color: #ef4444; }
+.empty { color: var(--matrix-muted-fg, #78716c); text-align: center; padding: 32px 0; }
 </style>
 </head>
 <body>

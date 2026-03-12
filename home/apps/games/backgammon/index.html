@@ -7,9 +7,9 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #0a0a0a;
-  color: #e0e0e0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-fg, #1c1917);
+  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -20,13 +20,14 @@ body {
 }
 .back-btn {
   position: fixed; top: 10px; left: 12px;
-  font-size: 22px; color: rgba(255,255,255,0.5);
+  font-size: 22px; color: var(--matrix-muted-fg, #78716c);
   text-decoration: none; z-index: 20;
   width: 32px; height: 32px; display: flex;
   align-items: center; justify-content: center;
-  border-radius: 6px; background: rgba(255,255,255,0.05);
+  border-radius: 6px; background: var(--matrix-card-bg, #ffffff);
+  border: 1px solid var(--matrix-border, #d8d0de);
 }
-.back-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.back-btn:hover { background: var(--matrix-border, #d8d0de); color: var(--matrix-fg, #1c1917); }
 .header {
   display: flex; gap: 16px; margin-bottom: 6px;
   align-items: center; width: 100%; max-width: 780px;

@@ -6,11 +6,11 @@
 <title>Notes</title>
 <style>
 :root {
-  --bg: #0a0a0a;
-  --fg: #e0e0e0;
-  --accent: #FF9800;
-  --surface: #1a1a1a;
-  --border: #333;
+  --bg: var(--matrix-bg, #ece5f0);
+  --fg: var(--matrix-fg, #1c1917);
+  --accent: var(--matrix-accent, #c2703a);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d8d0de);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -69,11 +69,11 @@ body {
   cursor: pointer;
   border-bottom: 1px solid var(--border);
 }
-.note-list li:hover { background: rgba(255,255,255,0.05); }
-.note-list li.active { background: rgba(255, 152, 0, 0.15); border-left: 3px solid var(--accent); }
+.note-list li:hover { background: rgba(0,0,0,0.03); }
+.note-list li.active { background: rgba(194, 112, 58, 0.1); border-left: 3px solid var(--accent); }
 .note-title { font-size: 14px; font-weight: 500; }
-.note-preview { font-size: 12px; color: #999; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.note-date { font-size: 11px; color: #666; margin-top: 2px; }
+.note-preview { font-size: 12px; color: var(--matrix-muted-fg, #78716c); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-date { font-size: 11px; color: var(--matrix-muted-fg, #78716c); margin-top: 2px; }
 .editor {
   flex: 1;
   display: flex;
@@ -97,13 +97,13 @@ body {
 .editor-header input:focus { outline: none; }
 .editor-header button {
   background: transparent;
-  color: #999;
+  color: var(--matrix-muted-fg, #78716c);
   border: none;
   cursor: pointer;
   font-size: 13px;
   padding: 4px 8px;
 }
-.editor-header button:hover { color: #e53935; }
+.editor-header button:hover { color: #ef4444; }
 textarea {
   flex: 1;
   background: var(--bg);
@@ -121,7 +121,7 @@ textarea:focus { outline: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: var(--matrix-muted-fg, #78716c);
 }
 </style>
 </head>

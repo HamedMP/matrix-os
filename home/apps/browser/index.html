@@ -7,9 +7,9 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #0a0a0a;
-  color: #e0e0e0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-fg, #1c1917);
+  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -19,30 +19,30 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: #141414;
-  border-bottom: 1px solid #222;
+  background: var(--matrix-card-bg, #ffffff);
+  border-bottom: 1px solid var(--matrix-border, #d8d0de);
 }
 .toolbar button {
   padding: 4px 8px;
-  background: #222;
-  color: #888;
-  border: 1px solid #333;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-muted-fg, #78716c);
+  border: 1px solid var(--matrix-border, #d8d0de);
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
 }
-.toolbar button:hover { background: #333; color: #e0e0e0; }
+.toolbar button:hover { background: var(--matrix-border, #d8d0de); color: var(--matrix-fg, #1c1917); }
 .url-bar {
   flex: 1;
   padding: 6px 12px;
-  background: #1a1a1a;
-  color: #e0e0e0;
-  border: 1px solid #333;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-fg, #1c1917);
+  border: 1px solid var(--matrix-border, #d8d0de);
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
 }
-.url-bar:focus { outline: none; border-color: #3b82f6; }
+.url-bar:focus { outline: none; border-color: var(--matrix-accent, #c2703a); }
 .content {
   flex: 1;
   display: flex;
@@ -51,8 +51,8 @@ body {
   flex-direction: column;
   gap: 12px;
 }
-.content h2 { font-size: 18px; color: #888; }
-.content p { font-size: 13px; color: #555; max-width: 400px; text-align: center; line-height: 1.5; }
+.content h2 { font-size: 18px; color: var(--matrix-muted-fg, #78716c); }
+.content p { font-size: 13px; color: var(--matrix-muted-fg, #78716c); max-width: 400px; text-align: center; line-height: 1.5; }
 iframe {
   flex: 1;
   width: 100%;

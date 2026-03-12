@@ -102,9 +102,9 @@ describe("T1410-T1414: Bundled desktop apps", () => {
         expect(manifest.author).toBe("system");
       });
 
-      it("index.html has dark theme background", () => {
+      it("index.html uses matrix theme variables", () => {
         const html = readFileSync(join(dir, "index.html"), "utf-8");
-        expect(html).toContain("#0a0a0a");
+        expect(html).toContain("--matrix-bg");
       });
 
       it("index.html has proper HTML structure", () => {

@@ -6,11 +6,11 @@
 <title>Task Manager</title>
 <style>
 :root {
-  --bg: #0a0a0a;
-  --fg: #e0e0e0;
-  --accent: #7C3AED;
-  --surface: #1a1a1a;
-  --border: #333;
+  --bg: var(--matrix-bg, #ece5f0);
+  --fg: var(--matrix-fg, #1c1917);
+  --accent: var(--matrix-accent, #c2703a);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d8d0de);
   --pending: #F59E0B;
   --progress: #3B82F6;
   --completed: #10B981;
@@ -180,10 +180,10 @@ button.primary:hover { opacity: 0.9; }
 .badge-priority-high { color: var(--pending); border-color: var(--pending); }
 .badge-priority-medium { color: var(--progress); border-color: var(--progress); }
 .badge-assignee { color: var(--accent); border-color: var(--accent); }
-.card-time { font-size: 11px; color: #666; }
+.card-time { font-size: 11px; color: var(--matrix-muted-fg, #78716c); }
 .card-output {
   font-size: 11px;
-  color: #999;
+  color: var(--matrix-muted-fg, #78716c);
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
@@ -200,7 +200,7 @@ button.primary:hover { opacity: 0.9; }
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #999;
+  color: var(--matrix-muted-fg, #78716c);
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
@@ -219,21 +219,21 @@ button.primary:hover { opacity: 0.9; }
   vertical-align: middle;
 }
 .empty {
-  color: #666;
+  color: var(--matrix-muted-fg, #78716c);
   text-align: center;
   padding: 48px 16px;
 }
 .empty p { margin-top: 8px; font-size: 14px; }
 .refresh-btn {
   background: transparent;
-  color: #999;
+  color: var(--matrix-muted-fg, #78716c);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
   font-size: 12px;
 }
-.refresh-btn:hover { color: var(--fg); border-color: #666; }
+.refresh-btn:hover { color: var(--fg); border-color: var(--accent); }
 </style>
 </head>
 <body>

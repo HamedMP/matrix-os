@@ -7,9 +7,9 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #0a0a0a;
-  color: #e0e0e0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--matrix-bg, #ece5f0);
+  color: var(--matrix-fg, #1c1917);
+  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -19,8 +19,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: #141414;
-  border-bottom: 1px solid #222;
+  background: var(--matrix-card-bg, #ffffff);
+  border-bottom: 1px solid var(--matrix-border, #d8d0de);
 }
 .toolbar .status {
   font-size: 12px;
