@@ -10,14 +10,14 @@
 
 ## Phase B: Pre-installed Games (8 tasks)
 
-- [ ] T2010 - Snake: canvas, smooth movement, keyboard+touch, high scores
-- [ ] T2011 - 2048: tile animations, merge effects, swipe controls, best score
-- [ ] T2012 - Tetris: wall kicks, ghost piece, hold, level system, line clear fx
-- [ ] T2013 - Chess: legal moves, minimax AI, check/checkmate, move history
-- [ ] T2014 - Solitaire: drag-drop cards, auto-complete, undo, win animation
-- [ ] T2015 - Minesweeper: cascade reveal, flagging, difficulty, timer
-- [ ] T2016 - Game launcher: grid cards, high scores, responsive
-- [ ] T2017 - Backgammon: board, dice animation, AI opponent
+- [x] T2010 - Snake: canvas, smooth movement, keyboard+touch, high scores
+- [x] T2011 - 2048: tile animations, merge effects, swipe controls, best score
+- [x] T2012 - Tetris: wall kicks, ghost piece, hold, level system, line clear fx
+- [x] T2013 - Chess: legal moves, minimax AI, check/checkmate, move history
+- [x] T2014 - Solitaire: drag-drop cards, auto-complete, undo, win animation
+- [x] T2015 - Minesweeper: cascade reveal, flagging, difficulty, timer
+- [x] T2016 - Game launcher: grid cards, high scores, responsive
+- [x] T2017 - Backgammon: board, dice animation, AI opponent
 
 ## Phase C: Core Utility Apps (8 tasks)
 
@@ -59,6 +59,49 @@
 - [ ] T2054 - App generation knowledge file: API reference, examples, quality checklist
 - [ ] T2055 - Build pipeline HTML fast path: auto-register, auto-manifest, file watcher
 
+## Phase G: Game Center + Multi-Window (5 tasks)
+
+- [ ] T2060 - openApp bridge method: shell receives postMessage, calls openWindow(name, path)
+- [ ] T2061 - Game Center launcher: dynamic discovery via /api/apps?category=games, scores, search
+- [ ] T2062 - Game Center categories + filtering: tags in matrix.json, filter UI, sort by recent/popular
+- [ ] T2063 - Game Center services foundation: cross-game leaderboard API (/api/games/leaderboard)
+- [ ] T2064 - User-built game auto-registration: any app with category=games auto-appears in Game Center
+
+## Phase H: Theme Injection + Design System (7 tasks)
+
+- [ ] T2070 - Theme variable injection: AppViewer injects --matrix-* CSS vars into iframes from shell theme
+- [ ] T2071 - Dynamic theme updates: postMessage re-injection when user changes theme (settings or chat)
+- [ ] T2072 - Matrix OS design system knowledge file: comprehensive guide for AI app building
+- [ ] T2073 - Frontend design skill for Matrix OS: inspired by Claude Code's frontend-design skill
+- [ ] T2074 - @matrix-os/ui package: shared component library (Button, Card, Input, Dialog, etc.)
+- [ ] T2075 - Migrate existing apps to --matrix-* variables: update all home/apps/ to use injected theme
+- [ ] T2076 - Design system docs page: add to www/content/docs/guide/design-system.mdx
+
+## Phase I: Vite App Runtime (5 tasks)
+
+- [ ] T2080 - Vite app scaffold skill: AI creates Vite+React+TS project in ~/apps/{name}/
+- [ ] T2081 - Vite dev proxy: gateway proxies Vite dev server during development, serves built output after
+- [ ] T2082 - Vite build integration: build command outputs static files to app directory
+- [ ] T2083 - Matrix OS Vite template: pre-configured template with @matrix-os/ui, theme vars, bridge API
+- [ ] T2084 - Rebuild pre-installed games as Vite apps: migrate games from raw HTML to Vite+React+TS
+
+## Phase J: Core Template Sync (5 tasks)
+
+- [ ] T2090 - Template manifest: generate home/.template-manifest.json with file hashes on release
+- [ ] T2091 - Smart syncTemplate: compare hashes, auto-update untouched files, skip customized files
+- [ ] T2092 - Sync logging: write skipped/updated files to ~/system/logs/template-sync.log
+- [ ] T2093 - Sync notification: kernel notifies user of updates on boot (N updated, M skipped)
+- [ ] T2094 - Template version file: home/.matrix-version with semver, shown in /api/system/info
+
+## Phase K: AI Elements + Shell Enhancements (6 tasks)
+
+- [ ] T2100 - Install AI Elements: add ai-elements package, install priority components
+- [ ] T2101 - Attachments component: file upload in chat (images, documents)
+- [ ] T2102 - Chain-of-thought / reasoning: collapsible thinking display in chat
+- [ ] T2103 - Suggestion chips: contextual action suggestions below messages
+- [ ] T2104 - Plan + Task components: render structured plans and task lists in chat
+- [ ] T2105 - Voice input: speech-input component for voice commands to the OS
+
 ---
 
 ## Migrated From
@@ -77,14 +120,19 @@
 
 ## Summary
 
-- **Total tasks:** 41
-- **Phase A (Chat UX):** 5 tasks
-- **Phase B (Games):** 8 tasks
+- **Total tasks:** 69
+- **Phase A (Chat UX):** 5 tasks [DONE]
+- **Phase B (Games):** 8 tasks [DONE]
 - **Phase C (Utilities):** 8 tasks
-- **Phase D (Social Backend):** 8 tasks
+- **Phase D (Social Backend):** 8 tasks [DONE]
 - **Phase E (Social Apps):** 6 tasks
 - **Phase F (AI Build):** 6 tasks
+- **Phase G (Game Center):** 5 tasks
+- **Phase H (Theme + Design System):** 7 tasks
+- **Phase I (Vite Runtime):** 5 tasks
+- **Phase J (Template Sync):** 5 tasks
+- **Phase K (AI Elements):** 6 tasks
 
 ## Execution Order
 
-D (social backend) -> A (chat UX) -> B (games) -> C (utilities) -> E (social apps) -> F (AI build)
+D [DONE] -> A [DONE] -> B [DONE] -> H (theme/design, foundation) -> G (game center) -> C (utilities) -> I (vite runtime) -> E (social apps) -> F (AI build) -> J (template sync) -> K (AI elements)
