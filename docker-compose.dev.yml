@@ -1,0 +1,277 @@
+# Matrix OS -- Docker-primary local development
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up                    # dev only
+#   docker compose -f docker-compose.dev.yml --profile full up     # full stack
+#   docker compose -f docker-compose.dev.yml --profile obs up      # + observability
+#   docker compose -f docker-compose.dev.yml --profile multi up    # alice + bob
+#
+# Reset to clean state:
+#   docker compose -f docker-compose.dev.yml down -v
+#
+# Run tests inside container:
+#   docker compose -f docker-compose.dev.yml exec dev bun run test
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+      - "4000:4000"
+    volumes:
+      # Source code (bind mounts for HMR)
+      - ./packages:/app/packages
+      - ./shell:/app/shell
+      - ./home:/app/home
+      - ./tests:/app/tests
+      - ./specs:/app/specs
+      - ./docs:/app/docs
+      - ./distro:/app/distro
+      - ./scripts:/app/scripts
+      # Config files from root
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vitest.config.ts:/app/vitest.config.ts
+      # Persistent volumes
+      - dev-node-modules:/app/node_modules
+      - dev-home:/home/matrixos/home
+      # Shell build cache
+      - dev-next-cache:/app/shell/.next
+    env_file:
+      - .env.docker
+    environment:
+      - NODE_ENV=development
+      - MATRIX_HOME=/home/matrixos/home
+      - PORT=4000
+      - NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
+      - NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
+      - GATEWAY_URL=http://localhost:4000
+    healthcheck:
+      test: wget -qO- http://localhost:4000/health || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+    restart: unless-stopped
+
+  # --- Full stack profile ---
+  proxy:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["node", "--import=tsx", "packages/proxy/src/main.ts"]
+    entrypoint: []
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./tsconfig.json:/app/tsconfig.json
+      - dev-node-modules:/app/node_modules
+      - proxy-data:/data
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PROXY_PORT=8080
+      - PROXY_DB_PATH=/data/proxy.db
+    healthcheck:
+      test: wget -qO- http://localhost:8080/health || exit 1
+      interval: 10s
+      timeout: 3s
+    restart: unless-stopped
+
+  platform:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["node", "--import=tsx", "packages/platform/src/main.ts"]
+    entrypoint: []
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./tsconfig.json:/app/tsconfig.json
+      - dev-node-modules:/app/node_modules
+      - platform-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - user-data:/data/users
+    environment:
+      - PLATFORM_PORT=9000
+      - PLATFORM_DB_PATH=/data/platform.db
+      - PLATFORM_SECRET=${PLATFORM_SECRET:-dev-secret}
+      - FAL_API_KEY=${FAL_API_KEY:-}
+    healthcheck:
+      test: wget -qO- http://localhost:9000/health || exit 1
+      interval: 10s
+      timeout: 3s
+    restart: unless-stopped
+
+  conduit:
+    profiles: ["full"]
+    image: matrixconduit/matrix-conduit:latest
+    environment:
+      - CONDUIT_SERVER_NAME=localhost
+      - CONDUIT_DATABASE_PATH=/var/lib/matrix-conduit
+      - CONDUIT_DATABASE_BACKEND=rocksdb
+      - CONDUIT_PORT=6167
+      - CONDUIT_ALLOW_REGISTRATION=true
+      - CONDUIT_ALLOW_FEDERATION=false
+    ports:
+      - "6167:6167"
+    volumes:
+      - conduit-data:/var/lib/matrix-conduit
+    healthcheck:
+      test: wget -qO- http://localhost:6167/_matrix/client/versions || exit 1
+      interval: 10s
+      timeout: 3s
+    restart: unless-stopped
+
+  # --- Observability profile ---
+  prometheus:
+    profiles: ["obs"]
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./distro/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./distro/observability/alerting/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["obs"]
+    image: grafana/grafana:latest
+    ports:
+      - "3200:3000"
+    volumes:
+      - ./distro/observability/provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./distro/observability/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./distro/observability/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-matrixos}
+      - GF_SERVER_ROOT_URL=http://localhost:3200
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+  loki:
+    profiles: ["obs"]
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./distro/observability/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  promtail:
+    profiles: ["obs"]
+    image: grafana/promtail:latest
+    volumes:
+      - ./distro/observability/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  # --- Multi-user profile ---
+  alice:
+    profiles: ["multi"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3001:3000"
+      - "4001:4000"
+    volumes:
+      - ./packages:/app/packages
+      - ./shell:/app/shell
+      - ./home:/app/home
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vitest.config.ts:/app/vitest.config.ts
+      - ./distro:/app/distro
+      - dev-node-modules:/app/node_modules
+      - alice-home:/home/matrixos/home
+      - dev-next-cache:/app/shell/.next
+    env_file:
+      - .env.docker
+    environment:
+      - NODE_ENV=development
+      - MATRIX_HOME=/home/matrixos/home
+      - MATRIX_HANDLE=alice
+      - PORT=4000
+      - ANTHROPIC_BASE_URL=http://proxy:8080
+    healthcheck:
+      test: wget -qO- http://localhost:4000/health || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+    restart: unless-stopped
+
+  bob:
+    profiles: ["multi"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3002:3000"
+      - "4002:4000"
+    volumes:
+      - ./packages:/app/packages
+      - ./shell:/app/shell
+      - ./home:/app/home
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vitest.config.ts:/app/vitest.config.ts
+      - ./distro:/app/distro
+      - dev-node-modules:/app/node_modules
+      - bob-home:/home/matrixos/home
+      - dev-next-cache-bob:/app/shell/.next
+    env_file:
+      - .env.docker
+    environment:
+      - NODE_ENV=development
+      - MATRIX_HOME=/home/matrixos/home
+      - MATRIX_HANDLE=bob
+      - PORT=4000
+      - ANTHROPIC_BASE_URL=http://proxy:8080
+    healthcheck:
+      test: wget -qO- http://localhost:4000/health || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  dev-node-modules:
+  dev-home:
+  dev-next-cache:
+  dev-next-cache-bob:
+  proxy-data:
+  platform-data:
+  user-data:
+  conduit-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alice-home:
+  bob-home:
