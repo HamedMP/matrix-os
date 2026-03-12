@@ -11,6 +11,10 @@ import {
   Message,
   MessageContent,
 } from "@/components/ai-elements/message";
+import { Reasoning, extractThinking } from "@/components/ai-elements/reasoning";
+import { SuggestionChips, DEFAULT_SUGGESTIONS, parseSuggestions } from "@/components/ai-elements/suggestions";
+import { Plan, parsePlan } from "@/components/ai-elements/plan";
+import { Task, parseTask } from "@/components/ai-elements/task";
 import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Button } from "@/components/ui/button";
@@ -118,11 +122,7 @@ export function ChatPanel({
                     {msg.content}
                   </div>
                 ) : (
-                  <Message from="assistant">
-                    <MessageContent>
-                      <RichContent onAction={onSubmit}>{msg.content}</RichContent>
-                    </MessageContent>
-                  </Message>
+                  <AssistantMessage content={msg.content} onAction={onSubmit} />
                 )}
               </div>
             );
@@ -134,6 +134,10 @@ export function ChatPanel({
               Thinking...
             </div>
           )}
+
+          {!busy && onSubmit && (
+            <ChatSuggestions messages={messages} onSelect={onSubmit} />
+          )}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
@@ -144,4 +148,61 @@ export function ChatPanel({
       )}
     </aside>
   );
+}
+
+function AssistantMessage({
+  content,
+  onAction,
+}: {
+  content: string;
+  onAction?: (text: string) => void;
+}) {
+  const { thinking, rest } = extractThinking(content);
+  const planSteps = parsePlan(rest);
+  const taskData = parseTask(rest);
+  const displayContent = planSteps
+    ? rest.replace(/```plan\n[\s\S]*?```/, "").trim()
+    : taskData
+      ? rest.replace(/```task\n[\s\S]*?```/, "").trim()
+      : rest;
+
+  return (
+    <Message from="assistant">
+      <MessageContent>
+        {thinking && <Reasoning content={thinking} />}
+        {planSteps && <Plan steps={planSteps} />}
+        {taskData && <Task task={taskData} />}
+        {displayContent && (
+          <RichContent onAction={onAction}>{displayContent}</RichContent>
+        )}
+      </MessageContent>
+    </Message>
+  );
+}
+
+function ChatSuggestions({
+  messages,
+  onSelect,
+}: {
+  messages: ChatMessage[];
+  onSelect: (text: string) => void;
+}) {
+  const suggestions = useMemo(() => {
+    if (messages.length === 0) return DEFAULT_SUGGESTIONS;
+
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && !m.tool);
+
+    if (lastAssistant) {
+      const parsed = parseSuggestions(lastAssistant.content);
+      if (parsed.length > 0) return parsed;
+    }
+
+    return messages.length < 3 ? DEFAULT_SUGGESTIONS : [];
+  }, [messages]);
+
+  if (suggestions.length === 0) return null;
+
+  return <SuggestionChips suggestions={suggestions} onSelect={onSelect} />;
 }

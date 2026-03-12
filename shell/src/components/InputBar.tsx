@@ -6,12 +6,13 @@ import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SendIcon, MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
+import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 
 interface InputBarProps {
   sessionId?: string;
   busy: boolean;
   queueLength?: number;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   chips?: ReactNode;
   embedded?: boolean;
 }
@@ -19,6 +20,7 @@ interface InputBarProps {
 export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, embedded }: InputBarProps) {
   const [input, setInput] = useState("");
   const { connected } = useSocket();
+  const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
 
   const {
     isRecording,
@@ -36,14 +38,21 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
   });
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
       const text = input.trim();
-      if (!text) return;
-      onSubmit(text);
+      if (!text && attachments.length === 0) return;
+
+      if (attachments.length > 0) {
+        const files = await getBase64Files();
+        onSubmit(text || `Attached ${files.length} file(s)`, files);
+        clearAll();
+      } else {
+        onSubmit(text);
+      }
       setInput("");
     },
-    [input, onSubmit],
+    [input, attachments, onSubmit, getBase64Files, clearAll],
   );
 
   const handleMicClick = useCallback(() => {
@@ -57,6 +66,7 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
   return (
     <div className="pointer-events-auto flex flex-col items-center gap-2">
       {chips}
+      <Attachments attachments={attachments} onRemove={removeFile} />
       <form
         onSubmit={handleSubmit}
         className={
@@ -65,6 +75,10 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
             : "flex w-full max-w-full md:max-w-[560px] items-center gap-2 rounded-xl border border-border bg-card/90 px-3 py-2 shadow-lg backdrop-blur-sm"
         }
       >
+        <AttachmentButton
+          onFilesSelected={addFiles}
+          disabled={!connected}
+        />
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -118,7 +132,7 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
           type="submit"
           size="icon"
           className="size-10 md:size-8"
-          disabled={!connected || !input.trim()}
+          disabled={!connected || (!input.trim() && attachments.length === 0)}
         >
           <SendIcon className="size-5 md:size-4" />
         </Button>
