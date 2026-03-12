@@ -879,7 +879,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 </CardHeader>
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
-                  <AppViewer path={win.path} />
+                  <AppViewer path={win.path} onOpenApp={openWindow} />
                   {interacting && (
                     <div className="absolute inset-0 z-10" />
                   )}

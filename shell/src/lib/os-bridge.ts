@@ -2,7 +2,8 @@ export type BridgeMessage =
   | { type: "os:generate"; app: string; payload: { context: string } }
   | { type: "os:navigate"; app: string; payload: { route: string; context?: string } }
   | { type: "os:read-data"; app: string; payload: { key: string } }
-  | { type: "os:write-data"; app: string; payload: { key: string; value: string } };
+  | { type: "os:write-data"; app: string; payload: { key: string; value: string } }
+  | { type: "os:open-app"; app: string; payload: { name: string; path: string } };
 
 export interface BridgeHandler {
   sendToKernel: (text: string) => void;
@@ -12,6 +13,30 @@ export interface BridgeHandler {
     key: string,
     value: string | undefined,
   ) => void;
+  openApp?: (name: string, path: string) => void;
+}
+
+export const THEME_VAR_MAP: Record<string, string> = {
+  "--background": "--matrix-bg",
+  "--foreground": "--matrix-fg",
+  "--primary": "--matrix-accent",
+  "--border": "--matrix-border",
+  "--card": "--matrix-card-bg",
+  "--card-foreground": "--matrix-card-fg",
+  "--input": "--matrix-input-bg",
+  "--font-sans": "--matrix-font-sans",
+  "--font-mono": "--matrix-font-mono",
+  "--radius": "--matrix-radius",
+};
+
+export type ThemeVars = Record<string, string>;
+
+export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
+  const vars: ThemeVars = {};
+  for (const [shellVar, matrixVar] of Object.entries(THEME_VAR_MAP)) {
+    vars[matrixVar] = style.getPropertyValue(shellVar).trim();
+  }
+  return vars;
 }
 
 export function handleBridgeMessage(
@@ -46,17 +71,56 @@ export function handleBridgeMessage(
     case "os:write-data":
       handler.fetchData("write", msg.app, msg.payload.key, msg.payload.value);
       break;
+
+    case "os:open-app":
+      if (handler.openApp && msg.payload.name && msg.payload.path) {
+        handler.openApp(msg.payload.name, msg.payload.path);
+      }
+      break;
   }
 }
 
-export function buildBridgeScript(appName: string): string {
+function buildThemeStyleBlock(themeVars: ThemeVars): string {
+  const entries = Object.entries(themeVars)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `    ${k}: ${v};`)
+    .join("\n");
+  if (!entries) return "";
+  return `:root {\n${entries}\n  }`;
+}
+
+export function buildBridgeScript(appName: string, themeVars?: ThemeVars): string {
+  const themeJson = JSON.stringify(themeVars ?? {});
+  const initialCss = themeVars ? buildThemeStyleBlock(themeVars) : "";
+
   return `
 (function() {
   var app = ${JSON.stringify(appName)};
+  var currentTheme = ${themeJson};
 
   function post(type, payload) {
     window.parent.postMessage({ type: type, app: app, payload: payload }, "*");
   }
+
+  // Inject theme style tag
+  var themeStyle = document.createElement("style");
+  themeStyle.id = "matrix-os-theme";
+  themeStyle.textContent = ${JSON.stringify(initialCss)};
+  document.head.appendChild(themeStyle);
+
+  // Listen for dynamic theme updates (T2071)
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.type === "os:theme-update" && e.data.payload) {
+      currentTheme = e.data.payload;
+      var css = ":root {\\n";
+      for (var k in currentTheme) {
+        if (currentTheme[k]) css += "    " + k + ": " + currentTheme[k] + ";\\n";
+      }
+      css += "  }";
+      themeStyle.textContent = css;
+      if (window.MatrixOS) window.MatrixOS.theme = currentTheme;
+    }
+  });
 
   window.MatrixOS = {
     generate: function(context) {
@@ -92,6 +156,12 @@ export function buildBridgeScript(appName: string): string {
         );
       });
     },
+
+    openApp: function(name, path) {
+      post("os:open-app", { name: name, path: path });
+    },
+
+    theme: currentTheme,
 
     app: { name: app }
   };

@@ -6,7 +6,9 @@ import { useSocket } from "@/hooks/useSocket";
 import {
   handleBridgeMessage,
   buildBridgeScript,
+  getThemeVariables,
   type BridgeHandler,
+  type ThemeVars,
 } from "@/lib/os-bridge";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -15,6 +17,7 @@ const GATEWAY_URL = getGatewayUrl();
 interface AppViewerProps {
   path: string;
   sessionId?: string;
+  onOpenApp?: (name: string, path: string) => void;
 }
 
 function appNameFromPath(path: string): string {
@@ -24,7 +27,13 @@ function appNameFromPath(path: string): string {
   return path.replace("apps/", "").replace(".html", "");
 }
 
-export function AppViewer({ path, sessionId }: AppViewerProps) {
+function readCurrentTheme(): ThemeVars {
+  if (typeof document === "undefined") return {};
+  const style = getComputedStyle(document.documentElement);
+  return getThemeVariables(style);
+}
+
+export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send } = useSocket();
@@ -41,13 +50,15 @@ export function AppViewer({ path, sessionId }: AppViewerProps) {
     ),
   );
 
+  // Inject bridge script with theme variables on iframe load
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
 
     const onLoad = () => {
       try {
-        const script = buildBridgeScript(appName);
+        const themeVars = readCurrentTheme();
+        const script = buildBridgeScript(appName, themeVars);
         iframe.contentWindow?.postMessage(
           { type: "os:inject", script },
           "*",
@@ -61,6 +72,32 @@ export function AppViewer({ path, sessionId }: AppViewerProps) {
     return () => iframe.removeEventListener("load", onLoad);
   }, [appName, refreshKey]);
 
+  // Observe theme changes and broadcast to iframe (T2071)
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const observer = new MutationObserver(() => {
+      try {
+        const themeVars = readCurrentTheme();
+        iframe.contentWindow?.postMessage(
+          { type: "os:theme-update", payload: themeVars },
+          "*",
+        );
+      } catch {
+        // cross-origin restriction
+      }
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
+
+    return () => observer.disconnect();
+  }, [refreshKey]);
+
+  // Handle bridge messages from iframe
   useEffect(() => {
     const handler: BridgeHandler = {
       sendToKernel(text) {
@@ -73,6 +110,7 @@ export function AppViewer({ path, sessionId }: AppViewerProps) {
           body: JSON.stringify({ action, app, key, value }),
         });
       },
+      openApp: onOpenApp,
     };
 
     const onMessage = (event: MessageEvent) => {
@@ -81,7 +119,7 @@ export function AppViewer({ path, sessionId }: AppViewerProps) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [send, sessionId]);
+  }, [send, sessionId, onOpenApp]);
 
   return (
     <iframe
