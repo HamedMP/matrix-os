@@ -9,6 +9,7 @@ import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
+import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -35,6 +36,7 @@ import {
   loadHandle,
   createImageClient,
   createUsageTracker,
+  createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import { authMiddleware } from "./auth.js";
@@ -156,6 +158,18 @@ export async function createGateway(config: GatewayConfig) {
       if (conv && conv.messages.length > 0) {
         const summary = summarizeConversation({ id: conv.id, messages: conv.messages });
         if (summary) saveSummary(homePath, sid, summary);
+
+        const candidates = extractMemoriesLocal(
+          conv.messages.map((m) => ({ role: m.role, content: m.content })),
+        );
+        if (candidates.length > 0) {
+          try {
+            const memStore = createMemoryStore(dispatcher.db);
+            for (const c of candidates) {
+              memStore.remember(c.content, { source: sid, category: c.category });
+            }
+          } catch { /* memory extraction is best-effort */ }
+        }
       }
     } catch { /* summary is best-effort */ }
   }
