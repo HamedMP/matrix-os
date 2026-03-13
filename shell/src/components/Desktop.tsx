@@ -27,9 +27,10 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon } from "lucide-react";
+import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { AmbientClock } from "./AmbientClock";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -108,6 +109,8 @@ function DockIcon({
   iconUrl,
   onUnpin,
   onRegenerateIcon,
+  onRename,
+  onDelete,
 }: {
   name: string;
   active: boolean;
@@ -117,6 +120,8 @@ function DockIcon({
   iconUrl?: string;
   onUnpin?: () => void;
   onRegenerateIcon?: () => void;
+  onRename?: (newName: string) => void;
+  onDelete?: () => void;
 }) {
   const initial = name.charAt(0).toUpperCase();
   const [imgFailed, setImgFailed] = useState(false);
@@ -149,7 +154,8 @@ function DockIcon({
     </button>
   );
 
-  if (!onUnpin && !onRegenerateIcon) {
+  const hasContextMenu = onUnpin || onRegenerateIcon || onRename || onDelete;
+  if (!hasContextMenu) {
     return (
       <Tooltip>
         <TooltipTrigger asChild>{btn}</TooltipTrigger>
@@ -179,6 +185,35 @@ function DockIcon({
           <ContextMenuItem onSelect={onRegenerateIcon}>
             <RefreshCwIcon className="size-3.5 mr-2" />
             Regenerate Icon
+          </ContextMenuItem>
+        )}
+        {(onRename || onDelete) && (onUnpin || onRegenerateIcon) && (
+          <ContextMenuSeparator />
+        )}
+        {onRename && (
+          <ContextMenuItem
+            onSelect={() => {
+              const newName = window.prompt("Rename app:", name);
+              if (newName && newName.trim() && newName.trim() !== name) {
+                onRename(newName.trim());
+              }
+            }}
+          >
+            <PencilIcon className="size-3.5 mr-2" />
+            Rename
+          </ContextMenuItem>
+        )}
+        {onDelete && (
+          <ContextMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={() => {
+              if (window.confirm(`Delete "${name}"? This cannot be undone.`)) {
+                onDelete();
+              }
+            }}
+          >
+            <TrashIcon className="size-3.5 mr-2" />
+            Delete
           </ContextMenuItem>
         )}
       </ContextMenuContent>
@@ -367,6 +402,73 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
       .finally(() => generatingRef.current.delete(slug));
   }, [wmSetApps]);
+
+  const renameAppOnServer = useCallback((slug: string, newName: string) => {
+    fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newName }),
+    })
+      .then((r) => {
+        if (!r.ok) {
+          r.json().then((d: { error?: string }) => console.warn(`Rename failed for "${slug}":`, d.error)).catch(() => {});
+          return;
+        }
+        return r.json().then((data: { newSlug?: string }) => {
+          if (data.newSlug) {
+            const oldSlug = slug;
+            const ns = data.newSlug;
+            wmSetApps((prev) =>
+              prev.map((a) => {
+                const aSlug = nameToSlug(a.name);
+                if (aSlug === oldSlug) {
+                  const newPath = a.path.includes("/")
+                    ? `apps/${ns}/index.html`
+                    : `apps/${ns}.html`;
+                  return {
+                    ...a,
+                    name: newName,
+                    path: newPath,
+                    iconUrl: `${GATEWAY_URL}/files/system/icons/${ns}.png?v=${Date.now()}`,
+                  };
+                }
+                return a;
+              }),
+            );
+            // Update open windows
+            wmSetWindows((prev) =>
+              prev.map((w) => {
+                const wSlug = w.path.replace("apps/", "").replace(/\/index\.html$/, "").replace(/\.html$/, "");
+                if (wSlug === oldSlug) {
+                  const newPath = w.path.includes("/")
+                    ? `apps/${ns}/index.html`
+                    : `apps/${ns}.html`;
+                  return { ...w, title: newName, path: newPath };
+                }
+                return w;
+              }),
+            );
+          }
+        });
+      })
+      .catch((err) => console.warn(`Rename request failed for "${slug}":`, err));
+  }, [wmSetApps, wmSetWindows]);
+
+  const deleteAppOnServer = useCallback((slug: string) => {
+    fetch(`${GATEWAY_URL}/api/apps/${slug}`, { method: "DELETE" })
+      .then((r) => {
+        if (!r.ok) {
+          r.json().then((d: { error?: string }) => console.warn(`Delete failed for "${slug}":`, d.error)).catch(() => {});
+          return;
+        }
+        wmSetApps((prev) => prev.filter((a) => nameToSlug(a.name) !== slug));
+        wmSetWindows((prev) => prev.filter((w) => {
+          const wSlug = w.path.replace("apps/", "").replace(/\/index\.html$/, "").replace(/\.html$/, "");
+          return wSlug !== slug;
+        }));
+      })
+      .catch((err) => console.warn(`Delete request failed for "${slug}":`, err));
+  }, [wmSetApps, wmSetWindows]);
 
   const addApp = useCallback((name: string, path: string, _moduleIconUrl?: string) => {
     const slug = nameToSlug(name);
@@ -711,6 +813,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 iconUrl={app.iconUrl}
                 onUnpin={() => togglePin(app.path)}
                 onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
+                onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
+                onDelete={() => deleteAppOnServer(nameToSlug(app.name))}
               />
             );
           })}
@@ -811,6 +915,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
               pinnedApps={pinnedApps}
               onTogglePin={togglePin}
               onRegenerateIcon={regenerateIcon}
+              onRenameApp={renameAppOnServer}
+              onDeleteApp={deleteAppOnServer}
             />
           )}
 

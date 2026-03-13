@@ -835,6 +835,24 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
       ),
 
       tool(
+        "app_data",
+        "Read or write persistent data for any app. Data is stored in ~/data/{app}/{key}.json. Use this to interact with app state from chat (e.g., add a task to a task manager, read notes, update expenses).",
+        {
+          action: z.enum(["read", "write", "list"]).describe("read: get data, write: set data, list: show all keys for an app"),
+          app: z.string().describe("App name/slug (e.g., 'task-manager', 'notes', 'expense-tracker')"),
+          key: z.string().optional().describe("Data key (required for read/write)"),
+          value: z.string().optional().describe("JSON string to write (required for write action)"),
+        },
+        async ({ action, app, key, value }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Cannot access app data (no home path)" }] };
+          }
+          const { appDataHandler } = await import("./app-data.js");
+          return appDataHandler(homePath, { action, app, key, value });
+        },
+      ),
+
+      tool(
         "fork_app",
         "Fork a public app from the store into this user's ~/apps/ directory. Creates a writable copy with forked_from attribution.",
         {

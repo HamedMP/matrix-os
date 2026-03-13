@@ -33,6 +33,8 @@ interface MissionControlProps {
   pinnedApps: string[];
   onTogglePin: (path: string) => void;
   onRegenerateIcon: (slug: string) => void;
+  onRenameApp?: (slug: string, newName: string) => void;
+  onDeleteApp?: (slug: string) => void;
 }
 
 export function MissionControl({
@@ -43,6 +45,8 @@ export function MissionControl({
   pinnedApps,
   onTogglePin,
   onRegenerateIcon,
+  onRenameApp,
+  onDeleteApp,
 }: MissionControlProps) {
   const { tasks, provision, todo, inProgress, done, selectedTaskId, selectTask, addTask } =
     useTaskBoard();
@@ -137,6 +141,8 @@ export function MissionControl({
                       onTogglePin={() => onTogglePin(app.path)}
                       iconUrl={app.iconUrl}
                       onRegenerateIcon={() => onRegenerateIcon(slug)}
+                      onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
+                      onDelete={onDeleteApp ? () => onDeleteApp(slug) : undefined}
                     />
                   );
                 })}

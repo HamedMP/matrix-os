@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { PinIcon, RefreshCwIcon } from "lucide-react";
+import { PinIcon, RefreshCwIcon, PencilIcon, TrashIcon } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 
@@ -17,9 +18,11 @@ interface AppTileProps {
   onTogglePin?: () => void;
   iconUrl?: string;
   onRegenerateIcon?: () => void;
+  onRename?: (newName: string) => void;
+  onDelete?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onDelete }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const [imgFailed, setImgFailed] = useState(false);
   const prevIconUrl = useRef(iconUrl);
@@ -77,7 +80,8 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
     </button>
   );
 
-  if (!onTogglePin && !onRegenerateIcon) return tile;
+  const hasContextMenu = onTogglePin || onRegenerateIcon || onRename || onDelete;
+  if (!hasContextMenu) return tile;
 
   return (
     <ContextMenu>
@@ -95,6 +99,35 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           <ContextMenuItem onSelect={onRegenerateIcon}>
             <RefreshCwIcon className="size-3.5 mr-2" />
             Regenerate Icon
+          </ContextMenuItem>
+        )}
+        {(onRename || onDelete) && (onTogglePin || onRegenerateIcon) && (
+          <ContextMenuSeparator />
+        )}
+        {onRename && (
+          <ContextMenuItem
+            onSelect={() => {
+              const newName = window.prompt("Rename app:", name);
+              if (newName && newName.trim() && newName.trim() !== name) {
+                onRename(newName.trim());
+              }
+            }}
+          >
+            <PencilIcon className="size-3.5 mr-2" />
+            Rename
+          </ContextMenuItem>
+        )}
+        {onDelete && (
+          <ContextMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={() => {
+              if (window.confirm(`Delete "${name}"? This cannot be undone.`)) {
+                onDelete();
+              }
+            }}
+          >
+            <TrashIcon className="size-3.5 mr-2" />
+            Delete
           </ContextMenuItem>
         )}
       </ContextMenuContent>
