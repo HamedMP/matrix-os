@@ -8,6 +8,7 @@ import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContex
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { resolveWithinHome } from "./path-security.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -148,6 +149,17 @@ export async function createGateway(config: GatewayConfig) {
     broadcast({ type: "kernel:error", message });
   }
 
+  function finalizeWithSummary(sid: string) {
+    conversations.finalize(sid);
+    try {
+      const conv = conversations.get(sid);
+      if (conv && conv.messages.length > 0) {
+        const summary = summarizeConversation({ id: conv.id, messages: conv.messages });
+        if (summary) saveSummary(homePath, sid, summary);
+      }
+    } catch { /* summary is best-effort */ }
+  }
+
   const heartbeat: Heartbeat = createHeartbeat({
     homePath,
     onHealthFailure: async (target, error) => {
@@ -251,7 +263,7 @@ export async function createGateway(config: GatewayConfig) {
                 if (sid) conversations.appendAssistantText(sid, event.text);
               } else if (event.type === "result") {
                 const sid = channelSessions.get(sessionKey);
-                if (sid) conversations.finalize(sid);
+                if (sid) finalizeWithSummary(sid);
               }
             }, {
               channel: msg.source,
@@ -288,7 +300,7 @@ export async function createGateway(config: GatewayConfig) {
             if (sid) conversations.appendAssistantText(sid, event.text);
           } else if (event.type === "result") {
             const sid = channelSessions.get(sessionKey);
-            if (sid) conversations.finalize(sid);
+            if (sid) finalizeWithSummary(sid);
           }
         }, {
           channel: msg.source,
@@ -488,12 +500,12 @@ export async function createGateway(config: GatewayConfig) {
                 } else if (msg.type === "kernel:text" && activeSessionId) {
                   conversations.appendAssistantText(activeSessionId, msg.text);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
-                  conversations.finalize(activeSessionId);
+                  finalizeWithSummary(activeSessionId);
                 }
               })
               .catch((err: Error) => {
                 if (activeSessionId) {
-                  conversations.finalize(activeSessionId);
+                  finalizeWithSummary(activeSessionId);
                 }
                 send(ws, {
                   type: "kernel:error",
@@ -657,13 +669,23 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     if (body.action === "read") {
-      if (!existsSync(filePath)) return c.json(null);
+      if (!existsSync(filePath)) return c.json({ value: null });
       const content = readFileSync(filePath, "utf-8");
-      return c.json(JSON.parse(content));
+      // Handle legacy double-encoded files (old bridge used JSON.stringify on write)
+      let value = content;
+      try {
+        const parsed = JSON.parse(content);
+        if (typeof parsed === "string") {
+          value = parsed;
+        }
+      } catch {
+        // Not JSON, return raw content as-is
+      }
+      return c.json({ value });
     }
 
     mkdirSync(dataDir, { recursive: true });
-    writeFileSync(filePath, JSON.stringify(body.value));
+    writeFileSync(filePath, body.value ?? "", "utf-8");
     return c.json({ ok: true });
   });
 
