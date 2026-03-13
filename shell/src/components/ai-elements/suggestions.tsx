@@ -10,7 +10,7 @@ export const DEFAULT_SUGGESTIONS = [
   "Show my files",
 ];
 
-export type SuggestionChipProps = HTMLAttributes<HTMLButtonElement> & {
+export type SuggestionChipProps = Omit<HTMLAttributes<HTMLButtonElement>, "onSelect"> & {
   label: string;
   onSelect: (label: string) => void;
   index?: number;
@@ -41,7 +41,7 @@ export function SuggestionChip({
   );
 }
 
-export type SuggestionChipsProps = HTMLAttributes<HTMLDivElement> & {
+export type SuggestionChipsProps = Omit<HTMLAttributes<HTMLDivElement>, "onSelect"> & {
   suggestions: string[];
   onSelect: (text: string) => void;
   visible?: boolean;
