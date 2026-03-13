@@ -26,12 +26,13 @@ const CHIPS: Record<ChipContext, string[]> = {
 };
 
 interface SuggestionChipsProps {
-  context: ChipContext;
+  context?: ChipContext;
+  suggestions?: string[];
   onSelect: (text: string) => void;
 }
 
-export function SuggestionChips({ context, onSelect }: SuggestionChipsProps) {
-  const chips = CHIPS[context];
+export function SuggestionChips({ context, suggestions, onSelect }: SuggestionChipsProps) {
+  const chips = suggestions ?? (context ? CHIPS[context] : []);
 
   return (
     <div className="flex flex-wrap justify-center gap-2">
