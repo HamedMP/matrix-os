@@ -20,6 +20,15 @@
     "dev:www": "bun run --filter www dev",
     "dev:proxy": "bun run --filter '@matrix-os/proxy' dev",
     "dev:platform": "bun run --filter '@matrix-os/platform' dev",
+    "docker": "docker compose -f docker-compose.dev.yml up",
+    "docker:full": "docker compose -f docker-compose.dev.yml --profile full up",
+    "docker:all": "docker compose -f docker-compose.dev.yml --profile full --profile obs up",
+    "docker:multi": "docker compose -f docker-compose.dev.yml --profile full --profile multi up",
+    "docker:stop": "docker compose -f docker-compose.dev.yml --profile full --profile obs --profile multi stop",
+    "docker:restart": "docker compose -f docker-compose.dev.yml restart dev",
+    "docker:logs": "docker compose -f docker-compose.dev.yml logs -f dev",
+    "docker:shell": "docker compose -f docker-compose.dev.yml exec -u matrixos dev sh",
+    "docker:build": "docker compose -f docker-compose.dev.yml build --no-cache",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
@@ -42,6 +51,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.45.1",
+    "tsx": "^4.21.0",
     "vitest": "^4.0.18"
   }
 }

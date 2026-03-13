@@ -33,6 +33,10 @@ export async function* spawnKernel(
       options: {
         ...options,
         includePartialMessages: true,
+        stderr: (data: Buffer | string) => {
+          const line = data.toString().trim();
+          if (line) console.error("[kernel:stderr]", line);
+        },
       } as Parameters<typeof query>[0]["options"],
     });
 

@@ -1,128 +1,201 @@
 # Docker Development Guide
 
-Matrix OS uses Docker as the primary local development environment. This ensures parity between development and production.
+Matrix OS uses Docker as the primary local development environment via OrbStack on macOS. This ensures dev/prod parity.
 
 ## Prerequisites
 
-- **macOS**: [OrbStack](https://orbstack.dev) (recommended over Docker Desktop)
+- **macOS**: [OrbStack](https://orbstack.dev) (required -- Docker Desktop is not supported)
 - **Linux/CI**: Standard Docker Engine + Docker Compose v2
-- **All platforms**: `jq` and `curl` for running test scripts
+- Copy `.env.docker.example` to `.env.docker` and fill in your keys
 
-## Quick Start
+## Setup
 
 ```bash
-# Start dev environment (gateway + shell with HMR)
-docker compose -f docker-compose.dev.yml up
+# Copy env file and add your API key
+cp .env.docker.example .env.docker
+# Edit .env.docker with your ANTHROPIC_API_KEY
 
-# Open in browser
-open http://localhost:3000   # Shell UI
-open http://localhost:4000   # Gateway API
+# Start dev environment
+bun run docker
 ```
 
-The dev container bind-mounts source code and runs `tsx watch` (gateway) + `next dev` (shell), so changes are reflected immediately without rebuilding.
+First start takes ~30s (installs dependencies). Subsequent starts are instant (deps cached in volume).
 
-## Compose Profiles
+## Convenience Scripts
 
-The `docker-compose.dev.yml` file uses profiles for modular startup:
-
-| Command | Services |
-|---------|----------|
-| `docker compose -f docker-compose.dev.yml up` | Dev container only (gateway + shell) |
-| `--profile full` | + platform, proxy, Matrix homeserver |
-| `--profile obs` | + Prometheus, Grafana, Loki, Promtail |
-| `--profile multi` | + alice (4001) and bob (4002) user containers |
-
-### Examples
+All Docker commands have `bun run` shortcuts in `package.json`:
 
 ```bash
-# Full stack (platform + proxy + Matrix)
-docker compose -f docker-compose.dev.yml --profile full up
+bun run docker          # Dev only (gateway + shell with HMR)
+bun run docker:full     # + proxy, platform, conduit
+bun run docker:all      # + observability (Grafana, Prometheus, Loki)
+bun run docker:multi    # + alice & bob multi-user
+bun run docker:stop     # Stop all containers (preserves data)
+bun run docker:restart  # Restart dev container
+bun run docker:logs     # Tail dev container logs
+bun run docker:shell    # Shell into container as matrixos user
+bun run docker:build    # Full rebuild (no cache)
+```
 
-# Full stack + observability dashboards
-docker compose -f docker-compose.dev.yml --profile full --profile obs up
+These map to `docker compose -f docker-compose.dev.yml` with the appropriate profiles.
 
-# Multi-user testing (alice + bob on separate ports)
-docker compose -f docker-compose.dev.yml --profile multi --profile full up
+## Service URLs
 
-# Run tests inside the dev container
+| Service | URL | Port | Profile |
+|---------|-----|------|---------|
+| Shell (desktop) | http://localhost:3000 | 3000 | default |
+| Gateway (API) | http://localhost:4000 | 4000 | default |
+| Proxy | http://localhost:8080 | 8080 | full |
+| Platform | http://localhost:9000 | 9000 | full |
+| Conduit (Matrix) | http://localhost:6167 | 6167 | full |
+| Prometheus | http://localhost:9090 | 9090 | obs |
+| Grafana | http://localhost:3200 | 3200 | obs |
+| Loki | http://localhost:3100 | 3100 | obs |
+| Alice (shell) | http://localhost:3001 | 3001 | multi |
+| Alice (gateway) | http://localhost:4001 | 4001 | multi |
+| Bob (shell) | http://localhost:3002 | 3002 | multi |
+| Bob (gateway) | http://localhost:4002 | 4002 | multi |
+
+Grafana default credentials: `admin` / `matrixos`
+
+## Common Operations
+
+### Stop containers (preserves data)
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+### Rebuild after Dockerfile changes
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+### Restart a single service
+
+```bash
+docker compose -f docker-compose.dev.yml restart dev
+```
+
+### View logs
+
+```bash
+# All services
+docker compose -f docker-compose.dev.yml logs -f
+
+# Single service
+docker compose -f docker-compose.dev.yml logs -f dev
+
+# Last 50 lines
+docker compose -f docker-compose.dev.yml logs --tail 50
+```
+
+### Run tests inside container
+
+```bash
 docker compose -f docker-compose.dev.yml exec dev bun run test
+```
 
-# Reset to clean state (removes volumes)
+### Shell into container
+
+```bash
+docker compose -f docker-compose.dev.yml exec dev sh
+```
+
+### Check health
+
+```bash
+curl http://localhost:4000/health
+```
+
+## Volume Management
+
+Volumes persist data across container restarts:
+
+| Volume | Purpose |
+|--------|---------|
+| `dev-node-modules` | pnpm dependencies (cached, ~30s first install) |
+| `dev-home` | Matrix OS home directory (`~/matrixos/`) |
+| `dev-next-cache` | Next.js build cache |
+| `conduit-data` | Matrix homeserver database |
+| `prometheus-data` | Metrics history |
+| `grafana-data` | Dashboard configs |
+
+**IMPORTANT**: Never use `docker compose down -v` unless you explicitly want to destroy all data and start fresh. This removes all volumes including your OS home directory and installed dependencies.
+
+### Reset to clean state (destructive)
+
+```bash
+# Only when you explicitly want a fresh start
 docker compose -f docker-compose.dev.yml down -v
 ```
 
-### Service Ports
-
-| Service | Port | Description |
-|---------|------|-------------|
-| dev (shell) | 3000 | Next.js desktop shell |
-| dev (gateway) | 4000 | Hono HTTP/WS gateway |
-| proxy | 8080 | Shared API proxy |
-| platform | 9000 | Multi-tenant orchestrator |
-| conduit | 6167 | Matrix homeserver |
-| prometheus | 9090 | Metrics collection |
-| grafana | 3200 | Dashboards |
-| loki | 3100 | Log aggregation |
-| alice | 3001/4001 | Test user 1 |
-| bob | 3002/4002 | Test user 2 |
-
-## Scenario Tests
-
-Seven test scripts in `scripts/docker-test/` validate Docker-based workflows:
-
-### 1. Fresh Install (`fresh-install.sh`)
-
-Starts with an empty volume and verifies the full onboarding experience: home directory initialization, git init, soul.md, bootstrap.md, config.json, and all API endpoints.
-
-### 2. Upgrade (`upgrade.sh`)
-
-Simulates upgrading from v0.3.0 to the current version. Seeds old state, restarts the container, and verifies that smart template sync runs, updates `.matrix-version`, creates `.template-manifest.json`, and logs the sync.
-
-### 3. Customized Files (`customized-files.sh`)
-
-Modifies `soul.md` and a skill file, then restarts. Verifies that user customizations survive the template sync (files are skipped, not overwritten).
-
-### 4. Multi-User (`multi-user.sh`)
-
-Starts alice and bob containers, creates social posts on each, and verifies that each instance works independently. Tests the multi-user profile.
-
-### 5. Channels (`channels.sh`)
-
-Writes a channel configuration to `config.json`, restarts, and verifies the channel status endpoint reports the adapter.
-
-### 6. Recovery (`recovery.sh`)
-
-Writes bridge data and a social post, then kills the container with SIGKILL (ungraceful shutdown). Restarts and verifies that data persisted on the Docker volume survives.
-
-### 7. Resource Limits (`resource-limits.sh`)
-
-Starts the container with a 256MB memory limit and verifies that all endpoints respond correctly. Reports memory usage statistics.
-
-### Running Tests
+### Reset only node_modules (force dependency reinstall)
 
 ```bash
-# Run all scenarios
-./scripts/docker-test/run-all.sh
-
-# Run a single scenario
-./scripts/docker-test/fresh-install.sh
-
-# Skip specific scenarios (space-separated)
-SKIP_SCENARIOS="multi-user resource-limits" ./scripts/docker-test/run-all.sh
+docker volume rm matrix-os_dev-node-modules
+docker compose -f docker-compose.dev.yml up
 ```
 
-Each script is standalone, handles its own setup/cleanup, and can be run independently.
+## Environment Variables
+
+All env vars are loaded from `.env.docker` (via `env_file` in compose). The compose file also sets some defaults in the `environment` section.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | - | Claude API key for kernel |
+| `MATRIX_HANDLE` | No | `dev` | User handle (set by platform in prod) |
+| `MATRIX_DISPLAY_NAME` | No | `Developer` | Display name (from Clerk signup in prod) |
+| `FAL_API_KEY` | No | - | Fal.ai key for image generation |
+| `PLATFORM_SECRET` | No | `dev-secret` | Platform JWT secret |
+| `GRAFANA_ADMIN_PASSWORD` | No | `matrixos` | Grafana admin password |
+
+## Architecture Notes
+
+**Non-root user**: The container runs services as the `matrixos` user (not root). The entrypoint runs setup tasks (pnpm install, chown) as root, then drops to `matrixos` via `su-exec`. This is required because the Agent SDK refuses `bypassPermissions` when running as root.
+
+**Identity from environment**: On boot, the gateway writes `handle.json` from `MATRIX_HANDLE` and `MATRIX_DISPLAY_NAME` env vars. In production, these are set by the platform orchestrator from Clerk signup data. In local dev, they default to `dev`/`Developer`.
+
+## HMR (Hot Module Replacement)
+
+Source code is bind-mounted into the container:
+- `packages/` -- gateway code changes trigger `tsx --watch` restart
+- `shell/` -- Next.js Turbopack HMR (instant)
+- `home/` -- template files
+
+File watching works automatically with OrbStack on macOS.
 
 ## Switching Between Local and Production
 
-Any service can be pointed at a production endpoint instead of the local container:
+Any service can point at a production endpoint:
 
 ```bash
-# Use production API proxy instead of local
+# Use production proxy instead of local
 ANTHROPIC_BASE_URL=https://api.matrix-os.com:8080 docker compose -f docker-compose.dev.yml up
 
 # Use production platform
 PLATFORM_URL=https://api.matrix-os.com:9000 docker compose -f docker-compose.dev.yml up
+```
+
+## Scenario Tests
+
+Seven test scripts in `scripts/docker-test/` validate Docker workflows:
+
+1. **fresh-install.sh** -- Empty volume, verify onboarding
+2. **upgrade.sh** -- Seed old state, boot new version, verify sync
+3. **customized-files.sh** -- Modified files survive sync
+4. **multi-user.sh** -- Alice + bob independent instances
+5. **channels.sh** -- Channel adapter lifecycle
+6. **recovery.sh** -- Kill -9, restart, verify data intact
+7. **resource-limits.sh** -- 256MB limit, verify stability
+
+```bash
+# Run all
+./scripts/docker-test/run-all.sh
+
+# Run single
+./scripts/docker-test/fresh-install.sh
 ```
 
 ## Troubleshooting
@@ -130,53 +203,30 @@ PLATFORM_URL=https://api.matrix-os.com:9000 docker compose -f docker-compose.dev
 ### Container fails to start
 
 ```bash
-# Check logs
-docker compose -f docker-compose.dev.yml logs dev
+docker compose -f docker-compose.dev.yml logs dev --tail 50
+```
 
-# Check if ports are in use
+### Port already in use
+
+```bash
 lsof -i :3000
 lsof -i :4000
 ```
 
-### Dependencies not installing
+### Dependencies out of date
+
+After changing `package.json` or `pnpm-lock.yaml` on host:
 
 ```bash
-# Force rebuild with no cache
-docker compose -f docker-compose.dev.yml build --no-cache dev
+# Run pnpm install on host first to update lockfile
+pnpm install
 
-# Or remove the node_modules volume
-docker compose -f docker-compose.dev.yml down -v
-docker compose -f docker-compose.dev.yml up
+# Then restart container (it auto-detects lockfile changes)
+docker compose -f docker-compose.dev.yml restart dev
 ```
 
-### Home directory issues
+### HMR not working on Linux
 
 ```bash
-# Reset home directory volume
-docker compose -f docker-compose.dev.yml down -v
-
-# Inspect home directory contents
-docker compose -f docker-compose.dev.yml exec dev ls -la /home/matrixos/home/
+echo 65536 | sudo tee /proc/sys/fs/inotify/max_user_watches
 ```
-
-### HMR not working
-
-- Verify bind mounts are correct in `docker-compose.dev.yml`
-- On macOS with OrbStack, file watching should work out of the box
-- On Linux, you may need to increase inotify limits: `echo 65536 | sudo tee /proc/sys/fs/inotify/max_user_watches`
-
-### Memory issues
-
-If the container is OOM-killed under resource limits:
-
-```bash
-# Check memory usage
-docker stats --no-stream
-
-# Increase the limit in docker-compose override
-# Or remove the mem_limit constraint
-```
-
-## CI Integration
-
-The GitHub Actions workflow (`.github/workflows/docker-test.yml`) runs scenario tests on every push to main and on pull requests. It skips `multi-user` and `resource-limits` scenarios in CI to save time. Test logs are uploaded as artifacts on failure.

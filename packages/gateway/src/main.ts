@@ -2,7 +2,7 @@ import { resolve, dirname } from "node:path";
 import { join } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ensureHome, loadHandle } from "@matrix-os/kernel";
+import { ensureHome, loadHandle, saveIdentity, deriveAiHandle } from "@matrix-os/kernel";
 import type { SyncReport } from "@matrix-os/kernel";
 import { createGateway } from "./server.js";
 
@@ -10,6 +10,19 @@ try { process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../.
 
 const syncResult = ensureHome(process.env.MATRIX_HOME || undefined);
 const homePath = syncResult.homePath;
+
+// Populate handle.json from env vars (set by platform/Clerk at provisioning time)
+const existingHandle = loadHandle(homePath);
+if (!existingHandle.handle && process.env.MATRIX_HANDLE) {
+  const handle = process.env.MATRIX_HANDLE;
+  const displayName = process.env.MATRIX_DISPLAY_NAME || handle;
+  saveIdentity(homePath, {
+    handle,
+    aiHandle: deriveAiHandle(handle),
+    displayName,
+    createdAt: new Date().toISOString(),
+  });
+}
 const syncReport: SyncReport = {
   added: syncResult.added,
   updated: syncResult.updated,

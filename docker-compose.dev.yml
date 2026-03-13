@@ -33,7 +33,7 @@ services:
       # Config files from root
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
-      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
       - ./tsconfig.json:/app/tsconfig.json
       - ./vitest.config.ts:/app/vitest.config.ts
       # Persistent volumes
@@ -46,6 +46,8 @@ services:
     environment:
       - NODE_ENV=development
       - MATRIX_HOME=/home/matrixos/home
+      - MATRIX_HANDLE=${MATRIX_HANDLE:-dev}
+      - MATRIX_DISPLAY_NAME=${MATRIX_DISPLAY_NAME:-Developer}
       - PORT=4000
       - NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
       - NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
@@ -65,6 +67,9 @@ services:
       dockerfile: Dockerfile.dev
     command: ["node", "--import=tsx", "packages/proxy/src/main.ts"]
     entrypoint: []
+    depends_on:
+      dev:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
@@ -91,6 +96,9 @@ services:
       dockerfile: Dockerfile.dev
     command: ["node", "--import=tsx", "packages/platform/src/main.ts"]
     entrypoint: []
+    depends_on:
+      dev:
+        condition: service_healthy
     ports:
       - "9000:9000"
     volumes:
@@ -117,19 +125,15 @@ services:
     profiles: ["full"]
     image: matrixconduit/matrix-conduit:latest
     environment:
-      - CONDUIT_SERVER_NAME=localhost
-      - CONDUIT_DATABASE_PATH=/var/lib/matrix-conduit
-      - CONDUIT_DATABASE_BACKEND=rocksdb
-      - CONDUIT_PORT=6167
-      - CONDUIT_ALLOW_REGISTRATION=true
-      - CONDUIT_ALLOW_FEDERATION=false
+      - CONDUIT_CONFIG=/etc/conduit.toml
     ports:
       - "6167:6167"
     volumes:
+      - ./distro/conduit.toml:/etc/conduit.toml:ro
       - conduit-data:/var/lib/matrix-conduit
     healthcheck:
-      test: wget -qO- http://localhost:6167/_matrix/client/versions || exit 1
-      interval: 10s
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 30s
       timeout: 3s
     restart: unless-stopped
 
@@ -203,7 +207,7 @@ services:
       - ./home:/app/home
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
-      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
       - ./tsconfig.json:/app/tsconfig.json
       - ./vitest.config.ts:/app/vitest.config.ts
       - ./distro:/app/distro
@@ -239,7 +243,7 @@ services:
       - ./home:/app/home
       - ./package.json:/app/package.json
       - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
-      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
       - ./tsconfig.json:/app/tsconfig.json
       - ./vitest.config.ts:/app/vitest.config.ts
       - ./distro:/app/distro

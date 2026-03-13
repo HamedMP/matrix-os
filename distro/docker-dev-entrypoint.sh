@@ -3,39 +3,40 @@ set -e
 
 cd /app
 
-# Install deps if node_modules is empty or lockfile changed
+# Install deps as root (volume may be root-owned)
 if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-lock-hash" ]; then
   echo "[matrix-os-dev] Installing dependencies..."
-  pnpm install
-  # Store hash to detect future lockfile changes
+  pnpm install --frozen-lockfile
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
-# Ensure home directory exists
+# Ensure home directory exists and is owned by matrixos
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
   mkdir -p "$MATRIX_HOME"
 fi
+chown -R matrixos:matrixos "$MATRIX_HOME"
 
-echo "[matrix-os-dev] Starting gateway (tsx watch) + shell (next dev)..."
+# Fix .next cache ownership (bind-mounted volume)
+mkdir -p /app/shell/.next
+chown -R matrixos:matrixos /app/shell/.next
 
-# Start Next.js dev server in background
-cd /app/shell
-npx next dev -p 3000 &
-SHELL_PID=$!
+echo "[matrix-os-dev] Starting gateway + shell as matrixos user..."
 
-# Start gateway with tsx watch in foreground
-cd /app
-npx tsx watch packages/gateway/src/main.ts &
-GATEWAY_PID=$!
+# Drop to matrixos user for services (Agent SDK refuses bypassPermissions as root)
+exec su-exec matrixos bash -c '
+  cd /app
 
-# Trap signals for clean shutdown
-trap "kill $SHELL_PID $GATEWAY_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+  pnpm --filter shell exec next dev -p 3000 &
+  SHELL_PID=$!
 
-# Wait for either process to exit
-wait -n $SHELL_PID $GATEWAY_PID
-EXIT_CODE=$?
+  node --import=tsx --watch packages/gateway/src/main.ts &
+  GATEWAY_PID=$!
 
-# If one exits, kill the other
-kill $SHELL_PID $GATEWAY_PID 2>/dev/null
-exit $EXIT_CODE
+  trap "kill $SHELL_PID $GATEWAY_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+
+  wait -n $SHELL_PID $GATEWAY_PID
+  EXIT_CODE=$?
+  kill $SHELL_PID $GATEWAY_PID 2>/dev/null
+  exit $EXIT_CODE
+'

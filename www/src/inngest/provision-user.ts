@@ -35,10 +35,11 @@ export const provisionUser = inngest.createFunction(
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (PLATFORM_SECRET) headers["authorization"] = `Bearer ${PLATFORM_SECRET}`;
 
+      const displayName = [user.first_name, user.last_name].filter(Boolean).join(" ") || handle;
       const res = await fetch(`${PLATFORM_API_URL}/containers/provision`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ handle, clerkUserId: user.id }),
+        body: JSON.stringify({ handle, clerkUserId: user.id, displayName }),
       });
 
       if (res.status === 409) {

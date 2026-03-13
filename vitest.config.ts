@@ -6,6 +6,9 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@": path.resolve(__dirname, "shell/src"),
+      react: path.resolve(__dirname, "node_modules/react"),
+      "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
+      "@aws-sdk/client-s3": path.resolve(__dirname, "node_modules/@aws-sdk/client-s3"),
     },
   },
   test: {

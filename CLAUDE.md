@@ -57,6 +57,8 @@ Key principles:
 - `specs/034-observability/`: Container observability: Prometheus metrics, Grafana dashboards, Loki logs, alerting (T1200-T1229)
 - `specs/035-canvas-desktop/`: Canvas desktop mode: infinite pan/zoom canvas, app grouping, minimap (T1250-T1279)
 
+- `specs/044-docker-dev/`: Docker-primary local development: non-root user, su-exec, identity from env, convenience scripts
+
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/`: original architecture spec, plan, tasks (reference only)
 - `specs/003-architecture/SDK-VERIFICATION.md`: SDK assumption verification
@@ -110,6 +112,8 @@ distro/              # Docker, cloudflared, systemd deployment configs
 - `allowedTools` is auto-approve, NOT filter: use `tools`/`disallowedTools` to restrict
 - `AgentDefinition` v0.2.39+: includes `maxTurns`, `disallowedTools`, `mcpServers`, `skills` per agent
 - `bypassPermissions` propagates to ALL subagents: use PreToolUse hooks for access control
+- **Agent SDK bundles its own claude runtime** -- no separate `npm install -g @anthropic-ai/claude-code` needed
+- **bypassPermissions refuses root** -- Docker containers must run services as non-root user
 - Prompt caching: `cache_control: {type: "ephemeral"}` on system prompt + tools for 90% savings
 - Integration tests use haiku to keep costs <$0.10 per run
 
@@ -127,7 +131,7 @@ pnpm install
 
 ### Run Tests
 ```bash
-bun run test              # Unit tests (926 tests, ~11s)
+bun run test              # Unit tests (1942 tests, ~16s)
 bun run test: watch        # Watch mode
 bun run test: integration  # Integration tests (needs API key, uses haiku)
 bun run test: coverage     # Coverage report
@@ -147,34 +151,40 @@ The gateway boots the home directory at `~/matrixos/` on first run (copies from 
 
 ### Docker Development (Primary)
 
-Requires [OrbStack](https://orbstack.dev) on macOS.
+Requires [OrbStack](https://orbstack.dev) on macOS. See `docs/dev/docker-development.md` for full guide.
+
+**IMPORTANT**: Never use `docker compose down -v` (removes volumes) unless explicitly resetting to clean state. Volumes hold the OS home directory, node_modules, and .next cache -- losing them means reinstalling deps and losing all OS state.
 
 ```bash
-# Start dev environment (gateway + shell with HMR)
-docker compose -f docker-compose.dev.yml up
-
-# Full stack (+ platform, proxy, Matrix)
-docker compose -f docker-compose.dev.yml --profile full up
-
-# With observability (+ Grafana, Prometheus, Loki)
-docker compose -f docker-compose.dev.yml --profile full --profile obs up
-
-# Multi-user testing (alice + bob)
-docker compose -f docker-compose.dev.yml --profile multi --profile full up
-
-# Run tests inside container
-docker compose -f docker-compose.dev.yml exec dev bun run test
-
-# Run Docker scenario tests
-./scripts/docker-test/run-all.sh
-
-# Reset to clean state
-docker compose -f docker-compose.dev.yml down -v
+bun run docker          # Dev only (gateway + shell with HMR)
+bun run docker:full     # + proxy, platform, conduit
+bun run docker:all      # + observability (Grafana, Prometheus, Loki)
+bun run docker:multi    # + alice & bob multi-user
+bun run docker:stop     # Stop all containers (preserves data)
+bun run docker:restart  # Restart dev container
+bun run docker:logs     # Tail dev container logs
+bun run docker:shell    # Shell into container as matrixos user
+bun run docker:build    # Full rebuild (no cache)
 ```
+
+**Service URLs** (full + obs profile):
+
+| Service | URL | Port |
+|---------|-----|------|
+| Shell (desktop) | http://localhost:3000 | 3000 |
+| Gateway (API) | http://localhost:4000 | 4000 |
+| Proxy | http://localhost:8080 | 8080 |
+| Platform | http://localhost:9000 | 9000 |
+| Conduit (Matrix) | http://localhost:6167 | 6167 |
+| Prometheus | http://localhost:9090 | 9090 |
+| Grafana | http://localhost:3200 | 3200 |
+| Loki | http://localhost:3100 | 3100 |
 
 ### Environment Variables
 - `ANTHROPIC_API_KEY`: required for kernel AI features
 - `MATRIX_HOME`: custom home directory path (default: `~/matrixos/`)
+- `MATRIX_HANDLE`: user handle, set by platform at provisioning (default in Docker: `dev`)
+- `MATRIX_DISPLAY_NAME`: display name from Clerk signup (default in Docker: `Developer`)
 - `MATRIX_AUTH_TOKEN`: bearer token for web shell auth (optional, for cloud deployment)
 - `PORT`: gateway port (default: 4000)
 - `NEXT_PUBLIC_GATEWAY_WS`: shell WebSocket URL (default: `ws://localhost:4000/ws`)
@@ -212,7 +222,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 993 passing (85 test files) | **Through Phase 031 desktop customization + Phase 025 security + Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 1942 passing (162 test files) | **Through Phase 044 Docker-primary dev + Phase 031 desktop customization + Phase 025 security + Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -291,7 +301,7 @@ Release process: `docs/dev/releases.md`
 - No over-engineering: solve the current problem
 - Keep kernel system prompt under 7K tokens
 - Always use Drizzle ORM for database access: never raw SQL queries with better-sqlite3 directly
-- **Documentation**: when adding a new feature, update `www/content/docs/` accordingly. Specs and plans should include a docs update step. The docs site at matrix-os.com/docs (Fumadocs in `www/`) is the public-facing reference -- keep it in sync with the codebase
+- **Documentation**: after completing a major feature, run `/update-docs` to audit and update all documentation (CLAUDE.md, docs/dev/, www/content/docs/, README.md). The docs site at matrix-os.com/docs (Fumadocs in `www/`) is the public-facing reference -- keep it in sync with the codebase
 
 ## Swarm / Multi-Agent Rules
 

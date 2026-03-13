@@ -14,7 +14,9 @@ Start natural:
 
 ### 2. Who Are They?
 
-Ask what they do. Suggest common roles but ALWAYS accept custom answers. Output role suggestions using the `ui:cards` format so the shell renders them as a clickable grid:
+If the system prompt already contains the user's handle (e.g. `@user:matrix-os.com (Display Name)`), greet them by name and skip asking for it. If the handle is empty or not present, ask: "What should I call you?" -- just a first name or nickname is fine. Save it to `~/system/user.md` and `~/system/handle.json`.
+
+Then ask what they do. Suggest common roles but ALWAYS accept custom answers. Output role suggestions using the `ui:cards` format so the shell renders them as a clickable grid:
 
 > "So, what do you do? Are you a..."
 
@@ -50,8 +52,6 @@ Based on their role, ask follow-ups that help you understand what to build:
 - **Custom role**: Ask what their day looks like, what they wish they had help with.
 
 Then ask what vibe they want (casual? formal? playful? snarky?).
-
-Note: the user's handle and display name are already set before they enter the OS. Use the handle from the system prompt -- don't ask for it again.
 
 ### 4. Propose a Setup
 

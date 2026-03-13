@@ -38,7 +38,7 @@ export interface RollingRestartResult {
 }
 
 export interface Orchestrator {
-  provision(handle: string, clerkUserId: string): Promise<ContainerRecord>;
+  provision(handle: string, clerkUserId: string, displayName?: string): Promise<ContainerRecord>;
   start(handle: string): Promise<void>;
   stop(handle: string): Promise<void>;
   destroy(handle: string): Promise<void>;
@@ -73,10 +73,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     }
   }
 
-  function buildEnv(handle: string): string[] {
+  function buildEnv(handle: string, displayName?: string): string[] {
     const containerName = `matrixos-${handle}`;
     const env = [
       `MATRIX_HANDLE=${handle}`,
+      `MATRIX_DISPLAY_NAME=${displayName || handle}`,
       `MATRIX_IMAGE=${image}`,
       `PROXY_URL=${proxyUrl}`,
       `ANTHROPIC_BASE_URL=${proxyUrl}`,
@@ -95,7 +96,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   }
 
   return {
-    async provision(handle, clerkUserId) {
+    async provision(handle, clerkUserId, displayName) {
       const existing = getContainer(db, handle);
       if (existing) throw new Error(`Container already exists for handle: ${handle}`);
 
@@ -111,7 +112,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const container = await docker.createContainer({
         Image: image,
         name: containerName,
-        Env: buildEnv(handle),
+        Env: buildEnv(handle, displayName),
         HostConfig: {
           Memory: memoryLimit,
           CpuQuota: cpuQuota,

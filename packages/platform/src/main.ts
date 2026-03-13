@@ -120,12 +120,12 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   // --- Container management ---
 
   app.post('/containers/provision', async (c) => {
-    const { handle, clerkUserId } = await c.req.json<{ handle: string; clerkUserId: string }>();
+    const { handle, clerkUserId, displayName } = await c.req.json<{ handle: string; clerkUserId: string; displayName?: string }>();
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
-      const record = await orchestrator.provision(handle, clerkUserId);
+      const record = await orchestrator.provision(handle, clerkUserId, displayName);
       return c.json(record, 201);
     } catch (e: any) {
       return c.json({ error: e.message }, 409);

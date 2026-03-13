@@ -5,10 +5,13 @@
 FROM node:24-alpine
 
 # System deps for native addons (node-pty, better-sqlite3)
-RUN apk add --no-cache git python3 make g++ linux-headers bash
+RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec
 
-# pnpm via corepack
+# pnpm via corepack (Agent SDK bundles its own claude runtime)
 RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Non-root user (Agent SDK refuses bypassPermissions as root)
+RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos
 
 WORKDIR /app
 
@@ -17,4 +20,5 @@ WORKDIR /app
 
 EXPOSE 3000 4000
 
+# Entrypoint runs as root for setup, drops to matrixos for services
 ENTRYPOINT ["/app/distro/docker-dev-entrypoint.sh"]
