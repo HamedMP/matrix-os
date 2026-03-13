@@ -123,6 +123,32 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     sections.push("No modules installed yet.");
   }
 
+  // Installed apps (from ~/apps/)
+  const appsPath = join(homePath, "apps");
+  sections.push("\n## Installed Apps\n");
+  if (existsSync(appsPath)) {
+    try {
+      const entries = readdirSync(appsPath).filter(
+        (f) => !f.endsWith(".matrix.md") && !f.startsWith(".")
+      );
+      if (entries.length > 0) {
+        const appNames = entries.map((f) =>
+          f.replace(/\.(html|htm)$/, "")
+        );
+        sections.push(
+          `${appNames.length} apps: ${appNames.join(", ")}\n` +
+          "Use the app_data tool to read/write app data. Apps store data in ~/data/{appName}/{key}.json."
+        );
+      } else {
+        sections.push("No apps installed yet.");
+      }
+    } catch {
+      sections.push("No apps installed yet.");
+    }
+  } else {
+    sections.push("No apps installed yet.");
+  }
+
   // Knowledge TOC
   const knowledgePath = join(homePath, "agents", "knowledge");
   sections.push("\n## Knowledge Base\n");
