@@ -119,17 +119,25 @@ function DockIcon({
   onRegenerateIcon?: () => void;
 }) {
   const initial = name.charAt(0).toUpperCase();
+  const [imgFailed, setImgFailed] = useState(false);
+  const prevIconUrl = useRef(iconUrl);
+  // Reset imgFailed when iconUrl changes (e.g. after regeneration)
+  if (iconUrl !== prevIconUrl.current) {
+    prevIconUrl.current = iconUrl;
+    if (imgFailed) setImgFailed(false);
+  }
+  const showIcon = iconUrl && !imgFailed;
 
   const btn = (
     <button
       onClick={onClick}
       className={`relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all overflow-hidden ${
-        iconUrl ? "" : "bg-card border border-border/60"
+        showIcon ? "" : "bg-card border border-border/60"
       }`}
       style={{ width: iconSize, height: iconSize }}
     >
-      {iconUrl ? (
-        <img src={iconUrl} alt={name} className="size-full object-cover rounded-xl" />
+      {showIcon ? (
+        <img src={iconUrl} alt={name} className="size-full object-cover rounded-xl" onError={() => setImgFailed(true)} />
       ) : (
         <span className="text-sm font-semibold text-foreground">
           {initial}
@@ -315,11 +323,9 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
     const iconPath = `/files/system/icons/${slug}.png`;
     fetch(`${GATEWAY_URL}${iconPath}`, { method: "HEAD" }).then((res) => {
       if (res.ok) {
-        wmSetApps((prev) =>
-          prev.map((a) =>
-            nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${iconPath}` } : a,
-          ),
-        );
+        // Icon exists -- the optimistic bare URL set by addApp is already correct
+        // and cacheable (server sends max-age=86400). Don't update the URL here
+        // to avoid changing <img> src which would trigger a re-download.
       } else {
         generatingRef.current.add(slug);
         fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, { method: "POST" })
@@ -331,7 +337,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             return r.json().then((data: { iconUrl: string }) => {
               wmSetApps((prev) =>
                 prev.map((a) =>
-                  nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}` } : a,
+                  nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Date.now()}` } : a,
                 ),
               );
             });
@@ -351,10 +357,9 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
           return;
         }
         return r.json().then((data: { iconUrl: string }) => {
-          const bustUrl = `${GATEWAY_URL}${data.iconUrl}?t=${Date.now()}`;
           wmSetApps((prev) =>
             prev.map((a) =>
-              nameToSlug(a.name) === slug ? { ...a, iconUrl: bustUrl } : a,
+              nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Date.now()}` } : a,
             ),
           );
         });
@@ -363,15 +368,16 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       .finally(() => generatingRef.current.delete(slug));
   }, [wmSetApps]);
 
-  const addApp = useCallback((name: string, path: string, moduleIconUrl?: string) => {
+  const addApp = useCallback((name: string, path: string, _moduleIconUrl?: string) => {
+    const slug = nameToSlug(name);
+    // Always prefer generated PNG icon over module-provided icon (which can be
+    // invalid, e.g. an emoji). checkAndGenerateIcon will generate if missing.
+    const optimisticUrl = `${GATEWAY_URL}/files/system/icons/${slug}.png`;
     wmSetApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
-      return [...prev, { name, path, iconUrl: moduleIconUrl }];
+      return [...prev, { name, path, iconUrl: optimisticUrl }];
     });
-    if (!moduleIconUrl) {
-      const slug = nameToSlug(name);
-      checkAndGenerateIcon(slug);
-    }
+    checkAndGenerateIcon(slug);
   }, [wmSetApps, checkAndGenerateIcon]);
 
   const openWindow = useCallback((name: string, path: string) => {

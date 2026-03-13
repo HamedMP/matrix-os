@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useRef } from "react";
 import { PinIcon, RefreshCwIcon } from "lucide-react";
 import {
   ContextMenu,
@@ -20,6 +21,13 @@ interface AppTileProps {
 
 export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
+  const [imgFailed, setImgFailed] = useState(false);
+  const prevIconUrl = useRef(iconUrl);
+  if (iconUrl !== prevIconUrl.current) {
+    prevIconUrl.current = iconUrl;
+    if (imgFailed) setImgFailed(false);
+  }
+  const showIcon = iconUrl && !imgFailed;
 
   const tile = (
     <button
@@ -29,15 +37,15 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
       <div className="relative">
         <div
           className={`flex size-12 items-center justify-center rounded-2xl shadow-sm text-lg font-semibold transition-all ${
-            iconUrl
+            showIcon
               ? `overflow-hidden ${isOpen ? "ring-2 ring-primary/40 shadow-primary/20 shadow-md" : "group-hover:shadow-md"}`
               : isOpen
                 ? "bg-primary/10 border border-primary/40 text-primary shadow-primary/20 shadow-md"
                 : "bg-card border border-border/60 text-foreground group-hover:shadow-md"
           }`}
         >
-          {iconUrl ? (
-            <img src={iconUrl} alt={name} className="size-full object-cover" />
+          {showIcon ? (
+            <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgFailed(true)} />
           ) : (
             initial
           )}

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -554,9 +554,17 @@ export async function createGateway(config: GatewayConfig) {
     };
 
     if (imageMimeTypes[ext]) {
+      const stat = statSync(fullPath);
+      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+      if (c.req.header("if-none-match") === etag) {
+        return c.body(null, 304);
+      }
       const buffer = readFileSync(fullPath);
       return c.body(buffer, 200, {
         "Content-Type": imageMimeTypes[ext],
+        "Cache-Control": "public, max-age=86400, immutable",
+        "CDN-Cache-Control": "public, max-age=86400",
+        "ETag": etag,
       });
     }
 
@@ -776,7 +784,7 @@ export async function createGateway(config: GatewayConfig) {
         } catch { /* ignore */ }
       }
       if (!iconStyle) {
-        iconStyle = "3D rendered glossy icon, dark background, vibrant glowing neon accents, soft lighting, rounded square shape";
+        iconStyle = "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style";
       }
 
       const client = createImageClient(falKey);
@@ -795,6 +803,53 @@ export async function createGateway(config: GatewayConfig) {
       console.error(`Icon generation failed for "${slug}":`, message);
       return c.json({ error: message }, 500);
     }
+  });
+
+  app.post("/api/icons/regenerate-all", async (c) => {
+    const falKey = process.env.FAL_API_KEY ?? "";
+    if (!falKey) {
+      return c.json({ error: "FAL_API_KEY not configured" }, 503);
+    }
+
+    let iconStyle = "";
+    try {
+      const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
+      iconStyle = desktop.iconStyle ?? "";
+    } catch { /* ignore */ }
+    if (!iconStyle) {
+      iconStyle = "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style";
+    }
+
+    const iconsDir = join(homePath, "system/icons");
+    if (!existsSync(iconsDir)) {
+      return c.json({ regenerated: 0, failed: [] });
+    }
+
+    const pngFiles = readdirSync(iconsDir).filter((f: string) => f.endsWith(".png"));
+    const client = createImageClient(falKey);
+    let regenerated = 0;
+    const failed: string[] = [];
+
+    for (const file of pngFiles) {
+      const slug = file.replace(/\.png$/, "");
+      const name = slug.replace(/-/g, " ").replace(/_/g, " ");
+      const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
+      try {
+        await client.generateImage(prompt, {
+          model: "fal-ai/z-image/turbo",
+          size: "square",
+          imageDir: iconsDir,
+          saveAs: `${slug}.png`,
+        });
+        regenerated++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        console.error(`Icon regeneration failed for "${slug}":`, msg);
+        failed.push(slug);
+      }
+    }
+
+    return c.json({ regenerated, failed });
   });
 
   app.get("/api/cron", (c) => {

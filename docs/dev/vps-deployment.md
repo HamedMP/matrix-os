@@ -653,6 +653,30 @@ Prometheus scrapes these every 15 seconds (configured in `distro/observability/p
 
 Promtail tails interaction logs (`~/matrixos/system/logs/*.jsonl`), activity logs (`~/matrixos/system/activity.log`), and Docker container stdout/stderr. All logs are searchable in Grafana via the Loki data source.
 
+## Caching and Cloudflare
+
+### Browser Cache Headers
+
+The gateway serves icon and image files with `Cache-Control: public, max-age=86400, immutable` and ETag headers. This means browsers cache images for 24 hours and only re-download when the ETag changes.
+
+### Cloudflare Cache Behavior
+
+Cloudflare sits between the browser and the origin (gateway). It has its own cache layer with important quirks:
+
+- **Cloudflare overrides `Cache-Control` headers.** If you set `Cache-Control: no-cache` on the origin, Cloudflare may replace it with its own default `max-age=14400` (4 hours). To control Cloudflare's cache independently, use the `CDN-Cache-Control` header:
+  ```
+  Cache-Control: public, max-age=86400, immutable    # browser cache
+  CDN-Cache-Control: public, max-age=86400           # Cloudflare edge cache
+  ```
+- **Cloudflare caches 404 responses.** If an icon doesn't exist yet and Cloudflare caches the 404, subsequent requests for the same URL will get 404 even after the icon is generated. Solutions: use `CDN-Cache-Control: no-store` for dynamic endpoints, or use cache-busting query params after generating new content.
+- **DevTools "Disable cache" defeats all caching.** If icons appear to re-download every time, check that "Disable cache" is unchecked in browser DevTools Network tab. This checkbox forces the browser to bypass its cache entirely.
+
+### Image Cache-Busting Strategy
+
+- **On page load**: Use bare URLs (e.g. `/files/system/icons/app.png`) -- browser cache handles it.
+- **After regeneration**: Append `?v={timestamp}` to force the browser to re-download the new version.
+- **Never use `?t=Date.now()` on every load** -- this defeats caching by creating a unique URL each time.
+
 ## Troubleshooting
 
 ### Platform won't start
@@ -697,6 +721,23 @@ docker restart matrixos-alice
 # Check memory usage (shell crash often = OOM)
 docker stats matrixos-alice --no-stream
 ```
+
+### App icons missing or not loading
+
+Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`. Common causes:
+
+1. **Icon not generated yet**: Check if the PNG exists on disk. If not, trigger generation:
+   ```bash
+   curl -X POST https://{handle}.matrix-os.com/api/apps/{slug}/icon
+   ```
+
+2. **Module manifest has invalid icon field**: Some `module.json`/`manifest.json` files use emojis or icon names instead of file paths. The shell ignores `meta.icon` and always uses the generated PNG at `/files/system/icons/{slug}.png`. If you see 404s for emoji URLs (e.g. `%F0%9F%94%A5`), the module manifest has `"icon": "emoji"` -- this is harmless, the generated PNG will be used instead.
+
+3. **Cloudflare cached a 404**: If the icon was requested before it was generated, Cloudflare may have cached the 404. Hard refresh (Ctrl+Shift+R) or wait for the CDN cache TTL to expire.
+
+4. **Shell not rebuilt**: Icon-related shell changes require rebuilding the Docker image (`docker build`) and upgrading the container. `docker compose up --build` only rebuilds platform services.
+
+5. **Pinned dock icon stuck on fallback letter**: The `imgFailed` state in DockIcon/AppTile components needs to reset when `iconUrl` changes. If icons show a letter instead of the image after regeneration, this reset logic may be broken.
 
 ### API routes return 404 (e.g. /api/layout, /files/...)
 

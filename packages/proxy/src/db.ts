@@ -138,3 +138,10 @@ export function getUsageSummary(): Array<{ userId: string; daily: number; monthl
   const users = db.prepare('SELECT DISTINCT user_id FROM api_usage').all() as Array<{ user_id: string }>;
   return users.map(u => ({ userId: u.user_id, ...getUserUsage(u.user_id) }));
 }
+
+export function getMetricsSeed(): Array<{ user_id: string; model: string; cost: number; calls: number }> {
+  const db = getDb();
+  return db.prepare(
+    'SELECT user_id, model, SUM(cost_usd) as cost, COUNT(*) as calls FROM api_usage GROUP BY user_id, model'
+  ).all() as Array<{ user_id: string; model: string; cost: number; calls: number }>;
+}

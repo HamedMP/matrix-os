@@ -80,11 +80,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(proxy_api_cost_usd_total[1d]))",
+          "expr": "sum(increase(proxy_api_cost_usd_total[$__range]))",
+          "instant": true,
           "legendFormat": "Cost Today",
           "refId": "A"
         }
       ],
+      "timeFrom": "now/d",
       "title": "API Cost Today",
       "type": "stat"
     },
@@ -115,11 +117,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(proxy_api_calls_total[1d]))",
+          "expr": "sum(increase(proxy_api_calls_total[$__range]))",
+          "instant": true,
           "legendFormat": "Calls Today",
           "refId": "A"
         }
       ],
+      "timeFrom": "now/d",
       "title": "API Calls Today",
       "type": "stat"
     },

@@ -88,6 +88,8 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       for (const [key, value] of Object.entries(c.req.header())) {
         if (key !== 'host' && value) headers.set(key, value);
       }
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
@@ -344,9 +346,12 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
     try {
       const headers = new Headers();
+      const originalHost = c.req.header('host') ?? '';
       for (const [key, value] of Object.entries(c.req.header())) {
         if (key !== 'host' && value) headers.set(key, value);
       }
+      headers.set('x-forwarded-host', originalHost);
+      headers.set('x-forwarded-proto', 'https');
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,

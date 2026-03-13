@@ -1,13 +1,18 @@
 // Anthropic pricing per million tokens (USD)
-// Update when Anthropic changes pricing
+// https://platform.claude.com/docs/en/about-claude/pricing
+// Updated 2026-03-11
 const PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  'claude-opus-4-6':         { input: 15,  output: 75,  cacheRead: 1.5,  cacheWrite: 18.75 },
-  'claude-sonnet-4-5':       { input: 3,   output: 15,  cacheRead: 0.3,  cacheWrite: 3.75 },
-  'claude-haiku-4-5':        { input: 0.8, output: 4,   cacheRead: 0.08, cacheWrite: 1 },
+  'claude-opus-4-6':         { input: 5,   output: 25,  cacheRead: 0.50, cacheWrite: 6.25 },
+  'claude-opus-4-5':         { input: 5,   output: 25,  cacheRead: 0.50, cacheWrite: 6.25 },
+  'claude-sonnet-4-6':       { input: 3,   output: 15,  cacheRead: 0.30, cacheWrite: 3.75 },
+  'claude-sonnet-4-5':       { input: 3,   output: 15,  cacheRead: 0.30, cacheWrite: 3.75 },
+  'claude-haiku-4-5':        { input: 1,   output: 5,   cacheRead: 0.10, cacheWrite: 1.25 },
 };
 
 const MODEL_ALIASES: Record<string, string> = {
   'claude-opus-4-6-20250923': 'claude-opus-4-6',
+  'claude-opus-4-5-20250514': 'claude-opus-4-5',
+  'claude-sonnet-4-6-20250827': 'claude-sonnet-4-6',
   'claude-sonnet-4-5-20250929': 'claude-sonnet-4-5',
   'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
 };

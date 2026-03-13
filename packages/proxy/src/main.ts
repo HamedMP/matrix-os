@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary } from './db.js';
+import { insertUsage, checkQuota, setQuota, getUserUsage, getUsageSummary, getMetricsSeed } from './db.js';
 import { calculateCost } from './cost.js';
 import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } from './metrics.js';
 
@@ -260,6 +260,14 @@ async function collectStreamUsage(
   apiCallsTotal.inc({ user_id: userId, model, status: String(status) });
   if (costUsd > 0) {
     apiCostTotal.inc({ user_id: userId, model }, costUsd);
+  }
+}
+
+// Seed Prometheus counters from DB so metrics survive restarts
+for (const row of getMetricsSeed()) {
+  apiCallsTotal.inc({ user_id: row.user_id, model: row.model, status: '200' }, row.calls);
+  if (row.cost > 0) {
+    apiCostTotal.inc({ user_id: row.user_id, model: row.model }, row.cost);
   }
 }
 

@@ -8,7 +8,7 @@ const DESKTOP_DEFAULTS = {
   background: { type: "pattern" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: [] as string[],
-  iconStyle: "3D rendered glossy icon, dark background, vibrant glowing neon accents, soft lighting, rounded square shape",
+  iconStyle: "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style",
 };
 
 const THEME_DEFAULTS = {};

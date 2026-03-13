@@ -35,7 +35,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "options": {
         "colorMode": "value",
@@ -46,12 +46,127 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(proxy_api_cost_usd_total[1d]))",
+          "expr": "sum(increase(proxy_api_cost_usd_total[$__range]))",
+          "instant": true,
           "legendFormat": "Cost Today",
           "refId": "A"
         }
       ],
+      "timeFrom": "now/d",
       "title": "Cost Today",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 25 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_api_cost_usd_total[$__range]))",
+          "instant": true,
+          "legendFormat": "Cost This Week",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "now/w",
+      "title": "Cost This Week",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_api_cost_usd_total[$__range]))",
+          "instant": true,
+          "legendFormat": "Cost This Month",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "now/M",
+      "title": "Cost This Month",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "purple", "value": 500 },
+              { "color": "red", "value": 1000 }
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(proxy_api_cost_usd_total)",
+          "instant": true,
+          "legendFormat": "Cost All Time",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost All Time",
       "type": "stat"
     },
     {
@@ -70,7 +185,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
       "id": 2,
       "options": {
         "colorMode": "value",
@@ -81,12 +196,88 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(proxy_api_calls_total[1d]))",
+          "expr": "sum(increase(proxy_api_calls_total[$__range]))",
+          "instant": true,
           "legendFormat": "Calls Today",
           "refId": "A"
         }
       ],
+      "timeFrom": "now/d",
       "title": "API Calls Today",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "red", "value": 2000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 4 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_api_calls_total[$__range]))",
+          "instant": true,
+          "legendFormat": "Calls This Week",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "now/w",
+      "title": "Calls This Week",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(proxy_api_calls_total[$__range]))",
+          "instant": true,
+          "legendFormat": "Calls This Month",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "now/M",
+      "title": "Calls This Month",
       "type": "stat"
     },
     {
@@ -104,7 +295,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
       "id": 3,
       "options": {
         "colorMode": "value",
@@ -115,11 +306,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(proxy_quota_rejections_total[1d]))",
+          "expr": "sum(increase(proxy_quota_rejections_total[$__range]))",
+          "instant": true,
           "legendFormat": "Rejections",
           "refId": "A"
         }
       ],
+      "timeFrom": "now/d",
       "title": "Quota Rejections Today",
       "type": "stat"
     },
@@ -148,9 +341,8 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "id": 4,
-      "interval": "1h",
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
         "tooltip": { "mode": "multi", "sort": "desc" }
@@ -158,7 +350,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (user_id) (increase(proxy_api_cost_usd_total[1h]))",
+          "expr": "sum by (user_id) (increase(proxy_api_cost_usd_total[$__interval]))",
           "legendFormat": "{{user_id}}",
           "refId": "A"
         }
@@ -203,7 +395,7 @@
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "id": 5,
       "options": {
         "cellHeight": "sm",
@@ -251,7 +443,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "id": 6,
       "options": {
         "displayLabels": ["name", "percent"],
@@ -295,7 +487,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "id": 7,
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
@@ -322,5 +514,5 @@
   "timezone": "browser",
   "title": "MatrixOS Cost and Usage",
   "uid": "matrixos-cost-usage",
-  "version": 2
+  "version": 3
 }

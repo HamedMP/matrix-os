@@ -272,6 +272,34 @@ Read `specs/ux-guide.md`: the UX bible for the shell and apps. Key rules:
 
 - **Never mutate state objects in reducers**:`reduceChat` and similar must create new objects via spread (`{ ...obj, content: obj.content + delta }`) instead of mutating in-place (`obj.content += delta`). Shallow array copies (`[...arr]`) share object references; mutating them causes React double-rendering bugs (streaming text duplication).
 
+## Shell Icon System
+
+App icons are generated via FAL AI (`fal-ai/z-image/turbo`) and stored as PNGs in `~/system/icons/{slug}.png`. The icon style is configurable in `~/system/desktop.json` (field `iconStyle`).
+
+### Icon Loading Flow
+
+1. `loadModules()` discovers apps from `/api/apps` (built-in) and `modules.json` (user modules)
+2. `addApp()` sets an optimistic icon URL pointing to `/files/system/icons/{slug}.png`
+3. `checkAndGenerateIcon()` does a HEAD request to verify the icon exists; if not, calls `POST /api/apps/{slug}/icon` to generate one
+4. Generated icons are saved to disk and served with `Cache-Control: public, max-age=86400, immutable` + ETag
+
+### Pitfalls (learned the hard way)
+
+- **Never use `meta.icon` from module.json/manifest.json as an image URL.** Module authors put emojis, icon names (not paths), or garbage in this field. Always use the generated PNG at `/files/system/icons/{slug}.png`.
+- **Never append `?t=Date.now()` for cache-busting on every load.** This defeats browser caching entirely. Use ETag-based versioning (`?v={etag}`) only when the file actually changes (e.g. after regeneration).
+- **Reset `imgFailed` state when `iconUrl` prop changes.** If an `<img>` fails (404), React `useState(false)` for `imgFailed` gets set to `true` and stays `true` even when the parent passes a new valid `iconUrl`. Track the previous URL with `useRef` and reset `imgFailed` when it differs.
+- **Cloudflare overrides `Cache-Control` headers.** `Cache-Control: no-cache` from the origin gets replaced by Cloudflare's default `max-age=14400`. Use `CDN-Cache-Control` header to control Cloudflare independently from the browser cache.
+- **Changing `<img> src` triggers a re-download.** Even if the underlying image is identical, React re-renders with the new `src` and the browser fetches it again. Avoid updating icon URLs unnecessarily (e.g. don't switch from bare URL to `?v=etag` URL on every page load).
+- **User container image must be rebuilt for shell changes.** The shell is a Next.js app built into the Docker image at build time. Gateway-only changes are included because the source is mounted, but shell `.tsx` changes require `docker build` + container upgrade. The `docker compose up --build` only rebuilds platform/proxy services, not user containers.
+- **`docker build` needs `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...`** for Next.js to embed Clerk auth. Without it, the shell build fails or Clerk auth breaks.
+
+### Bulk Icon Regeneration
+
+After changing `iconStyle` in `desktop.json`, regenerate all icons:
+```bash
+curl -X POST https://{handle}.matrix-os.com/api/icons/regenerate-all
+```
+
 ## Releases + Deployment
 
 Tags follow SemVer with `v` prefix (`v0.1.0`, `v0.2.0`, ...). Pre-1.0: minor = features, patch = fixes.
