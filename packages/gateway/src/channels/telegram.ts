@@ -8,7 +8,9 @@ import type {
 export interface TelegramBot {
   on(event: string, handler: (msg: TelegramMessage) => void): void;
   stopPolling(): Promise<void>;
-  sendMessage(chatId: string, text: string, options?: Record<string, unknown>): Promise<unknown>;
+  sendMessage(chatId: string, text: string, options?: Record<string, unknown>): Promise<{ message_id: number }>;
+  editMessageText(text: string, options?: Record<string, unknown>): Promise<unknown>;
+  sendChatAction(chatId: string | number, action: string): Promise<unknown>;
 }
 
 export interface TelegramMessage {
@@ -19,14 +21,22 @@ export interface TelegramMessage {
 
 export type TelegramBotFactory = (token: string, options: Record<string, unknown>) => TelegramBot;
 
-export function createTelegramAdapter(botFactory?: TelegramBotFactory): ChannelAdapter {
+export interface TelegramAdapter extends ChannelAdapter {
+  getBot(): TelegramBot | null;
+}
+
+export function createTelegramAdapter(botFactory?: TelegramBotFactory): TelegramAdapter {
   let bot: TelegramBot | null = null;
   let allowFrom: string[] = [];
 
-  const adapter: ChannelAdapter = {
+  const adapter: TelegramAdapter = {
     id: "telegram",
 
     onMessage: () => {},
+
+    getBot() {
+      return bot;
+    },
 
     async start(config: ChannelConfig) {
       if (!config.token) throw new Error("Telegram token required");

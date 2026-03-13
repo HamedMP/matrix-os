@@ -17,7 +17,9 @@ function createMockBot(): TelegramBot & {
       if (event === "message") messageHandler = handler;
     }),
     stopPolling: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    sendMessage: vi.fn<(chatId: string, text: string, options?: Record<string, unknown>) => Promise<unknown>>().mockResolvedValue({}),
+    sendMessage: vi.fn<(chatId: string, text: string, options?: Record<string, unknown>) => Promise<{ message_id: number }>>().mockResolvedValue({ message_id: 1 }),
+    editMessageText: vi.fn<(text: string, options?: Record<string, unknown>) => Promise<unknown>>().mockResolvedValue({}),
+    sendChatAction: vi.fn<(chatId: string | number, action: string) => Promise<unknown>>().mockResolvedValue({}),
     triggerMessage(msg: TelegramMessage) {
       messageHandler?.(msg);
     },
@@ -151,5 +153,21 @@ describe("createTelegramAdapter", () => {
     });
 
     expect(messages).toHaveLength(0);
+  });
+
+  it("exposes bot via getBot() after start", async () => {
+    const adapter = createTelegramAdapter(factory);
+    expect(adapter.getBot()).toBeNull();
+
+    await adapter.start({ enabled: true, token: "test-token" });
+    expect(adapter.getBot()).toBe(mockBot);
+  });
+
+  it("returns null from getBot() after stop", async () => {
+    const adapter = createTelegramAdapter(factory);
+    await adapter.start({ enabled: true, token: "test-token" });
+    await adapter.stop();
+
+    expect(adapter.getBot()).toBeNull();
   });
 });

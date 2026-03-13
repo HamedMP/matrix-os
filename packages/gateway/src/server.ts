@@ -11,7 +11,8 @@ import { createConversationStore, type ConversationStore } from "./conversations
 import { resolveWithinHome } from "./path-security.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
-import { createTelegramAdapter } from "./channels/telegram.js";
+import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
+import { createTelegramStream } from "./channels/telegram-stream.js";
 import { createPushAdapter } from "./channels/push.js";
 import { formatForChannel } from "./channels/format.js";
 import type { ChannelConfig, ChannelId } from "./channels/types.js";
@@ -42,6 +43,7 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import { renameApp, deleteApp } from "./app-ops.js";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -210,16 +212,68 @@ export async function createGateway(config: GatewayConfig) {
 
   const channelSessions = new Map<string, string>();
 
+  const telegramAdapter: TelegramAdapter = createTelegramAdapter();
+
   const channelManager: ChannelManager = createChannelManager({
     config: channelsConfig,
     adapters: {
-      telegram: createTelegramAdapter(),
+      telegram: telegramAdapter,
       push: pushAdapter,
     },
     outboundQueue,
     onMessage: (msg) => {
       const sessionKey = `${msg.source}:${msg.senderId}`;
       const existingSessionId = channelSessions.get(sessionKey);
+
+      // Telegram streaming: use progressive message editing
+      if (msg.source === "telegram") {
+        const bot = telegramAdapter.getBot();
+        if (bot) {
+          const stream = createTelegramStream({
+            chatId: msg.chatId,
+            bot,
+            throttleMs: 1000,
+            minInitialChars: 50,
+            maxChars: 4096,
+          });
+
+          stream.startTyping();
+
+          dispatcher
+            .dispatch(msg.text, existingSessionId, (event) => {
+              if (event.type === "init") {
+                channelSessions.set(sessionKey, event.sessionId);
+                conversations.begin(event.sessionId);
+                conversations.addUserMessage(event.sessionId, msg.text);
+              } else if (event.type === "text") {
+                stream.append(event.text);
+                const sid = channelSessions.get(sessionKey);
+                if (sid) conversations.appendAssistantText(sid, event.text);
+              } else if (event.type === "result") {
+                const sid = channelSessions.get(sessionKey);
+                if (sid) conversations.finalize(sid);
+              }
+            }, {
+              channel: msg.source,
+              senderId: msg.senderId,
+              senderName: msg.senderName,
+              chatId: msg.chatId,
+            })
+            .then(() => stream.flush())
+            .catch((err: Error) => {
+              stream.stopTyping();
+              channelManager.send({
+                channelId: msg.source,
+                chatId: msg.chatId,
+                text: `Error: ${err.message}`,
+              });
+            });
+
+          return;
+        }
+      }
+
+      // Default path for non-telegram channels (or telegram without bot)
       let responseText = "";
 
       dispatcher
@@ -761,6 +815,27 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/api/apps", (c) => {
     return c.json(listApps(homePath));
+  });
+
+  app.put("/api/apps/:slug/rename", async (c) => {
+    const slug = c.req.param("slug");
+    const { name } = await c.req.json<{ name: string }>();
+    const result = renameApp(homePath, slug, name);
+    if (!result.success) {
+      const status = result.error?.includes("not found") ? 404 : 400;
+      return c.json({ error: result.error }, status);
+    }
+    return c.json({ ok: true, newSlug: result.newSlug });
+  });
+
+  app.delete("/api/apps/:slug", async (c) => {
+    const slug = c.req.param("slug");
+    const result = deleteApp(homePath, slug);
+    if (!result.success) {
+      const status = result.error?.includes("not found") ? 404 : 400;
+      return c.json({ error: result.error }, status);
+    }
+    return c.json({ ok: true });
   });
 
   app.post("/api/apps/:slug/icon", async (c) => {
