@@ -42,6 +42,11 @@
         "cacheTtlMinutes": 15,
         "firecrawlApiKey": "${FIRECRAWL_API_KEY}"
       }
+    },
+    "embeddings": {
+      "openai_key": "",
+      "model": "text-embedding-3-small",
+      "dimensions": 256
     }
   },
   "browser": {
