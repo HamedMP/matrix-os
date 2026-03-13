@@ -314,8 +314,43 @@ git log $(git describe --tags --abbrev=0)..HEAD --oneline  # commits since last 
 VPS deployment: `docs/dev/vps-deployment.md` (platform, containers, Cloudflare, backups)
 Release process: `docs/dev/releases.md`
 
+## QMD (Markdown Search)
+
+QMD is an on-device semantic search engine for markdown files. It indexes specs, docs, and notes for fast retrieval via BM25 keywords + vector embeddings + LLM reranking. A `qmd-researcher` subagent is available globally at `~/.claude/agents/qmd-researcher.md`.
+
+### Setup (new dev or VPS)
+
+```bash
+npm install -g @tobilu/qmd
+
+# If bun is installed, its BUN_INSTALL env var makes qmd pick bun as runtime.
+# Bun crashes on sqlite-vec (no extension loading). Create a Node.js wrapper:
+mkdir -p ~/.local/bin
+QMD_JS="$(npm root -g)/@tobilu/qmd/dist/cli/qmd.js"
+printf '#!/bin/sh\nexec node "%s" "$@"\n' "$QMD_JS" > ~/.local/bin/qmd
+chmod +x ~/.local/bin/qmd
+# Ensure ~/.local/bin is in PATH before ~/.bun/bin
+
+# Index this project
+qmd collection add /path/to/matrix-os --name matrix-os
+qmd embed   # first run downloads ~2GB of models, uses Metal/CUDA GPU
+
+# Add MCP server to ~/.claude/settings.json for Claude Code integration:
+# "mcpServers": { "qmd": { "command": "qmd", "args": ["mcp"] } }
+```
+
+### Usage
+
+```bash
+qmd query "how does the kernel dispatch messages"  # hybrid (best recall)
+qmd search "telegram adapter"                       # BM25 keyword (instant)
+qmd get "qmd://matrix-os/specs/006-channels/spec.md"  # full doc
+qmd status                                          # health check
+```
+
 ## Development Rules
 
+- **Specs and plans go in `specs/`** -- NEVER use `docs/plans/`. All feature specs, implementation plans, and task files live in `specs/{NNN}-{feature-name}/`. The `docs/` directory is for reference documentation only.
 - Use Next.js/Vercel/React skills and best practices when working on frontend (shell or www)
 - Next.js 16: `proxy.ts` replaces `middleware.ts`, Turbopack by default, React Compiler stable, `cacheComponents` replaces PPR
 - TDD: write failing tests FIRST, then implement (Red -> Green -> Refactor)
