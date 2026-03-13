@@ -149,6 +149,34 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     sections.push("No apps installed yet.");
   }
 
+  // App data summary
+  const dataPath = join(homePath, "data");
+  sections.push("\n## App Data\n");
+  if (existsSync(dataPath)) {
+    try {
+      const appDirs = readdirSync(dataPath).filter((f) => {
+        try {
+          return readdirSync(join(dataPath, f)).some((k) => k.endsWith(".json"));
+        } catch { return false; }
+      });
+      if (appDirs.length > 0) {
+        const lines = appDirs.map((app) => {
+          const keys = readdirSync(join(dataPath, app))
+            .filter((k) => k.endsWith(".json"))
+            .map((k) => k.replace(".json", ""));
+          return `- ${app}: ${keys.join(", ")}`;
+        });
+        sections.push(lines.join("\n"));
+      } else {
+        sections.push("No app data stored yet.");
+      }
+    } catch {
+      sections.push("No app data stored yet.");
+    }
+  } else {
+    sections.push("No app data stored yet.");
+  }
+
   // Knowledge TOC
   const knowledgePath = join(homePath, "agents", "knowledge");
   sections.push("\n## Knowledge Base\n");

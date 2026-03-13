@@ -17,6 +17,7 @@ import {
 import { loadSkillBody } from "./skills.js";
 import { createMemoryStore } from "./memory.js";
 import { createImageClient } from "./image-gen.js";
+import { listConversationSummaries, getConversationMessages } from "./conversation-history.js";
 import { createUsageTracker } from "./usage.js";
 import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
 import { saveIdentity, deriveAiHandle } from "./identity.js";
@@ -915,6 +916,38 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
           } catch (e) {
             return { content: [{ type: "text" as const, text: `Install error: ${e instanceof Error ? e.message : String(e)}` }] };
           }
+        },
+      ),
+
+      tool(
+        "conversation_history",
+        "List recent conversation summaries, or fetch full conversation by session ID. Use 'list' to see what conversations happened, 'get' to read a specific one.",
+        {
+          action: z.enum(["list", "get"]),
+          sessionId: z.string().optional().describe("Session ID for 'get' action"),
+          limit: z.number().optional().describe("Max results for 'list' (default 10)"),
+        },
+        async ({ action, sessionId, limit }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Conversation history not available (no home path)" }] };
+          }
+
+          if (action === "list") {
+            const summaries = listConversationSummaries(homePath, limit);
+            if (summaries.length === 0) {
+              return { content: [{ type: "text" as const, text: "No conversation history yet." }] };
+            }
+            return { content: [{ type: "text" as const, text: JSON.stringify(summaries, null, 2) }] };
+          }
+
+          if (!sessionId) {
+            return { content: [{ type: "text" as const, text: "Error: sessionId required for 'get'" }] };
+          }
+          const messages = getConversationMessages(homePath, sessionId);
+          if (messages === null) {
+            return { content: [{ type: "text" as const, text: `No conversation found: ${sessionId}` }] };
+          }
+          return { content: [{ type: "text" as const, text: JSON.stringify(messages, null, 2) }] };
         },
       ),
 

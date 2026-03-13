@@ -48,4 +48,25 @@ describe("system prompt context", () => {
       expect(prompt).not.toContain("todo.matrix.md");
     });
   });
+
+  describe("app data summary", () => {
+    it("lists data directories and their keys", () => {
+      mkdirSync(join(home, "data", "todo"), { recursive: true });
+      writeFileSync(join(home, "data", "todo", "tasks.json"), "[]");
+      mkdirSync(join(home, "data", "notes"), { recursive: true });
+      writeFileSync(join(home, "data", "notes", "notes.json"), "[]");
+      writeFileSync(join(home, "data", "notes", "settings.json"), "{}");
+
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).toContain("## App Data");
+      expect(prompt).toContain("todo");
+      expect(prompt).toContain("tasks");
+      expect(prompt).toContain("notes");
+    });
+
+    it("shows empty message when no data exists", () => {
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).toContain("No app data");
+    });
+  });
 });
