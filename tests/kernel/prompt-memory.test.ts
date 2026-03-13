@@ -48,7 +48,7 @@ describe("System prompt memory integration", () => {
     const prompt = buildSystemPrompt(tempHome, db);
     const memorySection = prompt.split("## Relevant Memories")[1]?.split("\n##")[0] ?? "";
     const memoryTokens = estimateTokens(memorySection);
-    expect(memoryTokens).toBeLessThanOrEqual(300);
+    expect(memoryTokens).toBeLessThanOrEqual(1000);
   });
 
   it("overall prompt stays under 7K tokens", () => {

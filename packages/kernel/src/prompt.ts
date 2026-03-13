@@ -70,7 +70,7 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
       const memStore = createMemoryStore(db);
       const allMemories = memStore.listAll({ limit: 20 });
       if (allMemories.length > 0) {
-        const TOKEN_CAP = 300;
+        const TOKEN_CAP = 1000;
         const lines: string[] = [];
         let tokenCount = 0;
         for (const mem of allMemories) {
