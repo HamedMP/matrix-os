@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { loadSoul, loadIdentity, loadUser, loadBootstrap } from "./soul.js";
 import { loadSkills, buildSkillsToc } from "./skills.js";
@@ -175,6 +175,33 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     }
   } else {
     sections.push("No app data stored yet.");
+  }
+
+  // Recent conversation summaries
+  const summariesDir = join(homePath, "system", "summaries");
+  if (existsSync(summariesDir)) {
+    try {
+      const files = readdirSync(summariesDir)
+        .filter((f) => f.endsWith(".md"))
+        .map((f) => ({
+          name: f,
+          content: readFileSync(join(summariesDir, f), "utf-8"),
+          mtime: statSync(join(summariesDir, f)).mtimeMs,
+        }))
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(0, 5);
+
+      if (files.length > 0) {
+        sections.push("\n## Recent Conversations\n");
+        sections.push(
+          "These are summaries of recent conversations. Use this context to understand what the user has been working on.\n"
+        );
+        for (const f of files) {
+          const body = f.content.replace(/^---[\s\S]*?---\n*/m, "").trim();
+          if (body) sections.push(`- ${body}`);
+        }
+      }
+    } catch { /* graceful */ }
   }
 
   // Knowledge TOC

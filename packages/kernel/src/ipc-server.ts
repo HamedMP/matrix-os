@@ -18,6 +18,7 @@ import { loadSkillBody } from "./skills.js";
 import { createMemoryStore } from "./memory.js";
 import { createImageClient } from "./image-gen.js";
 import { listConversationSummaries, getConversationMessages } from "./conversation-history.js";
+import { searchMemories } from "./memory-search.js";
 import { createUsageTracker } from "./usage.js";
 import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
 import { saveIdentity, deriveAiHandle } from "./identity.js";
@@ -948,6 +949,27 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             return { content: [{ type: "text" as const, text: `No conversation found: ${sessionId}` }] };
           }
           return { content: [{ type: "text" as const, text: JSON.stringify(messages, null, 2) }] };
+        },
+      ),
+
+      tool(
+        "memory_search",
+        "Search long-term memory and conversation history for relevant context. Use this when you need to recall information from previous sessions.",
+        {
+          query: z.string().describe("Search query"),
+          scope: z.enum(["all", "memories", "conversations"]).optional()
+            .describe("Search scope (default: all)"),
+          limit: z.number().optional().describe("Max results (default: 10)"),
+        },
+        async ({ query, scope, limit }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "Memory search not available (no home path)" }] };
+          }
+          const results = searchMemories(db, homePath, { query, scope, limit });
+          if (results.length === 0) {
+            return { content: [{ type: "text" as const, text: "No relevant memories found." }] };
+          }
+          return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
         },
       ),
 

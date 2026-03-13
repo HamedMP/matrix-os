@@ -69,4 +69,37 @@ describe("system prompt context", () => {
       expect(prompt).toContain("No app data");
     });
   });
+
+  describe("conversation summaries in prompt", () => {
+    it("includes recent conversation summaries", () => {
+      mkdirSync(join(home, "system", "summaries"), { recursive: true });
+      writeFileSync(
+        join(home, "system", "summaries", "session-1.md"),
+        "---\nsession: session-1\ndate: 2026-03-13\ntimestamp: 2026-03-13T10:00:00Z\n---\n\nUser asked to add todo. AI added it.\n"
+      );
+
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).toContain("Recent Conversations");
+      expect(prompt).toContain("add todo");
+    });
+
+    it("limits to 5 most recent summaries", () => {
+      mkdirSync(join(home, "system", "summaries"), { recursive: true });
+      for (let i = 0; i < 8; i++) {
+        writeFileSync(
+          join(home, "system", "summaries", `s${i}.md`),
+          `---\nsession: s${i}\ndate: 2026-03-13\ntimestamp: 2026-03-13T1${i}:00:00Z\n---\n\nSummary ${i}\n`
+        );
+      }
+
+      const prompt = buildSystemPrompt(home);
+      const matches = prompt.match(/Summary \d/g) ?? [];
+      expect(matches.length).toBeLessThanOrEqual(5);
+    });
+
+    it("shows no section when no summaries exist", () => {
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).not.toContain("Recent Conversations");
+    });
+  });
 });
