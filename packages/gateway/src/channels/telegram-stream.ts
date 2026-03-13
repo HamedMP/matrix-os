@@ -29,6 +29,7 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
 
   let accumulated = "";
   let messageId: number | undefined;
+  let sendingInitial = false;
   let lastSentText = "";
   let typingTimer: ReturnType<typeof setInterval> | undefined;
   let throttleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -102,8 +103,13 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
     accumulated += text;
 
     if (messageId === undefined) {
-      if (accumulated.length >= minInitialChars) {
-        void sendInitialMessage(accumulated);
+      if (!sendingInitial && accumulated.length >= minInitialChars) {
+        sendingInitial = true;
+        sendInitialMessage(accumulated).then(() => {
+          if (!stopped && accumulated !== lastSentText && accumulated.length <= maxChars) {
+            scheduleEdit();
+          }
+        });
       }
       return;
     }

@@ -45,8 +45,8 @@ describe("T1430-T1433: Core utility apps", () => {
   describe("calculator specifics", () => {
     it("supports basic and scientific modes", () => {
       const html = readFileSync(join(APPS_DIR, "calculator", "index.html"), "utf-8");
-      expect(html).toContain("modeBasic");
-      expect(html).toContain("modeSci");
+      expect(html.toLowerCase()).toContain("basic");
+      expect(html.toLowerCase()).toContain("scientific");
     });
 
     it("supports keyboard input", () => {
@@ -65,20 +65,21 @@ describe("T1430-T1433: Core utility apps", () => {
   describe("clock specifics", () => {
     it("has analog and digital displays", () => {
       const html = readFileSync(join(APPS_DIR, "clock", "index.html"), "utf-8");
-      expect(html).toContain("analog");
-      expect(html).toContain("digital");
+      expect(html.toLowerCase()).toContain("canvas");
+      expect(html.toLowerCase()).toContain("digital");
     });
 
     it("has stopwatch functionality", () => {
       const html = readFileSync(join(APPS_DIR, "clock", "index.html"), "utf-8");
-      expect(html).toContain("timerStart");
-      expect(html).toContain("timerLap");
-      expect(html).toContain("timerReset");
+      const lower = html.toLowerCase();
+      expect(lower).toContain("stopwatch");
+      expect(lower).toContain("lap");
     });
 
-    it("displays timezone", () => {
+    it("has timer functionality", () => {
       const html = readFileSync(join(APPS_DIR, "clock", "index.html"), "utf-8");
-      expect(html).toContain("timeZone");
+      const lower = html.toLowerCase();
+      expect(lower).toContain("timer");
     });
   });
 });

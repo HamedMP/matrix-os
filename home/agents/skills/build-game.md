@@ -93,18 +93,36 @@ const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(nu
 
 ## Score Tracking with Bridge API
 
-```tsx
-const APP = "my-game";
-useEffect(() => {
-  fetch(`/api/bridge/data?app=${APP}&key=highscore`).then(r => r.json()).then(d => setHighScore(d.value ?? 0));
-}, []);
+```javascript
+var BRIDGE = location.origin + '/api/bridge/data';
+var APP = 'my-game';
 
-function saveHighScore(score: number) {
-  if (score > highScore) {
-    setHighScore(score);
-    fetch('/api/bridge/data', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ app: APP, key: 'highscore', value: score }) });
-  }
+function loadBest() {
+  fetch(BRIDGE, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP, key: 'highscore' })
+  }).then(r => r.json()).then(d => {
+    if (d && d.value != null) best = typeof d.value === 'number' ? d.value : parseInt(d.value) || 0;
+    updateHUD();
+  }).catch(() => {});
 }
+
+function saveBest() {
+  fetch(BRIDGE, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP, key: 'highscore', value: best })
+  }).catch(() => {});
+}
+```
+
+## Auto-Update (MANDATORY)
+Games MUST listen for external data changes so scores/stats update when modified from chat or other agents:
+```javascript
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'os:data-change') {
+    loadBest(); // Re-fetch scores from bridge
+  }
+});
 ```
 
 ## p5.js Quick Prototypes (HTML apps)
@@ -121,8 +139,16 @@ function keyPressed() { /* input */ }
 ```
 
 ## Game Styling
+All colors via CSS custom properties:
 ```css
-canvas { display: block; margin: 0 auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
-.score { position: absolute; top: 1rem; right: 1rem; font-size: 1.5rem; font-weight: 700; color: var(--accent); }
-.game-over { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); }
+canvas { display: block; margin: 0 auto; background: var(--matrix-bg, #0e0e0e); border: 1px solid var(--matrix-border, #333); border-radius: 8px; }
+.score { position: absolute; top: 1rem; right: 1rem; font-size: 1.5rem; font-weight: 700; color: var(--matrix-accent, #007aff); font-variant-numeric: tabular-nums; }
+.game-over { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); border-radius: 8px; }
 ```
+
+## Game Category
+Set `"category": "games"` in matrix.json so the Game Center discovers the game:
+```json
+{ "name": "My Game", "category": "games", "runtime": "static", "tags": ["arcade"] }
+```
+Place game in `~/apps/games/<name>/` with `matrix.json` + `index.html`.

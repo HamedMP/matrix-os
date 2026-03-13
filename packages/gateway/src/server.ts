@@ -16,6 +16,7 @@ import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
 import { createPushAdapter } from "./channels/push.js";
+import { createSessionStore } from "./session-store.js";
 import { formatForChannel } from "./channels/format.js";
 import type { ChannelConfig, ChannelId } from "./channels/types.js";
 import { createCronStore } from "./cron/store.js";
@@ -94,7 +95,8 @@ export type ServerMessage =
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
-  | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } };
+  | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
+  | { type: "data:change"; app: string; key: string };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -236,7 +238,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const pushAdapter = createPushAdapter();
 
-  const channelSessions = new Map<string, string>();
+  const channelSessions = createSessionStore(join(homePath, "system", "sessions.json"));
 
   const telegramAdapter: TelegramAdapter = createTelegramAdapter();
 
@@ -265,10 +267,15 @@ export async function createGateway(config: GatewayConfig) {
 
           stream.startTyping();
 
+          const text = msg.text.startsWith("/") ? msg.text.slice(1) : msg.text;
+
           dispatcher
-            .dispatch(msg.text, existingSessionId, (event) => {
+            .dispatch(text, existingSessionId, (event) => {
               if (event.type === "init") {
-                channelSessions.set(sessionKey, event.sessionId);
+                channelSessions.set(sessionKey, event.sessionId, {
+                  channel: msg.source, senderId: msg.senderId,
+                  senderName: msg.senderName, chatId: msg.chatId,
+                });
                 conversations.begin(event.sessionId);
                 conversations.addUserMessage(event.sessionId, msg.text);
               } else if (event.type === "text") {
@@ -305,7 +312,10 @@ export async function createGateway(config: GatewayConfig) {
       dispatcher
         .dispatch(msg.text, existingSessionId, (event) => {
           if (event.type === "init") {
-            channelSessions.set(sessionKey, event.sessionId);
+            channelSessions.set(sessionKey, event.sessionId, {
+              channel: msg.source, senderId: msg.senderId,
+              senderName: msg.senderName, chatId: msg.chatId,
+            });
             conversations.begin(event.sessionId);
             conversations.addUserMessage(event.sessionId, msg.text);
           } else if (event.type === "text") {
@@ -344,6 +354,31 @@ export async function createGateway(config: GatewayConfig) {
 
   channelManager.start().then(() => {
     channelManager.replay().catch(() => {});
+
+    // Register skills as Telegram slash commands
+    const bot = telegramAdapter.getBot();
+    if (bot?.setMyCommands) {
+      try {
+        const skillsDir = join(homePath, "agents", "skills");
+        if (existsSync(skillsDir)) {
+          const commands: Array<{ command: string; description: string }> = [];
+          for (const f of readdirSync(skillsDir).filter((s) => s.endsWith(".md"))) {
+            const content = readFileSync(join(skillsDir, f), "utf-8");
+            const nameMatch = content.match(/^name:\s*(.+)$/m);
+            const descMatch = content.match(/^description:\s*(.+)$/m);
+            if (nameMatch) {
+              commands.push({
+                command: nameMatch[1].trim().replace(/\s+/g, "-").toLowerCase(),
+                description: (descMatch?.[1]?.trim() ?? nameMatch[1].trim()).slice(0, 256),
+              });
+            }
+          }
+          if (commands.length > 0) {
+            bot.setMyCommands(commands.slice(0, 100)).catch(() => {});
+          }
+        }
+      } catch { /* best-effort */ }
+    }
   });
 
   // Cron service -- scheduled tasks from ~/system/cron.json
@@ -699,7 +734,9 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     mkdirSync(dataDir, { recursive: true });
-    writeFileSync(filePath, body.value ?? "", "utf-8");
+    const raw = body.value ?? "";
+    writeFileSync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
+    broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
   });
 

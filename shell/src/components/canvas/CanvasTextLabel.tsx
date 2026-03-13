@@ -3,7 +3,20 @@
 import { useCallback, useRef, useState } from "react";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasLabels, type CanvasLabel } from "@/stores/canvas-labels";
-import { Trash2 } from "lucide-react";
+import { Trash2, Palette } from "lucide-react";
+
+const LABEL_COLORS = [
+  "#ffffff",
+  "#94a3b8",
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+  "#06b6d4",
+  "#f97316",
+];
 
 interface CanvasTextLabelProps {
   label: CanvasLabel;
@@ -17,6 +30,7 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
 
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(label.text);
+  const [showColorPicker, setShowColorPicker] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const dragRef = useRef<{
@@ -83,6 +97,14 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
     [commitEdit, label.text],
   );
 
+  const onSelectColor = useCallback(
+    (color: string) => {
+      updateLabel(label.id, { color });
+      setShowColorPicker(false);
+    },
+    [label.id, updateLabel],
+  );
+
   const inverseScale = 1 / zoom;
 
   return (
@@ -126,16 +148,52 @@ export function CanvasTextLabel({ label }: CanvasTextLabelProps) {
               {label.text}
             </span>
           )}
-          <button
-            className="opacity-0 group-hover/label:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
-            onClick={(e) => {
-              e.stopPropagation();
-              deleteLabel(label.id);
-            }}
-            aria-label="Delete label"
-          >
-            <Trash2 className="size-3.5 text-muted-foreground" />
-          </button>
+          <div className="opacity-0 group-hover/label:opacity-100 transition-opacity flex items-center gap-0.5">
+            <div className="relative">
+              <button
+                className="p-0.5 rounded hover:bg-muted transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowColorPicker(!showColorPicker);
+                }}
+                aria-label="Change color"
+              >
+                <Palette className="size-3.5 text-muted-foreground" />
+              </button>
+              {showColorPicker && (
+                <div
+                  className="absolute top-full left-0 mt-1 p-1.5 rounded-lg bg-card/95 backdrop-blur-sm border border-border shadow-lg flex gap-1 flex-wrap"
+                  style={{ width: 130, zIndex: 100 }}
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {LABEL_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      className="size-5 rounded-full border transition-transform hover:scale-110"
+                      style={{
+                        backgroundColor: color,
+                        borderColor: color === label.color ? "var(--primary)" : "transparent",
+                        boxShadow: color === label.color ? "0 0 0 2px var(--primary)" : "none",
+                      }}
+                      onClick={() => onSelectColor(color)}
+                      aria-label={`Color ${color}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              className="p-0.5 rounded hover:bg-muted transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteLabel(label.id);
+              }}
+              aria-label="Delete label"
+            >
+              <Trash2 className="size-3.5 text-muted-foreground" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

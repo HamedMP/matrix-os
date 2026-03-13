@@ -5,284 +5,1303 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Clock</title>
 <style>
+:root {
+  --bg: var(--matrix-bg, #f5f5f7);
+  --fg: var(--matrix-fg, #1d1d1f);
+  --accent: var(--matrix-accent, #007aff);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d2d2d7);
+  --muted: var(--matrix-muted-fg, #86868b);
+  --font: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif);
+  --danger: #ff3b30;
+  --success: #34c759;
+  --radius: 12px;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
 body {
-  background: var(--matrix-bg, #ece5f0);
-  color: var(--matrix-fg, #1c1917);
-  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Tab Bar (Segmented Control) ---- */
+.segmented-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 16px 0;
+  flex-shrink: 0;
+}
+
+.segmented-track {
+  display: flex;
+  position: relative;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-radius: 9px;
+  padding: 2px;
+  gap: 0;
+}
+
+.segmented-track .indicator {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  height: calc(100% - 4px);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.segmented-track button {
+  position: relative;
+  z-index: 1;
+  padding: 6px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.2s;
+  white-space: nowrap;
+}
+
+.segmented-track button.active {
+  color: var(--fg);
+}
+
+/* ---- View Container ---- */
+.views {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  overflow-x: hidden;
+  opacity: 0;
+  transform: translateX(30px);
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 16px 16px 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.view.active {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.view.exit-left {
+  opacity: 0;
+  transform: translateX(-30px);
+}
+
+.view.enter-right {
+  transform: translateX(30px);
+}
+
+.view.enter-left {
+  transform: translateX(-30px);
+}
+
+/* ---- Clock View ---- */
+.clock-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.analog-container {
+  position: relative;
+  width: 240px;
+  height: 240px;
+}
+
+.analog-container canvas {
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.06));
+}
+
+.digital-time {
+  font-size: 56px;
+  font-weight: 200;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  line-height: 1.1;
+  margin-top: 12px;
+}
+
+.date-display {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.timezone-label {
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+/* ---- World Clocks ---- */
+.world-clocks {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  width: 100%;
+  max-width: 400px;
+  justify-content: center;
+}
+
+.world-card {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.world-card .city {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.world-card canvas {
+  width: 56px;
+  height: 56px;
+}
+
+.world-card .world-time {
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.world-card .world-offset {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ---- Stopwatch View ---- */
+.stopwatch-display {
+  font-size: 64px;
+  font-weight: 200;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  letter-spacing: -1px;
+  color: var(--fg);
+  margin: 24px 0 8px;
+  line-height: 1;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+.stopwatch-display .frac {
+  font-size: 0.55em;
+  opacity: 0.6;
+}
+
+.stopwatch-controls {
+  display: flex;
+  gap: 16px;
+  margin: 20px 0;
+  align-items: center;
+}
+
+.sw-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s, opacity 0.15s;
+}
+
+.sw-btn:active {
+  transform: scale(0.94);
+}
+
+.sw-btn.start-btn {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+}
+
+.sw-btn.stop-btn {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.sw-btn.secondary {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.sw-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sw-btn:disabled:active {
+  transform: none;
+}
+
+/* Lap List */
+.lap-list {
+  width: 100%;
+  max-width: 360px;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.lap-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+
+.lap-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.lap-row:nth-child(even) {
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 6px;
+}
+
+.lap-row .lap-name {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.lap-row .lap-time {
+  color: var(--fg);
+}
+
+.lap-row .lap-split {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.lap-row.best .lap-time,
+.lap-row.best .lap-name { color: var(--success); }
+
+.lap-row.worst .lap-time,
+.lap-row.worst .lap-name { color: var(--danger); }
+
+/* ---- Timer View ---- */
+.timer-ring-container {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  margin: 20px 0 8px;
+}
+
+.timer-ring-container svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.timer-ring-bg {
+  fill: none;
+  stroke: color-mix(in srgb, var(--fg) 8%, transparent);
+  stroke-width: 6;
+}
+
+.timer-ring-progress {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.1s linear;
+}
+
+.timer-ring-label {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100vh;
-  overflow: hidden;
-  user-select: none;
 }
-canvas {
-  margin-bottom: 16px;
-}
-.digital {
+
+.timer-time {
   font-size: 48px;
   font-weight: 200;
-  letter-spacing: 2px;
   font-variant-numeric: tabular-nums;
-  color: var(--matrix-fg, #1c1917);
-  margin-bottom: 4px;
+  color: var(--fg);
+  line-height: 1;
 }
-.date {
-  font-size: 14px;
-  color: var(--matrix-muted-fg, #78716c);
-  margin-bottom: 20px;
+
+.timer-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
 }
-.tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-}
-.tabs button {
-  padding: 6px 16px;
-  font-size: 12px;
-  background: var(--matrix-card-bg, #ffffff);
-  color: var(--matrix-muted-fg, #78716c);
-  border: 1px solid var(--matrix-border, #d8d0de);
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.tabs button.active { background: var(--matrix-accent, #c2703a); color: #ffffff; border-color: var(--matrix-accent, #c2703a); }
-.timer-display {
-  font-size: 36px;
-  font-weight: 300;
-  font-variant-numeric: tabular-nums;
-  color: var(--matrix-accent, #c2703a);
-  margin-bottom: 12px;
-}
-.timer-controls {
+
+.timer-presets {
   display: flex;
   gap: 8px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+  justify-content: center;
 }
-.timer-controls button {
-  padding: 8px 20px;
+
+.preset-btn {
+  padding: 8px 16px;
   font-size: 14px;
-  background: var(--matrix-card-bg, #ffffff);
-  color: var(--matrix-fg, #1c1917);
-  border: 1px solid var(--matrix-border, #d8d0de);
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
+  font-weight: 500;
   font-family: inherit;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
-.timer-controls button.start { background: #22c55e; color: #ffffff; }
-.timer-controls button.stop { background: #ef4444; color: #ffffff; }
-.hidden { display: none !important; }
-.timezone {
-  font-size: 12px;
-  color: var(--matrix-muted-fg, #78716c);
-  margin-top: 8px;
+
+.preset-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.preset-btn:active {
+  transform: scale(0.95);
+}
+
+.preset-btn.selected {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.timer-controls {
+  display: flex;
+  gap: 16px;
+  margin: 12px 0;
+  align-items: center;
+}
+
+.timer-controls .sw-btn.cancel-btn {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* Custom time input */
+.timer-input-row {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  margin: 8px 0 4px;
+}
+
+.timer-input-row input {
+  width: 52px;
+  font-size: 28px;
+  font-weight: 200;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  padding: 4px 2px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.timer-input-row input:focus {
+  border-color: var(--accent);
+}
+
+.timer-input-row .sep {
+  font-size: 24px;
+  font-weight: 200;
+  color: var(--muted);
+}
+
+.timer-input-row .unit {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: -2px;
+}
+
+/* ---- Responsive ---- */
+@media (max-height: 520px) {
+  .analog-container { width: 160px; height: 160px; }
+  .analog-container canvas { width: 160px; height: 160px; }
+  .digital-time { font-size: 40px; }
+  .world-clocks { margin-top: 12px; }
+  .stopwatch-display { font-size: 48px; margin: 12px 0 4px; }
+  .timer-ring-container { width: 160px; height: 160px; }
+  .timer-time { font-size: 36px; }
 }
 </style>
 </head>
 <body>
 
-<div id="clockView">
-  <canvas id="analog" width="200" height="200"></canvas>
-  <div class="digital" id="digital">00:00:00</div>
-  <div class="date" id="dateStr"></div>
-</div>
-
-<div id="timerView" class="hidden">
-  <div class="timer-display" id="timerDisplay">00:00.00</div>
-  <div class="timer-controls">
-    <button class="start" id="timerStart">Start</button>
-    <button id="timerLap">Lap</button>
-    <button id="timerReset">Reset</button>
+<!-- Segmented Control -->
+<div class="segmented-control">
+  <div class="segmented-track" id="segTrack">
+    <div class="indicator" id="segIndicator"></div>
+    <button class="active" data-tab="clock">Clock</button>
+    <button data-tab="stopwatch">Stopwatch</button>
+    <button data-tab="timer">Timer</button>
   </div>
-  <div id="laps" style="margin-top: 12px; font-size: 13px; color: #666; max-height: 120px; overflow-y: auto;"></div>
 </div>
 
-<div class="tabs">
-  <button class="active" id="tabClock">Clock</button>
-  <button id="tabTimer">Stopwatch</button>
-</div>
+<!-- Views -->
+<div class="views">
 
-<div class="timezone" id="tz"></div>
+  <!-- Clock View -->
+  <div class="view active" id="view-clock">
+    <div class="clock-section">
+      <div class="analog-container">
+        <canvas id="mainClock" width="480" height="480"></canvas>
+      </div>
+      <div class="digital-time" id="digitalTime">00:00:00</div>
+      <div class="date-display" id="dateDisplay"></div>
+      <div class="timezone-label" id="tzLabel"></div>
+    </div>
+    <div class="world-clocks">
+      <div class="world-card">
+        <span class="city">London</span>
+        <canvas class="world-canvas" data-tz="Europe/London" width="112" height="112"></canvas>
+        <span class="world-time" data-tz-time="Europe/London"></span>
+        <span class="world-offset" data-tz-offset="Europe/London"></span>
+      </div>
+      <div class="world-card">
+        <span class="city">UTC</span>
+        <canvas class="world-canvas" data-tz="UTC" width="112" height="112"></canvas>
+        <span class="world-time" data-tz-time="UTC"></span>
+        <span class="world-offset" data-tz-offset="UTC"></span>
+      </div>
+      <div class="world-card">
+        <span class="city">Tokyo</span>
+        <canvas class="world-canvas" data-tz="Asia/Tokyo" width="112" height="112"></canvas>
+        <span class="world-time" data-tz-time="Asia/Tokyo"></span>
+        <span class="world-offset" data-tz-offset="Asia/Tokyo"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stopwatch View -->
+  <div class="view" id="view-stopwatch">
+    <div class="stopwatch-display" id="swDisplay">00:00<span class="frac">.00</span></div>
+    <div class="stopwatch-controls">
+      <button class="sw-btn secondary" id="swLapReset" disabled>Reset</button>
+      <button class="sw-btn start-btn" id="swStartStop">Start</button>
+    </div>
+    <div class="lap-list" id="lapList"></div>
+  </div>
+
+  <!-- Timer View -->
+  <div class="view" id="view-timer">
+    <div class="timer-ring-container" id="timerRingWrap">
+      <svg viewBox="0 0 220 220">
+        <circle class="timer-ring-bg" cx="110" cy="110" r="100" />
+        <circle class="timer-ring-progress" id="timerRing" cx="110" cy="110" r="100"
+          stroke-dasharray="628.318" stroke-dashoffset="0" />
+      </svg>
+      <div class="timer-ring-label">
+        <div class="timer-time" id="timerTimeDisplay">00:00</div>
+        <div class="timer-sub" id="timerSub"></div>
+      </div>
+    </div>
+    <div class="timer-input-row" id="timerInputRow">
+      <input type="number" id="timerHH" min="0" max="23" value="0" placeholder="0"><span class="unit">h</span>
+      <span class="sep">:</span>
+      <input type="number" id="timerMM" min="0" max="59" value="5" placeholder="0"><span class="unit">m</span>
+      <span class="sep">:</span>
+      <input type="number" id="timerSS" min="0" max="59" value="0" placeholder="0"><span class="unit">s</span>
+    </div>
+    <div class="timer-presets" id="timerPresets">
+      <button class="preset-btn" data-seconds="60">1m</button>
+      <button class="preset-btn selected" data-seconds="300">5m</button>
+      <button class="preset-btn" data-seconds="600">10m</button>
+      <button class="preset-btn" data-seconds="900">15m</button>
+      <button class="preset-btn" data-seconds="1800">30m</button>
+    </div>
+    <div class="timer-controls">
+      <button class="sw-btn cancel-btn" id="timerCancel" disabled>Cancel</button>
+      <button class="sw-btn start-btn" id="timerStartBtn">Start</button>
+    </div>
+  </div>
+</div>
 
 <script>
-const analogCanvas = document.getElementById('analog');
-const analogCtx = analogCanvas.getContext('2d');
-const BRIDGE_URL = window.location.origin + '/api/bridge/data';
+(function() {
+  'use strict';
 
-function drawClock() {
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  const s = now.getSeconds();
-  const ms = now.getMilliseconds();
+  var BRIDGE_URL = window.location.origin + '/api/bridge/data';
+  var CIRCUMFERENCE = 2 * Math.PI * 100;
 
-  // Digital
-  const timeStr = [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
-  document.getElementById('digital').textContent = timeStr;
+  // ============================================================
+  //  Segmented Control
+  // ============================================================
+  var tabs = ['clock', 'stopwatch', 'timer'];
+  var activeTab = 'clock';
+  var segTrack = document.getElementById('segTrack');
+  var segIndicator = document.getElementById('segIndicator');
+  var tabButtons = segTrack.querySelectorAll('button');
 
-  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  document.getElementById('dateStr').textContent =
-    days[now.getDay()] + ', ' + months[now.getMonth()] + ' ' + now.getDate() + ', ' + now.getFullYear();
+  function positionIndicator(animate) {
+    var idx = tabs.indexOf(activeTab);
+    var btn = tabButtons[idx];
+    if (!btn) return;
+    var w = btn.offsetWidth;
+    segIndicator.style.width = w + 'px';
+    var tx = btn.offsetLeft - 2;
+    segIndicator.style.transform = 'translateX(' + tx + 'px)';
+    if (!animate) segIndicator.style.transition = 'none';
+    else segIndicator.style.transition = '';
+  }
 
-  // Analog
-  const ctx = analogCtx;
-  const cx = 100, cy = 100, r = 90;
+  function switchTab(name) {
+    if (name === activeTab) return;
+    var oldIdx = tabs.indexOf(activeTab);
+    var newIdx = tabs.indexOf(name);
+    var goingRight = newIdx > oldIdx;
 
-  ctx.fillStyle = '#0a0a0a';
-  ctx.fillRect(0, 0, 200, 200);
+    var oldView = document.getElementById('view-' + activeTab);
+    var newView = document.getElementById('view-' + name);
 
-  // Face
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#141414';
-  ctx.fill();
-  ctx.strokeStyle = '#333';
-  ctx.lineWidth = 2;
-  ctx.stroke();
+    oldView.classList.remove('active');
+    oldView.classList.add(goingRight ? 'exit-left' : 'enter-right');
 
-  // Hour markers
-  for (let i = 0; i < 12; i++) {
-    const angle = (i / 12) * Math.PI * 2 - Math.PI / 2;
-    const inner = i % 3 === 0 ? 68 : 74;
-    const outer = 82;
+    newView.classList.remove('exit-left', 'enter-right', 'enter-left');
+    newView.style.transform = goingRight ? 'translateX(30px)' : 'translateX(-30px)';
+    newView.style.opacity = '0';
+
+    void newView.offsetWidth;
+
+    newView.style.transform = '';
+    newView.style.opacity = '';
+    newView.classList.add('active');
+
+    tabButtons.forEach(function(b) { b.classList.remove('active'); });
+    segTrack.querySelector('[data-tab="' + name + '"]').classList.add('active');
+
+    activeTab = name;
+    positionIndicator(true);
+
+    setTimeout(function() {
+      oldView.classList.remove('exit-left', 'enter-right');
+    }, 300);
+  }
+
+  tabButtons.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      switchTab(btn.dataset.tab);
+    });
+  });
+
+  requestAnimationFrame(function() {
+    positionIndicator(false);
+    requestAnimationFrame(function() {
+      positionIndicator(false);
+    });
+  });
+  window.addEventListener('resize', function() { positionIndicator(false); });
+
+  // ============================================================
+  //  Utility
+  // ============================================================
+  function getComputedVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+  function getNowInTz(tz) {
+    var now = new Date();
+    var parts = {};
+    try {
+      var fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hour: 'numeric', minute: 'numeric', second: 'numeric',
+        hour12: false, fractionalSecondDigits: 3
+      });
+      fmt.formatToParts(now).forEach(function(p) { parts[p.type] = p.value; });
+    } catch (e) {
+      return { h: now.getHours(), m: now.getMinutes(), s: now.getSeconds(), ms: now.getMilliseconds() };
+    }
+    return {
+      h: parseInt(parts.hour, 10) || 0,
+      m: parseInt(parts.minute, 10) || 0,
+      s: parseInt(parts.second, 10) || 0,
+      ms: parseInt(parts.fractionalSecond, 10) || now.getMilliseconds()
+    };
+  }
+
+  // ============================================================
+  //  Canvas Drawing: Analog Clock
+  // ============================================================
+  function drawAnalogClock(canvas, h, m, s, ms, large) {
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    var size = large ? 240 : 56;
+    var pxSize = size * dpr;
+
+    if (canvas.width !== pxSize || canvas.height !== pxSize) {
+      canvas.width = pxSize;
+      canvas.height = pxSize;
+    }
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, size, size);
+
+    var cx = size / 2;
+    var cy = size / 2;
+    var r = (size / 2) - (large ? 8 : 3);
+
+    var fg = getComputedVar('--fg', '#1d1d1f');
+    var surface = getComputedVar('--surface', '#ffffff');
+    var border = getComputedVar('--border', '#d2d2d7');
+    var accent = getComputedVar('--accent', '#007aff');
+
+    // Clock face
     ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
-    ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
-    ctx.strokeStyle = i % 3 === 0 ? '#888' : '#444';
-    ctx.lineWidth = i % 3 === 0 ? 2 : 1;
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = surface;
+    ctx.fill();
+    ctx.strokeStyle = border;
+    ctx.lineWidth = large ? 1.5 : 0.5;
+    ctx.stroke();
+
+    // Inner shadow (subtle)
+    if (large) {
+      var grad = ctx.createRadialGradient(cx, cy - r * 0.1, r * 0.85, cx, cy, r);
+      grad.addColorStop(0, 'transparent');
+      grad.addColorStop(1, 'rgba(0,0,0,0.04)');
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    // Minute ticks
+    if (large) {
+      for (var i = 0; i < 60; i++) {
+        var tickAngle = (i / 60) * Math.PI * 2 - Math.PI / 2;
+        if (i % 5 === 0) continue;
+        var innerTick = r - 6;
+        var outerTick = r - 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(tickAngle) * innerTick, cy + Math.sin(tickAngle) * innerTick);
+        ctx.lineTo(cx + Math.cos(tickAngle) * outerTick, cy + Math.sin(tickAngle) * outerTick);
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+    }
+
+    // Hour markers
+    for (var j = 0; j < 12; j++) {
+      var hAngle = (j / 12) * Math.PI * 2 - Math.PI / 2;
+      var isCardinal = j % 3 === 0;
+
+      if (large) {
+        var innerH = isCardinal ? r - 20 : r - 12;
+        var outerH = r - 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(hAngle) * innerH, cy + Math.sin(hAngle) * innerH);
+        ctx.lineTo(cx + Math.cos(hAngle) * outerH, cy + Math.sin(hAngle) * outerH);
+        ctx.strokeStyle = fg;
+        ctx.lineWidth = isCardinal ? 2.5 : 1.2;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      } else {
+        var innerS = isCardinal ? r - 6 : r - 4;
+        var outerS = r - 1;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(hAngle) * innerS, cy + Math.sin(hAngle) * innerS);
+        ctx.lineTo(cx + Math.cos(hAngle) * outerS, cy + Math.sin(hAngle) * outerS);
+        ctx.strokeStyle = fg;
+        ctx.lineWidth = isCardinal ? 1.5 : 0.7;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+    }
+
+    // Hour numbers at 12/3/6/9
+    if (large) {
+      ctx.fillStyle = fg;
+      ctx.font = '500 15px ' + getComputedStyle(document.body).fontFamily;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var numR = r - 30;
+      var nums = [12, 3, 6, 9];
+      var numAngles = [- Math.PI / 2, 0, Math.PI / 2, Math.PI];
+      for (var ni = 0; ni < 4; ni++) {
+        ctx.fillText('' + nums[ni],
+          cx + Math.cos(numAngles[ni]) * numR,
+          cy + Math.sin(numAngles[ni]) * numR + 1
+        );
+      }
+    }
+
+    // Hands
+    var hVal = (h % 12) + m / 60 + s / 3600;
+    var mVal = m + s / 60;
+    var sVal = s + ms / 1000;
+
+    // Hour hand
+    var hourAngle = (hVal / 12) * Math.PI * 2 - Math.PI / 2;
+    var hourLen = r * 0.5;
+    var hourW = large ? 4 : 1.8;
+    drawHand(ctx, cx, cy, hourAngle, hourLen, hourW, fg, large ? 12 : 0);
+
+    // Minute hand
+    var minAngle = (mVal / 60) * Math.PI * 2 - Math.PI / 2;
+    var minLen = large ? r * 0.72 : r * 0.7;
+    var minW = large ? 3 : 1.2;
+    drawHand(ctx, cx, cy, minAngle, minLen, minW, fg, large ? 12 : 0);
+
+    // Second hand (continuous sweep)
+    var secAngle = (sVal / 60) * Math.PI * 2 - Math.PI / 2;
+    var secLen = large ? r * 0.82 : r * 0.75;
+    var secTailLen = large ? 24 : 8;
+
+    ctx.beginPath();
+    ctx.moveTo(cx - Math.cos(secAngle) * secTailLen, cy - Math.sin(secAngle) * secTailLen);
+    ctx.lineTo(cx + Math.cos(secAngle) * secLen, cy + Math.sin(secAngle) * secLen);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = large ? 1.5 : 0.8;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // Second hand counterweight circle
+    if (large) {
+      ctx.beginPath();
+      ctx.arc(
+        cx - Math.cos(secAngle) * (secTailLen - 6),
+        cy - Math.sin(secAngle) * (secTailLen - 6),
+        4, 0, Math.PI * 2
+      );
+      ctx.fillStyle = accent;
+      ctx.fill();
+    }
+
+    // Center cap
+    ctx.beginPath();
+    ctx.arc(cx, cy, large ? 5 : 2, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+
+    if (large) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+      ctx.fillStyle = surface;
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawHand(ctx, cx, cy, angle, length, width, color, tail) {
+    ctx.beginPath();
+    if (tail > 0) {
+      ctx.moveTo(cx - Math.cos(angle) * tail, cy - Math.sin(angle) * tail);
+    } else {
+      ctx.moveTo(cx, cy);
+    }
+    ctx.lineTo(cx + Math.cos(angle) * length, cy + Math.sin(angle) * length);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
     ctx.stroke();
   }
 
-  // Hour hand
-  const hAngle = ((h % 12) / 12 + m / 720) * Math.PI * 2 - Math.PI / 2;
-  drawHand(ctx, cx, cy, hAngle, 45, 3, '#e0e0e0');
+  // ============================================================
+  //  Clock View
+  // ============================================================
+  var mainCanvas = document.getElementById('mainClock');
+  var digitalEl = document.getElementById('digitalTime');
+  var dateEl = document.getElementById('dateDisplay');
+  var tzEl = document.getElementById('tzLabel');
 
-  // Minute hand
-  const mAngle = (m / 60 + s / 3600) * Math.PI * 2 - Math.PI / 2;
-  drawHand(ctx, cx, cy, mAngle, 62, 2, '#e0e0e0');
+  var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-  // Second hand
-  const sAngle = ((s + ms / 1000) / 60) * Math.PI * 2 - Math.PI / 2;
-  drawHand(ctx, cx, cy, sAngle, 70, 1, '#ef4444');
+  try { tzEl.textContent = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) {}
 
-  // Center dot
-  ctx.beginPath();
-  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-  ctx.fillStyle = '#ef4444';
-  ctx.fill();
-}
+  var worldCanvases = document.querySelectorAll('.world-canvas');
+  var worldTimes = document.querySelectorAll('[data-tz-time]');
+  var worldOffsets = document.querySelectorAll('[data-tz-offset]');
 
-function drawHand(ctx, cx, cy, angle, length, width, color) {
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + Math.cos(angle) * length, cy + Math.sin(angle) * length);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.lineCap = 'round';
-  ctx.stroke();
-}
-
-// Stopwatch
-let timerRunning = false;
-let timerStart = 0;
-let timerElapsed = 0;
-let timerInterval;
-let laps = [];
-
-function formatTimer(ms) {
-  const total = Math.floor(ms);
-  const min = Math.floor(total / 60000);
-  const sec = Math.floor((total % 60000) / 1000);
-  const centis = Math.floor((total % 1000) / 10);
-  return String(min).padStart(2, '0') + ':' + String(sec).padStart(2, '0') + '.' + String(centis).padStart(2, '0');
-}
-
-function updateTimer() {
-  const elapsed = timerElapsed + (timerRunning ? Date.now() - timerStart : 0);
-  document.getElementById('timerDisplay').textContent = formatTimer(elapsed);
-}
-
-document.getElementById('timerStart').addEventListener('click', () => {
-  if (timerRunning) {
-    timerElapsed += Date.now() - timerStart;
-    timerRunning = false;
-    clearInterval(timerInterval);
-    document.getElementById('timerStart').textContent = 'Start';
-    document.getElementById('timerStart').className = 'start';
-  } else {
-    timerStart = Date.now();
-    timerRunning = true;
-    timerInterval = setInterval(updateTimer, 10);
-    document.getElementById('timerStart').textContent = 'Stop';
-    document.getElementById('timerStart').className = 'stop';
+  function getOffsetLabel(tz) {
+    try {
+      var now = new Date();
+      var remote = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+      var diffMs = remote.getTime() - now.getTime() + (now.getTimezoneOffset() * 60000);
+      if (Math.abs(diffMs) < 60000) diffMs = 0;
+      var diffH = Math.round(diffMs / 3600000);
+      if (diffH === 0) return 'Same time';
+      return (diffH > 0 ? '+' : '') + diffH + 'h';
+    } catch(e) { return ''; }
   }
-});
 
-document.getElementById('timerLap').addEventListener('click', () => {
-  if (!timerRunning) return;
-  const elapsed = timerElapsed + Date.now() - timerStart;
-  laps.push(elapsed);
-  const el = document.getElementById('laps');
-  const div = document.createElement('div');
-  div.textContent = 'Lap ' + laps.length + ': ' + formatTimer(elapsed);
-  el.insertBefore(div, el.firstChild);
-});
+  function updateClockView() {
+    var now = new Date();
+    var h = now.getHours();
+    var m = now.getMinutes();
+    var s = now.getSeconds();
+    var ms = now.getMilliseconds();
 
-document.getElementById('timerReset').addEventListener('click', () => {
-  timerRunning = false;
-  timerElapsed = 0;
-  timerStart = 0;
-  laps = [];
-  clearInterval(timerInterval);
-  document.getElementById('timerDisplay').textContent = '00:00.00';
-  document.getElementById('timerStart').textContent = 'Start';
-  document.getElementById('timerStart').className = 'start';
-  const el = document.getElementById('laps');
-  while (el.firstChild) el.removeChild(el.firstChild);
-});
+    drawAnalogClock(mainCanvas, h, m, s, ms, true);
 
-// Tab switching
-document.getElementById('tabClock').addEventListener('click', () => {
-  document.getElementById('clockView').classList.remove('hidden');
-  document.getElementById('timerView').classList.add('hidden');
-  document.getElementById('tabClock').classList.add('active');
-  document.getElementById('tabTimer').classList.remove('active');
-});
-document.getElementById('tabTimer').addEventListener('click', () => {
-  document.getElementById('timerView').classList.remove('hidden');
-  document.getElementById('clockView').classList.add('hidden');
-  document.getElementById('tabTimer').classList.add('active');
-  document.getElementById('tabClock').classList.remove('active');
-});
+    digitalEl.textContent = pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+    dateEl.textContent = DAYS[now.getDay()] + ', ' + MONTHS[now.getMonth()] + ' ' + now.getDate() + ', ' + now.getFullYear();
 
-// Timezone display
-try {
-  document.getElementById('tz').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
-} catch {}
-
-// Save/load best lap time
-async function saveBestLap() {
-  if (laps.length === 0) return;
-  const best = Math.min(...laps);
-  try {
-    await fetch(BRIDGE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'write', app: 'clock', key: 'bestLap', value: best }),
+    worldCanvases.forEach(function(c) {
+      var tz = c.dataset.tz;
+      var t = getNowInTz(tz);
+      drawAnalogClock(c, t.h, t.m, t.s, t.ms, false);
     });
-  } catch {}
-}
 
-// Main loop
-function tick() {
-  drawClock();
-  requestAnimationFrame(tick);
-}
-tick();
+    worldTimes.forEach(function(el) {
+      var tz = el.dataset.tzTime;
+      var t = getNowInTz(tz);
+      el.textContent = pad2(t.h) + ':' + pad2(t.m);
+    });
+
+    worldOffsets.forEach(function(el) {
+      var tz = el.dataset.tzOffset;
+      el.textContent = getOffsetLabel(tz);
+    });
+  }
+
+  // ============================================================
+  //  Stopwatch
+  // ============================================================
+  var swRunning = false;
+  var swStartTime = 0;
+  var swAccumulated = 0;
+  var swLaps = [];
+  var swLastLapTime = 0;
+  var swRafId = null;
+
+  var swDisplay = document.getElementById('swDisplay');
+  var swStartStop = document.getElementById('swStartStop');
+  var swLapReset = document.getElementById('swLapReset');
+  var lapListEl = document.getElementById('lapList');
+
+  function formatSw(ms) {
+    var totalMs = Math.floor(ms);
+    var minutes = Math.floor(totalMs / 60000);
+    var secs = Math.floor((totalMs % 60000) / 1000);
+    var centis = Math.floor((totalMs % 1000) / 10);
+    return { main: pad2(minutes) + ':' + pad2(secs), frac: '.' + pad2(centis) };
+  }
+
+  function getSwElapsed() {
+    return swAccumulated + (swRunning ? performance.now() - swStartTime : 0);
+  }
+
+  function updateSwDisplay() {
+    var t = formatSw(getSwElapsed());
+    var fracSpan = swDisplay.querySelector('.frac');
+    swDisplay.firstChild.textContent = t.main;
+    fracSpan.textContent = t.frac;
+  }
+
+  function swTick() {
+    if (swRunning) {
+      updateSwDisplay();
+      swRafId = requestAnimationFrame(swTick);
+    }
+  }
+
+  swStartStop.addEventListener('click', function() {
+    if (swRunning) {
+      swAccumulated += performance.now() - swStartTime;
+      swRunning = false;
+      if (swRafId) cancelAnimationFrame(swRafId);
+      swStartStop.textContent = 'Start';
+      swStartStop.className = 'sw-btn start-btn';
+      swLapReset.textContent = 'Reset';
+      swLapReset.disabled = false;
+      updateSwDisplay();
+    } else {
+      swStartTime = performance.now();
+      swRunning = true;
+      if (swAccumulated === 0) swLastLapTime = 0;
+      swStartStop.textContent = 'Stop';
+      swStartStop.className = 'sw-btn stop-btn';
+      swLapReset.textContent = 'Lap';
+      swLapReset.disabled = false;
+      swTick();
+    }
+  });
+
+  swLapReset.addEventListener('click', function() {
+    if (swRunning) {
+      var elapsed = getSwElapsed();
+      var split = elapsed - swLastLapTime;
+      swLaps.push({ lapMs: elapsed, splitMs: split });
+      swLastLapTime = elapsed;
+      renderLaps();
+      saveBestLap();
+    } else {
+      swAccumulated = 0;
+      swLaps = [];
+      swLastLapTime = 0;
+      updateSwDisplay();
+      lapListEl.textContent = '';
+      swLapReset.disabled = true;
+      swLapReset.textContent = 'Reset';
+    }
+  });
+
+  function renderLaps() {
+    if (swLaps.length === 0) { lapListEl.textContent = ''; return; }
+
+    var splits = swLaps.map(function(l) { return l.splitMs; });
+    var bestSplit = Math.min.apply(null, splits);
+    var worstSplit = Math.max.apply(null, splits);
+    var showBestWorst = swLaps.length >= 3;
+
+    // Clear existing content
+    while (lapListEl.firstChild) lapListEl.removeChild(lapListEl.firstChild);
+
+    // Header
+    var header = document.createElement('div');
+    header.className = 'lap-header';
+    var hLap = document.createElement('span');
+    hLap.textContent = 'Lap';
+    var hSplit = document.createElement('span');
+    hSplit.textContent = 'Split';
+    var hTotal = document.createElement('span');
+    hTotal.textContent = 'Total';
+    header.appendChild(hLap);
+    header.appendChild(hSplit);
+    header.appendChild(hTotal);
+    lapListEl.appendChild(header);
+
+    for (var i = swLaps.length - 1; i >= 0; i--) {
+      var lap = swLaps[i];
+      var row = document.createElement('div');
+      row.className = 'lap-row';
+      if (showBestWorst) {
+        if (lap.splitMs === bestSplit) row.classList.add('best');
+        else if (lap.splitMs === worstSplit) row.classList.add('worst');
+      }
+
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'lap-name';
+      nameSpan.textContent = 'Lap ' + (i + 1);
+
+      var splitF = formatSw(lap.splitMs);
+      var timeSpan = document.createElement('span');
+      timeSpan.className = 'lap-time';
+      timeSpan.textContent = splitF.main + splitF.frac;
+
+      var totalF = formatSw(lap.lapMs);
+      var totalSpan = document.createElement('span');
+      totalSpan.className = 'lap-split';
+      totalSpan.textContent = totalF.main + totalF.frac;
+
+      row.appendChild(nameSpan);
+      row.appendChild(timeSpan);
+      row.appendChild(totalSpan);
+      lapListEl.appendChild(row);
+    }
+  }
+
+  // ============================================================
+  //  Timer
+  // ============================================================
+  var tmRunning = false;
+  var tmPaused = false;
+  var tmTotalMs = 300000;
+  var tmRemainingMs = 300000;
+  var tmStartTime = 0;
+  var tmRafId = null;
+  var tmDone = false;
+
+  var timerRing = document.getElementById('timerRing');
+  var timerTimeDisplay = document.getElementById('timerTimeDisplay');
+  var timerSub = document.getElementById('timerSub');
+  var timerStartBtn = document.getElementById('timerStartBtn');
+  var timerCancelBtn = document.getElementById('timerCancel');
+  var timerInputRow = document.getElementById('timerInputRow');
+  var timerPresetsEl = document.getElementById('timerPresets');
+  var timerHH = document.getElementById('timerHH');
+  var timerMM = document.getElementById('timerMM');
+  var timerSS = document.getElementById('timerSS');
+
+  timerRing.style.strokeDasharray = CIRCUMFERENCE;
+  timerRing.style.strokeDashoffset = '0';
+
+  function getTimerInputMs() {
+    var h = parseInt(timerHH.value, 10) || 0;
+    var m = parseInt(timerMM.value, 10) || 0;
+    var s = parseInt(timerSS.value, 10) || 0;
+    return (h * 3600 + m * 60 + s) * 1000;
+  }
+
+  function setTimerInputFromMs(ms) {
+    var totalSec = Math.round(ms / 1000);
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = totalSec % 60;
+    timerHH.value = h;
+    timerMM.value = m;
+    timerSS.value = s;
+  }
+
+  function formatTimerDisplay(ms) {
+    if (ms < 0) ms = 0;
+    var totalSec = Math.ceil(ms / 1000);
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = totalSec % 60;
+    if (h > 0) return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+    return pad2(m) + ':' + pad2(s);
+  }
+
+  function updateTimerRing(fraction) {
+    var offset = CIRCUMFERENCE * (1 - fraction);
+    timerRing.style.strokeDashoffset = offset;
+  }
+
+  function updateTimerView() {
+    if (!tmRunning && !tmPaused) {
+      var inputMs = getTimerInputMs();
+      timerTimeDisplay.textContent = formatTimerDisplay(inputMs);
+      updateTimerRing(1);
+      timerSub.textContent = '';
+      return;
+    }
+
+    var remaining;
+    if (tmRunning) {
+      remaining = tmRemainingMs - (performance.now() - tmStartTime);
+    } else {
+      remaining = tmRemainingMs;
+    }
+
+    if (remaining <= 0) {
+      remaining = 0;
+      timerTimeDisplay.textContent = '00:00';
+      updateTimerRing(0);
+      timerSub.textContent = 'Done';
+      if (!tmDone) {
+        tmDone = true;
+        tmRunning = false;
+        timerStartBtn.textContent = 'Start';
+        timerStartBtn.className = 'sw-btn start-btn';
+        timerCancelBtn.disabled = false;
+        timerCancelBtn.textContent = 'Cancel';
+        timerRing.style.stroke = getComputedVar('--danger', '#ff3b30');
+        setTimeout(function() {
+          timerRing.style.stroke = '';
+        }, 2000);
+      }
+      return;
+    }
+
+    timerTimeDisplay.textContent = formatTimerDisplay(remaining);
+    var fraction = remaining / tmTotalMs;
+    updateTimerRing(fraction);
+  }
+
+  function tmTick() {
+    updateTimerView();
+    if (tmRunning) {
+      tmRafId = requestAnimationFrame(tmTick);
+    }
+  }
+
+  timerPresetsEl.addEventListener('click', function(e) {
+    var btn = e.target.closest('.preset-btn');
+    if (!btn || tmRunning || tmPaused) return;
+    timerPresetsEl.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('selected'); });
+    btn.classList.add('selected');
+    var secs = parseInt(btn.dataset.seconds, 10);
+    setTimerInputFromMs(secs * 1000);
+    updateTimerView();
+  });
+
+  [timerHH, timerMM, timerSS].forEach(function(input) {
+    input.addEventListener('input', function() {
+      timerPresetsEl.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('selected'); });
+      updateTimerView();
+    });
+  });
+
+  timerStartBtn.addEventListener('click', function() {
+    if (tmDone) return;
+
+    if (tmRunning) {
+      tmRemainingMs -= (performance.now() - tmStartTime);
+      tmRunning = false;
+      tmPaused = true;
+      if (tmRafId) cancelAnimationFrame(tmRafId);
+      timerStartBtn.textContent = 'Resume';
+      timerStartBtn.className = 'sw-btn start-btn';
+      updateTimerView();
+    } else if (tmPaused) {
+      tmStartTime = performance.now();
+      tmRunning = true;
+      tmPaused = false;
+      timerStartBtn.textContent = 'Pause';
+      timerStartBtn.className = 'sw-btn stop-btn';
+      tmTick();
+    } else {
+      var inputMs = getTimerInputMs();
+      if (inputMs <= 0) return;
+      tmTotalMs = inputMs;
+      tmRemainingMs = inputMs;
+      tmStartTime = performance.now();
+      tmRunning = true;
+      tmPaused = false;
+      tmDone = false;
+      timerStartBtn.textContent = 'Pause';
+      timerStartBtn.className = 'sw-btn stop-btn';
+      timerCancelBtn.disabled = false;
+      timerInputRow.style.opacity = '0.3';
+      timerInputRow.style.pointerEvents = 'none';
+      timerPresetsEl.style.opacity = '0.3';
+      timerPresetsEl.style.pointerEvents = 'none';
+      tmTick();
+    }
+  });
+
+  timerCancelBtn.addEventListener('click', function() {
+    tmRunning = false;
+    tmPaused = false;
+    tmDone = false;
+    if (tmRafId) cancelAnimationFrame(tmRafId);
+    timerStartBtn.textContent = 'Start';
+    timerStartBtn.className = 'sw-btn start-btn';
+    timerCancelBtn.disabled = true;
+    timerInputRow.style.opacity = '';
+    timerInputRow.style.pointerEvents = '';
+    timerPresetsEl.style.opacity = '';
+    timerPresetsEl.style.pointerEvents = '';
+    timerRing.style.stroke = '';
+    updateTimerRing(1);
+    updateTimerView();
+  });
+
+  // ============================================================
+  //  Data Persistence
+  // ============================================================
+  function saveBestLap() {
+    if (swLaps.length === 0) return;
+    var splits = swLaps.map(function(l) { return l.splitMs; });
+    var best = Math.min.apply(null, splits);
+    try {
+      fetch(BRIDGE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'write', app: 'clock', key: 'bestLap', value: best })
+      });
+    } catch(e) {}
+  }
+
+  function loadData() {
+    try {
+      fetch(BRIDGE_URL + '?app=clock&key=timerPresets')
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .then(function(data) {
+          if (data && data.value) {
+            // Could restore custom presets in the future
+          }
+        });
+    } catch(e) {}
+  }
+
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') { loadData(); }
+  });
+
+  loadData();
+
+  // ============================================================
+  //  Main Render Loop
+  // ============================================================
+  function frame() {
+    if (activeTab === 'clock') {
+      updateClockView();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  updateClockView();
+  updateTimerView();
+  frame();
+})();
 </script>
 </body>
 </html>

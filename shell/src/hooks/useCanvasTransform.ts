@@ -4,7 +4,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 export const ZOOM_MIN = 0.1;
 export const ZOOM_MAX = 3.0;
 export const ZOOM_STEP = 0.1;
-export const INTERACTION_THRESHOLD = 0.6;
+export const INTERACTION_THRESHOLD = 0.25;
 
 const FIT_PADDING = 50;
 

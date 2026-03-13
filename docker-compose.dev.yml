@@ -214,6 +214,7 @@ services:
       - dev-node-modules:/app/node_modules
       - alice-home:/home/matrixos/home
       - dev-next-cache:/app/shell/.next
+      - qmd-models:/data/qmd-models
     env_file:
       - .env.docker
     environment:
@@ -250,6 +251,7 @@ services:
       - dev-node-modules:/app/node_modules
       - bob-home:/home/matrixos/home
       - dev-next-cache-bob:/app/shell/.next
+      - qmd-models:/data/qmd-models
     env_file:
       - .env.docker
     environment:

@@ -76,4 +76,54 @@ describe("T711: GET /api/apps", () => {
     const apps = listApps(homePath);
     expect(apps).toEqual([]);
   });
+
+  it("discovers apps in nested subdirectories", () => {
+    mkdirSync(join(homePath, "apps/games"), { recursive: true });
+    writeFileSync(
+      join(homePath, "apps/games/matrix.json"),
+      JSON.stringify({ name: "Game Center", category: "utilities", runtime: "static" }),
+    );
+
+    mkdirSync(join(homePath, "apps/games/snake"), { recursive: true });
+    writeFileSync(join(homePath, "apps/games/snake/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/games/snake/matrix.json"),
+      JSON.stringify({ name: "Snake", category: "games", runtime: "static" }),
+    );
+
+    mkdirSync(join(homePath, "apps/games/2048"), { recursive: true });
+    writeFileSync(join(homePath, "apps/games/2048/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/games/2048/matrix.json"),
+      JSON.stringify({ name: "2048", category: "games", runtime: "static" }),
+    );
+
+    const apps = listApps(homePath);
+    const names = apps.map((a) => a.name);
+    expect(names).toContain("Game Center");
+    expect(names).toContain("Snake");
+    expect(names).toContain("2048");
+
+    const snake = apps.find((a) => a.name === "Snake")!;
+    expect(snake.path).toBe("/files/apps/games/snake/index.html");
+    expect(snake.file).toBe("games/snake/index.html");
+    expect(snake.category).toBe("games");
+  });
+
+  it("lists nested apps alongside top-level apps", () => {
+    writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
+    writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
+
+    mkdirSync(join(homePath, "apps/tools/timer"), { recursive: true });
+    writeFileSync(join(homePath, "apps/tools/timer/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/tools/timer/matrix.json"),
+      JSON.stringify({ name: "Timer", category: "utilities", runtime: "static" }),
+    );
+
+    const apps = listApps(homePath);
+    const names = apps.map((a) => a.name);
+    expect(names).toContain("Notes");
+    expect(names).toContain("Timer");
+  });
 });

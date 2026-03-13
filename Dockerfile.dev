@@ -4,11 +4,14 @@
 
 FROM node:24-alpine
 
-# System deps for native addons (node-pty, better-sqlite3)
-RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec
+# System deps for native addons (node-pty, better-sqlite3, sqlite-vec)
+RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake
 
 # pnpm via corepack (Agent SDK bundles its own claude runtime)
 RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# QMD semantic search (BM25 + optional vector search)
+RUN npm install -g @tobilu/qmd
 
 # Non-root user (Agent SDK refuses bypassPermissions as root)
 RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos

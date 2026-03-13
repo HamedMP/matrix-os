@@ -74,22 +74,6 @@ function runMigrations(sqlite: InstanceType<typeof Database>) {
     USING fts5(content, content_rowid='rowid')
   `).run();
 
-  // Embeddings table (vector store for semantic search)
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS embeddings (
-      id TEXT PRIMARY KEY,
-      content TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      source_id TEXT,
-      vector TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    "CREATE INDEX IF NOT EXISTS idx_embeddings_source ON embeddings(source_type, source_id)",
-  ).run();
-
   // Social tables
   sqlite.prepare(`
     CREATE TABLE IF NOT EXISTS social_posts (

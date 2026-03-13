@@ -6,258 +6,503 @@
 <title>Game Center</title>
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: var(--matrix-bg, #ece5f0);
-  color: var(--matrix-fg, #1c1917);
-  font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
-  min-height: 100vh;
-  padding: 20px;
+
+:root {
+  --bg: var(--matrix-bg, #f5f5f7);
+  --fg: var(--matrix-fg, #1d1d1f);
+  --accent: var(--matrix-accent, #007aff);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d2d2d7);
+  --muted: var(--matrix-muted-fg, #86868b);
+  --font: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
 }
 
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 24px 40px;
+}
+
+/* ---------- Header ---------- */
 .header {
-  max-width: 960px;
-  margin: 0 auto 20px;
+  margin-bottom: 24px;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .header h1 {
-  font-size: 24px;
+  font-size: 32px;
   font-weight: 700;
-  margin-bottom: 4px;
+  letter-spacing: -0.5px;
 }
 
-.header .subtitle {
-  font-size: 13px;
-  color: var(--matrix-muted-fg, #78716c);
-  margin-bottom: 16px;
+.search-wrapper {
+  position: relative;
+  width: 260px;
+  flex-shrink: 0;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  pointer-events: none;
 }
 
 .search-bar {
   width: 100%;
-  padding: 10px 14px;
-  background: var(--matrix-card-bg, #ffffff);
-  color: var(--matrix-fg, #1c1917);
-  border: 1px solid var(--matrix-border, #d8d0de);
-  border-radius: 10px;
+  padding: 10px 14px 10px 36px;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   font-size: 14px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .search-bar:focus {
-  border-color: var(--matrix-accent, #c2703a);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .search-bar::placeholder {
-  color: var(--matrix-muted-fg, #78716c);
+  color: var(--muted);
 }
 
-.filter-bar {
-  max-width: 960px;
-  margin: 0 auto 12px;
+/* ---------- Hero ---------- */
+.hero {
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 28px;
+  cursor: pointer;
+  height: 200px;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hero:hover {
+  transform: scale(1.005);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+}
+
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.6s ease;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.15) 100%);
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 28px 32px;
+  color: #ffffff;
+}
+
+.hero-icon {
+  font-size: 52px;
+  margin-right: 20px;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+  line-height: 1;
+}
+
+.hero-info {
+  flex: 1;
+}
+
+.hero-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+
+.hero-title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin-bottom: 4px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+.hero-desc {
+  font-size: 14px;
+  opacity: 0.85;
+  max-width: 400px;
+}
+
+.hero-play {
+  align-self: flex-end;
+  padding: 10px 28px;
+  background: rgba(255,255,255,0.25);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 24px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  flex-shrink: 0;
+}
+
+.hero-play:hover {
+  background: rgba(255,255,255,0.4);
+  transform: scale(1.05);
+}
+
+.hero-dots {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+
+.hero-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.4);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.hero-dot.active {
+  background: #ffffff;
+  transform: scale(1.3);
+}
+
+/* ---------- Filter Tabs ---------- */
+.filter-bar {
+  display: flex;
   align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
 }
 
 .filter-tabs {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  gap: 6px;
+  overflow-x: auto;
   flex: 1;
+  padding: 2px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
+.filter-tabs::-webkit-scrollbar { display: none; }
+
 .filter-tab {
-  padding: 6px 14px;
-  border-radius: 20px;
-  border: 1px solid var(--matrix-border, #d8d0de);
-  background: var(--matrix-card-bg, #ffffff);
-  color: var(--matrix-fg, #1c1917);
-  font-size: 13px;
+  padding: 8px 18px;
+  border-radius: 24px;
+  border: none;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
   font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
 .filter-tab:hover {
-  border-color: var(--matrix-accent, #c2703a);
+  color: var(--fg);
+  background: color-mix(in srgb, var(--surface) 90%, var(--fg) 10%);
 }
 
 .filter-tab.active {
-  background: var(--matrix-accent, #c2703a);
-  color: #ffffff;
-  border-color: var(--matrix-accent, #c2703a);
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
 }
 
 .sort-select {
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--matrix-border, #d8d0de);
-  background: var(--matrix-card-bg, #ffffff);
-  color: var(--matrix-fg, #1c1917);
-  font-size: 13px;
+  padding: 8px 32px 8px 14px;
+  border-radius: 24px;
+  border: none;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   font-family: inherit;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%2386868b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+/* ---------- Section ---------- */
+.section {
+  margin-bottom: 32px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
 
 .section-title {
-  max-width: 960px;
-  margin: 0 auto 10px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.section-subtitle {
   font-size: 14px;
-  font-weight: 600;
-  color: var(--matrix-muted-fg, #78716c);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--muted);
 }
 
-.grid {
-  max-width: 960px;
-  margin: 0 auto 24px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+/* ---------- Horizontal scroll row ---------- */
+.scroll-row {
+  display: flex;
   gap: 14px;
+  overflow-x: auto;
+  padding: 4px 0 12px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-snap-type: x mandatory;
 }
 
+.scroll-row::-webkit-scrollbar { display: none; }
+
+.scroll-row .game-card {
+  min-width: 160px;
+  max-width: 160px;
+  scroll-snap-align: start;
+}
+
+/* ---------- Game Grid ---------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+/* ---------- Game Card ---------- */
 .game-card {
-  background: var(--matrix-card-bg, #ffffff);
-  border: 1px solid var(--matrix-border, #d8d0de);
-  border-radius: 14px;
-  padding: 20px 16px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px 16px 18px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
   position: relative;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: cardIn 0.4s ease forwards;
+}
+
+@keyframes cardIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .game-card:hover {
-  border-color: var(--matrix-accent, #c2703a);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+  border-color: transparent;
 }
 
-.game-icon {
-  font-size: 40px;
-  margin-bottom: 10px;
-  display: block;
+.game-card:active {
+  transform: translateY(-2px) scale(0.98);
+}
+
+.icon-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 14px;
+  font-size: 34px;
   line-height: 1;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.game-card:hover .icon-circle {
+  transform: scale(1.08);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
 }
 
 .game-name {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
+  letter-spacing: -0.1px;
 }
 
 .game-desc {
-  font-size: 12px;
-  color: var(--matrix-muted-fg, #78716c);
+  font-size: 13px;
+  color: var(--muted);
   line-height: 1.4;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.game-tags {
+.game-meta {
   display: flex;
-  gap: 4px;
+  align-items: center;
   justify-content: center;
+  gap: 6px;
+  margin-bottom: 12px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
 }
 
 .tag-badge {
-  font-size: 10px;
-  padding: 2px 8px;
+  font-size: 11px;
+  padding: 3px 10px;
   border-radius: 10px;
-  background: rgba(194, 112, 58, 0.1);
-  color: var(--matrix-accent, #c2703a);
-  border: 1px solid rgba(194, 112, 58, 0.2);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 500;
+  text-transform: capitalize;
 }
 
 .game-score {
   font-size: 12px;
-  color: var(--matrix-accent, #c2703a);
+  color: var(--accent);
   font-weight: 600;
-}
-
-.new-badge {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: #22c55e;
-  color: #ffffff;
-  font-weight: 600;
+  min-height: 16px;
 }
 
 .play-btn {
-  display: inline-block;
-  margin-top: 8px;
-  padding: 6px 20px;
-  border-radius: 8px;
-  background: var(--matrix-accent, #c2703a);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  padding: 8px 28px;
+  border-radius: 20px;
+  background: var(--accent);
   color: #ffffff;
   border: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s;
   font-family: inherit;
+  letter-spacing: 0.1px;
 }
 
 .play-btn:hover {
-  opacity: 0.9;
+  transform: scale(1.06);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-.empty-state {
-  max-width: 960px;
-  margin: 0 auto;
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--matrix-muted-fg, #78716c);
+.play-btn:active {
+  transform: scale(0.96);
 }
 
-.empty-state h2 {
-  font-size: 18px;
-  margin-bottom: 8px;
-  color: var(--matrix-fg, #1c1917);
-}
-
-.empty-state p {
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.leaderboard-section {
-  max-width: 960px;
-  margin: 0 auto 24px;
-}
-
+/* ---------- Leaderboard ---------- */
 .leaderboard-list {
   display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .leaderboard-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  background: var(--matrix-card-bg, #ffffff);
-  border: 1px solid var(--matrix-border, #d8d0de);
+  gap: 14px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border-radius: 14px;
+  transition: background 0.15s;
+}
+
+.leaderboard-item:hover {
+  background: color-mix(in srgb, var(--surface) 95%, var(--fg) 5%);
+}
+
+.lb-position {
+  width: 32px;
+  height: 32px;
   border-radius: 10px;
-  min-width: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
   flex-shrink: 0;
 }
 
-.lb-rank {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--matrix-accent, #c2703a);
-  min-width: 24px;
+.lb-position.gold {
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  color: #ffffff;
+}
+
+.lb-position.silver {
+  background: linear-gradient(135deg, #C0C0C0, #A0A0A0);
+  color: #ffffff;
+}
+
+.lb-position.bronze {
+  background: linear-gradient(135deg, #CD7F32, #A0522D);
+  color: #ffffff;
+}
+
+.lb-position.other {
+  background: color-mix(in srgb, var(--surface) 90%, var(--fg) 10%);
+  color: var(--muted);
+}
+
+.lb-icon {
+  font-size: 24px;
+  line-height: 1;
+  width: 36px;
+  text-align: center;
 }
 
 .lb-info {
@@ -265,512 +510,748 @@ body {
 }
 
 .lb-game {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
 }
 
-.lb-score {
-  font-size: 12px;
-  color: var(--matrix-muted-fg, #78716c);
+.lb-score-text {
+  font-size: 13px;
+  color: var(--muted);
 }
 
-@media (max-width: 600px) {
-  body { padding: 14px; }
+/* ---------- Empty State ---------- */
+.empty-state {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--muted);
+}
+
+.empty-icon {
+  font-size: 56px;
+  margin-bottom: 16px;
+  opacity: 0.4;
+}
+
+.empty-state h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--fg);
+}
+
+.empty-state p {
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 768px) {
+  .container { padding: 16px 16px 32px; }
+  .header h1 { font-size: 26px; }
+  .header-row { flex-direction: column; align-items: stretch; }
+  .search-wrapper { width: 100%; }
+  .hero { height: 180px; }
+  .hero-title { font-size: 22px; }
+  .hero-icon { font-size: 40px; }
+  .hero-content { padding: 20px 24px; }
   .grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .section-title { font-size: 19px; }
+}
+
+@media (max-width: 480px) {
+  .hero { height: 160px; }
+  .hero-play { display: none; }
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
     gap: 10px;
   }
-  .game-card { padding: 14px 12px 12px; }
-  .game-icon { font-size: 32px; }
-}
-
-@media (max-width: 400px) {
-  .grid {
-    grid-template-columns: 1fr 1fr;
-  }
+  .game-card { padding: 18px 12px 14px; }
+  .icon-circle { width: 60px; height: 60px; font-size: 28px; border-radius: 16px; }
+  .game-name { font-size: 14px; }
+  .game-desc { font-size: 12px; -webkit-line-clamp: 1; }
+  .play-btn { padding: 7px 22px; font-size: 13px; }
 }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <h1>Game Center</h1>
-  <p class="subtitle">Browse, discover, and play games</p>
-  <input type="text" class="search-bar" id="search" placeholder="Search games...">
-</div>
+<div class="container">
+  <div class="header">
+    <div class="header-row">
+      <h1>Game Center</h1>
+      <div class="search-wrapper">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <path d="M21 21l-4.35-4.35"></path>
+        </svg>
+        <input type="text" class="search-bar" id="search" placeholder="Search games...">
+      </div>
+    </div>
+  </div>
 
-<div class="filter-bar">
-  <div class="filter-tabs" id="filterTabs"></div>
-  <select class="sort-select" id="sortSelect">
-    <option value="az">A-Z</option>
-    <option value="recent">Recently Played</option>
-    <option value="score">Highest Score</option>
-  </select>
-</div>
+  <div id="heroContainer"></div>
 
-<div id="recentSection" style="display:none">
-  <div class="section-title">Recently Played</div>
-  <div class="grid" id="recentGrid"></div>
-</div>
+  <div class="filter-bar">
+    <div class="filter-tabs" id="filterTabs"></div>
+    <select class="sort-select" id="sortSelect">
+      <option value="az">A - Z</option>
+      <option value="recent">Recent</option>
+      <option value="score">Top Score</option>
+    </select>
+  </div>
 
-<div id="leaderboardSection" style="display:none">
-  <div class="section-title">Leaderboard</div>
-  <div class="leaderboard-section">
+  <div id="recentSection" class="section" style="display:none">
+    <div class="section-header">
+      <div class="section-title">Recently Played</div>
+    </div>
+    <div class="scroll-row" id="recentRow"></div>
+  </div>
+
+  <div id="leaderboardSection" class="section" style="display:none">
+    <div class="section-header">
+      <div class="section-title">Leaderboard</div>
+    </div>
     <div class="leaderboard-list" id="leaderboardList"></div>
+  </div>
+
+  <div id="allGamesSection" class="section">
+    <div class="section-header">
+      <div class="section-title" id="allGamesLabel">All Games</div>
+      <div class="section-subtitle" id="gameCount"></div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="empty-state" id="emptyState" style="display:none">
+    <div class="empty-icon">&#x1F50D;</div>
+    <h2>No games found</h2>
+    <p>Nothing matches your search. Try a different term, or ask your AI assistant to build a new game.</p>
+  </div>
+
+  <div class="empty-state" id="noGamesState" style="display:none">
+    <div class="empty-icon">&#x1F3AE;</div>
+    <h2>No games installed</h2>
+    <p>Your game library is empty. Ask your AI assistant: "Build me a game" to get started.</p>
   </div>
 </div>
 
-<div class="section-title" id="allGamesLabel">All Games</div>
-<div class="grid" id="grid"></div>
-
-<div class="empty-state" id="emptyState" style="display:none">
-  <h2>No games found</h2>
-  <p>No games match your search. Ask your AI to build one!</p>
-</div>
-
-<div class="empty-state" id="noGamesState" style="display:none">
-  <h2>No games installed</h2>
-  <p>Ask your AI to build one! Try: "Build me a game"</p>
-</div>
-
 <script>
-const BRIDGE_URL = window.location.origin + '/api/bridge/data';
-const APPS_URL = window.location.origin + '/api/apps';
-const LEADERBOARD_URL = window.location.origin + '/api/games/leaderboard';
+(function() {
+  'use strict';
 
-const GAME_ICONS = {
-  snake: '\u2740',
-  '2048': '\u2B1A',
-  tetris: '\u25A3',
-  chess: '\u265E',
-  solitaire: '\u2660',
-  minesweeper: '\u2739',
-  backgammon: '\u2680',
-};
+  var BRIDGE_URL = window.location.origin + '/api/bridge/data';
+  var APPS_URL = window.location.origin + '/api/apps';
+  var LEADERBOARD_URL = window.location.origin + '/api/games/leaderboard';
 
-const SCORE_CONFIG = {
-  snake: { app: 'snake', key: 'highscore' },
-  '2048': { app: '2048', key: 'best' },
-  tetris: { app: 'tetris', key: 'best' },
-  chess: { app: 'chess', key: 'stats' },
-  minesweeper: { app: 'minesweeper', key: 'best-beginner' },
-  solitaire: { app: 'solitaire', key: 'wins' },
-  backgammon: { app: 'backgammon', key: 'stats' },
-};
+  var GAME_ICONS = {
+    snake: '\u{1F40D}',
+    '2048': '\u{1F522}',
+    tetris: '\u{1F9E9}',
+    chess: '\u265E',
+    solitaire: '\u2660',
+    minesweeper: '\u{1F4A3}',
+    backgammon: '\u{1F3B2}'
+  };
 
-const CATEGORIES = ['All', 'Puzzle', 'Board', 'Arcade', 'Strategy', 'Card'];
+  var GAME_GRADIENTS = {
+    snake:       'linear-gradient(135deg, #34D399, #059669)',
+    '2048':      'linear-gradient(135deg, #FBBF24, #F59E0B)',
+    tetris:      'linear-gradient(135deg, #A78BFA, #7C3AED)',
+    chess:       'linear-gradient(135deg, #4B5563, #1F2937)',
+    solitaire:   'linear-gradient(135deg, #34D399, #0D9488)',
+    minesweeper: 'linear-gradient(135deg, #9CA3AF, #6B7280)',
+    backgammon:  'linear-gradient(135deg, #D97706, #92400E)'
+  };
 
-let allGames = [];
-let recentGames = [];
-let scores = {};
-let leaderboard = [];
-let activeCategory = 'All';
-let searchQuery = '';
-let sortMode = 'az';
+  var HERO_GRADIENTS = {
+    snake:       'linear-gradient(135deg, #059669 0%, #34D399 50%, #10B981 100%)',
+    '2048':      'linear-gradient(135deg, #D97706 0%, #FBBF24 50%, #F59E0B 100%)',
+    tetris:      'linear-gradient(135deg, #7C3AED 0%, #A78BFA 50%, #8B5CF6 100%)',
+    chess:       'linear-gradient(135deg, #1F2937 0%, #4B5563 50%, #374151 100%)',
+    solitaire:   'linear-gradient(135deg, #0D9488 0%, #34D399 50%, #14B8A6 100%)',
+    minesweeper: 'linear-gradient(135deg, #4B5563 0%, #9CA3AF 50%, #6B7280 100%)',
+    backgammon:  'linear-gradient(135deg, #78350F 0%, #D97706 50%, #92400E 100%)'
+  };
 
-function slugFromPath(path) {
-  const match = path.match(/\/files\/apps\/games\/([^/]+)\//);
-  return match ? match[1] : '';
-}
+  var DEFAULT_GRADIENT = 'linear-gradient(135deg, #6366F1, #8B5CF6)';
 
-function formatScore(slug, value) {
-  if (value == null) return '';
-  if ((slug === 'chess' || slug === 'backgammon') && typeof value === 'object') {
-    const w = value.wins || 0;
-    const l = value.losses || 0;
-    if (slug === 'chess') {
-      const d = value.draws || 0;
-      return 'W/L/D: ' + w + '/' + l + '/' + d;
-    }
-    return 'W/L: ' + w + '/' + l;
-  }
-  if (slug === 'minesweeper') return 'Best: ' + value + 's';
-  if (slug === 'solitaire') return 'Wins: ' + value;
-  return 'Best: ' + value;
-}
+  var SCORE_CONFIG = {
+    snake: { app: 'snake', key: 'highscore' },
+    '2048': { app: '2048', key: 'best' },
+    tetris: { app: 'tetris', key: 'best' },
+    chess: { app: 'chess', key: 'stats' },
+    minesweeper: { app: 'minesweeper', key: 'best-beginner' },
+    solitaire: { app: 'solitaire', key: 'wins' },
+    backgammon: { app: 'backgammon', key: 'stats' }
+  };
 
-async function bridgeRead(app, key) {
-  try {
-    const res = await fetch(BRIDGE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'read', app: app, key: key }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data != null ? (data.value != null ? data.value : data) : null;
-  } catch {
-    return null;
-  }
-}
+  var CATEGORIES = ['All', 'Arcade', 'Puzzle', 'Board', 'Strategy', 'Card'];
 
-async function bridgeWrite(app, key, value) {
-  try {
-    await fetch(BRIDGE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'write', app: app, key: key, value: JSON.stringify(value) }),
-    });
-  } catch {}
-}
-
-async function fetchGames() {
-  try {
-    const res = await fetch(APPS_URL);
-    if (!res.ok) return [];
-    const apps = await res.json();
-    return apps.filter(function(a) {
-      return a.category === 'games' && a.file !== 'games/index.html' && a.name !== 'Game Center';
-    });
-  } catch {
-    return [];
-  }
-}
-
-async function fetchLeaderboard() {
-  try {
-    const res = await fetch(LEADERBOARD_URL);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
-    return [];
-  }
-}
-
-async function fetchRecentGames() {
-  const data = await bridgeRead('game-center', 'recent');
-  if (data) {
-    try {
-      return typeof data === 'string' ? JSON.parse(data) : data;
-    } catch {}
-  }
-  return [];
-}
-
-async function saveRecentGame(slug) {
-  let recent = await fetchRecentGames();
-  recent = recent.filter(function(r) { return r !== slug; });
-  recent.unshift(slug);
-  if (recent.length > 5) recent = recent.slice(0, 5);
-  recentGames = recent;
-  await bridgeWrite('game-center', 'recent', recent);
-}
-
-function isNewGame(game) {
-  if (game.createdAt) {
-    const created = new Date(game.createdAt).getTime();
-    return Date.now() - created < 24 * 60 * 60 * 1000;
-  }
-  return false;
-}
-
-function getFilteredGames() {
-  let games = allGames;
-
-  if (searchQuery) {
-    const q = searchQuery.toLowerCase();
-    games = games.filter(function(g) {
-      return g.name.toLowerCase().indexOf(q) >= 0 ||
-        (g.description || '').toLowerCase().indexOf(q) >= 0 ||
-        (g.tags || []).some(function(t) { return t.toLowerCase().indexOf(q) >= 0; });
-    });
-  }
-
-  if (activeCategory !== 'All') {
-    const cat = activeCategory.toLowerCase();
-    games = games.filter(function(g) {
-      return (g.tags || []).some(function(t) { return t.toLowerCase() === cat; });
-    });
-  }
-
-  if (sortMode === 'az') {
-    games = games.slice().sort(function(a, b) { return a.name.localeCompare(b.name); });
-  } else if (sortMode === 'recent') {
-    games = games.slice().sort(function(a, b) {
-      var ai = recentGames.indexOf(slugFromPath(a.path));
-      var bi = recentGames.indexOf(slugFromPath(b.path));
-      if (ai === -1 && bi === -1) return a.name.localeCompare(b.name);
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    });
-  } else if (sortMode === 'score') {
-    games = games.slice().sort(function(a, b) {
-      var sa = getNumericScore(slugFromPath(a.path));
-      var sb = getNumericScore(slugFromPath(b.path));
-      return sb - sa;
-    });
-  }
-
-  return games;
-}
-
-function getNumericScore(slug) {
-  var val = scores[slug];
-  if (val == null) return 0;
-  if (typeof val === 'number') return val;
-  if (typeof val === 'object' && val.wins != null) return val.wins;
-  return 0;
-}
-
-function openGame(game) {
-  var slug = slugFromPath(game.path);
-  saveRecentGame(slug);
-
-  if (window.MatrixOS && typeof window.MatrixOS.openApp === 'function') {
-    window.MatrixOS.openApp(game.name, game.path);
-  } else {
-    window.location.href = slug + '/index.html';
-  }
-}
-
-function renderFilterTabs() {
-  var container = document.getElementById('filterTabs');
-  container.innerHTML = '';
-  CATEGORIES.forEach(function(cat) {
-    var btn = document.createElement('button');
-    btn.className = 'filter-tab' + (cat === activeCategory ? ' active' : '');
-    btn.textContent = cat;
-    btn.addEventListener('click', function() {
-      activeCategory = cat;
-      renderFilterTabs();
-      renderGames();
-    });
-    container.appendChild(btn);
-  });
-}
-
-function renderGameCard(game, container) {
-  var slug = slugFromPath(game.path);
-  var card = document.createElement('div');
-  card.className = 'game-card';
-
-  if (isNewGame(game)) {
-    var newBadge = document.createElement('span');
-    newBadge.className = 'new-badge';
-    newBadge.textContent = 'New!';
-    card.appendChild(newBadge);
-  }
-
-  var icon = document.createElement('span');
-  icon.className = 'game-icon';
-  icon.textContent = GAME_ICONS[slug] || '\u{1F3AE}';
-  card.appendChild(icon);
-
-  var name = document.createElement('div');
-  name.className = 'game-name';
-  name.textContent = game.name;
-  card.appendChild(name);
-
-  var desc = document.createElement('div');
-  desc.className = 'game-desc';
-  desc.textContent = game.description || '';
-  card.appendChild(desc);
-
-  if (game.tags && game.tags.length > 0) {
-    var tagsEl = document.createElement('div');
-    tagsEl.className = 'game-tags';
-    game.tags.forEach(function(tag) {
-      var badge = document.createElement('span');
-      badge.className = 'tag-badge';
-      badge.textContent = tag;
-      tagsEl.appendChild(badge);
-    });
-    card.appendChild(tagsEl);
-  }
-
-  var scoreEl = document.createElement('div');
-  scoreEl.className = 'game-score';
-  scoreEl.dataset.slug = slug;
-  var scoreText = formatScore(slug, scores[slug]);
-  if (scoreText) scoreEl.textContent = scoreText;
-  card.appendChild(scoreEl);
-
-  var playBtn = document.createElement('button');
-  playBtn.className = 'play-btn';
-  playBtn.textContent = 'Play';
-  playBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    openGame(game);
-  });
-  card.appendChild(playBtn);
-
-  card.addEventListener('click', function() {
-    openGame(game);
-  });
-
-  container.appendChild(card);
-}
-
-function renderRecentSection() {
-  var section = document.getElementById('recentSection');
-  var grid = document.getElementById('recentGrid');
-  grid.innerHTML = '';
-
-  if (recentGames.length === 0 || searchQuery || activeCategory !== 'All') {
-    section.style.display = 'none';
-    return;
-  }
-
-  var recentApps = recentGames
-    .map(function(slug) {
-      return allGames.find(function(g) { return slugFromPath(g.path) === slug; });
-    })
-    .filter(Boolean);
-
-  if (recentApps.length === 0) {
-    section.style.display = 'none';
-    return;
-  }
-
-  section.style.display = '';
-  recentApps.forEach(function(game) {
-    renderGameCard(game, grid);
-  });
-}
-
-function renderLeaderboard() {
-  var section = document.getElementById('leaderboardSection');
-  var list = document.getElementById('leaderboardList');
-  list.innerHTML = '';
-
-  if (leaderboard.length === 0 || searchQuery) {
-    section.style.display = 'none';
-    return;
-  }
-
-  section.style.display = '';
-  leaderboard.slice(0, 5).forEach(function(entry, i) {
-    var item = document.createElement('div');
-    item.className = 'leaderboard-item';
-
-    var rank = document.createElement('div');
-    rank.className = 'lb-rank';
-    rank.textContent = '#' + (i + 1);
-    item.appendChild(rank);
-
-    var info = document.createElement('div');
-    info.className = 'lb-info';
-
-    var gameName = document.createElement('div');
-    gameName.className = 'lb-game';
-    var matchedGame = allGames.find(function(g) { return slugFromPath(g.path) === entry.game; });
-    gameName.textContent = matchedGame ? matchedGame.name : entry.game;
-    info.appendChild(gameName);
-
-    var score = document.createElement('div');
-    score.className = 'lb-score';
-    score.textContent = 'Score: ' + entry.score;
-    info.appendChild(score);
-
-    item.appendChild(info);
-    list.appendChild(item);
-  });
-}
-
-function renderGames() {
-  var filtered = getFilteredGames();
-  var grid = document.getElementById('grid');
-  var emptyState = document.getElementById('emptyState');
-  var noGamesState = document.getElementById('noGamesState');
-  var label = document.getElementById('allGamesLabel');
-
-  grid.innerHTML = '';
-
-  if (allGames.length === 0) {
-    grid.style.display = 'none';
-    label.style.display = 'none';
-    emptyState.style.display = 'none';
-    noGamesState.style.display = '';
-    return;
-  }
-
-  noGamesState.style.display = 'none';
-
-  if (filtered.length === 0) {
-    grid.style.display = 'none';
-    label.style.display = 'none';
-    emptyState.style.display = '';
-    return;
-  }
-
-  grid.style.display = '';
-  label.style.display = '';
-  emptyState.style.display = 'none';
-
-  filtered.forEach(function(game) {
-    renderGameCard(game, grid);
-  });
-
-  renderRecentSection();
-  renderLeaderboard();
-}
-
-async function fetchScores() {
-  var promises = allGames.map(function(game) {
-    var slug = slugFromPath(game.path);
-    var cfg = SCORE_CONFIG[slug];
-    if (!cfg) return Promise.resolve();
-    return bridgeRead(cfg.app, cfg.key).then(function(value) {
-      if (value != null) {
-        scores[slug] = value;
-        var el = document.querySelector('.game-score[data-slug="' + slug + '"]');
-        if (el) {
-          var text = formatScore(slug, value);
-          if (text) el.textContent = text;
-        }
-      }
-    });
-  });
-  await Promise.all(promises);
-}
-
-async function init() {
-  renderFilterTabs();
-
-  var gamesPromise = fetchGames();
-  var recentPromise = fetchRecentGames();
-  var leaderboardPromise = fetchLeaderboard();
-
-  allGames = await gamesPromise;
-
-  // Attach tags from manifest (listApps may not include tags yet, but manifests have them)
-  // The /api/apps endpoint returns what loadAppManifest returns -- tags may not be in schema yet
-  // So we augment from the known config
-  var knownTags = {
+  var KNOWN_TAGS = {
     snake: ['arcade'],
     '2048': ['puzzle'],
     tetris: ['arcade', 'puzzle'],
     chess: ['board', 'strategy'],
     solitaire: ['card'],
     minesweeper: ['puzzle'],
-    backgammon: ['board'],
+    backgammon: ['board']
   };
-  allGames.forEach(function(game) {
+
+  var allGames = [];
+  var recentGames = [];
+  var scores = {};
+  var leaderboard = [];
+  var activeCategory = 'All';
+  var searchQuery = '';
+  var sortMode = 'az';
+  var heroIndex = 0;
+  var heroTimer = null;
+
+  function slugFromPath(path) {
+    var match = path.match(/\/files\/apps\/games\/([^/]+)\//);
+    return match ? match[1] : '';
+  }
+
+  function formatScore(slug, value) {
+    if (value == null) return '';
+    if ((slug === 'chess' || slug === 'backgammon') && typeof value === 'object') {
+      var w = value.wins || 0;
+      var l = value.losses || 0;
+      if (slug === 'chess') {
+        return 'W' + w + ' / L' + l + ' / D' + (value.draws || 0);
+      }
+      return 'W' + w + ' / L' + l;
+    }
+    if (slug === 'minesweeper') return 'Best: ' + value + 's';
+    if (slug === 'solitaire') return 'Wins: ' + value;
+    return 'Best: ' + value;
+  }
+
+  function getNumericScore(slug) {
+    var val = scores[slug];
+    if (val == null) return 0;
+    if (typeof val === 'number') return val;
+    if (typeof val === 'object' && val.wins != null) return val.wins;
+    return 0;
+  }
+
+  async function bridgeRead(app, key) {
+    try {
+      var res = await fetch(BRIDGE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'read', app: app, key: key })
+      });
+      if (!res.ok) return null;
+      var data = await res.json();
+      return data != null ? (data.value != null ? data.value : data) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function bridgeWrite(app, key, value) {
+    try {
+      await fetch(BRIDGE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'write', app: app, key: key, value: JSON.stringify(value) })
+      });
+    } catch (e) {}
+  }
+
+  async function fetchGames() {
+    try {
+      var res = await fetch(APPS_URL);
+      if (!res.ok) return [];
+      var apps = await res.json();
+      return apps.filter(function(a) {
+        return a.category === 'games' && a.file !== 'games/index.html' && a.name !== 'Game Center';
+      });
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function fetchLeaderboard() {
+    try {
+      var res = await fetch(LEADERBOARD_URL);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function fetchRecentGames() {
+    var data = await bridgeRead('game-center', 'recent');
+    if (data) {
+      try {
+        return typeof data === 'string' ? JSON.parse(data) : data;
+      } catch (e) {}
+    }
+    return [];
+  }
+
+  async function saveRecentGame(slug) {
+    var recent = await fetchRecentGames();
+    recent = recent.filter(function(r) { return r !== slug; });
+    recent.unshift(slug);
+    if (recent.length > 8) recent = recent.slice(0, 8);
+    recentGames = recent;
+    await bridgeWrite('game-center', 'recent', recent);
+  }
+
+  function openGame(game) {
     var slug = slugFromPath(game.path);
-    if (!game.tags && knownTags[slug]) {
-      game.tags = knownTags[slug];
+    saveRecentGame(slug);
+
+    if (window.MatrixOS && typeof window.MatrixOS.openApp === 'function') {
+      window.MatrixOS.openApp(game.name, game.path);
+    } else {
+      var pathMatch = game.path.match(/\/files\/apps\/games\/([^/]+)\//);
+      if (pathMatch) window.location.href = pathMatch[1] + '/index.html';
+    }
+  }
+
+  function getGradient(slug) {
+    return GAME_GRADIENTS[slug] || DEFAULT_GRADIENT;
+  }
+
+  function getHeroGradient(slug) {
+    return HERO_GRADIENTS[slug] || DEFAULT_GRADIENT;
+  }
+
+  function getIcon(slug) {
+    return GAME_ICONS[slug] || '\u{1F3AE}';
+  }
+
+  function clearChildren(el) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  /* ---------- Hero ---------- */
+  function renderHero() {
+    var container = document.getElementById('heroContainer');
+    clearChildren(container);
+
+    if (allGames.length === 0 || searchQuery) {
+      return;
+    }
+
+    var featured = allGames.slice();
+    var game = featured[heroIndex % featured.length];
+    var slug = slugFromPath(game.path);
+
+    var hero = document.createElement('div');
+    hero.className = 'hero';
+    hero.onclick = function() { openGame(game); };
+
+    var bg = document.createElement('div');
+    bg.className = 'hero-bg';
+    bg.style.background = getHeroGradient(slug);
+    hero.appendChild(bg);
+
+    var overlay = document.createElement('div');
+    overlay.className = 'hero-overlay';
+    hero.appendChild(overlay);
+
+    var content = document.createElement('div');
+    content.className = 'hero-content';
+
+    var iconEl = document.createElement('div');
+    iconEl.className = 'hero-icon';
+    iconEl.textContent = getIcon(slug);
+    content.appendChild(iconEl);
+
+    var info = document.createElement('div');
+    info.className = 'hero-info';
+
+    var label = document.createElement('div');
+    label.className = 'hero-label';
+    label.textContent = 'Featured';
+    info.appendChild(label);
+
+    var title = document.createElement('div');
+    title.className = 'hero-title';
+    title.textContent = game.name;
+    info.appendChild(title);
+
+    var desc = document.createElement('div');
+    desc.className = 'hero-desc';
+    desc.textContent = game.description || '';
+    info.appendChild(desc);
+
+    content.appendChild(info);
+
+    var playBtn = document.createElement('button');
+    playBtn.className = 'hero-play';
+    playBtn.textContent = 'Play Now';
+    playBtn.onclick = function(e) { e.stopPropagation(); openGame(game); };
+    content.appendChild(playBtn);
+
+    hero.appendChild(content);
+
+    if (featured.length > 1) {
+      var dots = document.createElement('div');
+      dots.className = 'hero-dots';
+      for (var i = 0; i < Math.min(featured.length, 7); i++) {
+        var dot = document.createElement('div');
+        dot.className = 'hero-dot' + (i === (heroIndex % featured.length) ? ' active' : '');
+        dot.dataset.index = i;
+        dot.onclick = (function(idx) {
+          return function(e) {
+            e.stopPropagation();
+            heroIndex = idx;
+            renderHero();
+            resetHeroTimer();
+          };
+        })(i);
+        dots.appendChild(dot);
+      }
+      hero.appendChild(dots);
+    }
+
+    container.appendChild(hero);
+  }
+
+  function resetHeroTimer() {
+    if (heroTimer) clearInterval(heroTimer);
+    heroTimer = setInterval(function() {
+      heroIndex++;
+      renderHero();
+    }, 6000);
+  }
+
+  /* ---------- Filter Tabs ---------- */
+  function renderFilterTabs() {
+    var container = document.getElementById('filterTabs');
+    clearChildren(container);
+    CATEGORIES.forEach(function(cat) {
+      var btn = document.createElement('button');
+      btn.className = 'filter-tab' + (cat === activeCategory ? ' active' : '');
+      btn.textContent = cat;
+      btn.addEventListener('click', function() {
+        activeCategory = cat;
+        renderFilterTabs();
+        renderAll();
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  /* ---------- Game Card ---------- */
+  function createGameCard(game, index) {
+    var slug = slugFromPath(game.path);
+    var card = document.createElement('div');
+    card.className = 'game-card';
+    card.style.animationDelay = (index * 50) + 'ms';
+
+    var circle = document.createElement('div');
+    circle.className = 'icon-circle';
+    circle.style.background = getGradient(slug);
+    circle.textContent = getIcon(slug);
+    card.appendChild(circle);
+
+    var name = document.createElement('div');
+    name.className = 'game-name';
+    name.textContent = game.name;
+    card.appendChild(name);
+
+    var desc = document.createElement('div');
+    desc.className = 'game-desc';
+    desc.textContent = game.description || '';
+    card.appendChild(desc);
+
+    var tags = game.tags || [];
+    if (tags.length > 0) {
+      var meta = document.createElement('div');
+      meta.className = 'game-meta';
+      tags.forEach(function(tag) {
+        var badge = document.createElement('span');
+        badge.className = 'tag-badge';
+        badge.textContent = tag;
+        meta.appendChild(badge);
+      });
+      card.appendChild(meta);
+    }
+
+    var scoreEl = document.createElement('div');
+    scoreEl.className = 'game-score';
+    scoreEl.dataset.slug = slug;
+    var scoreText = formatScore(slug, scores[slug]);
+    if (scoreText) scoreEl.textContent = scoreText;
+    card.appendChild(scoreEl);
+
+    var playBtn = document.createElement('button');
+    playBtn.className = 'play-btn';
+    playBtn.textContent = 'Play';
+    playBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      openGame(game);
+    });
+    card.appendChild(playBtn);
+
+    card.addEventListener('click', function() {
+      openGame(game);
+    });
+
+    return card;
+  }
+
+  /* ---------- Recently Played ---------- */
+  function renderRecentSection() {
+    var section = document.getElementById('recentSection');
+    var row = document.getElementById('recentRow');
+    clearChildren(row);
+
+    if (recentGames.length === 0 || searchQuery || activeCategory !== 'All') {
+      section.style.display = 'none';
+      return;
+    }
+
+    var recentApps = recentGames
+      .map(function(slug) {
+        return allGames.find(function(g) { return slugFromPath(g.path) === slug; });
+      })
+      .filter(Boolean);
+
+    if (recentApps.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = '';
+    recentApps.forEach(function(game, i) {
+      row.appendChild(createGameCard(game, i));
+    });
+  }
+
+  /* ---------- Leaderboard ---------- */
+  function renderLeaderboard() {
+    var section = document.getElementById('leaderboardSection');
+    var list = document.getElementById('leaderboardList');
+    clearChildren(list);
+
+    var entries = [];
+    if (leaderboard.length > 0) {
+      entries = leaderboard.slice(0, 5);
+    } else {
+      var slugs = Object.keys(scores);
+      slugs.forEach(function(slug) {
+        var numScore = getNumericScore(slug);
+        if (numScore > 0) {
+          entries.push({ game: slug, score: numScore });
+        }
+      });
+      entries.sort(function(a, b) { return b.score - a.score; });
+      entries = entries.slice(0, 5);
+    }
+
+    if (entries.length === 0 || searchQuery) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = '';
+    var posClasses = ['gold', 'silver', 'bronze', 'other', 'other'];
+
+    entries.forEach(function(entry, i) {
+      var item = document.createElement('div');
+      item.className = 'leaderboard-item';
+
+      var pos = document.createElement('div');
+      pos.className = 'lb-position ' + posClasses[i];
+      pos.textContent = i + 1;
+      item.appendChild(pos);
+
+      var icon = document.createElement('div');
+      icon.className = 'lb-icon';
+      icon.textContent = getIcon(entry.game);
+      item.appendChild(icon);
+
+      var info = document.createElement('div');
+      info.className = 'lb-info';
+
+      var gameName = document.createElement('div');
+      gameName.className = 'lb-game';
+      var matchedGame = allGames.find(function(g) { return slugFromPath(g.path) === entry.game; });
+      gameName.textContent = matchedGame ? matchedGame.name : entry.game;
+      info.appendChild(gameName);
+
+      var score = document.createElement('div');
+      score.className = 'lb-score-text';
+      var formattedScore = formatScore(entry.game, scores[entry.game] || entry.score);
+      score.textContent = formattedScore || ('Score: ' + entry.score);
+      info.appendChild(score);
+
+      item.appendChild(info);
+      list.appendChild(item);
+    });
+  }
+
+  /* ---------- Filtering / Sorting ---------- */
+  function getFilteredGames() {
+    var games = allGames;
+
+    if (searchQuery) {
+      var q = searchQuery.toLowerCase();
+      games = games.filter(function(g) {
+        return g.name.toLowerCase().indexOf(q) >= 0 ||
+          (g.description || '').toLowerCase().indexOf(q) >= 0 ||
+          (g.tags || []).some(function(t) { return t.toLowerCase().indexOf(q) >= 0; });
+      });
+    }
+
+    if (activeCategory !== 'All') {
+      var cat = activeCategory.toLowerCase();
+      games = games.filter(function(g) {
+        return (g.tags || []).some(function(t) { return t.toLowerCase() === cat; });
+      });
+    }
+
+    if (sortMode === 'az') {
+      games = games.slice().sort(function(a, b) { return a.name.localeCompare(b.name); });
+    } else if (sortMode === 'recent') {
+      games = games.slice().sort(function(a, b) {
+        var ai = recentGames.indexOf(slugFromPath(a.path));
+        var bi = recentGames.indexOf(slugFromPath(b.path));
+        if (ai === -1 && bi === -1) return a.name.localeCompare(b.name);
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+    } else if (sortMode === 'score') {
+      games = games.slice().sort(function(a, b) {
+        return getNumericScore(slugFromPath(b.path)) - getNumericScore(slugFromPath(a.path));
+      });
+    }
+
+    return games;
+  }
+
+  /* ---------- Main Render ---------- */
+  function renderAll() {
+    var filtered = getFilteredGames();
+    var grid = document.getElementById('grid');
+    var emptyState = document.getElementById('emptyState');
+    var noGamesState = document.getElementById('noGamesState');
+    var allSection = document.getElementById('allGamesSection');
+    var countEl = document.getElementById('gameCount');
+
+    clearChildren(grid);
+
+    if (allGames.length === 0) {
+      allSection.style.display = 'none';
+      emptyState.style.display = 'none';
+      noGamesState.style.display = '';
+      document.getElementById('recentSection').style.display = 'none';
+      document.getElementById('leaderboardSection').style.display = 'none';
+      return;
+    }
+
+    noGamesState.style.display = 'none';
+
+    if (filtered.length === 0) {
+      allSection.style.display = 'none';
+      emptyState.style.display = '';
+      document.getElementById('recentSection').style.display = 'none';
+      document.getElementById('leaderboardSection').style.display = 'none';
+      return;
+    }
+
+    allSection.style.display = '';
+    emptyState.style.display = 'none';
+    countEl.textContent = filtered.length + (filtered.length === 1 ? ' game' : ' games');
+
+    filtered.forEach(function(game, i) {
+      grid.appendChild(createGameCard(game, i));
+    });
+
+    renderRecentSection();
+    renderLeaderboard();
+    renderHero();
+  }
+
+  /* ---------- Scores ---------- */
+  async function fetchScores() {
+    var promises = allGames.map(function(game) {
+      var slug = slugFromPath(game.path);
+      var cfg = SCORE_CONFIG[slug];
+      if (!cfg) return Promise.resolve();
+      return bridgeRead(cfg.app, cfg.key).then(function(value) {
+        if (value != null) {
+          scores[slug] = value;
+          var els = document.querySelectorAll('.game-score[data-slug="' + slug + '"]');
+          els.forEach(function(el) {
+            var text = formatScore(slug, value);
+            if (text) el.textContent = text;
+          });
+        }
+      });
+    });
+    await Promise.all(promises);
+    renderLeaderboard();
+  }
+
+  /* ---------- Init ---------- */
+  async function init() {
+    renderFilterTabs();
+
+    var results = await Promise.all([
+      fetchGames(),
+      fetchRecentGames(),
+      fetchLeaderboard()
+    ]);
+
+    allGames = results[0];
+    recentGames = results[1];
+    leaderboard = results[2];
+
+    allGames.forEach(function(game) {
+      var slug = slugFromPath(game.path);
+      if (!game.tags && KNOWN_TAGS[slug]) {
+        game.tags = KNOWN_TAGS[slug];
+      }
+    });
+
+    if (allGames.length > 0) {
+      heroIndex = Math.floor(Math.random() * allGames.length);
+    }
+
+    renderAll();
+    resetHeroTimer();
+    fetchScores();
+  }
+
+  /* ---------- Event listeners ---------- */
+  document.getElementById('search').addEventListener('input', function(e) {
+    searchQuery = e.target.value.trim();
+    renderAll();
+  });
+
+  document.getElementById('sortSelect').addEventListener('change', function(e) {
+    sortMode = e.target.value;
+    renderAll();
+  });
+
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') {
+      fetchScores();
+      fetchRecentGames().then(function(recent) {
+        recentGames = recent;
+        renderRecentSection();
+      });
     }
   });
 
-  recentGames = await recentPromise;
-  leaderboard = await leaderboardPromise;
-
-  renderGames();
-  fetchScores();
-}
-
-document.getElementById('search').addEventListener('input', function(e) {
-  searchQuery = e.target.value.trim();
-  renderGames();
-});
-
-document.getElementById('sortSelect').addEventListener('change', function(e) {
-  sortMode = e.target.value;
-  renderGames();
-});
-
-init();
+  init();
+})();
 </script>
 </body>
 </html>

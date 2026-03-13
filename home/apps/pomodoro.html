@@ -6,268 +6,599 @@
 <title>Pomodoro</title>
 <style>
 :root {
-  --bg: var(--matrix-bg, #ece5f0);
-  --fg: var(--matrix-fg, #1c1917);
-  --accent: var(--matrix-accent, #c2703a);
+  --bg: var(--matrix-bg, #f5f5f7);
+  --fg: var(--matrix-fg, #1d1d1f);
+  --accent: var(--matrix-accent, #007aff);
   --surface: var(--matrix-card-bg, #ffffff);
-  --border: var(--matrix-border, #d8d0de);
+  --border: var(--matrix-border, #d2d2d7);
+  --muted: var(--matrix-muted-fg, #86868b);
+  --focus-color: var(--accent);
+  --short-color: #34c759;
+  --long-color: #5856d6;
+  --ring-size: 280px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
   background: var(--bg);
   color: var(--fg);
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   min-height: 100vh;
-  padding: 20px;
+  padding: 40px 20px 32px;
+  transition: background-color 2s ease;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-.timer-container { text-align: center; max-width: 400px; width: 100%; }
-h1 { font-size: 1.4em; margin-bottom: 24px; }
+body.focusing {
+  background-color: color-mix(in srgb, var(--bg) 94%, #ff9f0a 6%);
+}
+
+.container {
+  max-width: 380px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+/* Mode Tabs */
 .mode-tabs {
   display: flex;
-  gap: 4px;
-  justify-content: center;
-  margin-bottom: 24px;
+  gap: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-radius: 12px;
+  padding: 3px;
 }
-.mode-tabs button {
-  background: var(--surface);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 16px;
+.mode-tab {
+  background: none;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
   cursor: pointer;
-  font-size: 14px;
-}
-.mode-tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.progress-ring {
-  width: 240px;
-  height: 240px;
-  margin: 0 auto 24px;
+  transition: all 0.25s ease;
+  letter-spacing: -0.01em;
   position: relative;
 }
-.progress-ring svg { transform: rotate(-90deg); }
-.progress-ring .bg { fill: none; stroke: var(--border); stroke-width: 8; }
-.progress-ring .fg { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.5s ease; }
-.time-in-ring {
+.mode-tab:hover { color: var(--fg); }
+.mode-tab.active {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 0.5px 1px rgba(0,0,0,0.04);
+}
+.mode-tab.active[data-mode="focus"] { color: var(--focus-color); }
+.mode-tab.active[data-mode="short"] { color: var(--short-color); }
+.mode-tab.active[data-mode="long"] { color: var(--long-color); }
+
+/* Timer Ring */
+.ring-container {
+  position: relative;
+  width: var(--ring-size);
+  height: var(--ring-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ring-glow {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 3em;
+  inset: 10px;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  filter: blur(24px);
+}
+.ring-glow.active {
+  opacity: 1;
+  animation: glowPulse 4s ease-in-out infinite;
+}
+.ring-glow[data-mode="focus"] { background: color-mix(in srgb, var(--focus-color) 20%, transparent); }
+.ring-glow[data-mode="short"] { background: color-mix(in srgb, var(--short-color) 20%, transparent); }
+.ring-glow[data-mode="long"] { background: color-mix(in srgb, var(--long-color) 20%, transparent); }
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1.02); }
+}
+
+.ring-svg {
+  width: var(--ring-size);
+  height: var(--ring-size);
+  transform: rotate(-90deg);
+  position: relative;
+  z-index: 1;
+}
+.ring-bg {
+  fill: none;
+  stroke: color-mix(in srgb, var(--fg) 8%, transparent);
+  stroke-width: 6;
+}
+.ring-fg {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.4s ease;
+}
+.ring-fg[data-mode="focus"] { stroke: var(--focus-color); }
+.ring-fg[data-mode="short"] { stroke: var(--short-color); }
+.ring-fg[data-mode="long"] { stroke: var(--long-color); }
+
+.timer-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.time-display {
+  font-size: 64px;
   font-weight: 200;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -2px;
+  line-height: 1;
+  color: var(--fg);
 }
+.status-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 8px;
+  letter-spacing: -0.01em;
+  transition: opacity 0.3s ease;
+}
+
+/* Completion animation */
+@keyframes completePulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+.ring-container.complete {
+  animation: completePulse 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Session Dots */
+.session-dots {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dot.filled {
+  background: var(--focus-color);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--focus-color) 40%, transparent);
+  transform: scale(1.1);
+}
+
+/* Controls */
 .controls {
   display: flex;
   gap: 12px;
-  justify-content: center;
-  margin-bottom: 24px;
+  align-items: center;
 }
-.controls button {
-  background: var(--accent);
+.btn-start {
+  background: var(--focus-color);
   color: #fff;
   border: none;
-  border-radius: 8px;
-  padding: 12px 32px;
-  cursor: pointer;
+  border-radius: 30px;
+  padding: 14px 44px;
   font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: all 0.2s ease;
+  min-width: 140px;
 }
-.controls button:hover { opacity: 0.9; }
-.controls button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--border); }
+.btn-start:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--focus-color) 30%, transparent);
+}
+.btn-start:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+.btn-start.running {
+  background: #ff9f0a;
+}
+.btn-start.running:hover {
+  box-shadow: 0 4px 16px rgba(255, 159, 10, 0.3);
+}
+.btn-start[data-mode="short"] { background: var(--short-color); }
+.btn-start[data-mode="short"]:hover { box-shadow: 0 4px 16px color-mix(in srgb, var(--short-color) 30%, transparent); }
+.btn-start[data-mode="long"] { background: var(--long-color); }
+.btn-start[data-mode="long"]:hover { box-shadow: 0 4px 16px color-mix(in srgb, var(--long-color) 30%, transparent); }
+
+.btn-reset {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 30px;
+  padding: 13px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-reset:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
+/* Stats */
 .stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-top: 16px;
+  gap: 10px;
+  width: 100%;
 }
 .stat-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 14px;
+  padding: 14px 12px;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: statIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
-.stat-card .label { font-size: 12px; color: var(--matrix-muted-fg, #78716c); }
-.stat-card .value { font-size: 1.3em; font-weight: 600; margin-top: 4px; }
-.status { font-size: 14px; color: var(--matrix-muted-fg, #78716c); margin-bottom: 8px; }
+.stat-card:nth-child(1) { animation-delay: 0ms; }
+.stat-card:nth-child(2) { animation-delay: 100ms; }
+.stat-card:nth-child(3) { animation-delay: 200ms; }
+
+@keyframes statIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.02em;
+}
 </style>
 </head>
 <body>
-<div class="timer-container">
-  <h1>Pomodoro Timer</h1>
+<div class="container">
 
   <div class="mode-tabs" id="modeTabs"></div>
 
-  <div class="progress-ring">
-    <svg width="240" height="240" viewBox="0 0 240 240">
-      <circle class="bg" cx="120" cy="120" r="108" />
-      <circle class="fg" id="ring" cx="120" cy="120" r="108" />
+  <div class="ring-container" id="ringContainer">
+    <div class="ring-glow" id="ringGlow" data-mode="focus"></div>
+    <svg class="ring-svg" viewBox="0 0 280 280">
+      <circle class="ring-bg" cx="140" cy="140" r="126" />
+      <circle class="ring-fg" id="ringFg" cx="140" cy="140" r="126" data-mode="focus" />
     </svg>
-    <div class="time-in-ring" id="display">25:00</div>
+    <div class="timer-inner">
+      <div class="time-display" id="display">25:00</div>
+      <div class="status-text" id="status">Ready to focus</div>
+    </div>
   </div>
 
-  <div class="status" id="status">Ready to focus</div>
+  <div class="session-dots" id="sessionDots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
 
   <div class="controls">
-    <button id="startBtn">Start</button>
-    <button class="secondary" id="resetBtn">Reset</button>
+    <button class="btn-start" id="startBtn" data-mode="focus">Start</button>
+    <button class="btn-reset" id="resetBtn">Reset</button>
   </div>
 
   <div class="stats">
     <div class="stat-card">
-      <div class="label">Sessions Today</div>
-      <div class="value" id="sessionsToday">0</div>
+      <div class="stat-label">Sessions</div>
+      <div class="stat-value" id="sessionsToday">0</div>
     </div>
     <div class="stat-card">
-      <div class="label">Focus Time</div>
-      <div class="value" id="focusTime">0m</div>
+      <div class="stat-label">Focus Time</div>
+      <div class="stat-value" id="focusTime">0m</div>
     </div>
     <div class="stat-card">
-      <div class="label">Total Sessions</div>
-      <div class="value" id="totalSessions">0</div>
+      <div class="stat-label">Streak</div>
+      <div class="stat-value" id="streak">0</div>
     </div>
   </div>
+
 </div>
 
 <script>
-var DURATIONS = { focus: 25 * 60, short: 5 * 60, long: 15 * 60 };
-var LABELS = { focus: 'Focus', short: 'Short Break', long: 'Long Break' };
-var mode = 'focus';
-var timeLeft = DURATIONS.focus;
-var running = false;
-var interval = null;
-var sessions = [];
-var completedToday = 0;
-var CIRCUMFERENCE = 2 * Math.PI * 108;
-var GATEWAY = location.origin;
-var APP_NAME = 'pomodoro';
+(function() {
+  var DURATIONS = { focus: 25 * 60, short: 5 * 60, long: 15 * 60 };
+  var LABELS = { focus: 'Focus', short: 'Short Break', long: 'Long Break' };
+  var RADIUS = 126;
+  var CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+  var GATEWAY = location.origin;
+  var APP_NAME = 'pomodoro';
 
-var ringEl = document.getElementById('ring');
-ringEl.style.strokeDasharray = String(CIRCUMFERENCE);
+  var mode = 'focus';
+  var timeLeft = DURATIONS.focus;
+  var running = false;
+  var interval = null;
+  var sessions = [];
+  var cyclePosition = 0;
 
-document.getElementById('startBtn').addEventListener('click', toggleTimer);
-document.getElementById('resetBtn').addEventListener('click', resetTimer);
+  var ringFg = document.getElementById('ringFg');
+  var ringGlow = document.getElementById('ringGlow');
+  var ringContainer = document.getElementById('ringContainer');
+  var displayEl = document.getElementById('display');
+  var statusEl = document.getElementById('status');
+  var startBtn = document.getElementById('startBtn');
+  var resetBtn = document.getElementById('resetBtn');
+  var dotsContainer = document.getElementById('sessionDots');
 
-function loadData() {
-  fetch(GATEWAY + '/api/bridge/data', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'sessions' })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data && data.value) {
-      try { sessions = JSON.parse(data.value); } catch(e) { sessions = []; }
+  ringFg.style.strokeDasharray = String(CIRCUMFERENCE);
+  ringFg.style.strokeDashoffset = '0';
+
+  startBtn.addEventListener('click', toggleTimer);
+  resetBtn.addEventListener('click', resetTimer);
+
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') { loadData(); }
+  });
+
+  // Audio: soft chime via Web Audio API
+  function playChime() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var now = ctx.currentTime;
+
+      function tone(freq, start, dur) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(0.15, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + dur);
+      }
+
+      tone(523.25, now, 0.18);
+      tone(659.25, now + 0.12, 0.22);
+    } catch(e) {}
+  }
+
+  // Data persistence
+  function loadData() {
+    fetch(GATEWAY + '/api/bridge/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'sessions' })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data && data.value) {
+        try { sessions = JSON.parse(data.value); } catch(e) { sessions = []; }
+      }
+      updateStats();
+      updateDots();
+    })
+    .catch(function() { updateStats(); });
+  }
+
+  function saveData() {
+    fetch(GATEWAY + '/api/bridge/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'sessions', value: JSON.stringify(sessions) })
+    });
+  }
+
+  // Mode tabs
+  function renderModeTabs() {
+    var tabsEl = document.getElementById('modeTabs');
+    tabsEl.replaceChildren();
+    ['focus', 'short', 'long'].forEach(function(m) {
+      var btn = document.createElement('button');
+      btn.className = 'mode-tab' + (m === mode ? ' active' : '');
+      btn.setAttribute('data-mode', m);
+      btn.textContent = LABELS[m];
+      btn.addEventListener('click', function() {
+        if (!running) setMode(m);
+      });
+      tabsEl.appendChild(btn);
+    });
+  }
+
+  function setMode(m) {
+    if (running) { clearInterval(interval); running = false; }
+    mode = m;
+    timeLeft = DURATIONS[m];
+
+    ringFg.setAttribute('data-mode', m);
+    ringGlow.setAttribute('data-mode', m);
+    startBtn.setAttribute('data-mode', m);
+    startBtn.textContent = 'Start';
+    startBtn.classList.remove('running');
+    ringGlow.classList.remove('active');
+    document.body.classList.remove('focusing');
+
+    var statusText = m === 'focus' ? 'Ready to focus' : m === 'short' ? 'Time to recharge' : 'Long break ahead';
+    statusEl.textContent = statusText;
+    renderModeTabs();
+    updateDisplay();
+  }
+
+  function toggleTimer() {
+    if (running) {
+      clearInterval(interval);
+      running = false;
+      startBtn.textContent = 'Resume';
+      startBtn.classList.remove('running');
+      startBtn.setAttribute('data-mode', mode);
+      statusEl.textContent = 'Paused';
+      ringGlow.classList.remove('active');
+      document.body.classList.remove('focusing');
+    } else {
+      running = true;
+      startBtn.textContent = 'Pause';
+      startBtn.classList.add('running');
+      statusEl.textContent = mode === 'focus' ? 'Stay focused' : 'Relax';
+      ringGlow.classList.add('active');
+      if (mode === 'focus') document.body.classList.add('focusing');
+      interval = setInterval(tick, 1000);
     }
-    updateStats();
-  })
-  .catch(function() { updateStats(); });
-}
+  }
 
-function saveData() {
-  fetch(GATEWAY + '/api/bridge/data', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'sessions', value: JSON.stringify(sessions) })
-  });
-}
+  function resetTimer() {
+    if (running) { clearInterval(interval); running = false; }
+    timeLeft = DURATIONS[mode];
+    startBtn.textContent = 'Start';
+    startBtn.classList.remove('running');
+    startBtn.setAttribute('data-mode', mode);
+    ringGlow.classList.remove('active');
+    document.body.classList.remove('focusing');
+    statusEl.textContent = mode === 'focus' ? 'Ready to focus' : mode === 'short' ? 'Time to recharge' : 'Long break ahead';
+    updateDisplay();
+  }
 
-function renderModeTabs() {
-  var tabsEl = document.getElementById('modeTabs');
-  tabsEl.replaceChildren();
-  ['focus', 'short', 'long'].forEach(function(m) {
-    var btn = document.createElement('button');
-    btn.className = m === mode ? 'active' : '';
-    btn.textContent = LABELS[m];
-    btn.addEventListener('click', function() { setMode(m); });
-    tabsEl.appendChild(btn);
-  });
-}
+  function tick() {
+    timeLeft--;
+    if (timeLeft <= 0) {
+      clearInterval(interval);
+      running = false;
+      startBtn.classList.remove('running');
+      ringGlow.classList.remove('active');
+      document.body.classList.remove('focusing');
 
-function setMode(m) {
-  mode = m;
-  timeLeft = DURATIONS[m];
-  if (running) { clearInterval(interval); running = false; }
-  document.getElementById('startBtn').textContent = 'Start';
-  var statusText = m === 'focus' ? 'Ready to focus' : m === 'short' ? 'Short break' : 'Long break';
-  document.getElementById('status').textContent = statusText;
+      playChime();
+
+      ringContainer.classList.remove('complete');
+      void ringContainer.offsetWidth;
+      ringContainer.classList.add('complete');
+
+      if (mode === 'focus') {
+        sessions.push({ date: new Date().toISOString(), duration: DURATIONS.focus });
+        cyclePosition = (cyclePosition + 1) % 4;
+        saveData();
+        updateStats();
+        updateDots();
+        statusEl.textContent = 'Session complete';
+
+        if (cyclePosition === 0) {
+          setTimeout(function() { setMode('long'); }, 800);
+        } else {
+          setTimeout(function() { setMode('short'); }, 800);
+        }
+      } else {
+        statusEl.textContent = 'Break complete';
+        setTimeout(function() { setMode('focus'); }, 800);
+      }
+      updateDisplay();
+      return;
+    }
+    updateDisplay();
+  }
+
+  function updateDisplay() {
+    var m = Math.floor(timeLeft / 60);
+    var s = timeLeft % 60;
+    displayEl.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+
+    var total = DURATIONS[mode];
+    var fraction = timeLeft / total;
+    var offset = CIRCUMFERENCE * (1 - fraction);
+    ringFg.style.strokeDashoffset = String(offset);
+  }
+
+  function updateDots() {
+    var today = new Date().toISOString().slice(0, 10);
+    var todaySessions = sessions.filter(function(s) { return s.date.startsWith(today); });
+    cyclePosition = todaySessions.length % 4;
+    var dots = dotsContainer.querySelectorAll('.dot');
+    for (var i = 0; i < dots.length; i++) {
+      if (i < cyclePosition) {
+        dots[i].classList.add('filled');
+      } else {
+        dots[i].classList.remove('filled');
+      }
+    }
+  }
+
+  function calculateStreak() {
+    if (sessions.length === 0) return 0;
+
+    var daySet = {};
+    sessions.forEach(function(s) {
+      daySet[s.date.slice(0, 10)] = true;
+    });
+
+    var streak = 0;
+    var d = new Date();
+    var todayStr = d.toISOString().slice(0, 10);
+
+    if (!daySet[todayStr]) {
+      d.setDate(d.getDate() - 1);
+      todayStr = d.toISOString().slice(0, 10);
+      if (!daySet[todayStr]) return 0;
+    }
+
+    while (daySet[todayStr]) {
+      streak++;
+      d.setDate(d.getDate() - 1);
+      todayStr = d.toISOString().slice(0, 10);
+    }
+
+    return streak;
+  }
+
+  function updateStats() {
+    var today = new Date().toISOString().slice(0, 10);
+    var todaySessions = sessions.filter(function(s) { return s.date.startsWith(today); });
+    var totalMinutes = todaySessions.reduce(function(sum, s) { return sum + s.duration; }, 0) / 60;
+    var streak = calculateStreak();
+
+    document.getElementById('sessionsToday').textContent = String(todaySessions.length);
+
+    var mins = Math.round(totalMinutes);
+    if (mins >= 60) {
+      var h = Math.floor(mins / 60);
+      var rm = mins % 60;
+      document.getElementById('focusTime').textContent = h + 'h ' + rm + 'm';
+    } else {
+      document.getElementById('focusTime').textContent = mins + 'm';
+    }
+
+    var streakEl = document.getElementById('streak');
+    if (streak > 0) {
+      streakEl.textContent = streak + 'd';
+    } else {
+      streakEl.textContent = '0';
+    }
+  }
+
+  // Initialize
   renderModeTabs();
   updateDisplay();
-}
-
-function toggleTimer() {
-  if (running) {
-    clearInterval(interval);
-    running = false;
-    document.getElementById('startBtn').textContent = 'Start';
-    document.getElementById('status').textContent = 'Paused';
-  } else {
-    running = true;
-    document.getElementById('startBtn').textContent = 'Pause';
-    document.getElementById('status').textContent = mode === 'focus' ? 'Focusing...' : 'On break';
-    interval = setInterval(tick, 1000);
-  }
-}
-
-function resetTimer() {
-  if (running) { clearInterval(interval); running = false; }
-  timeLeft = DURATIONS[mode];
-  document.getElementById('startBtn').textContent = 'Start';
-  document.getElementById('status').textContent = 'Ready to focus';
-  updateDisplay();
-}
-
-function tick() {
-  timeLeft--;
-  if (timeLeft <= 0) {
-    clearInterval(interval);
-    running = false;
-    document.getElementById('startBtn').textContent = 'Start';
-    if (mode === 'focus') {
-      sessions.push({ date: new Date().toISOString(), duration: DURATIONS.focus });
-      saveData();
-      updateStats();
-      document.getElementById('status').textContent = 'Session complete! Take a break.';
-      completedToday++;
-      if (completedToday % 4 === 0) {
-        setMode('long');
-      } else {
-        setMode('short');
-      }
-    } else {
-      document.getElementById('status').textContent = 'Break over! Ready to focus.';
-      setMode('focus');
-    }
-    return;
-  }
-  updateDisplay();
-}
-
-function updateDisplay() {
-  var m = Math.floor(timeLeft / 60);
-  var s = timeLeft % 60;
-  document.getElementById('display').textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-  var total = DURATIONS[mode];
-  var progress = timeLeft / total;
-  var offset = CIRCUMFERENCE * progress;
-  ringEl.style.strokeDashoffset = String(CIRCUMFERENCE - offset);
-}
-
-function updateStats() {
-  var today = new Date().toISOString().slice(0, 10);
-  var todaySessions = sessions.filter(function(s) { return s.date.startsWith(today); });
-  var totalMinutes = todaySessions.reduce(function(sum, s) { return sum + s.duration; }, 0) / 60;
-  completedToday = todaySessions.length;
-  document.getElementById('sessionsToday').textContent = String(todaySessions.length);
-  document.getElementById('focusTime').textContent = Math.round(totalMinutes) + 'm';
-  document.getElementById('totalSessions').textContent = String(sessions.length);
-}
-
-renderModeTabs();
-updateDisplay();
-loadData();
+  loadData();
+})();
 </script>
 </body>
 </html>

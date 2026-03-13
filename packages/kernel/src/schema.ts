@@ -46,23 +46,6 @@ export const memories = sqliteTable(
   },
 );
 
-// --- Embeddings table ---
-
-export const embeddings = sqliteTable(
-  "embeddings",
-  {
-    id: text("id").primaryKey(),
-    content: text("content").notNull(),
-    sourceType: text("source_type").notNull(),
-    sourceId: text("source_id"),
-    vector: text("vector").notNull(),
-    createdAt: text("created_at").notNull(),
-  },
-  (table) => [
-    index("idx_embeddings_source").on(table.sourceType, table.sourceId),
-  ],
-);
-
 // --- Social tables ---
 
 export const socialPosts = sqliteTable(

@@ -22,7 +22,7 @@ import { searchMemories } from "./memory-search.js";
 import { createUsageTracker } from "./usage.js";
 import { getPersonaSuggestions, writeSetupPlan, SetupPlanSchema } from "./onboarding.js";
 import { saveIdentity, deriveAiHandle } from "./identity.js";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { WebCache } from "./tools/web-cache.js";
 import { createWebFetchTool } from "./tools/web-fetch.js";
@@ -970,6 +970,52 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             return { content: [{ type: "text" as const, text: "No relevant memories found." }] };
           }
           return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
+        },
+      ),
+
+      tool(
+        "qmd_search",
+        "Semantic search across knowledge files, skills, conversation summaries, and apps using QMD. Returns ranked results with snippets. Use this to find relevant context from the user's files.",
+        {
+          query: z.string().describe("Search query (natural language)"),
+          collection: z.enum(["knowledge", "skills", "summaries", "conversations", "apps"]).optional()
+            .describe("Filter to a specific collection (default: search all)"),
+          limit: z.number().optional().describe("Max results (default: 5)"),
+        },
+        async ({ query, collection, limit }) => {
+          if (!homePath) {
+            return { content: [{ type: "text" as const, text: "QMD not available (no home path)" }] };
+          }
+          try {
+            const args = ["search", query, "--json"];
+            if (collection) { args.push("-c", collection); }
+            args.push("-n", String(limit ?? 5));
+
+            const env = {
+              ...process.env,
+              XDG_CACHE_HOME: join(homePath, "system", "qmd"),
+              XDG_CONFIG_HOME: join(homePath, "system", "qmd"),
+            };
+
+            const result = execFileSync("qmd", args, {
+              encoding: "utf-8",
+              timeout: 5000,
+              env,
+            }).trim();
+
+            const parsed = JSON.parse(result || "[]");
+            if (parsed.length === 0) {
+              return { content: [{ type: "text" as const, text: "No results found." }] };
+            }
+
+            const formatted = parsed.map((r: { file: string; score: number; snippet: string; title: string }) =>
+              `**${r.file}** (score: ${r.score})\n${r.title}\n${r.snippet}`,
+            ).join("\n---\n");
+
+            return { content: [{ type: "text" as const, text: formatted }] };
+          } catch {
+            return { content: [{ type: "text" as const, text: "QMD search unavailable (not installed or not indexed)" }] };
+          }
         },
       ),
 

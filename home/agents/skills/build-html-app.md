@@ -78,19 +78,52 @@ Utility libraries:
 Same CSS custom properties as React apps. Set defaults in :root. The shell injects theme overrides via parent CSS.
 
 ## Data Persistence
-Use the bridge API for persistent data:
+Use the bridge API (POST only) for persistent data:
 ```js
-async function loadData(key) {
-  const r = await fetch(`/api/bridge/data?app=${APP_NAME}&key=${key}`);
-  return r.ok ? (await r.json()).value : null;
+var GATEWAY = location.origin;
+var APP_NAME = 'my-app';
+
+function loadData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'items' })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data && data.value) {
+      try { items = JSON.parse(data.value); } catch(e) { items = []; }
+    }
+    render();
+  }).catch(function() { render(); });
 }
-async function saveData(key, value) {
-  await fetch('/api/bridge/data', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ app: APP_NAME, key, value })
+
+function saveData() {
+  fetch(GATEWAY + '/api/bridge/data', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'items', value: JSON.stringify(items) })
   });
 }
 ```
+
+## Auto-Update (MANDATORY)
+Apps MUST listen for external data changes so the UI refreshes when data is modified from chat, Telegram, or other agents:
+```js
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'os:data-change') {
+    loadData(); // Re-fetch from bridge and re-render
+  }
+});
+```
+Without this, the app stays stale when the AI updates data externally.
+
+## Design Quality
+Every HTML app must have:
+- All colors via CSS custom properties: `var(--matrix-bg, #f5f5f7)`, `var(--matrix-fg, #1d1d1f)`, `var(--matrix-accent, #007aff)`, `var(--matrix-card-bg, #fff)`, `var(--matrix-border, #d2d2d7)`, `var(--matrix-muted-fg, #86868b)`
+- Smooth transitions (200-300ms) on all interactions
+- Hover/focus/active states on every interactive element
+- Beautiful empty state with icon + headline + call-to-action
+- Proper typography (system font stack, tabular-nums for numbers)
+- Consistent spacing, rounded corners (12-16px)
+- Animations for add/delete (fade + slide, 200-300ms)
+- Responsive at any width
 
 ## Registration
 Add to ~/system/modules.json:

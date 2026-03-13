@@ -42,7 +42,7 @@ describe("Canvas Renderer Integration", () => {
   });
 
   it("zoom below threshold makes windows non-interactive", () => {
-    useCanvasTransform.getState().setZoom(0.5);
+    useCanvasTransform.getState().setZoom(0.2);
     expect(useCanvasTransform.getState().zoom).toBeLessThan(INTERACTION_THRESHOLD);
   });
 

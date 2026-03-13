@@ -58,17 +58,56 @@ When the user asks to build an app, this skill enhances the builder agent with c
 
 ## Theme Integration
 All apps must use CSS custom properties for theming:
-- `var(--bg)` -- background color
-- `var(--fg)` -- foreground/text color
-- `var(--accent)` -- accent/primary color
-- `var(--surface)` -- card/surface background
-- `var(--border)` -- border color
-Set sensible defaults in `:root` for standalone viewing. Support both light and dark themes.
+- `var(--matrix-bg)` -- background color
+- `var(--matrix-fg)` -- foreground/text color
+- `var(--matrix-accent)` -- accent/primary color
+- `var(--matrix-card-bg)` -- card/surface background
+- `var(--matrix-border)` -- border color
+- `var(--matrix-muted-fg)` -- secondary/muted text
+- `var(--matrix-input-bg)` -- input background
+- `var(--matrix-font-sans)` -- sans-serif font stack
+- `var(--matrix-font-mono)` -- monospace font stack
+Set sensible fallback values: `var(--matrix-bg, #f5f5f7)`. Support both light and dark themes.
 
-## Data Directory
-If the app needs persistent data:
-- Use the bridge API (`/api/bridge/data`) for read/write from the app iframe
-- Data stored in `~/data/<app-name>/`
+## Data Persistence
+Use the bridge API (`/api/bridge/data`) for read/write from the app iframe. Data stored in `~/data/<app-name>/`.
+
+```javascript
+var GATEWAY = location.origin;
+var APP_NAME = 'my-app';
+// Read
+fetch(GATEWAY + '/api/bridge/data', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'read', app: APP_NAME, key: 'data' })
+}).then(r => r.json()).then(d => { if (d && d.value) items = JSON.parse(d.value); render(); });
+// Write
+fetch(GATEWAY + '/api/bridge/data', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'write', app: APP_NAME, key: 'data', value: JSON.stringify(items) })
+});
+```
+
+## Auto-Update (MANDATORY)
+Apps MUST listen for external data changes so the UI updates when data is modified from chat, Telegram, or other agents:
+```javascript
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'os:data-change') {
+    loadData(); // Re-fetch all data from bridge API and re-render
+  }
+});
+```
+This fires when any external source (kernel, chat, Telegram, other agents) writes to the app's data via the bridge API. Without this, the UI stays stale.
+
+## Design Quality
+Apps represent the Matrix OS brand. Every app must have:
+- Smooth transitions (200-300ms) on all interactions
+- Hover/focus/active states on every interactive element
+- Beautiful empty states (icon + headline + description)
+- Proper typography hierarchy (large titles, medium labels, small metadata)
+- Consistent spacing on a 4px grid
+- Subtle shadows and rounded corners (12-16px)
+- Animations for add/remove operations (fade, slide)
+- Responsive layout that works at any width
 
 ## Module Registration
 After building:

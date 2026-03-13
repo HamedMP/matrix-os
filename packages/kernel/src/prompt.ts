@@ -54,8 +54,13 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
     sections.push(user);
   }
 
-  // Bootstrap -- only inject on genuine first run (user.md Name field still empty)
-  const onboarded = user && !/^- \*\*Name:\*\*\s*$/m.test(user);
+  // Bootstrap -- only inject on genuine first run
+  // Consider onboarded if: user filled their name, OR past conversations exist
+  const hasName = user && !/^- \*\*Name:\*\*\s*$/m.test(user);
+  const onboardSummariesDir = join(homePath, "system", "summaries");
+  const hasPastSessions = existsSync(onboardSummariesDir) &&
+    readdirSync(onboardSummariesDir).filter((f) => f.endsWith(".md")).length > 0;
+  const onboarded = hasName || hasPastSessions;
   if (bootstrap && !onboarded) {
     sections.push("\n## First Run\n");
     sections.push(bootstrap);

@@ -10,7 +10,7 @@ import { CanvasWindow } from "./CanvasWindow";
 import { CanvasGroupRect } from "./CanvasGroup";
 import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
-import { CanvasToolbar } from "./CanvasToolbar";
+import { CanvasToolbar, autoArrangeWindows } from "./CanvasToolbar";
 import { CanvasMinimap } from "./CanvasMinimap";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -173,7 +173,10 @@ export function CanvasRenderer() {
       if (!e.metaKey && !e.ctrlKey) return;
       const key = e.key;
 
-      if (key === "0") {
+      if (key === "k") {
+        e.preventDefault();
+        autoArrangeWindows();
+      } else if (key === "0") {
         e.preventDefault();
         handleFitAll();
       } else if (key === "1") {

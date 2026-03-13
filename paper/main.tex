@@ -14,6 +14,8 @@
 \usepackage{natbib}
 \usepackage{url}
 \usepackage{microtype}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, shapes.geometric, fit, backgrounds, calc, decorations.pathreplacing}
 
 \hypersetup{
   colorlinks=true,
@@ -26,7 +28,7 @@
 \title{\textbf{Matrix OS: A Unified AI Operating System Where Software Is Generated from Conversation}}
 
 \author{
-  Hamed Mohammadpour\thanks{Correspondence: \texttt{hamed@matrix-os.com}} \\
+  Hamed Mohammadpour\thanks{Correspondence: \texttt{hamed@finna.ai}} \\
   Matrix OS Project \\
   \texttt{https://matrix-os.com}
 }
@@ -132,9 +134,80 @@ The kernel (main agent) receives requests, routes them, spawns sub-agents (proce
 
 \subsection{System Topology}
 
-The system has three layers. The \textbf{gateway} (Hono HTTP/WebSocket server) receives requests from all channels: browser WebSocket, REST API, Telegram polling, and future channels. It routes messages through a serial dispatch queue to the \textbf{kernel} (Claude Agent SDK), which reasons, invokes tools, spawns sub-agents, and writes results to the file system. The \textbf{shell} (Next.js~16 frontend) watches the file system via WebSocket and renders what it finds. The shell \emph{discovers} applications---it does not know what exists ahead of time.
+The system has three layers (Figure~\ref{fig:architecture}). The \textbf{gateway} (Hono HTTP/WebSocket server) receives requests from all channels: browser WebSocket, REST API, Telegram polling, and future channels. It routes messages through a serial dispatch queue to the \textbf{kernel} (Claude Agent SDK), which reasons, invokes tools, spawns sub-agents, and writes results to the file system. The \textbf{shell} (Next.js~16 frontend) watches the file system via WebSocket and renders what it finds. The shell \emph{discovers} applications---it does not know what exists ahead of time.
 
 A cron service and heartbeat runner live in the gateway, enabling proactive behavior: scheduled tasks, periodic kernel invocation, and active-hours awareness. The kernel is not purely reactive. It can reach out through any channel on a schedule.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  >=Stealth,
+  node distance=0.6cm and 0.8cm,
+  every node/.style={font=\small},
+  channel/.style={draw, rounded corners=3pt, minimum width=1.6cm, minimum height=0.7cm, fill=blue!8, align=center},
+  layer/.style={draw, rounded corners=5pt, minimum width=4.2cm, minimum height=1.2cm, thick, align=center},
+  component/.style={draw, rounded corners=3pt, minimum width=2.2cm, minimum height=0.65cm, fill=white, align=center, font=\footnotesize},
+  file/.style={draw, rounded corners=2pt, minimum width=1.4cm, minimum height=0.55cm, fill=orange!10, align=center, font=\footnotesize},
+  arrow/.style={->, thick, color=black!70},
+]
+
+% Channels row
+\node[channel] (web) {Web Shell};
+\node[channel, right=0.4cm of web] (tg) {Telegram};
+\node[channel, right=0.4cm of tg] (wa) {WhatsApp};
+\node[channel, right=0.4cm of wa] (disc) {Discord};
+\node[channel, right=0.4cm of disc] (api) {REST API};
+
+% Gateway layer
+\node[layer, below=0.9cm of wa, fill=green!6, minimum width=11.5cm] (gw) {};
+\node[font=\small\bfseries, anchor=north] at ([yshift=-0.08cm]gw.north) {Gateway (Hono)};
+\node[component, below=0.45cm of wa, xshift=-2.8cm] (dispatch) {Dispatcher};
+\node[component, right=0.5cm of dispatch] (cron) {Cron};
+\node[component, right=0.5cm of cron] (hb) {Heartbeat};
+\node[component, right=0.5cm of hb] (chanmgr) {Channel Mgr};
+
+% Kernel layer
+\node[layer, below=0.9cm of gw, fill=red!6, minimum width=11.5cm] (kern) {};
+\node[font=\small\bfseries, anchor=north] at ([yshift=-0.08cm]kern.north) {Kernel (Claude Agent SDK)};
+\node[component, below=0.45cm of gw, xshift=-3cm] (main) {Main Agent};
+\node[component, right=0.5cm of main] (sub) {Sub-agents};
+\node[component, right=0.5cm of sub] (ipc) {IPC Tools};
+\node[component, right=0.5cm of ipc] (hooks) {Hooks};
+
+% File system layer
+\node[layer, below=0.9cm of kern, fill=orange!6, minimum width=11.5cm] (fs) {};
+\node[font=\small\bfseries, anchor=north] at ([yshift=-0.08cm]fs.north) {File System (\textasciitilde/matrixos/)};
+\node[file, below=0.45cm of kern, xshift=-3.5cm] (apps) {\textasciitilde/apps};
+\node[file, right=0.35cm of apps] (data) {\textasciitilde/data};
+\node[file, right=0.35cm of data] (sys) {\textasciitilde/system};
+\node[file, right=0.35cm of sys] (agents) {\textasciitilde/agents};
+\node[file, right=0.35cm of agents] (soul) {soul.md};
+
+% Shell (watching)
+\node[layer, right=1.2cm of kern, fill=purple!6, minimum width=2.2cm, minimum height=1.2cm] (shell) {\textbf{Shell}\\\footnotesize Next.js 16};
+
+% Arrows: channels -> gateway
+\foreach \ch in {web, tg, wa, disc, api} {
+  \draw[arrow] (\ch.south) -- ([yshift=0.12cm]gw.north -| \ch);
+}
+
+% Gateway -> Kernel
+\draw[arrow, thick] (gw.south) -- (kern.north);
+
+% Kernel -> File system
+\draw[arrow, thick] (kern.south) -- (fs.north);
+
+% File system -> Shell (watches)
+\draw[arrow, dashed, thick, color=purple!60] (fs.east) -- ++(0.6,0) |- (shell.south west) node[midway, right, font=\footnotesize, color=purple!60] {};
+\node[font=\tiny, color=purple!60, right=0.15cm of shell.south west, anchor=west, yshift=-0.25cm] {WebSocket watch};
+
+% Shell label
+\draw[arrow, dashed, thick, color=purple!60] (shell.north) -- ++(0,0.6) -| (web.south east) node[near start, right, font=\tiny, color=purple!60] {renders};
+
+\end{tikzpicture}
+\caption{Matrix OS system topology. Channels feed into the gateway, which dispatches to the kernel. The kernel writes to the file system. The shell watches the file system and renders applications. Cron and heartbeat enable proactive behavior.}
+\label{fig:architecture}
+\end{figure}
 
 \subsection{SOUL and Identity}
 
@@ -148,7 +221,54 @@ Skills are markdown files in \texttt{\textasciitilde/agents/skills/} with frontm
 \section{Novel Computing Paradigms}
 \label{sec:paradigms}
 
-Matrix OS has a property no other system has: the AI and the software are in the same system, continuously. The kernel can read everything, write everything, remember everything, and be reached from everywhere. This enables three computing paradigms that cannot exist in conventional systems.
+Matrix OS has a property no other system has: the AI and the software are in the same system, continuously. The kernel can read everything, write everything, remember everything, and be reached from everywhere. This enables three computing paradigms that cannot exist in conventional systems (Figure~\ref{fig:paradigms}).
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  >=Stealth,
+  every node/.style={font=\small},
+  paradigm/.style={draw, rounded corners=6pt, minimum width=3.2cm, minimum height=2.2cm, thick, align=center},
+  plabel/.style={font=\small\bfseries, align=center},
+  pdesc/.style={font=\tiny, align=center, text width=2.6cm, color=black!70},
+  arrow/.style={<->, thick, color=black!40, dashed},
+]
+
+% Central kernel
+\node[draw, circle, minimum size=1.8cm, fill=red!8, thick, font=\small\bfseries, align=center] (kernel) {AI\\Kernel};
+
+% Three paradigms arranged around the kernel
+\node[paradigm, fill=blue!6, above left=1.2cm and 1.5cm of kernel] (living) {};
+\node[plabel] at ([yshift=0.35cm]living.center) {Living\\Software};
+\node[pdesc] at ([yshift=-0.45cm]living.center) {Software evolves\\with use via git\\version history};
+
+\node[paradigm, fill=green!6, above right=1.2cm and 1.5cm of kernel] (socratic) {};
+\node[plabel] at ([yshift=0.35cm]socratic.center) {Socratic\\Computing};
+\node[pdesc] at ([yshift=-0.45cm]socratic.center) {Dialogue is the\\computation;\\apps are byproducts};
+
+\node[paradigm, fill=orange!6, below=1.5cm of kernel] (intent) {};
+\node[plabel] at ([yshift=0.35cm]intent.center) {Intent-Based\\Interfaces};
+\node[pdesc] at ([yshift=-0.45cm]intent.center) {Persistent intents,\\not fixed apps;\\context-shaped UI};
+
+% Connecting arrows
+\draw[arrow] (kernel) -- (living);
+\draw[arrow] (kernel) -- (socratic);
+\draw[arrow] (kernel) -- (intent);
+
+% Enabling condition labels
+\node[font=\tiny, color=black!50, rotate=35] at ($(kernel)!0.5!(living) + (0.15, -0.1)$) {reads + rewrites};
+\node[font=\tiny, color=black!50, rotate=-35] at ($(kernel)!0.5!(socratic) + (-0.15, -0.1)$) {dialogue + reasoning};
+\node[font=\tiny, color=black!50] at ($(kernel)!0.5!(intent) + (1.1, 0)$) {channel-aware};
+
+% Shared foundation
+\node[draw, rounded corners=4pt, minimum width=10cm, minimum height=0.6cm, fill=gray!8, below=0.6cm of intent, font=\footnotesize] (foundation) {Shared foundation: file system as single source of truth + multi-channel delivery};
+
+\draw[->, thick, color=gray!50] (intent.south) -- (foundation.north);
+
+\end{tikzpicture}
+\caption{Three novel computing paradigms enabled by the AI kernel's continuous presence in the same system as the software it creates. Each paradigm requires the kernel to read, write, and reason about files simultaneously.}
+\label{fig:paradigms}
+\end{figure}
 
 \subsection{Living Software}
 
@@ -196,7 +316,57 @@ A pnpm monorepo with packages for the kernel, gateway, and platform. The shell i
 
 Every era of computing has unified previously separate things. Web~1 published static information. Web~2 created platforms for social interaction, but siloed identity and data across dozens of services. Web~3 attempted decentralization through cryptographic primitives but delivered complexity without improving the user experience.
 
-\textbf{Web~4 is the unification.} Operating system, messaging, social media, AI assistant, applications, games, and identity---all one thing. Not stitched together with APIs and OAuth tokens. Actually one thing.
+\textbf{Web~4 is the unification.} Operating system, messaging, social media, AI assistant, applications, games, and identity---all one thing. Not stitched together with APIs and OAuth tokens. Actually one thing (Figure~\ref{fig:web4}).
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  >=Stealth,
+  every node/.style={font=\small},
+  era/.style={draw, rounded corners=5pt, minimum width=2.2cm, minimum height=1.6cm, thick, align=center},
+  elabel/.style={font=\footnotesize\bfseries},
+  edesc/.style={font=\tiny, align=center, text width=2cm, color=black!70},
+  arrow/.style={->, very thick, color=black!30},
+]
+
+% Web eras
+\node[era, fill=gray!10] (w1) {};
+\node[elabel] at ([yshift=0.25cm]w1.center) {Web 1};
+\node[edesc] at ([yshift=-0.3cm]w1.center) {Static pages\\Read-only};
+
+\node[era, fill=blue!8, right=0.7cm of w1] (w2) {};
+\node[elabel] at ([yshift=0.25cm]w2.center) {Web 2};
+\node[edesc] at ([yshift=-0.3cm]w2.center) {Platforms\\Siloed identity};
+
+\node[era, fill=orange!8, right=0.7cm of w2] (w3) {};
+\node[elabel] at ([yshift=0.25cm]w3.center) {Web 3};
+\node[edesc] at ([yshift=-0.3cm]w3.center) {Crypto\\Complexity};
+
+\node[era, fill=green!12, right=0.7cm of w3, minimum width=3.8cm, minimum height=2.4cm] (w4) {};
+\node[elabel] at ([yshift=0.65cm]w4.center) {Web 4 (Matrix OS)};
+
+% Web 4 components
+\node[draw, rounded corners=2pt, fill=white, font=\tiny, minimum width=1.2cm, minimum height=0.35cm] at ([yshift=0.15cm, xshift=-0.7cm]w4.center) (w4os) {OS};
+\node[draw, rounded corners=2pt, fill=white, font=\tiny, minimum width=1.2cm, minimum height=0.35cm] at ([yshift=0.15cm, xshift=0.7cm]w4.center) (w4msg) {Messaging};
+\node[draw, rounded corners=2pt, fill=white, font=\tiny, minimum width=1.2cm, minimum height=0.35cm] at ([yshift=-0.35cm, xshift=-0.7cm]w4.center) (w4soc) {Social};
+\node[draw, rounded corners=2pt, fill=white, font=\tiny, minimum width=1.2cm, minimum height=0.35cm] at ([yshift=-0.35cm, xshift=0.7cm]w4.center) (w4ai) {AI Kernel};
+\node[draw, rounded corners=2pt, fill=white, font=\tiny, minimum width=1.2cm, minimum height=0.35cm] at ([yshift=-0.85cm, xshift=0cm]w4.center) (w4id) {One Identity};
+
+% Arrows between eras
+\draw[arrow] (w1.east) -- (w2.west);
+\draw[arrow] (w2.east) -- (w3.west);
+\draw[arrow] (w3.east) -- (w4.west);
+
+% Year labels
+\node[font=\tiny, color=black!40, below=0.1cm of w1] {1990s};
+\node[font=\tiny, color=black!40, below=0.1cm of w2] {2000s};
+\node[font=\tiny, color=black!40, below=0.1cm of w3] {2020s};
+\node[font=\tiny, color=black!40, below=0.1cm of w4] {2026};
+
+\end{tikzpicture}
+\caption{The evolution from Web~1 to Web~4. Each era unified previously separate things. Web~4 unifies operating system, messaging, social network, AI assistant, and identity under a single federated platform.}
+\label{fig:web4}
+\end{figure}
 
 \subsection{Federated Identity}
 

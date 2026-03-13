@@ -118,7 +118,7 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     setInteracting(false);
   }, []);
 
-  // Zoomed-out preview: inverse-scaled title + icon placeholder
+  // Zoomed-out preview: show icon + title card with close/maximize buttons
   if (!isInteractive) {
     return (
       <div
@@ -130,24 +130,25 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
           pointerEvents: "auto",
         }}
       >
-        {/* Inverse-scaled label -- constant screen size regardless of zoom */}
+        {/* Inverse-scaled controls above the window */}
         <div
           className="absolute"
           style={{
             bottom: "100%",
             left: 0,
+            right: 0,
             transform: `scale(${inverseScale})`,
             transformOrigin: "left bottom",
             paddingBottom: 4,
           }}
         >
           <div
-            className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none group/label whitespace-nowrap"
+            className="flex items-center gap-1 cursor-grab active:cursor-grabbing select-none group/label whitespace-nowrap"
             onPointerDown={onDragStart}
             onPointerMove={onDragMove}
             onPointerUp={onDragEnd}
           >
-            <span className="text-sm font-medium text-primary truncate max-w-[300px]">
+            <span className="text-sm font-medium text-primary truncate max-w-[300px] flex-1">
               {win.title}
             </span>
             <button
@@ -160,22 +161,32 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
             >
               <Maximize2 className="size-3.5 text-muted-foreground" />
             </button>
+            <button
+              className="opacity-0 group-hover/label:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeWindow(win.id);
+              }}
+              aria-label="Close"
+            >
+              <X className="size-3.5 text-muted-foreground" />
+            </button>
           </div>
         </div>
-        {/* Frame body with icon */}
+        {/* Frame body with icon - no border, just subtle shadow */}
         <div
-          className="rounded-sm border border-border/50 bg-card overflow-hidden flex items-center justify-center"
+          className="rounded-lg bg-card overflow-hidden shadow-md flex items-center justify-center"
           style={{ width: win.width, height: win.height }}
         >
           {iconUrl ? (
             <img
               src={iconUrl}
               alt={win.title}
-              className="size-16 object-contain opacity-60"
+              className="size-16 object-contain opacity-50"
               draggable={false}
             />
           ) : (
-            <span className="text-2xl font-semibold text-muted-foreground/30">
+            <span className="text-3xl font-semibold text-muted-foreground/20">
               {win.title.charAt(0).toUpperCase()}
             </span>
           )}
@@ -184,7 +195,7 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     );
   }
 
-  // Zoomed-in interactive: inverse-scaled label + full content with iframe
+  // Zoomed-in interactive: frameless content with subtle shadow
   return (
     <div
       className="absolute"
@@ -195,24 +206,25 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       }}
       onMouseDown={() => focusWindow(win.id)}
     >
-      {/* Inverse-scaled label -- constant screen size regardless of zoom */}
+      {/* Inverse-scaled controls above the window */}
       <div
         className="absolute"
         style={{
           bottom: "100%",
           left: 0,
+          right: 0,
           transform: `scale(${inverseScale})`,
           transformOrigin: "left bottom",
           paddingBottom: 4,
         }}
       >
         <div
-          className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing select-none group/label whitespace-nowrap"
+          className="flex items-center gap-1 cursor-grab active:cursor-grabbing select-none group/label whitespace-nowrap"
           onPointerDown={onDragStart}
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}
         >
-          <span className="text-[11px] font-medium text-primary truncate max-w-[200px]">
+          <span className="text-[11px] font-medium text-primary truncate max-w-[200px] flex-1">
             {win.title}
           </span>
           <button
@@ -237,9 +249,9 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
           </button>
         </div>
       </div>
-      {/* Frame body */}
+      {/* Frame body - no border, clean shadow */}
       <div
-        className="rounded-sm border border-border/50 bg-card overflow-hidden shadow-sm"
+        className="rounded-lg bg-card overflow-hidden shadow-lg"
         style={{ width: win.width, height: win.height }}
       >
         <AppViewer path={win.path} />
@@ -248,7 +260,6 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       {/* Resize handle */}
       <div
         className="absolute bottom-0 right-0 size-3 cursor-se-resize touch-none z-20"
-        style={{ bottom: 0, right: 0 }}
         onPointerDown={onResizeStart}
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}

@@ -36,7 +36,7 @@ function readCurrentTheme(): ThemeVars {
 export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const { send } = useSocket();
+  const { send, subscribe } = useSocket();
   const appName = appNameFromPath(path);
 
   useFileWatcher(
@@ -120,6 +120,28 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [send, sessionId, onOpenApp]);
+
+  // Forward data:change events to iframe for auto-update
+  useEffect(() => {
+    return subscribe((msg) => {
+      if (msg.type === "data:change") {
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+        const msgApp = (msg as { app: string }).app;
+        const msgKey = (msg as { key: string }).key;
+        if (msgApp === appName || appName.endsWith(`/${msgApp}`)) {
+          try {
+            iframe.contentWindow?.postMessage(
+              { type: "os:data-change", payload: { app: msgApp, key: msgKey } },
+              "*",
+            );
+          } catch {
+            // cross-origin restriction
+          }
+        }
+      }
+    });
+  }, [subscribe, appName]);
 
   return (
     <iframe

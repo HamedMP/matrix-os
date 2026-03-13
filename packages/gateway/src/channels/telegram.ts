@@ -11,6 +11,7 @@ export interface TelegramBot {
   sendMessage(chatId: string, text: string, options?: Record<string, unknown>): Promise<{ message_id: number }>;
   editMessageText(text: string, options?: Record<string, unknown>): Promise<unknown>;
   sendChatAction(chatId: string | number, action: string): Promise<unknown>;
+  setMyCommands?(commands: Array<{ command: string; description: string }>): Promise<unknown>;
 }
 
 export interface TelegramMessage {

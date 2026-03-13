@@ -102,4 +102,40 @@ describe("system prompt context", () => {
       expect(prompt).not.toContain("Recent Conversations");
     });
   });
+
+  describe("onboarding detection", () => {
+    it("shows bootstrap on genuine first run (no name, no summaries)", () => {
+      writeFileSync(join(home, "system", "bootstrap.md"), "# Welcome\nFollow these steps...");
+      writeFileSync(join(home, "system", "user.md"), "# User\n\n- **Name:**\n- **Role:**\n");
+
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).toContain("First Run");
+      expect(prompt).toContain("fresh install");
+    });
+
+    it("skips bootstrap when user has filled in their name", () => {
+      writeFileSync(join(home, "system", "bootstrap.md"), "# Welcome\nFollow these steps...");
+      writeFileSync(join(home, "system", "user.md"), "# User\n\n- **Name:** Hamed\n- **Role:** Developer\n");
+
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).not.toContain("First Run");
+      expect(prompt).not.toContain("fresh install");
+    });
+
+    it("skips bootstrap when past conversations exist (even without name)", () => {
+      writeFileSync(join(home, "system", "bootstrap.md"), "# Welcome\nFollow these steps...");
+      writeFileSync(join(home, "system", "user.md"), "# User\n\n- **Name:**\n");
+      mkdirSync(join(home, "system", "summaries"), { recursive: true });
+      writeFileSync(join(home, "system", "summaries", "s1.md"), "# Session\nUser talked about stuff.");
+
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).not.toContain("First Run");
+      expect(prompt).not.toContain("fresh install");
+    });
+
+    it("skips bootstrap when no bootstrap.md exists", () => {
+      const prompt = buildSystemPrompt(home);
+      expect(prompt).not.toContain("First Run");
+    });
+  });
 });

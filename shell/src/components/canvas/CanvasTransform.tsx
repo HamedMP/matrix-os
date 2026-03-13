@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect, type ReactNode } from "react";
+import { useRef, useCallback, useEffect, useState, type ReactNode } from "react";
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
 
 interface CanvasTransformProps {
@@ -22,6 +22,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
   const isPanning = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
   const spaceDown = useRef(false);
+  const [grabCursor, setGrabCursor] = useState(false);
 
   const onWheel = useCallback(
     (e: WheelEvent) => {
@@ -81,6 +82,8 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && !e.repeat) {
         spaceDown.current = true;
+        setGrabCursor(true);
+        if (overlay) overlay.style.pointerEvents = "all";
       }
       if ((e.ctrlKey || e.metaKey) && overlay) {
         overlay.style.pointerEvents = "all";
@@ -89,8 +92,12 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         spaceDown.current = false;
+        setGrabCursor(false);
+        if (!e.ctrlKey && !e.metaKey && overlay) {
+          overlay.style.pointerEvents = "none";
+        }
       }
-      if (!e.ctrlKey && !e.metaKey && overlay) {
+      if (!e.ctrlKey && !e.metaKey && !spaceDown.current && overlay) {
         overlay.style.pointerEvents = "none";
       }
     };
@@ -111,7 +118,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         position: "relative",
         width: "100%",
         height: "100%",
-        cursor: spaceDown.current || isPanning.current ? "grab" : "default",
+        cursor: grabCursor || isPanning.current ? "grab" : "default",
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

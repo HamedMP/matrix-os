@@ -108,9 +108,13 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
   themeStyle.textContent = ${JSON.stringify(initialCss)};
   document.head.appendChild(themeStyle);
 
-  // Listen for dynamic theme updates (T2071)
+  var dataChangeCallbacks = [];
+
+  // Listen for dynamic theme updates and data change notifications
   window.addEventListener("message", function(e) {
-    if (e.data && e.data.type === "os:theme-update" && e.data.payload) {
+    if (!e.data || !e.data.type) return;
+
+    if (e.data.type === "os:theme-update" && e.data.payload) {
       currentTheme = e.data.payload;
       var css = ":root {\\n";
       for (var k in currentTheme) {
@@ -119,6 +123,13 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
       css += "  }";
       themeStyle.textContent = css;
       if (window.MatrixOS) window.MatrixOS.theme = currentTheme;
+    }
+
+    if (e.data.type === "os:data-change" && e.data.payload) {
+      var changeKey = e.data.payload.key;
+      for (var i = 0; i < dataChangeCallbacks.length; i++) {
+        try { dataChangeCallbacks[i](changeKey, e.data.payload.app); } catch(err) {}
+      }
     }
   });
 
@@ -159,6 +170,14 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 
     openApp: function(name, path) {
       post("os:open-app", { name: name, path: path });
+    },
+
+    onDataChange: function(callback) {
+      dataChangeCallbacks.push(callback);
+      return function() {
+        var idx = dataChangeCallbacks.indexOf(callback);
+        if (idx >= 0) dataChangeCallbacks.splice(idx, 1);
+      };
     },
 
     theme: currentTheme,

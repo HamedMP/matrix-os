@@ -16,7 +16,8 @@ export type ServerMessage =
   | { type: "provision:start"; appCount: number }
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
-  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number };
+  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
+  | { type: "data:change"; app: string; key: string };
 
 type MessageHandler = (msg: ServerMessage) => void;
 
