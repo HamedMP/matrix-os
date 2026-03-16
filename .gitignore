@@ -10,6 +10,7 @@ dist/
 .DS_STORE
 coverage/
 .playwright-mcp/
+.superpowers/
 
 # Local platform data
 packages/platform/data/
