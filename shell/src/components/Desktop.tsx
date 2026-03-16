@@ -7,6 +7,7 @@ import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
+import { TerminalApp } from "./terminal/TerminalApp";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { Settings } from "./Settings";
@@ -483,7 +484,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   }, [wmSetApps, checkAndGenerateIcon]);
 
   const openWindow = useCallback((name: string, path: string) => {
-    wmOpenWindow(name, path, dockXOffset);
+    // Terminal windows get unique paths to allow multiple instances
+    const actualPath = path === "__terminal__"
+      ? `__terminal__:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      : path;
+    wmOpenWindow(name, actualPath, dockXOffset);
     // Don't reposition windows to canvas coordinates - the canvas transform
     // handles visual positioning. Mutating actual window positions causes
     // windows to end up off-screen when switching back to desktop mode.
@@ -503,6 +508,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
 
       const layoutToLoad: LayoutWindow[] = [];
+
+      // Register built-in Terminal app
+      addApp("Terminal", "__terminal__");
+      const savedTerminal = layoutMap.get("__terminal__");
+      if (savedTerminal) layoutToLoad.push(savedTerminal);
 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (appsRes?.ok) {
@@ -991,7 +1001,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 </CardHeader>
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
-                  <AppViewer path={win.path} onOpenApp={openWindow} />
+                  {win.path.startsWith("__terminal__") ? (
+                    <TerminalApp />
+                  ) : (
+                    <AppViewer path={win.path} onOpenApp={openWindow} />
+                  )}
                   {interacting && (
                     <div className="absolute inset-0 z-10" />
                   )}

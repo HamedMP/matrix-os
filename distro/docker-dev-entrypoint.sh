@@ -28,10 +28,16 @@ if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
   chown -R matrixos:matrixos "$MATRIX_HOME/system/qmd"
 fi
 
+# Set zsh as default shell for matrixos user (for PTY sessions)
+if command -v zsh >/dev/null 2>&1; then
+  export SHELL=/bin/zsh
+fi
+
 echo "[matrix-os-dev] Starting gateway + shell as matrixos user..."
 
 # Drop to matrixos user for services (Agent SDK refuses bypassPermissions as root)
 exec su-exec matrixos bash -c '
+  export SHELL=/bin/zsh
   cd /app
 
   # QMD: register collections + start MCP server (best-effort, background)

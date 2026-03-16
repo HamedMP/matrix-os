@@ -11,6 +11,7 @@ import { createConversationStore, type ConversationStore } from "./conversations
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
+import { listDirectory } from "./files-tree.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -575,8 +576,10 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get(
     "/ws/terminal",
-    upgradeWebSocket(() => {
-      const pty = createPtyHandler(homePath);
+    upgradeWebSocket((c) => {
+      const cwdParam = c.req.query("cwd");
+      const resolvedCwd = cwdParam ? resolveWithinHome(homePath, cwdParam) : null;
+      const pty = createPtyHandler(homePath, undefined, resolvedCwd ?? undefined);
 
       return {
         onOpen(_evt, ws) {
@@ -603,6 +606,47 @@ export async function createGateway(config: GatewayConfig) {
       };
     }),
   );
+
+  app.get("/api/files/tree", async (c) => {
+    const pathParam = c.req.query("path") ?? "";
+    const result = await listDirectory(homePath, pathParam);
+    if (!result) {
+      return c.json({ error: "Invalid path" }, 400);
+    }
+    return c.json(result);
+  });
+
+  app.get("/api/terminal/layout", async (c) => {
+    const layoutPath = join(homePath, "system", "terminal-layout.json");
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const data = await readFile(layoutPath, "utf-8");
+      return c.json(JSON.parse(data));
+    } catch {
+      return c.json({});
+    }
+  });
+
+  app.put("/api/terminal/layout", async (c) => {
+    const layoutPath = join(homePath, "system", "terminal-layout.json");
+    const raw = await c.req.text();
+    if (raw.length > 100_000) {
+      return c.json({ error: "Payload too large" }, 413);
+    }
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+    if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {
+      return c.json({ error: "Invalid layout schema" }, 400);
+    }
+    try {
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      await mkdir(dirname(layoutPath), { recursive: true });
+      await writeFile(layoutPath, JSON.stringify(body, null, 2));
+      return c.json({ ok: true });
+    } catch {
+      return c.json({ error: "Failed to save layout" }, 500);
+    }
+  });
 
   app.post("/api/message", async (c) => {
     const body = await c.req.json<{

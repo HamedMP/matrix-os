@@ -1,0 +1,45 @@
+# Matrix OS Terminal - zsh config
+
+# History
+HISTFILE=~/.zsh_history
+HISTSIZE=5000
+SAVEHIST=5000
+setopt appendhistory sharehistory hist_ignore_dups hist_ignore_space
+
+# Completion
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
+
+# Key bindings
+bindkey '^[[A' up-line-or-search
+bindkey '^[[B' down-line-or-search
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+
+# Git branch for prompt (no vcs_info needed)
+git_branch() {
+  local branch
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
+  echo " %F{yellow}${branch}%f"
+}
+
+setopt PROMPT_SUBST
+
+# Sanitize handle for prompt (prevent command injection via PROMPT_SUBST)
+_safe_handle="${MATRIX_HANDLE:-matrixos}"
+_safe_handle="${_safe_handle//\$/}"
+_safe_handle="${_safe_handle//\`/}"
+
+PROMPT="%F{green}${_safe_handle}%f %F{blue}%~%f"'$(git_branch)
+%F{green}>%f '
+unset _safe_handle
+
+# Aliases
+alias ll='ls -la'
+alias la='ls -A'
+alias gs='git status'
+alias gd='git diff'
+alias gl='git log --oneline -20'
+
