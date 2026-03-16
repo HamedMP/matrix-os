@@ -5,16 +5,24 @@
 FROM node:24-alpine
 
 # System deps for native addons (node-pty, better-sqlite3, sqlite-vec)
-RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake
+RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake \
+    zsh curl shadow
 
 # pnpm via corepack (Agent SDK bundles its own claude runtime)
 RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code
 
 # QMD semantic search (BM25 + optional vector search)
 RUN npm install -g @tobilu/qmd
 
 # Non-root user (Agent SDK refuses bypassPermissions as root)
-RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos
+RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos -s /bin/zsh
+
+# Zsh config for matrixos user
+COPY distro/zshrc /home/matrixos/.zshrc
+RUN chown matrixos:matrixos /home/matrixos/.zshrc
 
 WORKDIR /app
 

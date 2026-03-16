@@ -1,4 +1,5 @@
 import { spawn as nodePtySpawn, type IPty } from "node-pty";
+import { existsSync } from "node:fs";
 
 export type PtyMessage =
   | { type: "input"; data: string }
@@ -19,6 +20,7 @@ export type SpawnFn = (
 export function createPtyHandler(
   homePath: string,
   spawnFn: SpawnFn = nodePtySpawn as unknown as SpawnFn,
+  cwd?: string,
 ) {
   let ptyProcess: IPty | null = null;
   let sendFn: SendFn | null = null;
@@ -30,12 +32,13 @@ export function createPtyHandler(
 
     open() {
       const shell = process.env.SHELL ?? "/bin/bash";
+      const targetCwd = cwd && existsSync(cwd) ? cwd : homePath;
 
       ptyProcess = spawnFn(shell, [], {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
-        cwd: homePath,
+        cwd: targetCwd,
         env: { ...process.env },
       });
 

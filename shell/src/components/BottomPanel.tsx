@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useCommandStore } from "@/stores/commands";
-import { Terminal } from "./Terminal";
+import { useWindowManager } from "@/hooks/useWindowManager";
+import { TerminalApp } from "./terminal/TerminalApp";
+import { useTerminalStore } from "@/stores/terminal-store";
 import { ModuleGraph } from "./ModuleGraph";
 import { ActivityFeed } from "./ActivityFeed";
 import { Button } from "@/components/ui/button";
@@ -70,10 +72,26 @@ export function BottomPanel() {
     });
   }, [tab]);
 
+  const wmOpenWindow = useWindowManager((s) => s.openWindow);
+
+  const openTerminalWindow = useCallback(() => {
+    const uniquePath = `__terminal__:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    wmOpenWindow("Terminal", uniquePath, 0);
+  }, [wmOpenWindow]);
+
+  const launchClaudeCodeWindow = useCallback(() => {
+    const uniquePath = `__terminal__:claude-${Date.now()}`;
+    wmOpenWindow("Claude Code", uniquePath, 0);
+  }, [wmOpenWindow]);
+
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
   const toggleRef = useRef(toggle);
   toggleRef.current = toggle;
+  const openTerminalRef = useRef(openTerminalWindow);
+  openTerminalRef.current = openTerminalWindow;
+  const launchClaudeRef = useRef(launchClaudeCodeWindow);
+  launchClaudeRef.current = launchClaudeCodeWindow;
 
   useEffect(() => {
     register([
@@ -85,8 +103,22 @@ export function BottomPanel() {
         keywords: ["terminal", "activity", "modules", "panel"],
         execute: () => toggleRef.current(),
       },
+      {
+        id: "action:open-terminal",
+        label: "Open Terminal",
+        group: "Apps",
+        keywords: ["terminal", "shell", "bash", "command line", "cli"],
+        execute: () => openTerminalRef.current(),
+      },
+      {
+        id: "action:launch-claude-code",
+        label: "Launch Claude Code",
+        group: "Apps",
+        keywords: ["claude", "code", "ai", "coding", "assistant"],
+        execute: () => launchClaudeRef.current(),
+      },
     ]);
-    return () => unregister(["action:toggle-bottom-panel"]);
+    return () => unregister(["action:toggle-bottom-panel", "action:open-terminal", "action:launch-claude-code"]);
   }, [register, unregister]);
 
   return (
@@ -140,7 +172,7 @@ export function BottomPanel() {
       >
         <Separator />
         <div className="h-[240px] min-h-0">
-          {tab === "terminal" && <Terminal />}
+          {tab === "terminal" && <TerminalApp />}
           {tab === "graph" && <ModuleGraph />}
           {tab === "activity" && (
             <div className="h-full overflow-y-auto">
