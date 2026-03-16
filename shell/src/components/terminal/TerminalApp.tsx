@@ -187,11 +187,8 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
               theme={theme}
               focusedPaneId={focusedPaneId}
               onFocusPane={setFocusedPaneId}
-              commands={
-                activeTab.label === "Claude Code"
-                  ? { [getFirstPaneId(activeTab.paneTree)]: "claude" }
-                  : undefined
-              }
+              claudeMode={activeTab.label === "Claude Code"}
+              claudePaneId={getFirstPaneId(activeTab.paneTree)}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center" style={{ color: "var(--muted-foreground)" }}>

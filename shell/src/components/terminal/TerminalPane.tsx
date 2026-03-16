@@ -71,11 +71,11 @@ interface TerminalPaneProps {
   cwd: string;
   theme: Theme;
   isFocused: boolean;
-  onCommand?: string;
+  claudeMode?: boolean;
   onFocus?: (paneId: string) => void;
 }
 
-export function TerminalPane({ paneId, cwd, theme, isFocused, onCommand, onFocus }: TerminalPaneProps) {
+export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocus }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<unknown>(null);
@@ -118,9 +118,9 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, onCommand, onFocus
 
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-        if (onCommand) {
+        if (claudeMode) {
           setTimeout(() => {
-            ws.send(JSON.stringify({ type: "input", data: onCommand + "\r" }));
+            ws.send(JSON.stringify({ type: "input", data: "claude\r" }));
           }, 100);
         }
       };
@@ -168,7 +168,7 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, onCommand, onFocus
       disposed = true;
       cleanup.then((fn) => fn?.());
     };
-  }, [cwd, onCommand]);
+  }, [cwd, claudeMode]);
 
   useEffect(() => {
     if (termRef.current && fitAddonRef.current) {

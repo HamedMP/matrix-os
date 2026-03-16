@@ -17,7 +17,7 @@ interface GitStatusCache {
   gitRoot: string;
 }
 
-let cache: GitStatusCache | null = null;
+const cacheMap = new Map<string, GitStatusCache>();
 const CACHE_TTL_MS = 2000;
 
 function parseGitStatusCode(code: string): string {
@@ -30,17 +30,18 @@ function parseGitStatusCode(code: string): string {
   return "modified";
 }
 
-function getGitStatusMap(dirPath: string): Map<string, string> | null {
-  if (cache && Date.now() - cache.timestamp < CACHE_TTL_MS) {
-    return cache.map;
-  }
-
+function getGitStatusMap(dirPath: string): { map: Map<string, string>; gitRoot: string } | null {
   try {
     const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd: dirPath,
       encoding: "utf-8",
       timeout: 5000,
     }).trim();
+
+    const cached = cacheMap.get(gitRoot);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return { map: cached.map, gitRoot: cached.gitRoot };
+    }
 
     const output = execFileSync("git", ["status", "--porcelain"], {
       cwd: gitRoot,
@@ -56,8 +57,8 @@ function getGitStatusMap(dirPath: string): Map<string, string> | null {
       map.set(filePath, parseGitStatusCode(statusCode));
     }
 
-    cache = { map, timestamp: Date.now(), gitRoot };
-    return map;
+    cacheMap.set(gitRoot, { map, timestamp: Date.now(), gitRoot });
+    return { map, gitRoot };
   } catch {
     return null;
   }
@@ -91,12 +92,9 @@ export function listDirectory(
     return null;
   }
 
-  const gitMap = getGitStatusMap(resolved);
-
-  let gitRoot = "";
-  if (gitMap && cache) {
-    gitRoot = cache.gitRoot;
-  }
+  const gitResult = getGitStatusMap(resolved);
+  const gitMap = gitResult?.map ?? null;
+  const gitRoot = gitResult?.gitRoot ?? "";
 
   const dirs: FileTreeEntry[] = [];
   const files: FileTreeEntry[] = [];
@@ -146,5 +144,5 @@ export function listDirectory(
 }
 
 export function clearGitStatusCache(): void {
-  cache = null;
+  cacheMap.clear();
 }

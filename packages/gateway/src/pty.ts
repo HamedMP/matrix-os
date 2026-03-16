@@ -1,5 +1,6 @@
 import { spawn as nodePtySpawn, type IPty } from "node-pty";
 import { existsSync } from "node:fs";
+import { resolveWithinHome } from "./path-security.js";
 
 export type PtyMessage =
   | { type: "input"; data: string }
@@ -32,7 +33,8 @@ export function createPtyHandler(
 
     open() {
       const shell = process.env.SHELL ?? "/bin/bash";
-      const targetCwd = cwd && existsSync(cwd) ? cwd : homePath;
+      const validatedCwd = cwd ? resolveWithinHome(homePath, cwd) : null;
+      const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : homePath;
 
       ptyProcess = spawnFn(shell, [], {
         name: "xterm-256color",

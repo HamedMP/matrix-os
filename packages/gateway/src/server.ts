@@ -629,7 +629,15 @@ export async function createGateway(config: GatewayConfig) {
 
   app.put("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
-    const body = await c.req.json();
+    const raw = await c.req.text();
+    if (raw.length > 100_000) {
+      return c.json({ error: "Payload too large" }, 413);
+    }
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+    if (typeof body !== "object" || body === null) {
+      return c.json({ error: "Expected object" }, 400);
+    }
     try {
       const { writeFileSync, mkdirSync } = await import("node:fs");
       const { dirname } = await import("node:path");
