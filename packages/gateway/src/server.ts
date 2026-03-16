@@ -619,8 +619,8 @@ export async function createGateway(config: GatewayConfig) {
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     try {
-      const { readFileSync } = await import("node:fs");
-      const data = readFileSync(layoutPath, "utf-8");
+      const { readFile } = await import("node:fs/promises");
+      const data = await readFile(layoutPath, "utf-8");
       return c.json(JSON.parse(data));
     } catch {
       return c.json({});
@@ -635,14 +635,13 @@ export async function createGateway(config: GatewayConfig) {
     }
     let body: unknown;
     try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
-    if (typeof body !== "object" || body === null) {
-      return c.json({ error: "Expected object" }, 400);
+    if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {
+      return c.json({ error: "Invalid layout schema" }, 400);
     }
     try {
-      const { writeFileSync, mkdirSync } = await import("node:fs");
-      const { dirname } = await import("node:path");
-      mkdirSync(dirname(layoutPath), { recursive: true });
-      writeFileSync(layoutPath, JSON.stringify(body, null, 2));
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      await mkdir(dirname(layoutPath), { recursive: true });
+      await writeFile(layoutPath, JSON.stringify(body, null, 2));
       return c.json({ ok: true });
     } catch {
       return c.json({ error: "Failed to save layout" }, 500);

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
 
 export type PaneNode =
-  | { type: "pane"; id: string; cwd: string }
+  | { type: "pane"; id: string; cwd: string; claudeMode?: boolean }
   | { type: "split"; direction: "horizontal" | "vertical"; children: [PaneNode, PaneNode]; ratio: number };
 
 export interface TerminalTab {

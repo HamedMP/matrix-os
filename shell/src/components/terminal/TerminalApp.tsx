@@ -63,11 +63,11 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
 
-  const addTab = useCallback((cwd: string, label?: string) => {
+  const addTab = useCallback((cwd: string, label?: string, claude?: boolean) => {
     const id = genId();
     const paneId = genId();
     const basename = cwd.split("/").filter(Boolean).pop() ?? "~";
-    const tab: Tab = { id, label: label ?? basename, paneTree: { type: "pane", id: paneId, cwd } };
+    const tab: Tab = { id, label: label ?? basename, paneTree: { type: "pane", id: paneId, cwd, claudeMode: claude } };
     setTabs(prev => [...prev, tab]);
     setActiveTabId(id);
     setFocusedPaneId(paneId);
@@ -78,7 +78,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
     if (initializedRef.current) return;
     initializedRef.current = true;
     if (initialCommand) {
-      addTab(DEFAULT_CWD, "Claude Code");
+      addTab(DEFAULT_CWD, "Claude Code", true);
     } else {
       addTab(DEFAULT_CWD);
     }
@@ -152,7 +152,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
       case "D": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "horizontal"); break;
       case "E": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "vertical"); break;
       case "B": e.preventDefault(); setSidebarOpen(o => !o); break;
-      case "C": e.preventDefault(); addTab(getCwd(), "Claude Code"); break;
+      case "C": e.preventDefault(); addTab(getCwd(), "Claude Code", true); break;
     }
   }, [addTab, closePane, splitPane, focusedPaneId, getCwd]);
 
@@ -183,8 +183,6 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
               theme={theme}
               focusedPaneId={focusedPaneId}
               onFocusPane={setFocusedPaneId}
-              claudeMode={activeTab.label === "Claude Code"}
-              claudePaneId={getFirstPaneId(activeTab.paneTree)}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center" style={{ color: "var(--muted-foreground)" }}>
@@ -216,7 +214,7 @@ interface TerminalAppContextType {
   sidebarOpen: boolean;
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
-  addTab: (cwd: string, label?: string) => string;
+  addTab: (cwd: string, label?: string, claude?: boolean) => string;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -270,7 +268,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
         ))}
       </div>
       <div className="flex items-center gap-1 px-2 shrink-0">
-        <button className="text-xs cursor-pointer hover:opacity-80" style={{ background: "var(--success)", color: "white", borderRadius: 4, padding: "2px 8px" }} onClick={() => ctx.addTab(getCwd(), "Claude Code")} title="Launch Claude Code">Claude Code</button>
+        <button className="text-xs cursor-pointer hover:opacity-80" style={{ background: "var(--success)", color: "white", borderRadius: 4, padding: "2px 8px" }} onClick={() => ctx.addTab(getCwd(), "Claude Code", true)} title="Launch Claude Code">Claude Code</button>
         <button className="text-xs cursor-pointer hover:opacity-80" style={{ color: "var(--muted-foreground)" }} onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }} title="Split horizontal">&#8862;</button>
         <button className="text-xs cursor-pointer hover:opacity-80" style={{ color: "var(--muted-foreground)" }} onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }} title="Split vertical">&#8863;</button>
         <button className="text-xs cursor-pointer hover:opacity-80" style={{ color: "var(--muted-foreground)" }} onClick={() => ctx.addTab(getCwd())} title="New tab">+</button>
