@@ -27,8 +27,14 @@ git_branch() {
 
 setopt PROMPT_SUBST
 
-PROMPT='%F{green}${MATRIX_HANDLE:-matrixos}%f %F{blue}%~%f$(git_branch)
+# Sanitize handle for prompt (prevent command injection via PROMPT_SUBST)
+_safe_handle="${MATRIX_HANDLE:-matrixos}"
+_safe_handle="${_safe_handle//\$/}"
+_safe_handle="${_safe_handle//\`/}"
+
+PROMPT="%F{green}${_safe_handle}%f %F{blue}%~%f"'$(git_branch)
 %F{green}>%f '
+unset _safe_handle
 
 # Aliases
 alias ll='ls -la'
@@ -37,5 +43,3 @@ alias gs='git status'
 alias gd='git diff'
 alias gl='git log --oneline -20'
 
-# PATH
-export PATH="$HOME/.local/bin:$PATH"

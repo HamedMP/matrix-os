@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useCommandStore } from "@/stores/commands";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { TerminalApp } from "./terminal/TerminalApp";
-import { useTerminalStore } from "@/stores/terminal-store";
 import { ModuleGraph } from "./ModuleGraph";
 import { ActivityFeed } from "./ActivityFeed";
 import { Button } from "@/components/ui/button";

@@ -1,7 +1,10 @@
-import { readdirSync, statSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { join, relative } from "node:path";
+import { promisify } from "node:util";
 import { resolveWithinHome } from "./path-security.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface FileTreeEntry {
   name: string;
@@ -17,6 +20,7 @@ interface GitStatusCache {
   gitRoot: string;
 }
 
+const MAX_CACHE_ENTRIES = 20;
 const cacheMap = new Map<string, GitStatusCache>();
 const CACHE_TTL_MS = 2000;
 
@@ -30,20 +34,21 @@ function parseGitStatusCode(code: string): string {
   return "modified";
 }
 
-function getGitStatusMap(dirPath: string): { map: Map<string, string>; gitRoot: string } | null {
+async function getGitStatusMap(dirPath: string): Promise<{ map: Map<string, string>; gitRoot: string } | null> {
   try {
-    const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    const { stdout: gitRootRaw } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
       cwd: dirPath,
       encoding: "utf-8",
       timeout: 5000,
-    }).trim();
+    });
+    const gitRoot = gitRootRaw.trim();
 
     const cached = cacheMap.get(gitRoot);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       return { map: cached.map, gitRoot: cached.gitRoot };
     }
 
-    const output = execFileSync("git", ["status", "--porcelain"], {
+    const { stdout: output } = await execFileAsync("git", ["status", "--porcelain"], {
       cwd: gitRoot,
       encoding: "utf-8",
       timeout: 5000,
@@ -57,6 +62,10 @@ function getGitStatusMap(dirPath: string): { map: Map<string, string>; gitRoot: 
       map.set(filePath, parseGitStatusCode(statusCode));
     }
 
+    if (cacheMap.size >= MAX_CACHE_ENTRIES) {
+      const oldest = cacheMap.keys().next().value;
+      if (oldest) cacheMap.delete(oldest);
+    }
     cacheMap.set(gitRoot, { map, timestamp: Date.now(), gitRoot });
     return { map, gitRoot };
   } catch {
@@ -78,21 +87,21 @@ function countChangedFiles(
   return count;
 }
 
-export function listDirectory(
+export async function listDirectory(
   homePath: string,
   requestedPath: string,
-): FileTreeEntry[] | null {
+): Promise<FileTreeEntry[] | null> {
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return null;
 
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Awaited<ReturnType<typeof readdir>>;
   try {
-    entries = readdirSync(resolved, { withFileTypes: true });
+    entries = await readdir(resolved, { withFileTypes: true });
   } catch {
     return null;
   }
 
-  const gitResult = getGitStatusMap(resolved);
+  const gitResult = await getGitStatusMap(resolved);
   const gitMap = gitResult?.map ?? null;
   const gitRoot = gitResult?.gitRoot ?? "";
 
@@ -123,7 +132,7 @@ export function listDirectory(
 
       let size = 0;
       try {
-        size = statSync(fullPath).size;
+        size = (await stat(fullPath)).size;
       } catch {
         // ignore
       }

@@ -12,7 +12,7 @@ RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake \
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@2.1.42
 
 # QMD semantic search (BM25 + optional vector search)
 RUN npm install -g @tobilu/qmd

@@ -607,9 +607,9 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  app.get("/api/files/tree", (c) => {
+  app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";
-    const result = listDirectory(homePath, pathParam);
+    const result = await listDirectory(homePath, pathParam);
     if (!result) {
       return c.json({ error: "Invalid path" }, 400);
     }

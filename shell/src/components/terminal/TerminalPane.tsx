@@ -129,6 +129,10 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
         term.write("\r\n\x1b[31mConnection error. Is the gateway running?\x1b[0m\r\n");
       };
 
+      ws.onclose = () => {
+        term.write("\r\n\x1b[90m[Disconnected]\x1b[0m\r\n");
+      };
+
       ws.onmessage = (evt) => {
         try {
           const msg = JSON.parse(typeof evt.data === "string" ? evt.data : "");

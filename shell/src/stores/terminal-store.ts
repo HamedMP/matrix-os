@@ -51,9 +51,12 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 9);
 }
 
-function countPanes(node: PaneNode): number {
+const MAX_TREE_DEPTH = 10;
+
+function countPanes(node: PaneNode, depth = 0): number {
+  if (depth > MAX_TREE_DEPTH) return 0;
   if (node.type === "pane") return 1;
-  return countPanes(node.children[0]) + countPanes(node.children[1]);
+  return countPanes(node.children[0], depth + 1) + countPanes(node.children[1], depth + 1);
 }
 
 function findPaneInTree(node: PaneNode, paneId: string): PaneNode | null {
