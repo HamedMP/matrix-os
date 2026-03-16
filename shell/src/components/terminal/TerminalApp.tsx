@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState } from "react";
-import type { PaneNode } from "@/stores/terminal-store";
-import { TerminalSidebar } from "./TerminalSidebar";
+import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -17,11 +16,6 @@ interface Tab {
 
 function genId() {
   return Math.random().toString(36).slice(2, 9);
-}
-
-function countPanes(node: PaneNode): number {
-  if (node.type === "pane") return 1;
-  return countPanes(node.children[0]) + countPanes(node.children[1]);
 }
 
 function splitPaneInTree(node: PaneNode, paneId: string, dir: "horizontal" | "vertical"): PaneNode {
@@ -50,6 +44,8 @@ function getFirstPaneId(node: PaneNode): string {
   if (node.type === "pane") return node.id;
   return getFirstPaneId(node.children[0]);
 }
+
+const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
   initialCommand?: string;
