@@ -22,6 +22,7 @@ export interface ChatMessage {
   tool?: string;
   toolInput?: Record<string, unknown>;
   requestId?: string;
+  metadata?: Record<string, unknown>;
   timestamp: number;
 }
 

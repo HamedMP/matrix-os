@@ -7,6 +7,7 @@ export interface ChannelMessage {
   text: string;
   chatId: string;
   replyToId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChannelReply {

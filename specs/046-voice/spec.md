@@ -1,6 +1,6 @@
 # 046: Voice -- TTS, STT, and Telephony
 
-## Status: Draft
+## Status: Phase A-E Complete, Phase F (Voice Conversation) TODO
 
 ## Overview
 
@@ -456,22 +456,83 @@ For managed mode, voice webhooks use the existing per-user subdomain tunnel. For
 
 ## Phases
 
-- **A**: Voice core (types, TTS/STT providers, fallback chain, audio utils) -- independent
-- **B**: Shell voice (mic button, recording, playback, WS messages) -- depends on A
-- **C**: Telephony (CallManager, Twilio provider, webhooks, call IPC tools) -- depends on A
-- **D**: Platform integration (managed mode, provisioning, tunnel, usage tracking) -- depends on C
-- **E**: Channel voice notes (Telegram voice note handling) -- depends on A
+- **A**: Voice core (types, TTS/STT providers, fallback chain, audio utils) -- DONE
+- **B**: Shell voice (mic button, recording, playback, WS messages) -- DONE
+- **C**: Telephony (CallManager, Twilio provider, webhooks, call IPC tools) -- DONE
+- **D**: Platform integration (managed mode, provisioning, tunnel, usage tracking) -- DONE
+- **E**: Channel voice notes (Telegram voice note handling) -- DONE
+- **F**: Voice conversation mode (real-time voice with kernel agent) -- TODO
 
-A is the prerequisite. B, C, E can run in parallel after A. D requires C.
+A-E complete. F is the next major milestone.
+
+## Phase F: Voice Conversation Mode (TODO)
+
+### Problem
+
+The current mic button only transcribes. Users also need a full voice conversation mode where they talk naturally with their AI agent -- auto-listen, auto-respond, hands-free.
+
+### Voice Mode Strategy
+
+**Why not just use Gemini Live / OpenAI Realtime?**
+
+These APIs give excellent real-time voice (200ms latency, native VAD, barge-in) but they bypass the Matrix OS kernel. The AI responding would be Gemini/OpenAI, not the user's Claude agent with its SOUL, skills, memory, tools, and file system. This defeats the purpose of Matrix OS.
+
+**Strategy:**
+
+1. **Default: Kernel-routed voice** -- Whisper STT -> kernel dispatch -> ElevenLabs TTS. Slower (~2-3s) but uses the actual agent. Improve UX with AudioWorklet encoding, client-side VAD, streaming TTS.
+
+2. **Optional: Gemini Live quick voice** -- For casual conversation where kernel tools aren't needed. Fast (~200ms) but talks to Gemini, not the kernel agent.
+
+3. **Endgame: Anthropic real-time voice API** -- When Anthropic releases their voice API, it replaces option 1 with native Claude voice at real-time latency. Same kernel, same tools, real-time speed.
+
+### Audio Infrastructure
+
+Port production-grade audio layer from `~/dev/finna/finna-discovery/packages/voice-interview/`:
+
+- `AudioCapture` -- Web Audio API + AudioWorklet for real-time PCM encoding (16kHz capture, echo cancellation, noise suppression, auto gain, device selection)
+- `AudioPlayback` -- Queue-based playback with lookahead scheduling (24kHz output, barge-in interrupt)
+- `pcm-encoder.worklet.js` -- AudioWorklet processor (separate thread, zero main-thread jank)
+- Client-side VAD via AnalyserNode RMS level detection
+- All provider-agnostic -- works with any backend
+
+### UI Components
+
+- `Orb` -- ElevenLabs UI (already installed), wired with `agentState` + volume refs
+- `LiveWaveform` -- Real-time frequency visualization for mic preview
+- `AudioLevelBars` -- VU meter visualization
+- Auto-scrolling transcript panel
+- Fullscreen overlay with controls (mute, end, mode toggle)
+
+### Reference Implementations
+
+- **finna-discovery** (`~/dev/finna/finna-discovery/packages/voice-interview/`): Production voice-interview package with Gemini Live, AudioWorklet, Orb, transcript management
+- **hackathon** (`~/dev/playgrounds/finna-deepmind-granola-hackathon/apps/web/src/components/voice/`): Simpler single-app version with same audio stack
+
+Both use Gemini Live API with bidirectional WebSocket, AudioWorklet for PCM encoding, automatic VAD, event-driven architecture.
 
 ## Verification Checklist
 
-1. `bun run test` -- all existing + ~120 new tests pass
-2. Shell: click mic, speak "Hello" -> transcribed, kernel responds, audio plays back
-3. Shell: mic button hidden when voice disabled in config
-4. TTS fallback: disable ElevenLabs key -> OpenAI used, disable that -> Edge TTS used
-5. Telephony: initiate outbound call -> rings, answers, conversation loop works
-6. Telephony: receive inbound call -> greeting plays, conversation starts
+### Phase A-E (DONE)
+
+1. `bun run test` -- 2522 tests pass
+2. Shell: click mic, speak -> text fills input, user sends manually
+3. TTS fallback: ElevenLabs -> OpenAI -> Edge TTS (verified on Docker)
+4. TTS REST endpoint: POST /api/voice/tts -> returns audio URL
+5. STT REST endpoint: POST /api/voice/stt -> returns transcript
+6. Round-trip: TTS audio -> STT -> exact text match (verified)
+7. Voice health endpoint: GET /api/voice/health -> shows all providers
+8. Telephony: CallManager state machine, Twilio provider, webhook router (unit tested)
+9. Platform: Twilio provisioning, env var injection, tunnel interface (unit tested)
+10. Telegram: voice note auto-transcription (unit tested)
+
+### Phase F (TODO)
+
+1. Voice conversation: click AudioLines button -> fullscreen Orb -> speak naturally -> AI responds with voice
+2. Auto-listen: after AI finishes speaking, mic auto-activates for next turn
+3. Barge-in: speaking while AI talks interrupts playback
+4. Transcript: shows conversation history in real-time
+5. Gemini Live mode: toggle available, fast response, distinct label
+6. Settings: voice mode, engine, voice selection, VAD sensitivity
 7. Telephony: max duration timer fires -> call auto-hangups
 8. Telegram: send voice note -> auto-transcribed, kernel responds
 9. Platform: new user provisioned -> voice works with zero config

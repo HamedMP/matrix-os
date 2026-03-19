@@ -5,7 +5,7 @@ import { useSocket } from "@/hooks/useSocket";
 import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SendIcon, MicIcon, MicOffIcon, Loader2Icon } from "lucide-react";
+import { SendIcon, MicIcon, MicOffIcon, Loader2Icon, AudioLinesIcon } from "lucide-react";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 
 interface InputBarProps {
@@ -15,9 +15,11 @@ interface InputBarProps {
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>) => void;
   chips?: ReactNode;
   embedded?: boolean;
+  onVoiceModeToggle?: () => void;
+  voiceModeActive?: boolean;
 }
 
-export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, embedded }: InputBarProps) {
+export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, embedded, onVoiceModeToggle, voiceModeActive }: InputBarProps) {
   const [input, setInput] = useState("");
   const { connected } = useSocket();
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
@@ -30,7 +32,7 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
     stopRecording,
   } = useVoice({
     onTranscription: (text) => {
-      onSubmit(text);
+      setInput(text);
     },
     onError: (err) => {
       console.error("Voice error:", err);
@@ -128,6 +130,19 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
             <MicIcon className="size-5 md:size-4" />
           )}
         </Button>
+        {isSupported && onVoiceModeToggle && (
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className={`size-10 md:size-8 ${voiceModeActive ? "text-primary" : "text-muted-foreground"}`}
+            disabled={!connected}
+            onClick={onVoiceModeToggle}
+            title={voiceModeActive ? "Exit voice mode" : "Enter voice mode"}
+          >
+            <AudioLinesIcon className="size-5 md:size-4" />
+          </Button>
+        )}
         <Button
           type="submit"
           size="icon"

@@ -17,6 +17,7 @@ import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { AppStore } from "@/components/app-store/AppStore";
 import { BottomPanel } from "@/components/BottomPanel";
+import { VoiceMode } from "@/components/VoiceMode";
 import { Button } from "@/components/ui/button";
 import { MessageSquareIcon } from "lucide-react";
 
@@ -31,6 +32,7 @@ export default function Home() {
   const [overlayDismissed, setOverlayDismissed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
+  const [voiceModeActive, setVoiceModeActive] = useState(false);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
 
@@ -88,12 +90,16 @@ export default function Home() {
 
   const showEmbeddedInput = sidebarOpen || isCenterChat;
 
+  const voiceModeToggle = useCallback(() => setVoiceModeActive((v) => !v), []);
+
   const embeddedInputBar = (
     <InputBar
       sessionId={chat.sessionId}
       busy={chat.busy}
       queueLength={chat.queue.length}
       onSubmit={handleSubmit}
+      onVoiceModeToggle={voiceModeToggle}
+      voiceModeActive={voiceModeActive}
       embedded
     />
   );
@@ -116,6 +122,8 @@ export default function Home() {
                   busy={chat.busy}
                   queueLength={chat.queue.length}
                   onSubmit={handleSubmit}
+                  onVoiceModeToggle={voiceModeToggle}
+                  voiceModeActive={voiceModeActive}
                   chips={
                     <SuggestionChips
                       context={chipContext}
@@ -189,6 +197,13 @@ export default function Home() {
           messages={chat.messages}
           busy={chat.busy}
           onDismiss={() => setOverlayDismissed(true)}
+          onSubmit={handleSubmit}
+        />
+      )}
+
+      {voiceModeActive && (
+        <VoiceMode
+          onClose={() => setVoiceModeActive(false)}
           onSubmit={handleSubmit}
         />
       )}
