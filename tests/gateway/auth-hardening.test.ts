@@ -8,6 +8,7 @@ function mockContext(path: string, authHeader?: string) {
     ctx: {
       req: {
         path,
+        url: `http://localhost:4000${path}`,
         header: (name: string) =>
           name === "Authorization" ? authHeader : undefined,
       },

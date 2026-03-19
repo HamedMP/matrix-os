@@ -147,6 +147,9 @@ export class CallManager {
     }
 
     call.processedEventIds.push(event.id);
+    if (call.processedEventIds.length > 1000) {
+      call.processedEventIds = call.processedEventIds.slice(-1000);
+    }
   }
 
   getCall(callId: string): CallRecord | undefined {

@@ -102,7 +102,7 @@ export async function handleCallTool(
   }
 
   if (!deps.callManager) {
-    return { text: "Telephony is not available." };
+    return { text: "CallManager not available -- telephony requires gateway co-process." };
   }
 
   const cm = deps.callManager;
@@ -114,9 +114,21 @@ export async function handleCallTool(
       }
 
       try {
+        const fromNumber = process.env.TWILIO_FROM_NUMBER;
+        if (!fromNumber) {
+          return { text: "Telephony is not configured: TWILIO_FROM_NUMBER is not set." };
+        }
+
+        const handle = process.env.MATRIX_HANDLE;
+        const webhookUrl = process.env.MATRIX_VOICE_WEBHOOK_URL
+          || (handle ? `https://${handle}.matrix-os.com/voice/webhook/twilio` : "");
+        if (!webhookUrl) {
+          return { text: "Telephony is not configured: MATRIX_VOICE_WEBHOOK_URL or MATRIX_HANDLE must be set." };
+        }
+
         const record = await cm.initiateCall(params.to, {
-          from: "+10000000000", // Configured from number
-          webhookUrl: "https://localhost/voice/webhook/twilio",
+          from: fromNumber,
+          webhookUrl,
           mode: params.mode ?? "conversation",
           greeting: params.greeting,
         });

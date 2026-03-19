@@ -76,8 +76,8 @@ describe("TwilioProvider", () => {
       expect(result.reason).toBeDefined();
     });
 
-    it("reconstructs URL from X-Forwarded headers", () => {
-      const forwardedUrl = "https://proxy.example.com:443/voice/webhook/twilio";
+    it("reconstructs URL from X-Forwarded headers (omits default port 443)", () => {
+      const forwardedUrl = "https://proxy.example.com/voice/webhook/twilio";
       const params = {
         CallSid: "CA123",
         CallStatus: "ringing",
@@ -92,6 +92,30 @@ describe("TwilioProvider", () => {
           "x-forwarded-proto": "https",
           "x-forwarded-host": "proxy.example.com",
           "x-forwarded-port": "443",
+        },
+        rawBody: new URLSearchParams(params).toString(),
+      };
+
+      const result = provider.verifyWebhook(ctx);
+      expect(result.ok).toBe(true);
+    });
+
+    it("reconstructs URL from X-Forwarded headers (includes non-default port)", () => {
+      const forwardedUrl = "https://proxy.example.com:8443/voice/webhook/twilio";
+      const params = {
+        CallSid: "CA123",
+        CallStatus: "ringing",
+      };
+      const sig = createTwilioSignature(TEST_AUTH_TOKEN, forwardedUrl, params);
+
+      const ctx: WebhookContext = {
+        method: "POST",
+        url: "http://localhost:4000/voice/webhook/twilio",
+        headers: {
+          "x-twilio-signature": sig,
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "proxy.example.com",
+          "x-forwarded-port": "8443",
         },
         rawBody: new URLSearchParams(params).toString(),
       };

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   handleCallTool,
   handleSpeakTool,
@@ -44,6 +44,12 @@ function createMockDeps(overrides: Partial<VoiceToolDeps> = {}): VoiceToolDeps {
 }
 
 describe("Voice IPC Tools", () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
   describe("handleSpeakTool()", () => {
     it("returns audioUrl and durationMs", async () => {
       const deps = createMockDeps();
@@ -105,6 +111,8 @@ describe("Voice IPC Tools", () => {
 
   describe("handleCallTool()", () => {
     it("action=initiate returns callId", async () => {
+      process.env.TWILIO_FROM_NUMBER = "+15551234567";
+      process.env.MATRIX_HANDLE = "testuser";
       const deps = createMockDeps();
       const result = await handleCallTool(deps, {
         action: "initiate",
@@ -115,7 +123,20 @@ describe("Voice IPC Tools", () => {
       expect(deps.callManager!.initiateCall).toHaveBeenCalled();
     });
 
+    it("action=initiate without TWILIO_FROM_NUMBER returns config error", async () => {
+      delete process.env.TWILIO_FROM_NUMBER;
+      const deps = createMockDeps();
+      const result = await handleCallTool(deps, {
+        action: "initiate",
+        to: "+1234567890",
+      });
+
+      expect(result.text).toContain("not configured");
+    });
+
     it("action=initiate without 'to' returns error", async () => {
+      process.env.TWILIO_FROM_NUMBER = "+15551234567";
+      process.env.MATRIX_HANDLE = "testuser";
       const deps = createMockDeps();
       const result = await handleCallTool(deps, {
         action: "initiate",
@@ -178,7 +199,7 @@ describe("Voice IPC Tools", () => {
         to: "+1234567890",
       });
 
-      expect(result.text).toContain("not available");
+      expect(result.text).toContain("CallManager not available");
     });
   });
 });

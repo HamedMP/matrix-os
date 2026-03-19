@@ -16,7 +16,7 @@ export function createWebhookRouter(config: WebhookRouterConfig): Hono {
     const provider = config.providers.get(providerName);
 
     if (!provider) {
-      return c.json({ error: `Unknown provider: ${providerName}` }, 404);
+      return c.json({ error: "Not found" }, 404);
     }
 
     const rawBody = await c.req.text();

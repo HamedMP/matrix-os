@@ -15,9 +15,6 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
   const [agentState, setAgentState] = useState<AgentState>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [currentText, setCurrentText] = useState("");
-  const inputVolumeRef = useRef(0);
-  const outputVolumeRef = useRef(0);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number>(0);
 
   const {

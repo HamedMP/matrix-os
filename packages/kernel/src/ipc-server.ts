@@ -799,7 +799,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             {
               voiceEnabled,
               homePath: homePath ?? "",
-              callManager: (globalThis as Record<string, unknown>).__matrixCallManager as Parameters<typeof handleCallTool>[0]["callManager"],
+              callManager: ((globalThis as Record<string, unknown>).__matrixCallManager as Parameters<typeof handleCallTool>[0]["callManager"]) ?? undefined,
               synthesize: async () => { throw new Error("Not available"); },
               transcribe: async () => { throw new Error("Not available"); },
             },

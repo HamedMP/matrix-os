@@ -676,11 +676,13 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   // Voice WebSocket: receives audio, returns transcription + TTS audio
+  const MAX_VOICE_BUFFER_SIZE = 25 * 1024 * 1024; // 25MB
   app.get(
     "/ws/voice",
     upgradeWebSocket(() => {
       const chunks: Buffer[] = [];
       let collecting = false;
+      let totalSize = 0;
 
       return {
         onMessage(evt, ws) {
@@ -689,6 +691,7 @@ export async function createGateway(config: GatewayConfig) {
               const msg = JSON.parse(evt.data);
               if (msg.type === "audio_start") {
                 chunks.length = 0;
+                totalSize = 0;
                 collecting = true;
                 return;
               }
@@ -696,6 +699,7 @@ export async function createGateway(config: GatewayConfig) {
                 collecting = false;
                 const audioBuffer = Buffer.concat(chunks);
                 chunks.length = 0;
+                totalSize = 0;
 
                 handleVoiceWsMessage(
                   {
@@ -715,7 +719,7 @@ export async function createGateway(config: GatewayConfig) {
                 ).catch((err: Error) => {
                   ws.send(JSON.stringify({
                     type: "voice_error",
-                    message: err.message ?? "Voice processing error",
+                    message: "Voice processing error",
                   }));
                 });
                 return;
@@ -740,23 +744,32 @@ export async function createGateway(config: GatewayConfig) {
                 ).catch((err: Error) => {
                   ws.send(JSON.stringify({
                     type: "voice_error",
-                    message: err.message ?? "Voice processing error",
+                    message: "Voice processing error",
                   }));
                 });
                 return;
               }
             } catch {
-              ws.send(JSON.stringify({ type: "voice_error", message: "Invalid JSON" }));
+              ws.send(JSON.stringify({ type: "voice_error", message: "Invalid message" }));
             }
-          } else if (collecting && evt.data instanceof ArrayBuffer) {
-            chunks.push(Buffer.from(evt.data));
-          } else if (collecting && evt.data instanceof Uint8Array) {
-            chunks.push(Buffer.from(evt.data));
+          } else if (collecting && (evt.data instanceof ArrayBuffer || evt.data instanceof Uint8Array)) {
+            const chunk = Buffer.from(evt.data as ArrayBuffer);
+            totalSize += chunk.length;
+            if (totalSize > MAX_VOICE_BUFFER_SIZE) {
+              collecting = false;
+              chunks.length = 0;
+              totalSize = 0;
+              ws.send(JSON.stringify({ type: "voice_error", message: "Audio buffer size limit exceeded" }));
+              ws.close(1009, "Buffer size limit exceeded");
+              return;
+            }
+            chunks.push(chunk);
           }
         },
 
         onClose() {
           chunks.length = 0;
+          totalSize = 0;
         },
       };
     }),

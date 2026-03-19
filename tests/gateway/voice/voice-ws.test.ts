@@ -110,7 +110,7 @@ describe("Voice WebSocket message handling", () => {
       expect(errorMsg).toBeDefined();
       const parsed = JSON.parse(errorMsg as string);
       expect(parsed.type).toBe("voice_error");
-      expect(parsed.message).toContain("STT service unavailable");
+      expect(parsed.message).toBe("Transcription failed. Please try again.");
     });
 
     it("does not dispatch or synthesize when STT fails", async () => {
@@ -149,7 +149,7 @@ describe("Voice WebSocket message handling", () => {
       });
       expect(errorMsg).toBeDefined();
       const parsed = JSON.parse(errorMsg as string);
-      expect(parsed.message).toContain("TTS provider down");
+      expect(parsed.message).toBe("Speech synthesis failed. Please try again.");
     });
   });
 

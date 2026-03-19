@@ -22,7 +22,7 @@
     "autoApprove": ["Read", "list_tasks", "read_state"]
   },
   "voice": {
-    "enabled": true,
+    "enabled": false,
     "tts": {
       "provider": "auto"
     },
