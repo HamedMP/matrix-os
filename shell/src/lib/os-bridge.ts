@@ -182,7 +182,75 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 
     theme: currentTheme,
 
-    app: { name: app }
+    app: { name: app },
+
+    db: {
+      find: function(table, opts) {
+        var body = { app: app, action: "find", table: table };
+        if (opts) {
+          if (opts.where) body.filter = opts.where;
+          if (opts.orderBy) body.orderBy = opts.orderBy;
+          if (opts.limit) body.limit = opts.limit;
+          if (opts.offset) body.offset = opts.offset;
+        }
+        return fetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }).then(function(r) { return r.json(); });
+      },
+
+      findOne: function(table, id) {
+        return fetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "findOne", table: table, id: id })
+        }).then(function(r) { return r.json(); });
+      },
+
+      insert: function(table, data) {
+        return fetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "insert", table: table, data: data })
+        }).then(function(r) { return r.json(); });
+      },
+
+      update: function(table, id, data) {
+        return fetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
+        }).then(function(r) { return r.json(); });
+      },
+
+      delete: function(table, id) {
+        return fetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "delete", table: table, id: id })
+        }).then(function(r) { return r.json(); });
+      },
+
+      count: function(table, filter) {
+        return fetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "count", table: table, filter: filter })
+        }).then(function(r) { return r.json(); }).then(function(d) { return d.count; });
+      },
+
+      onChange: function(table, callback) {
+        var wrappedCb = function(key, changedApp) {
+          if (key === table && changedApp === app) callback({ table: table });
+        };
+        dataChangeCallbacks.push(wrappedCb);
+        return function() {
+          var idx = dataChangeCallbacks.indexOf(wrappedCb);
+          if (idx >= 0) dataChangeCallbacks.splice(idx, 1);
+        };
+      }
+    }
   };
 })();
 `;
