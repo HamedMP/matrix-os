@@ -155,6 +155,21 @@ export async function createGateway(config: GatewayConfig) {
       kvStore = createKvStore(appDb);
       appRegistry = createAppRegistry(appDb);
       console.log("[app-db] Postgres connected, data layer ready");
+
+      // Auto-migrate JSON files to _kv on first boot
+      const migrated = await kvStore.read("_system", "migration_v1");
+      if (!migrated) {
+        try {
+          const { migrateJsonToKv } = await import("./app-db-migration.js");
+          const jsonResult = await migrateJsonToKv(homePath, kvStore);
+          if (jsonResult.keys > 0) {
+            console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
+          }
+          await kvStore.write("_system", "migration_v1", new Date().toISOString());
+        } catch (migErr) {
+          console.error("[app-db] Migration error:", (migErr as Error).message);
+        }
+      }
     } catch (err) {
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
       console.log("[app-db] Falling back to file-based storage");
