@@ -48,6 +48,10 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import { createAppDb, type AppDb } from "./app-db.js";
+import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
+import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import {
   createPluginRegistry,
@@ -135,6 +139,31 @@ export async function createGateway(config: GatewayConfig) {
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const clients = new Set<WSContext>();
+
+  // App data layer (Postgres-backed when DATABASE_URL is set)
+  const databaseUrl = process.env.DATABASE_URL;
+  let appDb: AppDb | null = null;
+  let queryEngine: QueryEngine | null = null;
+  let kvStore: KvStore | null = null;
+  let appRegistry: AppRegistry | null = null;
+
+  if (databaseUrl) {
+    try {
+      appDb = createAppDb(databaseUrl);
+      await appDb.bootstrap();
+      queryEngine = createQueryEngine(appDb);
+      kvStore = createKvStore(appDb);
+      appRegistry = createAppRegistry(appDb);
+      console.log("[app-db] Postgres connected, data layer ready");
+    } catch (err) {
+      console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
+      console.log("[app-db] Falling back to file-based storage");
+      appDb = null;
+      queryEngine = null;
+      kvStore = null;
+      appRegistry = null;
+    }
+  }
 
   function logHealing(message: string) {
     const timestamp = new Date().toISOString();
@@ -744,6 +773,67 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
+  // Structured query API (Postgres-backed)
+  app.post("/api/bridge/query", async (c) => {
+    if (!queryEngine || !appRegistry) {
+      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    const appSlug = body.app as string;
+    const action = body.action as string;
+
+    if (!appSlug || !action) {
+      return c.json({ error: "app and action are required" }, 400);
+    }
+
+    try {
+      switch (action) {
+        case "find":
+          return c.json(await queryEngine.find(appSlug, body.table as string, {
+            filter: body.filter as Record<string, unknown> | undefined,
+            orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
+            limit: body.limit as number | undefined,
+            offset: body.offset as number | undefined,
+          }));
+        case "findOne":
+          return c.json(await queryEngine.findOne(appSlug, body.table as string, body.id as string));
+        case "insert": {
+          const result = await queryEngine.insert(appSlug, body.table as string, body.data as Record<string, unknown>);
+          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
+          return c.json(result, 201);
+        }
+        case "update": {
+          await queryEngine.update(appSlug, body.table as string, body.id as string, body.data as Record<string, unknown>);
+          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
+          return c.json({ ok: true });
+        }
+        case "delete": {
+          await queryEngine.delete(appSlug, body.table as string, body.id as string);
+          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
+          return c.json({ ok: true });
+        }
+        case "count":
+          return c.json({ count: await queryEngine.count(appSlug, body.table as string, body.filter as Record<string, unknown> | undefined) });
+        case "schema":
+          return c.json(await appRegistry.getSchema(appSlug));
+        case "listApps":
+          return c.json(await appRegistry.listApps());
+        default:
+          return c.json({ error: `Unknown action: ${action}` }, 400);
+      }
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+  });
+
+  // Key-value bridge: uses Postgres _kv when available, falls back to files
   app.post("/api/bridge/data", async (c) => {
     const body = await c.req.json<{
       action: "read" | "write";
@@ -754,6 +844,19 @@ export async function createGateway(config: GatewayConfig) {
 
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
+
+    // Postgres-backed path
+    if (kvStore) {
+      if (body.action === "read") {
+        const value = await kvStore.read(safeApp, safeKey);
+        return c.json({ value });
+      }
+      await kvStore.write(safeApp, safeKey, body.value ?? "");
+      broadcast({ type: "data:change", app: safeApp, key: safeKey });
+      return c.json({ ok: true });
+    }
+
+    // File-based fallback (no Postgres)
     const dataDir = join(homePath, "data", safeApp);
     const filePath = normalize(join(dataDir, `${safeKey}.json`));
 
@@ -764,7 +867,6 @@ export async function createGateway(config: GatewayConfig) {
     if (body.action === "read") {
       if (!existsSync(filePath)) return c.json({ value: null });
       const content = readFileSync(filePath, "utf-8");
-      // Handle legacy double-encoded files (old bridge used JSON.stringify on write)
       let value = content;
       try {
         const parsed = JSON.parse(content);
