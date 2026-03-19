@@ -30,6 +30,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-buildx-
 
+      - name: Create CI env file
+        run: |
+          echo "ANTHROPIC_API_KEY=test-not-used-in-docker-scenarios" > .env.docker
+
       - name: Build dev image
         run: |
           docker compose -f docker-compose.dev.yml build dev
