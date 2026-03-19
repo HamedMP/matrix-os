@@ -1,6 +1,24 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: matrixos
+      POSTGRES_PASSWORD: matrixos
+      POSTGRES_DB: matrixos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U matrixos"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
   matrix-os:
     build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "3000:3000"
       - "4000:4000"
@@ -8,6 +26,8 @@ services:
       - matrixos-data:/home/matrixos/home
     env_file:
       - .env.docker
+    environment:
+      DATABASE_URL: postgresql://matrixos:matrixos@postgres:5432/matrixos
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
       interval: 30s
@@ -17,3 +37,4 @@ services:
 
 volumes:
   matrixos-data:
+  pgdata:
