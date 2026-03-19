@@ -160,7 +160,7 @@ Top-level component. Renders sidebar + tab bar + pane grid in a flex layout. Rea
 
 ### TerminalPane
 
-- Wraps xterm.js (`@xterm/xterm` + `@xterm/addon-fit` + `@xterm/addon-web-links`)
+- Wraps xterm.js (`@xterm/xterm` + `@xterm/addon-fit`)
 - One WebSocket connection to `/ws/terminal?cwd=<path>` per pane
 - Resize observer triggers `addon-fit` recalculation
 - Theme colors inherited from Matrix OS theme

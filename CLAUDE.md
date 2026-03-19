@@ -58,6 +58,9 @@ Key principles:
 - `specs/035-canvas-desktop/`: Canvas desktop mode: infinite pan/zoom canvas, app grouping, minimap (T1250-T1279)
 
 - `specs/044-docker-dev/`: Docker-primary local development: non-root user, su-exec, identity from env, convenience scripts
+- `specs/046-voice/`: Voice interface (spec drafted)
+- `specs/047-terminal/`: IDE-grade terminal app with Claude Code integration (COMPLETE)
+- `specs/048-file-browser/`: File browser app (spec drafted)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/`: original architecture spec, plan, tasks (reference only)
@@ -222,7 +225,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 
 ## Current State (updated per commit)
 
-**Tests**: 1942 passing (162 test files) | **Through Phase 044 Docker-primary dev + Phase 031 desktop customization + Phase 025 security + Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
+**Tests**: 2187+ passing (170+ test files) | **Through Phase 047 Terminal + Phase 044 Docker-primary dev + Phase 031 desktop customization + Phase 025 security + Phase 009 P1 identity + Phase 009 P0 + Phase 008A/008B + Phase 007 + Phase 004 + Phase 012**
 
 ### Completed
 - **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
@@ -242,6 +245,7 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **Phase 009 P1 Sync+Mobile**: Git sync (auto-sync, sync_files IPC tool), mobile responsive shell, PWA manifest
 - **Phase 008B**: Multi-tenant platform: platform service (Hono :9000, Drizzle, dockerode orchestrator, lifecycle manager, social API), Clerk auth + Inngest provisioning in www/, admin dashboard, Cloudflare Tunnel + docker-compose.platform.yml
 - **Phase 031**: Desktop customization: 6 theme presets, background system (pattern/solid/gradient/wallpaper), dock config (position/size/autoHide), Appearance settings UI, chat-driven customization via knowledge file. 38 tests (5 test files).
+- **Phase 047**: IDE-grade terminal app: tabs, split panes, file tree sidebar with git status, adaptive theming, Claude Code launch button. Standalone windows (multiple instances) + bottom panel. Dev container: zsh + Claude Code CLI. 51 tests (5 test files).
 
 ### In Progress
 - **013A Docker** (T500-T506): Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
