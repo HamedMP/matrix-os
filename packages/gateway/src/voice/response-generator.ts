@@ -1,0 +1,81 @@
+import type { Dispatcher, DispatchContext } from "../dispatcher.js";
+import type { TranscriptEntry } from "./types.js";
+
+export type VoiceResponseParams = {
+  callId: string;
+  callerNumber: string;
+  transcript: TranscriptEntry[];
+  userMessage: string;
+  dispatcher: Dispatcher;
+  timeoutMs?: number;
+};
+
+const VOICE_CONTEXT_PREFIX =
+  "[Voice call] Keep responses brief and conversational, 1-2 sentences. The caller is on the phone.\n\n";
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const FALLBACK_MESSAGE =
+  "I'm still thinking about that. Could you give me a moment?";
+const ERROR_MESSAGE = "I'm sorry, I ran into an issue processing your request.";
+
+export async function generateVoiceResponse(
+  params: VoiceResponseParams,
+): Promise<string> {
+  const {
+    callId,
+    callerNumber,
+    transcript,
+    userMessage,
+    dispatcher,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = params;
+
+  const transcriptContext =
+    transcript.length > 0
+      ? transcript
+          .slice(-6)
+          .map((t) => `${t.speaker === "bot" ? "Assistant" : "Caller"}: ${t.text}`)
+          .join("\n") + "\n\n"
+      : "";
+
+  const fullMessage = `${VOICE_CONTEXT_PREFIX}${transcriptContext}Caller: ${userMessage}`;
+
+  const context: DispatchContext = {
+    channel: "voice" as DispatchContext["channel"],
+    senderId: callerNumber,
+    senderName: callerNumber,
+    chatId: callId,
+  };
+
+  let responseText = "";
+
+  try {
+    const dispatchPromise = dispatcher.dispatch(
+      fullMessage,
+      callId,
+      (event) => {
+        if (
+          event.type === "text" &&
+          typeof (event as { text?: string }).text === "string"
+        ) {
+          responseText += (event as { text: string }).text;
+        }
+      },
+      context,
+    );
+
+    const timeoutPromise = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), timeoutMs),
+    );
+
+    const result = await Promise.race([dispatchPromise, timeoutPromise]);
+
+    if (result === "timeout") {
+      return FALLBACK_MESSAGE;
+    }
+
+    return responseText || FALLBACK_MESSAGE;
+  } catch {
+    return ERROR_MESSAGE;
+  }
+}

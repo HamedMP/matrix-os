@@ -76,6 +76,14 @@ import {
   wsConnectionsActive,
   normalizePath,
 } from "./metrics.js";
+import { VoiceService } from "./voice/index.js";
+import { CallManager } from "./voice/call-manager.js";
+import { CallStore } from "./voice/call-store.js";
+import { createVoiceRoutes } from "./voice/routes.js";
+import { createWebhookRouter } from "./voice/webhook.js";
+import { handleVoiceWsMessage } from "./voice/voice-ws.js";
+import { MockProvider } from "./voice/providers/mock.js";
+import type { VoiceCallProvider } from "./voice/providers/base.js";
 
 export interface GatewayConfig {
   homePath: string;
@@ -538,6 +546,25 @@ export async function createGateway(config: GatewayConfig) {
     }
   } catch { /* no plugins config */ }
 
+  // Voice service -- TTS/STT with fallback chain
+  let voiceConfig: Record<string, unknown> = {};
+  try {
+    if (existsSync(configPath)) {
+      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
+      voiceConfig = cfg.voice ?? {};
+    }
+  } catch { /* no voice config */ }
+
+  const voiceService = VoiceService.create(voiceConfig);
+
+  // Telephony: CallManager + CallStore + webhook/REST routes
+  const callManager = new CallManager();
+  const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));
+  const voiceProviders = new Map<string, VoiceCallProvider>();
+  voiceProviders.set("mock", new MockProvider());
+  // Expose callManager globally for IPC tools
+  (globalThis as Record<string, unknown>).__matrixCallManager = callManager;
+
   const provisioner = createProvisioner({
     homePath,
     dispatcher,
@@ -841,6 +868,93 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
+  // Voice WebSocket: receives audio, returns transcription + TTS audio
+  app.get(
+    "/ws/voice",
+    upgradeWebSocket(() => {
+      const chunks: Buffer[] = [];
+      let collecting = false;
+
+      return {
+        onMessage(evt, ws) {
+          if (typeof evt.data === "string") {
+            try {
+              const msg = JSON.parse(evt.data);
+              if (msg.type === "audio_start") {
+                chunks.length = 0;
+                collecting = true;
+                return;
+              }
+              if (msg.type === "audio_end") {
+                collecting = false;
+                const audioBuffer = Buffer.concat(chunks);
+                chunks.length = 0;
+
+                handleVoiceWsMessage(
+                  {
+                    voiceService,
+                    send: (data) => ws.send(data),
+                    dispatch: async (text, metadata) => {
+                      let responseText = "";
+                      await dispatcher.dispatch(text, undefined, (event) => {
+                        if (event.type === "text") {
+                          responseText += event.text;
+                        }
+                      }, metadata ? { channel: "voice" } : undefined);
+                      return responseText;
+                    },
+                  },
+                  audioBuffer,
+                ).catch((err: Error) => {
+                  ws.send(JSON.stringify({
+                    type: "voice_error",
+                    message: err.message ?? "Voice processing error",
+                  }));
+                });
+                return;
+              }
+              if (msg.type === "voice" && msg.audio) {
+                const audioBuffer = Buffer.from(msg.audio, "base64");
+                handleVoiceWsMessage(
+                  {
+                    voiceService,
+                    send: (data) => ws.send(data),
+                    dispatch: async (text, metadata) => {
+                      let responseText = "";
+                      await dispatcher.dispatch(text, undefined, (event) => {
+                        if (event.type === "text") {
+                          responseText += event.text;
+                        }
+                      }, metadata ? { channel: "voice" } : undefined);
+                      return responseText;
+                    },
+                  },
+                  audioBuffer,
+                ).catch((err: Error) => {
+                  ws.send(JSON.stringify({
+                    type: "voice_error",
+                    message: err.message ?? "Voice processing error",
+                  }));
+                });
+                return;
+              }
+            } catch {
+              ws.send(JSON.stringify({ type: "voice_error", message: "Invalid JSON" }));
+            }
+          } else if (collecting && evt.data instanceof ArrayBuffer) {
+            chunks.push(Buffer.from(evt.data));
+          } else if (collecting && evt.data instanceof Uint8Array) {
+            chunks.push(Buffer.from(evt.data));
+          }
+        },
+
+        onClose() {
+          chunks.length = 0;
+        },
+      };
+    }),
+  );
+
   app.post("/api/message", async (c) => {
     const body = await c.req.json<{
       text: string;
@@ -905,7 +1019,18 @@ export async function createGateway(config: GatewayConfig) {
       svg: "image/svg+xml",
     };
 
-    if (imageMimeTypes[ext]) {
+    const binaryMimeTypes: Record<string, string> = {
+      mp3: "audio/mpeg",
+      wav: "audio/wav",
+      ogg: "audio/ogg",
+      webm: "audio/webm",
+      m4a: "audio/mp4",
+      flac: "audio/flac",
+      opus: "audio/opus",
+      pdf: "application/pdf",
+    };
+
+    if (imageMimeTypes[ext] || binaryMimeTypes[ext]) {
       const stat = statSync(fullPath);
       const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
       if (c.req.header("if-none-match") === etag) {
@@ -913,7 +1038,7 @@ export async function createGateway(config: GatewayConfig) {
       }
       const buffer = readFileSync(fullPath);
       return c.body(buffer, 200, {
-        "Content-Type": imageMimeTypes[ext],
+        "Content-Type": imageMimeTypes[ext] || binaryMimeTypes[ext],
         "Cache-Control": "public, max-age=86400, immutable",
         "CDN-Cache-Control": "public, max-age=86400",
         "ETag": etag,
@@ -1540,6 +1665,16 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(getLeaderboard(homePath, game));
   });
 
+  // Voice REST endpoints + webhook router
+  app.route(
+    "/api/voice",
+    createVoiceRoutes({ voiceService, callStore, homePath }),
+  );
+  app.route(
+    "/voice/webhook",
+    createWebhookRouter({ callManager, providers: voiceProviders }),
+  );
+
   app.get("/health", (c) => c.json({
     status: "ok",
     cronJobs: cronService.listJobs().length,
@@ -1600,6 +1735,7 @@ export async function createGateway(config: GatewayConfig) {
     proactiveHeartbeat,
     pluginRegistry,
     hookRunner,
+    voiceService,
     async close() {
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch(() => {});
@@ -1610,6 +1746,7 @@ export async function createGateway(config: GatewayConfig) {
         try { await services[i].stop(); } catch { /* ignore */ }
       }
 
+      voiceService.stop();
       heartbeat.stop();
       watchdog.stop();
       proactiveHeartbeat.stop();
