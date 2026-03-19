@@ -7,7 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -19,7 +18,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Scan QR codes to connect to your Matrix OS gateway",
         "NSMicrophoneUsageDescription": "Voice input for chat messages",
-        "NSFaceIDUsageDescription": "Biometric authentication to secure your Matrix OS data"
+        "NSFaceIDUsageDescription": "Biometric authentication to secure your Matrix OS data",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -32,7 +32,11 @@
         "CAMERA",
         "RECORD_AUDIO",
         "USE_BIOMETRIC",
-        "VIBRATE"
+        "VIBRATE",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -60,6 +64,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cdd27a8d-aebc-446a-8e18-d735c78d3b2d"
+      }
     }
   }
 }
