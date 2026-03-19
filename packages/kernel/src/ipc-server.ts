@@ -838,19 +838,50 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "app_data",
-        "Read or write persistent data for any app. Data is stored in ~/data/{app}/{key}.json. Use this to interact with app state from chat (e.g., add a task to a task manager, read notes, update expenses).",
+        "Query or modify persistent data for any app. Supports structured queries (find/insert/update/delete) via Postgres, and legacy key-value (read/write/list). Use structured actions when the app has declared storage tables in its manifest. Use 'list_apps' to discover what apps and tables are available, 'schema' to see an app's table structure.",
         {
-          action: z.enum(["read", "write", "list"]).describe("read: get data, write: set data, list: show all keys for an app"),
-          app: z.string().describe("App name/slug (e.g., 'task-manager', 'notes', 'expense-tracker')"),
-          key: z.string().optional().describe("Data key (required for read/write)"),
-          value: z.string().optional().describe("JSON string to write (required for write action)"),
+          action: z.enum(["find", "findOne", "insert", "update", "delete", "count", "schema", "list_apps", "read", "write", "list"]).describe("Structured: find/findOne/insert/update/delete/count/schema/list_apps. Legacy: read/write/list"),
+          app: z.string().describe("App slug (e.g., 'todo', 'notes', 'expense-tracker')"),
+          table: z.string().optional().describe("Table name (required for structured actions)"),
+          filter: z.record(z.unknown()).optional().describe("Filter object: { done: false, due: { $lte: '2026-03-21' } }"),
+          data: z.record(z.unknown()).optional().describe("Data to insert/update"),
+          id: z.string().optional().describe("Row ID (for findOne/update/delete)"),
+          orderBy: z.record(z.enum(["asc", "desc"])).optional().describe("Sort order: { due: 'asc' }"),
+          limit: z.number().optional().describe("Max rows to return"),
+          key: z.string().optional().describe("Data key (legacy read/write/list)"),
+          value: z.string().optional().describe("JSON string (legacy write)"),
         },
-        async ({ action, app, key, value }) => {
+        async ({ action, app, table, filter, data, id, orderBy, limit, key, value }) => {
+          const gatewayPort = process.env.PORT || process.env.GATEWAY_PORT || "4000";
+          const gatewayUrl = `http://localhost:${gatewayPort}`;
+
+          // Structured actions go to /api/bridge/query
+          if (["find", "findOne", "insert", "update", "delete", "count", "schema", "list_apps"].includes(action)) {
+            try {
+              const res = await fetch(`${gatewayUrl}/api/bridge/query`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action, app, table, filter, data, id, orderBy, limit }),
+              });
+              const result = await res.json();
+              if (!res.ok) {
+                return { content: [{ type: "text" as const, text: `Error: ${result.error || res.statusText}` }] };
+              }
+              return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+            } catch (e) {
+              // Fall through to file-based handler if gateway query endpoint unavailable
+              if (action === "schema" || action === "list_apps") {
+                return { content: [{ type: "text" as const, text: `Database not available: ${(e as Error).message}` }] };
+              }
+            }
+          }
+
+          // Legacy actions (read/write/list) -- file-based fallback
           if (!homePath) {
             return { content: [{ type: "text" as const, text: "Cannot access app data (no home path)" }] };
           }
           const { appDataHandler } = await import("./app-data.js");
-          return appDataHandler(homePath, { action, app, key, value });
+          return appDataHandler(homePath, { action: action as "read" | "write" | "list", app, key, value });
         },
       ),
 
