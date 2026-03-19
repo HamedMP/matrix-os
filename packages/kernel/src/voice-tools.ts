@@ -43,8 +43,8 @@ export async function handleSpeakTool(
   }
 
   try {
-    const options = params.provider
-      ? { voice: undefined, model: undefined, format: undefined as TtsOptions["format"] }
+    const options: TtsOptions | undefined = params.provider
+      ? { voice: params.provider }
       : undefined;
 
     const result = await deps.synthesize(params.text, options);

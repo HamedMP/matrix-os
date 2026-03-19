@@ -29,7 +29,14 @@ export async function handleVoiceWsMessage(
 
   ctx.send(JSON.stringify({ type: "voice_transcription", text: transcriptText }));
 
-  const responseText = await ctx.dispatch(transcriptText, { source: "voice" });
+  let responseText: string;
+  try {
+    responseText = await ctx.dispatch(transcriptText, { source: "voice" });
+  } catch (e) {
+    console.error("Dispatch failed:", e instanceof Error ? e.message : String(e));
+    ctx.send(JSON.stringify({ type: "voice_error", message: "Failed to process your message. Please try again." }));
+    return;
+  }
 
   try {
     const ttsResult = await ctx.voiceService.synthesize(responseText);

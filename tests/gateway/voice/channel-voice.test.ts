@@ -54,7 +54,10 @@ describe("handleVoiceNote", () => {
       stt,
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledWith("https://api.telegram.org/file/bot123/audio.ogg");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.telegram.org/file/bot123/audio.ogg",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("saves to ~/data/audio/{channel}-{timestamp}.{ext}", async () => {

@@ -55,7 +55,17 @@ export async function handleVoiceNote(params: {
     };
   }
 
-  const response = await fetch(audioUrl);
+  let response: Response;
+  try {
+    response = await fetch(audioUrl, { signal: AbortSignal.timeout(30_000) });
+  } catch (e) {
+    return {
+      filePath,
+      transcript: null,
+      durationMs: 0,
+      error: `Download failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
   if (!response.ok) {
     return {
       filePath,
@@ -63,6 +73,19 @@ export async function handleVoiceNote(params: {
       durationMs: 0,
       error: `Download failed: ${response.status}`,
     };
+  }
+
+  const contentLength = response.headers?.get?.("content-length");
+  if (contentLength) {
+    const declaredSize = parseInt(contentLength, 10);
+    if (!Number.isNaN(declaredSize) && declaredSize > MAX_VOICE_SIZE) {
+      return {
+        filePath,
+        transcript: null,
+        durationMs: 0,
+        error: `File too large: ${(declaredSize / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit`,
+      };
+    }
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());

@@ -58,7 +58,6 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
 
       return c.json({
         audioUrl,
-        localPath,
         durationMs: result.durationMs,
         provider: result.provider,
         format: result.format,

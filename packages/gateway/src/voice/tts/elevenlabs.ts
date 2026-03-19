@@ -24,6 +24,9 @@ export class ElevenLabsTtsProvider implements TtsProvider {
 
   async synthesize(text: string, options?: TtsOptions): Promise<TtsResult> {
     const voiceId = options?.voice || this.defaultVoiceId;
+    if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) {
+      throw new Error(`Invalid voiceId: contains disallowed characters`);
+    }
     const response = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
       {

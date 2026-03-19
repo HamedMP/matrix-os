@@ -75,7 +75,9 @@ import { createVoiceRoutes } from "./voice/routes.js";
 import { createWebhookRouter } from "./voice/webhook.js";
 import { handleVoiceWsMessage } from "./voice/voice-ws.js";
 import { MockProvider } from "./voice/providers/mock.js";
+import { TwilioProvider } from "./voice/providers/twilio.js";
 import type { VoiceCallProvider } from "./voice/providers/base.js";
+import { VoiceConfigSchema } from "./voice/types.js";
 
 export interface GatewayConfig {
   homePath: string;
@@ -466,6 +468,43 @@ export async function createGateway(config: GatewayConfig) {
   const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));
   const voiceProviders = new Map<string, VoiceCallProvider>();
   voiceProviders.set("mock", new MockProvider());
+
+  // Register TwilioProvider when credentials are available
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    try {
+      const twilioProvider = new TwilioProvider({
+        accountSid: process.env.TWILIO_ACCOUNT_SID,
+        authToken: process.env.TWILIO_AUTH_TOKEN,
+        fromNumber: process.env.TWILIO_FROM_NUMBER || "+10000000000",
+        publicUrl: process.env.MATRIX_VOICE_WEBHOOK_URL,
+      });
+      voiceProviders.set("twilio", twilioProvider);
+
+      const parsedVoiceConfig = VoiceConfigSchema.parse(voiceConfig);
+      callManager.initialize(twilioProvider, parsedVoiceConfig);
+      console.log("[voice] Twilio provider registered and CallManager initialized");
+    } catch (e) {
+      console.warn("[voice] Failed to initialize Twilio provider:", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // Wire CallStore persistence: persist call records on creation
+  const originalInitiateCall = callManager.initiateCall.bind(callManager);
+  callManager.initiateCall = async (...args) => {
+    const record = await originalInitiateCall(...args);
+    callStore.append(record);
+    return record;
+  };
+
+  const originalProcessEvent = callManager.processEvent.bind(callManager);
+  callManager.processEvent = (callId, event) => {
+    originalProcessEvent(callId, event);
+    const updatedCall = callManager.getCall(callId);
+    if (updatedCall) {
+      callStore.update(callId, updatedCall);
+    }
+  };
+
   // Expose callManager globally for IPC tools
   (globalThis as Record<string, unknown>).__matrixCallManager = callManager;
 

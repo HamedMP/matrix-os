@@ -117,7 +117,7 @@ export class TwilioProvider implements VoiceCallProvider {
     }
 
     const baseEvent = {
-      id: `twilio-${callSid}-${callStatus}-${Date.now()}`,
+      id: `twilio-${callSid}-${callStatus}`,
       callId: callSid,
       providerCallId: callSid,
       timestamp: Date.now(),
@@ -230,7 +230,10 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async startListening(input: StartListeningInput): Promise<void> {
-    const twiml = `<Response><Gather input="speech" action="" method="POST" speechTimeout="auto"><Say>I'm listening.</Say></Gather></Response>`;
+    const actionUrl = this.config.publicUrl
+      ? `${this.config.publicUrl.replace(/\/$/, "")}/voice/webhook/twilio`
+      : "/voice/webhook/twilio";
+    const twiml = `<Response><Gather input="speech" action="${this.escapeXml(actionUrl)}" method="POST" speechTimeout="auto"><Say>I'm listening.</Say></Gather></Response>`;
 
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls/${input.providerCallId}.json`;
 
