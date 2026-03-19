@@ -23,11 +23,15 @@
   },
   "voice": {
     "enabled": false,
-    "elevenlabs_key": "",
-    "voice_id": "21m00Tcm4TlvDq8ikWAM",
-    "model": "eleven_turbo_v2_5",
-    "stt_provider": "elevenlabs",
-    "auto_speak_responses": false
+    "tts": {
+      "provider": "auto"
+    },
+    "stt": {
+      "provider": "whisper"
+    },
+    "telephony": {
+      "mode": "managed"
+    }
   },
   "tools": {
     "web": {

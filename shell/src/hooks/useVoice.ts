@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { getGatewayWs } from "../lib/gateway";
 
 interface UseVoiceOptions {
   wsUrl?: string;
@@ -37,8 +38,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
 
   const getWsUrl = useCallback(() => {
     if (opts?.wsUrl) return opts.wsUrl;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.host}/ws/voice`;
+    return getGatewayWs().replace(/\/ws$/, "/ws/voice");
   }, [opts?.wsUrl]);
 
   const connectWs = useCallback(() => {
@@ -51,16 +51,17 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
       if (typeof event.data === "string") {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === "transcription" && opts?.onTranscription) {
+          if (msg.type === "voice_transcription" && opts?.onTranscription) {
             setIsTranscribing(false);
             opts.onTranscription(msg.text);
           }
-          if (msg.type === "audio_done") {
-            setIsPlaying(false);
+          if (msg.type === "voice_audio" && msg.audio) {
+            const binary = Uint8Array.from(atob(msg.audio), c => c.charCodeAt(0));
+            playAudio(binary.buffer);
           }
-          if (msg.type === "error" && opts?.onError) {
+          if (msg.type === "voice_error") {
             setIsTranscribing(false);
-            opts.onError(msg.message);
+            opts?.onError?.(msg.message);
           }
         } catch {}
       } else if (event.data instanceof Blob) {

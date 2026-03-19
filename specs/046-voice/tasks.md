@@ -493,6 +493,141 @@ Implementation:
 
 ---
 
+## Phase F: Voice Conversation Mode (Future)
+
+### Analysis: Real-Time Voice Architecture
+
+Matrix OS needs two voice modes with distinct architectures:
+
+**Mode 1: Transcribe-only (DONE)** -- Mic transcribes, fills input, user sends manually. Uses Whisper STT. No auto-reply audio.
+
+**Mode 2: Voice conversation** -- Full duplex voice conversation with the AI agent. This is the complex one. Options analyzed:
+
+| Approach | Latency | Uses Kernel | Tools/Skills/Memory | Status |
+|----------|---------|-------------|---------------------|--------|
+| Gemini Live | ~200ms | No (bypasses kernel) | No | Available now |
+| OpenAI Realtime | ~300ms | No (bypasses kernel) | No | Available now |
+| Custom pipeline (STT -> Kernel -> TTS) | ~2-3s | Yes | Yes | Built (Phase A-E) |
+| Anthropic Voice API | ~200ms (est.) | Yes (native) | Yes | Not yet released |
+
+**Decision: Custom pipeline as default, Gemini Live as optional "quick voice".**
+
+Gemini Live gives the best voice UX (instant, natural, barge-in) but bypasses the Claude kernel entirely. The user would talk to Gemini, not their Matrix OS agent with SOUL, skills, memory, tools, and file system. This is unacceptable as the default.
+
+The custom pipeline (Whisper -> kernel dispatch -> ElevenLabs TTS) is slower but routes through the actual kernel agent. When Anthropic ships their real-time voice API, it replaces the pipeline with native Claude voice at real-time latency.
+
+**Recommended architecture:**
+1. **Default voice mode**: Custom pipeline with improved UX (AudioWorklet, client-side VAD, streaming TTS)
+2. **Quick voice mode** (optional): Gemini Live for casual conversation without kernel tools
+3. **Endgame**: Anthropic real-time voice API when available (same kernel, real-time latency)
+
+### Audio Infrastructure (port from finna-discovery)
+
+Port the production-grade audio layer from `~/dev/finna/finna-discovery/packages/voice-interview/`:
+- `AudioCapture` -- Web Audio API + AudioWorklet for real-time PCM encoding (16kHz)
+- `AudioPlayback` -- Queue-based playback with lookahead scheduling (24kHz)
+- `pcm-encoder.worklet.js` -- AudioWorklet processor (separate thread, no main-thread jank)
+- Client-side VAD using AnalyserNode RMS level detection
+- These are provider-agnostic and work with any backend
+
+Also port UI components:
+- `Orb` -- Already installed (ElevenLabs UI). Wire `agentState` + volume refs properly.
+- `LiveWaveform` -- Real-time frequency visualization for mic preview
+- `AudioLevelBars` -- VU meter visualization
+- `Conversation` -- Auto-scrolling transcript display
+
+### T1330: Port audio infrastructure from finna-discovery
+
+- [ ] T1330a Copy and adapt `AudioCapture.ts` to `shell/src/lib/voice/audio-capture.ts`
+  - Web Audio API + AudioWorklet
+  - Mic with echo cancellation, noise suppression, auto gain
+  - 16kHz PCM16 encoding in AudioWorklet thread
+  - Audio level monitoring via AnalyserNode RMS
+  - Device selection support
+- [ ] T1330b Copy and adapt `AudioPlayback.ts` to `shell/src/lib/voice/audio-playback.ts`
+  - Queue-based scheduling with lookahead
+  - Base64 PCM -> Float32 -> AudioBuffer
+  - 24kHz output, GainNode volume control
+  - Interrupt support (clear queue on barge-in)
+- [ ] T1330c Copy `pcm-encoder.worklet.js` to `shell/public/pcm-encoder.worklet.js`
+  - Float32 -> Int16 -> Base64 encoding
+  - 50ms chunk buffering
+  - RMS level calculation
+- [ ] T1330d Port `LiveWaveform` component to `shell/src/components/ui/live-waveform.tsx`
+- [ ] T1330e Port `AudioLevelBars` component to `shell/src/components/ui/audio-level-bars.tsx`
+
+### T1331: Voice conversation mode (kernel-routed)
+
+- [ ] T1331a Create `shell/src/hooks/useVoiceConversation.ts`:
+  - State machine: idle -> connecting -> active -> completed/error
+  - Uses AudioCapture for mic input
+  - Uses AudioPlayback for TTS output
+  - Sends audio chunks to gateway `/ws/voice` for STT
+  - Receives transcription -> dispatches to kernel
+  - Receives kernel response -> sends to TTS -> plays audio
+  - Client-side VAD: detect silence (configurable threshold) -> auto-send
+  - Transcript management (merge consecutive segments from same speaker)
+  - Auto-listen after AI finishes speaking (conversation loop)
+- [ ] T1331b Create `shell/src/components/VoiceConversation.tsx`:
+  - Fullscreen overlay (replaces current VoiceMode.tsx)
+  - Orb with proper agentState (listening/thinking/talking) + volume refs
+  - LiveWaveform for mic preview
+  - Auto-scrolling transcript panel
+  - Controls: mute, end conversation
+  - Status indicators (connected, duration timer)
+- [ ] T1331c Modify gateway `/ws/voice` to support streaming mode:
+  - Accept continuous audio chunks (not just single recording)
+  - Stream STT results back as partials
+  - Stream TTS audio chunks back (not wait for full synthesis)
+
+### T1332: Gemini Live quick voice mode (optional)
+
+- [ ] T1332a Create `shell/src/lib/voice/gemini-live-client.ts`:
+  - Adapt from finna-discovery's GeminiLiveClient
+  - WebSocket to Gemini Live API
+  - Bidirectional audio streaming (16kHz in, 24kHz out)
+  - Input/output transcription
+  - VAD with configurable silence duration
+  - Barge-in support
+- [ ] T1332b Add Gemini token endpoint to gateway:
+  - `POST /api/voice/gemini-token` -> ephemeral token via Google GenAI SDK
+  - Requires `GOOGLE_API_KEY` env var
+  - Token: 5 uses, 30 min expiry
+- [ ] T1332c Create `shell/src/hooks/useGeminiVoice.ts`:
+  - Wraps GeminiLiveClient + AudioCapture + AudioPlayback
+  - Same interface as useVoiceConversation (agentState, transcript, start/end)
+  - System prompt injected from kernel SOUL + active conversation context
+- [ ] T1332d Add mode toggle in VoiceConversation UI:
+  - Default: kernel-routed (shows "Matrix OS" label)
+  - Quick: Gemini Live (shows "Quick Voice" label)
+  - Configurable default in ~/system/config.json
+
+### T1333: UX polish
+
+- [ ] T1333a Mic button behavior:
+  - Default: transcribe-only, fill input, user sends manually (DONE)
+  - Long-press (>500ms): enter voice conversation mode directly
+- [ ] T1333b Voice conversation entry points:
+  - AudioLines button in InputBar (DONE)
+  - Command palette: "Start voice conversation"
+  - Keyboard shortcut: Cmd+Shift+V
+- [ ] T1333c Voice settings in Settings UI:
+  - Default voice mode (transcribe / conversation)
+  - Default conversation engine (kernel / gemini)
+  - TTS voice selection (ElevenLabs voice picker)
+  - VAD sensitivity slider
+  - Auto-speak responses toggle
+
+---
+
+**Phase F Checkpoint:** Voice conversation works end-to-end with kernel agent. Orb shows correct states. Audio is clean with no echo/feedback. Transcript auto-scrolls. Gemini Live mode available as optional toggle.
+
+---
+
+**Phase F Checkpoint:** Send Telegram voice note -> auto-transcribed -> kernel responds.
+
+---
+
 ## Summary
 
 | Task | Description | Phase | Deps |
@@ -521,3 +656,7 @@ Implementation:
 | T1321 | Voice knowledge file | D | - |
 | T1322 | Channel voice note utility | E | T1303 |
 | T1323 | Telegram voice notes | E | T1322 |
+| T1330 | Port audio infrastructure from finna-discovery | F | - |
+| T1331 | Voice conversation mode (kernel-routed) | F | T1304, T1330 |
+| T1332 | Gemini Live quick voice mode | F | T1330 |
+| T1333 | UX polish (long-press, shortcuts, settings) | F | T1331 |

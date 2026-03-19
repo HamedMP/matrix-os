@@ -269,15 +269,63 @@ Phase A (core) ─┬─> Phase B (shell voice)
                 └─> Phase E (channel voice notes)
 ```
 
-A is prerequisite for everything. B, C, E are independent after A. D requires C.
+A is prerequisite for everything. B, C, E are independent after A. D requires C. F requires A + audio infrastructure port.
+
+## Phase F: Voice Conversation Mode (TODO)
+
+Full duplex voice conversation with the AI agent. Two engines behind a common UI.
+
+### F1: Audio infrastructure port
+
+Port AudioCapture, AudioPlayback, pcm-encoder.worklet.js from finna-discovery. Provider-agnostic audio layer.
+
+**New files:**
+- `shell/src/lib/voice/audio-capture.ts`
+- `shell/src/lib/voice/audio-playback.ts`
+- `shell/public/pcm-encoder.worklet.js`
+- `shell/src/components/ui/live-waveform.tsx`
+- `shell/src/components/ui/audio-level-bars.tsx`
+
+### F2: Kernel-routed voice conversation
+
+useVoiceConversation hook: AudioCapture -> gateway STT -> kernel dispatch -> TTS -> AudioPlayback. Client-side VAD for auto-send. Auto-listen after AI response.
+
+**New files:**
+- `shell/src/hooks/useVoiceConversation.ts`
+- `shell/src/components/VoiceConversation.tsx` (replaces current VoiceMode.tsx)
+
+**Modified:**
+- `packages/gateway/src/server.ts` (streaming voice WS mode)
+
+### F3: Gemini Live quick voice (optional)
+
+GeminiLiveClient adapted from finna-discovery. Direct WebSocket to Gemini Live API. Ephemeral token endpoint in gateway.
+
+**New files:**
+- `shell/src/lib/voice/gemini-live-client.ts`
+- `shell/src/hooks/useGeminiVoice.ts`
+
+**Modified:**
+- `packages/gateway/src/server.ts` (Gemini token endpoint)
+
+### F4: UX polish
+
+Long-press mic for conversation mode, command palette entry, keyboard shortcuts, voice settings UI.
+
+**Checkpoint:** Voice conversation works end-to-end with kernel agent. Orb shows correct states. Audio clean. Transcript auto-scrolls. Gemini Live mode toggleable.
+
+---
 
 ## Estimated Test Count
 
-| Phase | Tests |
-|-------|-------|
-| A: Core | ~35 |
-| B: Shell | ~10 |
-| C: Telephony | ~60 |
-| D: Platform | ~10 |
-| E: Channels | ~5 |
-| **Total** | **~120** |
+| Phase | Tests | Status |
+|-------|-------|--------|
+| A: Core | 180 | DONE |
+| B: Shell | 54 | DONE |
+| C: Telephony | 95 | DONE |
+| D: Platform | 42 | DONE |
+| E: Channels | 18 | DONE |
+| F: Voice Conversation | ~40 | TODO |
+| **Total** | **~430** | |
+
+**Actual tests as of Phase A-E: 2522 (580 new voice tests)**
