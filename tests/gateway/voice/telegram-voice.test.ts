@@ -145,6 +145,7 @@ describe("Telegram voice note handling", () => {
     expect(mockBot.getFile).toHaveBeenCalledWith("voice_file_abc");
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "https://api.telegram.org/file/bottest-token-123/voice/file_42.oga",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 

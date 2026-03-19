@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 
 import {
   handleVoiceNote,
+  isAllowedAudioUrl,
   type VoiceNoteResult,
 } from "../../../packages/gateway/src/voice/channel-voice.js";
 import type { SttProvider } from "../../../packages/gateway/src/voice/stt/base.js";
@@ -47,13 +48,16 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledWith("https://example.com/audio.ogg");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.telegram.org/file/bot123/audio.ogg",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("saves to ~/data/audio/{channel}-{timestamp}.{ext}", async () => {
@@ -65,7 +69,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -85,7 +89,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -104,7 +108,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -125,7 +129,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -145,7 +149,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/missing.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/missing.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -168,7 +172,7 @@ describe("handleVoiceNote", () => {
     });
 
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -193,7 +197,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -210,7 +214,7 @@ describe("handleVoiceNote", () => {
     });
 
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt: null,
@@ -231,7 +235,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt({ isAvailable: vi.fn(() => false) });
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.ogg",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
       channel: "telegram",
       homePath,
       stt,
@@ -250,7 +254,7 @@ describe("handleVoiceNote", () => {
 
     const stt = createMockStt();
     const result = await handleVoiceNote({
-      audioUrl: "https://example.com/audio.mp3",
+      audioUrl: "https://api.telegram.org/file/bot123/audio.mp3",
       channel: "discord",
       homePath,
       stt,
@@ -258,5 +262,75 @@ describe("handleVoiceNote", () => {
     });
 
     expect(result.filePath).toMatch(/discord-\d+\.mp3$/);
+  });
+
+  it("rejects URLs from non-allowlisted hosts", async () => {
+    globalThis.fetch = vi.fn();
+    const stt = createMockStt();
+    const result = await handleVoiceNote({
+      audioUrl: "https://evil.example.com/audio.ogg",
+      channel: "telegram",
+      homePath,
+      stt,
+    });
+
+    expect(result.transcript).toBeNull();
+    expect(result.error).toBe("Audio URL not allowed");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-HTTPS URLs", async () => {
+    const stt = createMockStt();
+    const result = await handleVoiceNote({
+      audioUrl: "http://api.telegram.org/file/bot123/audio.ogg",
+      channel: "telegram",
+      homePath,
+      stt,
+    });
+
+    expect(result.transcript).toBeNull();
+    expect(result.error).toBe("Audio URL not allowed");
+  });
+
+  it("sanitizes channel and extension in filename", async () => {
+    const audioData = Buffer.from("fake-ogg-audio");
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(audioData.buffer.slice(audioData.byteOffset, audioData.byteOffset + audioData.byteLength)),
+    });
+
+    const stt = createMockStt();
+    const result = await handleVoiceNote({
+      audioUrl: "https://api.telegram.org/file/bot123/audio.ogg",
+      channel: "../etc/passwd",
+      homePath,
+      stt,
+      extension: "../../etc",
+    });
+
+    expect(result.filePath).toMatch(/etcpasswd-\d+\.etc$/);
+    expect(result.filePath).not.toContain("..");
+  });
+});
+
+describe("isAllowedAudioUrl", () => {
+  it("allows api.telegram.org", () => {
+    expect(isAllowedAudioUrl("https://api.telegram.org/file/bot123/audio.ogg")).toBe(true);
+  });
+
+  it("allows cdn.discordapp.com", () => {
+    expect(isAllowedAudioUrl("https://cdn.discordapp.com/attachments/123/audio.ogg")).toBe(true);
+  });
+
+  it("rejects unknown hosts", () => {
+    expect(isAllowedAudioUrl("https://evil.com/audio.ogg")).toBe(false);
+  });
+
+  it("rejects http (non-https)", () => {
+    expect(isAllowedAudioUrl("http://api.telegram.org/file/bot123/audio.ogg")).toBe(false);
+  });
+
+  it("rejects invalid URLs", () => {
+    expect(isAllowedAudioUrl("not-a-url")).toBe(false);
   });
 });

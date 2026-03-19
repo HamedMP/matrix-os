@@ -59,9 +59,7 @@ describe("Voice IPC Tools", () => {
       await handleSpeakTool(deps, { text: "Hello", provider: "edge" });
 
       expect(deps.synthesize).toHaveBeenCalledWith("Hello", {
-        voice: undefined,
-        model: undefined,
-        format: undefined,
+        voice: "edge",
       });
     });
 
