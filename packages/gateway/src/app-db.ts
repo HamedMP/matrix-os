@@ -141,6 +141,21 @@ export function createAppDb(opts: string | { dialect: any }): AppDb {
         const result = await pool.query(query, params);
         return { rows: result.rows };
       }
+      // For pglite/non-pg-pool: build a parameterized sql tagged template
+      if (params && params.length > 0) {
+        // Convert $1, $2, ... placeholders into Kysely sql template parts
+        const parts = query.split(/\$\d+/);
+        const sqlChunks: unknown[] = [parts[0]];
+        for (let i = 0; i < params.length; i++) {
+          sqlChunks.push(params[i]);
+          sqlChunks.push(parts[i + 1] ?? "");
+        }
+        // Use Kysely's sql template to properly parameterize
+        const strings = parts as unknown as TemplateStringsArray;
+        const compiled = sql(strings, ...params);
+        const result = await compiled.execute(kysely);
+        return { rows: (result.rows ?? []) as Record<string, unknown>[] };
+      }
       const result = await sql.raw(query).execute(kysely);
       return { rows: (result.rows ?? []) as Record<string, unknown>[] };
     },
