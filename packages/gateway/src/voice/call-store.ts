@@ -2,14 +2,18 @@ import {
   existsSync,
   readFileSync,
   appendFileSync,
+  writeFileSync,
   mkdirSync,
 } from "node:fs";
 import { dirname } from "node:path";
 import { TerminalStates, type CallRecord } from "./types.js";
 
+const COMPACTION_THRESHOLD = 100;
+
 export class CallStore {
   private readonly path: string;
   private cache: Map<string, CallRecord>;
+  private appendsSinceCompaction = 0;
 
   constructor(path: string) {
     this.path = path;
@@ -44,6 +48,8 @@ export class CallStore {
     this.ensureDir();
     this.cache.set(record.callId, record);
     appendFileSync(this.path, JSON.stringify(record) + "\n");
+    this.appendsSinceCompaction++;
+    this.maybeCompact();
   }
 
   getAll(): CallRecord[] {
@@ -66,10 +72,27 @@ export class CallStore {
     this.cache.set(callId, updated);
     this.ensureDir();
     appendFileSync(this.path, JSON.stringify(updated) + "\n");
+    this.appendsSinceCompaction++;
+    this.maybeCompact();
   }
 
   getRecent(limit: number): CallRecord[] {
     const all = this.getAll();
     return all.slice(-limit);
+  }
+
+  compact(): void {
+    this.ensureDir();
+    const lines = Array.from(this.cache.values())
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    writeFileSync(this.path, lines ? lines + "\n" : "");
+    this.appendsSinceCompaction = 0;
+  }
+
+  private maybeCompact(): void {
+    if (this.appendsSinceCompaction >= COMPACTION_THRESHOLD) {
+      this.compact();
+    }
   }
 }

@@ -26,6 +26,7 @@ export type InitiateCallOptions = {
 type CallTimers = {
   maxDuration?: ReturnType<typeof setTimeout>;
   silence?: ReturnType<typeof setTimeout>;
+  eviction?: ReturnType<typeof setTimeout>;
 };
 
 export class CallManager {
@@ -146,6 +147,10 @@ export class CallManager {
       this.clearTimers(callId);
     }
 
+    if (TerminalStates.has(call.state)) {
+      this.scheduleEviction(callId);
+    }
+
     call.processedEventIds.push(event.id);
   }
 
@@ -188,10 +193,13 @@ export class CallManager {
       reason: "hangup-bot",
     });
 
-    call.state = "hangup-bot";
-    call.endedAt = Date.now();
-    call.endReason = "hangup-bot";
-    this.clearTimers(callId);
+    this.processEvent(callId, {
+      id: `hangup-${randomUUID()}`,
+      callId,
+      timestamp: Date.now(),
+      type: "call.ended",
+      reason: "hangup-bot",
+    });
   }
 
   async speak(callId: string, text: string): Promise<void> {
@@ -211,9 +219,12 @@ export class CallManager {
   }
 
   destroy(): void {
-    for (const callId of this.timers.keys()) {
-      this.clearTimers(callId);
+    for (const [, timers] of this.timers) {
+      if (timers.maxDuration) clearTimeout(timers.maxDuration);
+      if (timers.silence) clearTimeout(timers.silence);
+      if (timers.eviction) clearTimeout(timers.eviction);
     }
+    this.timers.clear();
     this.activeCalls.clear();
     this.providerCallIdMap.clear();
     this.callOptions.clear();
@@ -305,13 +316,31 @@ export class CallManager {
     existing.maxDuration = setTimeout(() => {
       const call = this.activeCalls.get(callId);
       if (call && !TerminalStates.has(call.state)) {
-        call.state = "timeout";
-        call.endedAt = Date.now();
-        call.endReason = "timeout";
-        this.clearTimers(callId);
+        this.processEvent(callId, {
+          id: `timeout-${randomUUID()}`,
+          callId,
+          timestamp: Date.now(),
+          type: "call.ended",
+          reason: "timeout",
+        });
       }
     }, maxDurationMs);
 
+    this.timers.set(callId, existing);
+  }
+
+  private scheduleEviction(callId: string): void {
+    const existing = this.timers.get(callId) ?? {};
+    if (existing.eviction) return;
+    existing.eviction = setTimeout(() => {
+      this.activeCalls.delete(callId);
+      this.callOptions.delete(callId);
+      const provId = [...this.providerCallIdMap.entries()].find(
+        ([, id]) => id === callId,
+      )?.[0];
+      if (provId) this.providerCallIdMap.delete(provId);
+      this.timers.delete(callId);
+    }, 5 * 60_000);
     this.timers.set(callId, existing);
   }
 
@@ -320,7 +349,13 @@ export class CallManager {
     if (timers) {
       if (timers.maxDuration) clearTimeout(timers.maxDuration);
       if (timers.silence) clearTimeout(timers.silence);
-      this.timers.delete(callId);
+      // Do not clear eviction timer — it should fire after terminal state
+      if (!timers.eviction) {
+        this.timers.delete(callId);
+      } else {
+        timers.maxDuration = undefined;
+        timers.silence = undefined;
+      }
     }
   }
 }

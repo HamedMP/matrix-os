@@ -160,4 +160,37 @@ describe("CallStore", () => {
       expect(recent.length).toBe(1);
     });
   });
+
+  describe("compact()", () => {
+    it("rewrites file with one line per unique callId", () => {
+      store.append(makeRecord({ callId: "call-1", state: "initiated" }));
+      store.update("call-1", { state: "ringing" });
+      store.update("call-1", { state: "completed" });
+
+      // Before compaction: 3 lines (1 append + 2 updates)
+      const beforeLines = readFileSync(storePath, "utf-8").trim().split("\n");
+      expect(beforeLines.length).toBe(3);
+
+      store.compact();
+
+      // After compaction: 1 line per unique callId
+      const afterLines = readFileSync(storePath, "utf-8").trim().split("\n");
+      expect(afterLines.length).toBe(1);
+      expect(JSON.parse(afterLines[0]!).state).toBe("completed");
+    });
+
+    it("preserves data after compaction", () => {
+      store.append(makeRecord({ callId: "a" }));
+      store.append(makeRecord({ callId: "b" }));
+      store.update("a", { state: "completed" });
+
+      store.compact();
+
+      // Reloading from disk should see the same data
+      const freshStore = new CallStore(storePath);
+      expect(freshStore.getAll().length).toBe(2);
+      expect(freshStore.getById("a")!.state).toBe("completed");
+      expect(freshStore.getById("b")!.state).toBe("initiated");
+    });
+  });
 });

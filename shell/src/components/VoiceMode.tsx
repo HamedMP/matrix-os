@@ -15,9 +15,7 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
   const [agentState, setAgentState] = useState<AgentState>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [currentText, setCurrentText] = useState("");
-  const inputVolumeRef = useRef(0);
-  const outputVolumeRef = useRef(0);
-  const analyserRef = useRef<AnalyserNode | null>(null);
+  const hasErrorRef = useRef(false);
   const animFrameRef = useRef<number>(0);
 
   const {
@@ -37,12 +35,14 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
     },
     onError: (err) => {
       setCurrentText(`Error: ${err}`);
+      hasErrorRef.current = true;
       setAgentState(null);
     },
   });
 
   useEffect(() => {
     if (isRecording) {
+      hasErrorRef.current = false;
       setAgentState("listening");
       setCurrentText("Listening...");
     } else if (isTranscribing) {
@@ -53,7 +53,7 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
       setCurrentText("Speaking...");
     } else {
       setAgentState(null);
-      if (!currentText.startsWith("Error:")) {
+      if (!hasErrorRef.current) {
         setCurrentText("Tap mic to speak");
       }
     }

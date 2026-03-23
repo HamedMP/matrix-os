@@ -450,4 +450,92 @@ describe("CallManager", () => {
       vi.useRealTimers();
     });
   });
+
+  describe("endCall() routes through processEvent", () => {
+    it("is observable via monkey-patched processEvent", async () => {
+      const events: NormalizedEvent[] = [];
+      const origProcess = manager.processEvent.bind(manager);
+      manager.processEvent = (callId, event) => {
+        events.push(event);
+        origProcess(callId, event);
+      };
+
+      const { callId } = await manager.initiateCall("+1234567890", {
+        from: "+10987654321",
+        webhookUrl: "https://example.com/webhook",
+        mode: "conversation",
+      });
+
+      await manager.endCall(callId);
+
+      const endEvent = events.find((e) => e.type === "call.ended");
+      expect(endEvent).toBeDefined();
+      expect((endEvent as any).reason).toBe("hangup-bot");
+    });
+  });
+
+  describe("timeout routes through processEvent", () => {
+    it("is observable via monkey-patched processEvent", async () => {
+      vi.useFakeTimers();
+      config.telephony.maxDurationSeconds = 5;
+      manager = new CallManager();
+      manager.initialize(provider, config);
+
+      const events: NormalizedEvent[] = [];
+      const origProcess = manager.processEvent.bind(manager);
+      manager.processEvent = (callId, event) => {
+        events.push(event);
+        origProcess(callId, event);
+      };
+
+      const { callId } = await manager.initiateCall("+1234567890", {
+        from: "+10987654321",
+        webhookUrl: "https://example.com/webhook",
+        mode: "conversation",
+      });
+
+      manager.processEvent(callId, makeEvent(callId, "call.ringing"));
+      manager.processEvent(callId, makeEvent(callId, "call.answered"));
+      manager.processEvent(callId, makeEvent(callId, "call.active"));
+
+      vi.advanceTimersByTime(5_000);
+
+      const timeoutEvent = events.find(
+        (e) => e.type === "call.ended" && (e as any).reason === "timeout",
+      );
+      expect(timeoutEvent).toBeDefined();
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("terminal call eviction", () => {
+    it("evicts completed calls after grace period", async () => {
+      vi.useFakeTimers();
+      manager = new CallManager();
+      manager.initialize(provider, config);
+
+      const { callId } = await manager.initiateCall("+1234567890", {
+        from: "+10987654321",
+        webhookUrl: "https://example.com/webhook",
+        mode: "conversation",
+      });
+
+      manager.processEvent(
+        callId,
+        makeEvent(callId, "call.ended", { reason: "completed" }),
+      );
+
+      // Call is still accessible immediately after terminal
+      expect(manager.getCall(callId)).toBeDefined();
+
+      // After 5 minutes, call should be evicted
+      vi.advanceTimersByTime(5 * 60_000);
+
+      expect(manager.getCall(callId)).toBeUndefined();
+      expect(manager.getCallByProviderCallId("prov-123")).toBeUndefined();
+
+      vi.useRealTimers();
+    });
+  });
 });

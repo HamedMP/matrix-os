@@ -4,6 +4,7 @@ import { createRateLimiter } from "./security/rate-limiter.js";
 
 const PUBLIC_PATHS = ["/health"];
 const PUBLIC_PREFIXES = ["/voice/webhook"];
+const WS_PREFIXES = ["/ws"];
 
 function timingSafeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
@@ -32,7 +33,14 @@ export function authMiddleware(token: string | undefined): MiddlewareHandler {
     if (PUBLIC_PATHS.some((p) => c.req.path === p)) {
       return next();
     }
-    if (PUBLIC_PREFIXES.some((p) => c.req.path.startsWith(p))) {
+
+    const isWebhook = PUBLIC_PREFIXES.some((p) => c.req.path.startsWith(p));
+    if (isWebhook) {
+      // Apply rate limiting to webhooks even though they skip auth
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
+        return c.json({ error: "Too many requests" }, 429);
+      }
       return next();
     }
 
@@ -42,15 +50,22 @@ export function authMiddleware(token: string | undefined): MiddlewareHandler {
     }
 
     const authHeader = c.req.header("Authorization");
+    const isWsUpgrade = WS_PREFIXES.some((p) => c.req.path.startsWith(p));
+
+    // Only accept query param token for WebSocket upgrades (browsers can't set
+    // Authorization headers on WS connections). REST endpoints must use headers.
     let queryToken: string | null = null;
-    try {
-      queryToken = new URL(c.req.url).searchParams.get("token");
-    } catch {
-      // URL parsing may fail in some contexts
+    if (isWsUpgrade) {
+      try {
+        queryToken = new URL(c.req.url).searchParams.get("token");
+      } catch {
+        // URL parsing may fail in some contexts
+      }
     }
+
     const authenticated =
-      (authHeader && token && timingSafeCompare(authHeader, `Bearer ${token}`)) ||
-      (queryToken && token && timingSafeCompare(queryToken, token));
+      (authHeader && timingSafeCompare(authHeader, `Bearer ${token}`)) ||
+      (isWsUpgrade && queryToken && timingSafeCompare(queryToken, token));
 
     if (!authenticated) {
       return c.json({ error: "Unauthorized" }, 401);
