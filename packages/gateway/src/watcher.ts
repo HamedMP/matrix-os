@@ -21,6 +21,7 @@ export function createWatcher(homePath: string): Watcher {
     ignored: [
       "**/node_modules/**",
       "**/.git/**",
+      "**/.trash/**",
       "**/system/matrix.db*",
     ],
   });
