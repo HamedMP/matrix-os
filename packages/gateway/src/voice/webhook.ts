@@ -35,10 +35,8 @@ export function createWebhookRouter(config: WebhookRouterConfig): Hono {
 
     const verification = provider.verifyWebhook(webhookCtx);
     if (!verification.ok) {
-      return c.json(
-        { error: "Webhook verification failed", reason: verification.reason },
-        403,
-      );
+      console.warn(`[webhook] Verification failed for ${providerName}:`, verification.reason);
+      return c.json({ error: "Webhook verification failed" }, 403);
     }
 
     const parseResult = provider.parseWebhookEvent(webhookCtx, {

@@ -332,9 +332,10 @@ export class CallManager {
   private startMaxDurationTimer(callId: string): void {
     if (!this.config) return;
 
-    const maxDurationMs = this.config.telephony.maxDurationSeconds * 1000;
     const existing = this.timers.get(callId) ?? {};
+    if (existing.maxDuration) return;
 
+    const maxDurationMs = this.config.telephony.maxDurationSeconds * 1000;
     existing.maxDuration = setTimeout(() => {
       const call = this.activeCalls.get(callId);
       if (call && !TerminalStates.has(call.state)) {

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -76,12 +77,11 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
     }
   });
 
-  app.post("/stt", async (c) => {
+  app.post(
+    "/stt",
+    bodyLimit({ maxSize: 25 * 1024 * 1024, onError: (c) => c.json({ error: "File too large (max 25MB)" }, 413) }),
+    async (c) => {
     try {
-      const contentLength = parseInt(c.req.header("content-length") ?? "0", 10);
-      if (contentLength > 25 * 1024 * 1024) {
-        return c.json({ error: "File too large (max 25MB)" }, 413);
-      }
 
       const formData = await c.req.formData();
       const audioFile = formData.get("audio");
