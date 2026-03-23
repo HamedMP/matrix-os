@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import type { VoiceCallProvider } from "./base.js";
 import {
@@ -22,6 +22,7 @@ type TwilioConfig = {
   accountSid: string;
   authToken: string;
   fromNumber: string;
+  publicUrl?: string;
 };
 
 const TWILIO_STATUS_MAP: Record<
@@ -95,7 +96,9 @@ export class TwilioProvider implements VoiceCallProvider {
       .update(data)
       .digest("base64");
 
-    if (signature !== expected) {
+    const sigBuf = Buffer.from(signature, "base64");
+    const expBuf = Buffer.from(expected, "base64");
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
       return { ok: false, reason: "Invalid signature" };
     }
 
@@ -153,8 +156,16 @@ export class TwilioProvider implements VoiceCallProvider {
     });
 
     if (input.inlineTwiml) {
+      const twiml = input.inlineTwiml.trim();
+      if (!twiml.startsWith("<")) {
+        throw new Error("Invalid TwiML: must start with an XML tag");
+      }
+      const ALLOWED_TWIML_VERBS = /^<Response>(\s*<(Say|Pause|Play|Hangup|Gather)\b[^>]*(?:\/>|>[\s\S]*?<\/\2>)\s*)*<\/Response>$/;
+      if (!ALLOWED_TWIML_VERBS.test(twiml)) {
+        throw new Error("Invalid TwiML: contains disallowed verbs. Allowed: Say, Pause, Play, Hangup, Gather");
+      }
       body.delete("Url");
-      body.set("Twiml", input.inlineTwiml);
+      body.set("Twiml", twiml);
     }
 
     const response = await fetch(url, {
@@ -303,6 +314,18 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   private reconstructUrl(ctx: WebhookContext): string {
+    if (this.config.publicUrl) {
+      const parsedUrl = new URL(ctx.url);
+      const base = this.config.publicUrl.replace(/\/$/, "");
+      let reconstructed = base + parsedUrl.pathname;
+      if (parsedUrl.search) {
+        reconstructed += parsedUrl.search;
+      }
+      return reconstructed;
+    }
+
+    // Only use forwarded headers when publicUrl is not set.
+    // This is only safe behind a trusted reverse proxy.
     const proto =
       typeof ctx.headers["x-forwarded-proto"] === "string"
         ? ctx.headers["x-forwarded-proto"]
@@ -319,7 +342,10 @@ export class TwilioProvider implements VoiceCallProvider {
     if (proto && host) {
       const parsedUrl = new URL(ctx.url);
       let reconstructed = `${proto}://${host}`;
-      if (port) {
+      const isDefaultPort =
+        (proto === "https" && port === "443") ||
+        (proto === "http" && port === "80");
+      if (port && !isDefaultPort) {
         reconstructed += `:${port}`;
       }
       reconstructed += parsedUrl.pathname;

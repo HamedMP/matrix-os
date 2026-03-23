@@ -141,12 +141,12 @@ describe("platform/voice-provisioner", () => {
       });
       vi.stubGlobal("fetch", mockFetch);
 
-      await provisioner.releaseNumber("PN_abc123");
+      await provisioner.releaseNumber("PNaabbccdd00112233aabbccdd00112233");
 
       expect(mockFetch).toHaveBeenCalledOnce();
       const [url, options] = mockFetch.mock.calls[0];
       expect(url).toBe(
-        `https://api.twilio.com/2010-04-01/Accounts/${SID}/IncomingPhoneNumbers/PN_abc123.json`,
+        `https://api.twilio.com/2010-04-01/Accounts/${SID}/IncomingPhoneNumbers/PNaabbccdd00112233aabbccdd00112233.json`,
       );
       expect(options.method).toBe("DELETE");
 
@@ -165,7 +165,7 @@ describe("platform/voice-provisioner", () => {
       );
 
       await expect(
-        provisioner.releaseNumber("PN_gone"),
+        provisioner.releaseNumber("PN00112233445566778899aabbccddeeff"),
       ).resolves.not.toThrow();
     });
 
@@ -179,7 +179,7 @@ describe("platform/voice-provisioner", () => {
         }),
       );
 
-      await expect(provisioner.releaseNumber("PN_abc")).rejects.toThrow(
+      await expect(provisioner.releaseNumber("PNffeeddccbbaa99887766554433221100")).rejects.toThrow(
         "Twilio release error 500",
       );
     });

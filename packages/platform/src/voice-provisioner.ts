@@ -64,6 +64,9 @@ export class VoiceProvisioner {
   }
 
   async releaseNumber(numberSid: string): Promise<void> {
+    if (!/^PN[0-9a-f]{32}$/i.test(numberSid)) {
+      throw new Error(`Invalid number SID format: ${numberSid}`);
+    }
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/IncomingPhoneNumbers/${numberSid}.json`;
 
     const response = await fetch(url, {

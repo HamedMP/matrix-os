@@ -1,4 +1,4 @@
-export type ChannelId = "telegram" | "whatsapp" | "discord" | "slack" | "push";
+export type ChannelId = "telegram" | "whatsapp" | "discord" | "slack" | "push" | "voice";
 
 export interface ChannelMessage {
   source: ChannelId;

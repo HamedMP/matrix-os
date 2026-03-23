@@ -2,7 +2,6 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, sta
 import { dirname, join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
@@ -13,9 +12,6 @@ import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
-import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
-import { fileSearch } from "./file-search.js";
-import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -52,10 +48,6 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
-import { createAppDb, type AppDb } from "./app-db.js";
-import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
-import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import {
   createPluginRegistry,
@@ -153,94 +145,6 @@ export async function createGateway(config: GatewayConfig) {
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const clients = new Set<WSContext>();
-
-  // App data layer (Postgres-backed when DATABASE_URL is set)
-  const databaseUrl = process.env.DATABASE_URL;
-  let appDb: AppDb | null = null;
-  let queryEngine: QueryEngine | null = null;
-  let kvStore: KvStore | null = null;
-  let appRegistry: AppRegistry | null = null;
-
-  if (databaseUrl) {
-    try {
-      const { db, kysely } = createAppDb(databaseUrl);
-      appDb = db;
-      await appDb.bootstrap();
-      queryEngine = createQueryEngine(appDb);
-      kvStore = createKvStore(kysely);
-      appRegistry = createAppRegistry(appDb, kysely);
-      console.log("[app-db] Postgres connected, data layer ready");
-
-      // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
-      const handle = process.env.MATRIX_HANDLE ?? "default";
-      const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
-      if (!migrated) {
-        try {
-          const { migrateJsonToKv } = await import("./app-db-migration.js");
-          const jsonResult = await migrateJsonToKv(homePath, kvStore);
-          if (jsonResult.keys > 0) {
-            console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
-          }
-          if (jsonResult.errors.length > 0) {
-            console.error("[app-db] Migration had errors, will retry next boot:", jsonResult.errors);
-          } else {
-            await kvStore.write("_system", `migration_v1_${handle}`, new Date().toISOString());
-          }
-        } catch (migErr) {
-          console.error("[app-db] Migration error:", (migErr as Error).message);
-        }
-      }
-
-      // Register apps with storage declarations
-      try {
-        const { loadAppManifest } = await import("./app-manifest.js");
-        const apps = listApps(homePath);
-        let registered = 0;
-        for (const app of apps) {
-          const appDir = app.file.includes("/")
-            ? join(homePath, "apps", app.file.replace(/\/index\.html$/, ""))
-            : null;
-          if (!appDir) continue;
-          const manifest = loadAppManifest(appDir);
-          if (manifest?.storage?.tables && Object.keys(manifest.storage.tables).length > 0) {
-            const slug = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
-            await appRegistry.register({
-              slug,
-              name: manifest.name,
-              description: manifest.description,
-              version: manifest.version,
-              author: manifest.author,
-              category: manifest.category,
-              tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
-            });
-            registered++;
-
-            // Clean up old JSON data dir so the kernel agent uses app_data tool instead of file I/O
-            const oldDataDir = join(homePath, "data", slug);
-            try {
-              const { rmSync, existsSync: exists } = await import("node:fs");
-              if (exists(oldDataDir)) {
-                rmSync(oldDataDir, { recursive: true });
-                console.log(`[app-db] Cleaned up legacy data dir: ${oldDataDir}`);
-              }
-            } catch { /* non-critical */ }
-          }
-        }
-        if (registered > 0) {
-          console.log(`[app-db] Registered ${registered} app(s) with storage schemas`);
-        }
-      } catch (regErr) {
-        console.error("[app-db] App registration error:", (regErr as Error).message);
-      }
-    } catch (err) {
-      console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
-      console.log("[app-db] Falling back to file-based storage");
-      appDb = null;
-      queryEngine = null;
-      kvStore = null;
-      appRegistry = null;
-    }
-  }
 
   function logHealing(message: string) {
     const timestamp = new Date().toISOString();
@@ -780,103 +684,6 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
-  app.get("/api/files/list", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json({ path: pathParam, entries: result });
-  });
-
-  app.get("/api/files/stat", async (c) => {
-    const pathParam = c.req.query("path");
-    if (!pathParam) return c.json({ error: "path required" }, 400);
-    const result = await fileStat(homePath, pathParam);
-    if (!result) return c.json({ error: "Not found" }, 404);
-    return c.json(result);
-  });
-
-  app.get("/api/files/search", async (c) => {
-    const q = c.req.query("q");
-    if (!q) return c.json({ error: "q required" }, 400);
-    if (q.length > 500) return c.json({ error: "q too long" }, 400);
-    const rawLimit = c.req.query("limit");
-    let limit: number | undefined;
-    if (rawLimit) {
-      limit = parseInt(rawLimit, 10);
-      if (isNaN(limit) || limit < 1) return c.json({ error: "limit must be a positive integer" }, 400);
-    }
-    const result = await fileSearch(homePath, {
-      q,
-      path: c.req.query("path"),
-      content: c.req.query("content") === "true",
-      limit,
-    });
-    return c.json(result);
-  });
-
-  const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
-
-  app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
-    const result = await fileMkdir(homePath, body.path);
-    return c.json(result, result.ok ? 200 : 400);
-  });
-
-  app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string; content?: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
-    const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
-  });
-
-  app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
-  });
-
-  app.post("/api/files/rename", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ from: string; to: string }>();
-    if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
-  });
-
-  app.post("/api/files/copy", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ from: string; to: string }>();
-    if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
-  });
-
-  app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDelete(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
-  });
-
-  app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
-  });
-
-  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ trashPath: string }>();
-    if (!body.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
-  });
-
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const result = await trashEmpty(homePath);
-    return c.json(result);
-  });
-
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     try {
@@ -910,11 +717,43 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   // Voice WebSocket: receives audio, returns transcription + TTS audio
+  const MAX_VOICE_BUFFER_SIZE = 25 * 1024 * 1024; // 25MB
   app.get(
     "/ws/voice",
     upgradeWebSocket(() => {
       const chunks: Buffer[] = [];
       let collecting = false;
+      let totalSize = 0;
+      let processing = false;
+
+      function createVoiceWsCtx(ws: WSContext) {
+        return {
+          voiceService,
+          send: (data: string) => ws.send(data),
+          dispatch: async (text: string) => {
+            let responseText = "";
+            await dispatcher.dispatch(text, undefined, (event) => {
+              if (event.type === "text") {
+                responseText += event.text;
+              }
+            }, { channel: "voice" });
+            return responseText;
+          },
+        };
+      }
+
+      function processAudio(ws: WSContext, audioBuffer: Buffer) {
+        if (processing) {
+          ws.send(JSON.stringify({ type: "voice_error", message: "Still processing previous audio" }));
+          return;
+        }
+        processing = true;
+        handleVoiceWsMessage(createVoiceWsCtx(ws), audioBuffer)
+          .catch(() => {
+            ws.send(JSON.stringify({ type: "voice_error", message: "Voice processing error" }));
+          })
+          .finally(() => { processing = false; });
+      }
 
       return {
         onMessage(evt, ws) {
@@ -923,6 +762,7 @@ export async function createGateway(config: GatewayConfig) {
               const msg = JSON.parse(evt.data);
               if (msg.type === "audio_start") {
                 chunks.length = 0;
+                totalSize = 0;
                 collecting = true;
                 return;
               }
@@ -930,28 +770,8 @@ export async function createGateway(config: GatewayConfig) {
                 collecting = false;
                 const audioBuffer = Buffer.concat(chunks);
                 chunks.length = 0;
-
-                handleVoiceWsMessage(
-                  {
-                    voiceService,
-                    send: (data) => ws.send(data),
-                    dispatch: async (text, metadata) => {
-                      let responseText = "";
-                      await dispatcher.dispatch(text, undefined, (event) => {
-                        if (event.type === "text") {
-                          responseText += event.text;
-                        }
-                      }, metadata ? { channel: "voice" } : undefined);
-                      return responseText;
-                    },
-                  },
-                  audioBuffer,
-                ).catch((err: Error) => {
-                  ws.send(JSON.stringify({
-                    type: "voice_error",
-                    message: err.message ?? "Voice processing error",
-                  }));
-                });
+                totalSize = 0;
+                processAudio(ws, audioBuffer);
                 return;
               }
               if (msg.type === "voice" && msg.audio) {
@@ -959,42 +779,30 @@ export async function createGateway(config: GatewayConfig) {
                   ws.send(JSON.stringify({ type: "voice_error", message: "Audio too large" }));
                   return;
                 }
-                const audioBuffer = Buffer.from(msg.audio, "base64");
-                handleVoiceWsMessage(
-                  {
-                    voiceService,
-                    send: (data) => ws.send(data),
-                    dispatch: async (text, metadata) => {
-                      let responseText = "";
-                      await dispatcher.dispatch(text, undefined, (event) => {
-                        if (event.type === "text") {
-                          responseText += event.text;
-                        }
-                      }, metadata ? { channel: "voice" } : undefined);
-                      return responseText;
-                    },
-                  },
-                  audioBuffer,
-                ).catch((err: Error) => {
-                  ws.send(JSON.stringify({
-                    type: "voice_error",
-                    message: err.message ?? "Voice processing error",
-                  }));
-                });
+                processAudio(ws, Buffer.from(msg.audio, "base64"));
                 return;
               }
             } catch {
-              ws.send(JSON.stringify({ type: "voice_error", message: "Invalid JSON" }));
+              ws.send(JSON.stringify({ type: "voice_error", message: "Invalid message" }));
             }
-          } else if (collecting && evt.data instanceof ArrayBuffer) {
-            chunks.push(Buffer.from(evt.data));
-          } else if (collecting && evt.data instanceof Uint8Array) {
-            chunks.push(Buffer.from(evt.data));
+          } else if (collecting && (evt.data instanceof ArrayBuffer || evt.data instanceof Uint8Array)) {
+            const chunk = Buffer.from(evt.data as ArrayBuffer);
+            totalSize += chunk.length;
+            if (totalSize > MAX_VOICE_BUFFER_SIZE) {
+              collecting = false;
+              chunks.length = 0;
+              totalSize = 0;
+              ws.send(JSON.stringify({ type: "voice_error", message: "Audio buffer size limit exceeded" }));
+              ws.close(1009, "Buffer size limit exceeded");
+              return;
+            }
+            chunks.push(chunk);
           }
         },
 
         onClose() {
           chunks.length = 0;
+          totalSize = 0;
         },
       };
     }),
@@ -1096,7 +904,7 @@ export async function createGateway(config: GatewayConfig) {
     });
   });
 
-  app.put("/files/*", fileBodyLimit, async (c) => {
+  app.put("/files/*", async (c) => {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWithinHome(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
@@ -1107,129 +915,16 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  // Structured query API (Postgres-backed)
-  app.post("/api/bridge/query", async (c) => {
-    if (!queryEngine || !appRegistry) {
-      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
-    }
-
-    let body: Record<string, unknown>;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
-
-    const appSlug = body.app as string;
-    const action = body.action as string;
-
-    if (!action) {
-      return c.json({ error: "action is required" }, 400);
-    }
-
-    // listApps doesn't need an app slug
-    if (action !== "listApps" && !appSlug) {
-      return c.json({ error: "app is required" }, 400);
-    }
-
-    // Validate data for insert/update
-    if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object" || Array.isArray(body.data))) {
-      return c.json({ error: "data must be a non-null object" }, 400);
-    }
-
-    // Validate table is present for actions that need it
-    const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
-    if (needsTable && !body.table) {
-      return c.json({ error: "table is required" }, 400);
-    }
-
-    // Validate id is present for actions that need it
-    const needsId = ["findOne", "update", "delete"].includes(action);
-    if (needsId && !body.id) {
-      return c.json({ error: "id is required" }, 400);
-    }
-
-    try {
-      switch (action) {
-        case "find":
-          return c.json(await queryEngine.find(appSlug, body.table as string, {
-            filter: body.filter as Record<string, unknown> | undefined,
-            orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
-            limit: body.limit as number | undefined,
-            offset: body.offset as number | undefined,
-          }));
-        case "findOne":
-          return c.json(await queryEngine.findOne(appSlug, body.table as string, body.id as string));
-        case "insert": {
-          const result = await queryEngine.insert(appSlug, body.table as string, body.data as Record<string, unknown>);
-          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
-          return c.json(result, 201);
-        }
-        case "update": {
-          await queryEngine.update(appSlug, body.table as string, body.id as string, body.data as Record<string, unknown>);
-          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
-          return c.json({ ok: true });
-        }
-        case "delete": {
-          await queryEngine.delete(appSlug, body.table as string, body.id as string);
-          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
-          return c.json({ ok: true });
-        }
-        case "count":
-          return c.json({ count: await queryEngine.count(appSlug, body.table as string, body.filter as Record<string, unknown> | undefined) });
-        case "schema":
-          return c.json(await appRegistry.getSchema(appSlug));
-        case "listApps":
-          return c.json(await appRegistry.listApps());
-        default:
-          return c.json({ error: `Unknown action: ${action}` }, 400);
-      }
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.error("[app-db] Query error:", msg);
-      const isValidation = msg.startsWith("Invalid ") || msg.startsWith("insert:") || msg.startsWith("update:");
-      const safe = isValidation ? msg : "Query failed";
-      return c.json({ error: safe }, isValidation ? 400 : 500);
-    }
-  });
-
-  // Key-value bridge: uses Postgres _kv when available, falls back to files
   app.post("/api/bridge/data", async (c) => {
-    let body: { action: "read" | "write"; app: string; key: string; value?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
-
-    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
-      return c.json({ error: "app and key are required strings" }, 400);
-    }
+    const body = await c.req.json<{
+      action: "read" | "write";
+      app: string;
+      key: string;
+      value?: string;
+    }>();
 
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
-
-    if (!safeApp || !safeKey) {
-      return c.json({ error: "app and key must contain valid characters" }, 400);
-    }
-
-    // Postgres-backed path
-    if (kvStore) {
-      try {
-        if (body.action === "read") {
-          const value = await kvStore.read(safeApp, safeKey);
-          return c.json({ value });
-        }
-        await kvStore.write(safeApp, safeKey, body.value ?? "");
-        broadcast({ type: "data:change", app: safeApp, key: safeKey });
-        return c.json({ ok: true });
-      } catch (e) {
-        console.error(`[app-db] KV ${body.action} error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database operation failed" }, 500);
-      }
-    }
-
-    // File-based fallback (no Postgres)
     const dataDir = join(homePath, "data", safeApp);
     const filePath = normalize(join(dataDir, `${safeKey}.json`));
 
@@ -1240,6 +935,7 @@ export async function createGateway(config: GatewayConfig) {
     if (body.action === "read") {
       if (!existsSync(filePath)) return c.json({ value: null });
       const content = readFileSync(filePath, "utf-8");
+      // Handle legacy double-encoded files (old bridge used JSON.stringify on write)
       let value = content;
       try {
         const parsed = JSON.parse(content);
@@ -1798,7 +1494,6 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       await channelManager.stop();
       await watcher.close();
-      await appDb?.destroy();
       server.close();
     },
   };

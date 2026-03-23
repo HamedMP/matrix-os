@@ -41,7 +41,7 @@ export async function generateVoiceResponse(
   const fullMessage = `${VOICE_CONTEXT_PREFIX}${transcriptContext}Caller: ${userMessage}`;
 
   const context: DispatchContext = {
-    channel: "voice" as DispatchContext["channel"],
+    channel: "voice",
     senderId: callerNumber,
     senderName: callerNumber,
     chatId: callId,

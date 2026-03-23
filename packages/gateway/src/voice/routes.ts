@@ -71,12 +71,8 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
         format: result.format,
       });
     } catch (e) {
-      return c.json(
-        {
-          error: `TTS failed: ${e instanceof Error ? e.message : String(e)}`,
-        },
-        500,
-      );
+      console.error("[voice/tts]", e instanceof Error ? e.message : String(e));
+      return c.json({ error: "TTS synthesis failed" }, 500);
     }
   });
 
@@ -109,12 +105,8 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
         durationMs: result.durationMs,
       });
     } catch (e) {
-      return c.json(
-        {
-          error: `STT failed: ${e instanceof Error ? e.message : String(e)}`,
-        },
-        500,
-      );
+      console.error("[voice/stt]", e instanceof Error ? e.message : String(e));
+      return c.json({ error: "STT transcription failed" }, 500);
     }
   });
 
