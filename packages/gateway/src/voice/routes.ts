@@ -92,6 +92,10 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
       const arrayBuffer = await audioFile.arrayBuffer();
       const audioBuffer = Buffer.from(arrayBuffer);
 
+      if (audioBuffer.length > 25 * 1024 * 1024) {
+        return c.json({ error: "File too large (max 25MB)" }, 413);
+      }
+
       const result = await config.voiceService.transcribe(audioBuffer);
 
       return c.json({

@@ -25,7 +25,6 @@ export function VoiceMode({ onClose, onSubmit }: VoiceModeProps) {
     isSupported,
     startRecording,
     stopRecording,
-    playAudio,
   } = useVoice({
     onTranscription: (text) => {
       setTranscript((prev) => [...prev, `You: ${text}`]);

@@ -103,6 +103,20 @@ describe("platform/voice-provisioner", () => {
       );
     });
 
+    it("rejects invalid handle (path traversal prevention)", async () => {
+      await expect(
+        provisioner.provisionNumber("x.evil.com/path?"),
+      ).rejects.toThrow(/Invalid handle/);
+
+      await expect(
+        provisioner.provisionNumber("UPPERCASE"),
+      ).rejects.toThrow(/Invalid handle/);
+
+      await expect(
+        provisioner.provisionNumber(""),
+      ).rejects.toThrow(/Invalid handle/);
+    });
+
     it("returns null on network error (graceful)", async () => {
       const consoleSpy = vi
         .spyOn(console, "warn")

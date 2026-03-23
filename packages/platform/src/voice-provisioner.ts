@@ -18,6 +18,10 @@ export class VoiceProvisioner {
   }
 
   async provisionNumber(handle: string): Promise<ProvisionResult | null> {
+    if (!/^[a-z0-9-]{1,63}$/.test(handle)) {
+      throw new Error(`Invalid handle: ${handle}`);
+    }
+
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}/IncomingPhoneNumbers.json`;
     const webhookUrl = `https://${handle}.matrix-os.com/voice/webhook/twilio`;
 
