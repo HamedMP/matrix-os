@@ -1,8 +1,9 @@
 import { readdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { join, relative } from "node:path";
+import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
 import { resolveWithinHome } from "./path-security.js";
+import { getMimeType } from "./file-utils.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +13,10 @@ export interface FileTreeEntry {
   size?: number;
   gitStatus: string | null;
   changedCount?: number;
+  modified?: string;
+  created?: string;
+  mime?: string;
+  children?: number;
 }
 
 interface GitStatusCache {
@@ -117,11 +122,25 @@ export async function listDirectory(
       const changedCount = gitMap
         ? countChangedFiles(gitMap, gitRoot, fullPath)
         : 0;
+
+      let modified: string | undefined;
+      let children: number | undefined;
+      try {
+        const dirStat = await stat(fullPath);
+        modified = new Date(dirStat.mtimeMs).toISOString();
+        const childEntries = await readdir(fullPath);
+        children = childEntries.filter((c) => !c.startsWith(".")).length;
+      } catch {
+        // ignore
+      }
+
       dirs.push({
         name: entry.name,
         type: "directory",
         gitStatus: null,
         changedCount,
+        modified,
+        children,
       });
     } else if (entry.isFile()) {
       let gitStatus: string | null = null;
@@ -131,8 +150,13 @@ export async function listDirectory(
       }
 
       let size = 0;
+      let modified: string | undefined;
+      let created: string | undefined;
       try {
-        size = (await stat(fullPath)).size;
+        const fileStat = await stat(fullPath);
+        size = fileStat.size;
+        modified = new Date(fileStat.mtimeMs).toISOString();
+        created = new Date(fileStat.birthtimeMs).toISOString();
       } catch {
         // ignore
       }
@@ -142,6 +166,9 @@ export async function listDirectory(
         type: "file",
         size,
         gitStatus,
+        modified,
+        created,
+        mime: getMimeType(extname(entry.name)),
       });
     }
   }

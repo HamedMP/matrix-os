@@ -12,6 +12,9 @@ import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
+import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
+import { fileSearch } from "./file-search.js";
+import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -699,12 +702,94 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  app.get("/api/files/tree", async (c) => {
+  const listHandler = async (c: any) => {
     const pathParam = c.req.query("path") ?? "";
     const result = await listDirectory(homePath, pathParam);
     if (!result) {
       return c.json({ error: "Invalid path" }, 400);
     }
+    return c.json(result);
+  };
+
+  app.get("/api/files/tree", listHandler);
+  app.get("/api/files/list", listHandler);
+
+  app.get("/api/files/stat", async (c) => {
+    const pathParam = c.req.query("path");
+    if (!pathParam) return c.json({ error: "path required" }, 400);
+    const result = await fileStat(homePath, pathParam);
+    if (!result) return c.json({ error: "Not found" }, 404);
+    return c.json(result);
+  });
+
+  app.get("/api/files/search", async (c) => {
+    const q = c.req.query("q");
+    if (!q) return c.json({ error: "q required" }, 400);
+    const result = await fileSearch(homePath, {
+      q,
+      path: c.req.query("path"),
+      content: c.req.query("content") === "true",
+      limit: c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : undefined,
+    });
+    return c.json(result);
+  });
+
+  app.post("/api/files/mkdir", async (c) => {
+    const body = await c.req.json<{ path: string }>();
+    if (!body.path) return c.json({ error: "path required" }, 400);
+    const result = await fileMkdir(homePath, body.path);
+    return c.json(result, result.ok ? 200 : 400);
+  });
+
+  app.post("/api/files/touch", async (c) => {
+    const body = await c.req.json<{ path: string; content?: string }>();
+    if (!body.path) return c.json({ error: "path required" }, 400);
+    const result = await fileTouch(homePath, body.path, body.content);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/duplicate", async (c) => {
+    const body = await c.req.json<{ path: string }>();
+    if (!body.path) return c.json({ error: "path required" }, 400);
+    const result = await fileDuplicate(homePath, body.path);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/rename", async (c) => {
+    const body = await c.req.json<{ from: string; to: string }>();
+    if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
+    const result = await fileRename(homePath, body.from, body.to);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/copy", async (c) => {
+    const body = await c.req.json<{ from: string; to: string }>();
+    if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
+    const result = await fileCopy(homePath, body.from, body.to);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/delete", async (c) => {
+    const body = await c.req.json<{ path: string }>();
+    if (!body.path) return c.json({ error: "path required" }, 400);
+    const result = await fileDelete(homePath, body.path);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.get("/api/files/trash", async (c) => {
+    const result = await trashList(homePath);
+    return c.json(result);
+  });
+
+  app.post("/api/files/trash/restore", async (c) => {
+    const body = await c.req.json<{ trashPath: string }>();
+    if (!body.trashPath) return c.json({ error: "trashPath required" }, 400);
+    const result = await trashRestore(homePath, body.trashPath);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/trash/empty", async (c) => {
+    const result = await trashEmpty(homePath);
     return c.json(result);
   });
 
