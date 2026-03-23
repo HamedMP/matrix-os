@@ -80,8 +80,6 @@ interface PreviewWindowActions {
   reorderTabs(fromIndex: number, toIndex: number): void;
 }
 
-let nextTabId = 1;
-
 export const usePreviewWindow = create<
   PreviewWindowState & PreviewWindowActions
 >()((set, get) => ({
@@ -99,7 +97,7 @@ export const usePreviewWindow = create<
 
     const name = path.split("/").pop() ?? path;
     const type = detectFileType(name);
-    const id = `tab-${nextTabId++}`;
+    const id = crypto.randomUUID();
     const tab: PreviewTab = { id, path, name, type, mode: defaultMode(type) };
 
     set((s) => ({

@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useFileBrowser, type FileEntry } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { getGatewayUrl } from "@/lib/gateway";
 import { cn } from "@/lib/utils";
 import { FolderIcon, FileTextIcon, ChevronRightIcon } from "lucide-react";
@@ -17,22 +16,33 @@ interface Column {
   selected: string | null;
 }
 
-export function ColumnView() {
+interface ColumnViewProps {
+  onOpenFile?: (path: string) => void;
+}
+
+export function ColumnView({ onOpenFile }: ColumnViewProps) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const navigate = useFileBrowser((s) => s.navigate);
-  const openFile = usePreviewWindow((s) => s.openFile);
   const [columns, setColumns] = useState<Column[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     async function load() {
       const segments = currentPath ? currentPath.split("/") : [];
       const cols: Column[] = [];
-
       const paths = ["", ...segments.map((_, i) => segments.slice(0, i + 1).join("/"))];
 
       for (const p of paths) {
+        if (controller.signal.aborted) return;
         try {
-          const res = await fetch(`${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(p)}`);
+          const res = await fetch(
+            `${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(p)}`,
+            { signal: controller.signal },
+          );
           if (res.ok) {
             const data = await res.json();
             const entries: FileEntry[] = data.entries ?? data;
@@ -44,9 +54,13 @@ export function ColumnView() {
         }
       }
 
-      setColumns(cols);
+      if (!controller.signal.aborted) {
+        setColumns(cols);
+      }
     }
     load();
+
+    return () => controller.abort();
   }, [currentPath]);
 
   function handleSelect(colIndex: number, entry: FileEntry) {
@@ -57,7 +71,7 @@ export function ColumnView() {
     } else {
       const col = columns[colIndex];
       const filePath = col.path ? `${col.path}/${entry.name}` : entry.name;
-      openFile(filePath);
+      onOpenFile?.(filePath);
     }
   }
 

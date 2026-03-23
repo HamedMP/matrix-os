@@ -139,7 +139,10 @@ async function searchFileContent(
           text: line.trimStart(),
           type: "content",
         });
-        if (matches.length >= 5) break;
+        if (matches.length >= 5) {
+          rl.close();
+          break;
+        }
       }
     }
   } finally {

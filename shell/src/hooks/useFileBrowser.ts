@@ -83,7 +83,8 @@ async function fetchEntries(path: string): Promise<FileEntry[]> {
     const res = await fetch(`${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(path)}`);
     if (!res.ok) return [];
     const data = await res.json();
-    return data.entries ?? data;
+    const entries = data.entries ?? data;
+    return Array.isArray(entries) ? entries : [];
   } catch {
     return [];
   }
@@ -206,7 +207,10 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     refresh() {
       const { currentPath } = get();
       set({ loading: true });
-      fetchEntries(currentPath).then((entries) => set({ entries, loading: false }));
+      fetchEntries(currentPath).then((entries) => {
+        const { sortBy, sortDirection } = get();
+        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+      });
     },
 
     setViewMode(mode) {
@@ -292,27 +296,21 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       const { clipboard, currentPath } = get();
       if (!clipboard) return;
 
+      let allOk = true;
       for (const sourcePath of clipboard.paths) {
-        // clipboard stores full relative paths already
         const name = sourcePath.split("/").pop() ?? sourcePath;
         const destPath = currentPath ? `${currentPath}/${name}` : name;
 
-        if (clipboard.operation === "copy") {
-          await fetch(`${GATEWAY_URL}/api/files/copy`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: sourcePath, to: destPath }),
-          });
-        } else {
-          await fetch(`${GATEWAY_URL}/api/files/rename`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: sourcePath, to: destPath }),
-          });
-        }
+        const endpoint = clipboard.operation === "copy" ? "copy" : "rename";
+        const res = await fetch(`${GATEWAY_URL}/api/files/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ from: sourcePath, to: destPath }),
+        });
+        if (!res.ok) allOk = false;
       }
 
-      if (clipboard.operation === "cut") {
+      if (clipboard.operation === "cut" && allOk) {
         set({ clipboard: null });
       }
       get().refresh();
@@ -331,11 +329,14 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
 
     async deleteFiles(paths) {
       for (const path of paths) {
-        await fetch(`${GATEWAY_URL}/api/files/delete`, {
+        const res = await fetch(`${GATEWAY_URL}/api/files/delete`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path }),
         });
+        if (!res.ok) {
+          set({ error: `Failed to delete ${path.split("/").pop()}` });
+        }
       }
       set({ selectedPaths: new Set() });
       get().refresh();
@@ -343,11 +344,14 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
 
     async duplicate(paths) {
       for (const path of paths) {
-        await fetch(`${GATEWAY_URL}/api/files/duplicate`, {
+        const res = await fetch(`${GATEWAY_URL}/api/files/duplicate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path }),
         });
+        if (!res.ok) {
+          set({ error: `Failed to duplicate ${path.split("/").pop()}` });
+        }
       }
       get().refresh();
     },
@@ -355,22 +359,24 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     async createFolder(name) {
       const { currentPath } = get();
       const path = currentPath ? `${currentPath}/${name}` : name;
-      await fetch(`${GATEWAY_URL}/api/files/mkdir`, {
+      const res = await fetch(`${GATEWAY_URL}/api/files/mkdir`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
+      if (!res.ok) set({ error: "Failed to create folder" });
       get().refresh();
     },
 
     async createFile(name) {
       const { currentPath } = get();
       const path = currentPath ? `${currentPath}/${name}` : name;
-      await fetch(`${GATEWAY_URL}/api/files/touch`, {
+      const res = await fetch(`${GATEWAY_URL}/api/files/touch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
+      if (!res.ok) set({ error: "Failed to create file" });
       get().refresh();
     },
 

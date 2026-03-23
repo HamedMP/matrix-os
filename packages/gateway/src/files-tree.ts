@@ -113,12 +113,14 @@ export async function listDirectory(
   const dirs: FileTreeEntry[] = [];
   const files: FileTreeEntry[] = [];
 
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
+  const visible = entries.filter((e) => !e.name.startsWith("."));
 
-    const fullPath = join(resolved, entry.name);
+  const dirEntries = visible.filter((e) => e.isDirectory());
+  const fileEntries = visible.filter((e) => e.isFile());
 
-    if (entry.isDirectory()) {
+  const dirResults = await Promise.all(
+    dirEntries.map(async (entry) => {
+      const fullPath = join(resolved, entry.name);
       const changedCount = gitMap
         ? countChangedFiles(gitMap, gitRoot, fullPath)
         : 0;
@@ -126,23 +128,30 @@ export async function listDirectory(
       let modified: string | undefined;
       let children: number | undefined;
       try {
-        const dirStat = await stat(fullPath);
+        const [dirStat, childEntries] = await Promise.all([
+          stat(fullPath),
+          readdir(fullPath),
+        ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
-        const childEntries = await readdir(fullPath);
         children = childEntries.filter((c) => !c.startsWith(".")).length;
       } catch {
         // ignore
       }
 
-      dirs.push({
+      return {
         name: entry.name,
-        type: "directory",
+        type: "directory" as const,
         gitStatus: null,
         changedCount,
         modified,
         children,
-      });
-    } else if (entry.isFile()) {
+      };
+    }),
+  );
+
+  const fileResults = await Promise.all(
+    fileEntries.map(async (entry) => {
+      const fullPath = join(resolved, entry.name);
       let gitStatus: string | null = null;
       if (gitMap) {
         const relPath = relative(gitRoot, fullPath);
@@ -161,17 +170,20 @@ export async function listDirectory(
         // ignore
       }
 
-      files.push({
+      return {
         name: entry.name,
-        type: "file",
+        type: "file" as const,
         size,
         gitStatus,
         modified,
         created,
         mime: getMimeType(extname(entry.name)),
-      });
-    }
-  }
+      };
+    }),
+  );
+
+  dirs.push(...dirResults);
+  files.push(...fileResults);
 
   dirs.sort((a, b) => a.name.localeCompare(b.name));
   files.sort((a, b) => a.name.localeCompare(b.name));

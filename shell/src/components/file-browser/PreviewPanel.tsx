@@ -58,7 +58,7 @@ export function PreviewPanel() {
       .then((data: FileStat) => setStat(data))
       .catch(() => setStat(null));
 
-    if (selectedName && !isImage(selectedName)) {
+    if (selectedName && isTextLike(selectedName)) {
       fetch(`${GATEWAY_URL}/files/${selectedFullPath}`)
         .then((r) => (r.ok ? r.text() : null))
         .then((text) => {
@@ -147,4 +147,8 @@ function isImage(name: string): boolean {
 
 function isCode(name: string): boolean {
   return /\.(js|ts|jsx|tsx|py|html|css|sh|json|yaml|yml|toml)$/i.test(name);
+}
+
+function isTextLike(name: string): boolean {
+  return /\.(md|txt|log|csv|json|yaml|yml|toml|js|ts|jsx|tsx|py|html|css|sh|xml|ini|cfg|conf|env|gitignore|editorconfig)$/i.test(name);
 }

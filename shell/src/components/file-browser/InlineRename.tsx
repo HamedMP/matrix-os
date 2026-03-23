@@ -11,12 +11,12 @@ interface InlineRenameProps {
 export function InlineRename({ name, onCommit, onCancel }: InlineRenameProps) {
   const [value, setValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const committedRef = useRef(false);
 
   useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
     input.focus();
-    // Select filename without extension
     const dotIndex = name.lastIndexOf(".");
     if (dotIndex > 0) {
       input.setSelectionRange(0, dotIndex);
@@ -37,11 +37,13 @@ export function InlineRename({ name, onCommit, onCancel }: InlineRenameProps) {
   }
 
   function commit() {
+    if (committedRef.current) return;
     const trimmed = value.trim();
     if (!trimmed || trimmed === name) {
       onCancel();
       return;
     }
+    committedRef.current = true;
     onCommit(trimmed);
   }
 

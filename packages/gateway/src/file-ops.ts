@@ -12,6 +12,8 @@ import { existsSync } from "node:fs";
 import { resolveWithinHome } from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
 
+type ErrnoException = NodeJS.ErrnoException;
+
 export interface FileStatResult {
   name: string;
   path: string;
@@ -71,16 +73,15 @@ export async function fileTouch(
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return { ok: false, error: "Invalid path" };
 
-  if (existsSync(resolved)) {
-    return { ok: false, error: "File already exists", status: 409 };
-  }
-
   try {
     const dir = dirname(resolved);
     await mkdir(dir, { recursive: true });
-    await writeFile(resolved, content);
+    await writeFile(resolved, content, { flag: "wx" });
     return { ok: true, path: requestedPath };
-  } catch {
+  } catch (err: unknown) {
+    if ((err as ErrnoException).code === "EEXIST") {
+      return { ok: false, error: "File already exists", status: 409 };
+    }
     return { ok: false, error: "Failed to create file" };
   }
 }

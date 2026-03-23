@@ -49,11 +49,17 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
   }, [tab.path, tab.type]);
 
   async function handleSave() {
-    await fetch(`${GATEWAY_URL}/files/${tab.path}`, {
-      method: "PUT",
-      body: content,
-    });
-    markSaved(tab.id);
+    try {
+      const res = await fetch(`${GATEWAY_URL}/files/${tab.path}`, {
+        method: "PUT",
+        body: content,
+      });
+      if (res.ok) {
+        markSaved(tab.id);
+      }
+    } catch {
+      // save failed — unsaved indicator stays visible
+    }
   }
 
   if (loading) {

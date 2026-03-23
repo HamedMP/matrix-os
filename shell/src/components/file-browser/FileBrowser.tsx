@@ -63,8 +63,9 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
 
   // Load initial directory
   useEffect(() => {
-    navigate(currentPath || "");
-  }, []);
+    navigate("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate]);
 
   // File watcher integration
   const onFileChange = useCallback(
@@ -289,6 +290,7 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
                 renamingPath={renamingPath}
                 onStartRename={setRenamingPath}
                 onCancelRename={() => setRenamingPath(null)}
+                onOpenFile={openFile}
               />
             )}
           </div>

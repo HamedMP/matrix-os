@@ -9,12 +9,14 @@ interface FileBrowserContentProps {
   renamingPath: string | null;
   onStartRename: (name: string) => void;
   onCancelRename: () => void;
+  onOpenFile?: (path: string) => void;
 }
 
 export function FileBrowserContent({
   renamingPath,
   onStartRename,
   onCancelRename,
+  onOpenFile,
 }: FileBrowserContentProps) {
   const viewMode = useFileBrowser((s) => s.viewMode);
   const loading = useFileBrowser((s) => s.loading);
@@ -55,7 +57,7 @@ export function FileBrowserContent({
         />
       );
     case "column":
-      return <ColumnView />;
+      return <ColumnView onOpenFile={onOpenFile} />;
     default:
       return null;
   }

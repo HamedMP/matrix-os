@@ -10,9 +10,6 @@ import {
   PuzzleIcon,
   BoxIcon,
   DatabaseIcon,
-  ClockIcon,
-  FileTextIcon,
-  ImageIcon,
   Trash2Icon,
   StarIcon,
 } from "lucide-react";
@@ -24,12 +21,6 @@ const LOCATIONS = [
   { name: "Plugins", path: "plugins", icon: PuzzleIcon },
   { name: "Modules", path: "modules", icon: BoxIcon },
   { name: "Data", path: "data", icon: DatabaseIcon },
-];
-
-const SMART_FILTERS = [
-  { name: "Recent", icon: ClockIcon, query: "" },
-  { name: "Markdown", icon: FileTextIcon, query: ".md" },
-  { name: "Media", icon: ImageIcon, query: "" },
 ];
 
 interface FileBrowserSidebarProps {
