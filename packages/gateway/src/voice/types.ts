@@ -29,6 +29,7 @@ export const CallStateSchema = z.enum([
   "no-answer",
   "busy",
   "voicemail",
+  "canceled",
 ]);
 export type CallState = z.infer<typeof CallStateSchema>;
 
@@ -42,6 +43,7 @@ export const TerminalStates = new Set<CallState>([
   "no-answer",
   "busy",
   "voicemail",
+  "canceled",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -65,6 +67,7 @@ export const EndReasonSchema = z.enum([
   "busy",
   "voicemail",
   "completed",
+  "canceled",
 ]);
 export type EndReason = z.infer<typeof EndReasonSchema>;
 
@@ -328,6 +331,7 @@ const terminalStatesArray: CallState[] = [
   "no-answer",
   "busy",
   "voicemail",
+  "canceled",
 ];
 
 export const VALID_TRANSITIONS: Record<CallState, CallState[]> = {
@@ -347,6 +351,7 @@ export const VALID_TRANSITIONS: Record<CallState, CallState[]> = {
   "no-answer": [],
   busy: [],
   voicemail: [],
+  canceled: [],
 };
 
 export function isValidTransition(from: CallState, to: CallState): boolean {

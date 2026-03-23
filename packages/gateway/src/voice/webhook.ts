@@ -47,7 +47,8 @@ export function createWebhookRouter(config: WebhookRouterConfig): Hono {
 
     for (const event of parseResult.events) {
       try {
-        config.callManager.processEvent(event.callId, event);
+        const internalCallId = config.callManager.getCallIdByProviderCallId(event.callId) ?? event.callId;
+        config.callManager.processEvent(internalCallId, event);
       } catch (e) {
         console.error(`[webhook] Event processing error for call ${event.callId}:`, e instanceof Error ? e.message : String(e));
         return c.json({ error: "Event processing failed" }, 500);

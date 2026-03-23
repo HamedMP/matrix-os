@@ -159,6 +159,10 @@ export class CallManager {
     return this.activeCalls.get(callId);
   }
 
+  getCallIdByProviderCallId(providerCallId: string): string | undefined {
+    return this.providerCallIdMap.get(providerCallId);
+  }
+
   getActiveCalls(): CallRecord[] {
     const results: CallRecord[] = [];
     for (const call of this.activeCalls.values()) {

@@ -204,7 +204,7 @@ describe("TwilioProvider", () => {
       expect((result.events[0] as { reason: string }).reason).toBe("no-answer");
     });
 
-    it("maps canceled -> call.ended with reason completed", () => {
+    it("maps canceled -> call.ended with reason canceled", () => {
       const ctx: WebhookContext = {
         method: "POST",
         url: "https://example.com/webhook",
@@ -217,7 +217,7 @@ describe("TwilioProvider", () => {
 
       const result = provider.parseWebhookEvent(ctx);
       expect(result.events[0]!.type).toBe("call.ended");
-      expect((result.events[0] as { reason: string }).reason).toBe("completed");
+      expect((result.events[0] as { reason: string }).reason).toBe("canceled");
     });
 
     it("maps failed -> call.ended with reason failed", () => {

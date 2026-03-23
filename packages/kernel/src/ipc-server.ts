@@ -799,7 +799,9 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             {
               voiceEnabled,
               homePath: homePath ?? "",
-              callManager: (globalThis as Record<string, unknown>).__matrixCallManager as Parameters<typeof handleCallTool>[0]["callManager"],
+              // NOTE: This only works when kernel and gateway run in the same process.
+              // For multi-process deployments, route call control through HTTP/IPC instead.
+              callManager: ((globalThis as Record<string, unknown>).__matrixCallManager as Parameters<typeof handleCallTool>[0]["callManager"]) ?? undefined,
               synthesize: async () => { throw new Error("Not available"); },
               transcribe: async () => { throw new Error("Not available"); },
             },
@@ -878,50 +880,19 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "app_data",
-        "ALWAYS use this tool to read/write app data. NEVER read or write files in ~/data/ directly. Apps with storage tables (todo, expense-tracker, notes, pomodoro) use structured Postgres queries: find/findOne/insert/update/delete/count. Use 'listApps' to discover apps and tables, 'schema' to see table structure. Legacy KV (read/write/list) is for apps without storage tables only.",
+        "Read or write persistent data for any app. Data is stored in ~/data/{app}/{key}.json. Use this to interact with app state from chat (e.g., add a task to a task manager, read notes, update expenses).",
         {
-          action: z.enum(["find", "findOne", "insert", "update", "delete", "count", "schema", "listApps", "read", "write", "list"]).describe("Structured: find/findOne/insert/update/delete/count/schema/listApps. Legacy: read/write/list"),
-          app: z.string().describe("App slug (e.g., 'todo', 'notes', 'expense-tracker')"),
-          table: z.string().optional().describe("Table name (required for structured actions)"),
-          filter: z.record(z.unknown()).optional().describe("Filter object: { done: false, due: { $lte: '2026-03-21' } }"),
-          data: z.record(z.unknown()).optional().describe("Data to insert/update"),
-          id: z.string().optional().describe("Row ID (for findOne/update/delete)"),
-          orderBy: z.record(z.enum(["asc", "desc"])).optional().describe("Sort order: { due: 'asc' }"),
-          limit: z.number().optional().describe("Max rows to return"),
-          key: z.string().optional().describe("Data key (legacy read/write/list)"),
-          value: z.string().optional().describe("JSON string (legacy write)"),
+          action: z.enum(["read", "write", "list"]).describe("read: get data, write: set data, list: show all keys for an app"),
+          app: z.string().describe("App name/slug (e.g., 'task-manager', 'notes', 'expense-tracker')"),
+          key: z.string().optional().describe("Data key (required for read/write)"),
+          value: z.string().optional().describe("JSON string to write (required for write action)"),
         },
-        async ({ action, app, table, filter, data, id, orderBy, limit, key, value }) => {
-          const gatewayPort = process.env.PORT || process.env.GATEWAY_PORT || "4000";
-          const gatewayUrl = `http://localhost:${gatewayPort}`;
-
-          // Structured actions go to /api/bridge/query
-          if (["find", "findOne", "insert", "update", "delete", "count", "schema", "listApps"].includes(action)) {
-            try {
-              const headers: Record<string, string> = { "Content-Type": "application/json" };
-              const authToken = process.env.MATRIX_AUTH_TOKEN;
-              if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
-              const res = await fetch(`${gatewayUrl}/api/bridge/query`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({ action, app, table, filter, data, id, orderBy, limit }),
-              });
-              const result = await res.json();
-              if (!res.ok) {
-                return { content: [{ type: "text" as const, text: `Error: ${result.error || res.statusText}` }] };
-              }
-              return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-            } catch (e) {
-              return { content: [{ type: "text" as const, text: `Database query failed (gateway unreachable): ${(e as Error).message}` }] };
-            }
-          }
-
-          // Legacy actions (read/write/list) -- file-based fallback
+        async ({ action, app, key, value }) => {
           if (!homePath) {
             return { content: [{ type: "text" as const, text: "Cannot access app data (no home path)" }] };
           }
           const { appDataHandler } = await import("./app-data.js");
-          return appDataHandler(homePath, { action: action as "read" | "write" | "list", app, key, value });
+          return appDataHandler(homePath, { action, app, key, value });
         },
       ),
 

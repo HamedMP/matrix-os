@@ -594,14 +594,19 @@ export async function createGateway(config: GatewayConfig) {
 
   const originalProcessEvent = callManager.processEvent.bind(callManager);
   callManager.processEvent = (callId, event) => {
-    originalProcessEvent(callId, event);
-    const updatedCall = callManager.getCall(callId);
-    if (updatedCall) {
-      callStore.update(callId, updatedCall);
+    try {
+      originalProcessEvent(callId, event);
+    } finally {
+      const call = callManager.getCall(callId);
+      if (call) {
+        try { callStore.update(callId, call); } catch { /* best effort */ }
+      }
     }
   };
 
-  // Expose callManager globally for IPC tools
+  // Expose callManager globally for IPC tools.
+  // NOTE: This only works when kernel and gateway run in the same process.
+  // For multi-process deployments, route call control through HTTP/IPC instead.
   (globalThis as Record<string, unknown>).__matrixCallManager = callManager;
 
   const provisioner = createProvisioner({

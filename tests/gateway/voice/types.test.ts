@@ -44,8 +44,8 @@ describe("Voice Types", () => {
       expect(() => CallStateSchema.parse("invalid-state")).toThrow();
     });
 
-    it("has exactly 15 valid states", () => {
-      expect(CallStateSchema.options.length).toBe(15);
+    it("has exactly 16 valid states", () => {
+      expect(CallStateSchema.options.length).toBe(16);
     });
   });
 
@@ -74,6 +74,7 @@ describe("Voice Types", () => {
       "busy",
       "voicemail",
       "completed",
+      "canceled",
     ] as const;
 
     it.each(reasons)("accepts valid reason '%s'", (reason) => {

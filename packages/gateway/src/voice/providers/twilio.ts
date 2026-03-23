@@ -38,7 +38,7 @@ const TWILIO_STATUS_MAP: Record<
   completed: { type: "call.ended", reason: "completed" },
   busy: { type: "call.ended", reason: "busy" },
   "no-answer": { type: "call.ended", reason: "no-answer" },
-  canceled: { type: "call.ended", reason: "completed" },
+  canceled: { type: "call.ended", reason: "canceled" },
   failed: { type: "call.ended", reason: "failed" },
 };
 

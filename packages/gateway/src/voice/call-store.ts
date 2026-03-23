@@ -1,7 +1,6 @@
 import {
   existsSync,
   readFileSync,
-  writeFileSync,
   appendFileSync,
   mkdirSync,
 } from "node:fs";
@@ -10,35 +9,45 @@ import { TerminalStates, type CallRecord } from "./types.js";
 
 export class CallStore {
   private readonly path: string;
+  private cache: Map<string, CallRecord>;
 
   constructor(path: string) {
     this.path = path;
+    this.cache = new Map();
+    this.loadFromDisk();
   }
 
-  append(record: CallRecord): void {
-    const dir = dirname(this.path);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    appendFileSync(this.path, JSON.stringify(record) + "\n");
-  }
-
-  getAll(): CallRecord[] {
-    if (!existsSync(this.path)) return [];
+  private loadFromDisk(): void {
+    if (!existsSync(this.path)) return;
 
     const content = readFileSync(this.path, "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
-    const records: CallRecord[] = [];
 
     for (const line of lines) {
       try {
-        records.push(JSON.parse(line) as CallRecord);
+        const record = JSON.parse(line) as CallRecord;
+        this.cache.set(record.callId, record);
       } catch {
         // Skip corrupted lines
       }
     }
+  }
 
-    return records;
+  private ensureDir(): void {
+    const dir = dirname(this.path);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  append(record: CallRecord): void {
+    this.ensureDir();
+    this.cache.set(record.callId, record);
+    appendFileSync(this.path, JSON.stringify(record) + "\n");
+  }
+
+  getAll(): CallRecord[] {
+    return Array.from(this.cache.values());
   }
 
   getActive(): CallRecord[] {
@@ -46,18 +55,17 @@ export class CallStore {
   }
 
   getById(callId: string): CallRecord | undefined {
-    return this.getAll().find((r) => r.callId === callId);
+    return this.cache.get(callId);
   }
 
   update(callId: string, partial: Partial<CallRecord>): void {
-    const records = this.getAll();
-    const updated = records.map((r) =>
-      r.callId === callId ? { ...r, ...partial } : r,
-    );
-    writeFileSync(
-      this.path,
-      updated.map((r) => JSON.stringify(r)).join("\n") + "\n",
-    );
+    const existing = this.cache.get(callId);
+    if (!existing) return;
+
+    const updated = { ...existing, ...partial };
+    this.cache.set(callId, updated);
+    this.ensureDir();
+    appendFileSync(this.path, JSON.stringify(updated) + "\n");
   }
 
   getRecent(limit: number): CallRecord[] {
