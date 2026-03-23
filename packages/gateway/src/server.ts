@@ -41,7 +41,7 @@ import {
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
-import { authMiddleware, setActiveWebhookProviders } from "./auth.js";
+import { authMiddleware } from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -467,9 +467,6 @@ export async function createGateway(config: GatewayConfig) {
   const callManager = new CallManager();
   const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));
   const voiceProviders = new Map<string, VoiceCallProvider>();
-  if (process.env.NODE_ENV === "test") {
-    voiceProviders.set("mock", new MockProvider());
-  }
 
   // Register TwilioProvider when credentials are available
   if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
@@ -493,9 +490,6 @@ export async function createGateway(config: GatewayConfig) {
       }
     }
   }
-
-  // Tell auth middleware which webhook providers are active
-  setActiveWebhookProviders(new Set(voiceProviders.keys()));
 
   // Wire CallStore persistence: persist call records on creation
   const originalInitiateCall = callManager.initiateCall.bind(callManager);
@@ -538,7 +532,9 @@ export async function createGateway(config: GatewayConfig) {
 
   app.use("*", cors());
   app.use("*", securityHeadersMiddleware());
-  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
+    webhookProviders: new Set(voiceProviders.keys()),
+  }));
 
   app.use("*", async (c, next) => {
     const start = performance.now();

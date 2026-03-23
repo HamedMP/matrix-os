@@ -62,12 +62,14 @@ export class FallbackTtsChain implements TtsProvider {
       if (circuit && circuit.openUntil > now) continue;
 
       try {
+        let timer: ReturnType<typeof setTimeout>;
         const result = await Promise.race([
           provider.synthesize(text, options),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Timeout")), this.timeoutMs),
-          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Timeout")), this.timeoutMs);
+          }),
         ]);
+        clearTimeout(timer!);
 
         this.circuits.delete(provider.name);
         this.onUsage?.({

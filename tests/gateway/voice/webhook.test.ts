@@ -141,7 +141,7 @@ describe("Webhook Router", () => {
       webhookEvents: [
         {
           id: "evt-dispatch-1",
-          callId,
+          callId: "prov-dispatch",
           timestamp: Date.now(),
           type: "call.ringing",
         },
@@ -186,7 +186,7 @@ describe("Webhook Router", () => {
       webhookEvents: [
         {
           id: eventId,
-          callId,
+          callId: "prov-dedup",
           timestamp: Date.now(),
           type: "call.ringing",
         },

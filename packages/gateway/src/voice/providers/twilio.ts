@@ -157,6 +157,9 @@ export class TwilioProvider implements VoiceCallProvider {
 
     if (input.inlineTwiml) {
       const twiml = input.inlineTwiml.trim();
+      if (twiml.length > 2000) {
+        throw new Error("Invalid TwiML: exceeds 2000 character limit");
+      }
       if (!twiml.startsWith("<")) {
         throw new Error("Invalid TwiML: must start with an XML tag");
       }
@@ -179,9 +182,8 @@ export class TwilioProvider implements VoiceCallProvider {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(
-        `Twilio API error ${response.status}: ${response.statusText} - ${text}`,
-      );
+      console.error(`[twilio] API error ${response.status}:`, text.slice(0, 200));
+      throw new Error(`Twilio API error (status ${response.status})`);
     }
 
     const data = (await response.json()) as { sid: string };
@@ -207,9 +209,8 @@ export class TwilioProvider implements VoiceCallProvider {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(
-        `Twilio hangup error ${response.status}: ${response.statusText} - ${text}`,
-      );
+      console.error("[twilio] hangup error:", text.slice(0, 200));
+      throw new Error(`Twilio hangup failed (status ${response.status})`);
     }
   }
 
@@ -231,9 +232,8 @@ export class TwilioProvider implements VoiceCallProvider {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(
-        `Twilio playTts error ${response.status}: ${response.statusText} - ${text}`,
-      );
+      console.error("[twilio] playTts error:", text.slice(0, 200));
+      throw new Error(`Twilio playTts failed (status ${response.status})`);
     }
   }
 
@@ -258,9 +258,8 @@ export class TwilioProvider implements VoiceCallProvider {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(
-        `Twilio startListening error ${response.status}: ${response.statusText} - ${text}`,
-      );
+      console.error("[twilio] startListening error:", text.slice(0, 200));
+      throw new Error(`Twilio startListening failed (status ${response.status})`);
     }
   }
 

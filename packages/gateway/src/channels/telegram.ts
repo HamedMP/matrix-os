@@ -97,13 +97,18 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
               const fileInfo = await currentBot.getFile(voiceFile.file_id);
               const filePath = fileInfo.file_path;
               if (!filePath || /\.\./.test(filePath) || /[^a-zA-Z0-9_./-]/.test(filePath)) {
-                console.warn("[telegram] Invalid file_path from Telegram API:", filePath);
+                console.warn("[telegram] Invalid file_path from Telegram API");
               } else {
-                const resp = await fetch(
-                  `https://api.telegram.org/file/bot${token}/${filePath}`,
-                  { signal: AbortSignal.timeout(30_000) },
-                );
-                if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
+                try {
+                  const resp = await fetch(
+                    `https://api.telegram.org/file/bot${token}/${filePath}`,
+                    { signal: AbortSignal.timeout(30_000) },
+                  );
+                  if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
+                } catch (fetchErr) {
+                  const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+                  console.warn("[telegram] Voice file download failed:", msg.replace(token, "[REDACTED]"));
+                }
               }
             }
             const audioBuffer = chunks.length > 0 ? Buffer.concat(chunks) : undefined;

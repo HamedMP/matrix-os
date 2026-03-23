@@ -64,9 +64,8 @@ export async function handleSpeakTool(
       text: `Audio saved to ${localPath}\nDuration: ${result.durationMs}ms\nProvider: ${result.provider}`,
     };
   } catch (e) {
-    return {
-      text: `TTS error: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    console.error("[voice-tools] TTS error:", e instanceof Error ? e.message : String(e));
+    return { text: "Speech synthesis failed. Check gateway logs for details." };
   }
 }
 
@@ -85,9 +84,8 @@ export async function handleTranscribeTool(
       text: `Transcription: ${result.text}\nLanguage: ${result.language}\nDuration: ${result.durationMs}ms`,
     };
   } catch (e) {
-    return {
-      text: `STT error: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    console.error("[voice-tools] STT error:", e instanceof Error ? e.message : String(e));
+    return { text: "Transcription failed. Check gateway logs for details." };
   }
 }
 
@@ -116,6 +114,9 @@ export async function handleCallTool(
     case "initiate": {
       if (!params.to) {
         return { text: "Phone number 'to' is required for initiating a call." };
+      }
+      if (!/^\+[1-9]\d{1,14}$/.test(params.to)) {
+        return { text: "Invalid phone number: must be E.164 format (e.g. +15551234567)" };
       }
 
       try {

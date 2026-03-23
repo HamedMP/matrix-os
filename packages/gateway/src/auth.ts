@@ -5,12 +5,6 @@ import { createRateLimiter } from "./security/rate-limiter.js";
 const PUBLIC_PATHS = ["/health"];
 const WS_QUERY_TOKEN_PATHS = ["/ws/voice"];
 
-let activeWebhookProviders: Set<string> | null = null;
-
-export function setActiveWebhookProviders(providers: Set<string>): void {
-  activeWebhookProviders = providers;
-}
-
 function timingSafeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
@@ -31,7 +25,12 @@ function getClientIp(c: { req: { header: (name: string) => string | undefined } 
   return c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "127.0.0.1";
 }
 
-export function authMiddleware(token: string | undefined): MiddlewareHandler {
+export function authMiddleware(
+  token: string | undefined,
+  options?: { webhookProviders?: Set<string> },
+): MiddlewareHandler {
+  const webhookProviders = options?.webhookProviders ?? new Set<string>();
+
   return async (c, next) => {
     if (!token) return next();
 
@@ -42,7 +41,7 @@ export function authMiddleware(token: string | undefined): MiddlewareHandler {
     // Webhook paths use provider-level HMAC verification, not bearer token auth.
     // Only bypass auth for providers that are actually registered and active.
     const webhookMatch = c.req.path.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
-    const isWebhook = webhookMatch && activeWebhookProviders?.has(webhookMatch[1]);
+    const isWebhook = webhookMatch && webhookProviders.has(webhookMatch[1]);
     if (isWebhook) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {

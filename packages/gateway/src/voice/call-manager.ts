@@ -38,6 +38,8 @@ export class CallManager {
   private timers: Map<string, CallTimers> = new Map();
   private callOptions: Map<string, InitiateCallOptions> = new Map();
   private speechInFlight: Set<string> = new Set();
+  private processedEvents: Map<string, Set<string>> = new Map();
+  private destroyed = false;
 
   initialize(provider: VoiceCallProvider, config: VoiceConfig): void {
     this.provider = provider;
@@ -97,7 +99,12 @@ export class CallManager {
       throw new Error(`Call not found: ${callId}`);
     }
 
-    if (call.processedEventIds.includes(event.id)) {
+    let seenIds = this.processedEvents.get(callId);
+    if (!seenIds) {
+      seenIds = new Set(call.processedEventIds);
+      this.processedEvents.set(callId, seenIds);
+    }
+    if (seenIds.has(event.id)) {
       return;
     }
 
@@ -153,6 +160,7 @@ export class CallManager {
       this.scheduleEviction(callId);
     }
 
+    seenIds.add(event.id);
     call.processedEventIds.push(event.id);
   }
 
@@ -221,6 +229,7 @@ export class CallManager {
   }
 
   destroy(): void {
+    this.destroyed = true;
     for (const [, timers] of this.timers) {
       if (timers.maxDuration) clearTimeout(timers.maxDuration);
       if (timers.silence) clearTimeout(timers.silence);
@@ -231,6 +240,7 @@ export class CallManager {
     this.providerCallIdMap.clear();
     this.callOptions.clear();
     this.speechInFlight.clear();
+    this.processedEvents.clear();
   }
 
   private eventToState(event: NormalizedEvent): CallState | null {
@@ -296,7 +306,7 @@ export class CallManager {
     call: CallRecord,
     userMessage: string,
   ): void {
-    if (call.mode !== "conversation") return;
+    if (this.destroyed || call.mode !== "conversation") return;
 
     const options = this.callOptions.get(callId);
     if (!options?.onResponse) return;

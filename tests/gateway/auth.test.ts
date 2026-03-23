@@ -1,9 +1,7 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { authMiddleware, setActiveWebhookProviders } from "../../packages/gateway/src/auth.js";
+import { describe, it, expect } from "vitest";
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
 
-beforeAll(() => {
-  setActiveWebhookProviders(new Set(["twilio", "mock"]));
-});
+const WEBHOOK_PROVIDERS = new Set(["twilio", "mock"]);
 
 function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string) {
   const url = queryToken
@@ -92,10 +90,18 @@ describe("T133: Auth token middleware", () => {
   });
 
   it("allows voice webhook without auth token", async () => {
-    const mw = authMiddleware("secret-token");
+    const mw = authMiddleware("secret-token", { webhookProviders: WEBHOOK_PROVIDERS });
     let nextCalled = false;
     await mw(mockContext("/voice/webhook/twilio"), async () => { nextCalled = true; });
     expect(nextCalled).toBe(true);
+  });
+
+  it("rejects webhook for unregistered provider", async () => {
+    const mw = authMiddleware("secret-token", { webhookProviders: WEBHOOK_PROVIDERS });
+    let nextCalled = false;
+    const result = await mw(mockContext("/voice/webhook/unknown"), async () => { nextCalled = true; });
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
   });
 
   it("allows WebSocket with query token", async () => {
@@ -142,7 +148,7 @@ describe("T133: Auth token middleware", () => {
   });
 
   it("rate-limits webhook endpoint", async () => {
-    const mw = authMiddleware("secret-token");
+    const mw = authMiddleware("secret-token", { webhookProviders: WEBHOOK_PROVIDERS });
     const testIp = "10.99.99.99";
     // Exhaust the rate limiter for this IP
     for (let i = 0; i < 10; i++) {
