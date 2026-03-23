@@ -12,6 +12,7 @@ import { SearchResults } from "./SearchResults";
 import { TrashView } from "./TrashView";
 import { StatusBar } from "./StatusBar";
 import { FileContextMenu } from "./FileContextMenu";
+import { QuickLook } from "./QuickLook";
 
 interface FileBrowserProps {
   windowId: string;
@@ -279,6 +280,7 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
         <PreviewPanel />
       </div>
       <StatusBar />
+      <QuickLook />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
+import { PreviewWindow } from "./preview-window/PreviewWindow";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { Settings } from "./Settings";
@@ -1015,6 +1016,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                     <TerminalApp />
                   ) : win.path === "__file-browser__" ? (
                     <FileBrowser windowId={win.id} />
+                  ) : win.path === "__preview-window__" ? (
+                    <PreviewWindow />
                   ) : (
                     <AppViewer path={win.path} onOpenApp={openWindow} />
                   )}
