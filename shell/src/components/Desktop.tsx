@@ -8,6 +8,7 @@ import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
+import { FileBrowser } from "./file-browser/FileBrowser";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { Settings } from "./Settings";
@@ -509,8 +510,9 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
 
       const layoutToLoad: LayoutWindow[] = [];
 
-      // Register built-in Terminal app
+      // Register built-in apps
       addApp("Terminal", "__terminal__");
+      addApp("Files", "__file-browser__");
       const savedTerminal = layoutMap.get("__terminal__");
       if (savedTerminal) layoutToLoad.push(savedTerminal);
 
@@ -725,11 +727,19 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         keywords: ["settings", "preferences", "config", "configure"],
         execute: () => setSettingsOpen((prev) => !prev),
       },
+      {
+        id: "action:open-file-browser",
+        label: "Open File Browser",
+        group: "Actions",
+        keywords: ["files", "finder", "browse", "explorer"],
+        execute: () => openWindow("Files", "__file-browser__"),
+      },
       ...modeCommands,
     ]);
     return () => unregister([
       "action:toggle-mc",
       "action:open-settings",
+      "action:open-file-browser",
       ...allModes().map((m) => `mode:${m.id}`),
     ]);
   }, [register, unregister, allModes, setDesktopMode]);
@@ -1003,6 +1013,8 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp />
+                  ) : win.path === "__file-browser__" ? (
+                    <FileBrowser windowId={win.id} />
                   ) : (
                     <AppViewer path={win.path} onOpenApp={openWindow} />
                   )}
