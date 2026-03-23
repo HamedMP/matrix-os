@@ -56,7 +56,8 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
             opts.onTranscription(msg.text);
           }
           if (msg.type === "voice_audio" && msg.audio) {
-            const mime = msg.format === "wav" ? "audio/wav" : msg.format === "ogg" ? "audio/ogg" : "audio/mpeg";
+            const MIME_MAP: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", opus: "audio/opus", webm: "audio/webm", flac: "audio/flac" };
+            const mime = MIME_MAP[msg.format] ?? "audio/mpeg";
             fetch(`data:${mime};base64,${msg.audio}`)
               .then((r) => r.arrayBuffer())
               .then((buf) => playAudio(buf))

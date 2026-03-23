@@ -95,11 +95,16 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
               }
             } else if (currentBot.getFile && token) {
               const fileInfo = await currentBot.getFile(voiceFile.file_id);
-              const resp = await fetch(
-                `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`,
-                { signal: AbortSignal.timeout(30_000) },
-              );
-              if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
+              const filePath = fileInfo.file_path;
+              if (!filePath || /\.\./.test(filePath) || /[^a-zA-Z0-9_./-]/.test(filePath)) {
+                console.warn("[telegram] Invalid file_path from Telegram API:", filePath);
+              } else {
+                const resp = await fetch(
+                  `https://api.telegram.org/file/bot${token}/${filePath}`,
+                  { signal: AbortSignal.timeout(30_000) },
+                );
+                if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
+              }
             }
             const audioBuffer = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
             return handleVoiceNote({

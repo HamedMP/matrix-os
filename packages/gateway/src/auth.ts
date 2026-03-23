@@ -5,6 +5,12 @@ import { createRateLimiter } from "./security/rate-limiter.js";
 const PUBLIC_PATHS = ["/health"];
 const WS_QUERY_TOKEN_PATHS = ["/ws/voice"];
 
+let activeWebhookProviders: Set<string> | null = null;
+
+export function setActiveWebhookProviders(providers: Set<string>): void {
+  activeWebhookProviders = providers;
+}
+
 function timingSafeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
@@ -34,8 +40,9 @@ export function authMiddleware(token: string | undefined): MiddlewareHandler {
     }
 
     // Webhook paths use provider-level HMAC verification, not bearer token auth.
-    // Match exactly /voice/webhook/{provider} to avoid bypassing auth on unrelated paths.
-    const isWebhook = /^\/voice\/webhook\/[a-z0-9-]+$/.test(c.req.path);
+    // Only bypass auth for providers that are actually registered and active.
+    const webhookMatch = c.req.path.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
+    const isWebhook = webhookMatch && activeWebhookProviders?.has(webhookMatch[1]);
     if (isWebhook) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {

@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { describe, it, expect, beforeAll } from "vitest";
+import { authMiddleware, setActiveWebhookProviders } from "../../packages/gateway/src/auth.js";
+
+beforeAll(() => {
+  setActiveWebhookProviders(new Set(["twilio", "mock"]));
+});
 
 function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string) {
   const url = queryToken

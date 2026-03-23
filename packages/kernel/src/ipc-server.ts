@@ -772,45 +772,10 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
         },
       ),
 
-      tool(
-        "call",
-        "Manage phone calls: initiate, speak into, hangup, or check status. Requires telephony to be configured.",
-        {
-          action: z.enum(["initiate", "speak", "hangup", "status"]).describe("Action to perform"),
-          to: z.string().optional().describe("Phone number to call (E.164 format, required for 'initiate')"),
-          call_id: z.string().optional().describe("Call ID (required for speak/hangup/status)"),
-          message: z.string().optional().describe("Message to speak into the call (required for 'speak')"),
-          mode: z.enum(["conversation", "notify"]).optional().describe("Call mode (default: conversation)"),
-          greeting: z.string().optional().describe("Greeting message for notify mode"),
-        },
-        async ({ action, to, call_id, message, mode, greeting }) => {
-          const { handleCallTool } = await import("./voice-tools.js");
-          const voiceEnabled = (() => {
-            try {
-              if (!homePath) return false;
-              const cfgPath = join(homePath, "system", "config.json");
-              if (!existsSync(cfgPath)) return false;
-              const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-              return cfg.voice?.enabled !== false;
-            } catch { return false; }
-          })();
-
-          const result = await handleCallTool(
-            {
-              voiceEnabled,
-              homePath: homePath ?? "",
-              callManager: undefined,
-              synthesize: async () => { throw new Error("Not available"); },
-              transcribe: async () => { throw new Error("Not available"); },
-            },
-            { action, to, callId: call_id, message, mode, greeting },
-          );
-
-          return {
-            content: [{ type: "text" as const, text: result.text }],
-          };
-        },
-      ),
+      // NOTE: "call" IPC tool removed -- telephony requires CallManager which lives
+      // in the gateway process. The kernel runs as a separate process via Agent SDK,
+      // so direct injection is not possible. Call control should route through the
+      // gateway HTTP API (POST /api/voice/calls) in a future phase.
 
       tool(
         "security_audit",

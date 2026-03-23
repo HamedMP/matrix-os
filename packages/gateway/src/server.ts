@@ -41,7 +41,7 @@ import {
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
-import { authMiddleware } from "./auth.js";
+import { authMiddleware, setActiveWebhookProviders } from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -473,22 +473,29 @@ export async function createGateway(config: GatewayConfig) {
 
   // Register TwilioProvider when credentials are available
   if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-    try {
-      const twilioProvider = new TwilioProvider({
-        accountSid: process.env.TWILIO_ACCOUNT_SID,
-        authToken: process.env.TWILIO_AUTH_TOKEN,
-        fromNumber: process.env.TWILIO_FROM_NUMBER || "+10000000000",
-        publicUrl: process.env.MATRIX_VOICE_WEBHOOK_URL,
-      });
-      voiceProviders.set("twilio", twilioProvider);
+    if (!process.env.TWILIO_FROM_NUMBER) {
+      console.warn("[voice] TWILIO_FROM_NUMBER not set, skipping Twilio initialization");
+    } else {
+      try {
+        const twilioProvider = new TwilioProvider({
+          accountSid: process.env.TWILIO_ACCOUNT_SID,
+          authToken: process.env.TWILIO_AUTH_TOKEN,
+          fromNumber: process.env.TWILIO_FROM_NUMBER,
+          publicUrl: process.env.MATRIX_VOICE_WEBHOOK_URL,
+        });
+        voiceProviders.set("twilio", twilioProvider);
 
-      const parsedVoiceConfig = VoiceConfigSchema.parse(voiceConfig);
-      callManager.initialize(twilioProvider, parsedVoiceConfig);
-      console.log("[voice] Twilio provider registered and CallManager initialized");
-    } catch (e) {
-      console.warn("[voice] Failed to initialize Twilio provider:", e instanceof Error ? e.message : String(e));
+        const parsedVoiceConfig = VoiceConfigSchema.parse(voiceConfig);
+        callManager.initialize(twilioProvider, parsedVoiceConfig);
+        console.log("[voice] Twilio provider registered and CallManager initialized");
+      } catch (e) {
+        console.warn("[voice] Failed to initialize Twilio provider:", e instanceof Error ? e.message : String(e));
+      }
     }
   }
+
+  // Tell auth middleware which webhook providers are active
+  setActiveWebhookProviders(new Set(voiceProviders.keys()));
 
   // Wire CallStore persistence: persist call records on creation
   const originalInitiateCall = callManager.initiateCall.bind(callManager);
@@ -775,11 +782,16 @@ export async function createGateway(config: GatewayConfig) {
                 return;
               }
               if (msg.type === "voice" && msg.audio) {
-                if (typeof msg.audio !== "string" || msg.audio.length > MAX_VOICE_BUFFER_SIZE * 1.37) {
+                if (typeof msg.audio !== "string" || msg.audio.length > MAX_VOICE_BUFFER_SIZE * 2) {
                   ws.send(JSON.stringify({ type: "voice_error", message: "Audio too large" }));
                   return;
                 }
-                processAudio(ws, Buffer.from(msg.audio, "base64"));
+                const decoded = Buffer.from(msg.audio, "base64");
+                if (decoded.length > MAX_VOICE_BUFFER_SIZE) {
+                  ws.send(JSON.stringify({ type: "voice_error", message: "Audio too large" }));
+                  return;
+                }
+                processAudio(ws, decoded);
                 return;
               }
             } catch {
