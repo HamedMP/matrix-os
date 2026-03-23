@@ -15,6 +15,7 @@ export interface TelegramBot {
   sendChatAction(chatId: string | number, action: string): Promise<unknown>;
   setMyCommands?(commands: Array<{ command: string; description: string }>): Promise<unknown>;
   getFile?(fileId: string): Promise<{ file_path: string }>;
+  getFileStream?(fileId: string): import("node:stream").Readable;
 }
 
 export interface TelegramMessage {
@@ -80,22 +81,35 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
 
         const voiceFile = msg.voice ?? msg.audio;
         if (voiceFile) {
-          if (!voiceCtx || !bot?.getFile || !token) return;
+          if (!voiceCtx || !bot) return;
 
           const currentBot = bot;
-          const currentToken = token;
           const ctx = voiceCtx;
 
-          currentBot.getFile!(voiceFile.file_id).then((fileInfo) => {
-            const audioUrl = `https://api.telegram.org/file/bot${currentToken}/${fileInfo.file_path}`;
+          (async () => {
+            const chunks: Buffer[] = [];
+            if (currentBot.getFileStream) {
+              const stream = currentBot.getFileStream(voiceFile.file_id);
+              for await (const chunk of stream) {
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+              }
+            } else if (currentBot.getFile && token) {
+              const fileInfo = await currentBot.getFile(voiceFile.file_id);
+              const resp = await fetch(
+                `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`,
+                { signal: AbortSignal.timeout(30_000) },
+              );
+              if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
+            }
+            const audioBuffer = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
             return handleVoiceNote({
-              audioUrl,
+              audioBuffer,
               channel: "telegram",
               homePath: ctx.homePath,
               stt: ctx.stt,
               extension: "ogg",
             });
-          }).then((result) => {
+          })().then((result) => {
             const text = result.transcript ?? "[Voice message - transcription failed]";
             const metadata: Record<string, unknown> = {
               source: "voice",

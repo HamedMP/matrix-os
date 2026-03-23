@@ -48,29 +48,39 @@ export async function generateVoiceResponse(
   };
 
   let responseText = "";
+  let timedOut = false;
 
   try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ac.abort();
+    }, timeoutMs);
+
     const dispatchPromise = dispatcher.dispatch(
       fullMessage,
       callId,
       (event) => {
         if (
-          event.type === "text" &&
-          typeof (event as { text?: string }).text === "string"
-        ) {
-          responseText += (event as { text: string }).text;
-        }
+          timedOut ||
+          event.type !== "text" ||
+          typeof (event as { text?: string }).text !== "string"
+        ) return;
+        responseText += (event as { text: string }).text;
       },
       context,
     );
 
-    const timeoutPromise = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), timeoutMs),
-    );
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      ac.signal.addEventListener("abort", () => resolve("timeout"), { once: true });
+    });
 
     const result = await Promise.race([dispatchPromise, timeoutPromise]);
+    clearTimeout(timer);
 
     if (result === "timeout") {
+      // Let the dispatch finish in the background but ignore its output
+      dispatchPromise.catch(() => {});
       return FALLBACK_MESSAGE;
     }
 

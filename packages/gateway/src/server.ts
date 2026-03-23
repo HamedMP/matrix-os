@@ -563,7 +563,9 @@ export async function createGateway(config: GatewayConfig) {
   const callManager = new CallManager();
   const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));
   const voiceProviders = new Map<string, VoiceCallProvider>();
-  voiceProviders.set("mock", new MockProvider());
+  if (process.env.NODE_ENV !== "production") {
+    voiceProviders.set("mock", new MockProvider());
+  }
 
   // Register TwilioProvider when credentials are available
   if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
@@ -958,6 +960,10 @@ export async function createGateway(config: GatewayConfig) {
                 return;
               }
               if (msg.type === "voice" && msg.audio) {
+                if (typeof msg.audio !== "string" || msg.audio.length > MAX_VOICE_BUFFER_SIZE * 1.37) {
+                  ws.send(JSON.stringify({ type: "voice_error", message: "Audio too large" }));
+                  return;
+                }
                 const audioBuffer = Buffer.from(msg.audio, "base64");
                 handleVoiceWsMessage(
                   {

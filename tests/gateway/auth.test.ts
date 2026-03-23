@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 
-function mockContext(path: string, authHeader?: string, queryToken?: string) {
+function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string) {
   const url = queryToken
     ? `http://localhost:4000${path}?token=${queryToken}`
     : `http://localhost:4000${path}`;
@@ -9,7 +9,11 @@ function mockContext(path: string, authHeader?: string, queryToken?: string) {
     req: {
       path,
       url,
-      header: (name: string) => name === "Authorization" ? authHeader : undefined,
+      header: (name: string) => {
+        if (name === "Authorization") return authHeader;
+        if (name === "X-Forwarded-For" && ip) return ip;
+        return undefined;
+      },
     },
     json: (body: unknown, status?: number) => ({ body, status: status ?? 200 }),
   } as any;
@@ -111,11 +115,22 @@ describe("T133: Auth token middleware", () => {
     expect(result?.status).toBe(401);
   });
 
+  it("rejects /ws/terminal with query token (only /ws/voice allowed)", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/ws/terminal", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
   it("rejects REST endpoint with query token (only WS allowed)", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
     const result = await mw(
-      mockContext("/api/message", undefined, "secret-token"),
+      mockContext("/api/message", undefined, "secret-token", "10.0.0.2"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(false);
@@ -124,13 +139,14 @@ describe("T133: Auth token middleware", () => {
 
   it("rate-limits webhook endpoint", async () => {
     const mw = authMiddleware("secret-token");
-    // Exhaust the rate limiter
+    const testIp = "10.99.99.99";
+    // Exhaust the rate limiter for this IP
     for (let i = 0; i < 10; i++) {
-      await mw(mockContext("/voice/webhook/twilio"), async () => {});
+      await mw(mockContext("/voice/webhook/twilio", undefined, undefined, testIp), async () => {});
     }
     let nextCalled = false;
     const result = await mw(
-      mockContext("/voice/webhook/twilio"),
+      mockContext("/voice/webhook/twilio", undefined, undefined, testIp),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(false);

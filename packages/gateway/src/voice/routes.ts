@@ -43,6 +43,9 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
       if (!body.text) {
         return c.json({ error: "Text is required" }, 400);
       }
+      if (body.text.length > 5000) {
+        return c.json({ error: "Text too long (max 5000 chars)" }, 400);
+      }
 
       const result = await config.voiceService.synthesize(body.text, {
         voice: body.voice,

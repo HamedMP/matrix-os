@@ -30,13 +30,14 @@ export interface VoiceNoteResult {
 }
 
 export async function handleVoiceNote(params: {
-  audioUrl: string;
+  audioUrl?: string;
+  audioBuffer?: Buffer;
   channel: string;
   homePath: string;
   stt: SttProvider | null;
   extension?: string;
 }): Promise<VoiceNoteResult> {
-  const { audioUrl, channel, homePath, stt, extension = "ogg" } = params;
+  const { audioUrl, audioBuffer: preloadedBuffer, channel, homePath, stt, extension = "ogg" } = params;
   const audioDir = join(homePath, "data", "audio");
   if (!existsSync(audioDir)) mkdirSync(audioDir, { recursive: true });
 
@@ -46,49 +47,55 @@ export async function handleVoiceNote(params: {
   const fileName = `${safeChannel}-${timestamp}.${safeExt}`;
   const filePath = join(audioDir, fileName);
 
-  if (!isAllowedAudioUrl(audioUrl)) {
-    return {
-      filePath,
-      transcript: null,
-      durationMs: 0,
-      error: "Audio URL not allowed",
-    };
-  }
+  let buffer: Buffer;
 
-  let response: Response;
-  try {
-    response = await fetch(audioUrl, { signal: AbortSignal.timeout(30_000) });
-  } catch (e) {
-    return {
-      filePath,
-      transcript: null,
-      durationMs: 0,
-      error: `Download failed: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
-  if (!response.ok) {
-    return {
-      filePath,
-      transcript: null,
-      durationMs: 0,
-      error: `Download failed: ${response.status}`,
-    };
-  }
-
-  const contentLength = response.headers?.get?.("content-length");
-  if (contentLength) {
-    const declaredSize = parseInt(contentLength, 10);
-    if (!Number.isNaN(declaredSize) && declaredSize > MAX_VOICE_SIZE) {
+  if (preloadedBuffer) {
+    buffer = preloadedBuffer;
+  } else {
+    if (!audioUrl || !isAllowedAudioUrl(audioUrl)) {
       return {
         filePath,
         transcript: null,
         durationMs: 0,
-        error: `File too large: ${(declaredSize / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit`,
+        error: "Audio URL not allowed",
       };
     }
-  }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+    let response: Response;
+    try {
+      response = await fetch(audioUrl, { signal: AbortSignal.timeout(30_000) });
+    } catch (e) {
+      return {
+        filePath,
+        transcript: null,
+        durationMs: 0,
+        error: `Download failed: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+    if (!response.ok) {
+      return {
+        filePath,
+        transcript: null,
+        durationMs: 0,
+        error: `Download failed: ${response.status}`,
+      };
+    }
+
+    const contentLength = response.headers?.get?.("content-length");
+    if (contentLength) {
+      const declaredSize = parseInt(contentLength, 10);
+      if (!Number.isNaN(declaredSize) && declaredSize > MAX_VOICE_SIZE) {
+        return {
+          filePath,
+          transcript: null,
+          durationMs: 0,
+          error: `File too large: ${(declaredSize / 1024 / 1024).toFixed(1)}MB exceeds 10MB limit`,
+        };
+      }
+    }
+
+    buffer = Buffer.from(await response.arrayBuffer());
+  }
 
   if (buffer.length > MAX_VOICE_SIZE) {
     return {

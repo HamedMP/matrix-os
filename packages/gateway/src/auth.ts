@@ -4,7 +4,7 @@ import { createRateLimiter } from "./security/rate-limiter.js";
 
 const PUBLIC_PATHS = ["/health"];
 const PUBLIC_PREFIXES = ["/voice/webhook"];
-const WS_PREFIXES = ["/ws"];
+const WS_QUERY_TOKEN_PATHS = ["/ws/voice"];
 
 function timingSafeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
@@ -50,7 +50,7 @@ export function authMiddleware(token: string | undefined): MiddlewareHandler {
     }
 
     const authHeader = c.req.header("Authorization");
-    const isWsUpgrade = WS_PREFIXES.some((p) => c.req.path.startsWith(p));
+    const isWsUpgrade = WS_QUERY_TOKEN_PATHS.some((p) => c.req.path === p);
 
     // Only accept query param token for WebSocket upgrades (browsers can't set
     // Authorization headers on WS connections). REST endpoints must use headers.
