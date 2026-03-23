@@ -66,6 +66,7 @@ export default function RootLayout({
           <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />
           <link rel="dns-prefetch" href="https://eu.i.posthog.com" />
           <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
+          <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
         </head>
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${sourceSerif.variable}`}>
           {children}
