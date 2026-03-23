@@ -88,6 +88,41 @@ async function fetchEntries(path: string): Promise<FileEntry[]> {
   }
 }
 
+function sortEntries(
+  entries: FileEntry[],
+  sortBy: "name" | "size" | "modified" | "type",
+  sortDirection: "asc" | "desc",
+): FileEntry[] {
+  const dirs = entries.filter((e) => e.type === "directory");
+  const files = entries.filter((e) => e.type === "file");
+
+  const compare = (a: FileEntry, b: FileEntry): number => {
+    let result = 0;
+    switch (sortBy) {
+      case "name":
+        result = a.name.localeCompare(b.name);
+        break;
+      case "size":
+        result = (a.size ?? 0) - (b.size ?? 0);
+        break;
+      case "modified":
+        result =
+          new Date(a.modified ?? 0).getTime() -
+          new Date(b.modified ?? 0).getTime();
+        break;
+      case "type": {
+        const extA = a.name.includes(".") ? a.name.split(".").pop()! : "";
+        const extB = b.name.includes(".") ? b.name.split(".").pop()! : "";
+        result = extA.localeCompare(extB);
+        break;
+      }
+    }
+    return sortDirection === "desc" ? -result : result;
+  };
+
+  return [...dirs.sort(compare), ...files.sort(compare)];
+}
+
 export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
   (set, get) => ({
     currentPath: "",
@@ -125,7 +160,10 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         loading: true,
         error: null,
       });
-      fetchEntries(path).then((entries) => set({ entries, loading: false }));
+      fetchEntries(path).then((entries) => {
+        const { sortBy, sortDirection } = get();
+        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+      });
     },
 
     goBack() {
@@ -140,7 +178,10 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         lastSelectedPath: null,
         loading: true,
       });
-      fetchEntries(path).then((entries) => set({ entries, loading: false }));
+      fetchEntries(path).then((entries) => {
+        const { sortBy, sortDirection } = get();
+        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+      });
     },
 
     goForward() {
@@ -155,7 +196,10 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         lastSelectedPath: null,
         loading: true,
       });
-      fetchEntries(path).then((entries) => set({ entries, loading: false }));
+      fetchEntries(path).then((entries) => {
+        const { sortBy, sortDirection } = get();
+        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+      });
     },
 
     refresh() {
@@ -169,11 +213,13 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     },
 
     setSortBy(sort) {
-      set({ sortBy: sort });
+      const { entries, sortDirection } = get();
+      set({ sortBy: sort, entries: sortEntries(entries, sort, sortDirection) });
     },
 
     setSortDirection(dir) {
-      set({ sortDirection: dir });
+      const { entries, sortBy } = get();
+      set({ sortDirection: dir, entries: sortEntries(entries, sortBy, dir) });
     },
 
     togglePreviewPanel() {
@@ -246,21 +292,21 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       if (!clipboard) return;
 
       for (const sourcePath of clipboard.paths) {
+        // clipboard stores full relative paths already
         const name = sourcePath.split("/").pop() ?? sourcePath;
-        const fullFrom = currentPath ? `${currentPath}/${sourcePath}` : sourcePath;
-        const fullTo = currentPath ? `${currentPath}/${name}` : name;
+        const destPath = currentPath ? `${currentPath}/${name}` : name;
 
         if (clipboard.operation === "copy") {
           await fetch(`${GATEWAY_URL}/api/files/copy`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: fullFrom, to: fullTo }),
+            body: JSON.stringify({ from: sourcePath, to: destPath }),
           });
         } else {
           await fetch(`${GATEWAY_URL}/api/files/rename`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: fullFrom, to: fullTo }),
+            body: JSON.stringify({ from: sourcePath, to: destPath }),
           });
         }
       }

@@ -46,9 +46,10 @@ export async function fileSearch(
   if (!startDir) return { query: q, results: [], truncated: false };
 
   let truncated = false;
+  const deadline = Date.now() + 5000;
 
   async function walk(dirPath: string): Promise<void> {
-    if (truncated) return;
+    if (truncated || Date.now() > deadline) { truncated = true; return; }
 
     let entries;
     try {

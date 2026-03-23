@@ -168,6 +168,16 @@ describe("trashRestore", () => {
     const result = await trashRestore(testDir, ".trash/nonexistent.md");
     expect(result).toEqual({ ok: false, error: "Not found in trash", status: 404 });
   });
+
+  it("rejects path traversal in trashPath", async () => {
+    const result = await trashRestore(testDir, "../../etc/passwd");
+    expect(result).toEqual({ ok: false, error: "Invalid trash path" });
+  });
+
+  it("rejects trashPath outside .trash directory", async () => {
+    const result = await trashRestore(testDir, "agents/builder.md");
+    expect(result).toEqual({ ok: false, error: "Invalid trash path" });
+  });
 });
 
 describe("trashEmpty", () => {

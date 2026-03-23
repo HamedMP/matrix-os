@@ -28,7 +28,6 @@ export function ColumnView() {
       const segments = currentPath ? currentPath.split("/") : [];
       const cols: Column[] = [];
 
-      let buildPath = "";
       const paths = ["", ...segments.map((_, i) => segments.slice(0, i + 1).join("/"))];
 
       for (const p of paths) {

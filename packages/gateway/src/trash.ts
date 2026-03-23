@@ -125,9 +125,12 @@ export async function trashRestore(
   trashPath: string,
 ): Promise<{ ok: boolean; restoredTo?: string; error?: string; status?: number }> {
   const trashDir = join(homePath, ".trash");
-  const fullTrashPath = join(homePath, trashPath);
+  const resolvedTrash = resolveWithinHome(homePath, trashPath);
+  if (!resolvedTrash || !resolvedTrash.startsWith(join(homePath, ".trash"))) {
+    return { ok: false, error: "Invalid trash path" };
+  }
 
-  if (!existsSync(fullTrashPath)) {
+  if (!existsSync(resolvedTrash)) {
     return { ok: false, error: "Not found in trash", status: 404 };
   }
 
@@ -139,7 +142,11 @@ export async function trashRestore(
     }
 
     const entry = manifest[entryIndex];
-    const restorePath = join(homePath, entry.originalPath);
+    const resolvedRestore = resolveWithinHome(homePath, entry.originalPath);
+    if (!resolvedRestore) {
+      return { ok: false, error: "Invalid restore path" };
+    }
+    const restorePath = resolvedRestore;
 
     if (existsSync(restorePath)) {
       return { ok: false, error: "Destination already exists", status: 409 };
@@ -149,7 +156,7 @@ export async function trashRestore(
     const parentDir = join(restorePath, "..");
     await mkdir(parentDir, { recursive: true });
 
-    await rename(fullTrashPath, restorePath);
+    await rename(resolvedTrash, restorePath);
 
     manifest.splice(entryIndex, 1);
     await writeManifest(trashDir, manifest);
