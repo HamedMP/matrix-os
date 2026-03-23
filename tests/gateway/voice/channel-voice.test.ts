@@ -60,7 +60,7 @@ describe("handleVoiceNote", () => {
     );
   });
 
-  it("saves to ~/data/audio/{channel}-{timestamp}.{ext}", async () => {
+  it("saves to ~/data/audio/{channel}-{uuid}.{ext}", async () => {
     const audioData = Buffer.from("fake-ogg-audio");
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -75,7 +75,7 @@ describe("handleVoiceNote", () => {
       stt,
     });
 
-    expect(result.filePath).toMatch(/data\/audio\/telegram-\d+\.ogg$/);
+    expect(result.filePath).toMatch(/data\/audio\/telegram-[0-9a-f-]+\.ogg$/);
     expect(existsSync(result.filePath)).toBe(true);
     expect(readFileSync(result.filePath)).toEqual(audioData);
   });
@@ -261,7 +261,7 @@ describe("handleVoiceNote", () => {
       extension: "mp3",
     });
 
-    expect(result.filePath).toMatch(/discord-\d+\.mp3$/);
+    expect(result.filePath).toMatch(/discord-[0-9a-f-]+\.mp3$/);
   });
 
   it("rejects URLs from non-allowlisted hosts", async () => {
@@ -308,7 +308,7 @@ describe("handleVoiceNote", () => {
       extension: "../../etc",
     });
 
-    expect(result.filePath).toMatch(/etcpasswd-\d+\.etc$/);
+    expect(result.filePath).toMatch(/etcpasswd-[0-9a-f-]+\.etc$/);
     expect(result.filePath).not.toContain("..");
   });
 });

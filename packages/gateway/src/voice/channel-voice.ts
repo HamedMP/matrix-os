@@ -1,5 +1,6 @@
 import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { SttProvider } from "./stt/base.js";
 
 const MAX_VOICE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -43,8 +44,7 @@ export async function handleVoiceNote(params: {
 
   const safeChannel = channel.replace(/[^a-z0-9-]/gi, "").toLowerCase();
   const safeExt = (extension || "ogg").replace(/[^a-z0-9]/gi, "").toLowerCase();
-  const timestamp = Date.now();
-  const fileName = `${safeChannel}-${timestamp}.${safeExt}`;
+  const fileName = `${safeChannel}-${randomUUID()}.${safeExt}`;
   const filePath = join(audioDir, fileName);
 
   let buffer: Buffer;

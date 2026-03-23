@@ -563,7 +563,7 @@ export async function createGateway(config: GatewayConfig) {
   const callManager = new CallManager();
   const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));
   const voiceProviders = new Map<string, VoiceCallProvider>();
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV === "test") {
     voiceProviders.set("mock", new MockProvider());
   }
 
@@ -596,20 +596,15 @@ export async function createGateway(config: GatewayConfig) {
 
   const originalProcessEvent = callManager.processEvent.bind(callManager);
   callManager.processEvent = (callId, event) => {
-    try {
-      originalProcessEvent(callId, event);
-    } finally {
-      const call = callManager.getCall(callId);
-      if (call) {
-        try { callStore.update(callId, call); } catch { /* best effort */ }
-      }
+    originalProcessEvent(callId, event);
+    const call = callManager.getCall(callId);
+    if (call) {
+      try { callStore.update(callId, call); } catch { /* best effort */ }
     }
   };
 
-  // Expose callManager globally for IPC tools.
-  // NOTE: This only works when kernel and gateway run in the same process.
-  // For multi-process deployments, route call control through HTTP/IPC instead.
-  (globalThis as Record<string, unknown>).__matrixCallManager = callManager;
+  // CallManager is exposed via the voiceService return value from createGateway.
+  // Kernel IPC tools receive it through VoiceToolDeps injection at startup.
 
   const provisioner = createProvisioner({
     homePath,

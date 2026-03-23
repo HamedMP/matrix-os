@@ -62,6 +62,13 @@ export class TwilioProvider implements VoiceCallProvider {
         `Invalid fromNumber: must be E.164 format (e.g. +15551234567)`,
       );
     }
+    if (!config.publicUrl) {
+      console.warn(
+        "[twilio] publicUrl is not set. Webhook HMAC verification will fall back to " +
+        "X-Forwarded-* headers, which are spoofable unless behind a trusted reverse proxy. " +
+        "Set MATRIX_VOICE_WEBHOOK_URL for production deployments.",
+      );
+    }
     this.config = config;
   }
 

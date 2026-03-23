@@ -11,6 +11,8 @@ export type VoiceRoutesConfig = {
   homePath: string;
 };
 
+const ALLOWED_AUDIO_FORMATS = new Set(["mp3", "wav", "ogg", "opus", "flac", "webm", "m4a"]);
+
 export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
   const app = new Hono();
 
@@ -51,11 +53,14 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
         voice: body.voice,
       });
 
+      if (!ALLOWED_AUDIO_FORMATS.has(result.format)) {
+        return c.json({ error: "Unsupported audio format" }, 500);
+      }
+
       const audioDir = join(config.homePath, "data", "audio");
       mkdirSync(audioDir, { recursive: true });
       const fileName = `${randomUUID()}.${result.format}`;
-      const localPath = join(audioDir, fileName);
-      writeFileSync(localPath, result.audio);
+      writeFileSync(join(audioDir, fileName), result.audio);
 
       const audioUrl = `/files/data/audio/${fileName}`;
 

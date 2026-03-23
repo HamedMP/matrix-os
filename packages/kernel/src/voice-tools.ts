@@ -49,6 +49,11 @@ export async function handleSpeakTool(
 
     const result = await deps.synthesize(params.text, options);
 
+    const ALLOWED_FORMATS = new Set(["mp3", "wav", "ogg", "opus", "flac", "webm", "m4a"]);
+    if (!ALLOWED_FORMATS.has(result.format)) {
+      return { text: `TTS error: unsupported audio format "${result.format}"` };
+    }
+
     const audioDir = join(deps.homePath, "data", "audio");
     mkdirSync(audioDir, { recursive: true });
     const fileName = `${randomUUID()}.${result.format}`;

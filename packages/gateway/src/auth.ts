@@ -3,7 +3,6 @@ import type { MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 
 const PUBLIC_PATHS = ["/health"];
-const PUBLIC_PREFIXES = ["/voice/webhook"];
 const WS_QUERY_TOKEN_PATHS = ["/ws/voice"];
 
 function timingSafeCompare(a: string, b: string): boolean {
@@ -34,9 +33,10 @@ export function authMiddleware(token: string | undefined): MiddlewareHandler {
       return next();
     }
 
-    const isWebhook = PUBLIC_PREFIXES.some((p) => c.req.path.startsWith(p));
+    // Webhook paths use provider-level HMAC verification, not bearer token auth.
+    // Match exactly /voice/webhook/{provider} to avoid bypassing auth on unrelated paths.
+    const isWebhook = /^\/voice\/webhook\/[a-z0-9-]+$/.test(c.req.path);
     if (isWebhook) {
-      // Apply rate limiting to webhooks even though they skip auth
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {
         return c.json({ error: "Too many requests" }, 429);

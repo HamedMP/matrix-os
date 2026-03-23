@@ -56,8 +56,11 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
             opts.onTranscription(msg.text);
           }
           if (msg.type === "voice_audio" && msg.audio) {
-            const binary = Uint8Array.from(atob(msg.audio), c => c.charCodeAt(0));
-            playAudio(binary.buffer);
+            const mime = msg.format === "wav" ? "audio/wav" : msg.format === "ogg" ? "audio/ogg" : "audio/mpeg";
+            fetch(`data:${mime};base64,${msg.audio}`)
+              .then((r) => r.arrayBuffer())
+              .then((buf) => playAudio(buf))
+              .catch(() => {});
           }
           if (msg.type === "voice_error") {
             setIsTranscribing(false);

@@ -3,6 +3,7 @@ import {
   readFileSync,
   appendFileSync,
   writeFileSync,
+  renameSync,
   mkdirSync,
 } from "node:fs";
 import { dirname } from "node:path";
@@ -86,7 +87,9 @@ export class CallStore {
     const lines = Array.from(this.cache.values())
       .map((r) => JSON.stringify(r))
       .join("\n");
-    writeFileSync(this.path, lines ? lines + "\n" : "");
+    const tmp = this.path + ".tmp";
+    writeFileSync(tmp, lines ? lines + "\n" : "");
+    renameSync(tmp, this.path);
     this.appendsSinceCompaction = 0;
   }
 

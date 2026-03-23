@@ -6,6 +6,7 @@ import {
   type NormalizedEvent,
   type VoiceConfig,
   type CallMode,
+  CallStateSchema,
   TerminalStates,
   isValidTransition,
 } from "./types.js";
@@ -36,6 +37,7 @@ export class CallManager {
   private providerCallIdMap: Map<string, string> = new Map();
   private timers: Map<string, CallTimers> = new Map();
   private callOptions: Map<string, InitiateCallOptions> = new Map();
+  private speechInFlight: Set<string> = new Set();
 
   initialize(provider: VoiceCallProvider, config: VoiceConfig): void {
     this.provider = provider;
@@ -228,6 +230,7 @@ export class CallManager {
     this.activeCalls.clear();
     this.providerCallIdMap.clear();
     this.callOptions.clear();
+    this.speechInFlight.clear();
   }
 
   private eventToState(event: NormalizedEvent): CallState | null {
@@ -244,8 +247,11 @@ export class CallManager {
         return "speaking";
       case "call.speech":
         return "listening";
-      case "call.ended":
-        return (event as { reason: string }).reason as CallState;
+      case "call.ended": {
+        const reason = (event as { reason: string }).reason;
+        const parsed = CallStateSchema.safeParse(reason);
+        return parsed.success ? parsed.data : "error";
+      }
       case "call.error":
         return "error";
       case "call.silence":
@@ -295,6 +301,9 @@ export class CallManager {
     const options = this.callOptions.get(callId);
     if (!options?.onResponse) return;
 
+    if (this.speechInFlight.has(callId)) return;
+    this.speechInFlight.add(callId);
+
     void options
       .onResponse(callId, userMessage, call.transcript)
       .then(async (response) => {
@@ -304,6 +313,9 @@ export class CallManager {
       })
       .catch(() => {
         // Response generation failed, continue listening
+      })
+      .finally(() => {
+        this.speechInFlight.delete(callId);
       });
   }
 
