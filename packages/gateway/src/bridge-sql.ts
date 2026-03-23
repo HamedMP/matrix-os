@@ -65,6 +65,7 @@ function validateSql(sql: string): void {
   }
 }
 
+/** @deprecated Use AppDb query engine (app-db-query.ts) instead. Per-app SQLite will be removed in v0.6.0. */
 export function createBridgeSql(homePath: string): BridgeSql {
   const databases = new Map<string, Database.Database>();
 

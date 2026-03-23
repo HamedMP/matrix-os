@@ -16,6 +16,7 @@ function sanitize(input: string): string {
   return input.replace(/[^a-zA-Z0-9_-]/g, "");
 }
 
+/** @deprecated File-based handler. Gateway now uses Postgres via KvStore/QueryEngine when DATABASE_URL is set. */
 export async function appDataHandler(
   homePath: string,
   params: AppDataParams,

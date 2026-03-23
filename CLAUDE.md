@@ -61,6 +61,8 @@ Key principles:
 - `specs/046-voice/`: Voice interface (spec drafted)
 - `specs/047-terminal/`: IDE-grade terminal app with Claude Code integration (COMPLETE)
 - `specs/048-file-browser/`: File browser app (spec drafted)
+- `specs/049-hybrid-integrations/`: Hybrid integrations: Pipedream, n8n, native connectors (spec drafted)
+- `specs/050-app-data-layer/`: Postgres-backed app data: Kysely, schema-per-app, unified query API (IN PROGRESS)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/`: original architecture spec, plan, tasks (reference only)
@@ -85,7 +87,7 @@ Key principles:
 - **Backend**: Hono (HTTP/WebSocket gateway + channel adapters)
 - **Channels**: node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt
 - **Federation**: Matrix protocol (matrix-js-sdk): federated identity, AI-to-AI, E2E encryption
-- **Database**: SQLite via Drizzle ORM (better-sqlite3, WAL mode)
+- **Database**: SQLite via Drizzle ORM (kernel, platform); PostgreSQL 16 via Kysely (app data layer, schema-per-app)
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Scheduling**: node-cron (cron expressions), native timers
 - **Testing**: Vitest (TDD, 99-100% coverage, `@vitest/coverage-v8`)
@@ -189,6 +191,7 @@ bun run docker:build    # Full rebuild (no cache)
 - `MATRIX_HANDLE`: user handle, set by platform at provisioning (default in Docker: `dev`)
 - `MATRIX_DISPLAY_NAME`: display name from Clerk signup (default in Docker: `Developer`)
 - `MATRIX_AUTH_TOKEN`: bearer token for web shell auth (optional, for cloud deployment)
+- `DATABASE_URL`: PostgreSQL connection string for app data layer (optional, falls back to file-based storage)
 - `PORT`: gateway port (default: 4000)
 - `NEXT_PUBLIC_GATEWAY_WS`: shell WebSocket URL (default: `ws://localhost:4000/ws`)
 - `NEXT_PUBLIC_GATEWAY_URL`: shell HTTP URL (default: `http://localhost:4000`)
