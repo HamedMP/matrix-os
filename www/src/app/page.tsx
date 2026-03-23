@@ -149,9 +149,9 @@ function Hero() {
         {/* Text block */}
         <div className="text-center mb-16">
           <h1 className="animate-fade-up text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 leading-[1.1]">
-            Your computer is stuck in 1984.
+            The AI-native operating system
             <br />
-            <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">This one isn't.</span>
+            <span className="font-[family-name:var(--font-caveat)] text-primary text-[1.15em]">that builds itself.</span>
           </h1>
 
           <p className="animate-fade-up delay-100 text-base sm:text-lg text-muted-foreground max-w-xl mx-auto mb-10 leading-relaxed">
@@ -366,9 +366,15 @@ function Problem() {
           <br />
           Files scattered across services you don't control.
         </h2>
-        <p className="text-lg text-muted-foreground leading-relaxed max-w-xl mx-auto mb-10">
+        <p className="text-lg text-muted-foreground leading-relaxed max-w-xl mx-auto mb-6">
           What if your OS understood you? What if software wrote itself?
           What if every device you own was the same computer?
+        </p>
+        <p className="text-base text-muted-foreground leading-relaxed max-w-xl mx-auto mb-10">
+          Matrix OS is an AI-native operating system built on the Claude Agent SDK.
+          It replaces the traditional app-per-task model with a single AI kernel
+          that generates, manages, and evolves software from plain conversation.
+          Everything lives as files you own, synced across every device.
         </p>
         <SignedOut>
           <Button size="lg" className="h-11 px-7 text-sm rounded-xl" asChild>
