@@ -1,1 +1,14 @@
 export { FileBrowser } from "./FileBrowser";
+export { FileBrowserToolbar } from "./FileBrowserToolbar";
+export { FileBrowserSidebar } from "./FileBrowserSidebar";
+export { FileBrowserContent } from "./FileBrowserContent";
+export { IconView } from "./IconView";
+export { ListView } from "./ListView";
+export { ColumnView } from "./ColumnView";
+export { FileIcon } from "./FileIcon";
+export { PreviewPanel } from "./PreviewPanel";
+export { SearchResults } from "./SearchResults";
+export { TrashView } from "./TrashView";
+export { StatusBar } from "./StatusBar";
+export { InlineRename } from "./InlineRename";
+export { FileContextMenu } from "./FileContextMenu";
