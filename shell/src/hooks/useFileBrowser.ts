@@ -82,7 +82,8 @@ async function fetchEntries(path: string): Promise<FileEntry[]> {
   try {
     const res = await fetch(`${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(path)}`);
     if (!res.ok) return [];
-    return await res.json();
+    const data = await res.json();
+    return data.entries ?? data;
   } catch {
     return [];
   }

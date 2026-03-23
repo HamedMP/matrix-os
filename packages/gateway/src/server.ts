@@ -702,17 +702,23 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  const listHandler = async (c: any) => {
+  app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";
     const result = await listDirectory(homePath, pathParam);
     if (!result) {
       return c.json({ error: "Invalid path" }, 400);
     }
     return c.json(result);
-  };
+  });
 
-  app.get("/api/files/tree", listHandler);
-  app.get("/api/files/list", listHandler);
+  app.get("/api/files/list", async (c) => {
+    const pathParam = c.req.query("path") ?? "";
+    const result = await listDirectory(homePath, pathParam);
+    if (!result) {
+      return c.json({ error: "Invalid path" }, 400);
+    }
+    return c.json({ path: pathParam, entries: result });
+  });
 
   app.get("/api/files/stat", async (c) => {
     const pathParam = c.req.query("path");

@@ -11,6 +11,7 @@ interface TrashEntry {
   name: string;
   originalPath: string;
   deletedAt: string;
+  trashPath: string;
   size?: number;
   type: "file" | "directory";
 }
@@ -100,7 +101,7 @@ export function TrashView() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => handleRestore(`.trash/${entry.name}`)}
+                onClick={() => handleRestore(entry.trashPath)}
                 title="Restore"
               >
                 <RotateCcwIcon className="size-4" />

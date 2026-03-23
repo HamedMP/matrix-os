@@ -22,6 +22,7 @@ interface TrashListEntry {
   name: string;
   originalPath: string;
   deletedAt: string;
+  trashPath: string;
   size?: number;
   type: "file" | "directory";
 }
@@ -109,6 +110,7 @@ export async function trashList(
         name: entry.name,
         originalPath: entry.originalPath,
         deletedAt: entry.deletedAt,
+        trashPath: entry.trashPath,
         size: stats.isFile() ? stats.size : undefined,
         type: stats.isDirectory() ? "directory" : "file",
       });

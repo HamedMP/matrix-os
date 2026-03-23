@@ -3,6 +3,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
 import { getGatewayUrl } from "@/lib/gateway";
+import { FileIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -32,7 +33,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
   const setMode = usePreviewWindow((s) => s.setMode);
 
   useEffect(() => {
-    if (tab.type === "image" || tab.type === "audio" || tab.type === "video") {
+    if (tab.type === "image" || tab.type === "audio" || tab.type === "video" || tab.type === "pdf") {
       setLoading(false);
       return;
     }
@@ -104,6 +105,8 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
             <ImageViewer path={tab.path} />
           ) : tab.type === "audio" || tab.type === "video" ? (
             <MediaPlayer path={tab.path} type={tab.type} />
+          ) : tab.type === "pdf" ? (
+            <PdfPlaceholder path={tab.path} />
           ) : tab.type === "markdown" && tab.mode === "preview" ? (
             <MarkdownViewer content={content} />
           ) : (
@@ -118,6 +121,26 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
           )}
         </Suspense>
       </div>
+    </div>
+  );
+}
+
+function PdfPlaceholder({ path }: { path: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+      <FileIcon className="size-12" />
+      <div className="text-sm font-medium">PDF Preview</div>
+      <div className="text-xs">
+        PDF rendering requires pdfjs-dist (planned for v2)
+      </div>
+      <a
+        href={`${GATEWAY_URL}/files/${path}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs text-primary underline"
+      >
+        Open in browser
+      </a>
     </div>
   );
 }

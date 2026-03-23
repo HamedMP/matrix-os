@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
 import { FileBrowserSidebar } from "./FileBrowserSidebar";
@@ -42,7 +43,23 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
   const togglePreviewPanel = useFileBrowser((s) => s.togglePreviewPanel);
   const searchResults = useFileBrowser((s) => s.searchResults);
-  const openFile = usePreviewWindow((s) => s.openFile);
+  const openFileTab = usePreviewWindow((s) => s.openFile);
+  const wmWindows = useWindowManager((s) => s.windows);
+  const wmOpenWindow = useWindowManager((s) => s.openWindow);
+
+  const openFile = useCallback(
+    (path: string) => {
+      openFileTab(path);
+      // Ensure the preview window exists in the window manager
+      const hasPreviewWindow = wmWindows.some(
+        (w) => w.path === "__preview-window__",
+      );
+      if (!hasPreviewWindow) {
+        wmOpenWindow("Preview", "__preview-window__", 0);
+      }
+    },
+    [openFileTab, wmWindows, wmOpenWindow],
+  );
 
   // Load initial directory
   useEffect(() => {
@@ -227,16 +244,15 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
         return;
       }
 
-      // Enter: open folder or start rename (for files, delayed)
+      // Enter: open folder or open file in Preview Window
       if (e.key === "Enter" && selectedPaths.size === 1 && !renamingPath) {
         e.preventDefault();
         const name = Array.from(selectedPaths)[0];
         const entry = entries.find((en) => en.name === name);
         if (entry?.type === "directory") {
           navigate(currentPath ? `${currentPath}/${name}` : name);
-        } else {
-          // Start rename for files
-          setRenamingPath(name);
+        } else if (entry) {
+          openFile(currentPath ? `${currentPath}/${name}` : name);
         }
         return;
       }

@@ -34,7 +34,8 @@ export function ColumnView() {
         try {
           const res = await fetch(`${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(p)}`);
           if (res.ok) {
-            const entries: FileEntry[] = await res.json();
+            const data = await res.json();
+            const entries: FileEntry[] = data.entries ?? data;
             const nextSeg = segments[cols.length] ?? null;
             cols.push({ path: p, entries, selected: nextSeg });
           }

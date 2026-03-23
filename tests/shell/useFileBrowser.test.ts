@@ -32,7 +32,7 @@ describe("useFileBrowser store", () => {
     mockFetch.mockReset();
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve([]),
+      json: () => Promise.resolve({ path: "", entries: [] }),
     });
   });
 
