@@ -27,12 +27,12 @@ const sourceSerif = Source_Serif_4({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://matrix-os.com"),
-  title: "Matrix OS | The OS That Builds Itself",
+  title: "Matrix OS | AI-Native Operating System That Builds Itself",
   description:
-    "An AI-native operating system where software is generated in real time from conversation. Your OS, your messaging, your social network, your AI assistant, unified under one identity.",
+    "Matrix OS is an AI-native operating system that generates software from conversation. Describe what you need and watch it appear on your desktop.",
   openGraph: {
-    title: "Matrix OS",
-    description: "The OS that builds itself. Describe what you need. It writes it into existence.",
+    title: "Matrix OS | AI-Native Operating System",
+    description: "The AI-native operating system that builds itself. Describe what you need. It writes it into existence.",
     url: "https://matrix-os.com",
     siteName: "Matrix OS",
     type: "website",
@@ -40,16 +40,17 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Matrix OS",
-    description: "The OS that builds itself. Describe what you need. It writes it into existence.",
+    title: "Matrix OS | AI-Native Operating System",
+    description: "The AI-native operating system that builds itself. Describe what you need. It writes it into existence.",
     creator: "@HamedMP",
   },
   keywords: [
+    "AI-native operating system",
     "AI operating system",
     "Claude Agent SDK",
-    "AI-native OS",
     "self-building software",
     "Matrix OS",
+    "generative OS",
   ],
 };
 
@@ -61,6 +62,12 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" suppressHydrationWarning>
+        <head>
+          <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />
+          <link rel="dns-prefetch" href="https://eu.i.posthog.com" />
+          <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
+          <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
+        </head>
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${sourceSerif.variable}`}>
           {children}
           <Analytics />
