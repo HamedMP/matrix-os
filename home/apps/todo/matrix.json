@@ -1,0 +1,22 @@
+{
+  "name": "Todo",
+  "description": "Task list with categories and due dates",
+  "category": "productivity",
+  "icon": "todo",
+  "author": "system",
+  "version": "2.0.0",
+  "storage": {
+    "tables": {
+      "tasks": {
+        "columns": {
+          "text": "text",
+          "done": "boolean",
+          "due": "timestamptz",
+          "category": "text",
+          "priority": "text"
+        },
+        "indexes": ["due", "category", "done"]
+      }
+    }
+  }
+}

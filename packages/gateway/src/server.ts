@@ -170,6 +170,38 @@ export async function createGateway(config: GatewayConfig) {
           console.error("[app-db] Migration error:", (migErr as Error).message);
         }
       }
+
+      // Register apps with storage declarations
+      try {
+        const { loadAppManifest } = await import("./app-manifest.js");
+        const apps = listApps(homePath);
+        let registered = 0;
+        for (const app of apps) {
+          const appDir = app.file.includes("/")
+            ? join(homePath, "apps", app.file.replace(/\/index\.html$/, ""))
+            : null;
+          if (!appDir) continue;
+          const manifest = loadAppManifest(appDir);
+          if (manifest?.storage?.tables && Object.keys(manifest.storage.tables).length > 0) {
+            const slug = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+            await appRegistry.register({
+              slug,
+              name: manifest.name,
+              description: manifest.description,
+              version: manifest.version,
+              author: manifest.author,
+              category: manifest.category,
+              tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
+            });
+            registered++;
+          }
+        }
+        if (registered > 0) {
+          console.log(`[app-db] Registered ${registered} app(s) with storage schemas`);
+        }
+      } catch (regErr) {
+        console.error("[app-db] App registration error:", (regErr as Error).message);
+      }
     } catch (err) {
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
       console.log("[app-db] Falling back to file-based storage");
