@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { sqliteTable, text, index } from 'drizzle-orm/sqlite-core';
 import type { PlatformDB } from './db.js';
@@ -100,7 +101,7 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
     username: string,
     displayname: string,
   ): Promise<{ userId: string; accessToken: string }> {
-    const password = `matrixos_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const password = randomBytes(32).toString('hex');
 
     const regRes = await fetchFn(`${homeserverUrl}/_matrix/client/v3/register`, {
       method: 'POST',
@@ -146,7 +147,13 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
   return {
     async provisionUser(handle) {
       const human = await registerAndLogin(handle, handle);
-      const ai = await registerAndLogin(`${handle}_ai`, `${handle} (AI)`);
+      let ai;
+      try {
+        ai = await registerAndLogin(`${handle}_ai`, `${handle} (AI)`);
+      } catch (err) {
+        console.error(`[matrix] AI registration failed for ${handle}, human account @${handle}:${serverName} is orphaned`);
+        throw err;
+      }
 
       const result: ProvisionResult = {
         humanMatrixId: human.userId,
