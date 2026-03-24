@@ -55,15 +55,16 @@ export class CallManager {
       throw new Error("CallManager not initialized");
     }
 
+    this.pendingCalls++;
     const maxConcurrent = this.config.telephony.maxConcurrentCalls;
     const currentActive = this.getActiveCalls().length + this.pendingCalls;
-    if (currentActive >= maxConcurrent) {
+    if (currentActive > maxConcurrent) {
+      this.pendingCalls--;
       throw new Error(
         `Max concurrent calls reached (${maxConcurrent}). Cannot initiate new call.`,
       );
     }
 
-    this.pendingCalls++;
     const callId = `call-${randomUUID()}`;
 
     let result;

@@ -461,7 +461,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   } catch { /* no voice config */ }
 
-  const voiceService = VoiceService.create(voiceConfig);
+  const voiceService = VoiceService.create({ ...voiceConfig, homePath });
 
   // Telephony: CallManager + CallStore + webhook/REST routes
   const callManager = new CallManager();

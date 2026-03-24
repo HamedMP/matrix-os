@@ -67,6 +67,10 @@ export function createWebhookRouter(config: WebhookRouterConfig): Hono {
       return c.body(parseResult.providerResponseBody, 200);
     }
 
+    if (errors.length > 0) {
+      return c.json({ ok: false }, 500);
+    }
+
     return c.json({ ok: true }, 200);
   });
 

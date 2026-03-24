@@ -25,6 +25,8 @@ type TwilioConfig = {
   publicUrl?: string;
 };
 
+const TWILIO_FETCH_TIMEOUT_MS = 10_000;
+
 const TWILIO_STATUS_MAP: Record<
   string,
   | { type: "call.initiated" }
@@ -182,6 +184,7 @@ export class TwilioProvider implements VoiceCallProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -209,6 +212,7 @@ export class TwilioProvider implements VoiceCallProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -232,6 +236,7 @@ export class TwilioProvider implements VoiceCallProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -258,6 +263,7 @@ export class TwilioProvider implements VoiceCallProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -268,7 +274,6 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async stopListening(input: StopListeningInput): Promise<void> {
-    // For Twilio, stopping listening is done by sending new TwiML
     const twiml = `<Response><Pause length="1"/></Response>`;
 
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls/${input.providerCallId}.json`;
@@ -282,6 +287,7 @@ export class TwilioProvider implements VoiceCallProvider {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
   }
 
@@ -295,6 +301,7 @@ export class TwilioProvider implements VoiceCallProvider {
       headers: {
         Authorization: `Basic ${Buffer.from(`${this.config.accountSid}:${this.config.authToken}`).toString("base64")}`,
       },
+      signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
