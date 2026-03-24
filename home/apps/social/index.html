@@ -1,1026 +1,2333 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Social - Matrix OS</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    :root {
-      --bg: var(--matrix-bg, #ece5f0);
-      --fg: var(--matrix-fg, #1c1917);
-      --accent: var(--matrix-accent, #c2703a);
-      --border: var(--matrix-border, #d8d0de);
-      --card-bg: var(--matrix-card-bg, #ffffff);
-    }
-    body {
-      font-family: var(--matrix-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
-      background: var(--bg);
-      color: var(--fg);
-      min-height: 100vh;
-    }
-    .app {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 1rem;
-    }
-    nav[role="tablist"] {
-      display: flex;
-      gap: 1rem;
-      padding: 0.75rem 0;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 1rem;
-    }
-    nav a[role="tab"] {
-      color: var(--fg);
-      text-decoration: none;
-      padding: 0.5rem 1rem;
-      border-radius: 0.5rem;
-      font-size: 0.9rem;
-      opacity: 0.7;
-      cursor: pointer;
-      background: none;
-      border: none;
-      font-family: inherit;
-    }
-    nav a[role="tab"][aria-selected="true"], nav a[role="tab"]:hover {
-      opacity: 1;
-      background: var(--card-bg);
-    }
-    nav button.compose-nav-btn {
-      color: var(--fg);
-      text-decoration: none;
-      padding: 0.5rem 1rem;
-      border-radius: 0.5rem;
-      font-size: 0.9rem;
-      opacity: 0.7;
-      cursor: pointer;
-      background: none;
-      border: none;
-      font-family: inherit;
-      margin-left: auto;
-    }
-    nav button.compose-nav-btn:hover {
-      opacity: 1;
-      background: var(--card-bg);
-    }
-    .post-card {
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 1rem;
-      margin-bottom: 0.75rem;
-      background: var(--card-bg);
-    }
-    .post-header {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-    .avatar {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: var(--accent);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 600;
-      font-size: 0.85rem;
-      color: white;
-      flex-shrink: 0;
-    }
-    .handle {
-      font-weight: 600;
-      font-size: 0.9rem;
-    }
-    .timestamp {
-      font-size: 0.75rem;
-      opacity: 0.5;
-      margin-left: auto;
-    }
-    .post-content {
-      font-size: 0.95rem;
-      line-height: 1.5;
-      margin-bottom: 0.75rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .post-actions {
-      display: flex;
-      gap: 1.5rem;
-    }
-    .action-btn {
-      background: none;
-      border: none;
-      color: var(--fg);
-      opacity: 0.6;
-      cursor: pointer;
-      font-size: 0.85rem;
-      display: flex;
-      align-items: center;
-      gap: 0.25rem;
-    }
-    .action-btn:hover {
-      opacity: 1;
-      color: var(--accent);
-    }
-    .action-btn.liked {
-      opacity: 1;
-      color: #e74c3c;
-    }
-    .compose-overlay {
-      display: none;
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.4);
-      z-index: 100;
-      align-items: center;
-      justify-content: center;
-    }
-    .compose-overlay.open {
-      display: flex;
-    }
-    .compose-dialog {
-      background: var(--card-bg);
-      border-radius: 0.75rem;
-      padding: 1.5rem;
-      width: 90%;
-      max-width: 500px;
-      border: 1px solid var(--border);
-    }
-    .compose-dialog h3 {
-      margin-bottom: 1rem;
-    }
-    .compose-dialog textarea {
-      width: 100%;
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 0.5rem;
-      color: var(--fg);
-      font-size: 0.95rem;
-      resize: none;
-      outline: none;
-      min-height: 120px;
-      padding: 0.75rem;
-      font-family: inherit;
-    }
-    .compose-dialog textarea:focus {
-      border-color: var(--accent);
-    }
-    .compose-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 0.75rem;
-    }
-    .char-count {
-      font-size: 0.75rem;
-      opacity: 0.5;
-    }
-    .compose-actions {
-      display: flex;
-      gap: 0.5rem;
-    }
-    .cancel-btn {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--fg);
-      padding: 0.5rem 1rem;
-      border-radius: 0.5rem;
-      cursor: pointer;
-      font-size: 0.85rem;
-      font-family: inherit;
-    }
-    .post-btn {
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 0.5rem 1.5rem;
-      border-radius: 0.5rem;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 0.85rem;
-    }
-    .post-btn:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-    .empty-state {
-      text-align: center;
-      padding: 3rem 1rem;
-      opacity: 0.6;
-    }
-    .empty-state h3 {
-      margin-bottom: 0.5rem;
-    }
-    .empty-state p {
-      font-size: 0.9rem;
-    }
-    .search-bar {
-      margin-bottom: 1rem;
-    }
-    .search-bar input {
-      width: 100%;
-      padding: 0.6rem 1rem;
-      border: 1px solid var(--border);
-      border-radius: 0.5rem;
-      background: var(--card-bg);
-      color: var(--fg);
-      font-size: 0.9rem;
-      font-family: inherit;
-      outline: none;
-    }
-    .search-bar input:focus {
-      border-color: var(--accent);
-    }
-    .user-card {
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 1rem;
-      margin-bottom: 0.75rem;
-      background: var(--card-bg);
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-    .user-info {
-      flex: 1;
-    }
-    .user-info .handle {
-      font-size: 0.95rem;
-    }
-    .user-info .stats {
-      font-size: 0.8rem;
-      opacity: 0.6;
-      margin-top: 0.25rem;
-    }
-    .follow-btn {
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 0.4rem 1rem;
-      border-radius: 0.5rem;
-      cursor: pointer;
-      font-size: 0.8rem;
-      font-weight: 600;
-    }
-    .follow-btn.following {
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--fg);
-    }
-    .profile-header {
-      text-align: center;
-      padding: 1.5rem 0;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 1rem;
-    }
-    .profile-header .avatar {
-      width: 64px;
-      height: 64px;
-      font-size: 1.5rem;
-      margin: 0 auto 0.75rem;
-    }
-    .profile-header .handle {
-      font-size: 1.1rem;
-      margin-bottom: 0.5rem;
-    }
-    .profile-stats {
-      display: flex;
-      justify-content: center;
-      gap: 2rem;
-      font-size: 0.85rem;
-    }
-    .profile-stats .stat-value {
-      font-weight: 600;
-    }
-    .comments-section {
-      border-top: 1px solid var(--border);
-      margin-top: 0.75rem;
-      padding-top: 0.75rem;
-    }
-    .comment {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
-      font-size: 0.85rem;
-    }
-    .comment .avatar {
-      width: 24px;
-      height: 24px;
-      font-size: 0.65rem;
-    }
-    .comment-input-row {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 0.5rem;
-    }
-    .comment-input-row input {
-      flex: 1;
-      padding: 0.4rem 0.6rem;
-      border: 1px solid var(--border);
-      border-radius: 0.5rem;
-      background: transparent;
-      color: var(--fg);
-      font-size: 0.8rem;
-      font-family: inherit;
-      outline: none;
-    }
-    .comment-input-row button {
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 0.4rem 0.8rem;
-      border-radius: 0.5rem;
-      cursor: pointer;
-      font-size: 0.8rem;
-    }
-    .sentinel {
-      height: 1px;
-    }
-    .delete-btn {
-      background: none;
-      border: none;
-      color: var(--fg);
-      opacity: 0.4;
-      cursor: pointer;
-      font-size: 0.75rem;
-      margin-left: auto;
-    }
-    .delete-btn:hover {
-      opacity: 1;
-      color: #e74c3c;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social - Matrix OS</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg: var(--matrix-bg, #0f0f11);
+  --fg: var(--matrix-fg, #e8e6e3);
+  --accent: var(--matrix-accent, #6366f1);
+  --border: var(--matrix-border, #27272a);
+  --card-bg: var(--matrix-card-bg, #18181b);
+  --muted: var(--matrix-muted-fg, #71717a);
+  --input-bg: var(--matrix-input-bg, #1e1e22);
+  --font: var(--matrix-font, 'DM Sans', 'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif);
+
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-hover: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent) 25%, transparent);
+  --card-hover: color-mix(in srgb, var(--fg) 3%, var(--card-bg));
+  --card-border: color-mix(in srgb, var(--border) 60%, transparent);
+  --card-shadow: 0 1px 3px color-mix(in srgb, #000 10%, transparent),
+                 0 4px 12px color-mix(in srgb, #000 5%, transparent);
+  --card-shadow-hover: 0 2px 8px color-mix(in srgb, #000 15%, transparent),
+                       0 8px 24px color-mix(in srgb, #000 8%, transparent);
+  --like-color: #ef4444;
+  --success-color: #22c55e;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-xs: 7px;
+  --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 30%, transparent);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 50%, transparent);
+}
+
+/* ---- Layout ---- */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.view-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 250ms ease, transform 250ms ease;
+  pointer-events: none;
+  scroll-behavior: smooth;
+}
+
+.view.active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.view-inner {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 20px 16px 24px;
+}
+
+/* ---- Top Header ---- */
+.top-header {
+  padding: 16px 16px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 10;
+  border-bottom: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+.top-header h1 {
+  font-family: 'Instrument Sans', 'DM Sans', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.top-header .header-action {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.refresh-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-xs);
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition), transform var(--transition);
+}
+
+.refresh-btn:hover { background: var(--accent-soft); }
+.refresh-btn:active { transform: scale(0.92); }
+.refresh-btn.spinning svg {
+  animation: spin 0.7s ease-in-out;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Bottom Navigation ---- */
+.bottom-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 8px 16px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.nav-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 16px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), background var(--transition);
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-tab:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.nav-tab.active {
+  color: var(--accent);
+}
+
+.nav-tab svg {
+  width: 22px;
+  height: 22px;
+  transition: transform var(--transition-spring);
+}
+
+.nav-tab.active svg {
+  transform: scale(1.1);
+}
+
+.nav-tab span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.nav-tab.compose-tab {
+  color: var(--accent);
+}
+
+.nav-compose-ring {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 12px var(--accent-glow);
+  transition: transform var(--transition-spring), box-shadow var(--transition);
+}
+
+.nav-tab.compose-tab:hover .nav-compose-ring {
+  transform: scale(1.08);
+  box-shadow: 0 4px 20px var(--accent-glow);
+}
+
+.nav-tab.compose-tab:active .nav-compose-ring {
+  transform: scale(0.95);
+}
+
+.nav-compose-ring svg {
+  width: 20px;
+  height: 20px;
+  color: white;
+}
+
+/* ---- Avatar ---- */
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 15px;
+  color: white;
+  flex-shrink: 0;
+  letter-spacing: -0.02em;
+  user-select: none;
+}
+
+.avatar-sm {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.avatar-lg {
+  width: 72px;
+  height: 72px;
+  font-size: 26px;
+}
+
+.avatar-xl {
+  width: 88px;
+  height: 88px;
+  font-size: 32px;
+}
+
+/* ---- Post Card ---- */
+.post-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 10px;
+  transition: background var(--transition), box-shadow var(--transition), border-color var(--transition);
+  cursor: default;
+  animation: fadeSlideIn 400ms ease both;
+}
+
+.post-card:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+  box-shadow: var(--card-shadow);
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.post-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.post-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.post-handle {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.post-timestamp {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.post-menu-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition), color var(--transition);
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.post-card:hover .post-menu-btn {
+  opacity: 1;
+}
+
+.post-menu-btn:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+}
+
+.post-content {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--fg);
+  margin-bottom: 12px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.post-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -6px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font);
+  transition: color var(--transition), background var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.action-btn svg {
+  width: 18px;
+  height: 18px;
+  transition: transform var(--transition-spring);
+}
+
+.action-btn:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+}
+
+.action-btn.like-btn:hover,
+.action-btn.like-btn.liked {
+  color: var(--like-color);
+  background: color-mix(in srgb, var(--like-color) 8%, transparent);
+}
+
+.action-btn.like-btn.liked svg {
+  fill: var(--like-color);
+}
+
+.action-btn.like-btn.pop svg {
+  animation: likePop 350ms var(--transition-spring);
+}
+
+@keyframes likePop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.35); }
+  60% { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+
+.action-btn.comment-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ---- Comments Section ---- */
+.comments-section {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 350ms ease, opacity 250ms ease, margin 250ms ease;
+  margin-top: 0;
+}
+
+.comments-section.open {
+  max-height: 600px;
+  opacity: 1;
+  margin-top: 12px;
+}
+
+.comments-divider {
+  height: 1px;
+  background: var(--card-border);
+  margin-bottom: 12px;
+}
+
+.comment-item {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  animation: fadeSlideIn 300ms ease both;
+}
+
+.comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-handle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.comment-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--fg) 85%, transparent);
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.comment-time {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.comment-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 8px;
+}
+
+.comment-input {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--fg);
+  outline: none;
+  resize: none;
+  min-height: 36px;
+  max-height: 80px;
+  transition: border-color var(--transition);
+}
+
+.comment-input::placeholder { color: var(--muted); }
+.comment-input:focus { border-color: var(--accent); }
+
+.comment-send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity var(--transition), transform var(--transition-spring);
+}
+
+.comment-send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.comment-send-btn:not(:disabled):hover {
+  transform: scale(1.08);
+}
+
+.comment-send-btn:not(:disabled):active {
+  transform: scale(0.95);
+}
+
+/* ---- Compose Modal ---- */
+.compose-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, #000 50%, transparent);
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.compose-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.compose-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--card-bg);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  z-index: 101;
+  transform: translateY(100%);
+  transition: transform 350ms cubic-bezier(0.32, 0.72, 0, 1);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.compose-sheet.open {
+  transform: translateY(0);
+}
+
+.compose-handle-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+  margin: 10px auto 0;
+  flex-shrink: 0;
+}
+
+.compose-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 10px;
+  flex-shrink: 0;
+}
+
+.compose-cancel {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  font-family: var(--font);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  transition: color var(--transition), background var(--transition);
+}
+
+.compose-cancel:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.compose-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.compose-post-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 7px 18px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: opacity var(--transition), transform var(--transition-spring);
+}
+
+.compose-post-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.compose-post-btn:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+.compose-post-btn:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+.compose-body {
+  flex: 1;
+  padding: 0 18px 18px;
+  display: flex;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.compose-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 16px;
+  font-family: var(--font);
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  min-height: 120px;
+}
+
+.compose-textarea::placeholder {
+  color: var(--muted);
+}
+
+.compose-footer {
+  padding: 10px 18px;
+  border-top: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+
+.char-counter {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.char-counter.warn { color: #f59e0b; }
+.char-counter.error { color: var(--like-color); }
+
+.char-ring {
+  width: 24px;
+  height: 24px;
+  position: relative;
+}
+
+.char-ring svg {
+  width: 24px;
+  height: 24px;
+  transform: rotate(-90deg);
+}
+
+.char-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.char-ring .ring-bg {
+  stroke: var(--card-border);
+}
+
+.char-ring .ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--transition), stroke var(--transition);
+}
+
+.char-ring .ring-fill.warn { stroke: #f59e0b; }
+.char-ring .ring-fill.error { stroke: var(--like-color); }
+
+/* ---- Skeleton Loader ---- */
+.skeleton-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 10px;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--fg) 5%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 10%, transparent) 50%,
+    color-mix(in srgb, var(--fg) 5%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--fg) 5%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 10%, transparent) 50%,
+    color-mix(in srgb, var(--fg) 5%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ---- Empty State ---- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  animation: fadeSlideIn 500ms ease both;
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.empty-icon svg {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
+
+.empty-state h3 {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--fg);
+}
+
+.empty-state p {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+.empty-action {
+  margin-top: 16px;
+  padding: 9px 20px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: opacity var(--transition), transform var(--transition-spring);
+}
+
+.empty-action:hover { opacity: 0.9; }
+.empty-action:active { transform: scale(0.96); }
+
+/* ---- Profile ---- */
+.profile-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 20px 20px;
+  animation: fadeSlideIn 400ms ease both;
+}
+
+.profile-handle {
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 14px;
+  letter-spacing: -0.01em;
+}
+
+.profile-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.profile-stats {
+  display: flex;
+  gap: 32px;
+  margin-top: 18px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: default;
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.profile-divider {
+  height: 1px;
+  background: var(--card-border);
+  margin: 20px 0 16px;
+}
+
+.profile-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 12px;
+  padding-left: 2px;
+}
+
+/* ---- Explore ---- */
+.explore-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  transition: border-color var(--transition);
+}
+
+.explore-search:focus-within {
+  border-color: var(--accent);
+}
+
+.explore-search svg {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.explore-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 14px;
+  font-family: var(--font);
+  outline: none;
+}
+
+.explore-search input::placeholder { color: var(--muted); }
+
+.section-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 12px;
+  padding-left: 2px;
+}
+
+/* ---- User Card ---- */
+.user-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  transition: background var(--transition), border-color var(--transition);
+  animation: fadeSlideIn 400ms ease both;
+}
+
+.user-card:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+}
+
+.user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.user-stats-inline {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.follow-btn {
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 1.5px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.follow-btn:hover {
+  background: var(--accent-soft);
+}
+
+.follow-btn.following {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.follow-btn.following:hover {
+  background: color-mix(in srgb, var(--accent) 85%, transparent);
+}
+
+/* ---- Load More ---- */
+.load-more-sentinel {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  min-height: 48px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2.5px solid var(--card-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ---- Delete Menu ---- */
+.delete-menu {
+  position: absolute;
+  right: 8px;
+  top: 36px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 32px color-mix(in srgb, #000 25%, transparent);
+  z-index: 50;
+  overflow: hidden;
+  animation: menuFadeIn 150ms ease;
+}
+
+@keyframes menuFadeIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.delete-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--like-color);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition);
+}
+
+.delete-menu button:hover {
+  background: color-mix(in srgb, var(--like-color) 8%, transparent);
+}
+
+.delete-menu button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Toast ---- */
+.toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--fg);
+  color: var(--bg);
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms ease, transform 250ms ease;
+  white-space: nowrap;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 400px) {
+  .view-inner { padding: 16px 12px 20px; }
+  .post-card { padding: 14px; }
+  .profile-stats { gap: 24px; }
+  .nav-tab { padding: 6px 12px; }
+}
+</style>
 </head>
 <body>
-  <div class="app">
-    <nav role="tablist">
-      <a role="tab" id="tab-feed" aria-selected="true" aria-controls="feed-view" data-tab="feed">Feed</a>
-      <a role="tab" id="tab-explore" aria-selected="false" aria-controls="explore-view" data-tab="explore">Explore</a>
-      <a role="tab" id="tab-profile" aria-selected="false" aria-controls="profile-view" data-tab="profile">Profile</a>
-      <button role="button" class="compose-nav-btn" id="compose-open-btn" aria-label="Compose new post">+ Post</button>
-    </nav>
 
-    <div id="feed-view" role="tabpanel" aria-labelledby="tab-feed"></div>
-    <div id="explore-view" role="tabpanel" aria-labelledby="tab-explore" style="display:none;"></div>
-    <div id="profile-view" role="tabpanel" aria-labelledby="tab-profile" style="display:none;"></div>
+<div class="app-shell">
+  <div class="top-header" id="top-header">
+    <h1 id="header-title">Feed</h1>
+    <button class="refresh-btn header-action" id="refresh-btn" aria-label="Refresh" title="Refresh">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+    </button>
   </div>
 
-  <div class="compose-overlay" id="compose-overlay" role="dialog" aria-modal="true" aria-label="Compose post">
-    <div class="compose-dialog" id="compose-dialog">
-      <h3>New Post</h3>
-      <textarea id="compose-text" placeholder="What's happening?" aria-label="Post content"></textarea>
-      <div class="compose-footer">
-        <span class="char-count"><span id="char-count">0</span>/500</span>
-        <div class="compose-actions">
-          <button class="cancel-btn" id="compose-cancel">Cancel</button>
-          <button class="post-btn" id="post-btn" disabled>Post</button>
-        </div>
-      </div>
+  <div class="view-container">
+    <div class="view active" id="view-feed">
+      <div class="view-inner" id="feed-inner"></div>
+    </div>
+    <div class="view" id="view-explore">
+      <div class="view-inner" id="explore-inner"></div>
+    </div>
+    <div class="view" id="view-profile">
+      <div class="view-inner" id="profile-inner"></div>
     </div>
   </div>
 
-  <script>
-    (function () {
-      'use strict';
+  <nav class="bottom-nav" role="tablist" aria-label="Navigation">
+    <button class="nav-tab active" data-tab="feed" role="tab" aria-selected="true" aria-label="Feed">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span>Feed</span>
+    </button>
+    <button class="nav-tab" data-tab="explore" role="tab" aria-selected="false" aria-label="Explore">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Explore</span>
+    </button>
+    <button class="nav-tab compose-tab" data-tab="compose" role="tab" aria-selected="false" aria-label="New post">
+      <div class="nav-compose-ring">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </div>
+    </button>
+    <button class="nav-tab" data-tab="profile" role="tab" aria-selected="false" aria-label="Profile">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>Profile</span>
+    </button>
+  </nav>
+</div>
 
-      // --- Escaping utilities ---
+<div class="compose-overlay" id="compose-overlay"></div>
+<div class="compose-sheet" id="compose-sheet" role="dialog" aria-label="Create post">
+  <div class="compose-handle-bar"></div>
+  <div class="compose-header">
+    <button class="compose-cancel" id="compose-cancel">Cancel</button>
+    <span class="compose-title">New Post</span>
+    <button class="compose-post-btn" id="compose-submit" disabled>Post</button>
+  </div>
+  <div class="compose-body">
+    <div id="compose-avatar"></div>
+    <textarea class="compose-textarea" id="compose-textarea" placeholder="What's on your mind?" maxlength="500" aria-label="Post content"></textarea>
+  </div>
+  <div class="compose-footer">
+    <div class="char-ring" id="char-ring">
+      <svg viewBox="0 0 24 24">
+        <circle class="ring-bg" cx="12" cy="12" r="10"/>
+        <circle class="ring-fill" cx="12" cy="12" r="10" stroke-dasharray="62.83" stroke-dashoffset="62.83"/>
+      </svg>
+    </div>
+    <span class="char-counter" id="char-counter">0 / 500</span>
+  </div>
+</div>
 
-      function escapeHtml(str) {
-        var div = document.createElement('div');
-        div.textContent = String(str);
-        return div.innerHTML;
-      }
+<div class="toast" id="toast"></div>
 
-      function escapeAttr(str) {
-        return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      }
+<script>
+(function() {
+  'use strict';
 
-      // --- State ---
+  // ---- SVG Icons (safe static strings) ----
+  var ICON_HEART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>';
+  var ICON_HEART_FILLED = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>';
+  var ICON_COMMENT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  var ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+  var ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+  var ICON_DOTS = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>';
+  var ICON_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+  var ICON_PEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+  var ICON_SPARKLES = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/></svg>';
+  var ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+  var ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="var(--like-color)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
 
-      var currentUser = '@me';
-      var feedPosts = [];
-      var feedCursor = null;
-      var feedHasMore = false;
-      var feedLoading = false;
-      var explorePosts = [];
-      var profileData = null;
-      var profilePosts = [];
-      var likeCounts = {};
-      var likedPosts = {};
-      var openCommentsState = {};
-      var commentsCache = {};
-      var currentTab = 'feed';
-      var exploreSearchValue = '';
-      var feedObserver = null;
+  // ---- State ----
+  var currentUser = '@me';
+  var currentTab = 'feed';
+  var feedPosts = [];
+  var feedCursor = null;
+  var feedHasMore = true;
+  var feedLoading = false;
+  var explorePosts = [];
+  var exploreLoading = false;
+  var profileData = null;
+  var profilePosts = [];
+  var profileLoading = false;
+  var allUsers = [];
+  var openCommentsState = {};
+  var likedPosts = {};
+  var likeCounts = {};
+  var openMenuId = null;
 
-      // --- Fix #3: Persist liked state to localStorage ---
+  // ---- DOM References ----
+  var feedInner = document.getElementById('feed-inner');
+  var exploreInner = document.getElementById('explore-inner');
+  var profileInner = document.getElementById('profile-inner');
+  var composeOverlay = document.getElementById('compose-overlay');
+  var composeSheet = document.getElementById('compose-sheet');
+  var composeTextarea = document.getElementById('compose-textarea');
+  var composeSubmit = document.getElementById('compose-submit');
+  var composeCancel = document.getElementById('compose-cancel');
+  var composeAvatarEl = document.getElementById('compose-avatar');
+  var charCounter = document.getElementById('char-counter');
+  var charRingFill = document.querySelector('.ring-fill');
+  var headerTitle = document.getElementById('header-title');
+  var refreshBtn = document.getElementById('refresh-btn');
+  var toastEl = document.getElementById('toast');
+  var navTabs = document.querySelectorAll('.nav-tab');
 
-      var LIKED_KEY = 'matrixos_social_liked';
+  var CIRCUMFERENCE = 2 * Math.PI * 10;
 
-      function saveLikedState() {
-        try {
-          localStorage.setItem(LIKED_KEY, JSON.stringify(likedPosts));
-        } catch (e) { /* quota exceeded or unavailable */ }
-      }
+  // ---- Utilities ----
+  function hashCode(str) {
+    var hash = 0;
+    for (var i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash);
+  }
 
-      function loadLikedState() {
-        try {
-          var raw = localStorage.getItem(LIKED_KEY);
-          if (raw) {
-            likedPosts = JSON.parse(raw);
-          }
-        } catch (e) {
-          likedPosts = {};
-        }
-      }
+  var GRADIENTS = [
+    ['#6366f1', '#8b5cf6'],
+    ['#ec4899', '#f43f5e'],
+    ['#f97316', '#eab308'],
+    ['#14b8a6', '#06b6d4'],
+    ['#3b82f6', '#6366f1'],
+    ['#8b5cf6', '#ec4899'],
+    ['#10b981', '#34d399'],
+    ['#f43f5e', '#fb923c'],
+    ['#0ea5e9', '#38bdf8'],
+    ['#a855f7', '#6366f1']
+  ];
 
-      loadLikedState();
+  function getAvatarGradient(handle) {
+    var idx = hashCode(handle || '') % GRADIENTS.length;
+    return GRADIENTS[idx];
+  }
 
-      // --- API helper ---
-      // Fix #7: Only set Content-Type when there's a body
+  function getInitials(handle) {
+    if (!handle) return '?';
+    var clean = handle.replace(/^@/, '');
+    if (clean.length <= 2) return clean.toUpperCase();
+    return clean.substring(0, 2).toUpperCase();
+  }
 
-      function apiCall(url, options) {
-        options = options || {};
-        if (options.body) {
-          options.headers = options.headers || {};
-          options.headers['Content-Type'] = 'application/json';
-        }
-        return fetch(url, options).then(function (res) {
-          if (!res.ok) throw new Error('API error: ' + res.status);
-          return res.json();
+  function makeAvatarHtml(handle, sizeClass) {
+    var g = getAvatarGradient(handle);
+    var initials = getInitials(handle);
+    var cls = 'avatar' + (sizeClass ? ' ' + sizeClass : '');
+    return '<div class="' + cls + '" style="background:linear-gradient(135deg,' + g[0] + ',' + g[1] + ')" aria-hidden="true">' + initials + '</div>';
+  }
+
+  function relativeTime(isoStr) {
+    if (!isoStr) return '';
+    var now = Date.now();
+    var then = new Date(isoStr).getTime();
+    var diff = Math.max(0, now - then);
+    var secs = Math.floor(diff / 1000);
+    if (secs < 60) return 'just now';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm ago';
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h ago';
+    var days = Math.floor(hours / 24);
+    if (days < 7) return days + 'd ago';
+    var d = new Date(isoStr);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function formatCount(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return String(n);
+  }
+
+  var toastTimer = null;
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { toastEl.classList.remove('visible'); }, 2500);
+  }
+
+  function apiCall(path, opts) {
+    var options = Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {});
+    return fetch('/api/social' + path, options).then(function(res) {
+      if (!res.ok) {
+        return res.json().catch(function() { return {}; }).then(function(body) {
+          throw new Error(body.error || 'HTTP ' + res.status);
         });
       }
+      return res.json();
+    });
+  }
 
-      // --- Avatar ---
-      // Fix #2: escapeHtml on initials
+  // ---- Skeleton Loaders ----
+  function buildSkeletons(count) {
+    var html = '';
+    for (var i = 0; i < count; i++) {
+      var delay = i * 80;
+      html += '<div class="skeleton-card" style="animation-delay:' + delay + 'ms">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+        '<div class="skeleton-avatar"></div>' +
+        '<div style="flex:1">' +
+        '<div class="skeleton-line" style="width:35%;height:10px;margin-bottom:6px"></div>' +
+        '<div class="skeleton-line" style="width:20%;height:8px"></div>' +
+        '</div></div>' +
+        '<div class="skeleton-line" style="width:90%;margin-bottom:6px"></div>' +
+        '<div class="skeleton-line" style="width:65%;margin-bottom:12px"></div>' +
+        '<div style="display:flex;gap:16px">' +
+        '<div class="skeleton-line" style="width:50px;height:10px"></div>' +
+        '<div class="skeleton-line" style="width:50px;height:10px"></div>' +
+        '</div></div>';
+    }
+    return html;
+  }
 
-      function getInitials(handle) {
-        if (!handle) return '?';
-        var clean = handle.replace(/^@/, '');
-        return clean.substring(0, 2).toUpperCase();
+  // ---- DOM building helpers (safe) ----
+  // Use textContent for user-supplied strings, static HTML for structure
+
+  function buildPostCard(post, index) {
+    var isLiked = likedPosts[post.id] || false;
+    var likes = likeCounts[post.id] !== undefined ? likeCounts[post.id] : post.likesCount;
+    var isOwn = post.authorId === currentUser;
+    var delay = Math.min(index * 40, 300);
+
+    var card = document.createElement('article');
+    card.className = 'post-card';
+    card.dataset.postId = post.id;
+    card.style.animationDelay = delay + 'ms';
+    card.setAttribute('aria-label', 'Post by ' + post.authorId);
+
+    // Header
+    var header = document.createElement('div');
+    header.className = 'post-header';
+
+    var avatarWrapper = document.createElement('div');
+    avatarWrapper.insertAdjacentHTML('beforeend', makeAvatarHtml(post.authorId));
+    header.appendChild(avatarWrapper.firstElementChild);
+
+    var meta = document.createElement('div');
+    meta.className = 'post-meta';
+    var handleDiv = document.createElement('div');
+    handleDiv.className = 'post-handle';
+    handleDiv.textContent = post.authorId.replace(/^@/, '');
+    meta.appendChild(handleDiv);
+    var timeDiv = document.createElement('div');
+    timeDiv.className = 'post-timestamp';
+    timeDiv.textContent = relativeTime(post.createdAt);
+    meta.appendChild(timeDiv);
+    header.appendChild(meta);
+
+    if (isOwn) {
+      var menuBtn = document.createElement('button');
+      menuBtn.className = 'post-menu-btn';
+      menuBtn.dataset.menuPost = post.id;
+      menuBtn.setAttribute('aria-label', 'Post options');
+      menuBtn.insertAdjacentHTML('beforeend', ICON_DOTS);
+      header.appendChild(menuBtn);
+    }
+
+    card.appendChild(header);
+
+    // Content
+    var content = document.createElement('div');
+    content.className = 'post-content';
+    content.textContent = post.content;
+    card.appendChild(content);
+
+    // Actions
+    var actions = document.createElement('div');
+    actions.className = 'post-actions';
+
+    var likeBtn = document.createElement('button');
+    likeBtn.className = 'action-btn like-btn' + (isLiked ? ' liked' : '');
+    likeBtn.dataset.likePost = post.id;
+    likeBtn.setAttribute('aria-label', isLiked ? 'Unlike' : 'Like');
+    likeBtn.insertAdjacentHTML('beforeend', isLiked ? ICON_HEART_FILLED : ICON_HEART);
+    var likeCount = document.createElement('span');
+    likeCount.className = 'like-count';
+    likeCount.textContent = likes > 0 ? formatCount(likes) : '';
+    likeBtn.appendChild(likeCount);
+    actions.appendChild(likeBtn);
+
+    var commentBtn = document.createElement('button');
+    commentBtn.className = 'action-btn comment-btn';
+    commentBtn.dataset.commentPost = post.id;
+    commentBtn.setAttribute('aria-label', 'Comments');
+    commentBtn.insertAdjacentHTML('beforeend', ICON_COMMENT);
+    var commentCount = document.createElement('span');
+    commentCount.textContent = post.commentsCount > 0 ? formatCount(post.commentsCount) : '';
+    commentBtn.appendChild(commentCount);
+    actions.appendChild(commentBtn);
+
+    card.appendChild(actions);
+
+    // Comments section
+    var commentsSection = document.createElement('div');
+    commentsSection.className = 'comments-section';
+    commentsSection.id = 'comments-' + post.id;
+
+    var divider = document.createElement('div');
+    divider.className = 'comments-divider';
+    commentsSection.appendChild(divider);
+
+    var commentsList = document.createElement('div');
+    commentsList.className = 'comments-list';
+    commentsList.id = 'comments-list-' + post.id;
+    commentsSection.appendChild(commentsList);
+
+    var inputRow = document.createElement('div');
+    inputRow.className = 'comment-input-row';
+
+    var inputAvatarWrap = document.createElement('div');
+    inputAvatarWrap.insertAdjacentHTML('beforeend', makeAvatarHtml(currentUser, 'avatar-sm'));
+    inputRow.appendChild(inputAvatarWrap.firstElementChild);
+
+    var commentInput = document.createElement('input');
+    commentInput.type = 'text';
+    commentInput.className = 'comment-input';
+    commentInput.dataset.commentInput = post.id;
+    commentInput.placeholder = 'Write a comment...';
+    commentInput.setAttribute('aria-label', 'Write a comment');
+    commentInput.maxLength = 500;
+    inputRow.appendChild(commentInput);
+
+    var sendBtn = document.createElement('button');
+    sendBtn.className = 'comment-send-btn';
+    sendBtn.dataset.commentSend = post.id;
+    sendBtn.disabled = true;
+    sendBtn.setAttribute('aria-label', 'Send comment');
+    sendBtn.insertAdjacentHTML('beforeend', ICON_SEND);
+    inputRow.appendChild(sendBtn);
+
+    commentsSection.appendChild(inputRow);
+    card.appendChild(commentsSection);
+
+    return card;
+  }
+
+  function buildCommentItem(comment, index) {
+    var item = document.createElement('div');
+    item.className = 'comment-item';
+    item.style.animationDelay = (index * 50) + 'ms';
+
+    var avatarWrap = document.createElement('div');
+    avatarWrap.insertAdjacentHTML('beforeend', makeAvatarHtml(comment.authorId, 'avatar-sm'));
+    item.appendChild(avatarWrap.firstElementChild);
+
+    var body = document.createElement('div');
+    body.className = 'comment-body';
+
+    var handle = document.createElement('div');
+    handle.className = 'comment-handle';
+    handle.textContent = comment.authorId.replace(/^@/, '');
+    body.appendChild(handle);
+
+    var text = document.createElement('div');
+    text.className = 'comment-text';
+    text.textContent = comment.content;
+    body.appendChild(text);
+
+    var time = document.createElement('div');
+    time.className = 'comment-time';
+    time.textContent = relativeTime(comment.createdAt);
+    body.appendChild(time);
+
+    item.appendChild(body);
+    return item;
+  }
+
+  function buildEmptyState(iconHtml, title, desc, actionText, actionFn) {
+    var container = document.createElement('div');
+    container.className = 'empty-state';
+
+    var iconWrap = document.createElement('div');
+    iconWrap.className = 'empty-icon';
+    iconWrap.insertAdjacentHTML('beforeend', iconHtml);
+    container.appendChild(iconWrap);
+
+    var h3 = document.createElement('h3');
+    h3.textContent = title;
+    container.appendChild(h3);
+
+    var p = document.createElement('p');
+    p.textContent = desc;
+    container.appendChild(p);
+
+    if (actionText && actionFn) {
+      var btn = document.createElement('button');
+      btn.className = 'empty-action';
+      btn.textContent = actionText;
+      btn.addEventListener('click', actionFn);
+      container.appendChild(btn);
+    }
+
+    return container;
+  }
+
+  function buildErrorState(msg, retryFn) {
+    var container = document.createElement('div');
+    container.className = 'empty-state';
+
+    var iconWrap = document.createElement('div');
+    iconWrap.className = 'empty-icon';
+    iconWrap.style.background = 'color-mix(in srgb, var(--like-color) 10%, transparent)';
+    iconWrap.insertAdjacentHTML('beforeend', ICON_X);
+    container.appendChild(iconWrap);
+
+    var h3 = document.createElement('h3');
+    h3.textContent = msg;
+    container.appendChild(h3);
+
+    var p = document.createElement('p');
+    p.textContent = 'Something went wrong. Please try again.';
+    container.appendChild(p);
+
+    var btn = document.createElement('button');
+    btn.className = 'empty-action';
+    btn.textContent = 'Retry';
+    btn.addEventListener('click', retryFn);
+    container.appendChild(btn);
+
+    return container;
+  }
+
+  function buildUserCard(user, index) {
+    var isFollowing = user.following || false;
+    var isSelf = user.handle === currentUser;
+    var delay = index * 60;
+
+    var card = document.createElement('div');
+    card.className = 'user-card';
+    card.style.animationDelay = delay + 'ms';
+
+    var avatarWrap = document.createElement('div');
+    avatarWrap.insertAdjacentHTML('beforeend', makeAvatarHtml(user.handle));
+    card.appendChild(avatarWrap.firstElementChild);
+
+    var info = document.createElement('div');
+    info.className = 'user-info';
+    var name = document.createElement('div');
+    name.className = 'user-name';
+    name.textContent = user.handle.replace(/^@/, '');
+    info.appendChild(name);
+    var stats = document.createElement('div');
+    stats.className = 'user-stats-inline';
+    stats.textContent = formatCount(user.postCount || 0) + ' posts \u00B7 ' + formatCount(user.followers || 0) + ' followers';
+    info.appendChild(stats);
+    card.appendChild(info);
+
+    if (!isSelf) {
+      var followBtn = document.createElement('button');
+      followBtn.className = 'follow-btn' + (isFollowing ? ' following' : '');
+      followBtn.dataset.followHandle = user.handle;
+      followBtn.textContent = isFollowing ? 'Following' : 'Follow';
+      card.appendChild(followBtn);
+    }
+
+    return card;
+  }
+
+  // ---- Initialization ----
+  function init() {
+    apiCall('/users').then(function(data) {
+      if (data.users && data.users.length > 0) {
+        currentUser = data.users[0].handle;
       }
+    }).catch(function() {}).then(function() {
+      composeAvatarEl.insertAdjacentHTML('beforeend', makeAvatarHtml(currentUser));
+      setupNavigation();
+      setupCompose();
+      setupRefresh();
+      loadFeed();
+    });
+  }
 
-      function makeAvatarHtml(handle, size) {
-        var initials = getInitials(handle);
-        var style = size ? ' style="width:' + size + 'px;height:' + size + 'px;font-size:' + Math.round(size * 0.4) + 'px;"' : '';
-        return '<div class="avatar"' + style + '>' + escapeHtml(initials) + '</div>';
-      }
-
-      // --- Time formatting ---
-
-      function timeAgo(isoStr) {
-        var now = Date.now();
-        var then = new Date(isoStr).getTime();
-        var diff = Math.max(0, now - then);
-        var s = Math.floor(diff / 1000);
-        if (s < 60) return 'now';
-        var m = Math.floor(s / 60);
-        if (m < 60) return m + 'm';
-        var h = Math.floor(m / 60);
-        if (h < 24) return h + 'h';
-        var d = Math.floor(h / 24);
-        return d + 'd';
-      }
-
-      // --- Post card builder ---
-
-      function buildPostCard(post) {
-        var liked = !!likedPosts[post.id];
-        var count = likeCounts[post.id] != null ? likeCounts[post.id] : (post.likesCount || 0);
-        var commentsCount = post.commentsCount || 0;
-        var isOwn = post.authorId === currentUser;
-
-        var html = '<div class="post-card" data-post-id="' + escapeAttr(post.id) + '">';
-        html += '<div class="post-header">';
-        html += makeAvatarHtml(post.authorId);
-        html += '<span class="handle">' + escapeHtml(post.authorId) + '</span>';
-        html += '<span class="timestamp">' + escapeHtml(timeAgo(post.createdAt)) + '</span>';
-        if (isOwn) {
-          html += '<button class="delete-btn" data-delete-id="' + escapeAttr(post.id) + '" aria-label="Delete post">x</button>';
-        }
-        html += '</div>';
-        html += '<div class="post-content">' + escapeHtml(post.content) + '</div>';
-        html += '<div class="post-actions">';
-        html += '<button class="action-btn' + (liked ? ' liked' : '') + '" data-like-id="' + escapeAttr(post.id) + '">';
-        html += (liked ? '&#9829;' : '&#9825;') + ' <span class="like-count">' + count + '</span>';
-        html += '</button>';
-        html += '<button class="action-btn" data-comment-toggle="' + escapeAttr(post.id) + '">';
-        html += '&#128172; ' + commentsCount;
-        html += '</button>';
-        html += '</div>';
-
-        if (openCommentsState[post.id]) {
-          html += buildCommentsSection(post.id);
-        }
-
-        html += '</div>';
-        return html;
-      }
-
-      function buildCommentsSection(postId) {
-        var comments = commentsCache[postId] || [];
-        var html = '<div class="comments-section">';
-        for (var i = 0; i < comments.length; i++) {
-          var c = comments[i];
-          html += '<div class="comment">';
-          html += makeAvatarHtml(c.authorId, 24);
-          html += '<div><strong>' + escapeHtml(c.authorId) + '</strong> ' + escapeHtml(c.content) + '</div>';
-          html += '</div>';
-        }
-        html += '<div class="comment-input-row">';
-        html += '<input type="text" placeholder="Add a comment..." data-comment-input="' + escapeAttr(postId) + '" aria-label="Add comment" />';
-        html += '<button data-comment-submit="' + escapeAttr(postId) + '">Reply</button>';
-        html += '</div>';
-        html += '</div>';
-        return html;
-      }
-
-      // --- Search bar builder ---
-      // Fix #1: use escapeAttr in attribute context
-
-      function buildSearchBar(value) {
-        return '<div class="search-bar">' +
-          '<input type="text" id="explore-search-input" placeholder="Search users..." value="' + escapeAttr(value) + '" aria-label="Search users" />' +
-          '</div>';
-      }
-
-      // --- Tab switching ---
-
-      var tabs = document.querySelectorAll('nav a[role="tab"]');
-      var views = {
-        feed: document.getElementById('feed-view'),
-        explore: document.getElementById('explore-view'),
-        profile: document.getElementById('profile-view'),
-      };
-
-      function switchTab(name) {
-        currentTab = name;
-        tabs.forEach(function (t) {
-          var isActive = t.dataset.tab === name;
-          t.setAttribute('aria-selected', isActive ? 'true' : 'false');
-        });
-        Object.keys(views).forEach(function (k) {
-          views[k].style.display = k === name ? '' : 'none';
-        });
-
-        if (name === 'feed') renderFeed();
-        else if (name === 'explore') renderExplore();
-        else if (name === 'profile') renderProfile();
-      }
-
-      tabs.forEach(function (tab) {
-        tab.addEventListener('click', function () {
-          switchTab(tab.dataset.tab);
-        });
-      });
-
-      // --- Compose modal ---
-      // Fix #9: Focus trapping
-
-      var composeOverlay = document.getElementById('compose-overlay');
-      var composeDialog = document.getElementById('compose-dialog');
-      var composeText = document.getElementById('compose-text');
-      var charCount = document.getElementById('char-count');
-      var postBtn = document.getElementById('post-btn');
-      var cancelBtn = document.getElementById('compose-cancel');
-      var openBtn = document.getElementById('compose-open-btn');
-
-      function openCompose() {
-        composeOverlay.classList.add('open');
-        composeText.focus();
-      }
-
-      function closeCompose() {
-        composeOverlay.classList.remove('open');
-        composeText.value = '';
-        charCount.textContent = '0';
-        postBtn.disabled = true;
-        openBtn.focus();
-      }
-
-      openBtn.addEventListener('click', openCompose);
-      cancelBtn.addEventListener('click', closeCompose);
-
-      composeOverlay.addEventListener('click', function (e) {
-        if (e.target === composeOverlay) closeCompose();
-      });
-
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && composeOverlay.classList.contains('open')) {
-          closeCompose();
-        }
-      });
-
-      // Fix #9: Focus trap within compose dialog
-      composeDialog.addEventListener('keydown', function (e) {
-        if (e.key !== 'Tab') return;
-        var focusable = composeDialog.querySelectorAll('textarea, button:not([disabled]), input');
-        if (focusable.length === 0) return;
-        var first = focusable[0];
-        var last = focusable[focusable.length - 1];
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      });
-
-      composeText.addEventListener('input', function () {
-        var len = composeText.value.length;
-        charCount.textContent = len;
-        postBtn.disabled = len === 0 || len > 500;
-      });
-
-      postBtn.addEventListener('click', function () {
-        var content = composeText.value.trim();
-        if (!content) return;
-        postBtn.disabled = true;
-        apiCall('/api/social/posts', {
-          method: 'POST',
-          body: JSON.stringify({ content: content, type: 'text' }),
-        }).then(function () {
-          closeCompose();
-          feedPosts = [];
-          feedCursor = null;
-          loadFeed();
-        }).catch(function (e) {
-          console.error('Failed to post:', e);
-          postBtn.disabled = false;
-        });
-      });
-
-      // --- Feed ---
-
-      function loadFeed() {
-        if (feedLoading) return;
-        feedLoading = true;
-        var url = '/api/social/feed?limit=20';
-        if (feedCursor) url += '&cursor=' + encodeURIComponent(feedCursor);
-        apiCall(url).then(function (data) {
-          var posts = data.posts || [];
-          for (var i = 0; i < posts.length; i++) {
-            feedPosts.push(posts[i]);
-            likeCounts[posts[i].id] = posts[i].likesCount || 0;
-            // Initialize liked state from localStorage (already loaded), don't overwrite
-            if (likedPosts[posts[i].id] === undefined) {
-              likedPosts[posts[i].id] = false;
-            }
-          }
-          feedHasMore = !!data.hasMore;
-          feedCursor = data.cursor || null;
-          feedLoading = false;
-          renderFeed();
-        }).catch(function (e) {
-          console.error('Failed to load feed:', e);
-          feedLoading = false;
-        });
-      }
-
-      function renderFeed() {
-        var container = views.feed;
-        if (feedPosts.length === 0 && !feedLoading) {
-          container.innerHTML =
-            '<div class="empty-state">' +
-            '<h3>Your feed is empty</h3>' +
-            '<p>Follow other users to see their posts here, or compose your first post.</p>' +
-            '</div>';
+  // ---- Navigation ----
+  function setupNavigation() {
+    navTabs.forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        var target = tab.dataset.tab;
+        if (target === 'compose') {
+          openCompose();
           return;
         }
-        var html = '';
-        for (var i = 0; i < feedPosts.length; i++) {
-          html += buildPostCard(feedPosts[i]);
-        }
-        if (feedHasMore) {
-          html += '<div class="sentinel" id="feed-sentinel"></div>';
-        }
-        container.innerHTML = html;
-        setupInfiniteScroll();
-      }
+        switchTab(target);
+      });
+    });
+  }
 
-      // --- Fix #4: Observer memory leak ---
+  function switchTab(tab) {
+    if (tab === currentTab) return;
+    currentTab = tab;
 
-      function setupInfiniteScroll() {
-        if (feedObserver) feedObserver.disconnect();
-        var sentinel = document.getElementById('feed-sentinel');
-        if (!sentinel) return;
-        var observer = new IntersectionObserver(function (entries) {
-          if (entries[0].isIntersecting && feedHasMore && !feedLoading) {
-            loadFeed();
-          }
-        }, { rootMargin: '200px' });
-        observer.observe(sentinel);
-        feedObserver = observer;
-      }
+    navTabs.forEach(function(t) {
+      var isActive = t.dataset.tab === tab;
+      t.classList.toggle('active', isActive);
+      t.setAttribute('aria-selected', String(isActive));
+    });
 
-      // --- Explore ---
-      // Fix #6: Search input stable in DOM, only re-render results
+    document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+    var targetView = document.getElementById('view-' + tab);
+    if (targetView) targetView.classList.add('active');
 
-      function renderExplore() {
-        var container = views.explore;
-        // Only build the search bar + results container once
-        if (!document.getElementById('explore-search-input')) {
-          container.innerHTML = buildSearchBar(exploreSearchValue) +
-            '<div id="explore-results"></div>';
-          var input = document.getElementById('explore-search-input');
-          input.addEventListener('input', function () {
-            exploreSearchValue = input.value;
-            renderExploreResults();
-          });
-        }
+    var titles = { feed: 'Feed', explore: 'Explore', profile: 'Profile' };
+    headerTitle.textContent = titles[tab] || '';
+
+    if (tab === 'feed' && feedPosts.length === 0) loadFeed();
+    if (tab === 'explore') loadExplore();
+    if (tab === 'profile') loadProfile();
+  }
+
+  // ---- Refresh ----
+  function setupRefresh() {
+    refreshBtn.addEventListener('click', function() {
+      refreshBtn.classList.add('spinning');
+      setTimeout(function() { refreshBtn.classList.remove('spinning'); }, 700);
+
+      if (currentTab === 'feed') {
+        feedPosts = [];
+        feedCursor = null;
+        feedHasMore = true;
+        likedPosts = {};
+        likeCounts = {};
+        openCommentsState = {};
+        loadFeed();
+      } else if (currentTab === 'explore') {
         loadExplore();
-      }
-
-      function loadExplore() {
-        apiCall('/api/social/explore?limit=30').then(function (data) {
-          explorePosts = data.posts || [];
-          for (var i = 0; i < explorePosts.length; i++) {
-            likeCounts[explorePosts[i].id] = explorePosts[i].likesCount || 0;
-            if (likedPosts[explorePosts[i].id] === undefined) {
-              likedPosts[explorePosts[i].id] = false;
-            }
-          }
-          renderExploreResults();
-        }).catch(function (e) {
-          console.error('Failed to load explore:', e);
-        });
-      }
-
-      function renderExploreResults() {
-        var resultsContainer = document.getElementById('explore-results');
-        if (!resultsContainer) return;
-
-        var filtered = explorePosts;
-        if (exploreSearchValue.trim()) {
-          var q = exploreSearchValue.trim().toLowerCase();
-          filtered = explorePosts.filter(function (p) {
-            return p.authorId.toLowerCase().indexOf(q) !== -1 ||
-              p.content.toLowerCase().indexOf(q) !== -1;
-          });
-        }
-        if (filtered.length === 0) {
-          resultsContainer.innerHTML =
-            '<div class="empty-state">' +
-            '<h3>No posts found</h3>' +
-            '<p>Try a different search term or check back later.</p>' +
-            '</div>';
-          return;
-        }
-        var html = '';
-        for (var i = 0; i < filtered.length; i++) {
-          html += buildPostCard(filtered[i]);
-        }
-        resultsContainer.innerHTML = html;
-      }
-
-      // --- Profile ---
-
-      function loadProfile() {
-        apiCall('/api/social/users/' + encodeURIComponent(currentUser)).then(function (data) {
-          profileData = data;
-          renderProfileContent();
-        }).catch(function (e) {
-          console.error('Failed to load profile:', e);
-        });
-        apiCall('/api/social/posts?author=' + encodeURIComponent(currentUser) + '&limit=50').then(function (data) {
-          profilePosts = data.posts || [];
-          for (var i = 0; i < profilePosts.length; i++) {
-            likeCounts[profilePosts[i].id] = profilePosts[i].likesCount || 0;
-            if (likedPosts[profilePosts[i].id] === undefined) {
-              likedPosts[profilePosts[i].id] = false;
-            }
-          }
-          renderProfileContent();
-        }).catch(function (e) {
-          console.error('Failed to load profile posts:', e);
-        });
-      }
-
-      function renderProfile() {
-        views.profile.innerHTML = '<div class="empty-state"><p>Loading...</p></div>';
+      } else if (currentTab === 'profile') {
         loadProfile();
       }
+    });
+  }
 
-      function renderProfileContent() {
-        if (!profileData) return;
-        var html = '<div class="profile-header">';
-        html += makeAvatarHtml(profileData.handle, 64);
-        html += '<div class="handle">' + escapeHtml(profileData.handle) + '</div>';
-        html += '<div class="profile-stats">';
-        html += '<div><span class="stat-value">' + (profileData.postCount || 0) + '</span> posts</div>';
-        html += '<div><span class="stat-value">' + (profileData.followers || 0) + '</span> followers</div>';
-        html += '<div><span class="stat-value">' + (profileData.following || 0) + '</span> following</div>';
-        html += '</div>';
-        html += '</div>';
+  // ---- Feed ----
+  function loadFeed() {
+    if (feedLoading) return;
+    feedLoading = true;
 
-        if (profilePosts.length === 0) {
-          html += '<div class="empty-state"><h3>No posts yet</h3><p>Share your first thought with the community.</p></div>';
-        } else {
-          for (var i = 0; i < profilePosts.length; i++) {
-            html += buildPostCard(profilePosts[i]);
-          }
-        }
-        views.profile.innerHTML = html;
+    if (feedPosts.length === 0) {
+      feedInner.insertAdjacentHTML('beforeend', buildSkeletons(4));
+    }
+
+    var params = new URLSearchParams({ limit: '20' });
+    if (feedCursor) params.set('cursor', feedCursor);
+
+    apiCall('/feed?' + params.toString()).then(function(data) {
+      var newPosts = data.posts || [];
+      feedHasMore = data.hasMore || false;
+      feedCursor = data.cursor || null;
+
+      if (feedPosts.length === 0 && newPosts.length === 0) {
+        feedInner.textContent = '';
+        feedInner.appendChild(buildEmptyState(
+          ICON_GLOBE,
+          'Your feed is quiet',
+          'Follow other users to see their posts here, or start the conversation yourself.',
+          'Create a post',
+          function() { openCompose(); }
+        ));
+        feedLoading = false;
+        return;
       }
 
-      // --- Event delegation for post interactions ---
+      feedPosts = feedPosts.concat(newPosts);
+      newPosts.forEach(function(p) {
+        if (likeCounts[p.id] === undefined) likeCounts[p.id] = p.likesCount;
+      });
 
-      document.addEventListener('click', function (e) {
-        var target = e.target;
+      renderFeed();
+      feedLoading = false;
+    }).catch(function() {
+      if (feedPosts.length === 0) {
+        feedInner.textContent = '';
+        feedInner.appendChild(buildErrorState('Could not load feed', function() {
+          feedPosts = [];
+          loadFeed();
+        }));
+      }
+      feedLoading = false;
+    });
+  }
 
-        // Like button
-        var likeBtn = target.closest('[data-like-id]');
-        if (likeBtn) {
-          var postId = likeBtn.getAttribute('data-like-id');
-          handleLike(postId);
-          return;
-        }
+  function renderFeed() {
+    feedInner.textContent = '';
 
-        // Comment toggle
-        var commentToggle = target.closest('[data-comment-toggle]');
-        if (commentToggle) {
-          var pid = commentToggle.getAttribute('data-comment-toggle');
-          handleCommentToggle(pid);
-          return;
-        }
+    feedPosts.forEach(function(post, i) {
+      var card = buildPostCard(post, i);
+      feedInner.appendChild(card);
+    });
 
-        // Comment submit
-        var commentSubmit = target.closest('[data-comment-submit]');
-        if (commentSubmit) {
-          var cpid = commentSubmit.getAttribute('data-comment-submit');
-          handleCommentSubmit(cpid);
-          return;
-        }
+    if (feedHasMore) {
+      var sentinel = document.createElement('div');
+      sentinel.className = 'load-more-sentinel';
+      sentinel.id = 'feed-sentinel';
+      var spinner = document.createElement('div');
+      spinner.className = 'spinner';
+      sentinel.appendChild(spinner);
+      feedInner.appendChild(sentinel);
+    }
 
-        // Delete button
-        var deleteBtn = target.closest('[data-delete-id]');
-        if (deleteBtn) {
-          var did = deleteBtn.getAttribute('data-delete-id');
-          handleDelete(did);
-          return;
-        }
+    attachPostListeners(feedInner);
+    setupInfiniteScroll();
+  }
 
-        // Follow button
-        var followBtn = target.closest('[data-follow-handle]');
-        if (followBtn) {
-          var handle = followBtn.getAttribute('data-follow-handle');
-          handleFollow(handle, followBtn);
-          return;
-        }
+  function attachPostListeners(container) {
+    container.querySelectorAll('[data-like-post]').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        toggleLike(btn.dataset.likePost, btn);
+      });
+    });
 
-        // Unfollow button
-        // Fix #5: encodeURIComponent on unfollow URL
-        var unfollowBtn = target.closest('[data-unfollow-handle]');
-        if (unfollowBtn) {
-          var uhandle = unfollowBtn.getAttribute('data-unfollow-handle');
-          handleUnfollow(uhandle, unfollowBtn);
-          return;
+    container.querySelectorAll('[data-comment-post]').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        toggleComments(btn.dataset.commentPost);
+      });
+    });
+
+    container.querySelectorAll('[data-comment-input]').forEach(function(input) {
+      var postId = input.dataset.commentInput;
+      var sendBtn = container.querySelector('[data-comment-send="' + postId + '"]');
+
+      input.addEventListener('input', function() {
+        if (sendBtn) sendBtn.disabled = input.value.trim().length === 0;
+      });
+
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey && input.value.trim()) {
+          e.preventDefault();
+          submitComment(postId, input, sendBtn);
         }
       });
 
-      // Comment submit on Enter
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && e.target.hasAttribute('data-comment-input')) {
-          var postId = e.target.getAttribute('data-comment-input');
-          handleCommentSubmit(postId);
+      if (sendBtn) {
+        sendBtn.addEventListener('click', function() {
+          if (input.value.trim()) submitComment(postId, input, sendBtn);
+        });
+      }
+    });
+
+    container.querySelectorAll('[data-menu-post]').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        showPostMenu(btn.dataset.menuPost, btn);
+      });
+    });
+  }
+
+  // ---- Like ----
+  function toggleLike(postId, btn) {
+    var wasLiked = likedPosts[postId] || false;
+    var currentCount = likeCounts[postId] || 0;
+
+    likedPosts[postId] = !wasLiked;
+    likeCounts[postId] = wasLiked ? Math.max(0, currentCount - 1) : currentCount + 1;
+
+    updateLikeButton(btn, !wasLiked, likeCounts[postId]);
+    btn.classList.add('pop');
+    setTimeout(function() { btn.classList.remove('pop'); }, 400);
+
+    apiCall('/posts/' + postId + '/like', { method: 'POST' }).then(function(data) {
+      likedPosts[postId] = data.liked;
+      likeCounts[postId] = data.likesCount;
+      updateLikeButton(btn, data.liked, data.likesCount);
+    }).catch(function() {
+      likedPosts[postId] = wasLiked;
+      likeCounts[postId] = currentCount;
+      updateLikeButton(btn, wasLiked, currentCount);
+    });
+  }
+
+  function updateLikeButton(btn, liked, count) {
+    btn.classList.toggle('liked', liked);
+    btn.setAttribute('aria-label', liked ? 'Unlike' : 'Like');
+    // Rebuild children safely
+    while (btn.firstChild) btn.removeChild(btn.firstChild);
+    btn.insertAdjacentHTML('beforeend', liked ? ICON_HEART_FILLED : ICON_HEART);
+    var span = document.createElement('span');
+    span.className = 'like-count';
+    span.textContent = count > 0 ? formatCount(count) : '';
+    btn.appendChild(span);
+  }
+
+  // ---- Comments ----
+  function toggleComments(postId) {
+    var section = document.getElementById('comments-' + postId);
+    if (!section) return;
+
+    var state = openCommentsState[postId] || { loaded: false, comments: [], expanded: false };
+
+    if (state.expanded) {
+      section.classList.remove('open');
+      state.expanded = false;
+      openCommentsState[postId] = state;
+      return;
+    }
+
+    section.classList.add('open');
+    state.expanded = true;
+    openCommentsState[postId] = state;
+
+    if (!state.loaded) {
+      var listEl = document.getElementById('comments-list-' + postId);
+      listEl.textContent = '';
+      var loading = document.createElement('div');
+      loading.style.cssText = 'padding:8px 0;color:var(--muted);font-size:13px';
+      loading.textContent = 'Loading...';
+      listEl.appendChild(loading);
+
+      apiCall('/posts/' + postId + '/comments').then(function(data) {
+        state.comments = data.comments || [];
+        state.loaded = true;
+        openCommentsState[postId] = state;
+        renderCommentsList(postId);
+      }).catch(function() {
+        listEl.textContent = '';
+        var err = document.createElement('div');
+        err.style.cssText = 'padding:8px 0;color:var(--muted);font-size:13px';
+        err.textContent = 'Failed to load comments';
+        listEl.appendChild(err);
+      });
+    }
+
+    var input = section.querySelector('[data-comment-input="' + postId + '"]');
+    if (input) setTimeout(function() { input.focus(); }, 100);
+  }
+
+  function renderCommentsList(postId) {
+    var state = openCommentsState[postId];
+    if (!state) return;
+    var listEl = document.getElementById('comments-list-' + postId);
+    if (!listEl) return;
+
+    listEl.textContent = '';
+
+    if (state.comments.length === 0) {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'padding:8px 0;color:var(--muted);font-size:13px';
+      empty.textContent = 'No comments yet. Be the first!';
+      listEl.appendChild(empty);
+      return;
+    }
+
+    state.comments.forEach(function(c, i) {
+      listEl.appendChild(buildCommentItem(c, i));
+    });
+  }
+
+  function submitComment(postId, input, sendBtn) {
+    var content = input.value.trim();
+    if (!content) return;
+
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    apiCall('/posts/' + postId + '/comments', {
+      method: 'POST',
+      body: JSON.stringify({ content: content })
+    }).then(function() {
+      var state = openCommentsState[postId] || { loaded: true, comments: [], expanded: true };
+      state.comments.push({
+        id: 'temp-' + Date.now(),
+        authorId: currentUser,
+        content: content,
+        createdAt: new Date().toISOString()
+      });
+      openCommentsState[postId] = state;
+      renderCommentsList(postId);
+
+      // Update comment count in all post arrays
+      [feedPosts, explorePosts, profilePosts].forEach(function(arr) {
+        var post = arr.find(function(p) { return p.id === postId; });
+        if (post) {
+          post.commentsCount = (post.commentsCount || 0) + 1;
+          var card = document.querySelector('[data-post-id="' + postId + '"]');
+          if (card) {
+            var countSpan = card.querySelector('.comment-btn span');
+            if (countSpan) countSpan.textContent = formatCount(post.commentsCount);
+          }
         }
       });
 
-      function handleLike(postId) {
-        apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/like', {
-          method: 'POST',
-        }).then(function (data) {
-          likedPosts[postId] = data.liked;
-          likeCounts[postId] = data.likesCount;
-          saveLikedState();
-          rerenderCurrentView();
-        }).catch(function (e) {
-          console.error('Failed to toggle like:', e);
-        });
-      }
+      input.value = '';
+      input.disabled = false;
+      sendBtn.disabled = true;
+      input.focus();
+    }).catch(function() {
+      showToast('Failed to post comment');
+      input.disabled = false;
+      sendBtn.disabled = false;
+    });
+  }
 
-      function handleCommentToggle(postId) {
-        openCommentsState[postId] = !openCommentsState[postId];
-        if (openCommentsState[postId] && !commentsCache[postId]) {
-          apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/comments').then(function (data) {
-            commentsCache[postId] = data.comments || [];
-            rerenderCurrentView();
-          }).catch(function (e) {
-            console.error('Failed to load comments:', e);
-          });
-        } else {
-          rerenderCurrentView();
+  // ---- Post Menu (Delete) ----
+  function showPostMenu(postId, btn) {
+    closeMenus();
+    var card = btn.closest('.post-card');
+    if (!card) return;
+    card.style.position = 'relative';
+
+    var menu = document.createElement('div');
+    menu.className = 'delete-menu';
+    menu.id = 'post-menu-' + postId;
+
+    var delBtn = document.createElement('button');
+    delBtn.insertAdjacentHTML('beforeend', ICON_TRASH);
+    var delText = document.createTextNode(' Delete post');
+    delBtn.appendChild(delText);
+
+    delBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      apiCall('/posts/' + postId, { method: 'DELETE' }).then(function() {
+        feedPosts = feedPosts.filter(function(p) { return p.id !== postId; });
+        explorePosts = explorePosts.filter(function(p) { return p.id !== postId; });
+        profilePosts = profilePosts.filter(function(p) { return p.id !== postId; });
+
+        var cardEl = document.querySelector('[data-post-id="' + postId + '"]');
+        if (cardEl) {
+          cardEl.style.transition = 'opacity 200ms ease, transform 200ms ease';
+          cardEl.style.opacity = '0';
+          cardEl.style.transform = 'translateX(-20px)';
+          setTimeout(function() { if (cardEl.parentNode) cardEl.parentNode.removeChild(cardEl); }, 200);
         }
-      }
+        showToast('Post deleted');
+      }).catch(function() {
+        showToast('Failed to delete post');
+      });
+      closeMenus();
+    });
 
-      function handleCommentSubmit(postId) {
-        var input = document.querySelector('[data-comment-input="' + CSS.escape(postId) + '"]');
-        if (!input) return;
-        var content = input.value.trim();
-        if (!content) return;
-        input.disabled = true;
-        apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/comments', {
-          method: 'POST',
-          body: JSON.stringify({ content: content }),
-        }).then(function () {
-          return apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/comments');
-        }).then(function (data) {
-          commentsCache[postId] = data.comments || [];
-          // Update comment count in the post arrays
-          updatePostCommentCount(postId, commentsCache[postId].length);
-          rerenderCurrentView();
-        }).catch(function (e) {
-          console.error('Failed to submit comment:', e);
-          input.disabled = false;
+    menu.appendChild(delBtn);
+    card.appendChild(menu);
+    openMenuId = postId;
+  }
+
+  function closeMenus() {
+    if (openMenuId) {
+      var menu = document.getElementById('post-menu-' + openMenuId);
+      if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+      openMenuId = null;
+    }
+  }
+
+  document.addEventListener('click', closeMenus);
+
+  // ---- Infinite Scroll ----
+  function setupInfiniteScroll() {
+    var sentinel = document.getElementById('feed-sentinel');
+    if (!sentinel || !feedHasMore) return;
+
+    var feedView = document.getElementById('view-feed');
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting && feedHasMore && !feedLoading) {
+          loadFeed();
+        }
+      });
+    }, { root: feedView, threshold: 0.1 });
+
+    observer.observe(sentinel);
+  }
+
+  // ---- Explore ----
+  function loadExplore() {
+    if (exploreLoading) return;
+    exploreLoading = true;
+
+    exploreInner.textContent = '';
+    exploreInner.insertAdjacentHTML('beforeend', buildSearchBar(''));
+    exploreInner.insertAdjacentHTML('beforeend', buildSkeletons(3));
+
+    Promise.all([
+      apiCall('/explore?limit=20'),
+      apiCall('/users')
+    ]).then(function(results) {
+      explorePosts = results[0].posts || [];
+      allUsers = results[1].users || [];
+
+      explorePosts.forEach(function(p) {
+        if (likeCounts[p.id] === undefined) likeCounts[p.id] = p.likesCount;
+      });
+
+      renderExplore(null);
+      exploreLoading = false;
+    }).catch(function() {
+      exploreInner.textContent = '';
+      exploreInner.appendChild(buildErrorState('Could not load explore', function() {
+        exploreLoading = false;
+        loadExplore();
+      }));
+      exploreLoading = false;
+    });
+  }
+
+  function buildSearchBar(value) {
+    return '<div class="explore-search">' +
+      ICON_SEARCH +
+      '<input type="text" id="explore-search-input" placeholder="Search posts..." value="' + escapeHtml(value || '') + '" aria-label="Search posts">' +
+      '</div>';
+  }
+
+  function renderExplore(filter) {
+    var filtered = filter
+      ? explorePosts.filter(function(p) { return p.content.toLowerCase().indexOf(filter.toLowerCase()) !== -1; })
+      : explorePosts;
+
+    exploreInner.textContent = '';
+    exploreInner.insertAdjacentHTML('beforeend', buildSearchBar(filter || ''));
+
+    // Users section
+    var otherUsers = allUsers.filter(function(u) { return u.handle !== currentUser; });
+    if (otherUsers.length > 0 && !filter) {
+      var label = document.createElement('div');
+      label.className = 'section-label';
+      label.textContent = 'People';
+      exploreInner.appendChild(label);
+
+      otherUsers.forEach(function(user, i) {
+        exploreInner.appendChild(buildUserCard(user, i));
+      });
+
+      var spacer = document.createElement('div');
+      spacer.style.height = '16px';
+      exploreInner.appendChild(spacer);
+    }
+
+    // Posts
+    if (filtered.length > 0) {
+      var postsLabel = document.createElement('div');
+      postsLabel.className = 'section-label';
+      postsLabel.textContent = filter ? 'Results' : 'Trending';
+      exploreInner.appendChild(postsLabel);
+
+      filtered.forEach(function(post, i) {
+        exploreInner.appendChild(buildPostCard(post, i));
+      });
+    } else if (filter) {
+      var noResults = document.createElement('div');
+      noResults.className = 'empty-state';
+      noResults.style.paddingTop = '32px';
+      var h3 = document.createElement('h3');
+      h3.textContent = 'No results';
+      noResults.appendChild(h3);
+      var p = document.createElement('p');
+      p.textContent = 'No posts match "' + filter + '"';
+      noResults.appendChild(p);
+      exploreInner.appendChild(noResults);
+    } else if (explorePosts.length === 0) {
+      exploreInner.appendChild(buildEmptyState(
+        ICON_SPARKLES,
+        'Nothing trending yet',
+        'Be the first to post something and start the conversation.',
+        'Create a post',
+        function() { openCompose(); }
+      ));
+    }
+
+    attachPostListeners(exploreInner);
+    attachFollowListeners(exploreInner);
+    attachExploreSearch();
+  }
+
+  function attachExploreSearch() {
+    var input = document.getElementById('explore-search-input');
+    if (!input) return;
+
+    var debounce = null;
+    input.addEventListener('input', function() {
+      clearTimeout(debounce);
+      var val = input.value;
+      var pos = input.selectionStart;
+      debounce = setTimeout(function() {
+        renderExplore(val.trim() || null);
+        var newInput = document.getElementById('explore-search-input');
+        if (newInput) {
+          newInput.focus();
+          newInput.setSelectionRange(pos, pos);
+        }
+      }, 250);
+    });
+  }
+
+  function attachFollowListeners(container) {
+    container.querySelectorAll('[data-follow-handle]').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var handle = btn.dataset.followHandle;
+        var isFollowing = btn.classList.contains('following');
+
+        btn.classList.toggle('following', !isFollowing);
+        btn.textContent = !isFollowing ? 'Following' : 'Follow';
+
+        var promise = isFollowing
+          ? apiCall('/follows/' + handle, { method: 'DELETE' })
+          : apiCall('/follows', { method: 'POST', body: JSON.stringify({ handle: handle }) });
+
+        promise.catch(function() {
+          btn.classList.toggle('following', isFollowing);
+          btn.textContent = isFollowing ? 'Following' : 'Follow';
+          showToast('Failed to update follow');
         });
+      });
+    });
+  }
+
+  // ---- Profile ----
+  function loadProfile() {
+    if (profileLoading) return;
+    profileLoading = true;
+
+    profileInner.textContent = '';
+    // Build skeleton
+    var skelHeader = document.createElement('div');
+    skelHeader.className = 'profile-header';
+    skelHeader.insertAdjacentHTML('beforeend',
+      '<div class="skeleton-avatar" style="width:88px;height:88px"></div>' +
+      '<div class="skeleton-line" style="width:120px;height:14px;margin-top:14px"></div>' +
+      '<div class="skeleton-line" style="width:80px;height:10px;margin-top:8px"></div>' +
+      '<div style="display:flex;gap:32px;margin-top:18px">' +
+      '<div class="skeleton-line" style="width:40px;height:12px"></div>' +
+      '<div class="skeleton-line" style="width:40px;height:12px"></div>' +
+      '<div class="skeleton-line" style="width:40px;height:12px"></div>' +
+      '</div>'
+    );
+    profileInner.appendChild(skelHeader);
+    profileInner.insertAdjacentHTML('beforeend', buildSkeletons(2));
+
+    Promise.all([
+      apiCall('/users/' + encodeURIComponent(currentUser)),
+      apiCall('/posts?author=' + encodeURIComponent(currentUser) + '&limit=50')
+    ]).then(function(results) {
+      profileData = results[0];
+      profilePosts = results[1].posts || [];
+
+      profilePosts.forEach(function(p) {
+        if (likeCounts[p.id] === undefined) likeCounts[p.id] = p.likesCount;
+      });
+
+      renderProfile();
+      profileLoading = false;
+    }).catch(function() {
+      profileInner.textContent = '';
+      profileInner.appendChild(buildErrorState('Could not load profile', function() {
+        profileLoading = false;
+        loadProfile();
+      }));
+      profileLoading = false;
+    });
+  }
+
+  function renderProfile() {
+    if (!profileData) return;
+
+    profileInner.textContent = '';
+
+    var header = document.createElement('div');
+    header.className = 'profile-header';
+
+    var avatarWrap = document.createElement('div');
+    avatarWrap.insertAdjacentHTML('beforeend', makeAvatarHtml(currentUser, 'avatar-xl'));
+    header.appendChild(avatarWrap.firstElementChild);
+
+    var handleEl = document.createElement('div');
+    handleEl.className = 'profile-handle';
+    handleEl.textContent = currentUser.replace(/^@/, '');
+    header.appendChild(handleEl);
+
+    var sub = document.createElement('div');
+    sub.className = 'profile-sub';
+    sub.textContent = 'Matrix OS';
+    header.appendChild(sub);
+
+    var stats = document.createElement('div');
+    stats.className = 'profile-stats';
+
+    [
+      { value: profileData.postCount || 0, label: 'Posts' },
+      { value: profileData.followers || 0, label: 'Followers' },
+      { value: profileData.following || 0, label: 'Following' }
+    ].forEach(function(s) {
+      var item = document.createElement('div');
+      item.className = 'stat-item';
+      var val = document.createElement('span');
+      val.className = 'stat-value';
+      val.textContent = formatCount(s.value);
+      item.appendChild(val);
+      var lbl = document.createElement('span');
+      lbl.className = 'stat-label';
+      lbl.textContent = s.label;
+      item.appendChild(lbl);
+      stats.appendChild(item);
+    });
+
+    header.appendChild(stats);
+    profileInner.appendChild(header);
+
+    var divider = document.createElement('div');
+    divider.className = 'profile-divider';
+    profileInner.appendChild(divider);
+
+    if (profilePosts.length > 0) {
+      var title = document.createElement('div');
+      title.className = 'profile-section-title';
+      title.textContent = 'Posts';
+      profileInner.appendChild(title);
+
+      profilePosts.forEach(function(post, i) {
+        profileInner.appendChild(buildPostCard(post, i));
+      });
+    } else {
+      profileInner.appendChild(buildEmptyState(
+        ICON_PEN,
+        'No posts yet',
+        'Share your thoughts with the world.',
+        'Create your first post',
+        function() { openCompose(); }
+      ));
+    }
+
+    attachPostListeners(profileInner);
+  }
+
+  // ---- Compose ----
+  function setupCompose() {
+    composeOverlay.addEventListener('click', closeCompose);
+    composeCancel.addEventListener('click', closeCompose);
+
+    composeTextarea.addEventListener('input', function() {
+      var len = composeTextarea.value.length;
+      composeSubmit.disabled = len === 0 || len > 500;
+
+      charCounter.textContent = len + ' / 500';
+      charCounter.classList.remove('warn', 'error');
+      if (len > 480) charCounter.classList.add('error');
+      else if (len > 400) charCounter.classList.add('warn');
+
+      var progress = Math.min(len / 500, 1);
+      var offset = CIRCUMFERENCE - (progress * CIRCUMFERENCE);
+      charRingFill.style.strokeDashoffset = offset;
+      charRingFill.classList.remove('warn', 'error');
+      if (len > 480) charRingFill.classList.add('error');
+      else if (len > 400) charRingFill.classList.add('warn');
+
+      composeTextarea.style.height = 'auto';
+      composeTextarea.style.height = Math.min(composeTextarea.scrollHeight, 240) + 'px';
+    });
+
+    composeSubmit.addEventListener('click', submitPost);
+
+    composeTextarea.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (!composeSubmit.disabled) submitPost();
+      }
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        if (composeSheet.classList.contains('open')) closeCompose();
+        closeMenus();
+      }
+    });
+  }
+
+  function openCompose() {
+    composeOverlay.classList.add('open');
+    composeSheet.classList.add('open');
+    composeTextarea.value = '';
+    composeSubmit.disabled = true;
+    charCounter.textContent = '0 / 500';
+    charCounter.classList.remove('warn', 'error');
+    charRingFill.style.strokeDashoffset = CIRCUMFERENCE;
+    charRingFill.classList.remove('warn', 'error');
+    composeTextarea.style.height = 'auto';
+    setTimeout(function() { composeTextarea.focus(); }, 350);
+  }
+
+  function closeCompose() {
+    composeOverlay.classList.remove('open');
+    composeSheet.classList.remove('open');
+  }
+
+  function submitPost() {
+    var content = composeTextarea.value.trim();
+    if (!content || content.length > 500) return;
+
+    composeSubmit.disabled = true;
+    composeSubmit.textContent = 'Posting...';
+
+    apiCall('/posts', {
+      method: 'POST',
+      body: JSON.stringify({ content: content, type: 'text' })
+    }).then(function(data) {
+      var newPost = {
+        id: data.id,
+        authorId: currentUser,
+        content: content,
+        type: 'text',
+        parentId: null,
+        mediaUrls: null,
+        appRef: null,
+        likesCount: 0,
+        commentsCount: 0,
+        createdAt: new Date().toISOString()
+      };
+
+      feedPosts.unshift(newPost);
+      likeCounts[data.id] = 0;
+
+      closeCompose();
+      showToast('Posted!');
+
+      if (currentTab !== 'feed') {
+        switchTab('feed');
+      } else {
+        renderFeed();
       }
 
-      function updatePostCommentCount(postId, count) {
-        [feedPosts, explorePosts, profilePosts].forEach(function (arr) {
-          for (var i = 0; i < arr.length; i++) {
-            if (arr[i].id === postId) {
-              arr[i] = Object.assign({}, arr[i], { commentsCount: count });
-            }
-          }
-        });
-      }
+      var feedView = document.getElementById('view-feed');
+      feedView.scrollTo({ top: 0, behavior: 'smooth' });
 
-      // Fix #8: Clean up state maps on delete
+      composeSubmit.disabled = false;
+      composeSubmit.textContent = 'Post';
+    }).catch(function(e) {
+      showToast('Failed to post: ' + (e.message || 'unknown error'));
+      composeSubmit.disabled = false;
+      composeSubmit.textContent = 'Post';
+    });
+  }
 
-      function handleDelete(postId) {
-        if (!confirm('Delete this post?')) return;
-        apiCall('/api/social/posts/' + encodeURIComponent(postId), {
-          method: 'DELETE',
-        }).then(function () {
-          feedPosts = feedPosts.filter(function (p) { return p.id !== postId; });
-          explorePosts = explorePosts.filter(function (p) { return p.id !== postId; });
-          profilePosts = profilePosts.filter(function (p) { return p.id !== postId; });
-
-          delete likeCounts[postId];
-          delete likedPosts[postId];
-          delete openCommentsState[postId];
-          delete commentsCache[postId];
-
-          saveLikedState();
-          rerenderCurrentView();
-        }).catch(function (e) {
-          console.error('Failed to delete post:', e);
-        });
-      }
-
-      function handleFollow(handle, btn) {
-        btn.disabled = true;
-        apiCall('/api/social/follows', {
-          method: 'POST',
-          body: JSON.stringify({ handle: handle }),
-        }).then(function () {
-          btn.textContent = 'Following';
-          btn.className = 'follow-btn following';
-          btn.removeAttribute('data-follow-handle');
-          btn.setAttribute('data-unfollow-handle', handle);
-          btn.disabled = false;
-        }).catch(function (e) {
-          console.error('Failed to follow:', e);
-          btn.disabled = false;
-        });
-      }
-
-      // Fix #5: encodeURIComponent on unfollow URL
-
-      function handleUnfollow(handle, btn) {
-        btn.disabled = true;
-        apiCall('/api/social/follows/' + encodeURIComponent(handle), {
-          method: 'DELETE',
-        }).then(function () {
-          btn.textContent = 'Follow';
-          btn.className = 'follow-btn';
-          btn.removeAttribute('data-unfollow-handle');
-          btn.setAttribute('data-follow-handle', handle);
-          btn.disabled = false;
-        }).catch(function (e) {
-          console.error('Failed to unfollow:', e);
-          btn.disabled = false;
-        });
-      }
-
-      function rerenderCurrentView() {
-        if (currentTab === 'feed') renderFeed();
-        else if (currentTab === 'explore') renderExploreResults();
-        else if (currentTab === 'profile') renderProfileContent();
-      }
-
-      // --- Initial load ---
-
-      loadFeed();
-    })();
-  </script>
+  // ---- Boot ----
+  init();
+})();
+</script>
 </body>
 </html>
