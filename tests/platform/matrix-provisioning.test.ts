@@ -196,7 +196,7 @@ describe('platform/matrix-provisioning', () => {
         json: async () => ({ errcode: 'M_UNKNOWN', error: 'AI registration failed' }),
       });
 
-      await expect(provisioner.provisionUser('dave')).rejects.toThrow('Failed to provision');
+      await expect(provisioner.provisionUser('dave')).rejects.toThrow('Failed to register');
     });
   });
 
@@ -216,10 +216,14 @@ describe('platform/matrix-provisioning', () => {
       expect(result.humanMatrixId).toBe('@my-user_123:matrix-os.com');
       expect(result.aiMatrixId).toBe('@my-user_123_ai:matrix-os.com');
 
-      const [humanUrl] = fetchMock.mock.calls[0];
-      expect(humanUrl).toContain('@my-user_123:matrix-os.com');
-      const [aiUrl] = fetchMock.mock.calls[1];
-      expect(aiUrl).toContain('@my-user_123_ai:matrix-os.com');
+      const [humanUrl, humanOpts] = fetchMock.mock.calls[0];
+      expect(humanUrl).toContain('/_matrix/client/v3/register');
+      const humanBody = JSON.parse(humanOpts.body);
+      expect(humanBody.username).toBe('my-user_123');
+      const [aiUrl, aiOpts] = fetchMock.mock.calls[1];
+      expect(aiUrl).toContain('/_matrix/client/v3/register');
+      const aiBody = JSON.parse(aiOpts.body);
+      expect(aiBody.username).toBe('my-user_123_ai');
     });
   });
 
