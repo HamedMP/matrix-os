@@ -58,10 +58,12 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
           if (msg.type === "voice_audio" && msg.audio) {
             const MIME_MAP: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", opus: "audio/opus", webm: "audio/webm", flac: "audio/flac" };
             const mime = MIME_MAP[msg.format] ?? "audio/mpeg";
-            fetch(`data:${mime};base64,${msg.audio}`)
-              .then((r) => r.arrayBuffer())
-              .then((buf) => playAudio(buf))
-              .catch(() => {});
+            try {
+              const binary = atob(msg.audio);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              playAudio(bytes.buffer);
+            } catch { /* decode error */ }
           }
           if (msg.type === "voice_error") {
             setIsTranscribing(false);

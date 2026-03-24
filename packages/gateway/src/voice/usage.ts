@@ -13,14 +13,21 @@ export interface VoiceUsageEntry {
 
 export class VoiceUsageTracker {
   private filePath: string;
+  private dirEnsured = false;
 
   constructor(homePath: string) {
     this.filePath = `${homePath}/system/logs/voice-usage.jsonl`;
+    const dir = dirname(this.filePath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    this.dirEnsured = true;
   }
 
   track(entry: Omit<VoiceUsageEntry, "ts">): void {
-    const dir = dirname(this.filePath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    if (!this.dirEnsured) {
+      const dir = dirname(this.filePath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      this.dirEnsured = true;
+    }
     const line = JSON.stringify({ ...entry, ts: Date.now() });
     appendFileSync(this.filePath, line + "\n");
   }

@@ -142,16 +142,17 @@ describe("CallStore", () => {
   });
 
   describe("getRecent()", () => {
-    it("returns last N records", () => {
+    it("returns most recent N records sorted by startedAt descending", () => {
+      const base = Date.now();
       for (let i = 0; i < 10; i++) {
-        store.append(makeRecord({ callId: `call-${i}` }));
+        store.append(makeRecord({ callId: `call-${i}`, startedAt: base + i }));
       }
 
       const recent = store.getRecent(3);
       expect(recent.length).toBe(3);
-      expect(recent[0]!.callId).toBe("call-7");
+      expect(recent[0]!.callId).toBe("call-9");
       expect(recent[1]!.callId).toBe("call-8");
-      expect(recent[2]!.callId).toBe("call-9");
+      expect(recent[2]!.callId).toBe("call-7");
     });
 
     it("returns all if fewer than limit", () => {

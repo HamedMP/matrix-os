@@ -268,8 +268,19 @@ export class CallManager {
         return "listening";
       case "call.ended": {
         const reason = (event as { reason: string }).reason;
-        const parsed = CallStateSchema.safeParse(reason);
-        return parsed.success ? parsed.data : "error";
+        const REASON_TO_STATE: Record<string, CallState> = {
+          "hangup-user": "hangup-user",
+          "hangup-bot": "hangup-bot",
+          "timeout": "timeout",
+          "error": "error",
+          "failed": "failed",
+          "no-answer": "no-answer",
+          "busy": "busy",
+          "voicemail": "voicemail",
+          "completed": "completed",
+          "canceled": "canceled",
+        };
+        return REASON_TO_STATE[reason] ?? "error";
       }
       case "call.error":
         return "error";

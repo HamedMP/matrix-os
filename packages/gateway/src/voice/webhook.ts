@@ -46,9 +46,10 @@ export function createWebhookRouter(config: WebhookRouterConfig): Hono {
     const errors: string[] = [];
     for (const event of parseResult.events) {
       try {
-        const internalCallId = config.callManager.getCallIdByProviderCallId(event.callId);
+        const providerCallId = event.providerCallId ?? event.callId;
+        const internalCallId = config.callManager.getCallIdByProviderCallId(providerCallId);
         if (!internalCallId) {
-          console.warn(`[webhook] No internal call found for provider call ${event.callId}, skipping`);
+          console.warn(`[webhook] No internal call found for provider call ${providerCallId}, skipping`);
           continue;
         }
         config.callManager.processEvent(internalCallId, event);

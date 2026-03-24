@@ -4,6 +4,7 @@ import {
   appendFileSync,
   writeFileSync,
   renameSync,
+  unlinkSync,
   mkdirSync,
 } from "node:fs";
 import { dirname } from "node:path";
@@ -23,6 +24,14 @@ export class CallStore {
   }
 
   private loadFromDisk(): void {
+    const tmp = this.path + ".tmp";
+    if (existsSync(tmp)) {
+      if (existsSync(this.path)) {
+        try { unlinkSync(tmp); } catch { /* ignore */ }
+      } else {
+        try { renameSync(tmp, this.path); } catch { /* ignore */ }
+      }
+    }
     if (!existsSync(this.path)) return;
 
     const content = readFileSync(this.path, "utf-8");
@@ -79,7 +88,8 @@ export class CallStore {
 
   getRecent(limit: number): CallRecord[] {
     const all = this.getAll();
-    return all.slice(-limit);
+    all.sort((a, b) => b.startedAt - a.startedAt);
+    return all.slice(0, limit);
   }
 
   compact(): void {

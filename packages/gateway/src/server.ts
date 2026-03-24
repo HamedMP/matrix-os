@@ -74,7 +74,6 @@ import { CallStore } from "./voice/call-store.js";
 import { createVoiceRoutes } from "./voice/routes.js";
 import { createWebhookRouter } from "./voice/webhook.js";
 import { handleVoiceWsMessage } from "./voice/voice-ws.js";
-import { MockProvider } from "./voice/providers/mock.js";
 import { TwilioProvider } from "./voice/providers/twilio.js";
 import type { VoiceCallProvider } from "./voice/providers/base.js";
 import { VoiceConfigSchema } from "./voice/types.js";

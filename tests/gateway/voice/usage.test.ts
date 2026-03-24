@@ -36,12 +36,8 @@ describe("voice/usage", () => {
       expect(entry.ts).toBe(new Date("2026-03-16T10:00:00Z").getTime());
     });
 
-    it("creates directory on first write", () => {
+    it("creates directory at construction time", () => {
       const dirPath = join(tmpDir, "system/logs");
-      expect(existsSync(dirPath)).toBe(false);
-
-      tracker.track({ action: "stt", provider: "whisper", cost: 0.006 });
-
       expect(existsSync(dirPath)).toBe(true);
     });
 
