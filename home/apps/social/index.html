@@ -24,14 +24,14 @@
       margin: 0 auto;
       padding: 1rem;
     }
-    nav {
+    nav[role="tablist"] {
       display: flex;
       gap: 1rem;
       padding: 0.75rem 0;
       border-bottom: 1px solid var(--border);
       margin-bottom: 1rem;
     }
-    nav a {
+    nav a[role="tab"] {
       color: var(--fg);
       text-decoration: none;
       padding: 0.5rem 1rem;
@@ -39,8 +39,28 @@
       font-size: 0.9rem;
       opacity: 0.7;
       cursor: pointer;
+      background: none;
+      border: none;
+      font-family: inherit;
     }
-    nav a.active, nav a:hover {
+    nav a[role="tab"][aria-selected="true"], nav a[role="tab"]:hover {
+      opacity: 1;
+      background: var(--card-bg);
+    }
+    nav button.compose-nav-btn {
+      color: var(--fg);
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.9rem;
+      opacity: 0.7;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-family: inherit;
+      margin-left: auto;
+    }
+    nav button.compose-nav-btn:hover {
       opacity: 1;
       background: var(--card-bg);
     }
@@ -67,6 +87,8 @@
       justify-content: center;
       font-weight: 600;
       font-size: 0.85rem;
+      color: white;
+      flex-shrink: 0;
     }
     .handle {
       font-weight: 600;
@@ -81,6 +103,8 @@
       font-size: 0.95rem;
       line-height: 1.5;
       margin-bottom: 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .post-actions {
       display: flex;
@@ -101,33 +125,72 @@
       opacity: 1;
       color: var(--accent);
     }
-    .compose {
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 1rem;
-      margin-bottom: 1rem;
-      background: var(--card-bg);
+    .action-btn.liked {
+      opacity: 1;
+      color: #e74c3c;
     }
-    .compose textarea {
+    .compose-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .compose-overlay.open {
+      display: flex;
+    }
+    .compose-dialog {
+      background: var(--card-bg);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      width: 90%;
+      max-width: 500px;
+      border: 1px solid var(--border);
+    }
+    .compose-dialog h3 {
+      margin-bottom: 1rem;
+    }
+    .compose-dialog textarea {
       width: 100%;
       background: transparent;
-      border: none;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
       color: var(--fg);
       font-size: 0.95rem;
       resize: none;
       outline: none;
-      min-height: 80px;
+      min-height: 120px;
+      padding: 0.75rem;
       font-family: inherit;
+    }
+    .compose-dialog textarea:focus {
+      border-color: var(--accent);
     }
     .compose-footer {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 0.5rem;
+      margin-top: 0.75rem;
     }
     .char-count {
       font-size: 0.75rem;
       opacity: 0.5;
+    }
+    .compose-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .cancel-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-family: inherit;
     }
     .post-btn {
       background: var(--accent);
@@ -154,89 +217,810 @@
     .empty-state p {
       font-size: 0.9rem;
     }
+    .search-bar {
+      margin-bottom: 1rem;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 0.6rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      background: var(--card-bg);
+      color: var(--fg);
+      font-size: 0.9rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .search-bar input:focus {
+      border-color: var(--accent);
+    }
+    .user-card {
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+      background: var(--card-bg);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .user-info {
+      flex: 1;
+    }
+    .user-info .handle {
+      font-size: 0.95rem;
+    }
+    .user-info .stats {
+      font-size: 0.8rem;
+      opacity: 0.6;
+      margin-top: 0.25rem;
+    }
+    .follow-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.4rem 1rem;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .follow-btn.following {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+    }
+    .profile-header {
+      text-align: center;
+      padding: 1.5rem 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+    .profile-header .avatar {
+      width: 64px;
+      height: 64px;
+      font-size: 1.5rem;
+      margin: 0 auto 0.75rem;
+    }
+    .profile-header .handle {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+    .profile-stats {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      font-size: 0.85rem;
+    }
+    .profile-stats .stat-value {
+      font-weight: 600;
+    }
+    .comments-section {
+      border-top: 1px solid var(--border);
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+    }
+    .comment {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .comment .avatar {
+      width: 24px;
+      height: 24px;
+      font-size: 0.65rem;
+    }
+    .comment-input-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .comment-input-row input {
+      flex: 1;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      background: transparent;
+      color: var(--fg);
+      font-size: 0.8rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .comment-input-row button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.4rem 0.8rem;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .sentinel {
+      height: 1px;
+    }
+    .delete-btn {
+      background: none;
+      border: none;
+      color: var(--fg);
+      opacity: 0.4;
+      cursor: pointer;
+      font-size: 0.75rem;
+      margin-left: auto;
+    }
+    .delete-btn:hover {
+      opacity: 1;
+      color: #e74c3c;
+    }
   </style>
 </head>
 <body>
   <div class="app">
-    <nav>
-      <a class="active" data-tab="feed">Feed</a>
-      <a data-tab="explore">Explore</a>
-      <a data-tab="profile">Profile</a>
+    <nav role="tablist">
+      <a role="tab" id="tab-feed" aria-selected="true" aria-controls="feed-view" data-tab="feed">Feed</a>
+      <a role="tab" id="tab-explore" aria-selected="false" aria-controls="explore-view" data-tab="explore">Explore</a>
+      <a role="tab" id="tab-profile" aria-selected="false" aria-controls="profile-view" data-tab="profile">Profile</a>
+      <button role="button" class="compose-nav-btn" id="compose-open-btn" aria-label="Compose new post">+ Post</button>
     </nav>
 
-    <div id="feed-view">
-      <div class="compose">
-        <textarea id="compose-text" placeholder="What's happening?"></textarea>
-        <div class="compose-footer">
-          <span class="char-count"><span id="char-count">0</span>/500</span>
+    <div id="feed-view" role="tabpanel" aria-labelledby="tab-feed"></div>
+    <div id="explore-view" role="tabpanel" aria-labelledby="tab-explore" style="display:none;"></div>
+    <div id="profile-view" role="tabpanel" aria-labelledby="tab-profile" style="display:none;"></div>
+  </div>
+
+  <div class="compose-overlay" id="compose-overlay" role="dialog" aria-modal="true" aria-label="Compose post">
+    <div class="compose-dialog" id="compose-dialog">
+      <h3>New Post</h3>
+      <textarea id="compose-text" placeholder="What's happening?" aria-label="Post content"></textarea>
+      <div class="compose-footer">
+        <span class="char-count"><span id="char-count">0</span>/500</span>
+        <div class="compose-actions">
+          <button class="cancel-btn" id="compose-cancel">Cancel</button>
           <button class="post-btn" id="post-btn" disabled>Post</button>
         </div>
-      </div>
-      <div id="feed-list">
-        <div class="empty-state">
-          <h3>Your feed is empty</h3>
-          <p>Follow other users to see their posts here.</p>
-        </div>
-      </div>
-    </div>
-
-    <div id="explore-view" style="display:none;">
-      <div class="empty-state">
-        <h3>Explore</h3>
-        <p>Discover trending posts and users on Matrix OS.</p>
-      </div>
-    </div>
-
-    <div id="profile-view" style="display:none;">
-      <div class="empty-state">
-        <h3>Your Profile</h3>
-        <p>Set up your profile to connect with others.</p>
       </div>
     </div>
   </div>
 
   <script>
-    const textarea = document.getElementById('compose-text');
-    const charCount = document.getElementById('char-count');
-    const postBtn = document.getElementById('post-btn');
-    const tabs = document.querySelectorAll('nav a');
-    const views = {
-      feed: document.getElementById('feed-view'),
-      explore: document.getElementById('explore-view'),
-      profile: document.getElementById('profile-view'),
-    };
+    (function () {
+      'use strict';
 
-    textarea.addEventListener('input', () => {
-      const len = textarea.value.length;
-      charCount.textContent = len;
-      postBtn.disabled = len === 0 || len > 500;
-    });
+      // --- Escaping utilities ---
 
-    tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        tabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        Object.values(views).forEach(v => v.style.display = 'none');
-        views[tab.dataset.tab].style.display = '';
-      });
-    });
+      function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.textContent = String(str);
+        return div.innerHTML;
+      }
 
-    postBtn.addEventListener('click', async () => {
-      const content = textarea.value.trim();
-      if (!content) return;
-      try {
-        await fetch('/api/social/posts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ authorId: '@me', content, type: 'text' }),
+      function escapeAttr(str) {
+        return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      // --- State ---
+
+      var currentUser = '@me';
+      var feedPosts = [];
+      var feedCursor = null;
+      var feedHasMore = false;
+      var feedLoading = false;
+      var explorePosts = [];
+      var profileData = null;
+      var profilePosts = [];
+      var likeCounts = {};
+      var likedPosts = {};
+      var openCommentsState = {};
+      var commentsCache = {};
+      var currentTab = 'feed';
+      var exploreSearchValue = '';
+      var feedObserver = null;
+
+      // --- Fix #3: Persist liked state to localStorage ---
+
+      var LIKED_KEY = 'matrixos_social_liked';
+
+      function saveLikedState() {
+        try {
+          localStorage.setItem(LIKED_KEY, JSON.stringify(likedPosts));
+        } catch (e) { /* quota exceeded or unavailable */ }
+      }
+
+      function loadLikedState() {
+        try {
+          var raw = localStorage.getItem(LIKED_KEY);
+          if (raw) {
+            likedPosts = JSON.parse(raw);
+          }
+        } catch (e) {
+          likedPosts = {};
+        }
+      }
+
+      loadLikedState();
+
+      // --- API helper ---
+      // Fix #7: Only set Content-Type when there's a body
+
+      function apiCall(url, options) {
+        options = options || {};
+        if (options.body) {
+          options.headers = options.headers || {};
+          options.headers['Content-Type'] = 'application/json';
+        }
+        return fetch(url, options).then(function (res) {
+          if (!res.ok) throw new Error('API error: ' + res.status);
+          return res.json();
         });
-        textarea.value = '';
+      }
+
+      // --- Avatar ---
+      // Fix #2: escapeHtml on initials
+
+      function getInitials(handle) {
+        if (!handle) return '?';
+        var clean = handle.replace(/^@/, '');
+        return clean.substring(0, 2).toUpperCase();
+      }
+
+      function makeAvatarHtml(handle, size) {
+        var initials = getInitials(handle);
+        var style = size ? ' style="width:' + size + 'px;height:' + size + 'px;font-size:' + Math.round(size * 0.4) + 'px;"' : '';
+        return '<div class="avatar"' + style + '>' + escapeHtml(initials) + '</div>';
+      }
+
+      // --- Time formatting ---
+
+      function timeAgo(isoStr) {
+        var now = Date.now();
+        var then = new Date(isoStr).getTime();
+        var diff = Math.max(0, now - then);
+        var s = Math.floor(diff / 1000);
+        if (s < 60) return 'now';
+        var m = Math.floor(s / 60);
+        if (m < 60) return m + 'm';
+        var h = Math.floor(m / 60);
+        if (h < 24) return h + 'h';
+        var d = Math.floor(h / 24);
+        return d + 'd';
+      }
+
+      // --- Post card builder ---
+
+      function buildPostCard(post) {
+        var liked = !!likedPosts[post.id];
+        var count = likeCounts[post.id] != null ? likeCounts[post.id] : (post.likesCount || 0);
+        var commentsCount = post.commentsCount || 0;
+        var isOwn = post.authorId === currentUser;
+
+        var html = '<div class="post-card" data-post-id="' + escapeAttr(post.id) + '">';
+        html += '<div class="post-header">';
+        html += makeAvatarHtml(post.authorId);
+        html += '<span class="handle">' + escapeHtml(post.authorId) + '</span>';
+        html += '<span class="timestamp">' + escapeHtml(timeAgo(post.createdAt)) + '</span>';
+        if (isOwn) {
+          html += '<button class="delete-btn" data-delete-id="' + escapeAttr(post.id) + '" aria-label="Delete post">x</button>';
+        }
+        html += '</div>';
+        html += '<div class="post-content">' + escapeHtml(post.content) + '</div>';
+        html += '<div class="post-actions">';
+        html += '<button class="action-btn' + (liked ? ' liked' : '') + '" data-like-id="' + escapeAttr(post.id) + '">';
+        html += (liked ? '&#9829;' : '&#9825;') + ' <span class="like-count">' + count + '</span>';
+        html += '</button>';
+        html += '<button class="action-btn" data-comment-toggle="' + escapeAttr(post.id) + '">';
+        html += '&#128172; ' + commentsCount;
+        html += '</button>';
+        html += '</div>';
+
+        if (openCommentsState[post.id]) {
+          html += buildCommentsSection(post.id);
+        }
+
+        html += '</div>';
+        return html;
+      }
+
+      function buildCommentsSection(postId) {
+        var comments = commentsCache[postId] || [];
+        var html = '<div class="comments-section">';
+        for (var i = 0; i < comments.length; i++) {
+          var c = comments[i];
+          html += '<div class="comment">';
+          html += makeAvatarHtml(c.authorId, 24);
+          html += '<div><strong>' + escapeHtml(c.authorId) + '</strong> ' + escapeHtml(c.content) + '</div>';
+          html += '</div>';
+        }
+        html += '<div class="comment-input-row">';
+        html += '<input type="text" placeholder="Add a comment..." data-comment-input="' + escapeAttr(postId) + '" aria-label="Add comment" />';
+        html += '<button data-comment-submit="' + escapeAttr(postId) + '">Reply</button>';
+        html += '</div>';
+        html += '</div>';
+        return html;
+      }
+
+      // --- Search bar builder ---
+      // Fix #1: use escapeAttr in attribute context
+
+      function buildSearchBar(value) {
+        return '<div class="search-bar">' +
+          '<input type="text" id="explore-search-input" placeholder="Search users..." value="' + escapeAttr(value) + '" aria-label="Search users" />' +
+          '</div>';
+      }
+
+      // --- Tab switching ---
+
+      var tabs = document.querySelectorAll('nav a[role="tab"]');
+      var views = {
+        feed: document.getElementById('feed-view'),
+        explore: document.getElementById('explore-view'),
+        profile: document.getElementById('profile-view'),
+      };
+
+      function switchTab(name) {
+        currentTab = name;
+        tabs.forEach(function (t) {
+          var isActive = t.dataset.tab === name;
+          t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        Object.keys(views).forEach(function (k) {
+          views[k].style.display = k === name ? '' : 'none';
+        });
+
+        if (name === 'feed') renderFeed();
+        else if (name === 'explore') renderExplore();
+        else if (name === 'profile') renderProfile();
+      }
+
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          switchTab(tab.dataset.tab);
+        });
+      });
+
+      // --- Compose modal ---
+      // Fix #9: Focus trapping
+
+      var composeOverlay = document.getElementById('compose-overlay');
+      var composeDialog = document.getElementById('compose-dialog');
+      var composeText = document.getElementById('compose-text');
+      var charCount = document.getElementById('char-count');
+      var postBtn = document.getElementById('post-btn');
+      var cancelBtn = document.getElementById('compose-cancel');
+      var openBtn = document.getElementById('compose-open-btn');
+
+      function openCompose() {
+        composeOverlay.classList.add('open');
+        composeText.focus();
+      }
+
+      function closeCompose() {
+        composeOverlay.classList.remove('open');
+        composeText.value = '';
         charCount.textContent = '0';
         postBtn.disabled = true;
-      } catch (e) {
-        console.error('Failed to post:', e);
+        openBtn.focus();
       }
-    });
+
+      openBtn.addEventListener('click', openCompose);
+      cancelBtn.addEventListener('click', closeCompose);
+
+      composeOverlay.addEventListener('click', function (e) {
+        if (e.target === composeOverlay) closeCompose();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && composeOverlay.classList.contains('open')) {
+          closeCompose();
+        }
+      });
+
+      // Fix #9: Focus trap within compose dialog
+      composeDialog.addEventListener('keydown', function (e) {
+        if (e.key !== 'Tab') return;
+        var focusable = composeDialog.querySelectorAll('textarea, button:not([disabled]), input');
+        if (focusable.length === 0) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      });
+
+      composeText.addEventListener('input', function () {
+        var len = composeText.value.length;
+        charCount.textContent = len;
+        postBtn.disabled = len === 0 || len > 500;
+      });
+
+      postBtn.addEventListener('click', function () {
+        var content = composeText.value.trim();
+        if (!content) return;
+        postBtn.disabled = true;
+        apiCall('/api/social/posts', {
+          method: 'POST',
+          body: JSON.stringify({ content: content, type: 'text' }),
+        }).then(function () {
+          closeCompose();
+          feedPosts = [];
+          feedCursor = null;
+          loadFeed();
+        }).catch(function (e) {
+          console.error('Failed to post:', e);
+          postBtn.disabled = false;
+        });
+      });
+
+      // --- Feed ---
+
+      function loadFeed() {
+        if (feedLoading) return;
+        feedLoading = true;
+        var url = '/api/social/feed?limit=20';
+        if (feedCursor) url += '&cursor=' + encodeURIComponent(feedCursor);
+        apiCall(url).then(function (data) {
+          var posts = data.posts || [];
+          for (var i = 0; i < posts.length; i++) {
+            feedPosts.push(posts[i]);
+            likeCounts[posts[i].id] = posts[i].likesCount || 0;
+            // Initialize liked state from localStorage (already loaded), don't overwrite
+            if (likedPosts[posts[i].id] === undefined) {
+              likedPosts[posts[i].id] = false;
+            }
+          }
+          feedHasMore = !!data.hasMore;
+          feedCursor = data.cursor || null;
+          feedLoading = false;
+          renderFeed();
+        }).catch(function (e) {
+          console.error('Failed to load feed:', e);
+          feedLoading = false;
+        });
+      }
+
+      function renderFeed() {
+        var container = views.feed;
+        if (feedPosts.length === 0 && !feedLoading) {
+          container.innerHTML =
+            '<div class="empty-state">' +
+            '<h3>Your feed is empty</h3>' +
+            '<p>Follow other users to see their posts here, or compose your first post.</p>' +
+            '</div>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < feedPosts.length; i++) {
+          html += buildPostCard(feedPosts[i]);
+        }
+        if (feedHasMore) {
+          html += '<div class="sentinel" id="feed-sentinel"></div>';
+        }
+        container.innerHTML = html;
+        setupInfiniteScroll();
+      }
+
+      // --- Fix #4: Observer memory leak ---
+
+      function setupInfiniteScroll() {
+        if (feedObserver) feedObserver.disconnect();
+        var sentinel = document.getElementById('feed-sentinel');
+        if (!sentinel) return;
+        var observer = new IntersectionObserver(function (entries) {
+          if (entries[0].isIntersecting && feedHasMore && !feedLoading) {
+            loadFeed();
+          }
+        }, { rootMargin: '200px' });
+        observer.observe(sentinel);
+        feedObserver = observer;
+      }
+
+      // --- Explore ---
+      // Fix #6: Search input stable in DOM, only re-render results
+
+      function renderExplore() {
+        var container = views.explore;
+        // Only build the search bar + results container once
+        if (!document.getElementById('explore-search-input')) {
+          container.innerHTML = buildSearchBar(exploreSearchValue) +
+            '<div id="explore-results"></div>';
+          var input = document.getElementById('explore-search-input');
+          input.addEventListener('input', function () {
+            exploreSearchValue = input.value;
+            renderExploreResults();
+          });
+        }
+        loadExplore();
+      }
+
+      function loadExplore() {
+        apiCall('/api/social/explore?limit=30').then(function (data) {
+          explorePosts = data.posts || [];
+          for (var i = 0; i < explorePosts.length; i++) {
+            likeCounts[explorePosts[i].id] = explorePosts[i].likesCount || 0;
+            if (likedPosts[explorePosts[i].id] === undefined) {
+              likedPosts[explorePosts[i].id] = false;
+            }
+          }
+          renderExploreResults();
+        }).catch(function (e) {
+          console.error('Failed to load explore:', e);
+        });
+      }
+
+      function renderExploreResults() {
+        var resultsContainer = document.getElementById('explore-results');
+        if (!resultsContainer) return;
+
+        var filtered = explorePosts;
+        if (exploreSearchValue.trim()) {
+          var q = exploreSearchValue.trim().toLowerCase();
+          filtered = explorePosts.filter(function (p) {
+            return p.authorId.toLowerCase().indexOf(q) !== -1 ||
+              p.content.toLowerCase().indexOf(q) !== -1;
+          });
+        }
+        if (filtered.length === 0) {
+          resultsContainer.innerHTML =
+            '<div class="empty-state">' +
+            '<h3>No posts found</h3>' +
+            '<p>Try a different search term or check back later.</p>' +
+            '</div>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < filtered.length; i++) {
+          html += buildPostCard(filtered[i]);
+        }
+        resultsContainer.innerHTML = html;
+      }
+
+      // --- Profile ---
+
+      function loadProfile() {
+        apiCall('/api/social/users/' + encodeURIComponent(currentUser)).then(function (data) {
+          profileData = data;
+          renderProfileContent();
+        }).catch(function (e) {
+          console.error('Failed to load profile:', e);
+        });
+        apiCall('/api/social/posts?author=' + encodeURIComponent(currentUser) + '&limit=50').then(function (data) {
+          profilePosts = data.posts || [];
+          for (var i = 0; i < profilePosts.length; i++) {
+            likeCounts[profilePosts[i].id] = profilePosts[i].likesCount || 0;
+            if (likedPosts[profilePosts[i].id] === undefined) {
+              likedPosts[profilePosts[i].id] = false;
+            }
+          }
+          renderProfileContent();
+        }).catch(function (e) {
+          console.error('Failed to load profile posts:', e);
+        });
+      }
+
+      function renderProfile() {
+        views.profile.innerHTML = '<div class="empty-state"><p>Loading...</p></div>';
+        loadProfile();
+      }
+
+      function renderProfileContent() {
+        if (!profileData) return;
+        var html = '<div class="profile-header">';
+        html += makeAvatarHtml(profileData.handle, 64);
+        html += '<div class="handle">' + escapeHtml(profileData.handle) + '</div>';
+        html += '<div class="profile-stats">';
+        html += '<div><span class="stat-value">' + (profileData.postCount || 0) + '</span> posts</div>';
+        html += '<div><span class="stat-value">' + (profileData.followers || 0) + '</span> followers</div>';
+        html += '<div><span class="stat-value">' + (profileData.following || 0) + '</span> following</div>';
+        html += '</div>';
+        html += '</div>';
+
+        if (profilePosts.length === 0) {
+          html += '<div class="empty-state"><h3>No posts yet</h3><p>Share your first thought with the community.</p></div>';
+        } else {
+          for (var i = 0; i < profilePosts.length; i++) {
+            html += buildPostCard(profilePosts[i]);
+          }
+        }
+        views.profile.innerHTML = html;
+      }
+
+      // --- Event delegation for post interactions ---
+
+      document.addEventListener('click', function (e) {
+        var target = e.target;
+
+        // Like button
+        var likeBtn = target.closest('[data-like-id]');
+        if (likeBtn) {
+          var postId = likeBtn.getAttribute('data-like-id');
+          handleLike(postId);
+          return;
+        }
+
+        // Comment toggle
+        var commentToggle = target.closest('[data-comment-toggle]');
+        if (commentToggle) {
+          var pid = commentToggle.getAttribute('data-comment-toggle');
+          handleCommentToggle(pid);
+          return;
+        }
+
+        // Comment submit
+        var commentSubmit = target.closest('[data-comment-submit]');
+        if (commentSubmit) {
+          var cpid = commentSubmit.getAttribute('data-comment-submit');
+          handleCommentSubmit(cpid);
+          return;
+        }
+
+        // Delete button
+        var deleteBtn = target.closest('[data-delete-id]');
+        if (deleteBtn) {
+          var did = deleteBtn.getAttribute('data-delete-id');
+          handleDelete(did);
+          return;
+        }
+
+        // Follow button
+        var followBtn = target.closest('[data-follow-handle]');
+        if (followBtn) {
+          var handle = followBtn.getAttribute('data-follow-handle');
+          handleFollow(handle, followBtn);
+          return;
+        }
+
+        // Unfollow button
+        // Fix #5: encodeURIComponent on unfollow URL
+        var unfollowBtn = target.closest('[data-unfollow-handle]');
+        if (unfollowBtn) {
+          var uhandle = unfollowBtn.getAttribute('data-unfollow-handle');
+          handleUnfollow(uhandle, unfollowBtn);
+          return;
+        }
+      });
+
+      // Comment submit on Enter
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.hasAttribute('data-comment-input')) {
+          var postId = e.target.getAttribute('data-comment-input');
+          handleCommentSubmit(postId);
+        }
+      });
+
+      function handleLike(postId) {
+        apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/like', {
+          method: 'POST',
+        }).then(function (data) {
+          likedPosts[postId] = data.liked;
+          likeCounts[postId] = data.likesCount;
+          saveLikedState();
+          rerenderCurrentView();
+        }).catch(function (e) {
+          console.error('Failed to toggle like:', e);
+        });
+      }
+
+      function handleCommentToggle(postId) {
+        openCommentsState[postId] = !openCommentsState[postId];
+        if (openCommentsState[postId] && !commentsCache[postId]) {
+          apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/comments').then(function (data) {
+            commentsCache[postId] = data.comments || [];
+            rerenderCurrentView();
+          }).catch(function (e) {
+            console.error('Failed to load comments:', e);
+          });
+        } else {
+          rerenderCurrentView();
+        }
+      }
+
+      function handleCommentSubmit(postId) {
+        var input = document.querySelector('[data-comment-input="' + CSS.escape(postId) + '"]');
+        if (!input) return;
+        var content = input.value.trim();
+        if (!content) return;
+        input.disabled = true;
+        apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/comments', {
+          method: 'POST',
+          body: JSON.stringify({ content: content }),
+        }).then(function () {
+          return apiCall('/api/social/posts/' + encodeURIComponent(postId) + '/comments');
+        }).then(function (data) {
+          commentsCache[postId] = data.comments || [];
+          // Update comment count in the post arrays
+          updatePostCommentCount(postId, commentsCache[postId].length);
+          rerenderCurrentView();
+        }).catch(function (e) {
+          console.error('Failed to submit comment:', e);
+          input.disabled = false;
+        });
+      }
+
+      function updatePostCommentCount(postId, count) {
+        [feedPosts, explorePosts, profilePosts].forEach(function (arr) {
+          for (var i = 0; i < arr.length; i++) {
+            if (arr[i].id === postId) {
+              arr[i] = Object.assign({}, arr[i], { commentsCount: count });
+            }
+          }
+        });
+      }
+
+      // Fix #8: Clean up state maps on delete
+
+      function handleDelete(postId) {
+        if (!confirm('Delete this post?')) return;
+        apiCall('/api/social/posts/' + encodeURIComponent(postId), {
+          method: 'DELETE',
+        }).then(function () {
+          feedPosts = feedPosts.filter(function (p) { return p.id !== postId; });
+          explorePosts = explorePosts.filter(function (p) { return p.id !== postId; });
+          profilePosts = profilePosts.filter(function (p) { return p.id !== postId; });
+
+          delete likeCounts[postId];
+          delete likedPosts[postId];
+          delete openCommentsState[postId];
+          delete commentsCache[postId];
+
+          saveLikedState();
+          rerenderCurrentView();
+        }).catch(function (e) {
+          console.error('Failed to delete post:', e);
+        });
+      }
+
+      function handleFollow(handle, btn) {
+        btn.disabled = true;
+        apiCall('/api/social/follows', {
+          method: 'POST',
+          body: JSON.stringify({ handle: handle }),
+        }).then(function () {
+          btn.textContent = 'Following';
+          btn.className = 'follow-btn following';
+          btn.removeAttribute('data-follow-handle');
+          btn.setAttribute('data-unfollow-handle', handle);
+          btn.disabled = false;
+        }).catch(function (e) {
+          console.error('Failed to follow:', e);
+          btn.disabled = false;
+        });
+      }
+
+      // Fix #5: encodeURIComponent on unfollow URL
+
+      function handleUnfollow(handle, btn) {
+        btn.disabled = true;
+        apiCall('/api/social/follows/' + encodeURIComponent(handle), {
+          method: 'DELETE',
+        }).then(function () {
+          btn.textContent = 'Follow';
+          btn.className = 'follow-btn';
+          btn.removeAttribute('data-unfollow-handle');
+          btn.setAttribute('data-follow-handle', handle);
+          btn.disabled = false;
+        }).catch(function (e) {
+          console.error('Failed to unfollow:', e);
+          btn.disabled = false;
+        });
+      }
+
+      function rerenderCurrentView() {
+        if (currentTab === 'feed') renderFeed();
+        else if (currentTab === 'explore') renderExploreResults();
+        else if (currentTab === 'profile') renderProfileContent();
+      }
+
+      // --- Initial load ---
+
+      loadFeed();
+    })();
   </script>
 </body>
 </html>
