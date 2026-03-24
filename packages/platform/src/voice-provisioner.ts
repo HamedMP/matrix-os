@@ -37,6 +37,7 @@ export class VoiceProvisioner {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body,
+        signal: AbortSignal.timeout(15_000),
       });
 
       if (!response.ok) {
@@ -74,6 +75,7 @@ export class VoiceProvisioner {
       headers: {
         Authorization: `Basic ${Buffer.from(`${this.accountSid}:${this.authToken}`).toString("base64")}`,
       },
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok && response.status !== 404) {

@@ -39,6 +39,7 @@ export class ElevenLabsTtsProvider implements TtsProvider {
           text,
           model_id: options?.model || this.defaultModel,
         }),
+        signal: AbortSignal.timeout(30_000),
       },
     );
     if (!response.ok)

@@ -34,6 +34,7 @@ export class OpenAiTtsProvider implements TtsProvider {
         voice: options?.voice || this.defaultVoice,
         response_format: "mp3",
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok)
       throw new Error(`OpenAI TTS error: ${response.status}`);

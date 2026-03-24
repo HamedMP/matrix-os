@@ -98,6 +98,7 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
               const filePath = fileInfo.file_path;
               if (!filePath || /\.\./.test(filePath) || /[^a-zA-Z0-9_./-]/.test(filePath)) {
                 console.warn("[telegram] Invalid file_path from Telegram API");
+                return { transcript: null, filePath: null };
               } else {
                 try {
                   const resp = await fetch(

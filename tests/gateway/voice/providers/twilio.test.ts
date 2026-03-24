@@ -259,7 +259,7 @@ describe("TwilioProvider", () => {
     it("constructs correct POST to Twilio API", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ sid: "CA999" }),
+        json: () => Promise.resolve({ sid: "CA00000000000000000000000000000999" }),
       });
       globalThis.fetch = mockFetch;
 
@@ -270,7 +270,7 @@ describe("TwilioProvider", () => {
         webhookUrl: "https://example.com/webhook",
       });
 
-      expect(result.providerCallId).toBe("CA999");
+      expect(result.providerCallId).toBe("CA00000000000000000000000000000999");
       expect(result.status).toBe("initiated");
 
       expect(mockFetch).toHaveBeenCalledWith(
@@ -299,12 +299,12 @@ describe("TwilioProvider", () => {
 
       await provider.hangupCall({
         callId: "call-1",
-        providerCallId: "CA999",
+        providerCallId: "CA00000000000000000000000000000999",
         reason: "hangup-bot",
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining(`Calls/CA999.json`),
+        expect.stringContaining(`Calls/CA00000000000000000000000000000999.json`),
         expect.objectContaining({ method: "POST" }),
       );
 
@@ -325,7 +325,7 @@ describe("TwilioProvider", () => {
 
       await provider.playTts({
         callId: "call-1",
-        providerCallId: "CA999",
+        providerCallId: "CA00000000000000000000000000000999",
         text: "Hello caller",
       });
 

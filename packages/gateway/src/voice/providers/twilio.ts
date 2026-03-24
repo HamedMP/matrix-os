@@ -26,6 +26,13 @@ type TwilioConfig = {
 };
 
 const TWILIO_FETCH_TIMEOUT_MS = 10_000;
+const TWILIO_CALL_SID_RE = /^CA[0-9a-f]{32}$/i;
+
+function validateCallSid(sid: string): void {
+  if (!TWILIO_CALL_SID_RE.test(sid)) {
+    throw new Error(`Invalid Twilio CallSid format: ${sid.slice(0, 10)}`);
+  }
+}
 
 const TWILIO_STATUS_MAP: Record<
   string,
@@ -201,6 +208,7 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async hangupCall(input: HangupCallInput): Promise<void> {
+    validateCallSid(input.providerCallId);
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls/${input.providerCallId}.json`;
 
     const body = new URLSearchParams({ Status: "completed" });
@@ -223,6 +231,7 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async playTts(input: PlayTtsInput): Promise<void> {
+    validateCallSid(input.providerCallId);
     const twiml = `<Response><Say>${this.escapeXml(input.text)}</Say></Response>`;
 
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls/${input.providerCallId}.json`;
@@ -247,6 +256,7 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async startListening(input: StartListeningInput): Promise<void> {
+    validateCallSid(input.providerCallId);
     const actionUrl = this.config.publicUrl
       ? `${this.config.publicUrl.replace(/\/$/, "")}/voice/webhook/twilio`
       : "/voice/webhook/twilio";
@@ -274,6 +284,7 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async stopListening(input: StopListeningInput): Promise<void> {
+    validateCallSid(input.providerCallId);
     const twiml = `<Response><Pause length="1"/></Response>`;
 
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls/${input.providerCallId}.json`;
@@ -294,6 +305,7 @@ export class TwilioProvider implements VoiceCallProvider {
   async getCallStatus(
     input: GetCallStatusInput,
   ): Promise<GetCallStatusResult> {
+    validateCallSid(input.providerCallId);
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls/${input.providerCallId}.json`;
 
     const response = await fetch(url, {

@@ -7,6 +7,7 @@ import {
   type VoiceConfig,
   type CallMode,
   CallStateSchema,
+  E164Schema,
   TerminalStates,
   isValidTransition,
 } from "./types.js";
@@ -53,6 +54,11 @@ export class CallManager {
   ): Promise<CallRecord> {
     if (!this.provider || !this.config) {
       throw new Error("CallManager not initialized");
+    }
+
+    const e164 = E164Schema.safeParse(to);
+    if (!e164.success) {
+      throw new Error("Invalid phone number: must be E.164 format (e.g. +15551234567)");
     }
 
     this.pendingCalls++;

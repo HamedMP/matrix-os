@@ -58,6 +58,7 @@ export class WhisperSttProvider implements SttProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: formData,
+        signal: AbortSignal.timeout(60_000),
       },
     );
 
