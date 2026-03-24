@@ -862,7 +862,7 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     // Validate data for insert/update
-    if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object")) {
+    if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object" || Array.isArray(body.data))) {
       return c.json({ error: "data must be a non-null object" }, 400);
     }
 
@@ -931,8 +931,16 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
+    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
+      return c.json({ error: "app and key are required strings" }, 400);
+    }
+
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
+
+    if (!safeApp || !safeKey) {
+      return c.json({ error: "app and key must contain valid characters" }, 400);
+    }
 
     // Postgres-backed path
     if (kvStore) {
