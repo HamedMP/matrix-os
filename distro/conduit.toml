@@ -5,5 +5,6 @@ database_backend = "rocksdb"
 port = 6167
 address = "0.0.0.0"
 allow_registration = true
+registration_token = "matrixos-provision-secret"
 allow_federation = false
 allow_check_for_updates = false

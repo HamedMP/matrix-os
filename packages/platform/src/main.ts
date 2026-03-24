@@ -17,6 +17,7 @@ import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
 import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
+import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provisioning.js';
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
 
@@ -24,12 +25,23 @@ const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 
-export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth }) {
-  const { db, orchestrator, clerkAuth } = deps;
+export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth; matrixProvisioner?: MatrixProvisioner }) {
+  const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const app = new Hono();
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  // Matrix well-known endpoints (unauthenticated, required for federation)
+  const CONDUIT_SERVER = process.env.CONDUIT_SERVER ?? 'matrix-os.com:6167';
+  const CONDUIT_BASE_URL = process.env.CONDUIT_BASE_URL ?? 'https://matrix-os.com';
+
+  app.get('/.well-known/matrix/server', (c) =>
+    c.json({ 'm.server': CONDUIT_SERVER }),
+  );
+  app.get('/.well-known/matrix/client', (c) =>
+    c.json({ 'm.homeserver': { base_url: CONDUIT_BASE_URL } }),
+  );
 
   // Prometheus metrics (unauthenticated for scraping)
   app.get('/metrics', async (c) => {
@@ -128,6 +140,16 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     }
     try {
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
+
+      // Provision Matrix accounts (non-blocking: log error but don't fail container provision)
+      if (matrixProvisioner) {
+        try {
+          await matrixProvisioner.provisionUser(handle);
+        } catch (matrixErr: any) {
+          console.error(`[matrix] Failed to provision Matrix accounts for ${handle}:`, matrixErr.message);
+        }
+      }
+
       return c.json(record, 201);
     } catch (e: any) {
       return c.json({ error: e.message }, 409);
@@ -415,7 +437,20 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     });
   }
 
-  const app = createApp({ db, orchestrator, clerkAuth });
+  // Matrix provisioner (optional: only if Conduit URL is configured)
+  let matrixProvisioner: MatrixProvisioner | undefined;
+  const conduitUrl = process.env.MATRIX_CONDUIT_URL;
+  const conduitToken = process.env.CONDUIT_REGISTRATION_TOKEN ?? 'matrixos-provision-secret';
+  if (conduitUrl) {
+    matrixProvisioner = createMatrixProvisioner({
+      db,
+      homeserverUrl: conduitUrl,
+      registrationToken: conduitToken,
+    });
+    console.log(`[matrix] Provisioner enabled (${conduitUrl})`);
+  }
+
+  const app = createApp({ db, orchestrator, clerkAuth, matrixProvisioner });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
