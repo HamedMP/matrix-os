@@ -163,9 +163,13 @@ export class TwilioProvider implements VoiceCallProvider {
       if (!twiml.startsWith("<")) {
         throw new Error("Invalid TwiML: must start with an XML tag");
       }
-      const ALLOWED_TWIML_VERBS = /^<Response>(\s*<(Say|Pause|Play|Hangup|Gather)\b[^>]*(?:\/>|>[\s\S]*?<\/\2>)\s*)*<\/Response>$/;
-      if (!ALLOWED_TWIML_VERBS.test(twiml)) {
-        throw new Error("Invalid TwiML: contains disallowed verbs. Allowed: Say, Pause, Play, Hangup, Gather");
+      const ALLOWED_VERBS = new Set(["Response", "Say", "Pause", "Play", "Hangup", "Gather"]);
+      const tagPattern = /<\/?([A-Za-z]+)\b/g;
+      let tagMatch;
+      while ((tagMatch = tagPattern.exec(twiml)) !== null) {
+        if (!ALLOWED_VERBS.has(tagMatch[1])) {
+          throw new Error("Invalid TwiML: contains disallowed verbs. Allowed: Say, Pause, Play, Hangup, Gather");
+        }
       }
       body.delete("Url");
       body.set("Twiml", twiml);

@@ -79,7 +79,10 @@ export async function generateVoiceResponse(
     clearTimeout(timer);
 
     if (result === "timeout") {
-      // Let the dispatch finish in the background but ignore its output
+      // Dispatcher does not support AbortSignal cancellation -- the kernel
+      // query continues in the background until it completes naturally.
+      // This is a known cost trade-off: the API tokens are consumed but the
+      // caller gets a timely response. Future: add signal support to dispatcher.
       dispatchPromise.catch(() => {});
       return FALLBACK_MESSAGE;
     }

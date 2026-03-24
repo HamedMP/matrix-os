@@ -39,6 +39,7 @@ export class CallManager {
   private callOptions: Map<string, InitiateCallOptions> = new Map();
   private speechInFlight: Set<string> = new Set();
   private processedEvents: Map<string, Set<string>> = new Map();
+  private pendingCalls = 0;
   private destroyed = false;
 
   initialize(provider: VoiceCallProvider, config: VoiceConfig): void {
@@ -55,21 +56,27 @@ export class CallManager {
     }
 
     const maxConcurrent = this.config.telephony.maxConcurrentCalls;
-    const currentActive = this.getActiveCalls().length;
+    const currentActive = this.getActiveCalls().length + this.pendingCalls;
     if (currentActive >= maxConcurrent) {
       throw new Error(
         `Max concurrent calls reached (${maxConcurrent}). Cannot initiate new call.`,
       );
     }
 
+    this.pendingCalls++;
     const callId = `call-${randomUUID()}`;
 
-    const result = await this.provider.initiateCall({
-      callId,
-      from: options.from,
-      to,
-      webhookUrl: options.webhookUrl,
-    });
+    let result;
+    try {
+      result = await this.provider.initiateCall({
+        callId,
+        from: options.from,
+        to,
+        webhookUrl: options.webhookUrl,
+      });
+    } finally {
+      this.pendingCalls--;
+    }
 
     const record: CallRecord = {
       callId,
@@ -358,6 +365,7 @@ export class CallManager {
     existing.eviction = setTimeout(() => {
       this.activeCalls.delete(callId);
       this.callOptions.delete(callId);
+      this.processedEvents.delete(callId);
       const provId = [...this.providerCallIdMap.entries()].find(
         ([, id]) => id === callId,
       )?.[0];

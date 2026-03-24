@@ -66,9 +66,23 @@ Start with the simplest implementation that works. Single-process async concurre
 - No external dependencies when native Node.js APIs suffice
 - Prefer CDN imports in generated HTML apps over npm-installed packages
 
+### VII. Defense in Depth (NON-NEGOTIABLE)
+
+Every new endpoint, WebSocket, and webhook requires explicit auth design before implementation. Security is not a follow-up -- it is part of the spec.
+
+- **Auth matrix in specs**: every spec with endpoints must include a table of routes, their auth method, and which are public
+- **Input validation at every boundary**: user input, webhook payloads, file paths, filenames, IPC tool params -- validate and sanitize at the point of entry
+- **Never trust user-controlled headers** for security decisions (X-Forwarded-*, Host, etc.)
+- **Never expose internal errors** to clients -- generic messages to users, detailed logs server-side
+- **Atomic file writes** for persistent state (write to tmp, rename)
+- **Resource limits on all buffers** and in-memory collections -- cap sizes, clean up on eviction
+- **Timeouts on all external calls** -- fetch, dispatch, provider APIs. No unbounded waits.
+- **Constant-time comparison** for all secret/token/signature checks (timingSafeEqual)
+- **Integration wiring verification**: every spec must describe how components connect at runtime and include an integration test that exercises the full path end-to-end
+
 ## Development Workflow
 
-### VI. Test-Driven Development (NON-NEGOTIABLE)
+### VIII. Test-Driven Development (NON-NEGOTIABLE)
 
 The OS is complex and self-modifying. TDD is mandatory to prevent regressions as the system evolves.
 
@@ -96,7 +110,7 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 1.4.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-02-25
+**Version**: 1.5.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-03-24
 
 ### Amendment Log
 
@@ -104,3 +118,4 @@ This constitution supersedes all other development practices for Matrix OS. Amen
 - **1.2.0** (2026-02-11): Added prompt caching strategy (90% input cost savings), 1M context window beta, compaction API, 99-100% test coverage target.
 - **1.3.0** (2026-02-12): Expanded vision to include personal AI assistant capabilities. Added: SOUL identity (`soul.md`), skills system (`agents/skills/`), multi-channel messaging (Telegram, WhatsApp, Discord, Slack), cron scheduling, proactive heartbeat, cloud deployment. Expanded Principle III with channel shells. Added channel/scheduling tech constraints. Inspired by OpenClaw/Moltbot and Nanobot (both MIT, open source). Matrix OS is now both a visual OS and a personal AI assistant.
 - **1.4.0** (2026-02-25): Added documentation-driven development rule. Every feature, spec, and plan must include public docs updates at `www/content/docs/` (Fumadocs site at matrix-os.com/docs) as an explicit deliverable.
+- **1.5.0** (2026-03-24): Added Defense in Depth principle (VII). Renumbered TDD to VIII. Every spec with endpoints must include auth matrix, input validation plan, resource limits, timeout policies, and integration wiring verification. Motivated by PR #17 (voice system) where 55+ review findings traced back to missing security architecture and integration wiring in the spec. Also added: atomic file writes, constant-time secret comparison, never expose internal errors, never trust forwarded headers.
