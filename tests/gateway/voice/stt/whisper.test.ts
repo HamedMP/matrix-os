@@ -108,7 +108,7 @@ describe("WhisperSttProvider", () => {
 
     const provider = new WhisperSttProvider({ apiKey: "sk-test" });
     await expect(provider.transcribe(Buffer.from("audio"))).rejects.toThrow(
-      /Whisper STT error: 500/,
+      /Whisper STT error \(status 500\)/,
     );
   });
 

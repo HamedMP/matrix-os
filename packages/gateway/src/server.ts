@@ -463,6 +463,10 @@ export async function createGateway(config: GatewayConfig) {
 
   const voiceService = VoiceService.create({ ...voiceConfig, homePath });
 
+  if (voiceService.isEnabled() && voiceService.stt) {
+    telegramAdapter.setVoiceContext({ homePath, stt: voiceService.stt });
+  }
+
   // Telephony: CallManager + CallStore + webhook/REST routes
   const callManager = new CallManager();
   const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));

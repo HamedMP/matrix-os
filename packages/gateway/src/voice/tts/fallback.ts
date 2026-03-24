@@ -53,23 +53,26 @@ export class FallbackTtsChain implements TtsProvider {
     if (!text) throw new Error("Text is required for TTS");
 
     const errors: Array<{ provider: string; error: string }> = [];
-    const now = Date.now();
 
     for (const provider of this.providers) {
       if (!provider.isAvailable()) continue;
 
       const circuit = this.circuits.get(provider.name);
-      if (circuit && circuit.openUntil > now) continue;
+      if (circuit && circuit.openUntil > Date.now()) continue;
 
       try {
         let timer: ReturnType<typeof setTimeout>;
-        const result = await Promise.race([
-          provider.synthesize(text, options),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error("Timeout")), this.timeoutMs);
-          }),
-        ]);
-        clearTimeout(timer!);
+        let result: TtsResult;
+        try {
+          result = await Promise.race([
+            provider.synthesize(text, options),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("Timeout")), this.timeoutMs);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer!);
+        }
 
         this.circuits.delete(provider.name);
         this.onUsage?.({

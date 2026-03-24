@@ -31,7 +31,13 @@ export async function handleVoiceWsMessage(
 
   let responseText: string;
   try {
-    responseText = await ctx.dispatch(transcriptText, { source: "voice" });
+    const DISPATCH_TIMEOUT_MS = 30_000;
+    responseText = await Promise.race([
+      ctx.dispatch(transcriptText, { source: "voice" }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Voice dispatch timeout")), DISPATCH_TIMEOUT_MS),
+      ),
+    ]);
   } catch (e) {
     console.error("Dispatch failed:", e instanceof Error ? e.message : String(e));
     ctx.send(JSON.stringify({ type: "voice_error", message: "Failed to process your message. Please try again." }));

@@ -201,6 +201,7 @@ export class CallManager {
     if (!call) {
       throw new Error(`Call not found: ${callId}`);
     }
+    if (TerminalStates.has(call.state)) return;
     if (!this.provider) {
       throw new Error("CallManager not initialized");
     }
@@ -329,8 +330,8 @@ export class CallManager {
           await this.speak(callId, response);
         }
       })
-      .catch(() => {
-        // Response generation failed, continue listening
+      .catch((err) => {
+        console.error(`[call-manager] Speech response failed for ${callId}:`, err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         this.speechInFlight.delete(callId);
@@ -367,6 +368,7 @@ export class CallManager {
       this.activeCalls.delete(callId);
       this.callOptions.delete(callId);
       this.processedEvents.delete(callId);
+      this.speechInFlight.delete(callId);
       const provId = [...this.providerCallIdMap.entries()].find(
         ([, id]) => id === callId,
       )?.[0];

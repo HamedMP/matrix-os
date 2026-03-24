@@ -68,7 +68,8 @@ export class WhisperSttProvider implements SttProvider {
         throw new Error("Whisper STT auth error: invalid API key");
       if (status === 429)
         throw new Error("Whisper STT rate limited: too many requests");
-      throw new Error(`Whisper STT error: ${status} ${body}`);
+      console.error(`[whisper] API error ${status}:`, body.slice(0, 200));
+      throw new Error(`Whisper STT error (status ${status})`);
     }
 
     const data = (await response.json()) as {
