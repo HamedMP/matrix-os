@@ -50,6 +50,26 @@ describe('gateway/social-activity', () => {
       expect(config).toEqual(DEFAULT_SOCIAL_CONFIG);
     });
 
+    it('returns defaults when config file has invalid JSON', () => {
+      writeFileSync(
+        join(tmpDir, 'system', 'social-config.json'),
+        'not-valid-json!!!',
+      );
+      const config = loadSocialConfig(tmpDir);
+      expect(config).toEqual(DEFAULT_SOCIAL_CONFIG);
+    });
+
+    it('merges partial config with defaults', () => {
+      writeFileSync(
+        join(tmpDir, 'system', 'social-config.json'),
+        JSON.stringify({ share_game_scores: true }),
+      );
+      const config = loadSocialConfig(tmpDir);
+      expect(config.share_game_scores).toBe(true);
+      expect(config.share_app_publishes).toBe(false);
+      expect(config.auto_post_frequency).toBe('none');
+    });
+
     it('loads config from file', () => {
       const customConfig: SocialConfig = {
         ...DEFAULT_SOCIAL_CONFIG,
@@ -113,6 +133,13 @@ describe('gateway/social-activity', () => {
     });
   });
 
+  describe('onGameScore (disabled)', () => {
+    it('does not create post when sharing is disabled', () => {
+      service.onGameScore({ authorId: '@alice', gameName: 'Snake', score: 500 });
+      expect(postCreated).toHaveLength(0);
+    });
+  });
+
   describe('onGameScore', () => {
     it('creates activity post when sharing is enabled', () => {
       writeFileSync(
@@ -125,6 +152,13 @@ describe('gateway/social-activity', () => {
       expect(postCreated).toHaveLength(1);
       expect(postCreated[0].content).toContain('Snake');
       expect(postCreated[0].content).toContain('1500');
+    });
+  });
+
+  describe('onAiActivity (disabled)', () => {
+    it('does not create post when sharing is disabled', () => {
+      service.onAiActivity({ authorId: '@alice', description: 'helped build something' });
+      expect(postCreated).toHaveLength(0);
     });
   });
 
@@ -156,6 +190,38 @@ describe('gateway/social-activity', () => {
 
       expect(summary).toContain('3');
       expect(summary).toContain('week');
+    });
+
+    it('uses singular form for counts of 1', () => {
+      const summary = generateWeeklySummary({
+        appsBuilt: 1,
+        gamesPlayed: 1,
+        aiInteractions: 1,
+        filesCreated: 1,
+      });
+
+      expect(summary).toContain('1 app,');
+      expect(summary).toContain('1 game,');
+      expect(summary).toContain('1 AI interaction,');
+      expect(summary).toContain('1 file');
+      expect(summary).not.toContain('apps');
+      expect(summary).not.toContain('games');
+      expect(summary).not.toContain('interactions');
+      expect(summary).not.toContain('files');
+    });
+
+    it('includes only non-zero stats', () => {
+      const summary = generateWeeklySummary({
+        appsBuilt: 2,
+        gamesPlayed: 0,
+        aiInteractions: 5,
+        filesCreated: 0,
+      });
+
+      expect(summary).toContain('2 apps');
+      expect(summary).toContain('5 AI interactions');
+      expect(summary).not.toContain('game');
+      expect(summary).not.toContain('file');
     });
 
     it('generates empty summary when no activity', () => {

@@ -172,6 +172,28 @@ export function createGitHubConnector(options?: GitHubConnectorOptions): SocialC
   };
 }
 
+// --- SSRF protection ---
+
+function isPublicUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname;
+    if (
+      host === 'localhost' ||
+      host.startsWith('127.') ||
+      host.startsWith('10.') ||
+      host.startsWith('192.168.') ||
+      host.startsWith('169.254.') ||
+      host.startsWith('172.') ||
+      host === '[::1]'
+    ) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Mastodon Connector ---
 
 interface MastodonConnectorOptions {
@@ -194,6 +216,10 @@ export function createMastodonConnector(options?: MastodonConnectorOptions): Soc
     async fetchPosts(context) {
       const { accessToken, metadata } = context;
       const instanceUrl = metadata.instanceUrl as string;
+
+      if (!isPublicUrl(instanceUrl)) {
+        return [];
+      }
 
       try {
         const res = await fetchFn(`${instanceUrl}/api/v1/timelines/home?limit=30`, {

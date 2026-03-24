@@ -1,4 +1,4 @@
-import { WebSocket } from "ws";
+import WebSocket from "ws";
 
 export interface WsClient {
   send: (msg: Record<string, unknown>) => void;

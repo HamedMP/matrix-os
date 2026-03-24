@@ -1,5 +1,5 @@
 [global]
-server_name = "localhost"
+server_name = "matrix-os.com"
 database_path = "/var/lib/matrix-conduit"
 database_backend = "rocksdb"
 port = 6167

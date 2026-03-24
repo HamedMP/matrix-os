@@ -178,6 +178,10 @@ export function deletePost(db: PlatformDB, id: string): boolean {
   const existing = getPost(db, id);
   if (!existing) return false;
 
+  // better-sqlite3 is synchronous and single-connection, so sequential
+  // DELETEs are effectively atomic (no concurrent writes). Order matters:
+  // likes first, then comments, then the post itself.
+  // TODO: if migrated to Postgres/async DB, wrap in a real transaction.
   db.delete(likes).where(eq(likes.postId, id)).run();
   db.delete(comments).where(eq(comments.postId, id)).run();
   db.delete(posts).where(eq(posts.id, id)).run();
@@ -239,6 +243,10 @@ export function listTrendingPosts(db: PlatformDB, limit: number = 20): PostRecor
 
 // --- Likes ---
 
+// better-sqlite3 is synchronous and single-connection. The check-then-mutate
+// pattern (SELECT + INSERT + UPDATE) has no race window because concurrent
+// requests are serialized by the Node.js event loop.
+// TODO: if migrated to Postgres/async DB, wrap in a real transaction.
 export function likePost(db: PlatformDB, postId: string, userId: string): void {
   const existing = db
     .select()

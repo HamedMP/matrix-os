@@ -58,8 +58,10 @@ export function getPost(db: MatrixDB, id: string): SocialPost | undefined {
 export function deletePost(db: MatrixDB, id: string): boolean {
   const existing = getPost(db, id);
   if (!existing) return false;
+  // better-sqlite3 is synchronous and single-connection, so sequential
+  // DELETEs are effectively atomic (no concurrent writes). Order matters:
+  // likes first, then child comments, then the post itself.
   db.delete(socialLikes).where(eq(socialLikes.postId, id)).run();
-  // Delete child comments
   db.delete(socialPosts).where(eq(socialPosts.parentId, id)).run();
   db.delete(socialPosts).where(eq(socialPosts.id, id)).run();
   return true;
@@ -136,6 +138,9 @@ export function listTrendingPosts(db: MatrixDB, limit = 20): SocialPost[] {
 
 // --- Likes ---
 
+// better-sqlite3 is synchronous and single-connection. The check-then-mutate
+// pattern (SELECT + INSERT + UPDATE) has no race window because concurrent
+// requests are serialized by the Node.js event loop.
 export function likePost(db: MatrixDB, postId: string, userId: string): boolean {
   const existing = db
     .select()
@@ -320,16 +325,25 @@ export function getUserStats(
   };
 }
 
+// --- Constants ---
+
+const VALID_POST_TYPES = ['text', 'image', 'link', 'app_share', 'activity'];
+
 // --- Hono routes ---
 
 export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): Hono {
   const api = new Hono();
 
+  api.onError((err, c) => {
+    if (err.message.includes('JSON')) return c.json({ error: 'Invalid JSON body' }, 400);
+    return c.json({ error: 'Internal error' }, 500);
+  });
+
   // Posts
   api.get("/posts", (c) => {
     const author = c.req.query("author");
     const type = c.req.query("type");
-    const limit = Number(c.req.query("limit")) || 20;
+    const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const offset = Number(c.req.query("offset")) || 0;
     const posts = listPosts(db, { authorId: author, type, limit, offset });
     return c.json({ posts });
@@ -348,6 +362,9 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     const body = await c.req.json<{ content?: string; type?: string; parentId?: string }>();
     if (!body.content) return c.json({ error: "content is required" }, 400);
     if (body.content.length > 500) return c.json({ error: "Content must be 500 characters or less" }, 400);
+    if (body.type && !VALID_POST_TYPES.includes(body.type)) {
+      return c.json({ error: "Invalid post type" }, 400);
+    }
 
     const authorId = getCurrentUser();
     const id = insertPost(db, {
@@ -371,7 +388,7 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
   // Feed
   api.get("/feed", (c) => {
     const userId = getCurrentUser();
-    const limit = Number(c.req.query("limit")) || 20;
+    const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const cursor = c.req.query("cursor");
     const followingIds = getFollowingIds(db, userId);
     // Include own posts in feed
@@ -387,7 +404,7 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
 
   // Explore
   api.get("/explore", (c) => {
-    const limit = Number(c.req.query("limit")) || 20;
+    const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const posts = listTrendingPosts(db, limit);
     return c.json({ posts });
   });
@@ -421,6 +438,7 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     if (!post) return c.json({ error: "Post not found" }, 404);
     const body = await c.req.json<{ content?: string }>();
     if (!body.content) return c.json({ error: "content is required" }, 400);
+    if (body.content.length > 500) return c.json({ error: "Comment must be 500 characters or less" }, 400);
     const authorId = getCurrentUser();
     const id = addComment(db, { postId, authorId, content: body.content });
     return c.json({ id }, 201);

@@ -20,8 +20,15 @@ import {
   getFollowingIds,
 } from './social-feed.js';
 
+const VALID_POST_TYPES = ['text', 'image', 'link', 'app_share', 'activity'];
+
 export function createSocialFeedApi(db: PlatformDB): Hono {
   const api = new Hono();
+
+  api.onError((err, c) => {
+    if (err.message.includes('JSON')) return c.json({ error: 'Invalid JSON body' }, 400);
+    return c.json({ error: 'Internal error' }, 500);
+  });
 
   // --- Feed ---
 
@@ -31,12 +38,13 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'userId parameter is required' }, 400);
     }
 
-    const limit = Number(c.req.query('limit')) || 20;
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
     const cursor = c.req.query('cursor');
 
     const followingIds = getFollowingIds(db, userId);
+    const authorIds = [...followingIds, userId];
     const result = listFeed(db, {
-      authorIds: followingIds,
+      authorIds,
       limit,
       cursor: cursor || undefined,
     });
@@ -63,6 +71,10 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'Content must be 500 characters or less' }, 400);
     }
 
+    if (!VALID_POST_TYPES.includes(body.type)) {
+      return c.json({ error: 'Invalid post type' }, 400);
+    }
+
     const id = insertPost(db, {
       authorId: body.authorId,
       content: body.content,
@@ -76,10 +88,11 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   api.delete('/posts/:id', (c) => {
     const id = c.req.param('id');
-    const deleted = deletePost(db, id);
-    if (!deleted) {
-      return c.json({ error: 'Post not found' }, 404);
-    }
+    const userId = c.req.query('userId') || c.req.header('x-user-id');
+    const post = getPost(db, id);
+    if (!post) return c.json({ error: 'Post not found' }, 404);
+    if (userId && post.authorId !== userId) return c.json({ error: 'Not authorized' }, 403);
+    deletePost(db, id);
     return c.json({ ok: true });
   });
 
@@ -120,6 +133,9 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     const body = await c.req.json<{ authorId?: string; content?: string }>();
     if (!body.authorId || !body.content) {
       return c.json({ error: 'authorId and content are required' }, 400);
+    }
+    if (body.content.length > 500) {
+      return c.json({ error: 'Comment must be 500 characters or less' }, 400);
     }
 
     const id = addComment(db, {
@@ -182,7 +198,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   api.get('/explore', (c) => {
     const sort = c.req.query('sort') ?? 'trending';
-    const limit = Number(c.req.query('limit')) || 20;
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
 
     if (sort === 'trending') {
       const trending = listTrendingPosts(db, limit);
