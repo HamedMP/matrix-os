@@ -12,6 +12,7 @@
       --accent: var(--matrix-accent, #c2703a);
       --border: var(--matrix-border, #d8d0de);
       --card-bg: var(--matrix-card-bg, #ffffff);
+      --muted: var(--matrix-muted-fg, #86868b);
     }
     body {
       font-family: var(--matrix-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
@@ -32,6 +33,20 @@
       font-size: 1.1rem;
       font-weight: 600;
     }
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 1rem;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      display: none;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
     .new-chat-btn {
       background: var(--accent);
       color: white;
@@ -40,6 +55,18 @@
       border-radius: 0.4rem;
       cursor: pointer;
       font-size: 0.85rem;
+    }
+    .main-content {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 320px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
     }
     .conversation-list {
       flex: 1;
@@ -53,7 +80,7 @@
       border-bottom: 1px solid var(--border);
       cursor: pointer;
     }
-    .conversation-item:hover {
+    .conversation-item:hover, .conversation-item.active {
       background: var(--card-bg);
     }
     .conv-avatar {
@@ -65,7 +92,9 @@
       align-items: center;
       justify-content: center;
       font-weight: 600;
+      color: white;
       flex-shrink: 0;
+      font-size: 0.9rem;
     }
     .conv-info {
       flex: 1;
@@ -87,10 +116,16 @@
       opacity: 0.5;
       flex-shrink: 0;
     }
-    .chat-view {
-      display: none;
+    .chat-panel {
+      flex: 1;
+      display: flex;
       flex-direction: column;
-      height: 100%;
+    }
+    .chat-header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 0.95rem;
     }
     .chat-messages {
       flex: 1;
@@ -104,6 +139,11 @@
       margin-bottom: 0.5rem;
       font-size: 0.9rem;
       line-height: 1.4;
+      word-wrap: break-word;
+    }
+    .message-bubble a {
+      color: inherit;
+      text-decoration: underline;
     }
     .message-sent {
       margin-left: auto;
@@ -115,6 +155,12 @@
       background: var(--card-bg);
       border-bottom-left-radius: 0.25rem;
     }
+    .message-time {
+      font-size: 0.7rem;
+      opacity: 0.5;
+      margin-top: 0.15rem;
+    }
+    .message-sent .message-time { text-align: right; }
     .chat-input-bar {
       display: flex;
       gap: 0.5rem;
@@ -142,23 +188,633 @@
       font-size: 1rem;
     }
     .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
       text-align: center;
-      padding: 4rem 1rem;
+      padding: 2rem;
       opacity: 0.6;
     }
-    .empty-state h3 { margin-bottom: 0.5rem; }
+    .empty-state-inner h3 { margin-bottom: 0.5rem; }
+    .new-chat-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .new-chat-modal.open { display: flex; }
+    .new-chat-form {
+      background: var(--card-bg);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      width: 90%;
+      max-width: 360px;
+    }
+    .new-chat-form h3 { margin-bottom: 1rem; }
+    .new-chat-form input {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 0.4rem;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+      color: var(--fg);
+      background: var(--bg);
+    }
+    .new-chat-form .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
+    .new-chat-form button {
+      padding: 0.4rem 1rem;
+      border-radius: 0.4rem;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 0.85rem;
+      background: var(--card-bg);
+      color: var(--fg);
+    }
+    .new-chat-form button.primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    @media (max-width: 640px) {
+      .sidebar { width: 100%; border-right: none; }
+      .chat-panel { display: none; }
+      .main-content.chat-open .sidebar { display: none; }
+      .main-content.chat-open .chat-panel { display: flex; }
+      .back-btn { display: inline-block; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>Messages</h1>
-    <button class="new-chat-btn">New</button>
+    <div class="header-left">
+      <button class="back-btn" id="backBtn" aria-label="Back to conversations">&#8592;</button>
+      <h1 id="headerTitle">Messages</h1>
+    </div>
+    <button class="new-chat-btn" id="newChatBtn">New</button>
   </header>
-  <div class="conversation-list">
-    <div class="empty-state">
-      <h3>No conversations yet</h3>
-      <p>Start a conversation with another Matrix OS user.</p>
+  <div class="main-content" id="mainContent">
+    <div class="sidebar">
+      <div class="conversation-list" id="convList"></div>
+    </div>
+    <div class="chat-panel" id="chatPanel">
+      <div class="empty-state" id="chatEmpty">
+        <div class="empty-state-inner">
+          <h3>Select a conversation</h3>
+          <p>Choose a conversation from the list or start a new one.</p>
+        </div>
+      </div>
+      <div class="chat-header" id="chatHeader" style="display:none;"></div>
+      <div class="chat-messages" id="chatMessages" style="display:none;" aria-live="polite" role="log"></div>
+      <div class="chat-input-bar" id="chatInputBar" style="display:none;">
+        <input type="text" id="msgInput" placeholder="Type a message..." aria-label="Message input" />
+        <button class="send-btn" id="sendBtn" aria-label="Send message">&#9654;</button>
+      </div>
     </div>
   </div>
+  <div class="new-chat-modal" id="newChatModal">
+    <div class="new-chat-form">
+      <h3>New Conversation</h3>
+      <input type="text" id="newChatName" placeholder="Contact name" />
+      <div class="btn-row">
+        <button id="cancelNewChat">Cancel</button>
+        <button class="primary" id="confirmNewChat">Start</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    var GATEWAY = location.origin;
+    var BRIDGE_APP = 'messages';
+    var BRIDGE_KEY = 'conversations';
+    var STORAGE_KEY = 'matrixos_messages';
+
+    var state = {
+      conversations: [],
+      activeConvId: null,
+      isMobile: window.innerWidth <= 640
+    };
+
+    var aiTimers = {};
+
+    // -- DOM refs --
+    var convListEl = document.getElementById('convList');
+    var chatPanel = document.getElementById('chatPanel');
+    var chatEmpty = document.getElementById('chatEmpty');
+    var chatHeader = document.getElementById('chatHeader');
+    var chatMessages = document.getElementById('chatMessages');
+    var chatInputBar = document.getElementById('chatInputBar');
+    var msgInput = document.getElementById('msgInput');
+    var sendBtn = document.getElementById('sendBtn');
+    var newChatBtn = document.getElementById('newChatBtn');
+    var newChatModal = document.getElementById('newChatModal');
+    var newChatName = document.getElementById('newChatName');
+    var cancelNewChat = document.getElementById('cancelNewChat');
+    var confirmNewChat = document.getElementById('confirmNewChat');
+    var backBtn = document.getElementById('backBtn');
+    var mainContent = document.getElementById('mainContent');
+    var headerTitle = document.getElementById('headerTitle');
+
+    // -- ID generation --
+    function genId() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    }
+
+    // -- Bridge data (fix #1: correct API contract) --
+    function saveToBridge() {
+      fetch(GATEWAY + '/api/bridge/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'write', app: BRIDGE_APP, key: BRIDGE_KEY, value: JSON.stringify({ conversations: state.conversations }) })
+      }).catch(function() {});
+    }
+
+    function loadFromBridge() {
+      fetch(GATEWAY + '/api/bridge/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'read', app: BRIDGE_APP, key: BRIDGE_KEY })
+      }).then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data && data.value) {
+            var parsed = JSON.parse(data.value);
+            if (parsed && Array.isArray(parsed.conversations)) {
+              mergeConversations(parsed.conversations);
+            }
+          }
+        }).catch(function() {});
+    }
+
+    // -- Merge (fix #6: bridge/localStorage race) --
+    function mergeConversations(bridgeConvs) {
+      bridgeConvs.forEach(function(bc) {
+        var existing = state.conversations.find(function(c) { return c.id === bc.id; });
+        if (!existing) {
+          state.conversations.push(bc);
+        } else {
+          bc.messages.forEach(function(msg) {
+            if (!existing.messages.find(function(m) { return m.id === msg.id; })) {
+              existing.messages.push(msg);
+            }
+          });
+          existing.messages.sort(function(a, b) { return new Date(a.timestamp) - new Date(b.timestamp); });
+        }
+      });
+      renderConversationList();
+      if (state.activeConvId) renderChatView();
+    }
+
+    // -- Persistence (fix #3: validation, fix #5: quota protection) --
+    function loadConversations() {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        try {
+          var parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.every(function(c) {
+            return c && typeof c.id === 'string' && Array.isArray(c.participants) && Array.isArray(c.messages);
+          })) {
+            state.conversations = parsed;
+            return;
+          }
+        } catch(e) { /* fall through to seed */ }
+      }
+      seedDemoData();
+    }
+
+    function saveConversations() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state.conversations));
+      } catch(e) {
+        state.conversations.forEach(function(c) {
+          if (c.messages.length > 100) c.messages = c.messages.slice(-100);
+        });
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.conversations)); }
+        catch(e2) { /* give up silently */ }
+      }
+      saveToBridge();
+    }
+
+    function seedDemoData() {
+      var now = new Date();
+      var fiveMin = new Date(now.getTime() - 5 * 60000);
+      var tenMin = new Date(now.getTime() - 10 * 60000);
+      state.conversations = [
+        {
+          id: genId(),
+          participants: ['You', 'Alice'],
+          messages: [
+            { id: genId(), sender: 'Alice', content: 'Hey! Have you tried the new todo app?', timestamp: tenMin.toISOString() },
+            { id: genId(), sender: 'You', content: 'Yes, it works great with the bridge API!', timestamp: fiveMin.toISOString() }
+          ]
+        },
+        {
+          id: genId(),
+          participants: ['You', 'Bob'],
+          messages: [
+            { id: genId(), sender: 'Bob', content: 'Matrix OS is looking awesome.', timestamp: tenMin.toISOString() }
+          ]
+        }
+      ];
+      saveConversations();
+    }
+
+    // -- Safe message rendering (fix #2: no innerHTML with user content) --
+    function renderMessageContent(bubble, content) {
+      var urlRegex = /(https?:\/\/[^\s]+)/g;
+      var parts = content.split(urlRegex);
+      parts.forEach(function(part) {
+        if (urlRegex.test(part)) {
+          urlRegex.lastIndex = 0;
+          var a = document.createElement('a');
+          a.href = part;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = part;
+          bubble.appendChild(a);
+        } else {
+          var lines = part.split('\n');
+          lines.forEach(function(line, i) {
+            bubble.appendChild(document.createTextNode(line));
+            if (i < lines.length - 1) bubble.appendChild(document.createElement('br'));
+          });
+        }
+      });
+    }
+
+    // -- Time formatting --
+    function formatTime(isoStr) {
+      var d = new Date(isoStr);
+      var now = new Date();
+      var diffMs = now - d;
+      if (diffMs < 60000) return 'now';
+      if (diffMs < 3600000) return Math.floor(diffMs / 60000) + 'm';
+      if (diffMs < 86400000) return Math.floor(diffMs / 3600000) + 'h';
+      return d.toLocaleDateString();
+    }
+
+    function formatMessageTime(isoStr) {
+      var d = new Date(isoStr);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // -- Render conversation list (fix #9: incremental update) --
+    function renderConversationList() {
+      var sorted = state.conversations.slice().sort(function(a, b) {
+        var aLast = a.messages.length ? new Date(a.messages[a.messages.length - 1].timestamp) : 0;
+        var bLast = b.messages.length ? new Date(b.messages[b.messages.length - 1].timestamp) : 0;
+        return bLast - aLast;
+      });
+
+      var existingItems = {};
+      Array.prototype.forEach.call(convListEl.children, function(el) {
+        if (el.dataset.convId) existingItems[el.dataset.convId] = el;
+      });
+
+      var fragment = document.createDocumentFragment();
+      sorted.forEach(function(conv) {
+        var otherName = conv.participants.find(function(p) { return p !== 'You'; }) || conv.participants[0];
+        var lastMsg = conv.messages.length ? conv.messages[conv.messages.length - 1] : null;
+        var preview = lastMsg ? (lastMsg.sender === 'You' ? 'You: ' : '') + lastMsg.content : 'No messages yet';
+        var time = lastMsg ? formatTime(lastMsg.timestamp) : '';
+        var initials = otherName.charAt(0).toUpperCase();
+
+        var existing = existingItems[conv.id];
+        if (existing) {
+          existing.querySelector('.conv-name').textContent = otherName;
+          existing.querySelector('.conv-preview').textContent = preview;
+          existing.querySelector('.conv-time').textContent = time;
+          if (conv.id === state.activeConvId) {
+            existing.classList.add('active');
+          } else {
+            existing.classList.remove('active');
+          }
+          fragment.appendChild(existing);
+          delete existingItems[conv.id];
+        } else {
+          var item = document.createElement('div');
+          item.className = 'conversation-item' + (conv.id === state.activeConvId ? ' active' : '');
+          item.dataset.convId = conv.id;
+          item.setAttribute('role', 'button');
+          item.setAttribute('tabindex', '0');
+          item.setAttribute('aria-label', 'Conversation with ' + otherName);
+
+          var avatar = document.createElement('div');
+          avatar.className = 'conv-avatar';
+          avatar.textContent = initials;
+
+          var info = document.createElement('div');
+          info.className = 'conv-info';
+          var nameEl = document.createElement('div');
+          nameEl.className = 'conv-name';
+          nameEl.textContent = otherName;
+          var previewEl = document.createElement('div');
+          previewEl.className = 'conv-preview';
+          previewEl.textContent = preview;
+          info.appendChild(nameEl);
+          info.appendChild(previewEl);
+
+          var timeEl = document.createElement('div');
+          timeEl.className = 'conv-time';
+          timeEl.textContent = time;
+
+          item.appendChild(avatar);
+          item.appendChild(info);
+          item.appendChild(timeEl);
+
+          item.addEventListener('click', function() { selectConversation(conv.id); });
+          item.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectConversation(conv.id); }
+          });
+
+          fragment.appendChild(item);
+        }
+      });
+
+      // Remove stale items
+      Object.keys(existingItems).forEach(function(id) {
+        existingItems[id].remove();
+      });
+
+      convListEl.innerHTML = '';
+      convListEl.appendChild(fragment);
+
+      if (state.conversations.length === 0) {
+        convListEl.innerHTML = '<div class="empty-state"><div class="empty-state-inner"><h3>No conversations yet</h3><p>Start a conversation with another Matrix OS user.</p></div></div>';
+      }
+    }
+
+    // -- Render chat view --
+    function renderChatView() {
+      var conv = state.conversations.find(function(c) { return c.id === state.activeConvId; });
+      if (!conv) {
+        chatEmpty.style.display = 'flex';
+        chatHeader.style.display = 'none';
+        chatMessages.style.display = 'none';
+        chatInputBar.style.display = 'none';
+        return;
+      }
+
+      var otherName = conv.participants.find(function(p) { return p !== 'You'; }) || conv.participants[0];
+      chatEmpty.style.display = 'none';
+      chatHeader.style.display = 'block';
+      chatHeader.textContent = otherName;
+      chatMessages.style.display = 'block';
+      chatInputBar.style.display = 'flex';
+
+      chatMessages.innerHTML = '';
+      conv.messages.forEach(function(msg) {
+        appendMessageBubble(msg);
+      });
+
+      scrollToBottom();
+    }
+
+    // -- Append single message (fix #9: incremental append) --
+    function appendMessageBubble(msg) {
+      var wrapper = document.createElement('div');
+      wrapper.dataset.msgId = msg.id;
+
+      var bubble = document.createElement('div');
+      bubble.className = 'message-bubble ' + (msg.sender === 'You' ? 'message-sent' : 'message-received');
+      renderMessageContent(bubble, msg.content);
+
+      var timeEl = document.createElement('div');
+      timeEl.className = 'message-time';
+      timeEl.textContent = formatMessageTime(msg.timestamp);
+
+      wrapper.appendChild(bubble);
+      wrapper.appendChild(timeEl);
+      chatMessages.appendChild(wrapper);
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(function() {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      });
+    }
+
+    // -- Select conversation --
+    function selectConversation(convId) {
+      state.activeConvId = convId;
+
+      // Update active state in list without full rebuild
+      Array.prototype.forEach.call(convListEl.querySelectorAll('.conversation-item'), function(el) {
+        if (el.dataset.convId === convId) {
+          el.classList.add('active');
+        } else {
+          el.classList.remove('active');
+        }
+      });
+
+      renderChatView();
+
+      if (state.isMobile) {
+        mainContent.classList.add('chat-open');
+        var conv = state.conversations.find(function(c) { return c.id === convId; });
+        if (conv) {
+          var otherName = conv.participants.find(function(p) { return p !== 'You'; }) || conv.participants[0];
+          headerTitle.textContent = otherName;
+        }
+      }
+
+      requestAnimationFrame(function() { msgInput.focus(); });
+    }
+
+    function deselectConversation() {
+      state.activeConvId = null;
+      mainContent.classList.remove('chat-open');
+      headerTitle.textContent = 'Messages';
+      renderChatView();
+
+      Array.prototype.forEach.call(convListEl.querySelectorAll('.conversation-item'), function(el) {
+        el.classList.remove('active');
+      });
+    }
+
+    // -- Send message --
+    function sendMessage() {
+      var text = msgInput.value.trim();
+      if (!text || !state.activeConvId) return;
+
+      var conv = state.conversations.find(function(c) { return c.id === state.activeConvId; });
+      if (!conv) return;
+
+      var msg = {
+        id: genId(),
+        sender: 'You',
+        content: text,
+        timestamp: new Date().toISOString()
+      };
+
+      conv.messages.push(msg);
+      msgInput.value = '';
+
+      // Incremental append instead of full rebuild
+      appendMessageBubble(msg);
+      scrollToBottom();
+
+      // Update only changed conversation item in sidebar
+      updateConversationItem(conv.id);
+
+      saveConversations();
+      simulateAIReply(conv);
+    }
+
+    // -- Update single conversation list item (fix #9) --
+    function updateConversationItem(convId) {
+      var conv = state.conversations.find(function(c) { return c.id === convId; });
+      if (!conv) return;
+
+      var item = convListEl.querySelector('[data-conv-id="' + convId + '"]');
+      if (item) {
+        var lastMsg = conv.messages.length ? conv.messages[conv.messages.length - 1] : null;
+        var preview = lastMsg ? (lastMsg.sender === 'You' ? 'You: ' : '') + lastMsg.content : 'No messages yet';
+        var time = lastMsg ? formatTime(lastMsg.timestamp) : '';
+
+        var previewEl = item.querySelector('.conv-preview');
+        var timeEl = item.querySelector('.conv-time');
+        if (previewEl) previewEl.textContent = preview;
+        if (timeEl) timeEl.textContent = time;
+
+        // Move to top of list
+        if (item !== convListEl.firstChild) {
+          convListEl.insertBefore(item, convListEl.firstChild);
+        }
+      } else {
+        renderConversationList();
+      }
+    }
+
+    // -- AI reply simulation (fix #4: tracked timers) --
+    var aiReplies = [
+      'That sounds interesting!',
+      'I agree, this is really cool.',
+      'Have you seen the latest updates?',
+      'Let me check and get back to you.',
+      'Great idea! We should try that.',
+      'Sure, I am on it.',
+      'Thanks for letting me know.',
+      'Can you share more details?',
+      'That makes sense to me.',
+      'Looking forward to it!'
+    ];
+
+    function simulateAIReply(conv) {
+      if (aiTimers[conv.id]) clearTimeout(aiTimers[conv.id]);
+
+      var delay = 1000 + Math.floor(Math.random() * 2000);
+      aiTimers[conv.id] = setTimeout(function() {
+        delete aiTimers[conv.id];
+
+        var replyText = aiReplies[Math.floor(Math.random() * aiReplies.length)];
+        var otherName = conv.participants.find(function(p) { return p !== 'You'; }) || 'User';
+
+        var reply = {
+          id: genId(),
+          sender: otherName,
+          content: replyText,
+          timestamp: new Date().toISOString()
+        };
+
+        conv.messages.push(reply);
+
+        // Incremental append if this conversation is active
+        if (state.activeConvId === conv.id) {
+          appendMessageBubble(reply);
+          scrollToBottom();
+        }
+
+        updateConversationItem(conv.id);
+        saveConversations();
+      }, delay);
+    }
+
+    // -- New conversation modal --
+    function openNewChatModal() {
+      newChatModal.classList.add('open');
+      newChatName.value = '';
+      requestAnimationFrame(function() { newChatName.focus(); });
+    }
+
+    function closeNewChatModal() {
+      newChatModal.classList.remove('open');
+    }
+
+    function createNewConversation() {
+      var name = newChatName.value.trim();
+      if (!name) return;
+
+      var conv = {
+        id: genId(),
+        participants: ['You', name],
+        messages: []
+      };
+
+      state.conversations.push(conv);
+      saveConversations();
+      renderConversationList();
+      closeNewChatModal();
+      selectConversation(conv.id);
+    }
+
+    // -- Event listeners --
+    sendBtn.addEventListener('click', sendMessage);
+    msgInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    newChatBtn.addEventListener('click', openNewChatModal);
+    cancelNewChat.addEventListener('click', closeNewChatModal);
+    confirmNewChat.addEventListener('click', createNewConversation);
+    newChatName.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); createNewConversation(); }
+    });
+
+    backBtn.addEventListener('click', deselectConversation);
+
+    // Light dismiss modal
+    newChatModal.addEventListener('click', function(e) {
+      if (e.target === newChatModal) closeNewChatModal();
+    });
+
+    // Fix #7: Escape works on both mobile and desktop
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        if (newChatModal.classList.contains('open')) {
+          closeNewChatModal();
+        } else if (state.activeConvId) {
+          deselectConversation();
+        }
+      }
+    });
+
+    // Responsive handling
+    window.addEventListener('resize', function() {
+      state.isMobile = window.innerWidth <= 640;
+      if (!state.isMobile) {
+        mainContent.classList.remove('chat-open');
+        headerTitle.textContent = 'Messages';
+      }
+    });
+
+    // -- Init --
+    loadConversations();
+    renderConversationList();
+    loadFromBridge();
+  })();
+  </script>
 </body>
 </html>
