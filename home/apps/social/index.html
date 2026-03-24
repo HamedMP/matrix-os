@@ -1174,6 +1174,8 @@ body {
   var allUsers = [];
   var openCommentsState = {};
   var likedPosts = {};
+  try { var _lk = localStorage.getItem('matrixos_social_liked'); if (_lk) likedPosts = JSON.parse(_lk); } catch(e) {}
+  function saveLikedState() { try { localStorage.setItem('matrixos_social_liked', JSON.stringify(likedPosts)); } catch(e) {} }
   var likeCounts = {};
   var openMenuId = null;
 
@@ -1235,7 +1237,7 @@ body {
     var g = getAvatarGradient(handle);
     var initials = getInitials(handle);
     var cls = 'avatar' + (sizeClass ? ' ' + sizeClass : '');
-    return '<div class="' + cls + '" style="background:linear-gradient(135deg,' + g[0] + ',' + g[1] + ')" aria-hidden="true">' + initials + '</div>';
+    return '<div class="' + cls + '" style="background:linear-gradient(135deg,' + g[0] + ',' + g[1] + ')" aria-hidden="true">' + escapeHtml(initials) + '</div>';
   }
 
   function relativeTime(isoStr) {
@@ -1261,6 +1263,10 @@ body {
     return div.innerHTML;
   }
 
+  function escapeAttr(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
   function formatCount(n) {
     if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
     if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
@@ -1276,7 +1282,8 @@ body {
   }
 
   function apiCall(path, opts) {
-    var options = Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {});
+    var options = Object.assign({}, opts || {});
+    if (options.body) { options.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}); }
     return fetch('/api/social' + path, options).then(function(res) {
       if (!res.ok) {
         return res.json().catch(function() { return {}; }).then(function(body) {
@@ -1755,14 +1762,17 @@ body {
     btn.classList.add('pop');
     setTimeout(function() { btn.classList.remove('pop'); }, 400);
 
+    saveLikedState();
     apiCall('/posts/' + postId + '/like', { method: 'POST' }).then(function(data) {
       likedPosts[postId] = data.liked;
       likeCounts[postId] = data.likesCount;
       updateLikeButton(btn, data.liked, data.likesCount);
+      saveLikedState();
     }).catch(function() {
       likedPosts[postId] = wasLiked;
       likeCounts[postId] = currentCount;
       updateLikeButton(btn, wasLiked, currentCount);
+      saveLikedState();
     });
   }
 
@@ -1910,6 +1920,9 @@ body {
         feedPosts = feedPosts.filter(function(p) { return p.id !== postId; });
         explorePosts = explorePosts.filter(function(p) { return p.id !== postId; });
         profilePosts = profilePosts.filter(function(p) { return p.id !== postId; });
+        delete likeCounts[postId];
+        delete likedPosts[postId];
+        delete openCommentsState[postId];
 
         var cardEl = document.querySelector('[data-post-id="' + postId + '"]');
         if (cardEl) {
@@ -1941,12 +1954,14 @@ body {
   document.addEventListener('click', closeMenus);
 
   // ---- Infinite Scroll ----
+  var feedObserver = null;
   function setupInfiniteScroll() {
+    if (feedObserver) feedObserver.disconnect();
     var sentinel = document.getElementById('feed-sentinel');
     if (!sentinel || !feedHasMore) return;
 
     var feedView = document.getElementById('view-feed');
-    var observer = new IntersectionObserver(function(entries) {
+    feedObserver = new IntersectionObserver(function(entries) {
       entries.forEach(function(entry) {
         if (entry.isIntersecting && feedHasMore && !feedLoading) {
           loadFeed();
@@ -1954,7 +1969,7 @@ body {
       });
     }, { root: feedView, threshold: 0.1 });
 
-    observer.observe(sentinel);
+    feedObserver.observe(sentinel);
   }
 
   // ---- Explore ----
@@ -1992,7 +2007,7 @@ body {
   function buildSearchBar(value) {
     return '<div class="explore-search">' +
       ICON_SEARCH +
-      '<input type="text" id="explore-search-input" placeholder="Search posts..." value="' + escapeHtml(value || '') + '" aria-label="Search posts">' +
+      '<input type="text" id="explore-search-input" placeholder="Search posts..." value="' + escapeAttr(value || '') + '" aria-label="Search posts">' +
       '</div>';
   }
 
@@ -2088,7 +2103,7 @@ body {
         btn.textContent = !isFollowing ? 'Following' : 'Follow';
 
         var promise = isFollowing
-          ? apiCall('/follows/' + handle, { method: 'DELETE' })
+          ? apiCall('/follows/' + encodeURIComponent(handle), { method: 'DELETE' })
           : apiCall('/follows', { method: 'POST', body: JSON.stringify({ handle: handle }) });
 
         promise.catch(function() {
