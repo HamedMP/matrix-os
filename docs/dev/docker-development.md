@@ -118,6 +118,7 @@ Volumes persist data across container restarts:
 | `dev-node-modules` | pnpm dependencies (cached, ~30s first install) |
 | `dev-home` | Matrix OS home directory (`~/matrixos/`) |
 | `dev-next-cache` | Next.js build cache |
+| `pgdata` | PostgreSQL data (app data layer) |
 | `conduit-data` | Matrix homeserver database |
 | `prometheus-data` | Metrics history |
 | `grafana-data` | Dashboard configs |
@@ -149,6 +150,7 @@ All env vars are loaded from `.env.docker` (via `env_file` in compose). The comp
 | `MATRIX_DISPLAY_NAME` | No | `Developer` | Display name (from Clerk signup in prod) |
 | `FAL_API_KEY` | No | - | Fal.ai key for image generation |
 | `PLATFORM_SECRET` | No | `dev-secret` | Platform JWT secret |
+| `DATABASE_URL` | No | auto-set | PostgreSQL connection string for app data layer |
 | `GRAFANA_ADMIN_PASSWORD` | No | `matrixos` | Grafana admin password |
 
 ## Architecture Notes
@@ -197,6 +199,43 @@ Seven test scripts in `scripts/docker-test/` validate Docker workflows:
 # Run single
 ./scripts/docker-test/fresh-install.sh
 ```
+
+## Per-Branch Testing
+
+When working on multiple features in parallel (e.g., git worktrees), each branch can run its own isolated Docker environment with unique ports. Main keeps 3000/4000/5432.
+
+### Quick start
+
+```bash
+./scripts/branch-dev.sh          # build + start + tail logs
+./scripts/branch-dev.sh stop     # stop (preserves volumes)
+./scripts/branch-dev.sh logs     # tail logs
+./scripts/branch-dev.sh shell    # shell into container
+./scripts/branch-dev.sh ps       # show containers
+./scripts/branch-dev.sh down     # remove containers (keep volumes)
+./scripts/branch-dev.sh restart  # restart dev container
+```
+
+### How it works
+
+- Ports are derived deterministically from the branch name (hash mod 90 + 10), giving each branch a unique offset: shell on 30xx, gateway on 40xx, postgres on 54xx
+- Uses `docker-compose.branch.yml` as an override file that remaps ports via env vars
+- Each branch gets its own Docker Compose project (`mos-<branch-name>`), so containers, networks, and volumes are fully isolated
+- The script refuses to run on `main` -- use `bun run docker` for that
+
+### Manual usage (without the script)
+
+```bash
+SHELL_PORT=3050 GW_PORT=4050 PG_PORT=5482 \
+  docker compose -f docker-compose.dev.yml -f docker-compose.branch.yml \
+  -p mos-my-feature up --build -d
+```
+
+### Notes
+
+- Bind mounts mean source code changes are live -- restart the dev container to pick up server-side changes (`./scripts/branch-dev.sh restart`)
+- Next.js shell changes are picked up by Turbopack HMR automatically
+- Each branch project has independent volumes (node_modules, home dir, postgres data)
 
 ## Troubleshooting
 

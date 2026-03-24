@@ -27,7 +27,7 @@ services:
     env_file:
       - .env.docker
     environment:
-      DATABASE_URL: postgresql://matrixos:matrixos@postgres:5432/matrixos
+      DATABASE_URL: ${DATABASE_URL:-postgresql://matrixos:matrixos@postgres:5432/matrixos}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
       interval: 30s

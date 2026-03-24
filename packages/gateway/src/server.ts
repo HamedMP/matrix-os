@@ -149,15 +149,17 @@ export async function createGateway(config: GatewayConfig) {
 
   if (databaseUrl) {
     try {
-      appDb = createAppDb(databaseUrl);
+      const { db, kysely } = createAppDb(databaseUrl);
+      appDb = db;
       await appDb.bootstrap();
       queryEngine = createQueryEngine(appDb);
-      kvStore = createKvStore(appDb);
-      appRegistry = createAppRegistry(appDb);
+      kvStore = createKvStore(kysely);
+      appRegistry = createAppRegistry(appDb, kysely);
       console.log("[app-db] Postgres connected, data layer ready");
 
-      // Auto-migrate JSON files to _kv on first boot
-      const migrated = await kvStore.read("_system", "migration_v1");
+      // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
+      const handle = process.env.MATRIX_HANDLE ?? "default";
+      const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
       if (!migrated) {
         try {
           const { migrateJsonToKv } = await import("./app-db-migration.js");
@@ -165,7 +167,11 @@ export async function createGateway(config: GatewayConfig) {
           if (jsonResult.keys > 0) {
             console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
           }
-          await kvStore.write("_system", "migration_v1", new Date().toISOString());
+          if (jsonResult.errors.length > 0) {
+            console.error("[app-db] Migration had errors, will retry next boot:", jsonResult.errors);
+          } else {
+            await kvStore.write("_system", `migration_v1_${handle}`, new Date().toISOString());
+          }
         } catch (migErr) {
           console.error("[app-db] Migration error:", (migErr as Error).message);
         }
@@ -194,6 +200,16 @@ export async function createGateway(config: GatewayConfig) {
               tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
             });
             registered++;
+
+            // Clean up old JSON data dir so the kernel agent uses app_data tool instead of file I/O
+            const oldDataDir = join(homePath, "data", slug);
+            try {
+              const { rmSync, existsSync: exists } = await import("node:fs");
+              if (exists(oldDataDir)) {
+                rmSync(oldDataDir, { recursive: true });
+                console.log(`[app-db] Cleaned up legacy data dir: ${oldDataDir}`);
+              }
+            } catch { /* non-critical */ }
           }
         }
         if (registered > 0) {
@@ -836,8 +852,30 @@ export async function createGateway(config: GatewayConfig) {
     const appSlug = body.app as string;
     const action = body.action as string;
 
-    if (!appSlug || !action) {
-      return c.json({ error: "app and action are required" }, 400);
+    if (!action) {
+      return c.json({ error: "action is required" }, 400);
+    }
+
+    // listApps doesn't need an app slug
+    if (action !== "listApps" && !appSlug) {
+      return c.json({ error: "app is required" }, 400);
+    }
+
+    // Validate data for insert/update
+    if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object")) {
+      return c.json({ error: "data must be a non-null object" }, 400);
+    }
+
+    // Validate table is present for actions that need it
+    const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
+    if (needsTable && !body.table) {
+      return c.json({ error: "table is required" }, 400);
+    }
+
+    // Validate id is present for actions that need it
+    const needsId = ["findOne", "update", "delete"].includes(action);
+    if (needsId && !body.id) {
+      return c.json({ error: "id is required" }, 400);
     }
 
     try {
@@ -876,31 +914,40 @@ export async function createGateway(config: GatewayConfig) {
           return c.json({ error: `Unknown action: ${action}` }, 400);
       }
     } catch (e) {
-      return c.json({ error: (e as Error).message }, 400);
+      const msg = (e as Error).message;
+      console.error("[app-db] Query error:", msg);
+      const isValidation = msg.startsWith("Invalid ") || msg.startsWith("insert:") || msg.startsWith("update:");
+      const safe = isValidation ? msg : "Query failed";
+      return c.json({ error: safe }, isValidation ? 400 : 500);
     }
   });
 
   // Key-value bridge: uses Postgres _kv when available, falls back to files
   app.post("/api/bridge/data", async (c) => {
-    const body = await c.req.json<{
-      action: "read" | "write";
-      app: string;
-      key: string;
-      value?: string;
-    }>();
+    let body: { action: "read" | "write"; app: string; key: string; value?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
 
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
 
     // Postgres-backed path
     if (kvStore) {
-      if (body.action === "read") {
-        const value = await kvStore.read(safeApp, safeKey);
-        return c.json({ value });
+      try {
+        if (body.action === "read") {
+          const value = await kvStore.read(safeApp, safeKey);
+          return c.json({ value });
+        }
+        await kvStore.write(safeApp, safeKey, body.value ?? "");
+        broadcast({ type: "data:change", app: safeApp, key: safeKey });
+        return c.json({ ok: true });
+      } catch (e) {
+        console.error(`[app-db] KV ${body.action} error for ${safeApp}/${safeKey}:`, (e as Error).message);
+        return c.json({ error: "Database operation failed" }, 500);
       }
-      await kvStore.write(safeApp, safeKey, body.value ?? "");
-      broadcast({ type: "data:change", app: safeApp, key: safeKey });
-      return c.json({ ok: true });
     }
 
     // File-based fallback (no Postgres)
@@ -1460,6 +1507,7 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       await channelManager.stop();
       await watcher.close();
+      await appDb?.destroy();
       server.close();
     },
   };

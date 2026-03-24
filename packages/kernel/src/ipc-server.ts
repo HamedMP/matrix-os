@@ -838,9 +838,9 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "app_data",
-        "Query or modify persistent data for any app. Supports structured queries (find/insert/update/delete) via Postgres, and legacy key-value (read/write/list). Use structured actions when the app has declared storage tables in its manifest. Use 'list_apps' to discover what apps and tables are available, 'schema' to see an app's table structure.",
+        "ALWAYS use this tool to read/write app data. NEVER read or write files in ~/data/ directly. Apps with storage tables (todo, expense-tracker, notes, pomodoro) use structured Postgres queries: find/findOne/insert/update/delete/count. Use 'listApps' to discover apps and tables, 'schema' to see table structure. Legacy KV (read/write/list) is for apps without storage tables only.",
         {
-          action: z.enum(["find", "findOne", "insert", "update", "delete", "count", "schema", "list_apps", "read", "write", "list"]).describe("Structured: find/findOne/insert/update/delete/count/schema/list_apps. Legacy: read/write/list"),
+          action: z.enum(["find", "findOne", "insert", "update", "delete", "count", "schema", "listApps", "read", "write", "list"]).describe("Structured: find/findOne/insert/update/delete/count/schema/listApps. Legacy: read/write/list"),
           app: z.string().describe("App slug (e.g., 'todo', 'notes', 'expense-tracker')"),
           table: z.string().optional().describe("Table name (required for structured actions)"),
           filter: z.record(z.unknown()).optional().describe("Filter object: { done: false, due: { $lte: '2026-03-21' } }"),
@@ -856,11 +856,14 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
           const gatewayUrl = `http://localhost:${gatewayPort}`;
 
           // Structured actions go to /api/bridge/query
-          if (["find", "findOne", "insert", "update", "delete", "count", "schema", "list_apps"].includes(action)) {
+          if (["find", "findOne", "insert", "update", "delete", "count", "schema", "listApps"].includes(action)) {
             try {
+              const headers: Record<string, string> = { "Content-Type": "application/json" };
+              const authToken = process.env.MATRIX_AUTH_TOKEN;
+              if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
               const res = await fetch(`${gatewayUrl}/api/bridge/query`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify({ action, app, table, filter, data, id, orderBy, limit }),
               });
               const result = await res.json();
@@ -869,10 +872,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               }
               return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
             } catch (e) {
-              // Fall through to file-based handler if gateway query endpoint unavailable
-              if (action === "schema" || action === "list_apps") {
-                return { content: [{ type: "text" as const, text: `Database not available: ${(e as Error).message}` }] };
-              }
+              return { content: [{ type: "text" as const, text: `Database query failed (gateway unreachable): ${(e as Error).message}` }] };
             }
           }
 

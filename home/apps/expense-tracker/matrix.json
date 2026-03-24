@@ -1,0 +1,21 @@
+{
+  "name": "Expense Tracker",
+  "description": "Track daily expenses and budgets",
+  "category": "productivity",
+  "icon": "expense-tracker",
+  "author": "system",
+  "version": "2.0.0",
+  "storage": {
+    "tables": {
+      "expenses": {
+        "columns": {
+          "amount": "float",
+          "description": "text",
+          "category": "text",
+          "date": "timestamptz"
+        },
+        "indexes": ["date", "category"]
+      }
+    }
+  }
+}

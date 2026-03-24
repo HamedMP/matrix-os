@@ -26,7 +26,8 @@ export async function migrateJsonToKv(
         return false;
       }
     });
-  } catch {
+  } catch (e) {
+    result.errors.push(`Failed to read data directory: ${(e as Error).message}`);
     return result;
   }
 
@@ -35,7 +36,8 @@ export async function migrateJsonToKv(
     let jsonFiles: string[];
     try {
       jsonFiles = readdirSync(appDir).filter((f) => f.endsWith(".json"));
-    } catch {
+    } catch (e) {
+      result.errors.push(`Failed to read ${appSlug}/: ${(e as Error).message}`);
       continue;
     }
 

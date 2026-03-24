@@ -25,6 +25,14 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__send_message",
   "mcp__matrix-os-ipc__read_messages",
   "mcp__matrix-os-ipc__read_state",
+  "mcp__matrix-os-ipc__app_data",
+  "mcp__matrix-os-ipc__load_skill",
+  "mcp__matrix-os-ipc__get_persona_suggestions",
+  "mcp__matrix-os-ipc__write_setup_plan",
+  "mcp__matrix-os-ipc__manage_cron",
+  "mcp__matrix-os-ipc__sync_files",
+  "mcp__matrix-os-ipc__publish_app",
+  "mcp__matrix-os-ipc__fork_app",
 ];
 
 const BROWSER_TOOL_NAMES = [
@@ -73,6 +81,8 @@ export function kernelOptions(config: KernelConfig) {
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const agents = { ...coreAgents, ...customAgents };
   const systemPrompt = buildSystemPrompt(homePath, db);
+  console.log("[kernel] System prompt length:", systemPrompt.length, "chars");
+  console.log("[kernel] Contains app_data?", systemPrompt.includes("mcp__matrix-os-ipc__app_data"));
   const protectedFilesHook = createProtectedFilesHook(homePath);
   const gitSnapshotHook = createGitSnapshotHook(homePath);
 

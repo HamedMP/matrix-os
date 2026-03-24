@@ -356,9 +356,7 @@ body.focusing {
   startBtn.addEventListener('click', toggleTimer);
   resetBtn.addEventListener('click', resetTimer);
 
-  window.addEventListener('message', function(e) {
-    if (e.data && e.data.type === 'os:data-change') { loadData(); }
-  });
+  var useDb = !!(window.MatrixOS && window.MatrixOS.db);
 
   // Audio: soft chime via Web Audio API
   function playChime() {
@@ -387,6 +385,18 @@ body.focusing {
 
   // Data persistence
   function loadData() {
+    if (useDb) {
+      window.MatrixOS.db.find('sessions', { orderBy: { created_at: 'desc' } })
+        .then(function(rows) {
+          sessions = rows.map(function(r) {
+            return { id: r.id, date: r.created_at, duration: r.duration, type: r.type || 'focus', completed: r.completed };
+          });
+          updateStats();
+          updateDots();
+        })
+        .catch(function() { updateStats(); });
+      return;
+    }
     fetch(GATEWAY + '/api/bridge/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -404,6 +414,7 @@ body.focusing {
   }
 
   function saveData() {
+    if (useDb) return;
     fetch(GATEWAY + '/api/bridge/data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -495,17 +506,30 @@ body.focusing {
       ringContainer.classList.add('complete');
 
       if (mode === 'focus') {
-        sessions.push({ date: new Date().toISOString(), duration: DURATIONS.focus });
-        cyclePosition = (cyclePosition + 1) % 4;
-        saveData();
-        updateStats();
-        updateDots();
-        statusEl.textContent = 'Session complete';
-
-        if (cyclePosition === 0) {
-          setTimeout(function() { setMode('long'); }, 800);
+        var session = { duration: DURATIONS.focus, type: 'focus', completed: true };
+        var afterInsert = function() {
+          statusEl.textContent = 'Session complete';
+          if (cyclePosition === 0) {
+            setTimeout(function() { setMode('long'); }, 800);
+          } else {
+            setTimeout(function() { setMode('short'); }, 800);
+          }
+        };
+        if (useDb) {
+          window.MatrixOS.db.insert('sessions', session).then(function(result) {
+            sessions.unshift({ id: result.id, date: new Date().toISOString(), duration: DURATIONS.focus, type: 'focus', completed: true });
+            cyclePosition = (cyclePosition + 1) % 4;
+            updateStats();
+            updateDots();
+            afterInsert();
+          });
         } else {
-          setTimeout(function() { setMode('short'); }, 800);
+          sessions.push({ date: new Date().toISOString(), duration: DURATIONS.focus });
+          cyclePosition = (cyclePosition + 1) % 4;
+          saveData();
+          updateStats();
+          updateDots();
+          afterInsert();
         }
       } else {
         statusEl.textContent = 'Break complete';
@@ -530,7 +554,10 @@ body.focusing {
 
   function updateDots() {
     var today = new Date().toISOString().slice(0, 10);
-    var todaySessions = sessions.filter(function(s) { return s.date.startsWith(today); });
+    var todaySessions = sessions.filter(function(s) {
+      var dateStr = s.date || s.created_at || '';
+      return dateStr.startsWith(today);
+    });
     cyclePosition = todaySessions.length % 4;
     var dots = dotsContainer.querySelectorAll('.dot');
     for (var i = 0; i < dots.length; i++) {
@@ -547,7 +574,8 @@ body.focusing {
 
     var daySet = {};
     sessions.forEach(function(s) {
-      daySet[s.date.slice(0, 10)] = true;
+      var dateStr = s.date || s.created_at || '';
+      daySet[dateStr.slice(0, 10)] = true;
     });
 
     var streak = 0;
@@ -571,7 +599,10 @@ body.focusing {
 
   function updateStats() {
     var today = new Date().toISOString().slice(0, 10);
-    var todaySessions = sessions.filter(function(s) { return s.date.startsWith(today); });
+    var todaySessions = sessions.filter(function(s) {
+      var dateStr = s.date || s.created_at || '';
+      return dateStr.startsWith(today);
+    });
     var totalMinutes = todaySessions.reduce(function(sum, s) { return sum + s.duration; }, 0) / 60;
     var streak = calculateStreak();
 
@@ -597,6 +628,15 @@ body.focusing {
   // Initialize
   renderModeTabs();
   updateDisplay();
+
+  if (useDb && window.MatrixOS.db.onChange) {
+    window.MatrixOS.db.onChange('sessions', function() { loadData(); });
+  } else {
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'os:data-change') { loadData(); }
+    });
+  }
+
   loadData();
 })();
 </script>

@@ -24,7 +24,7 @@ function appNameFromPath(path: string): string {
   if (path.startsWith("modules/")) {
     return path.split("/")[1];
   }
-  return path.replace("apps/", "").replace(".html", "");
+  return path.replace("apps/", "").replace(/\/index\.html$/, "").replace(".html", "");
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -59,10 +59,13 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       try {
         const themeVars = readCurrentTheme();
         const script = buildBridgeScript(appName, themeVars);
-        iframe.contentWindow?.postMessage(
-          { type: "os:inject", script },
-          "*",
-        );
+        // Inject bridge directly into iframe DOM (same-origin), then trigger reload
+        const doc = iframe.contentDocument;
+        if (doc) {
+          const el = doc.createElement("script");
+          el.textContent = script + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`;
+          doc.head.appendChild(el);
+        }
       } catch {
         // cross-origin restriction, bridge won't be available
       }
@@ -147,7 +150,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     <iframe
       ref={iframeRef}
       key={refreshKey}
-      src={`${GATEWAY_URL}/files/${path}`}
+      src={`/files/${path}`}
       className="h-full w-full border-0"
       sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
       title={path}

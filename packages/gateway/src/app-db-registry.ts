@@ -1,12 +1,10 @@
-import { sql } from "kysely";
+import { type Kysely, sql } from "kysely";
 import type { AppDb } from "./app-db.js";
+import { parseAppSlug, type AppSlug, type TableDef } from "./app-db-types.js";
 
-interface TableDef {
-  columns: Record<string, string>;
-  indexes?: string[];
-}
+export type { TableDef };
 
-interface RegisterOpts {
+export interface RegisterOpts {
   slug: string;
   name: string;
   description?: string;
@@ -36,36 +34,40 @@ export interface AppRegistry {
   getSchema(slug: string): Promise<Record<string, TableDef>>;
 }
 
-export function createAppRegistry(db: AppDb): AppRegistry {
-  const { kysely } = db;
-
+export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
   return {
     async register(opts: RegisterOpts): Promise<void> {
-      await db.createAppSchema(opts.slug);
+      const slug: AppSlug = parseAppSlug(opts.slug);
 
-      for (const [tableName, tableDef] of Object.entries(opts.tables)) {
-        await db.createTable(opts.slug, tableName, tableDef.columns, tableDef.indexes);
-      }
+      await kysely.transaction().execute(async (trx) => {
+        // Create schema and tables via AppDb (outside trx -- DDL is auto-committed in PG)
+        await db.createAppSchema(slug);
+        for (const [tableName, tableDef] of Object.entries(opts.tables)) {
+          await db.createTable(slug, tableName, tableDef.columns, tableDef.indexes);
+        }
 
-      await sql`
-        INSERT INTO public._apps (slug, name, description, version, author, category, tables, updated_at)
-        VALUES (
-          ${opts.slug}, ${opts.name}, ${opts.description ?? null},
-          ${opts.version ?? "1.0.0"}, ${opts.author ?? null},
-          ${opts.category ?? null}, ${JSON.stringify(opts.tables)}::jsonb,
-          now()
-        )
-        ON CONFLICT (slug) DO UPDATE SET
-          name = EXCLUDED.name,
-          description = EXCLUDED.description,
-          version = EXCLUDED.version,
-          tables = EXCLUDED.tables,
-          updated_at = now()
-      `.execute(kysely);
+        // Upsert registry row inside transaction
+        await sql`
+          INSERT INTO public._apps (slug, name, description, version, author, category, tables, updated_at)
+          VALUES (
+            ${opts.slug}, ${opts.name}, ${opts.description ?? null},
+            ${opts.version ?? "1.0.0"}, ${opts.author ?? null},
+            ${opts.category ?? null}, ${JSON.stringify(opts.tables)}::jsonb,
+            now()
+          )
+          ON CONFLICT (slug) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            version = EXCLUDED.version,
+            tables = EXCLUDED.tables,
+            updated_at = now()
+        `.execute(trx);
+      });
     },
 
     async unregister(slug: string): Promise<void> {
-      await db.dropAppSchema(slug);
+      const validSlug = parseAppSlug(slug);
+      await db.dropAppSchema(validSlug);
       await sql`DELETE FROM public._apps WHERE slug = ${slug}`.execute(kysely);
     },
 

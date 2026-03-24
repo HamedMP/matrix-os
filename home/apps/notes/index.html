@@ -649,6 +649,8 @@ var newlyCreatedId = null;
 var GATEWAY = location.origin;
 var APP_NAME = 'notes';
 
+var useDb = !!(window.MatrixOS && window.MatrixOS.db);
+
 /* SVG icon factory - all icons are static, no user content */
 function createSvg(paths, w, h, opts) {
   var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -759,10 +761,6 @@ document.getElementById('searchIcon').appendChild(ICONS.search());
 document.getElementById('newBtn').addEventListener('click', newNote);
 document.getElementById('search').addEventListener('input', renderList);
 
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'os:data-change') { loadData(); }
-});
-
 document.addEventListener('keydown', function(e) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
     e.preventDefault();
@@ -771,6 +769,18 @@ document.addEventListener('keydown', function(e) {
 });
 
 function loadData() {
+  if (useDb) {
+    window.MatrixOS.db.find('notes', { orderBy: { updated_at: 'desc' } })
+      .then(function(rows) {
+        notes = rows.map(function(r) {
+          return { id: r.id, title: r.title || '', content: r.content || '', pinned: !!r.pinned, created: r.created_at, updated: r.updated_at };
+        });
+        renderList();
+        renderEditor();
+      })
+      .catch(function() { renderList(); renderEditor(); });
+    return;
+  }
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -791,6 +801,7 @@ function loadData() {
 }
 
 function saveData() {
+  if (useDb) return;
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -800,7 +811,16 @@ function saveData() {
 
 function debounceSave() {
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveData, 500);
+  if (useDb) {
+    saveTimer = setTimeout(function() {
+      var note = getActive();
+      if (note) {
+        window.MatrixOS.db.update('notes', note.id, { title: note.title, content: note.content });
+      }
+    }, 500);
+  } else {
+    saveTimer = setTimeout(saveData, 500);
+  }
 }
 
 function getSortedNotes() {
@@ -810,6 +830,17 @@ function getSortedNotes() {
 }
 
 function newNote() {
+  if (useDb) {
+    window.MatrixOS.db.insert('notes', { title: '', content: '', pinned: false }).then(function(result) {
+      var note = { id: result.id, title: '', content: '', pinned: false, created: new Date().toISOString(), updated: new Date().toISOString() };
+      notes.unshift(note);
+      newlyCreatedId = note.id;
+      activeId = note.id;
+      renderList();
+      renderEditor();
+    });
+    return;
+  }
   var note = {
     id: Date.now(),
     title: '',
@@ -884,21 +915,29 @@ function confirmDelete() {
 
 function deleteNote() {
   if (!activeId) return;
+  var removingId = activeId;
   var itemEl = document.querySelector('[data-note-id="' + activeId + '"]');
   if (itemEl) {
     itemEl.classList.add('removing');
-    var removingId = activeId;
     setTimeout(function() {
       notes = notes.filter(function(n) { return n.id !== removingId; });
       if (activeId === removingId) activeId = null;
-      saveData();
+      if (useDb) {
+        window.MatrixOS.db.delete('notes', removingId);
+      } else {
+        saveData();
+      }
       renderList();
       renderEditor();
     }, 250);
   } else {
-    notes = notes.filter(function(n) { return n.id !== activeId; });
+    notes = notes.filter(function(n) { return n.id !== removingId; });
     activeId = null;
-    saveData();
+    if (useDb) {
+      window.MatrixOS.db.delete('notes', removingId);
+    } else {
+      saveData();
+    }
     renderList();
     renderEditor();
   }
@@ -910,7 +949,11 @@ function togglePin(id, e) {
   if (note) {
     note.pinned = !note.pinned;
     note.updated = new Date().toISOString();
-    debounceSave();
+    if (useDb) {
+      window.MatrixOS.db.update('notes', id, { pinned: note.pinned });
+    } else {
+      debounceSave();
+    }
     renderList();
   }
 }
@@ -1111,7 +1154,11 @@ function renderEditor() {
   pinBtn.addEventListener('click', function() {
     note.pinned = !note.pinned;
     note.updated = new Date().toISOString();
-    debounceSave();
+    if (useDb) {
+      window.MatrixOS.db.update('notes', note.id, { pinned: note.pinned });
+    } else {
+      debounceSave();
+    }
     renderList();
     renderEditor();
   });
@@ -1217,6 +1264,14 @@ function renderEmptyState(container) {
   wrapper.appendChild(btn);
 
   container.appendChild(wrapper);
+}
+
+if (useDb && window.MatrixOS.db.onChange) {
+  window.MatrixOS.db.onChange('notes', function() { loadData(); });
+} else {
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') { loadData(); }
+  });
 }
 
 loadData();

@@ -1,28 +1,11 @@
 import type { AppDb } from "./app-db.js";
+import { parseSafeName, type FilterOp, type FilterValue } from "./app-db-types.js";
 
-const SAFE_NAME = /^[a-z][a-z0-9_-]{0,62}$/;
-
-function validateName(name: string, label: string): void {
-  if (!SAFE_NAME.test(name)) throw new Error(`Invalid ${label}: ${name}`);
-}
+export type { FilterOp, FilterValue };
 
 function qualifiedTable(schema: string, table: string): string {
   return `"${schema}"."${table}"`;
 }
-
-type FilterOp = {
-  $eq?: unknown;
-  $ne?: unknown;
-  $lt?: unknown;
-  $lte?: unknown;
-  $gt?: unknown;
-  $gte?: unknown;
-  $in?: unknown[];
-  $like?: string;
-  $ilike?: string;
-};
-
-type FilterValue = string | number | boolean | null | FilterOp;
 
 export interface FindOptions {
   filter?: Record<string, FilterValue>;
@@ -51,7 +34,7 @@ function buildWhere(filter: Record<string, FilterValue>, startIdx: number): Wher
   let idx = startIdx;
 
   for (const [col, val] of Object.entries(filter)) {
-    validateName(col, "column");
+    parseSafeName(col, "column");
     const quotedCol = `"${col}"`;
 
     if (val === null) {
@@ -69,9 +52,13 @@ function buildWhere(filter: Record<string, FilterValue>, startIdx: number): Wher
       if ("$gt" in ops) { clauses.push(`${quotedCol} > $${idx}`); params.push(ops.$gt); idx++; }
       if ("$gte" in ops) { clauses.push(`${quotedCol} >= $${idx}`); params.push(ops.$gte); idx++; }
       if ("$in" in ops && Array.isArray(ops.$in)) {
-        const placeholders = ops.$in.map(() => `$${idx++}`).join(", ");
-        clauses.push(`${quotedCol} IN (${placeholders})`);
-        params.push(...ops.$in);
+        if (ops.$in.length === 0) {
+          clauses.push("FALSE");
+        } else {
+          const placeholders = ops.$in.map(() => `$${idx++}`).join(", ");
+          clauses.push(`${quotedCol} IN (${placeholders})`);
+          params.push(...ops.$in);
+        }
       }
       if ("$like" in ops) { clauses.push(`${quotedCol} LIKE $${idx}`); params.push(ops.$like); idx++; }
       if ("$ilike" in ops) { clauses.push(`${quotedCol} ILIKE $${idx}`); params.push(ops.$ilike); idx++; }
@@ -84,8 +71,8 @@ function buildWhere(filter: Record<string, FilterValue>, startIdx: number): Wher
 export function createQueryEngine(db: AppDb): QueryEngine {
   return {
     async find(schema, table, opts) {
-      validateName(schema, "schema");
-      validateName(table, "table");
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
       const qt = qualifiedTable(schema, table);
 
       let q = `SELECT * FROM ${qt}`;
@@ -99,22 +86,28 @@ export function createQueryEngine(db: AppDb): QueryEngine {
 
       if (opts?.orderBy) {
         const parts = Object.entries(opts.orderBy).map(([col, dir]) => {
-          validateName(col, "column");
+          parseSafeName(col, "column");
           return `"${col}" ${dir === "desc" ? "DESC" : "ASC"}`;
         });
         q += ` ORDER BY ${parts.join(", ")}`;
       }
 
-      if (opts?.limit != null) q += ` LIMIT ${Math.max(1, Math.min(Number(opts.limit), 10000))}`;
-      if (opts?.offset != null) q += ` OFFSET ${Math.max(0, Number(opts.offset))}`;
+      if (opts?.limit != null) {
+        const n = parseInt(String(opts.limit), 10);
+        if (!isNaN(n)) q += ` LIMIT ${Math.max(1, Math.min(n, 10000))}`;
+      }
+      if (opts?.offset != null) {
+        const n = parseInt(String(opts.offset), 10);
+        if (!isNaN(n)) q += ` OFFSET ${Math.max(0, n)}`;
+      }
 
       const result = await db.raw(q, params);
       return result.rows;
     },
 
     async findOne(schema, table, id) {
-      validateName(schema, "schema");
-      validateName(table, "table");
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
       const result = await db.raw(
         `SELECT * FROM ${qualifiedTable(schema, table)} WHERE id = $1`,
         [id],
@@ -123,12 +116,13 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     },
 
     async insert(schema, table, data) {
-      validateName(schema, "schema");
-      validateName(table, "table");
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
       const cols = Object.keys(data).filter((c) => {
-        validateName(c, "column");
+        parseSafeName(c, "column");
         return true;
       });
+      if (cols.length === 0) throw new Error("insert: data must have at least one column");
       const vals = cols.map((c) => data[c]);
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
       const colNames = cols.map((c) => `"${c}"`).join(", ");
@@ -141,12 +135,13 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     },
 
     async update(schema, table, id, data) {
-      validateName(schema, "schema");
-      validateName(table, "table");
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
       const cols = Object.keys(data).filter((c) => {
-        validateName(c, "column");
+        parseSafeName(c, "column");
         return true;
       });
+      if (cols.length === 0) throw new Error("update: data must have at least one column");
       const sets = cols.map((c, i) => `"${c}" = $${i + 1}`).join(", ");
       const vals = [...cols.map((c) => data[c]), id];
 
@@ -157,14 +152,14 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     },
 
     async delete(schema, table, id) {
-      validateName(schema, "schema");
-      validateName(table, "table");
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
       await db.raw(`DELETE FROM ${qualifiedTable(schema, table)} WHERE id = $1`, [id]);
     },
 
     async count(schema, table, filter) {
-      validateName(schema, "schema");
-      validateName(table, "table");
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
       let q = `SELECT count(*)::int as count FROM ${qualifiedTable(schema, table)}`;
       let params: unknown[] = [];
 

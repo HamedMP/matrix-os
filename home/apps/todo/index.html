@@ -1004,12 +1004,12 @@ function positionIndicator() {
   indicator.style.width = btnRect.width + 'px';
 }
 
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'os:data-change') { loadData(); }
-});
-
 if (useDb && window.MatrixOS.db.onChange) {
   window.MatrixOS.db.onChange('tasks', function() { loadData(); });
+} else {
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') { loadData(); }
+  });
 }
 
 window.addEventListener('resize', function() {

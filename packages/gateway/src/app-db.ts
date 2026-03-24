@@ -1,16 +1,10 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
+import { parseAppSlug, isSafeName, type AppSlug } from "./app-db-types.js";
 
-const SAFE_SLUG = /^[a-z][a-z0-9_-]{0,62}$/;
-
-function validateSlug(slug: string): void {
-  if (!SAFE_SLUG.test(slug)) {
-    throw new Error(`Invalid app slug: ${slug}`);
-  }
-}
+export type { AppSlug };
 
 export interface AppDb {
-  kysely: Kysely<any>;
   bootstrap(): Promise<void>;
   createAppSchema(slug: string): Promise<void>;
   dropAppSchema(slug: string): Promise<void>;
@@ -45,20 +39,26 @@ function pgType(t: string): string {
   return TYPE_MAP[t.toLowerCase()] ?? "text";
 }
 
-export function createAppDb(opts: string | { dialect: any }): AppDb {
+export interface AppDbWithKysely {
+  db: AppDb;
+  kysely: Kysely<any>;
+}
+
+export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
   let kysely: Kysely<any>;
   let pool: pg.Pool | null = null;
 
   if (typeof opts === "string") {
     pool = new pg.Pool({ connectionString: opts, max: 10 });
+    pool.on("error", (err) => {
+      console.error("[app-db] Idle pool client error:", err.message);
+    });
     kysely = new Kysely<any>({ dialect: new PostgresDialect({ pool }) });
   } else {
     kysely = new Kysely<any>({ dialect: opts.dialect });
   }
 
-  return {
-    kysely,
-
+  const db: AppDb = {
     async bootstrap(): Promise<void> {
       await sql`
         CREATE TABLE IF NOT EXISTS public._apps (
@@ -86,12 +86,12 @@ export function createAppDb(opts: string | { dialect: any }): AppDb {
     },
 
     async createAppSchema(slug: string): Promise<void> {
-      validateSlug(slug);
+      parseAppSlug(slug);
       await sql.raw(`CREATE SCHEMA IF NOT EXISTS "${slug}"`).execute(kysely);
     },
 
     async dropAppSchema(slug: string): Promise<void> {
-      validateSlug(slug);
+      parseAppSlug(slug);
       await sql.raw(`DROP SCHEMA IF EXISTS "${slug}" CASCADE`).execute(kysely);
     },
 
@@ -101,11 +101,14 @@ export function createAppDb(opts: string | { dialect: any }): AppDb {
       columns: Record<string, string>,
       indexes?: string[],
     ): Promise<void> {
-      validateSlug(schema);
-      if (!SAFE_SLUG.test(table)) throw new Error(`Invalid table name: ${table}`);
+      parseAppSlug(schema);
+      if (!isSafeName(table)) throw new Error(`Invalid table name: ${table}`);
 
       const colDefs = Object.entries(columns)
-        .map(([name, type]) => `"${name}" ${pgType(type)}`)
+        .map(([name, type]) => {
+          if (!isSafeName(name)) throw new Error(`Invalid column name: ${name}`);
+          return `"${name}" ${pgType(type)}`;
+        })
         .join(", ");
 
       const fullTable = `"${schema}"."${table}"`;
@@ -122,7 +125,7 @@ export function createAppDb(opts: string | { dialect: any }): AppDb {
 
       if (indexes) {
         for (const col of indexes) {
-          if (!SAFE_SLUG.test(col)) continue;
+          if (!isSafeName(col)) continue;
           const idxName = `idx_${schema}_${table}_${col}`.replace(/-/g, "_");
           await sql
             .raw(
@@ -143,15 +146,9 @@ export function createAppDb(opts: string | { dialect: any }): AppDb {
       }
       // For pglite/non-pg-pool: build a parameterized sql tagged template
       if (params && params.length > 0) {
-        // Convert $1, $2, ... placeholders into Kysely sql template parts
         const parts = query.split(/\$\d+/);
-        const sqlChunks: unknown[] = [parts[0]];
-        for (let i = 0; i < params.length; i++) {
-          sqlChunks.push(params[i]);
-          sqlChunks.push(parts[i + 1] ?? "");
-        }
-        // Use Kysely's sql template to properly parameterize
-        const strings = parts as unknown as TemplateStringsArray;
+        // Kysely's sql() expects TemplateStringsArray which has a .raw property
+        const strings = Object.assign([...parts], { raw: [...parts] }) as unknown as TemplateStringsArray;
         const compiled = sql(strings, ...params);
         const result = await compiled.execute(kysely);
         return { rows: (result.rows ?? []) as Record<string, unknown>[] };
@@ -164,4 +161,8 @@ export function createAppDb(opts: string | { dialect: any }): AppDb {
       await kysely.destroy();
     },
   };
+
+  return { db, kysely };
 }
+
+export { parseAppSlug } from "./app-db-types.js";

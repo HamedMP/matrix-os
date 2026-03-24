@@ -16,9 +16,10 @@ describe("migrateJsonToKv", () => {
   beforeEach(async () => {
     homePath = resolve(mkdtempSync(join(tmpdir(), "migrate-test-")));
     instance = await KyselyPGlite.create();
-    db = createAppDb({ dialect: instance.dialect });
+    const created = createAppDb({ dialect: instance.dialect });
+    db = created.db;
     await db.bootstrap();
-    kv = createKvStore(db);
+    kv = createKvStore(created.kysely);
   });
 
   afterEach(async () => {

@@ -8,7 +8,7 @@ describe("AppDb connection", () => {
 
   beforeEach(async () => {
     instance = await KyselyPGlite.create();
-    db = createAppDb({ dialect: instance.dialect });
+    ({ db } = createAppDb({ dialect: instance.dialect }));
     await db.bootstrap();
   });
 

@@ -10,9 +10,10 @@ describe("AppRegistry", () => {
 
   beforeEach(async () => {
     instance = await KyselyPGlite.create();
-    db = createAppDb({ dialect: instance.dialect });
+    const created = createAppDb({ dialect: instance.dialect });
+    db = created.db;
     await db.bootstrap();
-    registry = createAppRegistry(db);
+    registry = createAppRegistry(db, created.kysely);
   });
 
   afterEach(async () => {

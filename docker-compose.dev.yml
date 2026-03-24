@@ -16,8 +16,11 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./distro/init-postgres.sh:/docker-entrypoint-initdb.d/init-postgres.sh:ro
     environment:
       POSTGRES_USER: matrixos
       POSTGRES_PASSWORD: matrixos
@@ -245,7 +248,7 @@ services:
       - MATRIX_HANDLE=alice
       - PORT=4000
       - ANTHROPIC_BASE_URL=http://proxy:8080
-      - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
+      - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_alice
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1
       interval: 10s
@@ -286,7 +289,7 @@ services:
       - MATRIX_HANDLE=bob
       - PORT=4000
       - ANTHROPIC_BASE_URL=http://proxy:8080
-      - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
+      - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_bob
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1
       interval: 10s

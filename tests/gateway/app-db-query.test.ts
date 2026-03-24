@@ -11,9 +11,10 @@ describe("QueryEngine", () => {
 
   beforeEach(async () => {
     instance = await KyselyPGlite.create();
-    db = createAppDb({ dialect: instance.dialect });
+    const created = createAppDb({ dialect: instance.dialect });
+    db = created.db;
     await db.bootstrap();
-    const registry = createAppRegistry(db);
+    const registry = createAppRegistry(db, created.kysely);
     await registry.register({
       slug: "todo",
       name: "Todo",
