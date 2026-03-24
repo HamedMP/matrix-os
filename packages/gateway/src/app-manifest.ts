@@ -21,6 +21,17 @@ export const AppManifestSchema = z.object({
   author: z.string().optional(),
   version: z.string().optional(),
   autoStart: z.boolean().default(false),
+  storage: z
+    .object({
+      tables: z.record(
+        z.string(),
+        z.object({
+          columns: z.record(z.string(), z.string()),
+          indexes: z.array(z.string()).optional(),
+        }),
+      ).default({}),
+    })
+    .optional(),
 });
 
 export type AppManifest = z.infer<typeof AppManifestSchema>;

@@ -1,0 +1,8 @@
+{
+  "name": "Task Manager",
+  "description": "Manage kernel tasks with kanban and list views",
+  "category": "productivity",
+  "icon": "task-manager",
+  "author": "system",
+  "version": "1.0.0"
+}

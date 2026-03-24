@@ -637,6 +637,8 @@ var expenses = [];
 var GATEWAY = location.origin;
 var APP_NAME = 'expense-tracker';
 
+var useDb = !!(window.MatrixOS && window.MatrixOS.db);
+
 var CATEGORIES = {
   food: { label: 'Food', color: '#34C759' },
   transport: { label: 'Transport', color: '#007AFF' },
@@ -681,11 +683,31 @@ function navigateMonth(delta) {
 
 function getMonthExpenses(y, m) {
   var key = monthKey(y, m);
-  return expenses.filter(function(e) { return e.date && e.date.startsWith(key); });
+  return expenses.filter(function(e) {
+    var d = e.date || '';
+    if (typeof d === 'string') return d.startsWith(key);
+    if (d instanceof Date) return d.toISOString().startsWith(key);
+    return false;
+  });
 }
 
 /* ---- Data persistence ---- */
 function loadData() {
+  if (useDb) {
+    window.MatrixOS.db.find('expenses', { orderBy: { date: 'desc' } })
+      .then(function(rows) {
+        expenses = rows.map(function(r) {
+          var dateStr = r.date;
+          if (dateStr && typeof dateStr === 'string' && dateStr.length > 10) {
+            dateStr = dateStr.slice(0, 10);
+          }
+          return { id: r.id, amount: r.amount, description: r.description, category: r.category, date: dateStr };
+        });
+        render();
+      })
+      .catch(function() { render(); });
+    return;
+  }
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -702,6 +724,7 @@ function loadData() {
 }
 
 function saveData() {
+  if (useDb) return;
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -727,14 +750,22 @@ function addExpense() {
   }
   if (!desc) desc = CATEGORIES[cat] ? CATEGORIES[cat].label : cat;
 
-  expenses.unshift({ amount: amount, description: desc, category: cat, date: date, id: Date.now() });
-  saveData();
+  if (useDb) {
+    window.MatrixOS.db.insert('expenses', { amount: amount, description: desc, category: cat, date: date })
+      .then(function(result) {
+        expenses.unshift({ id: result.id, amount: amount, description: desc, category: cat, date: date });
+        render();
+      });
+  } else {
+    expenses.unshift({ amount: amount, description: desc, category: cat, date: date, id: Date.now() });
+    saveData();
+    render();
+  }
 
   amountInput.value = '';
   descInput.value = '';
   dateInput.value = today();
 
-  render();
   amountInput.focus();
 }
 
@@ -744,12 +775,20 @@ function removeExpense(id) {
     row.classList.add('deleting');
     setTimeout(function() {
       expenses = expenses.filter(function(e) { return e.id !== id; });
-      saveData();
+      if (useDb) {
+        window.MatrixOS.db.delete('expenses', id);
+      } else {
+        saveData();
+      }
       render();
     }, 300);
   } else {
     expenses = expenses.filter(function(e) { return e.id !== id; });
-    saveData();
+    if (useDb) {
+      window.MatrixOS.db.delete('expenses', id);
+    } else {
+      saveData();
+    }
     render();
   }
 }
@@ -872,7 +911,7 @@ function render() {
   var sorted = monthExps.slice().sort(function(a, b) {
     if (a.date > b.date) return -1;
     if (a.date < b.date) return 1;
-    return b.id - a.id;
+    return 0;
   });
 
   document.getElementById('listTitle').textContent = sorted.length > 0
@@ -903,7 +942,8 @@ function render() {
       li.style.animationDelay = (i * 30) + 'ms';
 
       /* Date: show month/day */
-      var parts = e.date ? e.date.split('-') : [];
+      var dateStr = (e.date || '').toString();
+      var parts = dateStr.split('-');
       var dateLabel = parts.length >= 3
         ? parseInt(parts[1], 10) + '/' + parseInt(parts[2], 10)
         : '';
@@ -966,10 +1006,14 @@ for (var i = 0; i < formFields.length; i++) {
   });
 }
 
-/* Auto-update */
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'os:data-change') { loadData(); }
-});
+/* Auto-update on data changes */
+if (useDb && window.MatrixOS.db.onChange) {
+  window.MatrixOS.db.onChange('expenses', function() { loadData(); });
+} else {
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') { loadData(); }
+  });
+}
 
 /* Init */
 initMonth();

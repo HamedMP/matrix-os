@@ -568,26 +568,42 @@ Minimum 44x44px for all interactive elements on mobile. Use padding to increase 
 
 ## Bridge API Patterns
 
-### Reading Data
+### Structured Data (Postgres-backed)
+
+Apps with `storage.tables` in `matrix.json` use `MatrixOS.db`:
+
+```javascript
+// Find rows
+const rows = await MatrixOS.db.find('tasks', { filter: { done: false }, orderBy: { created_at: 'desc' } });
+
+// Insert
+const { id } = await MatrixOS.db.insert('tasks', { text: 'Buy milk', done: false });
+
+// Update
+await MatrixOS.db.update('tasks', id, { done: true });
+
+// Delete
+await MatrixOS.db.delete('tasks', id);
+
+// Count
+const { count } = await MatrixOS.db.count('tasks', { done: false });
+
+// Listen for changes
+MatrixOS.db.onChange('tasks', () => loadData());
+```
+
+### Legacy KV Data (deprecated for new apps)
 
 ```javascript
 async function readData(app, key) {
-  const res = await fetch(`/api/bridge/data?app=${app}&key=${key}`);
-  if (!res.ok) return null;
+  const res = await fetch(`/api/bridge/data`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', app, key }),
+  });
   return res.json();
 }
 ```
-
-### Writing Data
-
-```javascript
-async function writeData(app, key, value) {
-  await fetch('/api/bridge/data', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app, key, value }),
-  });
-}
 ```
 
 ### Theme Integration

@@ -1,0 +1,20 @@
+{
+  "name": "Notes",
+  "description": "Quick notes with rich text",
+  "category": "productivity",
+  "icon": "notes",
+  "author": "system",
+  "version": "2.0.0",
+  "storage": {
+    "tables": {
+      "notes": {
+        "columns": {
+          "title": "text",
+          "content": "text",
+          "pinned": "boolean"
+        },
+        "indexes": ["pinned"]
+      }
+    }
+  }
+}

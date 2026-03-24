@@ -98,7 +98,36 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
   // File system paths (absolute)
   sections.push("\n## File System\n");
   sections.push(
-    `MATRIX_HOME: ${homePath}\nAll paths like ~/modules/, ~/system/, ~/apps/ resolve to MATRIX_HOME. Always use the absolute path when writing files.`,
+    `MATRIX_HOME: ${homePath}\nAll paths like ~/modules/, ~/system/, ~/apps/ resolve to MATRIX_HOME. Always use the absolute path when writing files.
+
+## App Data (CRITICAL -- READ THIS FIRST)
+
+App data is in Postgres. Do NOT read files in ~/data/. Do NOT search for databases. Do NOT read app HTML files. Use Bash with curl to call the gateway API at http://localhost:4000/api/bridge/query.
+
+Add a todo:
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"todo","table":"tasks","data":{"text":"Buy milk","done":false}}'
+
+List todos:
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"find","app":"todo","table":"tasks","orderBy":{"created_at":"desc"}}'
+
+Complete a todo (replace ID):
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"update","app":"todo","table":"tasks","id":"UUID","data":{"done":true}}'
+
+Delete a todo (replace ID):
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"delete","app":"todo","table":"tasks","id":"UUID"}'
+
+Add expense:
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"expense-tracker","table":"expenses","data":{"amount":25.50,"description":"Lunch","category":"food","date":"2026-03-23"}}'
+
+Add note:
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"notes","table":"notes","data":{"title":"Meeting","content":"Discuss roadmap","pinned":false}}'
+
+List all apps and tables:
+  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"listApps","app":"_"}'
+
+Filter syntax: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"}}
+
+IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/data which is the old KV path).`,
   );
 
   // State summary

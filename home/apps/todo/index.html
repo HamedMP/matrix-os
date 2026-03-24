@@ -539,7 +539,20 @@ var CATEGORY_COLORS = {
   general: '#86868b'
 };
 
+var useDb = !!(window.MatrixOS && window.MatrixOS.db);
+
 function loadData() {
+  if (useDb) {
+    window.MatrixOS.db.find('tasks', { orderBy: { created_at: 'desc' } })
+      .then(function(rows) {
+        tasks = rows.map(function(r) {
+          return { id: r.id, text: r.text, done: r.done, category: r.category || 'general', priority: r.priority || 'none', due: r.due, created: r.created_at };
+        });
+        render();
+      })
+      .catch(function() { render(); });
+    return;
+  }
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -556,6 +569,7 @@ function loadData() {
 }
 
 function saveData() {
+  if (useDb) return; // db mode saves per-operation, no bulk save needed
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -567,21 +581,29 @@ function addTask() {
   var input = document.getElementById('taskInput');
   var text = input.value.trim();
   if (!text) return;
-  tasks.unshift({
-    id: Date.now(),
+  var task = {
     text: text,
     done: false,
     category: pendingCategory,
     priority: pendingPriority,
-    due: pendingDue || null,
-    created: new Date().toISOString()
-  });
-  saveData();
+    due: pendingDue || null
+  };
+  if (useDb) {
+    window.MatrixOS.db.insert('tasks', task).then(function(result) {
+      tasks.unshift({ id: result.id, text: text, done: false, category: pendingCategory, priority: pendingPriority, due: pendingDue || null, created: new Date().toISOString() });
+      render();
+    });
+  } else {
+    task.id = Date.now();
+    task.created = new Date().toISOString();
+    tasks.unshift(task);
+    saveData();
+    render();
+  }
   input.value = '';
   pendingPriority = 'none';
   pendingCategory = 'general';
   pendingDue = '';
-  render();
   requestAnimationFrame(function() { input.focus(); });
 }
 
@@ -589,35 +611,42 @@ function toggleTask(id) {
   var task = tasks.find(function(t) { return t.id === id; });
   if (!task) return;
   task.done = !task.done;
+  var doSave = function() {
+    if (useDb) {
+      window.MatrixOS.db.update('tasks', id, { done: task.done });
+    } else {
+      saveData();
+    }
+    render();
+  };
   if (task.done) {
     var el = document.querySelector('[data-task-id="' + id + '"]');
     if (el) {
       el.classList.add('completing');
       el.classList.add('done');
     }
-    setTimeout(function() {
-      saveData();
-      render();
-    }, 500);
+    setTimeout(doSave, 500);
   } else {
-    saveData();
-    render();
+    doSave();
   }
 }
 
 function removeTask(id) {
+  var doRemove = function() {
+    tasks = tasks.filter(function(t) { return t.id !== id; });
+    if (useDb) {
+      window.MatrixOS.db.delete('tasks', id);
+    } else {
+      saveData();
+    }
+    render();
+  };
   var el = document.querySelector('[data-task-id="' + id + '"]');
   if (el) {
     el.classList.add('removing');
-    setTimeout(function() {
-      tasks = tasks.filter(function(t) { return t.id !== id; });
-      saveData();
-      render();
-    }, 300);
+    setTimeout(doRemove, 300);
   } else {
-    tasks = tasks.filter(function(t) { return t.id !== id; });
-    saveData();
-    render();
+    doRemove();
   }
 }
 
@@ -975,9 +1004,13 @@ function positionIndicator() {
   indicator.style.width = btnRect.width + 'px';
 }
 
-window.addEventListener('message', function(e) {
-  if (e.data && e.data.type === 'os:data-change') { loadData(); }
-});
+if (useDb && window.MatrixOS.db.onChange) {
+  window.MatrixOS.db.onChange('tasks', function() { loadData(); });
+} else {
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'os:data-change') { loadData(); }
+  });
+}
 
 window.addEventListener('resize', function() {
   positionIndicator();

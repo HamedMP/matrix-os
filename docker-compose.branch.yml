@@ -1,0 +1,24 @@
+# Per-branch port override for parallel testing.
+#
+# Usage (automatic via scripts/branch-dev.sh):
+#   SHELL_PORT=3010 GW_PORT=4010 PG_PORT=5442 \
+#     docker compose -f docker-compose.dev.yml -f docker-compose.branch.yml -p mos-my-branch up
+#
+# Port defaults match docker-compose.dev.yml so this is safe to stack without env vars.
+
+services:
+  postgres:
+    ports:
+      - "${PG_PORT:-5432}:5432"
+
+  dev:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${SHELL_PORT:-3000}:3000"
+      - "${GW_PORT:-4000}:4000"
+    environment:
+      - NEXT_PUBLIC_GATEWAY_WS=ws://localhost:${GW_PORT:-4000}/ws
+      - NEXT_PUBLIC_GATEWAY_URL=http://localhost:${GW_PORT:-4000}
+      - GATEWAY_URL=http://localhost:${GW_PORT:-4000}

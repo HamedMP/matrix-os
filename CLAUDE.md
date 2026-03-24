@@ -61,6 +61,8 @@ Key principles:
 - `specs/046-voice/`: Voice interface (spec drafted)
 - `specs/047-terminal/`: IDE-grade terminal app with Claude Code integration (COMPLETE)
 - `specs/048-file-browser/`: File browser app (spec drafted)
+- `specs/049-hybrid-integrations/`: Hybrid integrations: Pipedream, n8n, native connectors (spec drafted)
+- `specs/050-app-data-layer/`: Postgres-backed app data: Kysely, schema-per-app, unified query API (IN PROGRESS)
 
 ### Archive (Phases 1-6 complete)
 - `specs/003-architecture/`: original architecture spec, plan, tasks (reference only)
@@ -85,7 +87,7 @@ Key principles:
 - **Backend**: Hono (HTTP/WebSocket gateway + channel adapters)
 - **Channels**: node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt
 - **Federation**: Matrix protocol (matrix-js-sdk): federated identity, AI-to-AI, E2E encryption
-- **Database**: SQLite via Drizzle ORM (better-sqlite3, WAL mode)
+- **Database**: SQLite via Drizzle ORM (kernel, platform); PostgreSQL 16 via Kysely (app data layer, schema-per-app)
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Scheduling**: node-cron (cron expressions), native timers
 - **Testing**: Vitest (TDD, 99-100% coverage, `@vitest/coverage-v8`)
@@ -182,6 +184,21 @@ bun run docker:build    # Full rebuild (no cache)
 | Prometheus | http://localhost:9090 | 9090 |
 | Grafana | http://localhost:3200 | 3200 |
 | Loki | http://localhost:3100 | 3100 |
+| Postgres | localhost:5432 | 5432 |
+
+### Per-Branch Docker Testing
+
+When working on multiple features in parallel worktrees, use `scripts/branch-dev.sh` to run isolated Docker environments with unique ports (derived from branch name). Main keeps 3000/4000/5432.
+
+```bash
+./scripts/branch-dev.sh          # build + start + tail logs
+./scripts/branch-dev.sh stop     # stop (preserves volumes)
+./scripts/branch-dev.sh logs     # tail logs
+./scripts/branch-dev.sh shell    # shell into container
+./scripts/branch-dev.sh restart  # restart dev container
+```
+
+See `docs/dev/docker-development.md` for details.
 
 ### Environment Variables
 - `ANTHROPIC_API_KEY`: required for kernel AI features
@@ -189,6 +206,7 @@ bun run docker:build    # Full rebuild (no cache)
 - `MATRIX_HANDLE`: user handle, set by platform at provisioning (default in Docker: `dev`)
 - `MATRIX_DISPLAY_NAME`: display name from Clerk signup (default in Docker: `Developer`)
 - `MATRIX_AUTH_TOKEN`: bearer token for web shell auth (optional, for cloud deployment)
+- `DATABASE_URL`: PostgreSQL connection string for app data layer (optional, falls back to file-based storage)
 - `PORT`: gateway port (default: 4000)
 - `NEXT_PUBLIC_GATEWAY_WS`: shell WebSocket URL (default: `ws://localhost:4000/ws`)
 - `NEXT_PUBLIC_GATEWAY_URL`: shell HTTP URL (default: `http://localhost:4000`)
@@ -275,6 +293,9 @@ Read `specs/ux-guide.md`: the UX bible for the shell and apps. Key rules:
 ## Shell Patterns
 
 - **Never mutate state objects in reducers**:`reduceChat` and similar must create new objects via spread (`{ ...obj, content: obj.content + delta }`) instead of mutating in-place (`obj.content += delta`). Shallow array copies (`[...arr]`) share object references; mutating them causes React double-rendering bugs (streaming text duplication).
+- **App slug derivation must handle directory format.** Apps are directories (`apps/todo/index.html`, not `apps/todo.html`). Any code that derives a slug from a path must strip both `apps/` prefix AND `/index.html` suffix. The slug must match `^[a-z][a-z0-9_-]{0,62}$` (the `SAFE_SLUG` regex). A slug like `todo/index` will be rejected by the Postgres query engine.
+- **Iframe bridge injection requires same-origin.** The bridge script (`MatrixOS.db`, theme vars) is injected into app iframes via `contentDocument`. This only works when the iframe is same-origin with the shell. App iframes must load through the shell's proxy (`/files/...`) not directly from the gateway (`http://localhost:4000/files/...`). Cross-origin iframes silently fail -- `contentDocument` returns `null` and the catch block swallows the error, leaving `MatrixOS.db` undefined.
+- **Bridge injects AFTER app script runs.** The bridge is injected on the iframe `load` event, but app scripts execute during load. Apps that check `var useDb = !!(window.MatrixOS && window.MatrixOS.db)` will get `false` on first run. The injector must set `useDb = true` and call `loadData()` after injection to re-trigger the data load with the db path.
 
 ## Shell Icon System
 
@@ -351,6 +372,42 @@ qmd search "telegram adapter"                       # BM25 keyword (instant)
 qmd get "qmd://matrix-os/specs/006-channels/spec.md"  # full doc
 qmd status                                          # health check
 ```
+
+## Migration Checklist
+
+When introducing a new data path, storage layer, or changing how apps/kernel interact with data, trace EVERY consumer end-to-end before shipping:
+
+### 1. Trace all data paths
+- **Who writes?** Kernel agent, shell UI, iframe apps, channel adapters, cron jobs
+- **Who reads?** Same list. Every reader must read from the SAME source the writer writes to
+- **What format?** If the writer produces UUIDs but the reader expects integer IDs, data is invisible
+
+### 2. Check the kernel agent
+- **System prompt**: Does the agent know about the new path? The prompt is the agent's only guide
+- **Tool availability**: MCP tools are deferred in the Agent SDK -- the agent must ToolSearch to discover them. If the tool isn't reliably found, provide curl-based alternatives in the prompt
+- **Old habits die hard**: If old files/paths still exist, the agent will use them. Delete or migrate stale data so the agent is forced onto the new path
+- **Session resume**: Resumed sessions use the OLD system prompt. New prompts only apply to new sessions
+
+### 3. Check the shell and iframe bridge
+- **Same-origin**: Iframes must load through the shell proxy, not directly from the gateway
+- **Injection timing**: The bridge injects after `load`. Any app variable set at parse time (`var useDb = ...`) must be re-evaluated after injection
+- **Slug derivation**: Every path→slug function must handle the current app format (directory-based: `apps/todo/index.html` → `todo`)
+
+### 4. Check Docker and multi-user
+- **Shared state**: If multiple containers share a database, namespace by user (separate DBs or prefixed schemas)
+- **Migration sentinels**: Per-user, not global. First container to boot shouldn't block others
+- **Port conflicts**: Per-branch testing needs unique ports (see `scripts/branch-dev.sh`)
+
+### 5. Clean up stale data
+- Old files/tables/KV entries that the new path doesn't use must be deleted or the system will have split-brain reads
+- Migration code should verify success before writing the "done" sentinel
+- Log migration errors -- silent `catch {}` blocks hide data loss
+
+### 6. Test the full loop
+- Add data via kernel agent → verify it shows in the app UI
+- Add data via app UI → verify kernel agent can read it
+- Restart the container → verify data persists
+- Test with an empty database (first boot) AND with existing data (upgrade)
 
 ## Development Rules
 

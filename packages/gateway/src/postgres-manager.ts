@@ -38,6 +38,7 @@ function generatePassword(): string {
   return randomBytes(24).toString("base64url");
 }
 
+/** @deprecated Use AppDb schema-per-app model (app-db.ts + app-db-registry.ts) instead. Will be removed in v0.6.0. */
 export function createPostgresManager(config: PostgresConfig): PostgresManager {
   const { homePath, port = 5432 } = config;
   const credentialsPath = join(homePath, "system", "postgres", "credentials.json");

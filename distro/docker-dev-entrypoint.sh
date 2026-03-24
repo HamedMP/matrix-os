@@ -10,12 +10,11 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
-# Ensure home directory exists and is owned by matrixos
+# Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
   mkdir -p "$MATRIX_HOME"
 fi
-chown -R matrixos:matrixos "$MATRIX_HOME"
 
 # Fix .next cache ownership (bind-mounted volume)
 mkdir -p /app/shell/.next
@@ -25,8 +24,10 @@ chown -R matrixos:matrixos /app/shell/.next
 if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Setting up QMD search index..."
   mkdir -p "$MATRIX_HOME/system/qmd"
-  chown -R matrixos:matrixos "$MATRIX_HOME/system/qmd"
 fi
+
+# Fix ownership of everything created as root before dropping to matrixos
+chown -R matrixos:matrixos "$MATRIX_HOME"
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
 if command -v zsh >/dev/null 2>&1; then

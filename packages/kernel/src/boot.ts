@@ -32,7 +32,7 @@ export function ensureHome(homePath: string = DEFAULT_HOME): SyncReport & { home
   }
 
   mkdirSync(homePath, { recursive: true });
-  cpSync(TEMPLATE_DIR, homePath, { recursive: true });
+  cpSync(TEMPLATE_DIR, homePath, { recursive: true, force: true });
 
   initGit(homePath);
 
@@ -112,12 +112,17 @@ export function smartSyncTemplate(
 
     if (!existsSync(homeFilePath)) {
       // File doesn't exist in home -> ADD it
-      const dir = dirname(homeFilePath);
-      mkdirSync(dir, { recursive: true });
-      cpSync(templateFilePath, homeFilePath);
-      installedManifest[relPath] = templateHash;
-      report.added.push(relPath);
-      logLines.push(`[${now}] Added: ${relPath}`);
+      try {
+        const dir = dirname(homeFilePath);
+        mkdirSync(dir, { recursive: true });
+        // Use read+write instead of cpSync to avoid permission issues with bind mounts
+        writeFileSync(homeFilePath, readFileSync(templateFilePath));
+        installedManifest[relPath] = templateHash;
+        report.added.push(relPath);
+        logLines.push(`[${now}] Added: ${relPath}`);
+      } catch (e) {
+        logLines.push(`[${now}] Error adding: ${relPath} (${(e as Error).message})`);
+      }
     } else {
       const userHash = hashFile(homeFilePath);
       const installedHash = installedManifest[relPath];
@@ -135,7 +140,12 @@ export function smartSyncTemplate(
       } else if (userHash === installedHash) {
         // User hasn't touched it -> UPDATE from template
         if (templateHash !== installedHash) {
-          cpSync(templateFilePath, homeFilePath);
+          try {
+            writeFileSync(homeFilePath, readFileSync(templateFilePath));
+          } catch (e) {
+            logLines.push(`[${now}] Error updating: ${relPath} (${(e as Error).message})`);
+            continue;
+          }
           installedManifest[relPath] = templateHash;
           report.updated.push(relPath);
           logLines.push(`[${now}] Updated: ${relPath}`);

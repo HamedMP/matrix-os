@@ -1,0 +1,8 @@
+{
+  "name": "Code Editor",
+  "description": "Edit code with syntax highlighting",
+  "category": "dev",
+  "icon": "code-editor",
+  "author": "system",
+  "version": "1.0.0"
+}
