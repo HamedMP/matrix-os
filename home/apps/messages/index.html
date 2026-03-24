@@ -1006,7 +1006,7 @@ body {
       </div>
     </div>
 
-    <div class="chat-messages" id="chatMessages" style="display:none"></div>
+    <div class="chat-messages" id="chatMessages" style="display:none" aria-live="polite" role="log"></div>
 
     <div class="typing-indicator" id="typingIndicator">
       <div class="typing-dots"><span></span><span></span><span></span></div>
@@ -1167,9 +1167,22 @@ body {
     return el.innerHTML;
   }
 
-  function linkify(escapedText) {
-    return escapedText.replace(/(https?:\/\/[^\s<]+)/g, function(url) {
-      return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>';
+  function buildBubbleContent(bubble, text) {
+    var urlRe = /(https?:\/\/[^\s]+)/g;
+    var lines = String(text).split('\n');
+    lines.forEach(function(line, li) {
+      var parts = line.split(urlRe);
+      parts.forEach(function(part) {
+        if (urlRe.test(part)) {
+          urlRe.lastIndex = 0;
+          var a = document.createElement('a');
+          a.href = part; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.textContent = part; bubble.appendChild(a);
+        } else if (part) {
+          bubble.appendChild(document.createTextNode(part));
+        }
+      });
+      if (li < lines.length - 1) bubble.appendChild(document.createElement('br'));
     });
   }
 
@@ -1196,8 +1209,13 @@ body {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        state.conversations = JSON.parse(raw);
-        return;
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every(function(c) {
+          return c && typeof c.id === 'string' && Array.isArray(c.participants) && Array.isArray(c.messages);
+        })) {
+          state.conversations = parsed;
+          return;
+        }
       }
     } catch (e) { /* ignore */ }
     seedDemoData();
@@ -1206,27 +1224,53 @@ body {
   function saveConversations() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state.conversations));
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      state.conversations.forEach(function(c) {
+        if (c.messages.length > 100) c.messages = c.messages.slice(-100);
+      });
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.conversations)); } catch(e2) {}
+    }
     saveToBridge();
   }
 
   function saveToBridge() {
     try {
       fetch('/api/bridge/data', {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app: BRIDGE_APP, key: BRIDGE_KEY, data: { conversations: state.conversations } })
+        body: JSON.stringify({ action: 'write', app: BRIDGE_APP, key: BRIDGE_KEY, value: JSON.stringify({ conversations: state.conversations }) })
       }).catch(function() {});
     } catch (e) { /* bridge not available */ }
   }
 
+  function mergeConversations(incoming) {
+    if (!Array.isArray(incoming)) return;
+    incoming.forEach(function(bc) {
+      var existing = state.conversations.find(function(c) { return c.id === bc.id; });
+      if (!existing) { state.conversations.push(bc); return; }
+      if (!Array.isArray(bc.messages)) return;
+      bc.messages.forEach(function(msg) {
+        if (!existing.messages.find(function(m) { return m.id === msg.id; })) {
+          existing.messages.push(msg);
+        }
+      });
+      existing.messages.sort(function(a, b) { return new Date(a.timestamp) - new Date(b.timestamp); });
+    });
+    renderConversationList();
+  }
+
   function loadFromBridge() {
-    fetch('/api/bridge/data?app=' + BRIDGE_APP + '&key=' + BRIDGE_KEY)
-      .then(function(res) { return res.ok ? res.json() : null; })
+    fetch('/api/bridge/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', app: BRIDGE_APP, key: BRIDGE_KEY })
+    }).then(function(res) { return res.ok ? res.json() : null; })
       .then(function(data) {
-        if (data && data.conversations && data.conversations.length) {
-          state.conversations = data.conversations;
-          renderConversationList();
+        if (data && data.value) {
+          try {
+            var parsed = JSON.parse(data.value);
+            if (parsed && Array.isArray(parsed.conversations)) mergeConversations(parsed.conversations);
+          } catch(e) {}
         }
       })
       .catch(function() {});
@@ -1542,11 +1586,7 @@ body {
 
       var bubble = createEl('div', 'msg-bubble');
       // Build bubble content safely: escape text, then apply linkification
-      var escaped = escapeHtml(msg.content);
-      var withLinks = linkify(escaped);
-      var withBreaks = withLinks.replace(/\n/g, '<br>');
-      // linkify only produces <a> tags from URLs in already-escaped text, safe to set
-      bubble.innerHTML = withBreaks;
+      buildBubbleContent(bubble, msg.content);
       contentEl.appendChild(bubble);
 
       var timeEl = createEl('div', 'msg-time');
@@ -1640,7 +1680,9 @@ body {
     }
   }
 
+  var aiReplyTimers = {};
   function simulateAIReply(conv) {
+    if (aiReplyTimers[conv.id]) clearTimeout(aiReplyTimers[conv.id]);
     var other = (conv.participants || []).find(function(p) { return p !== MY_HANDLE; });
     var name = conv.name || other;
 
@@ -1649,7 +1691,8 @@ body {
 
     var delay = 1000 + Math.random() * 2000;
 
-    setTimeout(function() {
+    aiReplyTimers[conv.id] = setTimeout(function() {
+      delete aiReplyTimers[conv.id];
       typingIndicator.classList.remove('visible');
 
       var replies = [
@@ -1815,7 +1858,7 @@ body {
     if (e.key === 'Escape') {
       if (modalOverlay.classList.contains('visible')) {
         closeModal();
-      } else if (state.isMobile && state.activeConvId) {
+      } else if (state.activeConvId) {
         closeChat();
       }
     }
