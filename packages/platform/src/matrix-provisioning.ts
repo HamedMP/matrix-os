@@ -119,7 +119,11 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
       throw new Error(`Failed to register Matrix user ${username}: ${err.errcode ?? regRes.status}`);
     }
 
-    const regBody = (await regRes.json()) as { user_id: string; access_token?: string };
+    const regBody = (await regRes.json()) as { user_id?: string; access_token?: string };
+
+    if (!regBody.user_id) {
+      throw new Error(`Matrix register: missing user_id in response for ${username}`);
+    }
 
     if (regBody.access_token) {
       return { userId: regBody.user_id, accessToken: regBody.access_token };

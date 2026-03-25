@@ -31,10 +31,10 @@ const withClerk = clerkMiddleware(async (auth, request) => {
     await auth.protect();
   }
 
-  // Layer 2: Owner verification -- ensure logged-in user owns this instance
+  // Layer 2: Owner verification -- fail closed when configured
   if (expectedClerkUserId) {
     const { userId } = await auth();
-    if (userId && userId !== expectedClerkUserId) {
+    if (userId !== expectedClerkUserId) {
       return new NextResponse("Forbidden: you do not own this instance", {
         status: 403,
       });
@@ -54,32 +54,16 @@ const withClerk = clerkMiddleware(async (auth, request) => {
       headers.set("Authorization", `Bearer ${authToken}`);
     }
 
-    return NextResponse.rewrite(url, { headers });
+    return NextResponse.rewrite(url, { request: { headers } });
   }
 
   return NextResponse.next();
 });
 
-// Paths that bypass Clerk entirely (static cacheable assets).
-// Clerk adds Cache-Control: no-store to every response it touches,
-// which kills browser caching. These paths rewrite directly to the
-// gateway so cache headers (max-age=86400, immutable) are preserved.
-function isCacheableAsset(pathname: string): boolean {
-  return pathname.startsWith("/files/system/icons/");
-}
-
 export default function middleware(
   request: NextRequest,
   event: import("next/server").NextFetchEvent,
 ) {
-  const { pathname } = request.nextUrl;
-
-  // Bypass Clerk for cacheable assets -- rewrite directly to gateway
-  if (isCacheableAsset(pathname)) {
-    const url = new URL(pathname, gatewayUrl);
-    return NextResponse.rewrite(url);
-  }
-
   return withClerk(request, event);
 }
 

@@ -5,6 +5,8 @@ database_backend = "rocksdb"
 port = 6167
 address = "0.0.0.0"
 allow_registration = true
-registration_token = "matrixos-provision-secret"
+# registration_token must be set via env var or override file in production.
+# Local dev: set CONDUIT_REGISTRATION_TOKEN in .env.docker
+registration_token = "MUST_BE_SET_VIA_ENV"
 allow_federation = false
 allow_check_for_updates = false

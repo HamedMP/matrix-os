@@ -440,12 +440,16 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   // Matrix provisioner (optional: only if Conduit URL is configured)
   let matrixProvisioner: MatrixProvisioner | undefined;
   const conduitUrl = process.env.MATRIX_CONDUIT_URL;
-  const conduitToken = process.env.CONDUIT_REGISTRATION_TOKEN ?? 'matrixos-provision-secret';
+  const conduitToken = process.env.CONDUIT_REGISTRATION_TOKEN;
+  if (conduitUrl && !conduitToken) {
+    console.error('[platform] CONDUIT_REGISTRATION_TOKEN is required when MATRIX_CONDUIT_URL is set');
+    process.exit(1);
+  }
   if (conduitUrl) {
     matrixProvisioner = createMatrixProvisioner({
       db,
       homeserverUrl: conduitUrl,
-      registrationToken: conduitToken,
+      registrationToken: conduitToken!,
     });
     console.log(`[matrix] Provisioner enabled (${conduitUrl})`);
   }
