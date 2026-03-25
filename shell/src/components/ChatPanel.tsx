@@ -31,6 +31,8 @@ import {
   LoaderCircleIcon,
   PlusIcon,
   PanelRightCloseIcon,
+  MicIcon,
+  Volume2Icon,
 } from "lucide-react";
 
 interface ConversationMeta {
@@ -111,18 +113,28 @@ export function ChatPanel({
               return <ToolCallGroup key={`tg-${i}`} tools={group.messages} />;
             }
             const msg = group.message;
+            const isVoice = msg.metadata?.source === "voice";
             return (
               <div key={msg.id}>
                 {msg.role === "user" ? (
                   <Message from="user">
-                    <MessageContent>{msg.content}</MessageContent>
+                    <MessageContent>
+                      {isVoice && (
+                        <MicIcon className="inline-block size-3.5 mr-1.5 text-muted-foreground align-text-bottom" />
+                      )}
+                      {msg.content}
+                    </MessageContent>
                   </Message>
                 ) : msg.role === "system" ? (
                   <div className="text-xs px-3 py-1 rounded bg-background text-muted-foreground">
                     {msg.content}
                   </div>
                 ) : (
-                  <AssistantMessage content={msg.content} onAction={onSubmit} />
+                  <AssistantMessage
+                    content={msg.content}
+                    onAction={onSubmit}
+                    hasVoiceAudio={isVoice && msg.metadata?.hasAudio === true}
+                  />
                 )}
               </div>
             );
@@ -153,9 +165,11 @@ export function ChatPanel({
 function AssistantMessage({
   content,
   onAction,
+  hasVoiceAudio,
 }: {
   content: string;
   onAction?: (text: string) => void;
+  hasVoiceAudio?: boolean;
 }) {
   const { thinking, rest } = extractThinking(content);
   const planSteps = parsePlan(rest);
@@ -174,6 +188,17 @@ function AssistantMessage({
         {taskData && <Task task={taskData} />}
         {displayContent && (
           <RichContent onAction={onAction}>{displayContent}</RichContent>
+        )}
+        {hasVoiceAudio && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-1 h-6 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+            title="Play audio response"
+          >
+            <Volume2Icon className="size-3.5" />
+            Play
+          </Button>
         )}
       </MessageContent>
     </Message>

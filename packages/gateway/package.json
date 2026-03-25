@@ -33,6 +33,7 @@
     "hono": "^4.11.9",
     "kysely": "^0.28.13",
     "node-cron": "^4.2.1",
+    "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "node-telegram-bot-api": "^0.67.0",
     "pg": "^8.20.0",
