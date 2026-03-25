@@ -28,6 +28,9 @@ export interface SyncReport {
 export function ensureHome(homePath: string = DEFAULT_HOME): SyncReport & { homePath: string } {
   if (existsSync(homePath)) {
     const report = syncTemplate(homePath);
+    if (!existsSync(join(homePath, ".git"))) {
+      initGit(homePath);
+    }
     return { ...report, homePath };
   }
 
@@ -185,6 +188,22 @@ function syncTemplate(homePath: string): SyncReport {
   }
 
   const report = smartSyncTemplate(homePath, TEMPLATE_DIR);
+
+  // Always update .matrix-version to match the template (version marker, not user content)
+  const templateVersionPath = join(TEMPLATE_DIR, ".matrix-version");
+  if (existsSync(templateVersionPath)) {
+    const templateVersion = readFileSync(templateVersionPath, "utf-8");
+    const installedVersionPath = join(homePath, ".matrix-version");
+    const currentVersion = existsSync(installedVersionPath)
+      ? readFileSync(installedVersionPath, "utf-8")
+      : "";
+    if (currentVersion !== templateVersion) {
+      writeFileSync(installedVersionPath, templateVersion);
+      if (!report.updated.includes(".matrix-version") && !report.added.includes(".matrix-version")) {
+        report.updated.push(".matrix-version");
+      }
+    }
+  }
 
   const totalChanges = report.added.length + report.updated.length;
   if (totalChanges > 0) {

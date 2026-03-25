@@ -64,8 +64,8 @@ READ_RESULT=$(curl -s -X POST "$GATEWAY_URL/api/bridge/data" \
   -H "Content-Type: application/json" \
   -d '{"action":"read","app":"test","key":"state"}' 2>/dev/null)
 
-READ_VALUE=$(echo "$READ_RESULT" | jq -r '.' 2>/dev/null)
-if [ "$READ_VALUE" = '"important"' ] || [ "$READ_VALUE" = 'important' ]; then
+READ_VALUE=$(echo "$READ_RESULT" | jq -r '.value' 2>/dev/null)
+if [ "$READ_VALUE" = 'important' ]; then
   echo -e "  ${GREEN}PASS${NC} Bridge data survived crash"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
