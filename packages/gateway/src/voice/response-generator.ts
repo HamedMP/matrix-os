@@ -40,7 +40,8 @@ export async function generateVoiceResponse(
           .join("\n") + "\n\n"
       : "";
 
-  const fullMessage = `${VOICE_CONTEXT_PREFIX}${transcriptContext}<caller_speech>${userMessage}</caller_speech>`;
+  const safeSpeech = userMessage.replace(/[<>]/g, (c) => c === "<" ? "&lt;" : "&gt;");
+  const fullMessage = `${VOICE_CONTEXT_PREFIX}${transcriptContext}<caller_speech>${safeSpeech}</caller_speech>`;
 
   const context: DispatchContext = {
     channel: "voice",

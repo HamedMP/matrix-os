@@ -122,7 +122,7 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
             });
           })().then((result) => {
             const text = result.transcript ?? "[Voice message - transcription failed]";
-            const audioFileName = result.filePath.split("/").pop() ?? "";
+            const audioFileName = result.filePath?.split("/").pop() ?? "";
             const metadata: Record<string, unknown> = {
               source: "voice",
               audioPath: `/files/data/audio/${audioFileName}`,

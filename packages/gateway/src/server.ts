@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, sta
 import { dirname, join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
@@ -916,7 +917,7 @@ export async function createGateway(config: GatewayConfig) {
     });
   });
 
-  app.put("/files/*", async (c) => {
+  app.put("/files/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }), async (c) => {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWithinHome(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
