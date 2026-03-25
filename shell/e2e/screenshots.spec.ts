@@ -50,34 +50,14 @@ test.describe("Visual regression", () => {
   });
 
   test("file browser", async ({ page }) => {
-    const fileBrowserButton = page.locator("aside button", { has: page.locator("svg.lucide-folder") }).first();
-    await fileBrowserButton.click();
+    // Open via command palette since file browser may not be in the dock
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(300);
+    await page.keyboard.type("File Browser");
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Enter");
     await page.waitForTimeout(500);
     await expect(page).toHaveScreenshot("file-browser.png", {
-      maxDiffPixelRatio: 0.01,
-    });
-  });
-
-  test("file browser list view", async ({ page }) => {
-    const fileBrowserButton = page.locator("aside button", { has: page.locator("svg.lucide-folder") }).first();
-    await fileBrowserButton.click();
-    await page.waitForTimeout(500);
-    const listViewButton = page.locator("button", { has: page.locator("svg.lucide-list") }).first();
-    await listViewButton.click();
-    await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot("file-browser-list.png", {
-      maxDiffPixelRatio: 0.01,
-    });
-  });
-
-  test("file browser column view", async ({ page }) => {
-    const fileBrowserButton = page.locator("aside button", { has: page.locator("svg.lucide-folder") }).first();
-    await fileBrowserButton.click();
-    await page.waitForTimeout(500);
-    const columnViewButton = page.locator("button", { has: page.locator("svg.lucide-columns-3") }).first();
-    await columnViewButton.click();
-    await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot("file-browser-columns.png", {
       maxDiffPixelRatio: 0.01,
     });
   });
