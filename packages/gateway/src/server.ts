@@ -487,6 +487,7 @@ export async function createGateway(config: GatewayConfig) {
 
         const parsedVoiceConfig = VoiceConfigSchema.parse(voiceConfig);
         callManager.initialize(twilioProvider, parsedVoiceConfig);
+        voiceService.setCallManager(callManager);
         console.log("[voice] Twilio provider registered and CallManager initialized");
       } catch (e) {
         console.warn("[voice] Failed to initialize Twilio provider:", e instanceof Error ? e.message : String(e));

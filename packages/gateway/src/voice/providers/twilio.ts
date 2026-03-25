@@ -291,7 +291,7 @@ export class TwilioProvider implements VoiceCallProvider {
 
     const body = new URLSearchParams({ Twiml: twiml });
 
-    await fetch(url, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${this.config.accountSid}:${this.config.authToken}`).toString("base64")}`,
@@ -300,6 +300,12 @@ export class TwilioProvider implements VoiceCallProvider {
       body,
       signal: AbortSignal.timeout(TWILIO_FETCH_TIMEOUT_MS),
     });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("[twilio] stopListening error:", text.slice(0, 200));
+      throw new Error(`Twilio stopListening failed (status ${response.status})`);
+    }
   }
 
   async getCallStatus(

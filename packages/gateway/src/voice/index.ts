@@ -6,6 +6,7 @@ import { WhisperSttProvider } from "./stt/whisper.js";
 import { VoiceUsageTracker } from "./usage.js";
 import type { TtsOptions, TtsResult } from "./tts/base.js";
 import type { SttProvider, SttOptions, SttResult } from "./stt/base.js";
+import type { CallManager } from "./call-manager.js";
 
 export interface VoiceServiceConfig {
   enabled?: boolean;
@@ -26,6 +27,7 @@ export class VoiceService {
   readonly stt: SttProvider | null;
   readonly usage: VoiceUsageTracker | null;
   private enabled: boolean;
+  private callManager: CallManager | null = null;
 
   private constructor(
     tts: FallbackTtsChain | null,
@@ -37,6 +39,10 @@ export class VoiceService {
     this.stt = stt;
     this.enabled = enabled;
     this.usage = usage;
+  }
+
+  setCallManager(cm: CallManager): void {
+    this.callManager = cm;
   }
 
   static create(config: VoiceServiceConfig = {}): VoiceService {
@@ -128,6 +134,6 @@ export class VoiceService {
   }
 
   stop(): void {
-    // Cleanup resources if needed (future: close WebSocket connections, etc.)
+    this.callManager?.destroy();
   }
 }

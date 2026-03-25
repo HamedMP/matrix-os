@@ -1,4 +1,4 @@
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SttProvider } from "./stt/base.js";
@@ -106,7 +106,9 @@ export async function handleVoiceNote(params: {
     };
   }
 
-  writeFileSync(filePath, buffer);
+  const tmpPath = filePath + ".tmp";
+  writeFileSync(tmpPath, buffer);
+  renameSync(tmpPath, filePath);
 
   if (!stt || !stt.isAvailable()) {
     return {

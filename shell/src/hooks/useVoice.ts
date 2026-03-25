@@ -165,6 +165,10 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
     };
   }, []);
 
