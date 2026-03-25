@@ -13,6 +13,7 @@ import {
   Trash2Icon,
   StarIcon,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 const LOCATIONS = [
   { name: "Agents", path: "agents", icon: UsersIcon },
@@ -105,7 +106,7 @@ function SidebarItem({
   active,
   onClick,
 }: {
-  icon: React.ElementType;
+  icon: LucideIcon;
   label: string;
   active?: boolean;
   onClick: () => void;
