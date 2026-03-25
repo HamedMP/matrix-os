@@ -194,6 +194,7 @@ export async function createGateway(config: GatewayConfig) {
           const manifest = loadAppManifest(appDir);
           if (manifest?.storage?.tables && Object.keys(manifest.storage.tables).length > 0) {
             const slug = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+            if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(slug)) continue;
             await appRegistry.register({
               slug,
               name: manifest.name,
@@ -204,16 +205,6 @@ export async function createGateway(config: GatewayConfig) {
               tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
             });
             registered++;
-
-            // Clean up old JSON data dir so the kernel agent uses app_data tool instead of file I/O
-            const oldDataDir = join(homePath, "data", slug);
-            try {
-              const { rmSync, existsSync: exists } = await import("node:fs");
-              if (exists(oldDataDir)) {
-                rmSync(oldDataDir, { recursive: true });
-                console.log(`[app-db] Cleaned up legacy data dir: ${oldDataDir}`);
-              }
-            } catch { /* non-critical */ }
           }
         }
         if (registered > 0) {

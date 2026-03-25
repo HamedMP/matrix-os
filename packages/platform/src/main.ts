@@ -145,8 +145,8 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       if (matrixProvisioner) {
         try {
           await matrixProvisioner.provisionUser(handle);
-        } catch (matrixErr: any) {
-          console.error(`[matrix] Failed to provision Matrix accounts for ${handle}:`, matrixErr.message);
+        } catch (matrixErr) {
+          console.error(`[matrix] Failed to provision Matrix accounts for ${handle}:`, matrixErr instanceof Error ? matrixErr.message : String(matrixErr));
         }
       }
 

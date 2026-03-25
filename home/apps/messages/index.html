@@ -1173,8 +1173,8 @@ body {
     lines.forEach(function(line, li) {
       var parts = line.split(urlRe);
       parts.forEach(function(part) {
+        urlRe.lastIndex = 0;
         if (urlRe.test(part)) {
-          urlRe.lastIndex = 0;
           var a = document.createElement('a');
           a.href = part; a.target = '_blank'; a.rel = 'noopener noreferrer';
           a.textContent = part; bubble.appendChild(a);

@@ -1236,7 +1236,8 @@ body {
   function makeAvatarHtml(handle, sizeClass) {
     var g = getAvatarGradient(handle);
     var initials = getInitials(handle);
-    var cls = 'avatar' + (sizeClass ? ' ' + sizeClass : '');
+    var safeSizeClass = sizeClass && /^[a-z-]+$/.test(sizeClass) ? sizeClass : '';
+    var cls = 'avatar' + (safeSizeClass ? ' ' + safeSizeClass : '');
     return '<div class="' + cls + '" style="background:linear-gradient(135deg,' + g[0] + ',' + g[1] + ')" aria-hidden="true">' + escapeHtml(initials) + '</div>';
   }
 

@@ -36,7 +36,13 @@ export function authMiddleware(
   return async (c, next) => {
     if (!token) return next();
 
-    const normalizedPath = normalize(c.req.path);
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(c.req.path);
+    } catch {
+      return c.json({ error: "Bad request" }, 400);
+    }
+    const normalizedPath = normalize(decodedPath);
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return next();

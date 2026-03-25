@@ -31,8 +31,8 @@ const withClerk = clerkMiddleware(async (auth, request) => {
     await auth.protect();
   }
 
-  // Layer 2: Owner verification -- fail closed when configured
-  if (expectedClerkUserId) {
+  // Layer 2: Owner verification -- fail closed when configured (skip public routes)
+  if (expectedClerkUserId && !isPublicRoute(request)) {
     const { userId } = await auth();
     if (userId !== expectedClerkUserId) {
       return new NextResponse("Forbidden: you do not own this instance", {
