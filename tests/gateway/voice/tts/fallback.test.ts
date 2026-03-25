@@ -475,6 +475,10 @@ describe("OpenAiTtsProvider", () => {
 });
 
 describe("EdgeTtsProvider", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -512,7 +516,6 @@ describe("EdgeTtsProvider", () => {
   });
 
   it("uses default voice en-US-AriaNeural", async () => {
-    vi.resetModules();
     const constructorArgs: Record<string, unknown>[] = [];
     const mockTtsPromise = vi.fn().mockImplementation(async (_text: string, path: string) => {
       const { writeFileSync } = await import("node:fs");
