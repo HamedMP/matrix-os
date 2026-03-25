@@ -50,7 +50,7 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
         await sql`
           INSERT INTO public._apps (slug, name, description, version, author, category, tables, updated_at)
           VALUES (
-            ${opts.slug}, ${opts.name}, ${opts.description ?? null},
+            ${slug}, ${opts.name}, ${opts.description ?? null},
             ${opts.version ?? "1.0.0"}, ${opts.author ?? null},
             ${opts.category ?? null}, ${JSON.stringify(opts.tables)}::jsonb,
             now()
@@ -68,7 +68,7 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
     async unregister(slug: string): Promise<void> {
       const validSlug = parseAppSlug(slug);
       await db.dropAppSchema(validSlug);
-      await sql`DELETE FROM public._apps WHERE slug = ${slug}`.execute(kysely);
+      await sql`DELETE FROM public._apps WHERE slug = ${validSlug}`.execute(kysely);
     },
 
     async get(slug: string): Promise<AppRecord | null> {
