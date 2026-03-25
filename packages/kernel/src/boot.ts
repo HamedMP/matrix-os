@@ -28,6 +28,9 @@ export interface SyncReport {
 export function ensureHome(homePath: string = DEFAULT_HOME): SyncReport & { homePath: string } {
   if (existsSync(homePath)) {
     const report = syncTemplate(homePath);
+    if (!existsSync(join(homePath, ".git"))) {
+      initGit(homePath);
+    }
     return { ...report, homePath };
   }
 

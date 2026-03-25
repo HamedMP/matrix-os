@@ -475,51 +475,15 @@ describe("OpenAiTtsProvider", () => {
 });
 
 describe("EdgeTtsProvider", () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
+  const constructorArgs: Record<string, unknown>[] = [];
+  const mockTtsPromise = vi.fn();
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("isAvailable() always returns true", () => {
-    const provider = new EdgeTtsProvider();
-    expect(provider.isAvailable()).toBe(true);
-  });
-
-  it("returns audio buffer from edge-tts", async () => {
-    const fakeAudio = Buffer.from("edge-audio-data");
-    const mockTtsPromise = vi.fn().mockImplementation(async (_text: string, path: string) => {
+  beforeEach(async () => {
+    constructorArgs.length = 0;
+    mockTtsPromise.mockReset();
+    mockTtsPromise.mockImplementation(async (_text: string, path: string) => {
       const { writeFileSync } = await import("node:fs");
-      writeFileSync(path, fakeAudio);
-    });
-
-    vi.doMock("node-edge-tts", () => ({
-      EdgeTTS: class {
-        ttsPromise = mockTtsPromise;
-      },
-    }));
-
-    const { EdgeTtsProvider: MockedEdgeTts } = await import(
-      "../../../../packages/gateway/src/voice/tts/edge-tts.js"
-    );
-    const provider = new MockedEdgeTts();
-    const result = await provider.synthesize("Hello");
-
-    expect(result.audio).toBeInstanceOf(Buffer);
-    expect(result.format).toBe("mp3");
-    expect(result.provider).toBe("edge");
-    expect(mockTtsPromise).toHaveBeenCalledWith("Hello", expect.any(String));
-
-    vi.doUnmock("node-edge-tts");
-  });
-
-  it("uses default voice en-US-AriaNeural", async () => {
-    const constructorArgs: Record<string, unknown>[] = [];
-    const mockTtsPromise = vi.fn().mockImplementation(async (_text: string, path: string) => {
-      const { writeFileSync } = await import("node:fs");
-      writeFileSync(path, Buffer.from("audio"));
+      writeFileSync(path, Buffer.from("fake-audio-data"));
     });
 
     vi.doMock("node-edge-tts", () => ({
@@ -530,7 +494,33 @@ describe("EdgeTtsProvider", () => {
         }
       },
     }));
+  });
 
+  afterEach(() => {
+    vi.doUnmock("node-edge-tts");
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it("isAvailable() always returns true", () => {
+    const provider = new EdgeTtsProvider();
+    expect(provider.isAvailable()).toBe(true);
+  });
+
+  it("returns audio buffer from edge-tts", async () => {
+    const { EdgeTtsProvider: MockedEdgeTts } = await import(
+      "../../../../packages/gateway/src/voice/tts/edge-tts.js"
+    );
+    const provider = new MockedEdgeTts();
+    const result = await provider.synthesize("Hello");
+
+    expect(result.audio).toBeInstanceOf(Buffer);
+    expect(result.format).toBe("mp3");
+    expect(result.provider).toBe("edge");
+    expect(mockTtsPromise).toHaveBeenCalledWith("Hello", expect.any(String));
+  });
+
+  it("uses default voice en-US-AriaNeural", async () => {
     const { EdgeTtsProvider: MockedEdgeTts } = await import(
       "../../../../packages/gateway/src/voice/tts/edge-tts.js"
     );
@@ -540,7 +530,5 @@ describe("EdgeTtsProvider", () => {
     expect(constructorArgs[0]).toEqual(
       expect.objectContaining({ voice: "en-US-AriaNeural" }),
     );
-
-    vi.doUnmock("node-edge-tts");
   });
 });
