@@ -14,6 +14,10 @@ const isPublicRoute = createRouteMatcher([
   "/favicon.ico",
 ]);
 
+const isCacheableAsset = createRouteMatcher([
+  "/files/system/icons/:path*",
+]);
+
 const isGatewayProxy = createRouteMatcher([
   "/gateway/:path*",
   "/api/:path*",
@@ -53,7 +57,14 @@ export default clerkMiddleware(async (auth, request) => {
       headers.set("Authorization", `Bearer ${authToken}`);
     }
 
-    return NextResponse.rewrite(url, { headers });
+    const response = NextResponse.rewrite(url, { headers });
+
+    // Preserve cache headers for static assets (Clerk adds no-store to everything)
+    if (isCacheableAsset(request)) {
+      response.headers.set("Cache-Control", "public, max-age=86400, immutable");
+    }
+
+    return response;
   }
 
   return NextResponse.next();
