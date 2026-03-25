@@ -26,20 +26,11 @@ V4 (current):
 @plugin "@tailwindcss/typography";
 ```
 
-**Important:** The `@tailwindcss/typography` package is NOT bundled with `tailwindcss`. It must be listed in `package.json` as a dependency so CI can install it. The `@plugin` directive resolves the package at build time via PostCSS.
+## Typography Plugin -- Known Issue
 
-## Typography Plugin
+`@tailwindcss/typography` works with v4 via `@plugin`, BUT pnpm's strict module isolation prevents `@tailwindcss/postcss` from resolving it in Docker. The PostCSS plugin resolves from its own virtual store (`node_modules/.pnpm/@tailwindcss+postcss@.../node_modules/@tailwindcss/`) which only sees `node`, `oxide`, `postcss` -- NOT `typography`.
 
-- Package: `@tailwindcss/typography` (v0.5.16+ supports v4)
-- Load via: `@plugin "@tailwindcss/typography"`
-- Provides `prose` utility classes for markdown rendering
-- Usage: `<div className="prose prose-sm dark:prose-invert">`
-
-## Common Mistakes
-
-1. **Don't use `@import "@tailwindcss/typography"`** -- use `@plugin` for JS plugins
-2. **Don't remove the package from package.json** -- `@plugin` still needs the npm package installed
-3. **`@import` is for CSS files, `@plugin` is for JS plugins** -- they are different directives
+**Our solution:** Custom `.md-prose` CSS class in `globals.css` instead of the typography plugin. This avoids all pnpm/Docker resolution issues and uses theme CSS variables for consistent styling.
 
 ## Other Changes
 

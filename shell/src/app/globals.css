@@ -1,7 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -163,3 +162,28 @@ pre {
     width: var(--ro-w);
   }
 }
+
+/* Markdown prose styles (custom, avoids @tailwindcss/typography pnpm resolution issues) */
+.md-prose { color: var(--foreground); font-size: 0.875rem; line-height: 1.7; }
+.md-prose h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.75rem; line-height: 1.3; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+.md-prose h2 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.5rem; line-height: 1.3; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+.md-prose h3 { font-size: 1.1rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+.md-prose h4, .md-prose h5, .md-prose h6 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+.md-prose p { margin: 0 0 0.75rem; }
+.md-prose a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.md-prose strong { font-weight: 600; }
+.md-prose ul, .md-prose ol { margin: 0 0 0.75rem; padding-left: 1.5rem; }
+.md-prose ul { list-style: disc; }
+.md-prose ol { list-style: decimal; }
+.md-prose li { margin-bottom: 0.25rem; }
+.md-prose li > ul, .md-prose li > ol { margin-top: 0.25rem; margin-bottom: 0; }
+.md-prose blockquote { border-left: 3px solid var(--border); padding-left: 1rem; margin: 0.75rem 0; color: var(--muted-foreground); font-style: italic; }
+.md-prose code { font-family: var(--font-mono); font-size: 0.8em; background: var(--muted); padding: 0.15em 0.35em; border-radius: 4px; }
+.md-prose pre { font-family: var(--font-mono); font-size: 0.8rem; background: var(--muted); border-radius: 6px; padding: 0.75rem 1rem; margin: 0.75rem 0; overflow-x: auto; }
+.md-prose pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
+.md-prose hr { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+.md-prose table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.8rem; }
+.md-prose th, .md-prose td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+.md-prose th { font-weight: 600; background: var(--muted); }
+.md-prose img { max-width: 100%; border-radius: 6px; margin: 0.75rem 0; }
+.md-prose input[type="checkbox"] { margin-right: 0.4rem; }
