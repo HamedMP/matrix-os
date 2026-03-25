@@ -355,9 +355,11 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   } | null>(null);
 
   const generatingRef = useRef(new Set<string>());
+  const checkedRef = useRef(new Set<string>());
 
   const checkAndGenerateIcon = useCallback((slug: string) => {
-    if (generatingRef.current.has(slug)) return;
+    if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
+    checkedRef.current.add(slug);
     const iconPath = `/files/system/icons/${slug}.png`;
     fetch(`${GATEWAY_URL}${iconPath}`, { method: "HEAD" }).then((res) => {
       if (res.ok) {
