@@ -77,7 +77,7 @@ describe("TwilioProvider", () => {
     });
 
     it("reconstructs URL from X-Forwarded headers", () => {
-      const forwardedUrl = "https://proxy.example.com:443/voice/webhook/twilio";
+      const forwardedUrl = "https://proxy.example.com/voice/webhook/twilio";
       const params = {
         CallSid: "CA123",
         CallStatus: "ringing",
