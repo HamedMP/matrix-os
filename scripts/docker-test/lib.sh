@@ -37,10 +37,10 @@ assert_status() {
   actual=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null) || actual="000"
   if [ "$actual" = "$expected" ]; then
     echo -e "  ${GREEN}PASS${NC} $desc (HTTP $actual)"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (expected HTTP $expected, got $actual)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 
@@ -53,10 +53,10 @@ assert_json() {
   actual=$(curl -s --max-time 10 "$url" | jq -r "$jq_expr" 2>/dev/null) || actual="<error>"
   if [ "$actual" = "$expected" ]; then
     echo -e "  ${GREEN}PASS${NC} $desc"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (expected '$expected', got '$actual')"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 
@@ -68,10 +68,10 @@ assert_json_not_empty() {
   actual=$(curl -s --max-time 10 "$url" | jq -r "$jq_expr" 2>/dev/null) || actual=""
   if [ -n "$actual" ] && [ "$actual" != "null" ] && [ "$actual" != "" ]; then
     echo -e "  ${GREEN}PASS${NC} $desc (got: $actual)"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (value was empty or null)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 
@@ -81,10 +81,10 @@ assert_file_exists() {
   local desc="$3"
   if $COMPOSE exec -T "$container" test -f "$path" 2>/dev/null; then
     echo -e "  ${GREEN}PASS${NC} $desc"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (file not found: $path)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 
@@ -94,10 +94,10 @@ assert_dir_exists() {
   local desc="$3"
   if $COMPOSE exec -T "$container" test -d "$path" 2>/dev/null; then
     echo -e "  ${GREEN}PASS${NC} $desc"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (directory not found: $path)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 
@@ -107,10 +107,10 @@ assert_file_not_exists() {
   local desc="$3"
   if $COMPOSE exec -T "$container" test -f "$path" 2>/dev/null; then
     echo -e "  ${RED}FAIL${NC} $desc (file exists: $path)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   else
     echo -e "  ${GREEN}PASS${NC} $desc"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   fi
 }
 
@@ -121,10 +121,10 @@ assert_file_contains() {
   local desc="$4"
   if $COMPOSE exec -T "$container" grep -q "$pattern" "$path" 2>/dev/null; then
     echo -e "  ${GREEN}PASS${NC} $desc"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (pattern '$pattern' not found in $path)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 
@@ -133,10 +133,10 @@ assert_container_running() {
   local desc="$2"
   if $COMPOSE ps --status running "$service" 2>/dev/null | grep -q "$service"; then
     echo -e "  ${GREEN}PASS${NC} $desc"
-    ((++PASS_COUNT))
+    PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo -e "  ${RED}FAIL${NC} $desc (container not running)"
-    ((++FAIL_COUNT))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 }
 

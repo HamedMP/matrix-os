@@ -62,10 +62,10 @@ WRITE_RESULT=$(curl -s -X POST "$GATEWAY_URL/api/bridge/data" \
 WRITE_OK=$(echo "$WRITE_RESULT" | jq -r '.ok' 2>/dev/null)
 if [ "$WRITE_OK" = "true" ]; then
   echo -e "  ${GREEN}PASS${NC} Bridge data write works under memory limit"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Bridge data write failed under memory limit"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Check memory usage
@@ -81,10 +81,10 @@ if [ -n "$CONTAINER_ID" ]; then
     MEM_INT=${MEM_PCT%.*}
     if [ "$MEM_INT" -lt 90 ] 2>/dev/null; then
       echo -e "  ${GREEN}PASS${NC} Memory usage under 90% ($MEM_PCT%)"
-      ((PASS_COUNT++))
+      PASS_COUNT=$((PASS_COUNT + 1))
     else
       echo -e "  ${YELLOW}WARN${NC} Memory usage high: $MEM_PCT% (may be acceptable)"
-      ((PASS_COUNT++))
+      PASS_COUNT=$((PASS_COUNT + 1))
     fi
   fi
 fi
