@@ -45,8 +45,8 @@ for scenario in "${SCENARIOS[@]}"; do
   if [ ! -x "$SCRIPT" ]; then
     echo -e "${RED}[ERROR]${NC} $SCRIPT not found or not executable"
     RESULTS+=("FAIL:$scenario")
-    ((FAILED++))
-    ((TOTAL++))
+    FAILED=$((FAILED + 1))
+    TOTAL=$((TOTAL + 1))
     continue
   fi
 
@@ -58,13 +58,13 @@ for scenario in "${SCENARIOS[@]}"; do
 
   if "$SCRIPT"; then
     RESULTS+=("PASS:$scenario")
-    ((PASSED++))
+    PASSED=$((PASSED + 1))
   else
     RESULTS+=("FAIL:$scenario")
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
   fi
 
-  ((TOTAL++))
+  TOTAL=$((TOTAL + 1))
 
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))

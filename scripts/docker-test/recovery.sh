@@ -27,10 +27,10 @@ WRITE_RESULT=$(curl -s -X POST "$GATEWAY_URL/api/bridge/data" \
 WRITE_OK=$(echo "$WRITE_RESULT" | jq -r '.ok' 2>/dev/null)
 if [ "$WRITE_OK" = "true" ]; then
   echo -e "  ${GREEN}PASS${NC} Bridge data written successfully"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Failed to write bridge data"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Create a social post
@@ -67,10 +67,10 @@ READ_RESULT=$(curl -s -X POST "$GATEWAY_URL/api/bridge/data" \
 READ_VALUE=$(echo "$READ_RESULT" | jq -r '.' 2>/dev/null)
 if [ "$READ_VALUE" = '"important"' ] || [ "$READ_VALUE" = 'important' ]; then
   echo -e "  ${GREEN}PASS${NC} Bridge data survived crash"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Bridge data lost (got: $READ_VALUE)"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Verify health endpoint works after recovery

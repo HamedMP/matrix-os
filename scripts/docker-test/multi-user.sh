@@ -55,18 +55,18 @@ echo -e "  ${BLUE}INFO${NC} Bob post ID: $BOB_POST_ID"
 # Verify posts exist on their respective instances
 if [ -n "$ALICE_POST_ID" ] && [ "$ALICE_POST_ID" != "null" ]; then
   echo -e "  ${GREEN}PASS${NC} Alice's post created successfully"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Alice's post creation failed"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 if [ -n "$BOB_POST_ID" ] && [ "$BOB_POST_ID" != "null" ]; then
   echo -e "  ${GREEN}PASS${NC} Bob's post created successfully"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Bob's post creation failed"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Verify alice's posts appear on alice's instance
@@ -75,10 +75,10 @@ ALICE_HAS_POST=$(echo "$ALICE_POSTS" | jq -r '.posts[] | select(.content == "Hel
 
 if [ -n "$ALICE_HAS_POST" ]; then
   echo -e "  ${GREEN}PASS${NC} Alice's post appears on her instance"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Alice's post not found on her instance"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Verify bob's posts appear on bob's instance
@@ -87,10 +87,10 @@ BOB_HAS_POST=$(echo "$BOB_POSTS" | jq -r '.posts[] | select(.content == "Hello f
 
 if [ -n "$BOB_HAS_POST" ]; then
   echo -e "  ${GREEN}PASS${NC} Bob's post appears on his instance"
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
 else
   echo -e "  ${RED}FAIL${NC} Bob's post not found on his instance"
-  ((FAIL_COUNT++))
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 # Each instance is independent (local SQLite)
