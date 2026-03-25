@@ -5,6 +5,8 @@ import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTran
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
+import { FileBrowser } from "../file-browser/FileBrowser";
+import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { X, Maximize2 } from "lucide-react";
 
 const MIN_WIDTH = 320;
@@ -255,7 +257,15 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
         className="rounded-lg bg-card overflow-hidden shadow-lg"
         style={{ width: win.width, height: win.height }}
       >
-        {win.path.startsWith("__terminal__") ? <TerminalApp /> : <AppViewer path={win.path} />}
+        {win.path.startsWith("__terminal__") ? (
+          <TerminalApp />
+        ) : win.path === "__file-browser__" ? (
+          <FileBrowser windowId={win.id} />
+        ) : win.path === "__preview-window__" ? (
+          <PreviewWindow />
+        ) : (
+          <AppViewer path={win.path} />
+        )}
         {interacting && <div className="absolute inset-0 z-10" />}
       </div>
       {/* Resize handle */}

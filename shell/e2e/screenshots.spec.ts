@@ -15,7 +15,6 @@ test.describe("Visual regression", () => {
   });
 
   test("chat sidebar open", async ({ page }) => {
-    // Chat toggle button is fixed at top-right corner
     const chatToggle = page.locator("button", { has: page.locator("svg.lucide-message-square") }).first();
     await chatToggle.click();
     await page.waitForTimeout(300);
@@ -25,7 +24,6 @@ test.describe("Visual regression", () => {
   });
 
   test("settings panel", async ({ page }) => {
-    // Settings button is in the dock, identified by the SettingsIcon
     const settingsButton = page.locator("aside button", { has: page.locator("svg.lucide-settings") }).first();
     await settingsButton.click();
     await page.waitForTimeout(300);
@@ -43,11 +41,23 @@ test.describe("Visual regression", () => {
   });
 
   test("mission control", async ({ page }) => {
-    // Mission control / Tasks button in the dock (KanbanSquareIcon)
     const tasksButton = page.locator("aside button", { has: page.locator("svg.lucide-square-kanban") }).first();
     await tasksButton.click();
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("mission-control.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("file browser", async ({ page }) => {
+    // Open via command palette since file browser may not be in the dock
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(300);
+    await page.keyboard.type("File Browser");
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(500);
+    await expect(page).toHaveScreenshot("file-browser.png", {
       maxDiffPixelRatio: 0.01,
     });
   });

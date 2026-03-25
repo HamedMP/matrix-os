@@ -1,0 +1,19 @@
+"use client";
+
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+
+interface MarkdownViewerProps {
+  content: string;
+}
+
+export function MarkdownViewer({ content }: MarkdownViewerProps) {
+  return (
+    <div className="md-prose max-w-none p-4 overflow-auto h-full">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
