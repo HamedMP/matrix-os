@@ -1,5 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
@@ -14,10 +14,6 @@ const isPublicRoute = createRouteMatcher([
   "/favicon.ico",
 ]);
 
-const isCacheableAsset = createRouteMatcher([
-  "/files/system/icons/:path*",
-]);
-
 const isGatewayProxy = createRouteMatcher([
   "/gateway/:path*",
   "/api/:path*",
@@ -26,7 +22,8 @@ const isGatewayProxy = createRouteMatcher([
   "/ws/:path*",
 ]);
 
-export default clerkMiddleware(async (auth, request) => {
+// Clerk handler for authenticated routes
+const withClerk = clerkMiddleware(async (auth, request) => {
   const { pathname } = request.nextUrl;
 
   // Layer 1: Clerk authentication (skip public routes)
@@ -57,18 +54,34 @@ export default clerkMiddleware(async (auth, request) => {
       headers.set("Authorization", `Bearer ${authToken}`);
     }
 
-    const response = NextResponse.rewrite(url, { headers });
-
-    // Preserve cache headers for static assets (Clerk adds no-store to everything)
-    if (isCacheableAsset(request)) {
-      response.headers.set("Cache-Control", "public, max-age=86400, immutable");
-    }
-
-    return response;
+    return NextResponse.rewrite(url, { headers });
   }
 
   return NextResponse.next();
 });
+
+// Paths that bypass Clerk entirely (static cacheable assets).
+// Clerk adds Cache-Control: no-store to every response it touches,
+// which kills browser caching. These paths rewrite directly to the
+// gateway so cache headers (max-age=86400, immutable) are preserved.
+function isCacheableAsset(pathname: string): boolean {
+  return pathname.startsWith("/files/system/icons/");
+}
+
+export default function middleware(
+  request: NextRequest,
+  event: import("next/server").NextFetchEvent,
+) {
+  const { pathname } = request.nextUrl;
+
+  // Bypass Clerk for cacheable assets -- rewrite directly to gateway
+  if (isCacheableAsset(pathname)) {
+    const url = new URL(pathname, gatewayUrl);
+    return NextResponse.rewrite(url);
+  }
+
+  return withClerk(request, event);
+}
 
 export const config = {
   matcher: [
