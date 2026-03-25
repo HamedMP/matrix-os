@@ -22,8 +22,8 @@ export async function handleVoiceWsMessage(
     const result = await ctx.voiceService.transcribe(audioBuffer);
     transcriptText = result.text;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    ctx.send(JSON.stringify({ type: "voice_error", message: `Transcription failed: ${msg}` }));
+    console.error("[voice-ws] Transcription failed:", e instanceof Error ? e.message : String(e));
+    ctx.send(JSON.stringify({ type: "voice_error", message: "Transcription failed. Please try again." }));
     return;
   }
 
@@ -54,7 +54,7 @@ export async function handleVoiceWsMessage(
       }),
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    ctx.send(JSON.stringify({ type: "voice_error", message: `TTS failed: ${msg}` }));
+    console.error("[voice-ws] TTS failed:", e instanceof Error ? e.message : String(e));
+    ctx.send(JSON.stringify({ type: "voice_error", message: "Voice response failed. Please try again." }));
   }
 }
