@@ -7,7 +7,7 @@ import {
   access,
   readdir,
 } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { existsSync } from "node:fs";
 import { resolveWithinHome } from "./path-security.js";
 import { getMimeType } from "./file-utils.js";
@@ -175,8 +175,8 @@ export async function fileDuplicate(
     if (counter > MAX_COPIES) return { ok: false, error: "Too many copies exist" };
   }
 
-  const newPath = dir && dir !== "." ? `${dir}/${newName}` : newName;
   const resolvedNew = join(dirname(resolved), newName);
+  const newPath = relative(homePath, resolvedNew);
 
   try {
     await cp(resolved, resolvedNew, { recursive: true });

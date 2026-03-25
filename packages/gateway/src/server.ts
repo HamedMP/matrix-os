@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, sta
 import { dirname, join, normalize, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
@@ -747,46 +748,44 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
-  app.post("/api/files/mkdir", async (c) => {
+  const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+
+  app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ path: string }>();
     if (!body.path) return c.json({ error: "path required" }, 400);
     const result = await fileMkdir(homePath, body.path);
     return c.json(result, result.ok ? 200 : 400);
   });
 
-  app.post("/api/files/touch", async (c) => {
-    const contentLength = parseInt(c.req.header("content-length") ?? "0", 10);
-    if (contentLength > 10 * 1024 * 1024) {
-      return c.json({ error: "Request body too large (max 10MB)" }, 413);
-    }
+  app.post("/api/files/touch", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ path: string; content?: string }>();
     if (!body.path) return c.json({ error: "path required" }, 400);
     const result = await fileTouch(homePath, body.path, body.content);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
-  app.post("/api/files/duplicate", async (c) => {
+  app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ path: string }>();
     if (!body.path) return c.json({ error: "path required" }, 400);
     const result = await fileDuplicate(homePath, body.path);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
-  app.post("/api/files/rename", async (c) => {
+  app.post("/api/files/rename", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ from: string; to: string }>();
     if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileRename(homePath, body.from, body.to);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
-  app.post("/api/files/copy", async (c) => {
+  app.post("/api/files/copy", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ from: string; to: string }>();
     if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileCopy(homePath, body.from, body.to);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
-  app.post("/api/files/delete", async (c) => {
+  app.post("/api/files/delete", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ path: string }>();
     if (!body.path) return c.json({ error: "path required" }, 400);
     const result = await fileDelete(homePath, body.path);
@@ -798,14 +797,14 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
-  app.post("/api/files/trash/restore", async (c) => {
+  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
     const body = await c.req.json<{ trashPath: string }>();
     if (!body.trashPath) return c.json({ error: "trashPath required" }, 400);
     const result = await trashRestore(homePath, body.trashPath);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
-  app.post("/api/files/trash/empty", async (c) => {
+  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
     const result = await trashEmpty(homePath);
     return c.json(result);
   });

@@ -163,6 +163,10 @@ export async function trashRestore(
     }
 
     const entry = manifest[entryIndex];
+    const normalizedRestore = entry.originalPath.replace(/^\/+/, "");
+    if (PROTECTED_PATHS.has(normalizedRestore) || [...PROTECTED_PATHS].some((p) => normalizedRestore.startsWith(p + "/"))) {
+      return { ok: false, error: "Cannot restore to a protected path", status: 403 };
+    }
     const resolvedRestore = resolveWithinHome(homePath, entry.originalPath);
     if (!resolvedRestore) {
       return { ok: false, error: "Invalid restore path" };
@@ -191,25 +195,27 @@ export async function trashEmpty(
 ): Promise<{ ok: boolean; deleted: number }> {
   const trashDir = join(homePath, ".trash");
 
+  const trashBase = join(homePath, ".trash");
+
   return withMutex(trashDir, async () => {
     const manifest = await readManifest(trashDir);
-    const count = manifest.length;
 
-    if (count === 0) return { ok: true, deleted: 0 };
+    if (manifest.length === 0) return { ok: true, deleted: 0 };
 
-    // Delete only files tracked in the manifest
+    let deleted = 0;
     for (const entry of manifest) {
       const fullPath = join(homePath, entry.trashPath);
+      if (!fullPath.startsWith(trashBase + "/")) continue;
       try {
         await rm(fullPath, { recursive: true, force: true });
+        deleted++;
       } catch {
         // skip entries whose files were already removed
       }
     }
 
-    // Clear manifest
     await writeManifest(trashDir, []);
 
-    return { ok: true, deleted: count };
+    return { ok: true, deleted };
   });
 }
