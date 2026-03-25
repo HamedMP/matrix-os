@@ -133,7 +133,7 @@ describe("Voice REST Endpoints", () => {
       const body = await res.json();
       expect(body.audioUrl).toBeDefined();
       expect(body.durationMs).toBe(1500);
-      expect(body.provider).toBe("edge");
+      expect(body.provider).toBeUndefined();
     });
 
     it("rejects empty text", async () => {

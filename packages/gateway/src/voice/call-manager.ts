@@ -300,6 +300,7 @@ export class CallManager {
   }
 
   private handleAnswered(callId: string, call: CallRecord): void {
+    if (this.destroyed) return;
     const options = this.callOptions.get(callId);
     if (!options) return;
 
@@ -314,7 +315,7 @@ export class CallManager {
     call: CallRecord,
     greeting: string,
   ): Promise<void> {
-    if (!this.provider) return;
+    if (this.destroyed || !this.provider) return;
 
     try {
       await this.provider.playTts({

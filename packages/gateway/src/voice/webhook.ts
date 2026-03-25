@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { VoiceCallProvider } from "./providers/base.js";
 import type { CallManager } from "./call-manager.js";
 import type { WebhookContext } from "./types.js";
@@ -10,6 +11,8 @@ export type WebhookRouterConfig = {
 
 export function createWebhookRouter(config: WebhookRouterConfig): Hono {
   const app = new Hono();
+
+  app.use("/*", bodyLimit({ maxSize: 64 * 1024 }));
 
   app.post("/:provider", async (c) => {
     const providerName = c.req.param("provider");

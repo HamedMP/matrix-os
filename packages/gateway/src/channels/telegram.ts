@@ -108,7 +108,7 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
                   if (resp.ok) chunks.push(Buffer.from(await resp.arrayBuffer()));
                 } catch (fetchErr) {
                   const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-                  console.warn("[telegram] Voice file download failed:", msg.replace(token, "[REDACTED]"));
+                  console.warn("[telegram] Voice file download failed:", msg.replaceAll(token, "[REDACTED]"));
                 }
               }
             }
@@ -122,11 +122,12 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
             });
           })().then((result) => {
             const text = result.transcript ?? "[Voice message - transcription failed]";
+            const audioFileName = result.filePath.split("/").pop() ?? "";
             const metadata: Record<string, unknown> = {
               source: "voice",
-              audioPath: result.filePath,
+              audioPath: `/files/data/audio/${audioFileName}`,
             };
-            if (result.error) metadata.error = result.error;
+            if (result.error) metadata.error = "Transcription unavailable";
 
             const channelMessage: ChannelMessage = {
               source: "telegram",

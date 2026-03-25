@@ -221,7 +221,7 @@ describe("Telegram voice note handling", () => {
     expect(messages[0]!.metadata).toEqual(
       expect.objectContaining({
         source: "voice",
-        audioPath: expect.stringMatching(/telegram-[0-9a-f-]+\.ogg$/),
+        audioPath: expect.stringMatching(/^\/files\/data\/audio\/telegram-[0-9a-f-]+\.ogg$/),
       }),
     );
   });
@@ -266,8 +266,8 @@ describe("Telegram voice note handling", () => {
     expect(messages[0]!.metadata).toEqual(
       expect.objectContaining({
         source: "voice",
-        audioPath: expect.stringMatching(/telegram-[0-9a-f-]+\.ogg$/),
-        error: "Whisper rate limited",
+        audioPath: expect.stringMatching(/^\/files\/data\/audio\/telegram-[0-9a-f-]+\.ogg$/),
+        error: "Transcription unavailable",
       }),
     );
   });

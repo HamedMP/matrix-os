@@ -41,9 +41,8 @@ export class VoiceProvisioner {
       });
 
       if (!response.ok) {
-        const text = await response.text();
         console.warn(
-          `[voice-provisioner] Failed to provision number for ${handle}: ${response.status} ${text}`,
+          `[voice-provisioner] Failed to provision number for ${handle}: HTTP ${response.status}`,
         );
         return null;
       }
@@ -79,9 +78,8 @@ export class VoiceProvisioner {
     });
 
     if (!response.ok && response.status !== 404) {
-      const text = await response.text();
       throw new Error(
-        `Twilio release error ${response.status}: ${response.statusText} - ${text}`,
+        `Twilio release failed (HTTP ${response.status})`,
       );
     }
   }

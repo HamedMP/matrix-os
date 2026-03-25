@@ -156,6 +156,9 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   async initiateCall(input: InitiateCallInput): Promise<InitiateCallResult> {
+    if (this.config.publicUrl && !input.webhookUrl.startsWith(this.config.publicUrl)) {
+      throw new Error("webhookUrl does not match configured publicUrl");
+    }
     const url = `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Calls.json`;
 
     const body = new URLSearchParams({

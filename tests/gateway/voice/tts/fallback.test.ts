@@ -95,7 +95,7 @@ describe("FallbackTtsChain", () => {
     await expect(chain.synthesize("hello")).rejects.toThrow(
       /All TTS providers failed/,
     );
-    await expect(chain.synthesize("hello")).rejects.toThrow(/p1 failed/);
+    await expect(chain.synthesize("hello")).rejects.toThrow(/All TTS providers failed/);
   });
 
   it("provider with isAvailable()=false is skipped entirely", async () => {

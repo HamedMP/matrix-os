@@ -97,7 +97,8 @@ export class FallbackTtsChain implements TtsProvider {
       }
     }
 
-    throw new Error(`All TTS providers failed: ${JSON.stringify(errors)}`);
+    console.error("[tts] All providers failed:", JSON.stringify(errors));
+    throw new Error("All TTS providers failed");
   }
 
   getStatus(): Array<{

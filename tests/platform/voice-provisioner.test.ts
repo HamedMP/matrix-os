@@ -180,7 +180,7 @@ describe("platform/voice-provisioner", () => {
       );
 
       await expect(provisioner.releaseNumber("PNffeeddccbbaa99887766554433221100")).rejects.toThrow(
-        "Twilio release error 500",
+        "Twilio release failed (HTTP 500)",
       );
     });
   });
