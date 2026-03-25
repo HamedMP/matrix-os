@@ -46,6 +46,7 @@ export function FileBrowserContent({
           renamingPath={renamingPath}
           onStartRename={onStartRename}
           onCancelRename={onCancelRename}
+          onOpenFile={onOpenFile}
         />
       );
     case "list":
@@ -54,6 +55,7 @@ export function FileBrowserContent({
           renamingPath={renamingPath}
           onStartRename={onStartRename}
           onCancelRename={onCancelRename}
+          onOpenFile={onOpenFile}
         />
       );
     case "column":

@@ -28,7 +28,7 @@ export function FileBrowserToolbar() {
   const clearSearch = useFileBrowser((s) => s.clearSearch);
 
   const [localQuery, setLocalQuery] = useState(searchQuery);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     setLocalQuery(searchQuery);

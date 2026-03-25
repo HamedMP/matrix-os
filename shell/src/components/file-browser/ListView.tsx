@@ -1,7 +1,6 @@
 "use client";
 
 import { useFileBrowser, type FileEntry } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { InlineRename } from "./InlineRename";
 import { cn } from "@/lib/utils";
 import {
@@ -56,9 +55,10 @@ interface ListViewProps {
   renamingPath: string | null;
   onStartRename: (name: string) => void;
   onCancelRename: () => void;
+  onOpenFile?: (path: string) => void;
 }
 
-export function ListView({ renamingPath, onStartRename, onCancelRename }: ListViewProps) {
+export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFile }: ListViewProps) {
   const entries = useFileBrowser((s) => s.entries);
   const selectedPaths = useFileBrowser((s) => s.selectedPaths);
   const currentPath = useFileBrowser((s) => s.currentPath);
@@ -69,7 +69,6 @@ export function ListView({ renamingPath, onStartRename, onCancelRename }: ListVi
   const setSortDirection = useFileBrowser((s) => s.setSortDirection);
   const navigate = useFileBrowser((s) => s.navigate);
   const rename = useFileBrowser((s) => s.rename);
-  const openFile = usePreviewWindow((s) => s.openFile);
 
   function handleSort(col: "name" | "size" | "modified" | "type") {
     if (sortBy === col) {
@@ -84,7 +83,7 @@ export function ListView({ renamingPath, onStartRename, onCancelRename }: ListVi
     if (entry.type === "directory") {
       navigate(currentPath ? `${currentPath}/${entry.name}` : entry.name);
     } else {
-      openFile(currentPath ? `${currentPath}/${entry.name}` : entry.name);
+      onOpenFile?.(currentPath ? `${currentPath}/${entry.name}` : entry.name);
     }
   }
 

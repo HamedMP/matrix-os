@@ -10,7 +10,7 @@ interface MarkdownViewerProps {
 
 export function MarkdownViewer({ content }: MarkdownViewerProps) {
   return (
-    <div className="prose prose-invert prose-sm max-w-none p-4 overflow-auto h-full">
+    <div className="prose prose-sm max-w-none p-4 overflow-auto h-full dark:prose-invert">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
         {content}
       </ReactMarkdown>

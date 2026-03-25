@@ -46,19 +46,19 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
   const openFileTab = usePreviewWindow((s) => s.openFile);
   const wmWindows = useWindowManager((s) => s.windows);
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
+  const wmFocusWindow = useWindowManager((s) => s.focusWindow);
 
   const openFile = useCallback(
     (path: string) => {
       openFileTab(path);
-      // Ensure the preview window exists in the window manager
-      const hasPreviewWindow = wmWindows.some(
-        (w) => w.path === "__preview-window__",
-      );
-      if (!hasPreviewWindow) {
+      const previewWin = wmWindows.find((w) => w.path === "__preview-window__");
+      if (previewWin) {
+        wmFocusWindow(previewWin.id);
+      } else {
         wmOpenWindow("Preview", "__preview-window__", 0);
       }
     },
-    [openFileTab, wmWindows, wmOpenWindow],
+    [openFileTab, wmWindows, wmOpenWindow, wmFocusWindow],
   );
 
   // Load initial directory
@@ -279,12 +279,12 @@ export function FileBrowser({ windowId }: FileBrowserProps) {
           onTrashClick={() => setShowingTrash(!showingTrash)}
           showingTrash={showingTrash}
         />
-        <FileContextMenu>
+        <FileContextMenu onOpenFile={openFile}>
           <div className="flex-1 min-w-0 overflow-auto">
             {showingTrash ? (
               <TrashView />
             ) : searchResults ? (
-              <SearchResults />
+              <SearchResults onOpenFile={openFile} />
             ) : (
               <FileBrowserContent
                 renamingPath={renamingPath}

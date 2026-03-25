@@ -1,21 +1,23 @@
 "use client";
 
 import { useFileBrowser, type SearchResult } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import {
   FileTextIcon,
   FolderIcon,
   FileCodeIcon,
 } from "lucide-react";
 
-export function SearchResults() {
+interface SearchResultsProps {
+  onOpenFile?: (path: string) => void;
+}
+
+export function SearchResults({ onOpenFile }: SearchResultsProps) {
   const searchResults = useFileBrowser((s) => s.searchResults);
   const searchQuery = useFileBrowser((s) => s.searchQuery);
   const searching = useFileBrowser((s) => s.searching);
   const navigate = useFileBrowser((s) => s.navigate);
   const select = useFileBrowser((s) => s.select);
   const clearSearch = useFileBrowser((s) => s.clearSearch);
-  const openFile = usePreviewWindow((s) => s.openFile);
 
   if (!searchResults) return null;
 
@@ -50,7 +52,7 @@ export function SearchResults() {
       clearSearch();
       navigate(result.path);
     } else {
-      openFile(result.path);
+      onOpenFile?.(result.path);
     }
   }
 

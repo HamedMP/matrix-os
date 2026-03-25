@@ -11,18 +11,19 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 
 interface FileContextMenuProps {
   children: React.ReactNode;
   targetName?: string;
   targetType?: "file" | "directory";
+  onOpenFile?: (path: string) => void;
 }
 
 export function FileContextMenu({
   children,
   targetName,
   targetType,
+  onOpenFile,
 }: FileContextMenuProps) {
   const currentPath = useFileBrowser((s) => s.currentPath);
   const selectedPaths = useFileBrowser((s) => s.selectedPaths);
@@ -38,7 +39,6 @@ export function FileContextMenu({
   const setQuickLookPath = useFileBrowser((s) => s.setQuickLookPath);
   const setViewMode = useFileBrowser((s) => s.setViewMode);
   const setSortBy = useFileBrowser((s) => s.setSortBy);
-  const openFile = usePreviewWindow((s) => s.openFile);
 
   const isMulti = selectedPaths.size > 1;
   const selected = Array.from(selectedPaths);
@@ -82,7 +82,7 @@ export function FileContextMenu({
             </ContextMenuItem>
           ) : (
             <>
-              <ContextMenuItem onClick={() => openFile(fullPath)}>
+              <ContextMenuItem onClick={() => onOpenFile?.(fullPath)}>
                 Open
               </ContextMenuItem>
               <ContextMenuItem onClick={() => setQuickLookPath(targetName)}>

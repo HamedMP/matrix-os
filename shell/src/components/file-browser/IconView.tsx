@@ -1,7 +1,6 @@
 "use client";
 
 import { useFileBrowser, type FileEntry } from "@/hooks/useFileBrowser";
-import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { FileIcon } from "./FileIcon";
 import { InlineRename } from "./InlineRename";
 
@@ -9,16 +8,16 @@ interface IconViewProps {
   renamingPath: string | null;
   onStartRename: (name: string) => void;
   onCancelRename: () => void;
+  onOpenFile?: (path: string) => void;
 }
 
-export function IconView({ renamingPath, onStartRename, onCancelRename }: IconViewProps) {
+export function IconView({ renamingPath, onStartRename, onCancelRename, onOpenFile }: IconViewProps) {
   const entries = useFileBrowser((s) => s.entries);
   const selectedPaths = useFileBrowser((s) => s.selectedPaths);
   const currentPath = useFileBrowser((s) => s.currentPath);
   const select = useFileBrowser((s) => s.select);
   const navigate = useFileBrowser((s) => s.navigate);
   const rename = useFileBrowser((s) => s.rename);
-  const openFile = usePreviewWindow((s) => s.openFile);
 
   function handleClick(entry: FileEntry, e: React.MouseEvent) {
     select(entry.name, e.metaKey || e.ctrlKey);
@@ -28,7 +27,7 @@ export function IconView({ renamingPath, onStartRename, onCancelRename }: IconVi
     if (entry.type === "directory") {
       navigate(currentPath ? `${currentPath}/${entry.name}` : entry.name);
     } else {
-      openFile(currentPath ? `${currentPath}/${entry.name}` : entry.name);
+      onOpenFile?.(currentPath ? `${currentPath}/${entry.name}` : entry.name);
     }
   }
 
