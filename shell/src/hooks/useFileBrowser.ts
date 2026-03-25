@@ -296,7 +296,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       const { clipboard, currentPath } = get();
       if (!clipboard) return;
 
-      let allOk = true;
+      const failed: string[] = [];
       for (const sourcePath of clipboard.paths) {
         const name = sourcePath.split("/").pop() ?? sourcePath;
         const destPath = currentPath ? `${currentPath}/${name}` : name;
@@ -307,11 +307,15 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ from: sourcePath, to: destPath }),
         });
-        if (!res.ok) allOk = false;
+        if (!res.ok) failed.push(sourcePath);
       }
 
-      if (clipboard.operation === "cut" && allOk) {
-        set({ clipboard: null });
+      if (clipboard.operation === "cut") {
+        if (failed.length === 0) {
+          set({ clipboard: null });
+        } else {
+          set({ clipboard: { paths: failed, operation: "cut" } });
+        }
       }
       get().refresh();
     },

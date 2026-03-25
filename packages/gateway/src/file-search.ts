@@ -1,10 +1,10 @@
-import { readdir, stat, open } from "node:fs/promises";
+import { readdir, lstat, open } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { resolveWithinHome } from "./path-security.js";
 import { isBinaryFile } from "./file-utils.js";
 
-const SKIP_DIRS = new Set([".git", ".trash", "node_modules", ".next"]);
+const SKIP_DIRS = new Set([".git", ".trash", "node_modules", ".next", "system"]);
 const MAX_CONTENT_SIZE = 1024 * 1024; // 1MB
 
 interface SearchMatch {
@@ -88,7 +88,8 @@ export async function fileSearch(
       } else if (entry.isFile()) {
         if (content && !isBinaryFile(entry.name)) {
           try {
-            const stats = await stat(fullPath);
+            const stats = await lstat(fullPath);
+            if (stats.isSymbolicLink()) continue;
             if (stats.size <= MAX_CONTENT_SIZE) {
               const contentMatches = await searchFileContent(
                 fullPath,
@@ -134,9 +135,10 @@ async function searchFileContent(
     for await (const line of rl) {
       lineNum++;
       if (line.toLowerCase().includes(queryLower)) {
+        const trimmed = line.trimStart();
         matches.push({
           line: lineNum,
-          text: line.trimStart(),
+          text: trimmed.length > 150 ? trimmed.slice(0, 150) + "..." : trimmed,
           type: "content",
         });
         if (matches.length >= 5) {

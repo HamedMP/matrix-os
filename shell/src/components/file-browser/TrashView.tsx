@@ -19,6 +19,7 @@ interface TrashEntry {
 export function TrashView() {
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,7 +49,11 @@ export function TrashView() {
   }
 
   async function handleEmpty() {
-    if (!confirm("Permanently delete all items in Trash?")) return;
+    if (!confirmEmpty) {
+      setConfirmEmpty(true);
+      return;
+    }
+    setConfirmEmpty(false);
     await fetch(`${GATEWAY_URL}/api/files/trash/empty`, {
       method: "POST",
     });
@@ -71,8 +76,13 @@ export function TrashView() {
           Trash ({entries.length} items)
         </div>
         {entries.length > 0 && (
-          <Button variant="destructive" size="sm" onClick={handleEmpty}>
-            Empty Trash
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleEmpty}
+            onBlur={() => setConfirmEmpty(false)}
+          >
+            {confirmEmpty ? "Confirm Empty" : "Empty Trash"}
           </Button>
         )}
       </div>

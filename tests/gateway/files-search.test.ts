@@ -40,13 +40,23 @@ describe("fileSearch", () => {
 
   it("searches file contents when content=true", async () => {
     const result = await fileSearch(testDir, {
-      q: "telegram",
+      q: "Builder",
       content: true,
     });
     expect(result.results.length).toBeGreaterThan(0);
-    const configResult = result.results.find((r) => r.name === "config.json");
-    expect(configResult).toBeDefined();
-    expect(configResult!.matches.some((m) => m.type === "content")).toBe(true);
+    const builderResult = result.results.find((r) => r.name === "builder.md");
+    expect(builderResult).toBeDefined();
+    expect(builderResult!.matches.some((m) => m.type === "content")).toBe(true);
+  });
+
+  it("skips system directory in content search", async () => {
+    const result = await fileSearch(testDir, {
+      q: "telegram",
+      content: true,
+    });
+    expect(
+      result.results.every((r) => !r.path.startsWith("system/")),
+    ).toBe(true);
   });
 
   it("searches within a subdirectory", async () => {

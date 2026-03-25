@@ -5,10 +5,10 @@ import {
   readFile,
   writeFile,
   rm,
-  readdir,
 } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolveWithinHome } from "./path-security.js";
 
 interface TrashManifestEntry {
@@ -60,12 +60,24 @@ async function writeManifest(
   await rename(tmpPath, manifestPath);
 }
 
+const PROTECTED_PATHS = new Set([
+  "system/config.json",
+  "system/matrix.db",
+  "system/soul.md",
+  "agents",
+]);
+
 export async function fileDelete(
   homePath: string,
   requestedPath: string,
 ): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return { ok: false, error: "Invalid path" };
+
+  const normalized = requestedPath.replace(/^\/+/, "");
+  if (PROTECTED_PATHS.has(normalized) || [...PROTECTED_PATHS].some((p) => normalized.startsWith(p + "/"))) {
+    return { ok: false, error: "Protected path cannot be deleted", status: 403 };
+  }
 
   if (!existsSync(resolved)) {
     return { ok: false, error: "Not found", status: 404 };
@@ -80,7 +92,7 @@ export async function fileDelete(
     let trashName = name;
 
     if (existsSync(join(trashDir, trashName))) {
-      trashName = `${Date.now()}-${name}`;
+      trashName = `${randomUUID()}-${name}`;
     }
 
     const trashFullPath = join(trashDir, trashName);
@@ -185,16 +197,14 @@ export async function trashEmpty(
 
     if (count === 0) return { ok: true, deleted: 0 };
 
-    // Delete all files in trash
-    try {
-      const entries = await readdir(trashDir);
-      for (const entry of entries) {
-        if (entry === ".manifest.json" || entry === ".manifest.json.tmp")
-          continue;
-        await rm(join(trashDir, entry), { recursive: true, force: true });
+    // Delete only files tracked in the manifest
+    for (const entry of manifest) {
+      const fullPath = join(homePath, entry.trashPath);
+      try {
+        await rm(fullPath, { recursive: true, force: true });
+      } catch {
+        // skip entries whose files were already removed
       }
-    } catch {
-      // trash dir may not exist
     }
 
     // Clear manifest

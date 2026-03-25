@@ -755,6 +755,10 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/files/touch", async (c) => {
+    const contentLength = parseInt(c.req.header("content-length") ?? "0", 10);
+    if (contentLength > 10 * 1024 * 1024) {
+      return c.json({ error: "Request body too large (max 10MB)" }, 413);
+    }
     const body = await c.req.json<{ path: string; content?: string }>();
     if (!body.path) return c.json({ error: "path required" }, 400);
     const result = await fileTouch(homePath, body.path, body.content);

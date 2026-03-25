@@ -33,13 +33,19 @@ export function QuickLook() {
       return;
     }
 
-    fetch(`${GATEWAY_URL}/files/${fullPath}`)
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    fetch(`${GATEWAY_URL}/files/${fullPath}`, { signal })
       .then((r) => (r.ok ? r.text() : null))
       .then((text) => {
+        if (signal.aborted) return;
         if (text) setContent(text.split("\n").slice(0, 50).join("\n"));
         else setContent(null);
       })
-      .catch(() => setContent(null));
+      .catch(() => { if (!signal.aborted) setContent(null); });
+
+    return () => controller.abort();
   }, [fullPath, quickLookPath]);
 
   if (!quickLookPath || !fullPath) return null;

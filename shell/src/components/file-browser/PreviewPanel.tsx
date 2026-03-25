@@ -51,25 +51,31 @@ export function PreviewPanel() {
       return;
     }
 
+    const controller = new AbortController();
+    const { signal } = controller;
+
     fetch(
       `${GATEWAY_URL}/api/files/stat?path=${encodeURIComponent(selectedFullPath)}`,
+      { signal },
     )
       .then((r) => r.json())
-      .then((data: FileStat) => setStat(data))
-      .catch(() => setStat(null));
+      .then((data: FileStat) => { if (!signal.aborted) setStat(data); })
+      .catch(() => { if (!signal.aborted) setStat(null); });
 
     if (selectedName && isTextLike(selectedName)) {
-      fetch(`${GATEWAY_URL}/files/${selectedFullPath}`)
+      fetch(`${GATEWAY_URL}/files/${selectedFullPath}`, { signal })
         .then((r) => (r.ok ? r.text() : null))
         .then((text) => {
-          if (text) {
+          if (!signal.aborted && text) {
             setPreview(text.split("\n").slice(0, 20).join("\n"));
           }
         })
-        .catch(() => setPreview(null));
+        .catch(() => { if (!signal.aborted) setPreview(null); });
     } else {
       setPreview(null);
     }
+
+    return () => controller.abort();
   }, [selectedFullPath, showPreviewPanel, selectedName]);
 
   if (!showPreviewPanel) return null;

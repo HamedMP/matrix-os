@@ -38,14 +38,21 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
       return;
     }
 
+    const controller = new AbortController();
+    const { signal } = controller;
+
     setLoading(true);
-    fetch(`${GATEWAY_URL}/files/${tab.path}`)
+    fetch(`${GATEWAY_URL}/files/${tab.path}`, { signal })
       .then((r) => (r.ok ? r.text() : ""))
       .then((text) => {
-        setContent(text);
-        setLoading(false);
+        if (!signal.aborted) {
+          setContent(text);
+          setLoading(false);
+        }
       })
-      .catch(() => setLoading(false));
+      .catch(() => { if (!signal.aborted) setLoading(false); });
+
+    return () => controller.abort();
   }, [tab.path, tab.type]);
 
   async function handleSave() {

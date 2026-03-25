@@ -82,7 +82,7 @@ export function FileBrowserToolbar() {
           ~
         </button>
         {pathSegments.map((seg, i) => (
-          <span key={i} className="flex items-center gap-1 min-w-0">
+          <span key={pathSegments.slice(0, i + 1).join("/")} className="flex items-center gap-1 min-w-0">
             <span className="text-muted-foreground">/</span>
             <button
               className="hover:text-foreground truncate"
