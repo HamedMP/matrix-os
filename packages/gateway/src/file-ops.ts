@@ -124,6 +124,9 @@ export async function fileCopy(
   if (!existsSync(resolvedFrom)) {
     return { ok: false, error: "Source not found", status: 404 };
   }
+  if (existsSync(resolvedTo)) {
+    return { ok: false, error: "Destination already exists", status: 409 };
+  }
 
   try {
     const dir = dirname(resolvedTo);
@@ -150,23 +153,26 @@ export async function fileDuplicate(
   const dir = dirname(requestedPath);
   const name = basename(requestedPath);
 
+  const MAX_COPIES = 100;
   let newName: string;
   if (stats.isDirectory()) {
     newName = `${name} copy`;
     let counter = 2;
-    while (existsSync(join(dirname(resolved), newName))) {
+    while (counter <= MAX_COPIES && existsSync(join(dirname(resolved), newName))) {
       newName = `${name} copy ${counter}`;
       counter++;
     }
+    if (counter > MAX_COPIES) return { ok: false, error: "Too many copies exist" };
   } else {
     const ext = extname(name);
     const base = ext ? name.slice(0, -ext.length) : name;
     newName = ext ? `${base} copy${ext}` : `${base} copy`;
     let counter = 2;
-    while (existsSync(join(dirname(resolved), newName))) {
+    while (counter <= MAX_COPIES && existsSync(join(dirname(resolved), newName))) {
       newName = ext ? `${base} copy ${counter}${ext}` : `${base} copy ${counter}`;
       counter++;
     }
+    if (counter > MAX_COPIES) return { ok: false, error: "Too many copies exist" };
   }
 
   const newPath = dir && dir !== "." ? `${dir}/${newName}` : newName;

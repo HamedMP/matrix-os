@@ -731,11 +731,18 @@ export async function createGateway(config: GatewayConfig) {
   app.get("/api/files/search", async (c) => {
     const q = c.req.query("q");
     if (!q) return c.json({ error: "q required" }, 400);
+    if (q.length > 500) return c.json({ error: "q too long" }, 400);
+    const rawLimit = c.req.query("limit");
+    let limit: number | undefined;
+    if (rawLimit) {
+      limit = parseInt(rawLimit, 10);
+      if (isNaN(limit) || limit < 1) return c.json({ error: "limit must be a positive integer" }, 400);
+    }
     const result = await fileSearch(homePath, {
       q,
       path: c.req.query("path"),
       content: c.req.query("content") === "true",
-      limit: c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : undefined,
+      limit,
     });
     return c.json(result);
   });

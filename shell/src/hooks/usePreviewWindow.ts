@@ -43,7 +43,7 @@ const EXT_TYPE_MAP: Record<string, PreviewFileType> = {
   ".jpeg": "image",
   ".gif": "image",
   ".webp": "image",
-  ".svg": "image",
+  ".svg": "code",
   ".pdf": "pdf",
   ".mp3": "audio",
   ".wav": "audio",

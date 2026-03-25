@@ -44,7 +44,12 @@
       "unrs-resolver",
       "@next/swc-linux-arm64-musl",
       "@next/swc-linux-x64-musl"
-    ]
+    ],
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "kysely-codegen>kysely": "^0.28.0"
+      }
+    }
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

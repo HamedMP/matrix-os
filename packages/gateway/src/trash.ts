@@ -31,7 +31,11 @@ const mutexes = new Map<string, Promise<unknown>>();
 
 function withMutex<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = mutexes.get(key) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
+  const next = prev
+    .then(() => fn(), () => fn())
+    .finally(() => {
+      if (mutexes.get(key) === next) mutexes.delete(key);
+    }) as Promise<T>;
   mutexes.set(key, next);
   return next;
 }
@@ -101,9 +105,11 @@ export async function trashList(
   const trashDir = join(homePath, ".trash");
   const manifest = await readManifest(trashDir);
 
+  const trashBase = join(homePath, ".trash");
   const entries: TrashListEntry[] = [];
   for (const entry of manifest) {
     const fullPath = join(homePath, entry.trashPath);
+    if (!fullPath.startsWith(trashBase + "/")) continue;
     try {
       const stats = await fsStat(fullPath);
       entries.push({
@@ -128,7 +134,8 @@ export async function trashRestore(
 ): Promise<{ ok: boolean; restoredTo?: string; error?: string; status?: number }> {
   const trashDir = join(homePath, ".trash");
   const resolvedTrash = resolveWithinHome(homePath, trashPath);
-  if (!resolvedTrash || !resolvedTrash.startsWith(join(homePath, ".trash"))) {
+  const trashBase = join(homePath, ".trash");
+  if (!resolvedTrash || (!resolvedTrash.startsWith(trashBase + "/") && resolvedTrash !== trashBase)) {
     return { ok: false, error: "Invalid trash path" };
   }
 
