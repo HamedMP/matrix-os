@@ -3,6 +3,7 @@
 // Inspired by AI Elements task pattern, consistent with MissionControl TaskCard
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
+import type { LucideIcon } from "lucide-react";
 import {
   CircleIcon,
   LoaderCircleIcon,
@@ -20,7 +21,7 @@ export interface TaskData {
 
 const statusConfig: Record<
   TaskStatus,
-  { icon: React.ElementType; className: string; label: string }
+  { icon: LucideIcon; className: string; label: string }
 > = {
   pending: {
     icon: CircleIcon,
