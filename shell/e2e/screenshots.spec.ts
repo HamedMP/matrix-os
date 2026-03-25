@@ -15,7 +15,6 @@ test.describe("Visual regression", () => {
   });
 
   test("chat sidebar open", async ({ page }) => {
-    // Chat toggle button is fixed at top-right corner
     const chatToggle = page.locator("button", { has: page.locator("svg.lucide-message-square") }).first();
     await chatToggle.click();
     await page.waitForTimeout(300);
@@ -25,7 +24,6 @@ test.describe("Visual regression", () => {
   });
 
   test("settings panel", async ({ page }) => {
-    // Settings button is in the dock, identified by the SettingsIcon
     const settingsButton = page.locator("aside button", { has: page.locator("svg.lucide-settings") }).first();
     await settingsButton.click();
     await page.waitForTimeout(300);
@@ -43,11 +41,43 @@ test.describe("Visual regression", () => {
   });
 
   test("mission control", async ({ page }) => {
-    // Mission control / Tasks button in the dock (KanbanSquareIcon)
     const tasksButton = page.locator("aside button", { has: page.locator("svg.lucide-square-kanban") }).first();
     await tasksButton.click();
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("mission-control.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("file browser", async ({ page }) => {
+    const fileBrowserButton = page.locator("aside button", { has: page.locator("svg.lucide-folder") }).first();
+    await fileBrowserButton.click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveScreenshot("file-browser.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("file browser list view", async ({ page }) => {
+    const fileBrowserButton = page.locator("aside button", { has: page.locator("svg.lucide-folder") }).first();
+    await fileBrowserButton.click();
+    await page.waitForTimeout(500);
+    const listViewButton = page.locator("button", { has: page.locator("svg.lucide-list") }).first();
+    await listViewButton.click();
+    await page.waitForTimeout(300);
+    await expect(page).toHaveScreenshot("file-browser-list.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("file browser column view", async ({ page }) => {
+    const fileBrowserButton = page.locator("aside button", { has: page.locator("svg.lucide-folder") }).first();
+    await fileBrowserButton.click();
+    await page.waitForTimeout(500);
+    const columnViewButton = page.locator("button", { has: page.locator("svg.lucide-columns-3") }).first();
+    await columnViewButton.click();
+    await page.waitForTimeout(300);
+    await expect(page).toHaveScreenshot("file-browser-columns.png", {
       maxDiffPixelRatio: 0.01,
     });
   });
