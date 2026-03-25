@@ -926,7 +926,7 @@ export async function createGateway(config: GatewayConfig) {
     });
   });
 
-  app.put("/files/*", async (c) => {
+  app.put("/files/*", fileBodyLimit, async (c) => {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWithinHome(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);

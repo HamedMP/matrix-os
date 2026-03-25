@@ -5,6 +5,8 @@ import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
 
+let navSeq = 0;
+
 export interface FileEntry {
   name: string;
   type: "file" | "directory";
@@ -162,7 +164,9 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         loading: true,
         error: null,
       });
+      const seq = ++navSeq;
       fetchEntries(path).then((entries) => {
+        if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
       });
@@ -180,7 +184,9 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         lastSelectedPath: null,
         loading: true,
       });
+      const seq = ++navSeq;
       fetchEntries(path).then((entries) => {
+        if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
       });
@@ -198,7 +204,9 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         lastSelectedPath: null,
         loading: true,
       });
+      const seq = ++navSeq;
       fetchEntries(path).then((entries) => {
+        if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
       });
@@ -207,7 +215,9 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     refresh() {
       const { currentPath } = get();
       set({ loading: true });
+      const seq = ++navSeq;
       fetchEntries(currentPath).then((entries) => {
+        if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
       });

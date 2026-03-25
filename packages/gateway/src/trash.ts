@@ -157,7 +157,8 @@ export async function trashRestore(
 
   return withMutex(trashDir, async () => {
     const manifest = await readManifest(trashDir);
-    const entryIndex = manifest.findIndex((e) => e.trashPath === trashPath);
+    const normalizedTrash = trashPath.replace(/^\/+/, "");
+    const entryIndex = manifest.findIndex((e) => e.trashPath === normalizedTrash);
     if (entryIndex === -1) {
       return { ok: false, error: "Not found in trash", status: 404 };
     }
