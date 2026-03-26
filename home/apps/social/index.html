@@ -1723,7 +1723,7 @@ body {
 
     container.querySelectorAll('[data-comment-input]').forEach(function(input) {
       var postId = input.dataset.commentInput;
-      var sendBtn = container.querySelector('[data-comment-send="' + postId + '"]');
+      var sendBtn = container.querySelector('[data-comment-send="' + CSS.escape(postId) + '"]');
 
       input.addEventListener('input', function() {
         if (sendBtn) sendBtn.disabled = input.value.trim().length === 0;
@@ -1764,7 +1764,7 @@ body {
     setTimeout(function() { btn.classList.remove('pop'); }, 400);
 
     saveLikedState();
-    apiCall('/posts/' + postId + '/like', { method: 'POST' }).then(function(data) {
+    apiCall('/posts/' + encodeURIComponent(postId) + '/like', { method: 'POST' }).then(function(data) {
       likedPosts[postId] = data.liked;
       likeCounts[postId] = data.likesCount;
       updateLikeButton(btn, data.liked, data.likesCount);
@@ -1815,7 +1815,7 @@ body {
       loading.textContent = 'Loading...';
       listEl.appendChild(loading);
 
-      apiCall('/posts/' + postId + '/comments').then(function(data) {
+      apiCall('/posts/' + encodeURIComponent(postId) + '/comments').then(function(data) {
         state.comments = data.comments || [];
         state.loaded = true;
         openCommentsState[postId] = state;
@@ -1829,7 +1829,7 @@ body {
       });
     }
 
-    var input = section.querySelector('[data-comment-input="' + postId + '"]');
+    var input = section.querySelector('[data-comment-input="' + CSS.escape(postId) + '"]');
     if (input) setTimeout(function() { input.focus(); }, 100);
   }
 
@@ -1861,7 +1861,7 @@ body {
     sendBtn.disabled = true;
     input.disabled = true;
 
-    apiCall('/posts/' + postId + '/comments', {
+    apiCall('/posts/' + encodeURIComponent(postId) + '/comments', {
       method: 'POST',
       body: JSON.stringify({ content: content })
     }).then(function() {
@@ -1880,7 +1880,7 @@ body {
         var post = arr.find(function(p) { return p.id === postId; });
         if (post) {
           post.commentsCount = (post.commentsCount || 0) + 1;
-          var card = document.querySelector('[data-post-id="' + postId + '"]');
+          var card = document.querySelector('[data-post-id="' + CSS.escape(postId) + '"]');
           if (card) {
             var countSpan = card.querySelector('.comment-btn span');
             if (countSpan) countSpan.textContent = formatCount(post.commentsCount);
@@ -1917,7 +1917,7 @@ body {
 
     delBtn.addEventListener('click', function(e) {
       e.stopPropagation();
-      apiCall('/posts/' + postId, { method: 'DELETE' }).then(function() {
+      apiCall('/posts/' + encodeURIComponent(postId), { method: 'DELETE' }).then(function() {
         feedPosts = feedPosts.filter(function(p) { return p.id !== postId; });
         explorePosts = explorePosts.filter(function(p) { return p.id !== postId; });
         profilePosts = profilePosts.filter(function(p) { return p.id !== postId; });
@@ -1925,7 +1925,7 @@ body {
         delete likedPosts[postId];
         delete openCommentsState[postId];
 
-        var cardEl = document.querySelector('[data-post-id="' + postId + '"]');
+        var cardEl = document.querySelector('[data-post-id="' + CSS.escape(postId) + '"]');
         if (cardEl) {
           cardEl.style.transition = 'opacity 200ms ease, transform 200ms ease';
           cardEl.style.opacity = '0';

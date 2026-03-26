@@ -1686,14 +1686,17 @@ body {
     var other = (conv.participants || []).find(function(p) { return p !== MY_HANDLE; });
     var name = conv.name || other;
 
+    var convIdAtStart = conv.id;
     typingIndicator.classList.add('visible');
     typingNameEl.textContent = name + ' is typing...';
 
     var delay = 1000 + Math.random() * 2000;
 
     aiReplyTimers[conv.id] = setTimeout(function() {
-      delete aiReplyTimers[conv.id];
-      typingIndicator.classList.remove('visible');
+      delete aiReplyTimers[convIdAtStart];
+      if (state.activeConvId === convIdAtStart) {
+        typingIndicator.classList.remove('visible');
+      }
 
       var replies = [
         'That is a great question! Let me think about it.',

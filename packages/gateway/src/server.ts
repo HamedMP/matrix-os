@@ -728,7 +728,7 @@ export async function createGateway(config: GatewayConfig) {
     let limit: number | undefined;
     if (rawLimit) {
       limit = parseInt(rawLimit, 10);
-      if (isNaN(limit) || limit < 1) return c.json({ error: "limit must be a positive integer" }, 400);
+      if (isNaN(limit) || limit < 1 || limit > 500) return c.json({ error: "limit must be 1-500" }, 400);
     }
     const result = await fileSearch(homePath, {
       q,
@@ -741,44 +741,48 @@ export async function createGateway(config: GatewayConfig) {
 
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
 
+  async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
+    try { return await c.req.json<T>(); } catch { return null; }
+  }
+
   app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
+    const body = await parseJson<{ path: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileMkdir(homePath, body.path);
     return c.json(result, result.ok ? 200 : 400);
   });
 
   app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string; content?: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
+    const body = await parseJson<{ path: string; content?: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileTouch(homePath, body.path, body.content);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
   app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
+    const body = await parseJson<{ path: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDuplicate(homePath, body.path);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
   app.post("/api/files/rename", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ from: string; to: string }>();
-    if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
+    const body = await parseJson<{ from: string; to: string }>(c);
+    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileRename(homePath, body.from, body.to);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
   app.post("/api/files/copy", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ from: string; to: string }>();
-    if (!body.from || !body.to) return c.json({ error: "from and to required" }, 400);
+    const body = await parseJson<{ from: string; to: string }>(c);
+    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileCopy(homePath, body.from, body.to);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
 
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ path: string }>();
-    if (!body.path) return c.json({ error: "path required" }, 400);
+    const body = await parseJson<{ path: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDelete(homePath, body.path);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
@@ -789,8 +793,8 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await c.req.json<{ trashPath: string }>();
-    if (!body.trashPath) return c.json({ error: "trashPath required" }, 400);
+    const body = await parseJson<{ trashPath: string }>(c);
+    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
     const result = await trashRestore(homePath, body.trashPath);
     return c.json(result, result.ok ? 200 : (result.status ?? 400));
   });
@@ -941,9 +945,13 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    const appSlug = body.app as string;
+    const rawSlug = body.app as string;
     const action = body.action as string;
+    const appSlug = rawSlug?.replace(/[^a-zA-Z0-9_-]/g, "");
 
+    if (!appSlug) {
+      return c.json({ error: "app is required and must contain valid characters" }, 400);
+    }
     if (!action) {
       return c.json({ error: "action is required" }, 400);
     }
@@ -960,8 +968,9 @@ export async function createGateway(config: GatewayConfig) {
 
     // Validate table is present for actions that need it
     const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
-    if (needsTable && !body.table) {
-      return c.json({ error: "table is required" }, 400);
+    const safeTable = typeof body.table === "string" ? body.table.replace(/[^a-zA-Z0-9_-]/g, "") : "";
+    if (needsTable && !safeTable) {
+      return c.json({ error: "table is required and must contain valid characters" }, 400);
     }
 
     // Validate id is present for actions that need it
@@ -973,31 +982,31 @@ export async function createGateway(config: GatewayConfig) {
     try {
       switch (action) {
         case "find":
-          return c.json(await queryEngine.find(appSlug, body.table as string, {
+          return c.json(await queryEngine.find(appSlug, safeTable, {
             filter: body.filter as Record<string, unknown> | undefined,
             orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
             limit: body.limit as number | undefined,
             offset: body.offset as number | undefined,
           }));
         case "findOne":
-          return c.json(await queryEngine.findOne(appSlug, body.table as string, body.id as string));
+          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id as string));
         case "insert": {
-          const result = await queryEngine.insert(appSlug, body.table as string, body.data as Record<string, unknown>);
-          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
+          const result = await queryEngine.insert(appSlug, safeTable, body.data as Record<string, unknown>);
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json(result, 201);
         }
         case "update": {
-          await queryEngine.update(appSlug, body.table as string, body.id as string, body.data as Record<string, unknown>);
-          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
+          await queryEngine.update(appSlug, safeTable, body.id as string, body.data as Record<string, unknown>);
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
         case "delete": {
-          await queryEngine.delete(appSlug, body.table as string, body.id as string);
-          broadcast({ type: "data:change", app: appSlug, key: body.table as string });
+          await queryEngine.delete(appSlug, safeTable, body.id as string);
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
         case "count":
-          return c.json({ count: await queryEngine.count(appSlug, body.table as string, body.filter as Record<string, unknown> | undefined) });
+          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, unknown> | undefined) });
         case "schema":
           return c.json(await appRegistry.getSchema(appSlug));
         case "listApps":
