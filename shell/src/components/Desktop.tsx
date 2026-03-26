@@ -355,10 +355,12 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
   } | null>(null);
 
   const generatingRef = useRef(new Set<string>());
+  const checkedRef = useRef(new Set<string>());
 
   const checkAndGenerateIcon = useCallback((slug: string) => {
-    if (generatingRef.current.has(slug)) return;
-    const iconPath = `/files/system/icons/${slug}.png`;
+    if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
+    checkedRef.current.add(slug);
+    const iconPath = `/icons/${slug}.png`;
     fetch(`${GATEWAY_URL}${iconPath}`, { method: "HEAD" }).then((res) => {
       if (res.ok) {
         // Icon exists -- the optimistic bare URL set by addApp is already correct
@@ -432,7 +434,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
                     ...a,
                     name: newName,
                     path: newPath,
-                    iconUrl: `${GATEWAY_URL}/files/system/icons/${ns}.png?v=${Date.now()}`,
+                    iconUrl: `/icons/${ns}.png?v=${Date.now()}`,
                   };
                 }
                 return a;
@@ -477,7 +479,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
     const slug = nameToSlug(name);
     // Always prefer generated PNG icon over module-provided icon (which can be
     // invalid, e.g. an emoji). checkAndGenerateIcon will generate if missing.
-    const optimisticUrl = `${GATEWAY_URL}/files/system/icons/${slug}.png`;
+    const optimisticUrl = `/icons/${slug}.png`;
     wmSetApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
       return [...prev, { name, path, iconUrl: optimisticUrl }];

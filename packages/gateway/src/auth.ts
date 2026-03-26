@@ -1,8 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
+import { normalize } from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 
 const PUBLIC_PATHS = ["/health"];
+const PUBLIC_PREFIXES = ["/files/system/icons/"];
 const WS_QUERY_TOKEN_PATHS = ["/ws/voice"];
 
 function timingSafeCompare(a: string, b: string): boolean {
@@ -34,7 +36,15 @@ export function authMiddleware(
   return async (c, next) => {
     if (!token) return next();
 
-    if (PUBLIC_PATHS.some((p) => c.req.path === p)) {
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(c.req.path);
+    } catch {
+      return c.json({ error: "Bad request" }, 400);
+    }
+    const normalizedPath = normalize(decodedPath);
+    if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
+        PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return next();
     }
 
@@ -48,11 +58,6 @@ export function authMiddleware(
         return c.json({ error: "Too many requests" }, 429);
       }
       return next();
-    }
-
-    const ip = getClientIp(c);
-    if (!rateLimiter.check(ip)) {
-      return c.json({ error: "Too many requests" }, 429);
     }
 
     const authHeader = c.req.header("Authorization");
@@ -73,10 +78,16 @@ export function authMiddleware(
       (authHeader && timingSafeCompare(authHeader, `Bearer ${token}`)) ||
       (isWsUpgrade && queryToken && timingSafeCompare(queryToken, token));
 
-    if (!authenticated) {
-      return c.json({ error: "Unauthorized" }, 401);
+    if (authenticated) {
+      return next();
     }
 
-    return next();
+    // Only rate-limit failed auth attempts
+    const ip = getClientIp(c);
+    if (!rateLimiter.check(ip)) {
+      return c.json({ error: "Too many requests" }, 429);
+    }
+
+    return c.json({ error: "Unauthorized" }, 401);
   };
 }

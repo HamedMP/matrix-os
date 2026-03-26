@@ -13,6 +13,9 @@ import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
 import { listDirectory } from "./files-tree.js";
+import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
+import { fileSearch } from "./file-search.js";
+import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -49,6 +52,10 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import { createAppDb, type AppDb } from "./app-db.js";
+import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
+import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import {
   createPluginRegistry,
@@ -69,15 +76,6 @@ import {
   wsConnectionsActive,
   normalizePath,
 } from "./metrics.js";
-import { VoiceService } from "./voice/index.js";
-import { CallManager } from "./voice/call-manager.js";
-import { CallStore } from "./voice/call-store.js";
-import { createVoiceRoutes } from "./voice/routes.js";
-import { createWebhookRouter } from "./voice/webhook.js";
-import { handleVoiceWsMessage } from "./voice/voice-ws.js";
-import { TwilioProvider } from "./voice/providers/twilio.js";
-import type { VoiceCallProvider } from "./voice/providers/base.js";
-import { VoiceConfigSchema } from "./voice/types.js";
 
 export interface GatewayConfig {
   homePath: string;
@@ -145,6 +143,85 @@ export async function createGateway(config: GatewayConfig) {
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const clients = new Set<WSContext>();
+
+  // App data layer (Postgres-backed when DATABASE_URL is set)
+  const databaseUrl = process.env.DATABASE_URL;
+  let appDb: AppDb | null = null;
+  let queryEngine: QueryEngine | null = null;
+  let kvStore: KvStore | null = null;
+  let appRegistry: AppRegistry | null = null;
+
+  if (databaseUrl) {
+    try {
+      const { db, kysely } = createAppDb(databaseUrl);
+      appDb = db;
+      await appDb.bootstrap();
+      queryEngine = createQueryEngine(appDb);
+      kvStore = createKvStore(kysely);
+      appRegistry = createAppRegistry(appDb, kysely);
+      console.log("[app-db] Postgres connected, data layer ready");
+
+      // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
+      const handle = process.env.MATRIX_HANDLE ?? "default";
+      const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
+      if (!migrated) {
+        try {
+          const { migrateJsonToKv } = await import("./app-db-migration.js");
+          const jsonResult = await migrateJsonToKv(homePath, kvStore);
+          if (jsonResult.keys > 0) {
+            console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
+          }
+          if (jsonResult.errors.length > 0) {
+            console.error("[app-db] Migration had errors, will retry next boot:", jsonResult.errors);
+          } else {
+            await kvStore.write("_system", `migration_v1_${handle}`, new Date().toISOString());
+          }
+        } catch (migErr) {
+          console.error("[app-db] Migration error:", (migErr as Error).message);
+        }
+      }
+
+      // Register apps with storage declarations
+      try {
+        const { loadAppManifest } = await import("./app-manifest.js");
+        const apps = listApps(homePath);
+        let registered = 0;
+        for (const app of apps) {
+          const appDir = app.file.includes("/")
+            ? join(homePath, "apps", app.file.replace(/\/index\.html$/, ""))
+            : null;
+          if (!appDir) continue;
+          const manifest = loadAppManifest(appDir);
+          if (manifest?.storage?.tables && Object.keys(manifest.storage.tables).length > 0) {
+            const slug = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
+            if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(slug)) continue;
+            await appRegistry.register({
+              slug,
+              name: manifest.name,
+              description: manifest.description,
+              version: manifest.version,
+              author: manifest.author,
+              category: manifest.category,
+              tables: manifest.storage.tables as Record<string, { columns: Record<string, string>; indexes?: string[] }>,
+            });
+            registered++;
+          }
+        }
+        if (registered > 0) {
+          console.log(`[app-db] Registered ${registered} app(s) with storage schemas`);
+        }
+      } catch (regErr) {
+        console.error("[app-db] App registration error:", (regErr as Error).message);
+      }
+    } catch (err) {
+      console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
+      console.log("[app-db] Falling back to file-based storage");
+      appDb = null;
+      queryEngine = null;
+      kvStore = null;
+      appRegistry = null;
+    }
+  }
 
   function logHealing(message: string) {
     const timestamp = new Date().toISOString();
@@ -452,70 +529,6 @@ export async function createGateway(config: GatewayConfig) {
     }
   } catch { /* no plugins config */ }
 
-  // Voice service -- TTS/STT with fallback chain
-  let voiceConfig: Record<string, unknown> = {};
-  try {
-    if (existsSync(configPath)) {
-      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
-      voiceConfig = cfg.voice ?? {};
-    }
-  } catch { /* no voice config */ }
-
-  const voiceService = VoiceService.create({ ...voiceConfig, homePath });
-
-  if (voiceService.isEnabled() && voiceService.stt) {
-    telegramAdapter.setVoiceContext({ homePath, stt: voiceService.stt });
-  }
-
-  // Telephony: CallManager + CallStore + webhook/REST routes
-  const callManager = new CallManager();
-  const callStore = new CallStore(join(homePath, "system", "voice", "calls.jsonl"));
-  const voiceProviders = new Map<string, VoiceCallProvider>();
-
-  // Register TwilioProvider when credentials are available
-  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-    if (!process.env.TWILIO_FROM_NUMBER) {
-      console.warn("[voice] TWILIO_FROM_NUMBER not set, skipping Twilio initialization");
-    } else {
-      try {
-        const twilioProvider = new TwilioProvider({
-          accountSid: process.env.TWILIO_ACCOUNT_SID,
-          authToken: process.env.TWILIO_AUTH_TOKEN,
-          fromNumber: process.env.TWILIO_FROM_NUMBER,
-          publicUrl: process.env.MATRIX_VOICE_WEBHOOK_URL,
-        });
-        voiceProviders.set("twilio", twilioProvider);
-
-        const parsedVoiceConfig = VoiceConfigSchema.parse(voiceConfig);
-        callManager.initialize(twilioProvider, parsedVoiceConfig);
-        voiceService.setCallManager(callManager);
-        console.log("[voice] Twilio provider registered and CallManager initialized");
-      } catch (e) {
-        console.warn("[voice] Failed to initialize Twilio provider:", e instanceof Error ? e.message : String(e));
-      }
-    }
-  }
-
-  // Wire CallStore persistence: persist call records on creation
-  const originalInitiateCall = callManager.initiateCall.bind(callManager);
-  callManager.initiateCall = async (...args) => {
-    const record = await originalInitiateCall(...args);
-    callStore.append(record);
-    return record;
-  };
-
-  const originalProcessEvent = callManager.processEvent.bind(callManager);
-  callManager.processEvent = (callId, event) => {
-    originalProcessEvent(callId, event);
-    const call = callManager.getCall(callId);
-    if (call) {
-      try { callStore.update(callId, call); } catch { /* best effort */ }
-    }
-  };
-
-  // CallManager is exposed via the voiceService return value from createGateway.
-  // Kernel IPC tools receive it through VoiceToolDeps injection at startup.
-
   const provisioner = createProvisioner({
     homePath,
     dispatcher,
@@ -537,9 +550,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.use("*", cors());
   app.use("*", securityHeadersMiddleware());
-  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
-    webhookProviders: new Set(voiceProviders.keys()),
-  }));
+  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
   app.use("*", async (c, next) => {
     const start = performance.now();
@@ -692,6 +703,107 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
+  app.get("/api/files/list", async (c) => {
+    const pathParam = c.req.query("path") ?? "";
+    const result = await listDirectory(homePath, pathParam);
+    if (!result) {
+      return c.json({ error: "Invalid path" }, 400);
+    }
+    return c.json({ path: pathParam, entries: result });
+  });
+
+  app.get("/api/files/stat", async (c) => {
+    const pathParam = c.req.query("path");
+    if (!pathParam) return c.json({ error: "path required" }, 400);
+    const result = await fileStat(homePath, pathParam);
+    if (!result) return c.json({ error: "Not found" }, 404);
+    return c.json(result);
+  });
+
+  app.get("/api/files/search", async (c) => {
+    const q = c.req.query("q");
+    if (!q) return c.json({ error: "q required" }, 400);
+    if (q.length > 500) return c.json({ error: "q too long" }, 400);
+    const rawLimit = c.req.query("limit");
+    let limit: number | undefined;
+    if (rawLimit) {
+      limit = parseInt(rawLimit, 10);
+      if (isNaN(limit) || limit < 1 || limit > 500) return c.json({ error: "limit must be 1-500" }, 400);
+    }
+    const result = await fileSearch(homePath, {
+      q,
+      path: c.req.query("path"),
+      content: c.req.query("content") === "true",
+      limit,
+    });
+    return c.json(result);
+  });
+
+  const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+
+  async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
+    try { return await c.req.json<T>(); } catch { return null; }
+  }
+
+  app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ path: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
+    const result = await fileMkdir(homePath, body.path);
+    return c.json(result, result.ok ? 200 : 400);
+  });
+
+  app.post("/api/files/touch", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ path: string; content?: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
+    const result = await fileTouch(homePath, body.path, body.content);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ path: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
+    const result = await fileDuplicate(homePath, body.path);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/rename", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ from: string; to: string }>(c);
+    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
+    const result = await fileRename(homePath, body.from, body.to);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/copy", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ from: string; to: string }>(c);
+    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
+    const result = await fileCopy(homePath, body.from, body.to);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/delete", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ path: string }>(c);
+    if (!body?.path) return c.json({ error: "path required" }, 400);
+    const result = await fileDelete(homePath, body.path);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.get("/api/files/trash", async (c) => {
+    const result = await trashList(homePath);
+    return c.json(result);
+  });
+
+  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
+    const body = await parseJson<{ trashPath: string }>(c);
+    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
+    const result = await trashRestore(homePath, body.trashPath);
+    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+  });
+
+  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
+    const result = await trashEmpty(homePath);
+    return c.json(result);
+  });
+
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     try {
@@ -723,103 +835,6 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Failed to save layout" }, 500);
     }
   });
-
-  // Voice WebSocket: receives audio, returns transcription + TTS audio
-  const MAX_VOICE_BUFFER_SIZE = 25 * 1024 * 1024; // 25MB
-  app.get(
-    "/ws/voice",
-    upgradeWebSocket(() => {
-      const chunks: Buffer[] = [];
-      let collecting = false;
-      let totalSize = 0;
-      let processing = false;
-
-      function createVoiceWsCtx(ws: WSContext) {
-        return {
-          voiceService,
-          send: (data: string) => ws.send(data),
-          dispatch: async (text: string) => {
-            let responseText = "";
-            await dispatcher.dispatch(text, undefined, (event) => {
-              if (event.type === "text") {
-                responseText += event.text;
-              }
-            }, { channel: "voice" });
-            return responseText;
-          },
-        };
-      }
-
-      function processAudio(ws: WSContext, audioBuffer: Buffer) {
-        if (processing) {
-          ws.send(JSON.stringify({ type: "voice_error", message: "Still processing previous audio" }));
-          return;
-        }
-        processing = true;
-        handleVoiceWsMessage(createVoiceWsCtx(ws), audioBuffer)
-          .catch(() => {
-            ws.send(JSON.stringify({ type: "voice_error", message: "Voice processing error" }));
-          })
-          .finally(() => { processing = false; });
-      }
-
-      return {
-        onMessage(evt, ws) {
-          if (typeof evt.data === "string") {
-            try {
-              const msg = JSON.parse(evt.data);
-              if (msg.type === "audio_start") {
-                chunks.length = 0;
-                totalSize = 0;
-                collecting = true;
-                return;
-              }
-              if (msg.type === "audio_end") {
-                collecting = false;
-                const audioBuffer = Buffer.concat(chunks);
-                chunks.length = 0;
-                totalSize = 0;
-                processAudio(ws, audioBuffer);
-                return;
-              }
-              if (msg.type === "voice" && msg.audio) {
-                if (typeof msg.audio !== "string" || msg.audio.length > MAX_VOICE_BUFFER_SIZE * 2) {
-                  ws.send(JSON.stringify({ type: "voice_error", message: "Audio too large" }));
-                  return;
-                }
-                const decoded = Buffer.from(msg.audio, "base64");
-                if (decoded.length > MAX_VOICE_BUFFER_SIZE) {
-                  ws.send(JSON.stringify({ type: "voice_error", message: "Audio too large" }));
-                  return;
-                }
-                processAudio(ws, decoded);
-                return;
-              }
-            } catch {
-              ws.send(JSON.stringify({ type: "voice_error", message: "Invalid message" }));
-            }
-          } else if (collecting && (evt.data instanceof ArrayBuffer || evt.data instanceof Uint8Array)) {
-            const chunk = Buffer.from(evt.data as ArrayBuffer);
-            totalSize += chunk.length;
-            if (totalSize > MAX_VOICE_BUFFER_SIZE) {
-              collecting = false;
-              chunks.length = 0;
-              totalSize = 0;
-              ws.send(JSON.stringify({ type: "voice_error", message: "Audio buffer size limit exceeded" }));
-              ws.close(1009, "Buffer size limit exceeded");
-              return;
-            }
-            chunks.push(chunk);
-          }
-        },
-
-        onClose() {
-          chunks.length = 0;
-          totalSize = 0;
-        },
-      };
-    }),
-  );
 
   app.post("/api/message", async (c) => {
     const body = await c.req.json<{
@@ -885,18 +900,7 @@ export async function createGateway(config: GatewayConfig) {
       svg: "image/svg+xml",
     };
 
-    const binaryMimeTypes: Record<string, string> = {
-      mp3: "audio/mpeg",
-      wav: "audio/wav",
-      ogg: "audio/ogg",
-      webm: "audio/webm",
-      m4a: "audio/mp4",
-      flac: "audio/flac",
-      opus: "audio/opus",
-      pdf: "application/pdf",
-    };
-
-    if (imageMimeTypes[ext] || binaryMimeTypes[ext]) {
+    if (imageMimeTypes[ext]) {
       const stat = statSync(fullPath);
       const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
       if (c.req.header("if-none-match") === etag) {
@@ -904,7 +908,7 @@ export async function createGateway(config: GatewayConfig) {
       }
       const buffer = readFileSync(fullPath);
       return c.body(buffer, 200, {
-        "Content-Type": imageMimeTypes[ext] || binaryMimeTypes[ext],
+        "Content-Type": imageMimeTypes[ext],
         "Cache-Control": "public, max-age=86400, immutable",
         "CDN-Cache-Control": "public, max-age=86400",
         "ETag": etag,
@@ -917,7 +921,7 @@ export async function createGateway(config: GatewayConfig) {
     });
   });
 
-  app.put("/files/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }), async (c) => {
+  app.put("/files/*", fileBodyLimit, async (c) => {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWithinHome(homePath, filePath);
     if (!fullPath) return c.text("Invalid path", 403);
@@ -928,16 +932,162 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
+  // Structured query API (Postgres-backed)
+  app.post("/api/bridge/query", async (c) => {
+    if (!queryEngine || !appRegistry) {
+      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    const rawSlug = body.app as string;
+    const action = body.action as string;
+    const appSlug = rawSlug?.replace(/[^a-zA-Z0-9_-]/g, "");
+
+    if (!action) {
+      return c.json({ error: "action is required" }, 400);
+    }
+
+    if (action !== "listApps" && !appSlug) {
+      return c.json({ error: "app is required and must contain valid characters" }, 400);
+    }
+
+    // Validate data for insert/update
+    if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object" || Array.isArray(body.data))) {
+      return c.json({ error: "data must be a non-null object" }, 400);
+    }
+
+    // Validate table is present for actions that need it
+    const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
+    const safeTable = typeof body.table === "string" ? body.table.replace(/[^a-zA-Z0-9_-]/g, "") : "";
+    if (needsTable && !safeTable) {
+      return c.json({ error: "table is required and must contain valid characters" }, 400);
+    }
+
+    // Validate id is present for actions that need it
+    const needsId = ["findOne", "update", "delete"].includes(action);
+    if (needsId && !body.id) {
+      return c.json({ error: "id is required" }, 400);
+    }
+
+    try {
+      switch (action) {
+        case "find":
+          return c.json(await queryEngine.find(appSlug, safeTable, {
+            filter: body.filter as Record<string, unknown> | undefined,
+            orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
+            limit: body.limit as number | undefined,
+            offset: body.offset as number | undefined,
+          }));
+        case "findOne":
+          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id as string));
+        case "insert": {
+          const result = await queryEngine.insert(appSlug, safeTable, body.data as Record<string, unknown>);
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json(result, 201);
+        }
+        case "update": {
+          await queryEngine.update(appSlug, safeTable, body.id as string, body.data as Record<string, unknown>);
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json({ ok: true });
+        }
+        case "delete": {
+          await queryEngine.delete(appSlug, safeTable, body.id as string);
+          broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json({ ok: true });
+        }
+        case "count":
+          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, unknown> | undefined) });
+        case "schema":
+          return c.json(await appRegistry.getSchema(appSlug));
+        case "listApps":
+          return c.json(await appRegistry.listApps());
+        default:
+          return c.json({ error: `Unknown action: ${action}` }, 400);
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      console.error("[app-db] Query error:", msg);
+      const isValidation = msg.startsWith("Invalid ") || msg.startsWith("insert:") || msg.startsWith("update:");
+      const safe = isValidation ? msg : "Query failed";
+      return c.json({ error: safe }, isValidation ? 400 : 500);
+    }
+  });
+
+  // Key-value bridge: GET for reads (query params), POST for read/write (JSON body)
+  app.get("/api/bridge/data", async (c) => {
+    const appName = c.req.query("app");
+    const key = c.req.query("key");
+    if (!appName || !key) return c.json({ error: "app and key query params required" }, 400);
+
+    const safeApp = appName.replace(/[^a-zA-Z0-9_-]/g, "");
+    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!safeApp || !safeKey) return c.json({ error: "Invalid app or key" }, 400);
+
+    if (kvStore) {
+      try {
+        const value = await kvStore.read(safeApp, safeKey);
+        return c.json({ value });
+      } catch (e) {
+        console.error(`[app-db] KV read error for ${safeApp}/${safeKey}:`, (e as Error).message);
+        return c.json({ error: "Database read failed" }, 500);
+      }
+    }
+
+    const dataDir = join(homePath, "data", safeApp);
+    const filePath = normalize(join(dataDir, `${safeKey}.json`));
+    if (!filePath.startsWith(normalize(dataDir))) return c.json({ error: "Path traversal denied" }, 403);
+    if (!existsSync(filePath)) return c.json({ value: null });
+    const content = readFileSync(filePath, "utf-8");
+    let value = content;
+    try {
+      const parsed = JSON.parse(content);
+      if (typeof parsed === "string") value = parsed;
+    } catch { /* raw content */ }
+    return c.json({ value });
+  });
+
   app.post("/api/bridge/data", async (c) => {
-    const body = await c.req.json<{
-      action: "read" | "write";
-      app: string;
-      key: string;
-      value?: string;
-    }>();
+    let body: { action: "read" | "write"; app: string; key: string; value?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
+      return c.json({ error: "app and key are required strings" }, 400);
+    }
 
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
+
+    if (!safeApp || !safeKey) {
+      return c.json({ error: "app and key must contain valid characters" }, 400);
+    }
+
+    // Postgres-backed path
+    if (kvStore) {
+      try {
+        if (body.action === "read") {
+          const value = await kvStore.read(safeApp, safeKey);
+          return c.json({ value });
+        }
+        await kvStore.write(safeApp, safeKey, body.value ?? "");
+        broadcast({ type: "data:change", app: safeApp, key: safeKey });
+        return c.json({ ok: true });
+      } catch (e) {
+        console.error(`[app-db] KV ${body.action} error for ${safeApp}/${safeKey}:`, (e as Error).message);
+        return c.json({ error: "Database operation failed" }, 500);
+      }
+    }
+
+    // File-based fallback (no Postgres)
     const dataDir = join(homePath, "data", safeApp);
     const filePath = normalize(join(dataDir, `${safeKey}.json`));
 
@@ -948,7 +1098,6 @@ export async function createGateway(config: GatewayConfig) {
     if (body.action === "read") {
       if (!existsSync(filePath)) return c.json({ value: null });
       const content = readFileSync(filePath, "utf-8");
-      // Handle legacy double-encoded files (old bridge used JSON.stringify on write)
       let value = content;
       try {
         const parsed = JSON.parse(content);
@@ -1419,16 +1568,6 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(getLeaderboard(homePath, game));
   });
 
-  // Voice REST endpoints + webhook router
-  app.route(
-    "/api/voice",
-    createVoiceRoutes({ voiceService, callStore, homePath }),
-  );
-  app.route(
-    "/voice/webhook",
-    createWebhookRouter({ callManager, providers: voiceProviders }),
-  );
-
   app.get("/health", (c) => c.json({
     status: "ok",
     cronJobs: cronService.listJobs().length,
@@ -1489,7 +1628,6 @@ export async function createGateway(config: GatewayConfig) {
     proactiveHeartbeat,
     pluginRegistry,
     hookRunner,
-    voiceService,
     async close() {
       // T939: Fire gateway_stop hook
       await hookRunner.fireVoidHook("gateway_stop", {}).catch(() => {});
@@ -1500,13 +1638,13 @@ export async function createGateway(config: GatewayConfig) {
         try { await services[i].stop(); } catch { /* ignore */ }
       }
 
-      voiceService.stop();
       heartbeat.stop();
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
       await channelManager.stop();
       await watcher.close();
+      await appDb?.destroy();
       server.close();
     },
   };

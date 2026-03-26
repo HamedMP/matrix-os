@@ -4,6 +4,8 @@ database_path = "/var/lib/matrix-conduit"
 database_backend = "rocksdb"
 port = 6167
 address = "0.0.0.0"
-allow_registration = true
+allow_registration = false
+# Enable registration only when CONDUIT_REGISTRATION_TOKEN is set.
+# The platform service manages registration via the provisioning API.
 allow_federation = false
 allow_check_for_updates = false
