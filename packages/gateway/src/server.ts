@@ -949,16 +949,12 @@ export async function createGateway(config: GatewayConfig) {
     const action = body.action as string;
     const appSlug = rawSlug?.replace(/[^a-zA-Z0-9_-]/g, "");
 
-    if (!appSlug) {
-      return c.json({ error: "app is required and must contain valid characters" }, 400);
-    }
     if (!action) {
       return c.json({ error: "action is required" }, 400);
     }
 
-    // listApps doesn't need an app slug
     if (action !== "listApps" && !appSlug) {
-      return c.json({ error: "app is required" }, 400);
+      return c.json({ error: "app is required and must contain valid characters" }, 400);
     }
 
     // Validate data for insert/update

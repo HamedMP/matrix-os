@@ -102,7 +102,8 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
     displayname: string,
   ): Promise<{ userId: string; accessToken: string }> {
     // Password is used once for register+login, then discarded. The access_token
-    // is stored durably in the DB. If it expires, the user can be re-provisioned.
+    // is stored in the DB. If it expires, recovery requires Conduit admin API
+    // (no password stored). TODO: persist encrypted password or use admin API.
     const password = randomBytes(32).toString('hex');
 
     const regRes = await fetchFn(`${homeserverUrl}/_matrix/client/v3/register`, {

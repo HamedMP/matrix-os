@@ -1564,17 +1564,18 @@ body {
 
   // ---- Initialization ----
   function init() {
-    apiCall('/users').then(function(data) {
-      if (data.users && data.users.length > 0) {
-        currentUser = data.users[0].handle;
-      }
-    }).catch(function() {}).then(function() {
-      composeAvatarEl.insertAdjacentHTML('beforeend', makeAvatarHtml(currentUser));
-      setupNavigation();
-      setupCompose();
-      setupRefresh();
-      loadFeed();
-    });
+    fetch('/api/identity').then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (data && data.handle) currentUser = '@' + data.handle;
+      })
+      .catch(function() {})
+      .then(function() {
+        composeAvatarEl.insertAdjacentHTML('beforeend', makeAvatarHtml(currentUser));
+        setupNavigation();
+        setupCompose();
+        setupRefresh();
+        loadFeed();
+      });
   }
 
   // ---- Navigation ----

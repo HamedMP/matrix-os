@@ -1889,10 +1889,17 @@ body {
   // -- Init --
 
   function init() {
-    loadConversations();
-    renderConversationList();
-    fetchUsers();
-    loadFromBridge();
+    fetch('/api/identity').then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (data && data.handle) MY_HANDLE = '@' + data.handle;
+      })
+      .catch(function() {})
+      .then(function() {
+        loadConversations();
+        renderConversationList();
+        fetchUsers();
+        loadFromBridge();
+      });
   }
 
   init();
