@@ -1174,8 +1174,6 @@ body {
   var allUsers = [];
   var openCommentsState = {};
   var likedPosts = {};
-  try { var _lk = localStorage.getItem('matrixos_social_liked'); if (_lk) likedPosts = JSON.parse(_lk); } catch(e) {}
-  function saveLikedState() { try { localStorage.setItem('matrixos_social_liked', JSON.stringify(likedPosts)); } catch(e) {} }
   var likeCounts = {};
   var openMenuId = null;
 
@@ -1669,6 +1667,7 @@ body {
       feedPosts = feedPosts.concat(newPosts);
       newPosts.forEach(function(p) {
         if (likeCounts[p.id] === undefined) likeCounts[p.id] = p.likesCount;
+        if (p.liked !== undefined) likedPosts[p.id] = p.liked;
       });
 
       renderFeed();
@@ -1764,17 +1763,17 @@ body {
     btn.classList.add('pop');
     setTimeout(function() { btn.classList.remove('pop'); }, 400);
 
-    saveLikedState();
+
     apiCall('/posts/' + encodeURIComponent(postId) + '/like', { method: 'POST' }).then(function(data) {
       likedPosts[postId] = data.liked;
       likeCounts[postId] = data.likesCount;
       updateLikeButton(btn, data.liked, data.likesCount);
-      saveLikedState();
+  
     }).catch(function() {
       likedPosts[postId] = wasLiked;
       likeCounts[postId] = currentCount;
       updateLikeButton(btn, wasLiked, currentCount);
-      saveLikedState();
+  
     });
   }
 
@@ -1992,6 +1991,7 @@ body {
 
       explorePosts.forEach(function(p) {
         if (likeCounts[p.id] === undefined) likeCounts[p.id] = p.likesCount;
+        if (p.liked !== undefined) likedPosts[p.id] = p.liked;
       });
 
       renderExplore(null);
@@ -2148,6 +2148,7 @@ body {
 
       profilePosts.forEach(function(p) {
         if (likeCounts[p.id] === undefined) likeCounts[p.id] = p.likesCount;
+        if (p.liked !== undefined) likedPosts[p.id] = p.liked;
       });
 
       renderProfile();

@@ -975,6 +975,31 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "id is required" }, 400);
     }
 
+    // Validate filter: must be a plain object with string keys (parseSafeName validates in query engine)
+    if (body.filter != null && (typeof body.filter !== "object" || Array.isArray(body.filter))) {
+      return c.json({ error: "filter must be a plain object" }, 400);
+    }
+
+    // Validate orderBy: must be a plain object with only "asc"/"desc" values
+    if (body.orderBy != null) {
+      if (typeof body.orderBy !== "object" || Array.isArray(body.orderBy)) {
+        return c.json({ error: "orderBy must be a plain object" }, 400);
+      }
+      for (const [, dir] of Object.entries(body.orderBy as Record<string, unknown>)) {
+        if (dir !== "asc" && dir !== "desc") {
+          return c.json({ error: "orderBy values must be 'asc' or 'desc'" }, 400);
+        }
+      }
+    }
+
+    // Validate limit/offset are non-negative integers
+    if (body.limit != null && (typeof body.limit !== "number" || !Number.isInteger(body.limit) || body.limit < 0)) {
+      return c.json({ error: "limit must be a non-negative integer" }, 400);
+    }
+    if (body.offset != null && (typeof body.offset !== "number" || !Number.isInteger(body.offset) || body.offset < 0)) {
+      return c.json({ error: "offset must be a non-negative integer" }, 400);
+    }
+
     try {
       switch (action) {
         case "find":

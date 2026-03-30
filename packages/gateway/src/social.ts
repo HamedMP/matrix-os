@@ -339,6 +339,10 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     return c.json({ error: 'Internal error' }, 500);
   });
 
+  function enrichWithLiked(posts: SocialPost[], userId: string) {
+    return posts.map((p) => ({ ...p, liked: isLikedBy(db, p.id, userId) }));
+  }
+
   // Posts
   api.get("/posts", (c) => {
     const author = c.req.query("author");
@@ -346,7 +350,7 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const offset = Number(c.req.query("offset")) || 0;
     const posts = listPosts(db, { authorId: author, type, limit, offset });
-    return c.json({ posts });
+    return c.json({ posts: enrichWithLiked(posts, getCurrentUser()) });
   });
 
   api.get("/posts/:id", (c) => {
@@ -391,22 +395,21 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const cursor = c.req.query("cursor");
     const followingIds = getFollowingIds(db, userId);
-    // Include own posts in feed
     const authorIds = [...followingIds, userId];
     if (authorIds.length === 0) {
-      // No follows: show recent posts from everyone
       const posts = listPosts(db, { limit });
-      return c.json({ posts, hasMore: false });
+      return c.json({ posts: enrichWithLiked(posts, userId), hasMore: false });
     }
     const result = listFeed(db, { authorIds, limit, cursor: cursor || undefined });
-    return c.json(result);
+    return c.json({ ...result, posts: enrichWithLiked(result.posts, userId) });
   });
 
   // Explore
   api.get("/explore", (c) => {
+    const userId = getCurrentUser();
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const posts = listTrendingPosts(db, limit);
-    return c.json({ posts });
+    return c.json({ posts: enrichWithLiked(posts, userId) });
   });
 
   // Likes
