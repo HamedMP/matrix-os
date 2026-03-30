@@ -1,19 +1,24 @@
-/** Resolve the gateway URL for API calls. In cloud (*.matrix-os.com), uses the current origin. */
+/**
+ * Resolve the gateway URL for API calls.
+ * Browser: always use current origin (requests go through shell proxy which injects auth).
+ * Server: use GATEWAY_URL env var (direct container-internal access).
+ */
 export function getGatewayUrl(): string {
-  if (typeof window !== "undefined" && window.location.hostname.endsWith(".matrix-os.com")) {
+  if (typeof window !== "undefined") {
     return window.location.origin;
   }
-  return process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:4000";
+  return process.env.GATEWAY_URL ?? "http://localhost:4000";
 }
 
-/** Resolve the gateway WebSocket URL. In cloud, uses the current host with wss. */
+/**
+ * Resolve the gateway WebSocket URL.
+ * Browser: always use current host (shell proxy handles /ws).
+ * Server: use direct gateway URL.
+ */
 export function getGatewayWs(): string {
-  if (typeof window !== "undefined" && window.location.hostname.endsWith(".matrix-os.com")) {
+  if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${window.location.host}/ws`;
   }
-  if (process.env.NEXT_PUBLIC_GATEWAY_WS) return process.env.NEXT_PUBLIC_GATEWAY_WS;
-  if (typeof window === "undefined") return "ws://localhost:4000/ws";
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.hostname}:4000/ws`;
+  return process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:4000/ws";
 }

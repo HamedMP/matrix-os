@@ -40,7 +40,7 @@ export interface ActivityServiceConfig {
     content: string;
     type: string;
     appRef?: string;
-  }) => string;
+  }) => Promise<string>;
 }
 
 export interface ActivityService {
@@ -66,7 +66,7 @@ export function createActivityService(config: ActivityServiceConfig): ActivitySe
         content: `Published a new app: ${event.appName}`,
         type: 'activity',
         appRef: event.appId,
-      });
+      }).catch((e) => console.error('[social-activity] Failed to create post:', e));
     },
 
     onAppFork(event) {
@@ -76,7 +76,7 @@ export function createActivityService(config: ActivityServiceConfig): ActivitySe
         authorId: event.authorId,
         content: `Remixed ${event.originalAuthor}'s ${event.appName}`,
         type: 'activity',
-      });
+      }).catch((e) => console.error('[social-activity] Failed to create post:', e));
     },
 
     onGameScore(event) {
@@ -86,7 +86,7 @@ export function createActivityService(config: ActivityServiceConfig): ActivitySe
         authorId: event.authorId,
         content: `Scored ${event.score} in ${event.gameName}!`,
         type: 'activity',
-      });
+      }).catch((e) => console.error('[social-activity] Failed to create post:', e));
     },
 
     onAiActivity(event) {
@@ -96,7 +96,7 @@ export function createActivityService(config: ActivityServiceConfig): ActivitySe
         authorId: event.authorId,
         content: `My AI ${event.description}`,
         type: 'activity',
-      });
+      }).catch((e) => console.error('[social-activity] Failed to create post:', e));
     },
   };
 }

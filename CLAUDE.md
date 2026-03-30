@@ -248,6 +248,13 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **013A Docker** (T500-T506): Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
 - **033 Docs** (T1100-T1108): Fumadocs documentation site at www/content/docs/ (feat/docs-site branch)
 
+### TODO: Social Network (spec 041)
+- **041 Phase A** (T1550-T1553): Matrix homeserver (Conduit) integration -- deploy, user provisioning, client library. MUST be done before messaging.
+- **041 Phase E** (T1590-T1594): Messages app -- BLOCKED on Phase A. Build on real Matrix rooms, not mocks. Mock messages app was removed. See `specs/041-social/tasks.md`.
+- **041 Phase C** (T1570-T1574): Activity sharing -- auto-post on app publish, weekly summaries. Activity service is wired but needs user-facing settings UI.
+- **041 Phase D** (T1580-T1584): External platform aggregation (X, GitHub, Instagram, Mastodon). Code scaffolded, not wired.
+- **Social app gaps**: No profile pictures (initials only), no image upload for posts, no repost/share. Social data is fully on Postgres (spec 050 app data layer).
+
 ### Next Up (see specs/ for details)
 - **034 Observability** (T1200-T1229): Prometheus metrics, Grafana dashboards, Loki log aggregation, alerting
 - **035 Canvas Desktop** (T1250-T1279): Infinite pan/zoom canvas mode, app grouping, minimap, toolbar
@@ -382,6 +389,28 @@ Each phase checkpoint must include:
 - Unit tests pass (`bun run test`)
 - Integration test that exercises the full end-to-end path (e.g., "initiate call via IPC tool -> Twilio API called -> webhook processes event -> call record persisted")
 - Manual Docker verification scenario
+
+### 6. Code Review Checklist (for review agents and PR reviews)
+Every code review MUST check these failure-mode questions. Don't just verify "does it work" -- verify "what happens when it breaks":
+
+**Error handling:**
+- Does every `catch` block check the error type before returning a fallback? Bare `catch { return null }` hides real errors.
+- Are errors from async fire-and-forget calls caught? (`.catch()` or try/catch with logging)
+- Do error responses leak internal state? (stack traces, DB column names, provider names)
+
+**Atomicity:**
+- Do multi-step mutations use a transaction? (3+ sequential DB writes need BEGIN/COMMIT/ROLLBACK)
+- Can a mid-flight crash leave inconsistent state? (orphaned rows, wrong counters, half-deleted cascades)
+- Is there a TOCTOU race? (check-then-insert without unique constraint or lock)
+
+**API contract:**
+- Do response field names match what the frontend expects? (camelCase vs snake_case after DB migration)
+- Are there dead code paths? (conditions that can never be true, like checking `array.length === 0` after pushing to it)
+- Does the API return all fields the frontend reads? (liked, counts, timestamps)
+
+**Type safety:**
+- Are there `as` casts that skip validation? (cast `unknown` to typed object without checking)
+- Do function signatures match their callers? (sync vs async, return type mismatches)
 
 ## Development Rules
 

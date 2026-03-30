@@ -5,6 +5,37 @@
   "category": "social",
   "icon": "users",
   "author": "system",
-  "version": "1.0.0",
-  "permissions": ["network"]
+  "version": "2.0.0",
+  "permissions": ["network"],
+  "storage": {
+    "tables": {
+      "posts": {
+        "columns": {
+          "author_id": "text",
+          "content": "text",
+          "type": "text",
+          "media_urls": "text",
+          "app_ref": "text",
+          "parent_id": "text",
+          "likes_count": "integer",
+          "comments_count": "integer"
+        },
+        "indexes": ["author_id", "type", "created_at", "likes_count", "parent_id"]
+      },
+      "likes": {
+        "columns": {
+          "post_id": "text",
+          "user_id": "text"
+        },
+        "indexes": ["post_id", "user_id"]
+      },
+      "follows": {
+        "columns": {
+          "follower_id": "text",
+          "followee_id": "text"
+        },
+        "indexes": ["follower_id", "followee_id"]
+      }
+    }
+  }
 }

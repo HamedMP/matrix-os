@@ -1,29 +1,53 @@
-import { randomUUID } from "node:crypto";
-import { eq, and, desc, sql, inArray, lt } from "drizzle-orm";
 import { Hono } from "hono";
-import {
-  socialPosts,
-  socialLikes,
-  socialFollows,
-  type MatrixDB,
-  type SocialPost,
-} from "@matrix-os/kernel";
+import type { AppDb } from "./app-db.js";
+import type { QueryEngine } from "./app-db-query.js";
 
-// --- ID generation ---
+// --- Types ---
 
-let postSeq = 0;
+export interface SocialPost {
+  id: string;
+  author_id: string;
+  content: string;
+  type: string;
+  media_urls: string | null;
+  app_ref: string | null;
+  parent_id: string | null;
+  likes_count: number;
+  comments_count: number;
+  created_at: string;
+  updated_at: string;
+}
 
-function makePostId(): string {
-  const ts = Date.now().toString(36);
-  const seq = (postSeq++).toString(36).padStart(4, "0");
-  const rand = randomUUID().slice(0, 6);
-  return `p_${ts}_${seq}_${rand}`;
+export interface SocialLike {
+  id: string;
+  post_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+export interface SocialFollow {
+  id: string;
+  follower_id: string;
+  followee_id: string;
+  created_at: string;
+}
+
+// --- Constants ---
+
+const SCHEMA = "social";
+const VALID_POST_TYPES = ["text", "image", "link", "app_share", "activity"];
+
+// --- Schema bootstrap (unique constraints not expressible in matrix.json) ---
+
+export async function bootstrapSocialSchema(db: AppDb): Promise<void> {
+  await db.raw(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_likes_unique ON "${SCHEMA}"."likes" ("post_id", "user_id")`);
+  await db.raw(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_follows_unique ON "${SCHEMA}"."follows" ("follower_id", "followee_id")`);
 }
 
 // --- Posts CRUD ---
 
-export function insertPost(
-  db: MatrixDB,
+export async function insertPost(
+  engine: QueryEngine,
   input: {
     authorId: string;
     content: string;
@@ -32,59 +56,84 @@ export function insertPost(
     mediaUrls?: string;
     appRef?: string;
   },
-): string {
-  const id = makePostId();
-  db.insert(socialPosts)
-    .values({
-      id,
-      authorId: input.authorId,
-      content: input.content,
-      type: input.type ?? "text",
-      parentId: input.parentId,
-      mediaUrls: input.mediaUrls,
-      appRef: input.appRef,
-      likesCount: 0,
-      commentsCount: 0,
-      createdAt: new Date().toISOString(),
-    })
-    .run();
+): Promise<string> {
+  const { id } = await engine.insert(SCHEMA, "posts", {
+    author_id: input.authorId,
+    content: input.content,
+    type: input.type ?? "text",
+    parent_id: input.parentId ?? null,
+    media_urls: input.mediaUrls ?? null,
+    app_ref: input.appRef ?? null,
+    likes_count: 0,
+    comments_count: 0,
+  });
   return id;
 }
 
-export function getPost(db: MatrixDB, id: string): SocialPost | undefined {
-  return db.select().from(socialPosts).where(eq(socialPosts.id, id)).get();
+export async function getPost(
+  engine: QueryEngine,
+  id: string,
+): Promise<SocialPost | null> {
+  try {
+    const row = await engine.findOne(SCHEMA, "posts", id);
+    return row as SocialPost | null;
+  } catch (e) {
+    if ((e as any).code === "22P02") return null; // invalid UUID syntax
+    throw e;
+  }
 }
 
-export function deletePost(db: MatrixDB, id: string): boolean {
-  const existing = getPost(db, id);
-  if (!existing) return false;
-  // better-sqlite3 is synchronous and single-connection, so sequential
-  // DELETEs are effectively atomic (no concurrent writes). Order matters:
-  // likes first, then child comments, then the post itself.
-  db.delete(socialLikes).where(eq(socialLikes.postId, id)).run();
-  db.delete(socialPosts).where(eq(socialPosts.parentId, id)).run();
-  db.delete(socialPosts).where(eq(socialPosts.id, id)).run();
+export async function deletePost(
+  db: AppDb,
+  engine: QueryEngine,
+  id: string,
+): Promise<boolean> {
+  const post = await getPost(engine, id);
+  if (!post) return false;
+  await db.raw("BEGIN");
+  try {
+    if (post.parent_id) {
+      await db.raw(
+        `UPDATE "${SCHEMA}"."posts" SET comments_count = GREATEST(comments_count - 1, 0), updated_at = now() WHERE id = $1`,
+        [post.parent_id],
+      );
+    }
+    await db.raw(
+      `DELETE FROM "${SCHEMA}"."likes" WHERE post_id = $1::text`,
+      [id],
+    );
+    await db.raw(
+      `DELETE FROM "${SCHEMA}"."likes" WHERE post_id IN (SELECT id::text FROM "${SCHEMA}"."posts" WHERE parent_id = $1::text)`,
+      [id],
+    );
+    await db.raw(
+      `DELETE FROM "${SCHEMA}"."posts" WHERE parent_id = $1::text`,
+      [id],
+    );
+    await engine.delete(SCHEMA, "posts", id);
+    await db.raw("COMMIT");
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    throw e;
+  }
   return true;
 }
 
-export function listPosts(
-  db: MatrixDB,
+export async function listPosts(
+  engine: QueryEngine,
   opts?: { authorId?: string; type?: string; limit?: number; offset?: number },
-): SocialPost[] {
-  const limit = opts?.limit ?? 20;
-  const offset = opts?.offset ?? 0;
-  const conditions = [sql`${socialPosts.parentId} IS NULL`];
-  if (opts?.authorId) conditions.push(eq(socialPosts.authorId, opts.authorId));
-  if (opts?.type) conditions.push(eq(socialPosts.type, opts.type));
+): Promise<SocialPost[]> {
+  const filter: Record<string, unknown> = { parent_id: null };
+  if (opts?.authorId) filter.author_id = opts.authorId;
+  if (opts?.type) filter.type = opts.type;
 
-  return db
-    .select()
-    .from(socialPosts)
-    .where(and(...conditions))
-    .orderBy(desc(socialPosts.createdAt))
-    .limit(limit)
-    .offset(offset)
-    .all();
+  const rows = await engine.find(SCHEMA, "posts", {
+    filter,
+    orderBy: { created_at: "desc" },
+    limit: opts?.limit ?? 20,
+    offset: opts?.offset ?? 0,
+  });
+  return rows as SocialPost[];
 }
 
 // --- Feed ---
@@ -95,267 +144,362 @@ export interface FeedResult {
   cursor?: string;
 }
 
-export function listFeed(
-  db: MatrixDB,
+export async function listFeed(
+  db: AppDb,
   opts: { authorIds: string[]; limit?: number; cursor?: string },
-): FeedResult {
+): Promise<FeedResult> {
   const { authorIds, limit = 20, cursor } = opts;
   if (authorIds.length === 0) return { posts: [], hasMore: false };
 
-  const conditions = [
-    inArray(socialPosts.authorId, authorIds),
-    sql`${socialPosts.parentId} IS NULL`,
-  ];
-  if (cursor) conditions.push(lt(socialPosts.id, cursor));
+  const placeholders = authorIds.map((_, i) => `$${i + 1}`).join(", ");
+  let q = `SELECT * FROM "${SCHEMA}"."posts" WHERE author_id IN (${placeholders}) AND parent_id IS NULL`;
+  const params: unknown[] = [...authorIds];
 
-  const result = db
-    .select()
-    .from(socialPosts)
-    .where(and(...conditions))
-    .orderBy(desc(socialPosts.createdAt), desc(socialPosts.id))
-    .limit(limit + 1)
-    .all();
+  if (cursor) {
+    const cursorResult = await db.raw(
+      `SELECT created_at, id FROM "${SCHEMA}"."posts" WHERE id = $1`,
+      [cursor],
+    );
+    if (cursorResult.rows.length > 0) {
+      const cursorTs = cursorResult.rows[0].created_at;
+      const cursorId = cursorResult.rows[0].id;
+      params.push(cursorTs);
+      const tsIdx = params.length;
+      params.push(cursorTs);
+      const tsIdx2 = params.length;
+      params.push(cursorId);
+      const idIdx = params.length;
+      q += ` AND (created_at < $${tsIdx} OR (created_at = $${tsIdx2} AND id < $${idIdx}))`;
+    }
+  }
 
-  const hasMore = result.length > limit;
-  const page = hasMore ? result.slice(0, limit) : result;
+  params.push(limit + 1);
+  q += ` ORDER BY created_at DESC, id DESC LIMIT $${params.length}`;
+
+  const result = await db.raw(q, params);
+  const rows = result.rows as SocialPost[];
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
 
   return {
     posts: page,
     hasMore,
-    cursor: page.length > 0 ? page[page.length - 1].id : undefined,
+    cursor: page.length > 0 ? String(page[page.length - 1].id) : undefined,
   };
 }
 
-export function listTrendingPosts(db: MatrixDB, limit = 20): SocialPost[] {
-  return db
-    .select()
-    .from(socialPosts)
-    .where(sql`${socialPosts.parentId} IS NULL`)
-    .orderBy(desc(socialPosts.likesCount), desc(socialPosts.createdAt))
-    .limit(limit)
-    .all();
+export async function listTrendingPosts(
+  engine: QueryEngine,
+  limit = 20,
+): Promise<SocialPost[]> {
+  const rows = await engine.find(SCHEMA, "posts", {
+    filter: { parent_id: null },
+    orderBy: { likes_count: "desc" },
+    limit,
+  });
+  return rows as SocialPost[];
 }
 
 // --- Likes ---
 
-// better-sqlite3 is synchronous and single-connection. The check-then-mutate
-// pattern (SELECT + INSERT + UPDATE) has no race window because concurrent
-// requests are serialized by the Node.js event loop.
-export function likePost(db: MatrixDB, postId: string, userId: string): boolean {
-  const existing = db
-    .select()
-    .from(socialLikes)
-    .where(and(eq(socialLikes.postId, postId), eq(socialLikes.userId, userId)))
-    .get();
-  if (existing) return false;
-
-  db.insert(socialLikes)
-    .values({ postId, userId, createdAt: new Date().toISOString() })
-    .run();
-  db.update(socialPosts)
-    .set({ likesCount: sql`${socialPosts.likesCount} + 1` })
-    .where(eq(socialPosts.id, postId))
-    .run();
-  return true;
-}
-
-export function unlikePost(db: MatrixDB, postId: string, userId: string): boolean {
-  const existing = db
-    .select()
-    .from(socialLikes)
-    .where(and(eq(socialLikes.postId, postId), eq(socialLikes.userId, userId)))
-    .get();
-  if (!existing) return false;
-
-  db.delete(socialLikes)
-    .where(and(eq(socialLikes.postId, postId), eq(socialLikes.userId, userId)))
-    .run();
-  db.update(socialPosts)
-    .set({ likesCount: sql`MAX(${socialPosts.likesCount} - 1, 0)` })
-    .where(eq(socialPosts.id, postId))
-    .run();
-  return true;
-}
-
-export function isLikedBy(db: MatrixDB, postId: string, userId: string): boolean {
-  return !!db
-    .select()
-    .from(socialLikes)
-    .where(and(eq(socialLikes.postId, postId), eq(socialLikes.userId, userId)))
-    .get();
-}
-
-export function getLikers(db: MatrixDB, postId: string): string[] {
-  return db
-    .select({ userId: socialLikes.userId })
-    .from(socialLikes)
-    .where(eq(socialLikes.postId, postId))
-    .all()
-    .map((r) => r.userId);
-}
-
-// --- Comments (posts with parentId) ---
-
-export function addComment(
-  db: MatrixDB,
-  input: { postId: string; authorId: string; content: string },
-): string {
-  const id = insertPost(db, {
-    authorId: input.authorId,
-    content: input.content,
-    type: "text",
-    parentId: input.postId,
+export async function likePost(
+  db: AppDb,
+  engine: QueryEngine,
+  postId: string,
+  userId: string,
+): Promise<boolean> {
+  const existing = await engine.find(SCHEMA, "likes", {
+    filter: { post_id: postId, user_id: userId },
+    limit: 1,
   });
-  db.update(socialPosts)
-    .set({ commentsCount: sql`${socialPosts.commentsCount} + 1` })
-    .where(eq(socialPosts.id, input.postId))
-    .run();
-  return id;
+  if (existing.length > 0) return false;
+
+  await db.raw("BEGIN");
+  try {
+    await engine.insert(SCHEMA, "likes", {
+      post_id: postId,
+      user_id: userId,
+    });
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET likes_count = likes_count + 1, updated_at = now() WHERE id = $1`,
+      [postId],
+    );
+    await db.raw("COMMIT");
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    if ((e as any).code === "23505") return false; // unique constraint (concurrent like)
+    throw e;
+  }
+  return true;
 }
 
-export function listComments(db: MatrixDB, postId: string): SocialPost[] {
-  return db
-    .select()
-    .from(socialPosts)
-    .where(eq(socialPosts.parentId, postId))
-    .orderBy(socialPosts.createdAt)
-    .all();
+export async function unlikePost(
+  db: AppDb,
+  engine: QueryEngine,
+  postId: string,
+  userId: string,
+): Promise<boolean> {
+  const existing = await engine.find(SCHEMA, "likes", {
+    filter: { post_id: postId, user_id: userId },
+    limit: 1,
+  });
+  if (existing.length === 0) return false;
+
+  const likeId = (existing[0] as SocialLike).id;
+  await db.raw("BEGIN");
+  try {
+    await engine.delete(SCHEMA, "likes", likeId);
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET likes_count = GREATEST(likes_count - 1, 0), updated_at = now() WHERE id = $1`,
+      [postId],
+    );
+    await db.raw("COMMIT");
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    throw e;
+  }
+  return true;
+}
+
+export async function isLikedBy(
+  engine: QueryEngine,
+  postId: string,
+  userId: string,
+): Promise<boolean> {
+  const rows = await engine.find(SCHEMA, "likes", {
+    filter: { post_id: postId, user_id: userId },
+    limit: 1,
+  });
+  return rows.length > 0;
+}
+
+export async function getLikers(
+  engine: QueryEngine,
+  postId: string,
+): Promise<string[]> {
+  const rows = await engine.find(SCHEMA, "likes", {
+    filter: { post_id: postId },
+    limit: 1000,
+  });
+  return rows.map((r) => r.user_id as string);
+}
+
+// --- Comments (posts with parent_id) ---
+
+export async function addComment(
+  db: AppDb,
+  engine: QueryEngine,
+  input: { postId: string; authorId: string; content: string },
+): Promise<string> {
+  await db.raw("BEGIN");
+  try {
+    const id = await insertPost(engine, {
+      authorId: input.authorId,
+      content: input.content,
+      type: "text",
+      parentId: input.postId,
+    });
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET comments_count = comments_count + 1, updated_at = now() WHERE id = $1`,
+      [input.postId],
+    );
+    await db.raw("COMMIT");
+    return id;
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    throw e;
+  }
+}
+
+export async function listComments(
+  engine: QueryEngine,
+  postId: string,
+): Promise<SocialPost[]> {
+  const rows = await engine.find(SCHEMA, "posts", {
+    filter: { parent_id: postId },
+    orderBy: { created_at: "asc" },
+  });
+  return rows as SocialPost[];
 }
 
 // --- Follows ---
 
-export function followUser(db: MatrixDB, followerId: string, followeeId: string): boolean {
-  const existing = db
-    .select()
-    .from(socialFollows)
-    .where(and(eq(socialFollows.followerId, followerId), eq(socialFollows.followeeId, followeeId)))
-    .get();
-  if (existing) return false;
+export async function followUser(
+  engine: QueryEngine,
+  followerId: string,
+  followeeId: string,
+): Promise<boolean> {
+  const existing = await engine.find(SCHEMA, "follows", {
+    filter: { follower_id: followerId, followee_id: followeeId },
+    limit: 1,
+  });
+  if (existing.length > 0) return false;
 
-  db.insert(socialFollows)
-    .values({ followerId, followeeId, createdAt: new Date().toISOString() })
-    .run();
+  try {
+    await engine.insert(SCHEMA, "follows", {
+      follower_id: followerId,
+      followee_id: followeeId,
+    });
+  } catch (e) {
+    if ((e as any).code === "23505") return false; // unique constraint violation (race)
+    throw e;
+  }
   return true;
 }
 
-export function unfollowUser(db: MatrixDB, followerId: string, followeeId: string): boolean {
-  const existing = db
-    .select()
-    .from(socialFollows)
-    .where(and(eq(socialFollows.followerId, followerId), eq(socialFollows.followeeId, followeeId)))
-    .get();
-  if (!existing) return false;
+export async function unfollowUser(
+  engine: QueryEngine,
+  followerId: string,
+  followeeId: string,
+): Promise<boolean> {
+  const existing = await engine.find(SCHEMA, "follows", {
+    filter: { follower_id: followerId, followee_id: followeeId },
+    limit: 1,
+  });
+  if (existing.length === 0) return false;
 
-  db.delete(socialFollows)
-    .where(and(eq(socialFollows.followerId, followerId), eq(socialFollows.followeeId, followeeId)))
-    .run();
+  const followId = (existing[0] as SocialFollow).id;
+  await engine.delete(SCHEMA, "follows", followId);
   return true;
 }
 
-export function getFollowers(db: MatrixDB, handle: string) {
-  return db
-    .select()
-    .from(socialFollows)
-    .where(eq(socialFollows.followeeId, handle))
-    .orderBy(desc(socialFollows.createdAt))
-    .all();
-}
-
-export function getFollowing(db: MatrixDB, handle: string) {
-  return db
-    .select()
-    .from(socialFollows)
-    .where(eq(socialFollows.followerId, handle))
-    .orderBy(desc(socialFollows.createdAt))
-    .all();
-}
-
-export function getFollowCounts(
-  db: MatrixDB,
+export async function getFollowers(
+  engine: QueryEngine,
   handle: string,
-): { followers: number; following: number } {
-  const followers = db
-    .select({ count: sql<number>`count(*)` })
-    .from(socialFollows)
-    .where(eq(socialFollows.followeeId, handle))
-    .get();
-  const following = db
-    .select({ count: sql<number>`count(*)` })
-    .from(socialFollows)
-    .where(eq(socialFollows.followerId, handle))
-    .get();
-  return {
-    followers: followers?.count ?? 0,
-    following: following?.count ?? 0,
-  };
+): Promise<SocialFollow[]> {
+  const rows = await engine.find(SCHEMA, "follows", {
+    filter: { followee_id: handle },
+    orderBy: { created_at: "desc" },
+    limit: 1000,
+  });
+  return rows as SocialFollow[];
 }
 
-export function getFollowingIds(db: MatrixDB, handle: string): string[] {
-  return db
-    .select({ followeeId: socialFollows.followeeId })
-    .from(socialFollows)
-    .where(eq(socialFollows.followerId, handle))
-    .all()
-    .map((r) => r.followeeId);
+export async function getFollowing(
+  engine: QueryEngine,
+  handle: string,
+): Promise<SocialFollow[]> {
+  const rows = await engine.find(SCHEMA, "follows", {
+    filter: { follower_id: handle },
+    orderBy: { created_at: "desc" },
+    limit: 1000,
+  });
+  return rows as SocialFollow[];
 }
 
-export function isFollowing(db: MatrixDB, followerId: string, followeeId: string): boolean {
-  return !!db
-    .select()
-    .from(socialFollows)
-    .where(and(eq(socialFollows.followerId, followerId), eq(socialFollows.followeeId, followeeId)))
-    .get();
+export async function getFollowCounts(
+  engine: QueryEngine,
+  handle: string,
+): Promise<{ followers: number; following: number }> {
+  const followers = await engine.count(SCHEMA, "follows", { followee_id: handle });
+  const following = await engine.count(SCHEMA, "follows", { follower_id: handle });
+  return { followers, following };
+}
+
+export async function getFollowingIds(
+  engine: QueryEngine,
+  handle: string,
+): Promise<string[]> {
+  const rows = await engine.find(SCHEMA, "follows", {
+    filter: { follower_id: handle },
+    limit: 10000,
+  });
+  return rows.map((r) => r.followee_id as string);
+}
+
+export async function isFollowing(
+  engine: QueryEngine,
+  followerId: string,
+  followeeId: string,
+): Promise<boolean> {
+  const rows = await engine.find(SCHEMA, "follows", {
+    filter: { follower_id: followerId, followee_id: followeeId },
+    limit: 1,
+  });
+  return rows.length > 0;
 }
 
 // --- User stats ---
 
-export function getUserStats(
-  db: MatrixDB,
+export async function getUserStats(
+  engine: QueryEngine,
   handle: string,
-): { postCount: number; followers: number; following: number } {
-  const postCount = db
-    .select({ count: sql<number>`count(*)` })
-    .from(socialPosts)
-    .where(and(eq(socialPosts.authorId, handle), sql`${socialPosts.parentId} IS NULL`))
-    .get();
-  const counts = getFollowCounts(db, handle);
+): Promise<{ postCount: number; followers: number; following: number }> {
+  const postCount = await engine.count(SCHEMA, "posts", {
+    author_id: handle,
+    parent_id: null,
+  });
+  const counts = await getFollowCounts(engine, handle);
+  return { postCount, ...counts };
+}
+
+// --- API response mapping (snake_case DB -> camelCase frontend) ---
+
+export function toPostResponse(p: SocialPost & { liked?: boolean }) {
   return {
-    postCount: postCount?.count ?? 0,
-    ...counts,
+    id: p.id,
+    authorId: p.author_id,
+    content: p.content,
+    type: p.type,
+    mediaUrls: p.media_urls,
+    appRef: p.app_ref,
+    parentId: p.parent_id,
+    likesCount: p.likes_count,
+    commentsCount: p.comments_count,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+    ...(p.liked !== undefined ? { liked: p.liked } : {}),
   };
 }
 
-// --- Constants ---
+// --- Enrichment ---
 
-const VALID_POST_TYPES = ['text', 'image', 'link', 'app_share', 'activity'];
+export async function enrichWithLiked(
+  engine: QueryEngine,
+  posts: SocialPost[],
+  userId: string,
+): Promise<(SocialPost & { liked: boolean })[]> {
+  if (posts.length === 0) return [];
+  const postIds = posts.map((p) => String(p.id));
+  const rows = await engine.find(SCHEMA, "likes", {
+    filter: { post_id: { $in: postIds }, user_id: userId },
+  });
+  const likedSet = new Set(rows.map((r) => String(r.post_id)));
+  return posts.map((p) => ({ ...p, liked: likedSet.has(String(p.id)) }));
+}
 
 // --- Hono routes ---
 
-export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): Hono {
+export function createSocialRoutes(
+  db: AppDb,
+  engine: QueryEngine,
+  getCurrentUser: () => string,
+): Hono {
   const api = new Hono();
 
   api.onError((err, c) => {
-    if (err.message.includes('JSON')) return c.json({ error: 'Invalid JSON body' }, 400);
-    return c.json({ error: 'Internal error' }, 500);
+    if (err.message.includes("JSON")) return c.json({ error: "Invalid JSON body" }, 400);
+    return c.json({ error: "Internal error" }, 500);
   });
 
   // Posts
-  api.get("/posts", (c) => {
+  api.get("/posts", async (c) => {
     const author = c.req.query("author");
     const type = c.req.query("type");
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const offset = Number(c.req.query("offset")) || 0;
-    const posts = listPosts(db, { authorId: author, type, limit, offset });
-    return c.json({ posts });
+    const posts = await listPosts(engine, { authorId: author, type, limit, offset });
+    const enriched = await enrichWithLiked(engine, posts, getCurrentUser());
+    return c.json({ posts: enriched.map(toPostResponse) });
   });
 
-  api.get("/posts/:id", (c) => {
+  api.get("/posts/:id", async (c) => {
     const id = c.req.param("id");
-    const post = getPost(db, id);
+    const post = await getPost(engine, id);
     if (!post) return c.json({ error: "Post not found" }, 404);
-    const comments = listComments(db, id);
-    const liked = isLikedBy(db, id, getCurrentUser());
-    return c.json({ post, comments, liked });
+    const comments = await listComments(engine, id);
+    const liked = await isLikedBy(engine, id, getCurrentUser());
+    return c.json({ post: toPostResponse({ ...post, liked }), comments: comments.map(toPostResponse), liked });
   });
 
   api.post("/posts", async (c) => {
@@ -367,7 +511,7 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     }
 
     const authorId = getCurrentUser();
-    const id = insertPost(db, {
+    const id = await insertPost(engine, {
       authorId,
       content: body.content,
       type: body.type,
@@ -376,78 +520,81 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     return c.json({ id }, 201);
   });
 
-  api.delete("/posts/:id", (c) => {
+  api.delete("/posts/:id", async (c) => {
     const id = c.req.param("id");
-    const post = getPost(db, id);
+    const post = await getPost(engine, id);
     if (!post) return c.json({ error: "Post not found" }, 404);
-    if (post.authorId !== getCurrentUser()) return c.json({ error: "Not authorized" }, 403);
-    deletePost(db, id);
+    if (post.author_id !== getCurrentUser()) return c.json({ error: "Not authorized" }, 403);
+    await deletePost(db, engine, id);
     return c.json({ ok: true });
   });
 
   // Feed
-  api.get("/feed", (c) => {
+  api.get("/feed", async (c) => {
     const userId = getCurrentUser();
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const cursor = c.req.query("cursor");
-    const followingIds = getFollowingIds(db, userId);
-    // Include own posts in feed
-    const authorIds = [...followingIds, userId];
-    if (authorIds.length === 0) {
+    const followingIds = await getFollowingIds(engine, userId);
+    if (followingIds.length === 0) {
       // No follows: show recent posts from everyone
-      const posts = listPosts(db, { limit });
-      return c.json({ posts, hasMore: false });
+      const posts = await listPosts(engine, { limit });
+      const enriched = await enrichWithLiked(engine, posts, userId);
+      return c.json({ posts: enriched.map(toPostResponse), hasMore: false });
     }
-    const result = listFeed(db, { authorIds, limit, cursor: cursor || undefined });
-    return c.json(result);
+    const authorIds = [...followingIds, userId];
+    const result = await listFeed(db, { authorIds, limit, cursor: cursor || undefined });
+    const enriched = await enrichWithLiked(engine, result.posts, userId);
+    return c.json({ ...result, posts: enriched.map(toPostResponse) });
   });
 
   // Explore
-  api.get("/explore", (c) => {
+  api.get("/explore", async (c) => {
+    const userId = getCurrentUser();
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
-    const posts = listTrendingPosts(db, limit);
-    return c.json({ posts });
+    const posts = await listTrendingPosts(engine, limit);
+    const enriched = await enrichWithLiked(engine, posts, userId);
+    return c.json({ posts: enriched.map(toPostResponse) });
   });
 
   // Likes
-  api.post("/posts/:id/like", (c) => {
+  api.post("/posts/:id/like", async (c) => {
     const postId = c.req.param("id");
-    const post = getPost(db, postId);
+    const post = await getPost(engine, postId);
     if (!post) return c.json({ error: "Post not found" }, 404);
     const userId = getCurrentUser();
-    const liked = isLikedBy(db, postId, userId);
+    const liked = await isLikedBy(engine, postId, userId);
     if (liked) {
-      unlikePost(db, postId, userId);
+      await unlikePost(db, engine, postId, userId);
     } else {
-      likePost(db, postId, userId);
+      await likePost(db, engine, postId, userId);
     }
-    const updatedPost = getPost(db, postId)!;
-    return c.json({ liked: !liked, likesCount: updatedPost.likesCount });
+    const updatedPost = await getPost(engine, postId);
+    return c.json({ liked: !liked, likesCount: updatedPost?.likes_count ?? 0 });
   });
 
-  api.get("/posts/:id/likes", (c) => {
+  api.get("/posts/:id/likes", async (c) => {
     const postId = c.req.param("id");
-    const likers = getLikers(db, postId);
+    const likers = await getLikers(engine, postId);
     return c.json({ likers });
   });
 
   // Comments
   api.post("/posts/:id/comments", async (c) => {
     const postId = c.req.param("id");
-    const post = getPost(db, postId);
+    const post = await getPost(engine, postId);
     if (!post) return c.json({ error: "Post not found" }, 404);
     const body = await c.req.json<{ content?: string }>();
     if (!body.content) return c.json({ error: "content is required" }, 400);
     if (body.content.length > 500) return c.json({ error: "Comment must be 500 characters or less" }, 400);
     const authorId = getCurrentUser();
-    const id = addComment(db, { postId, authorId, content: body.content });
+    const id = await addComment(db, engine, { postId, authorId, content: body.content });
     return c.json({ id }, 201);
   });
 
-  api.get("/posts/:id/comments", (c) => {
+  api.get("/posts/:id/comments", async (c) => {
     const postId = c.req.param("id");
-    const comments = listComments(db, postId);
-    return c.json({ comments });
+    const comments = await listComments(engine, postId);
+    return c.json({ comments: comments.map(toPostResponse) });
   });
 
   // Follows
@@ -456,45 +603,44 @@ export function createSocialRoutes(db: MatrixDB, getCurrentUser: () => string): 
     if (!body.handle) return c.json({ error: "handle is required" }, 400);
     const followerId = getCurrentUser();
     if (followerId === body.handle) return c.json({ error: "Cannot follow yourself" }, 400);
-    const followed = followUser(db, followerId, body.handle);
+    const followed = await followUser(engine, followerId, body.handle);
     return c.json({ ok: true, followed });
   });
 
-  api.delete("/follows/:handle", (c) => {
+  api.delete("/follows/:handle", async (c) => {
     const handle = c.req.param("handle");
     const followerId = getCurrentUser();
-    const unfollowed = unfollowUser(db, followerId, handle);
+    const unfollowed = await unfollowUser(engine, followerId, handle);
     return c.json({ ok: true, unfollowed });
   });
 
-  api.get("/followers/:handle", (c) => {
+  api.get("/followers/:handle", async (c) => {
     const handle = c.req.param("handle");
-    const followers = getFollowers(db, handle);
-    const counts = getFollowCounts(db, handle);
+    const followers = await getFollowers(engine, handle);
+    const counts = await getFollowCounts(engine, handle);
     return c.json({ followers, count: counts.followers });
   });
 
-  api.get("/following/:handle", (c) => {
+  api.get("/following/:handle", async (c) => {
     const handle = c.req.param("handle");
-    const following = getFollowing(db, handle);
-    const counts = getFollowCounts(db, handle);
+    const following = await getFollowing(engine, handle);
+    const counts = await getFollowCounts(engine, handle);
     return c.json({ following, count: counts.following });
   });
 
   // Users / discovery
-  api.get("/users", (c) => {
-    // In single-user mode, return the current user and their AI
+  api.get("/users", async (c) => {
     const handle = getCurrentUser();
-    const stats = getUserStats(db, handle);
+    const stats = await getUserStats(engine, handle);
     return c.json({ users: [{ handle, ...stats }] });
   });
 
-  api.get("/users/:handle", (c) => {
+  api.get("/users/:handle", async (c) => {
     const handle = c.req.param("handle");
-    const stats = getUserStats(db, handle);
+    const stats = await getUserStats(engine, handle);
     const currentUser = getCurrentUser();
-    const following = currentUser !== handle ? isFollowing(db, currentUser, handle) : false;
-    return c.json({ handle, ...stats, following });
+    const follows = currentUser !== handle ? await isFollowing(engine, currentUser, handle) : false;
+    return c.json({ handle, ...stats, following: follows });
   });
 
   return api;

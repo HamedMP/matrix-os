@@ -187,13 +187,21 @@
 
 ---
 
-## Phase E: Messaging App (T1590-T1594)
+## Phase E: Messaging App (T1590-T1594) -- BLOCKED on Phase A (Conduit/Matrix)
+
+**Status**: Mock messages app removed. Real messaging requires Matrix protocol integration (Phase A: T1550-T1553). Do NOT build another mock -- wait for Conduit to be wired, then build messages on top of real Matrix rooms.
+
+**Pre-requisites before starting Phase E:**
+- T1550: Conduit deployed and reachable from gateway
+- T1551: User provisioning creates Matrix accounts on signup
+- T1552: Matrix client library (`matrix-js-sdk` or HTTP wrapper)
+- T1553: AI Matrix integration (dispatcher routes Matrix messages)
 
 ### T1590 [US82] Messages app scaffold
-- [ ] `home/apps/messages/` with matrix.json
-- [ ] React app on app runtime
+- [ ] `home/apps/messages/` with matrix.json and Postgres storage
+- [ ] Connects to Conduit via matrix-client (T1552) for all operations
 - [ ] Routes: /conversations, /chat/:roomId, /new
-- [ ] Uses matrix-client (T1552) for all message operations
+- [ ] NO mock/simulated replies -- all messages go through Matrix protocol
 
 ### T1591 [US82] Conversation list
 - [ ] List of DM and group conversations, sorted by recent activity
@@ -222,6 +230,65 @@
 
 ---
 
+## Phase G: Postgres Migration (T2050-T2056)
+
+Migrate social and messages from SQLite/Drizzle to Postgres/Kysely via the app data layer (spec 050).
+
+### Tests (TDD)
+
+- [ ] T2050a Write `tests/gateway/social-postgres.test.ts`:
+  - All social CRUD operations work via QueryEngine (insert, find, update, delete posts)
+  - Like/unlike toggles correctly, likes_count stays in sync
+  - Follow/unfollow works, follower/following counts correct
+  - Feed returns posts from followed users only, with cursor pagination
+  - Explore returns posts ordered by likes_count
+  - Comments (posts with parent_id) work correctly
+  - `enrichWithLiked` returns `liked: true/false` per post
+  - Use pglite for in-memory Postgres (same pattern as app-db tests)
+
+### T2050 Social `matrix.json` storage declaration
+- [ ] Add `storage.tables` to `home/apps/social/matrix.json` with posts, likes, follows tables
+- [ ] Add `storage.tables` to `home/apps/messages/matrix.json` (if messages uses social data)
+- [ ] Tables auto-created on boot via app registry (same as todo app)
+
+### T2051 Rewrite `social.ts` to use QueryEngine
+- [ ] Replace all Drizzle/MatrixDB imports with QueryEngine/AppDb
+- [ ] `createSocialRoutes(queryEngine, appSlug, getCurrentUser)` signature
+- [ ] All CRUD functions use `queryEngine.find()`, `queryEngine.insert()`, etc.
+- [ ] Complex queries (feed with IN clause, trending ORDER BY, cursor pagination) use `queryEngine.find()` with filter/orderBy/limit/offset
+- [ ] Like/unlike uses `queryEngine.findOne()` + `queryEngine.insert()`/`queryEngine.delete()` + raw SQL for atomic counter update
+- [ ] Remove `enrichWithLiked` N+1 pattern: use a single query with LEFT JOIN or batch lookup
+
+### T2052 Remove social tables from kernel SQLite schema
+- [ ] Delete `socialPosts`, `socialLikes`, `socialFollows` from `packages/kernel/src/schema.ts`
+- [ ] Remove `SocialPost`, `SocialLike`, `SocialFollow` type exports from kernel
+- [ ] Define social types in `packages/gateway/src/social.ts` (or `social-types.ts`)
+- [ ] Update all imports across the codebase
+
+### T2053 Wire social routes to Postgres in server.ts
+- [ ] Pass `queryEngine` and `appRegistry` to `createSocialRoutes()` instead of `dispatcher.db`
+- [ ] Ensure social app schema is registered on boot (same as todo)
+- [ ] Graceful fallback if DATABASE_URL not set (return 503, not crash)
+
+### T2054 Update social frontend to use MatrixOS.db for simple CRUD
+- [ ] Post creation: `MatrixOS.db.insert('posts', {...})` instead of `fetch('/api/social/posts')`
+- [ ] Post deletion: `MatrixOS.db.delete('posts', id)`
+- [ ] Keep `/api/social/feed`, `/api/social/explore`, `/api/social/posts/:id/like` as server routes (complex queries that need server logic)
+- [ ] `MatrixOS.db.onChange('posts', reload)` for real-time updates
+
+### T2055 Update social tests
+- [ ] Migrate existing 116 social tests from SQLite mocks to pglite
+- [ ] Verify all tests pass with Postgres backend
+- [ ] Add integration test: full flow (create post -> like -> comment -> feed shows it)
+
+### T2056 Cleanup
+- [ ] Remove SQLite migration code for social tables from kernel `db.ts`
+- [ ] Remove `bridge-sql.ts` if no other consumers (deprecated in spec 050)
+- [ ] Update CLAUDE.md to reflect social uses Postgres
+- [ ] Update `home/agents/knowledge/app-data.md` with social data patterns
+
+---
+
 ## Checkpoint
 
 1. [ ] `bun run test` passes with all social tests
@@ -237,3 +304,7 @@
 11. [ ] Connect X account -> tweets appear in feed
 12. [ ] AI profile page shows skills and personality
 13. [ ] Weekly summary post generated (opt-in)
+14. [ ] Social data in Postgres (no SQLite): `SELECT * FROM social.posts` works
+15. [ ] No social tables in kernel schema.ts
+16. [ ] Social app frontend uses MatrixOS.db.* for CRUD
+17. [ ] All 116+ social tests pass with pglite backend

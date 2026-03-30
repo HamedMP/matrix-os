@@ -89,9 +89,10 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
   api.delete('/posts/:id', (c) => {
     const id = c.req.param('id');
     const userId = c.req.query('userId') || c.req.header('x-user-id');
+    if (!userId) return c.json({ error: 'userId is required' }, 401);
     const post = getPost(db, id);
     if (!post) return c.json({ error: 'Post not found' }, 404);
-    if (userId && post.authorId !== userId) return c.json({ error: 'Not authorized' }, 403);
+    if (post.authorId !== userId) return c.json({ error: 'Not authorized' }, 403);
     deletePost(db, id);
     return c.json({ ok: true });
   });

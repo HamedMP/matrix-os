@@ -1,15 +1,56 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { createDB, type MatrixDB } from "@matrix-os/kernel";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
+import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
+import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
+import { KyselyPGlite } from "kysely-pglite";
 import { createSocialRoutes, insertPost, followUser } from "../../packages/gateway/src/social.js";
 
-describe("T2031-T2035: Social API routes", () => {
-  let db: MatrixDB;
+const SOCIAL_TABLES = {
+  posts: {
+    columns: {
+      author_id: "text",
+      content: "text",
+      type: "text",
+      media_urls: "text",
+      app_ref: "text",
+      parent_id: "text",
+      likes_count: "integer",
+      comments_count: "integer",
+    },
+    indexes: ["author_id", "type", "created_at", "likes_count", "parent_id"],
+  },
+  likes: {
+    columns: { post_id: "text", user_id: "text" },
+    indexes: ["post_id", "user_id"],
+  },
+  follows: {
+    columns: { follower_id: "text", followee_id: "text" },
+    indexes: ["follower_id", "followee_id"],
+  },
+};
+
+describe("T2051: Social API routes (Postgres)", () => {
+  let db: AppDb;
+  let engine: QueryEngine;
   let app: ReturnType<typeof createSocialRoutes>;
+  let instance: InstanceType<typeof KyselyPGlite>;
   const currentUser = "alice";
 
-  beforeEach(() => {
-    db = createDB(":memory:");
-    app = createSocialRoutes(db, () => currentUser);
+  beforeEach(async () => {
+    instance = await KyselyPGlite.create();
+    const created = createAppDb({ dialect: instance.dialect });
+    db = created.db;
+    await db.bootstrap();
+    const registry = createAppRegistry(db, created.kysely);
+    await registry.register({ slug: "social", name: "Social", tables: SOCIAL_TABLES });
+    engine = createQueryEngine(db);
+    app = createSocialRoutes(db, engine, () => currentUser);
+  });
+
+  afterEach(async () => {
+    await db.raw("DROP SCHEMA IF EXISTS social CASCADE");
+    await db.raw("DELETE FROM public._apps");
+    await db.destroy();
   });
 
   function req(method: string, path: string, body?: unknown) {
@@ -28,7 +69,7 @@ describe("T2031-T2035: Social API routes", () => {
       const res = await req("POST", "/posts", { content: "Hello world" });
       expect(res.status).toBe(201);
       const data = await res.json();
-      expect(data.id).toMatch(/^p_/);
+      expect(data.id).toBeDefined();
     });
 
     it("rejects empty content", async () => {
@@ -55,7 +96,7 @@ describe("T2031-T2035: Social API routes", () => {
 
     it("filters by author", async () => {
       await req("POST", "/posts", { content: "Alice post" });
-      insertPost(db, { authorId: "bob", content: "Bob post" });
+      await insertPost(engine, { authorId: "bob", content: "Bob post" });
 
       const res = await req("GET", "/posts?author=alice");
       const data = await res.json();
@@ -78,7 +119,7 @@ describe("T2031-T2035: Social API routes", () => {
     });
 
     it("returns 404 for missing post", async () => {
-      const res = await req("GET", "/posts/nonexistent");
+      const res = await req("GET", "/posts/00000000-0000-0000-0000-000000000000");
       expect(res.status).toBe(404);
     });
   });
@@ -96,7 +137,7 @@ describe("T2031-T2035: Social API routes", () => {
     });
 
     it("rejects deleting other user's post", async () => {
-      const id = insertPost(db, { authorId: "bob", content: "Bob's post" });
+      const id = await insertPost(engine, { authorId: "bob", content: "Bob's post" });
       const res = await req("DELETE", `/posts/${id}`);
       expect(res.status).toBe(403);
     });
@@ -106,9 +147,9 @@ describe("T2031-T2035: Social API routes", () => {
 
   describe("GET /feed", () => {
     it("returns posts from followed users and self", async () => {
-      followUser(db, "alice", "bob");
-      insertPost(db, { authorId: "bob", content: "Bob post" });
-      insertPost(db, { authorId: "carol", content: "Carol post" });
+      await followUser(engine, "alice", "bob");
+      await insertPost(engine, { authorId: "bob", content: "Bob post" });
+      await insertPost(engine, { authorId: "carol", content: "Carol post" });
       await req("POST", "/posts", { content: "Alice post" });
 
       const res = await req("GET", "/feed");
@@ -120,12 +161,11 @@ describe("T2031-T2035: Social API routes", () => {
     });
 
     it("falls back to all posts when no follows", async () => {
-      insertPost(db, { authorId: "bob", content: "Bob post" });
+      await insertPost(engine, { authorId: "bob", content: "Bob post" });
       await req("POST", "/posts", { content: "Alice post" });
 
       const res = await req("GET", "/feed");
       const data = await res.json();
-      // Should include own posts since alice is in authorIds
       expect(data.posts.length).toBeGreaterThanOrEqual(1);
     });
   });
@@ -148,13 +188,11 @@ describe("T2031-T2035: Social API routes", () => {
       const createRes = await req("POST", "/posts", { content: "Likeable" });
       const { id } = await createRes.json();
 
-      // Like
       const likeRes = await req("POST", `/posts/${id}/like`);
       const likeData = await likeRes.json();
       expect(likeData.liked).toBe(true);
       expect(likeData.likesCount).toBe(1);
 
-      // Unlike (toggle)
       const unlikeRes = await req("POST", `/posts/${id}/like`);
       const unlikeData = await unlikeRes.json();
       expect(unlikeData.liked).toBe(false);
@@ -162,7 +200,7 @@ describe("T2031-T2035: Social API routes", () => {
     });
 
     it("returns 404 for missing post", async () => {
-      const res = await req("POST", "/posts/nonexistent/like");
+      const res = await req("POST", "/posts/00000000-0000-0000-0000-000000000000/like");
       expect(res.status).toBe(404);
     });
   });
@@ -237,8 +275,8 @@ describe("T2031-T2035: Social API routes", () => {
 
   describe("GET /followers/:handle and /following/:handle", () => {
     it("returns followers and following lists", async () => {
-      followUser(db, "bob", "alice");
-      followUser(db, "carol", "alice");
+      await followUser(engine, "bob", "alice");
+      await followUser(engine, "carol", "alice");
 
       const followersRes = await req("GET", "/followers/alice");
       const followersData = await followersRes.json();
@@ -263,8 +301,8 @@ describe("T2031-T2035: Social API routes", () => {
 
   describe("GET /users/:handle", () => {
     it("returns user stats and following status", async () => {
-      insertPost(db, { authorId: "bob", content: "Bob post" });
-      followUser(db, "alice", "bob");
+      await insertPost(engine, { authorId: "bob", content: "Bob post" });
+      await followUser(engine, "alice", "bob");
 
       const res = await req("GET", "/users/bob");
       const data = await res.json();

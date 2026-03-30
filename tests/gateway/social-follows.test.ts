@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { createDB, type MatrixDB } from "@matrix-os/kernel";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
+import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
+import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
+import { KyselyPGlite } from "kysely-pglite";
 import {
   followUser,
   unfollowUser,
@@ -10,82 +13,116 @@ import {
   isFollowing,
 } from "../../packages/gateway/src/social.js";
 
-describe("T2033: Social follows", () => {
-  let db: MatrixDB;
+const SOCIAL_TABLES = {
+  posts: {
+    columns: {
+      author_id: "text",
+      content: "text",
+      type: "text",
+      media_urls: "text",
+      app_ref: "text",
+      parent_id: "text",
+      likes_count: "integer",
+      comments_count: "integer",
+    },
+    indexes: ["author_id", "type", "created_at", "likes_count", "parent_id"],
+  },
+  likes: {
+    columns: { post_id: "text", user_id: "text" },
+    indexes: ["post_id", "user_id"],
+  },
+  follows: {
+    columns: { follower_id: "text", followee_id: "text" },
+    indexes: ["follower_id", "followee_id"],
+  },
+};
 
-  beforeEach(() => {
-    db = createDB(":memory:");
+describe("T2050: Social follows (Postgres)", () => {
+  let db: AppDb;
+  let engine: QueryEngine;
+  let instance: InstanceType<typeof KyselyPGlite>;
+
+  beforeEach(async () => {
+    instance = await KyselyPGlite.create();
+    const created = createAppDb({ dialect: instance.dialect });
+    db = created.db;
+    await db.bootstrap();
+    const registry = createAppRegistry(db, created.kysely);
+    await registry.register({ slug: "social", name: "Social", tables: SOCIAL_TABLES });
+    engine = createQueryEngine(db);
   });
 
-  it("follows a user", () => {
-    const result = followUser(db, "bob", "alice");
-    expect(result).toBe(true);
-    expect(isFollowing(db, "bob", "alice")).toBe(true);
+  afterEach(async () => {
+    await db.raw("DROP SCHEMA IF EXISTS social CASCADE");
+    await db.raw("DELETE FROM public._apps");
+    await db.destroy();
   });
 
-  it("returns false when already following", () => {
-    followUser(db, "bob", "alice");
-    const result = followUser(db, "bob", "alice");
-    expect(result).toBe(false);
+  it("follows a user", async () => {
+    expect(await followUser(engine, "alice", "bob")).toBe(true);
+    expect(await isFollowing(engine, "alice", "bob")).toBe(true);
   });
 
-  it("unfollows a user", () => {
-    followUser(db, "bob", "alice");
-    const result = unfollowUser(db, "bob", "alice");
-    expect(result).toBe(true);
-    expect(isFollowing(db, "bob", "alice")).toBe(false);
+  it("prevents double-following", async () => {
+    expect(await followUser(engine, "alice", "bob")).toBe(true);
+    expect(await followUser(engine, "alice", "bob")).toBe(false);
   });
 
-  it("returns false when unfollowing non-existent follow", () => {
-    const result = unfollowUser(db, "bob", "alice");
-    expect(result).toBe(false);
+  it("unfollows a user", async () => {
+    await followUser(engine, "alice", "bob");
+    expect(await unfollowUser(engine, "alice", "bob")).toBe(true);
+    expect(await isFollowing(engine, "alice", "bob")).toBe(false);
   });
 
-  it("gets followers of a user", () => {
-    followUser(db, "bob", "alice");
-    followUser(db, "carol", "alice");
+  it("returns false when unfollowing non-followed user", async () => {
+    expect(await unfollowUser(engine, "alice", "bob")).toBe(false);
+  });
 
-    const followers = getFollowers(db, "alice");
+  it("gets followers of a user", async () => {
+    await followUser(engine, "alice", "bob");
+    await followUser(engine, "carol", "bob");
+
+    const followers = await getFollowers(engine, "bob");
     expect(followers).toHaveLength(2);
-    const followerIds = followers.map((f) => f.followerId);
-    expect(followerIds).toContain("bob");
+    const followerIds = followers.map((f) => f.follower_id);
+    expect(followerIds).toContain("alice");
     expect(followerIds).toContain("carol");
   });
 
-  it("gets who a user is following", () => {
-    followUser(db, "alice", "bob");
-    followUser(db, "alice", "carol");
+  it("gets following of a user", async () => {
+    await followUser(engine, "alice", "bob");
+    await followUser(engine, "alice", "carol");
 
-    const following = getFollowing(db, "alice");
+    const following = await getFollowing(engine, "alice");
     expect(following).toHaveLength(2);
-    const followeeIds = following.map((f) => f.followeeId);
+    const followeeIds = following.map((f) => f.followee_id);
     expect(followeeIds).toContain("bob");
     expect(followeeIds).toContain("carol");
   });
 
-  it("gets follow counts", () => {
-    followUser(db, "bob", "alice");
-    followUser(db, "carol", "alice");
-    followUser(db, "alice", "dave");
+  it("gets follow counts", async () => {
+    await followUser(engine, "alice", "bob");
+    await followUser(engine, "carol", "bob");
+    await followUser(engine, "bob", "alice");
 
-    const counts = getFollowCounts(db, "alice");
+    const counts = await getFollowCounts(engine, "bob");
     expect(counts.followers).toBe(2);
     expect(counts.following).toBe(1);
   });
 
-  it("gets following IDs for feed building", () => {
-    followUser(db, "alice", "bob");
-    followUser(db, "alice", "carol");
+  it("gets following IDs", async () => {
+    await followUser(engine, "alice", "bob");
+    await followUser(engine, "alice", "carol");
+    await followUser(engine, "alice", "dave");
 
-    const ids = getFollowingIds(db, "alice");
-    expect(ids).toHaveLength(2);
+    const ids = await getFollowingIds(engine, "alice");
+    expect(ids).toHaveLength(3);
     expect(ids).toContain("bob");
     expect(ids).toContain("carol");
+    expect(ids).toContain("dave");
   });
 
-  it("returns zero counts for unknown user", () => {
-    const counts = getFollowCounts(db, "nobody");
-    expect(counts.followers).toBe(0);
-    expect(counts.following).toBe(0);
+  it("isFollowing returns false for non-followed", async () => {
+    expect(await isFollowing(engine, "alice", "bob")).toBe(false);
   });
 });

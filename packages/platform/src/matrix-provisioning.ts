@@ -75,7 +75,8 @@ function deleteMatrixUser(db: PlatformDB, handle: string): void {
 export interface MatrixProvisionerConfig {
   db: PlatformDB;
   homeserverUrl: string;
-  adminToken: string;
+  registrationToken: string;
+  serverName?: string;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -92,46 +93,72 @@ export interface MatrixProvisioner {
 }
 
 export function createMatrixProvisioner(config: MatrixProvisionerConfig): MatrixProvisioner {
-  const { db, homeserverUrl, adminToken } = config;
+  const { db, homeserverUrl, registrationToken, serverName = 'matrix-os.com' } = config;
   const fetchFn = config.fetch ?? globalThis.fetch;
+  const jsonHeaders = { 'Content-Type': 'application/json' };
 
-  async function registerUser(
-    matrixId: string,
+  async function registerAndLogin(
+    username: string,
     displayname: string,
   ): Promise<{ userId: string; accessToken: string }> {
-    const url = `${homeserverUrl}/_synapse/admin/v2/users/${matrixId}`;
-    const res = await fetchFn(url, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${adminToken}`,
-        'Content-Type': 'application/json',
-      },
+    // Password is used once for register+login, then discarded. The access_token
+    // is stored in the DB. If it expires, recovery requires Conduit admin API
+    // (no password stored). TODO: persist encrypted password or use admin API.
+    const password = randomBytes(32).toString('hex');
+
+    const regRes = await fetchFn(`${homeserverUrl}/_matrix/client/v3/register`, {
+      method: 'POST',
+      headers: jsonHeaders,
       body: JSON.stringify({
-        displayname,
-        password: randomBytes(32).toString('hex'),
-        admin: false,
+        username,
+        password,
+        initial_device_display_name: displayname,
+        auth: { type: 'm.login.registration_token', token: registrationToken },
       }),
     });
 
-    if (!res.ok) {
-      throw new Error(`Failed to provision Matrix user ${matrixId}`);
+    if (!regRes.ok) {
+      const err = (await regRes.json().catch(() => ({}))) as { errcode?: string };
+      throw new Error(`Failed to register Matrix user ${username}: ${err.errcode ?? regRes.status}`);
     }
 
-    const body = (await res.json()) as { user_id: string; access_token: string };
-    return { userId: body.user_id, accessToken: body.access_token };
+    const regBody = (await regRes.json()) as { user_id?: string; access_token?: string };
+
+    if (!regBody.user_id) {
+      throw new Error(`Matrix register: missing user_id in response for ${username}`);
+    }
+
+    if (regBody.access_token) {
+      return { userId: regBody.user_id, accessToken: regBody.access_token };
+    }
+
+    const loginRes = await fetchFn(`${homeserverUrl}/_matrix/client/v3/login`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        type: 'm.login.password',
+        identifier: { type: 'm.id.user', user: username },
+        password,
+        initial_device_display_name: displayname,
+      }),
+    });
+
+    if (!loginRes.ok) {
+      throw new Error(`Failed to login Matrix user ${username} after registration`);
+    }
+
+    const loginBody = (await loginRes.json()) as { user_id: string; access_token: string };
+    return { userId: loginBody.user_id, accessToken: loginBody.access_token };
   }
 
   return {
     async provisionUser(handle) {
-      const humanId = `@${handle}:matrix-os.com`;
-      const aiId = `@${handle}_ai:matrix-os.com`;
-
-      const human = await registerUser(humanId, handle);
+      const human = await registerAndLogin(handle, handle);
       let ai;
       try {
-        ai = await registerUser(aiId, `${handle} (AI)`);
+        ai = await registerAndLogin(`${handle}_ai`, `${handle} (AI)`);
       } catch (err) {
-        console.error(`[matrix] AI registration failed for ${handle}, human account ${humanId} is orphaned`);
+        console.error(`[matrix] AI registration failed for ${handle}, human account @${handle}:${serverName} is orphaned`);
         throw err;
       }
 

@@ -131,6 +131,37 @@ How users find each other:
 - **Trending**: "Trending on Matrix OS" -- popular posts, apps, users this week
 - **Invite**: share an invite link that credits the referrer
 
+### G: Postgres Migration (from SQLite)
+
+Social data MUST use the unified Postgres app data layer (spec 050). No SQLite for user-facing data.
+
+**Current state (to be removed):**
+- Social tables (`social_posts`, `social_likes`, `social_follows`) live in kernel's SQLite (better-sqlite3/Drizzle)
+- `social.ts` has custom Drizzle ORM queries against SQLite
+- Frontend calls `/api/social/*` custom Hono routes
+
+**Target state:**
+- Social app declares tables in `matrix.json` `storage` field
+- Social data lives in Postgres under the `social` schema (same as todo, notes, etc.)
+- `social.ts` rewired to use `QueryEngine` (Kysely/Postgres) instead of Drizzle/SQLite
+- Frontend uses `MatrixOS.db.*` for simple CRUD, custom `/api/social/*` routes for complex queries (feed, trending, follow graph)
+- Social tables removed from kernel schema (`packages/kernel/src/schema.ts`)
+
+**Tables (Postgres):**
+
+```
+social.posts:    id, author_id, content, type, media_urls, app_ref, parent_id, likes_count, comments_count, created_at
+social.likes:    id, post_id, user_id, created_at  (unique: post_id + user_id)
+social.follows:  id, follower_id, followee_id, created_at  (unique: follower_id + followee_id)
+```
+
+**Why this matters for 1M users:**
+- SQLite is embedded per-container, can't be queried externally or backed up easily
+- Postgres enables cross-user queries (trending, explore, global feed)
+- Platform service can query social data for admin dashboards, moderation
+- Agents from any channel (Telegram, Discord) query via the unified bridge/query API
+- One database technology to maintain, monitor, and scale
+
 ## Non-Goals
 
 - Video/audio calls (future, use Matrix VoIP)
@@ -138,11 +169,13 @@ How users find each other:
 - Algorithmic feed (chronological only for now)
 - Ads or promoted posts
 - Moderation tools (future, use Matrix moderation APIs)
+- SQLite for any user-facing app data (all apps use Postgres via spec 050)
 
 ## Dependencies
 
 - 039-app-store: published apps shown in social feed
 - 009-platform: handles, platform service
+- 050-app-data-layer: Postgres-backed storage (QueryEngine, AppDb, matrix.json storage field)
 - Matrix protocol: Conduit homeserver deployment
 
 ## Success Metrics
