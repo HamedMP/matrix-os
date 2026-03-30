@@ -5,6 +5,38 @@
   "category": "social",
   "icon": "message-circle",
   "author": "system",
-  "version": "1.0.0",
-  "permissions": ["network"]
+  "version": "2.0.0",
+  "permissions": ["network"],
+  "storage": {
+    "tables": {
+      "conversations": {
+        "columns": {
+          "name": "text",
+          "type": "text",
+          "is_ai": "boolean",
+          "last_message_at": "timestamptz"
+        },
+        "indexes": ["last_message_at", "type"]
+      },
+      "participants": {
+        "columns": {
+          "conversation_id": "text",
+          "handle": "text",
+          "display_name": "text",
+          "avatar": "text"
+        },
+        "indexes": ["conversation_id", "handle"]
+      },
+      "messages": {
+        "columns": {
+          "conversation_id": "text",
+          "sender": "text",
+          "content": "text",
+          "type": "text",
+          "read": "boolean"
+        },
+        "indexes": ["conversation_id", "created_at", "sender"]
+      }
+    }
+  }
 }
