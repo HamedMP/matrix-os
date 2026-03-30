@@ -248,6 +248,13 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
 - **013A Docker** (T500-T506): Dockerfile + docker-compose.yml done. User working on additional distro scaffolding.
 - **033 Docs** (T1100-T1108): Fumadocs documentation site at www/content/docs/ (feat/docs-site branch)
 
+### TODO: Social Network (spec 041)
+- **041 Phase A** (T1550-T1553): Matrix homeserver (Conduit) integration -- deploy, user provisioning, client library. MUST be done before messaging.
+- **041 Phase E** (T1590-T1594): Messages app -- BLOCKED on Phase A. Build on real Matrix rooms, not mocks. Mock messages app was removed. See `specs/041-social/tasks.md`.
+- **041 Phase C** (T1570-T1574): Activity sharing -- auto-post on app publish, weekly summaries. Activity service is wired but needs user-facing settings UI.
+- **041 Phase D** (T1580-T1584): External platform aggregation (X, GitHub, Instagram, Mastodon). Code scaffolded, not wired.
+- **Social app gaps**: No profile pictures (initials only), no image upload for posts, no repost/share. Social data is fully on Postgres (spec 050 app data layer).
+
 ### Next Up (see specs/ for details)
 - **034 Observability** (T1200-T1229): Prometheus metrics, Grafana dashboards, Loki log aggregation, alerting
 - **035 Canvas Desktop** (T1250-T1279): Infinite pan/zoom canvas mode, app grouping, minimap, toolbar

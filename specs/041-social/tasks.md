@@ -187,13 +187,21 @@
 
 ---
 
-## Phase E: Messaging App (T1590-T1594)
+## Phase E: Messaging App (T1590-T1594) -- BLOCKED on Phase A (Conduit/Matrix)
+
+**Status**: Mock messages app removed. Real messaging requires Matrix protocol integration (Phase A: T1550-T1553). Do NOT build another mock -- wait for Conduit to be wired, then build messages on top of real Matrix rooms.
+
+**Pre-requisites before starting Phase E:**
+- T1550: Conduit deployed and reachable from gateway
+- T1551: User provisioning creates Matrix accounts on signup
+- T1552: Matrix client library (`matrix-js-sdk` or HTTP wrapper)
+- T1553: AI Matrix integration (dispatcher routes Matrix messages)
 
 ### T1590 [US82] Messages app scaffold
-- [ ] `home/apps/messages/` with matrix.json
-- [ ] React app on app runtime
+- [ ] `home/apps/messages/` with matrix.json and Postgres storage
+- [ ] Connects to Conduit via matrix-client (T1552) for all operations
 - [ ] Routes: /conversations, /chat/:roomId, /new
-- [ ] Uses matrix-client (T1552) for all message operations
+- [ ] NO mock/simulated replies -- all messages go through Matrix protocol
 
 ### T1591 [US82] Conversation list
 - [ ] List of DM and group conversations, sorted by recent activity
