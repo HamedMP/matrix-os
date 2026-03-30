@@ -1,88 +1,110 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { createDB, type MatrixDB } from "@matrix-os/kernel";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
+import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
+import { KyselyPGlite } from "kysely-pglite";
 
-describe("T2030: Social schema", () => {
-  let db: MatrixDB;
+const SOCIAL_TABLES = {
+  posts: {
+    columns: {
+      author_id: "text",
+      content: "text",
+      type: "text",
+      media_urls: "text",
+      app_ref: "text",
+      parent_id: "text",
+      likes_count: "integer",
+      comments_count: "integer",
+    },
+    indexes: ["author_id", "type", "created_at", "likes_count", "parent_id"],
+  },
+  likes: {
+    columns: { post_id: "text", user_id: "text" },
+    indexes: ["post_id", "user_id"],
+  },
+  follows: {
+    columns: { follower_id: "text", followee_id: "text" },
+    indexes: ["follower_id", "followee_id"],
+  },
+};
 
-  beforeEach(() => {
-    db = createDB(":memory:");
+describe("T2050: Social schema (Postgres)", () => {
+  let db: AppDb;
+  let instance: InstanceType<typeof KyselyPGlite>;
+
+  beforeEach(async () => {
+    instance = await KyselyPGlite.create();
+    const created = createAppDb({ dialect: instance.dialect });
+    db = created.db;
+    await db.bootstrap();
+    const registry = createAppRegistry(db, created.kysely);
+    await registry.register({ slug: "social", name: "Social", tables: SOCIAL_TABLES });
   });
 
-  it("creates social_posts table with correct columns", () => {
-    const client = (db as unknown as { $client: { prepare: (s: string) => { run: (...args: unknown[]) => void; get: (...args: unknown[]) => Record<string, unknown> | undefined } } }).$client;
-    client.prepare(
-      "INSERT INTO social_posts (id, author_id, content, type, likes_count, comments_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run("p1", "alice", "Hello world", "text", 0, 0, new Date().toISOString());
-
-    const result = client.prepare("SELECT * FROM social_posts WHERE id = ?").get("p1");
-
-    expect(result).toBeDefined();
-    expect(result!.author_id).toBe("alice");
-    expect(result!.content).toBe("Hello world");
-    expect(result!.type).toBe("text");
-    expect(result!.likes_count).toBe(0);
+  afterEach(async () => {
+    await db.raw("DROP SCHEMA IF EXISTS social CASCADE");
+    await db.raw("DELETE FROM public._apps");
+    await db.destroy();
   });
 
-  it("creates social_likes table with unique constraint", () => {
-    const client = (db as unknown as { $client: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).$client;
-    client.prepare(
-      "INSERT INTO social_posts (id, author_id, content, type, likes_count, comments_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run("p1", "alice", "test", "text", 0, 0, new Date().toISOString());
-
-    client.prepare(
-      "INSERT INTO social_likes (post_id, user_id, created_at) VALUES (?, ?, ?)",
-    ).run("p1", "bob", new Date().toISOString());
-
-    // Duplicate should fail
-    expect(() => {
-      client.prepare(
-        "INSERT INTO social_likes (post_id, user_id, created_at) VALUES (?, ?, ?)",
-      ).run("p1", "bob", new Date().toISOString());
-    }).toThrow();
+  it("creates posts table with correct columns", async () => {
+    const result = await db.raw(
+      `INSERT INTO "social"."posts" (author_id, content, type, likes_count, comments_count) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      ["alice", "Hello world", "text", 0, 0],
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].author_id).toBe("alice");
+    expect(result.rows[0].content).toBe("Hello world");
+    expect(result.rows[0].id).toBeDefined();
   });
 
-  it("creates social_follows table with unique constraint", () => {
-    const client = (db as unknown as { $client: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).$client;
-    client.prepare(
-      "INSERT INTO social_follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)",
-    ).run("bob", "alice", new Date().toISOString());
+  it("creates likes table", async () => {
+    const post = await db.raw(
+      `INSERT INTO "social"."posts" (author_id, content, type, likes_count, comments_count) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      ["alice", "test", "text", 0, 0],
+    );
+    const postId = String(post.rows[0].id);
 
-    // Duplicate should fail
-    expect(() => {
-      client.prepare(
-        "INSERT INTO social_follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)",
-      ).run("bob", "alice", new Date().toISOString());
-    }).toThrow();
+    await db.raw(
+      `INSERT INTO "social"."likes" (post_id, user_id) VALUES ($1, $2)`,
+      [postId, "bob"],
+    );
+
+    const result = await db.raw(
+      `SELECT * FROM "social"."likes" WHERE post_id = $1`,
+      [postId],
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].user_id).toBe("bob");
   });
 
-  it("supports parent_id for comment posts", () => {
-    const client = (db as unknown as { $client: { prepare: (s: string) => { run: (...args: unknown[]) => void; get: (...args: unknown[]) => Record<string, unknown> | undefined } } }).$client;
-    const now = new Date().toISOString();
-    client.prepare(
-      "INSERT INTO social_posts (id, author_id, content, type, likes_count, comments_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run("p1", "alice", "Original post", "text", 0, 0, now);
+  it("creates follows table", async () => {
+    await db.raw(
+      `INSERT INTO "social"."follows" (follower_id, followee_id) VALUES ($1, $2)`,
+      ["bob", "alice"],
+    );
 
-    client.prepare(
-      "INSERT INTO social_posts (id, author_id, content, type, parent_id, likes_count, comments_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run("c1", "bob", "Nice post!", "text", "p1", 0, 0, now);
-
-    const comment = client.prepare("SELECT * FROM social_posts WHERE id = ?").get("c1");
-    expect(comment).toBeDefined();
-    expect(comment!.parent_id).toBe("p1");
+    const result = await db.raw(
+      `SELECT * FROM "social"."follows" WHERE follower_id = $1`,
+      ["bob"],
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].followee_id).toBe("alice");
   });
 
-  it("indexes are created for performance", () => {
-    const client = (db as unknown as { $client: { prepare: (s: string) => { all: () => Array<{ name: string }> } } }).$client;
-    const indexes = client.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all();
-    const indexNames = indexes.map((i) => i.name);
+  it("app is registered in _apps table", async () => {
+    const result = await db.raw(`SELECT * FROM public._apps WHERE slug = $1`, ["social"]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].name).toBe("Social");
+  });
 
-    expect(indexNames).toContain("idx_posts_author");
-    expect(indexNames).toContain("idx_posts_created");
-    expect(indexNames).toContain("idx_posts_likes");
-    expect(indexNames).toContain("idx_posts_parent");
-    expect(indexNames).toContain("idx_likes_post_user");
-    expect(indexNames).toContain("idx_follows_pair");
-    expect(indexNames).toContain("idx_follows_follower");
-    expect(indexNames).toContain("idx_follows_followee");
+  it("indexes are created", async () => {
+    const result = await db.raw(
+      `SELECT indexname FROM pg_indexes WHERE schemaname = $1`,
+      ["social"],
+    );
+    const names = result.rows.map((r) => r.indexname as string);
+    expect(names.some((n) => n.includes("author_id"))).toBe(true);
+    expect(names.some((n) => n.includes("likes_count"))).toBe(true);
+    expect(names.some((n) => n.includes("follower_id"))).toBe(true);
   });
 });

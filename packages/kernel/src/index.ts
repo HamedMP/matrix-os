@@ -4,12 +4,6 @@ export { kernelOptions } from "./options.js";
 export type { KernelConfig } from "./options.js";
 export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
-export {
-  socialPosts,
-  socialLikes,
-  socialFollows,
-} from "./schema.js";
-export type { SocialPost, SocialLike, SocialFollow } from "./schema.js";
 export { ensureHome, generateTemplateManifest, smartSyncTemplate } from "./boot.js";
 export type { SyncReport } from "./boot.js";
 export { buildSystemPrompt, estimateTokens } from "./prompt.js";

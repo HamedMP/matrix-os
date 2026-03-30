@@ -1556,13 +1556,17 @@ export async function createGateway(config: GatewayConfig) {
     const identity = loadHandle(homePath);
     return identity.handle || "@me";
   };
-  const socialRoutes = createSocialRoutes(dispatcher.db, getCurrentUser);
-  app.route("/api/social", socialRoutes);
+  if (appDb && queryEngine) {
+    const socialRoutes = createSocialRoutes(appDb, queryEngine, getCurrentUser);
+    app.route("/api/social", socialRoutes);
+  } else {
+    app.all("/api/social/*", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
+  }
 
   // T2036: Activity auto-posting
   const activityService = createActivityService({
     homePath,
-    createPost: (post) => insertPost(dispatcher.db, post),
+    createPost: queryEngine ? (post) => insertPost(queryEngine, post) : async () => "",
   });
 
   // T946: Plugin list endpoint
