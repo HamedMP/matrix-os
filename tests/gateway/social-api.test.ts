@@ -101,7 +101,7 @@ describe("T2051: Social API routes (Postgres)", () => {
       const res = await req("GET", "/posts?author=alice");
       const data = await res.json();
       expect(data.posts).toHaveLength(1);
-      expect(data.posts[0].author_id).toBe("alice");
+      expect(data.posts[0].authorId).toBe("alice");
     });
   });
 
@@ -155,7 +155,7 @@ describe("T2051: Social API routes (Postgres)", () => {
       const res = await req("GET", "/feed");
       const data = await res.json();
       expect(data.posts).toHaveLength(2);
-      const authors = data.posts.map((p: { author_id: string }) => p.author_id);
+      const authors = data.posts.map((p: { authorId: string }) => p.authorId);
       expect(authors).toContain("alice");
       expect(authors).toContain("bob");
     });

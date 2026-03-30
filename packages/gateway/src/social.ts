@@ -384,6 +384,25 @@ export async function getUserStats(
   return { postCount, ...counts };
 }
 
+// --- API response mapping (snake_case DB -> camelCase frontend) ---
+
+export function toPostResponse(p: SocialPost & { liked?: boolean }) {
+  return {
+    id: p.id,
+    authorId: p.author_id,
+    content: p.content,
+    type: p.type,
+    mediaUrls: p.media_urls,
+    appRef: p.app_ref,
+    parentId: p.parent_id,
+    likesCount: p.likes_count,
+    commentsCount: p.comments_count,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+    ...(p.liked !== undefined ? { liked: p.liked } : {}),
+  };
+}
+
 // --- Enrichment ---
 
 export async function enrichWithLiked(
@@ -392,8 +411,6 @@ export async function enrichWithLiked(
   userId: string,
 ): Promise<(SocialPost & { liked: boolean })[]> {
   if (posts.length === 0) return [];
-  // Batch lookup: get all likes for this user on these posts in one query
-  // Use individual lookups to avoid type mismatch issues between text post_id and uuid id
   const likedSet = new Set<string>();
   for (const p of posts) {
     const rows = await engine.find(SCHEMA, "likes", {
@@ -427,7 +444,7 @@ export function createSocialRoutes(
     const offset = Number(c.req.query("offset")) || 0;
     const posts = await listPosts(engine, { authorId: author, type, limit, offset });
     const enriched = await enrichWithLiked(engine, posts, getCurrentUser());
-    return c.json({ posts: enriched });
+    return c.json({ posts: enriched.map(toPostResponse) });
   });
 
   api.get("/posts/:id", async (c) => {
@@ -436,7 +453,7 @@ export function createSocialRoutes(
     if (!post) return c.json({ error: "Post not found" }, 404);
     const comments = await listComments(engine, id);
     const liked = await isLikedBy(engine, id, getCurrentUser());
-    return c.json({ post, comments, liked });
+    return c.json({ post: toPostResponse({ ...post, liked }), comments: comments.map(toPostResponse), liked });
   });
 
   api.post("/posts", async (c) => {
@@ -472,15 +489,16 @@ export function createSocialRoutes(
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const cursor = c.req.query("cursor");
     const followingIds = await getFollowingIds(engine, userId);
-    const authorIds = [...followingIds, userId];
-    if (authorIds.length === 0) {
+    if (followingIds.length === 0) {
+      // No follows: show recent posts from everyone
       const posts = await listPosts(engine, { limit });
       const enriched = await enrichWithLiked(engine, posts, userId);
-      return c.json({ posts: enriched, hasMore: false });
+      return c.json({ posts: enriched.map(toPostResponse), hasMore: false });
     }
+    const authorIds = [...followingIds, userId];
     const result = await listFeed(db, { authorIds, limit, cursor: cursor || undefined });
     const enriched = await enrichWithLiked(engine, result.posts, userId);
-    return c.json({ ...result, posts: enriched });
+    return c.json({ ...result, posts: enriched.map(toPostResponse) });
   });
 
   // Explore
@@ -489,7 +507,7 @@ export function createSocialRoutes(
     const limit = Math.min(Math.max(Number(c.req.query("limit")) || 20, 1), 100);
     const posts = await listTrendingPosts(engine, limit);
     const enriched = await enrichWithLiked(engine, posts, userId);
-    return c.json({ posts: enriched });
+    return c.json({ posts: enriched.map(toPostResponse) });
   });
 
   // Likes
@@ -530,7 +548,7 @@ export function createSocialRoutes(
   api.get("/posts/:id/comments", async (c) => {
     const postId = c.req.param("id");
     const comments = await listComments(engine, postId);
-    return c.json({ comments });
+    return c.json({ comments: comments.map(toPostResponse) });
   });
 
   // Follows
