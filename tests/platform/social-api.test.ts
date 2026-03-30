@@ -114,12 +114,33 @@ describe('platform/social-api', () => {
     it('deletes a post', async () => {
       const id = insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
 
-      const res = await req(`/posts/${id}`, { method: 'DELETE' });
+      const res = await req(`/posts/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': '@alice' },
+      });
       expect(res.status).toBe(200);
     });
 
+    it('returns 401 without userId', async () => {
+      const id = insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
+      const res = await req(`/posts/${id}`, { method: 'DELETE' });
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 403 for wrong user', async () => {
+      const id = insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
+      const res = await req(`/posts/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': '@bob' },
+      });
+      expect(res.status).toBe(403);
+    });
+
     it('returns 404 for non-existent post', async () => {
-      const res = await req('/posts/nonexistent', { method: 'DELETE' });
+      const res = await req('/posts/nonexistent', {
+        method: 'DELETE',
+        headers: { 'x-user-id': '@alice' },
+      });
       expect(res.status).toBe(404);
     });
   });

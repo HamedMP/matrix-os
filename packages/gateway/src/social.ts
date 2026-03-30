@@ -82,6 +82,13 @@ export async function deletePost(
 ): Promise<boolean> {
   const post = await getPost(engine, id);
   if (!post) return false;
+  // If this is a comment, decrement parent's comments_count
+  if (post.parent_id) {
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET comments_count = GREATEST(comments_count - 1, 0), updated_at = now() WHERE id = $1`,
+      [post.parent_id],
+    );
+  }
   // Delete likes on the post itself
   await db.raw(
     `DELETE FROM "${SCHEMA}"."likes" WHERE post_id = $1::text`,
@@ -411,14 +418,11 @@ export async function enrichWithLiked(
   userId: string,
 ): Promise<(SocialPost & { liked: boolean })[]> {
   if (posts.length === 0) return [];
-  const likedSet = new Set<string>();
-  for (const p of posts) {
-    const rows = await engine.find(SCHEMA, "likes", {
-      filter: { post_id: String(p.id), user_id: userId },
-      limit: 1,
-    });
-    if (rows.length > 0) likedSet.add(String(p.id));
-  }
+  const postIds = posts.map((p) => String(p.id));
+  const rows = await engine.find(SCHEMA, "likes", {
+    filter: { post_id: { $in: postIds }, user_id: userId },
+  });
+  const likedSet = new Set(rows.map((r) => String(r.post_id)));
   return posts.map((p) => ({ ...p, liked: likedSet.has(String(p.id)) }));
 }
 

@@ -22,7 +22,7 @@ describe('gateway/social-activity', () => {
     postCreated = [];
     service = createActivityService({
       homePath: tmpDir,
-      createPost: (post) => {
+      createPost: async (post) => {
         postCreated.push(post);
         return `post_${postCreated.length}`;
       },
