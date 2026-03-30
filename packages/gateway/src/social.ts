@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppDb } from "./app-db.js";
-import type { QueryEngine, FindOptions } from "./app-db-query.js";
+import type { QueryEngine } from "./app-db-query.js";
 
 // --- Types ---
 
@@ -36,6 +36,13 @@ export interface SocialFollow {
 
 const SCHEMA = "social";
 const VALID_POST_TYPES = ["text", "image", "link", "app_share", "activity"];
+
+// --- Schema bootstrap (unique constraints not expressible in matrix.json) ---
+
+export async function bootstrapSocialSchema(db: AppDb): Promise<void> {
+  await db.raw(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_likes_unique ON "${SCHEMA}"."likes" ("post_id", "user_id")`);
+  await db.raw(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_follows_unique ON "${SCHEMA}"."follows" ("follower_id", "followee_id")`);
+}
 
 // --- Posts CRUD ---
 

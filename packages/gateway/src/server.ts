@@ -66,7 +66,7 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
-import { createSocialRoutes, insertPost } from "./social.js";
+import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
 import {
@@ -1557,6 +1557,7 @@ export async function createGateway(config: GatewayConfig) {
     return identity.handle || "@me";
   };
   if (appDb && queryEngine) {
+    await bootstrapSocialSchema(appDb);
     const socialRoutes = createSocialRoutes(appDb, queryEngine, getCurrentUser);
     app.route("/api/social", socialRoutes);
   } else {
