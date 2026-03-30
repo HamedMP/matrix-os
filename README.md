@@ -18,13 +18,19 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Built_with-Claude_Opus_4.6-cc785c?style=for-the-badge" alt="Built with Claude Opus 4.6">
-  <img src="https://img.shields.io/badge/Tests-1,012_passing-brightgreen?style=for-the-badge" alt="1,012 Tests">
-  <img src="https://img.shields.io/badge/TypeScript-5.5+-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Tests-2,807_passing-brightgreen?style=for-the-badge" alt="2,807 Tests">
+  <img src="https://img.shields.io/badge/TypeScript-100K+_lines-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
 </p>
 
 Matrix OS is an AI-native operating system where software doesn't exist until you need it. You speak, and applications materialize -- generated in real time, saved as real files, yours to keep, inspect, and modify. The AI isn't a feature bolted onto the side. It IS the kernel.
 
-Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) (Feb 10-16, 2026). The entire system -- kernel, shell, platform, website, and this README -- was written with Claude Code.
+<p align="center">
+  <img src="docs/images/anthropic-hackathon.jpg" alt="Matrix OS at the Claude Code Birthday Party, Anthropic HQ" width="600">
+  <br>
+  <em>Matrix OS at the Claude Code Birthday Party at Anthropic HQ (Feb 2026) -- Top 20 finalist</em>
+</p>
+
+Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) (Feb 10-16, 2026) where it placed in the **top 20**. Now being built into a production-ready platform. The entire system -- kernel, shell, platform, website, and this README -- was written with Claude Code.
 
 ---
 
@@ -57,6 +63,18 @@ Terminal (1970s) -> GUI (1980s) -> Web (1990s) -> Mobile (2000s) -> AI Assistant
 
 **Multi-channel.** Talk to your OS from the web desktop, Telegram, WhatsApp, Discord, or Slack. Same kernel, same identity, same file system.
 
+**Voice interface.** Talk to your OS with voice -- text-to-speech, speech-to-text, and telephony support via Twilio. Multiple TTS providers (Edge TTS, ElevenLabs, OpenAI) with automatic fallback.
+
+**Finder-class file browser.** Full file management with column view, preview panel, inline rename, trash with restore, search (filename + content), and drag-and-drop.
+
+**Social network.** Profiles, posts, comments, likes, follows, and activity feeds. Built on Postgres with real-time updates. Foundation for federated social via Matrix protocol.
+
+**Messages.** Real-time messaging built on Matrix protocol with Conduit homeserver integration.
+
+**IDE-grade terminal.** Split panes, multiple tabs, integrated Claude Code sessions, and layout persistence.
+
+**Canvas desktop.** Infinite pan/zoom workspace with app grouping, minimap, and spatial organization.
+
 **Proactive.** Cron jobs, heartbeats, scheduled tasks. The OS doesn't just respond -- it anticipates.
 
 **SOUL identity.** Every instance has a personality defined in `~/system/soul.md`. It shapes how the AI thinks, communicates, and acts.
@@ -67,7 +85,11 @@ Terminal (1970s) -> GUI (1980s) -> Web (1990s) -> Mobile (2000s) -> AI Assistant
 
 **Desktop customization.** 6 theme presets, custom backgrounds (patterns, gradients, wallpapers), configurable dock, AI-generated app icons.
 
+**Observability.** Prometheus metrics for gateway, platform, and proxy. Ready for Grafana dashboards and alerting.
+
 **Cloud-native + Multi-tenant.** Sign up at matrix-os.com, get your own instance at `yourname.matrix-os.com`. Each user gets an isolated Docker container with persistent storage.
+
+**Documentation site.** Public docs at [matrix-os.com/docs](https://matrix-os.com/docs) built with Fumadocs.
 
 ---
 
@@ -78,9 +100,10 @@ Browser (localhost:3000)              Telegram / WhatsApp / Discord / Slack
   |-- Next.js shell (desktop UI)        |-- Channel adapters
   |                                     |
   +------------- Gateway (localhost:4000) ---------------+
-                  |-- WebSocket (chat, file watcher, terminal)
-                  |-- REST API (messages, files, themes, layout, settings)
+                  |-- WebSocket (chat, file watcher, terminal, voice)
+                  |-- REST API (messages, files, social, themes, layout)
                   |-- Channel manager, cron, heartbeat
+                  |-- Prometheus metrics (/metrics)
                   |
                   +---> Dispatcher ---> Kernel (Claude Agent SDK)
                                           |-- Builder agent (generates apps)
@@ -125,11 +148,13 @@ Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, m
 | AI | Claude Agent SDK V1 (`query()` + `resume`), Opus 4.6 |
 | Frontend | Next.js 16, React 19 |
 | Backend | Hono (HTTP/WebSocket gateway) |
-| Database | SQLite via Drizzle ORM (WAL mode) |
+| Database | SQLite via Drizzle ORM (kernel), Postgres via Kysely (social/app data) |
 | Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
-| Federation | Matrix protocol (matrix-js-sdk) |
+| Federation | Matrix protocol (matrix-js-sdk), Conduit homeserver |
+| Voice | Edge TTS, ElevenLabs, OpenAI TTS/Whisper, Twilio |
 | Validation | Zod 4 |
-| Testing | Vitest (1,012 tests, TDD, 86 test files) |
+| Observability | Prometheus metrics (prom-client) |
+| Testing | Vitest (2,807 tests, TDD, 214 test files) |
 | Package mgr | pnpm (install), bun (scripts) |
 
 ---
@@ -138,14 +163,14 @@ Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, m
 
 ```
 packages/kernel/     # AI kernel (Agent SDK, agents, IPC tools, hooks, SOUL, skills)
-packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
-packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode)
+packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat + voice
+packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode, social API)
 packages/proxy/      # Shared API proxy (Hono :8080, usage tracking)
-shell/               # Next.js 16 frontend (desktop shell)
-www/                 # matrix-os.com (Next.js on Vercel, Clerk auth)
-home/                # File system template (copied on first boot)
-tests/               # Vitest test suites (86 files)
-specs/               # Architecture specs (31 specs)
+shell/               # Next.js 16 frontend (desktop shell, file browser, terminal, canvas)
+www/                 # matrix-os.com + /docs (Next.js on Vercel, Clerk auth, Fumadocs)
+home/                # File system template (apps, agents, skills -- copied on first boot)
+tests/               # Vitest test suites (214 files)
+specs/               # Architecture specs (35+ specs)
 docs/                # Reference documentation
 distro/              # Docker, cloudflared, systemd deployment configs
 ```
@@ -169,7 +194,7 @@ pnpm install
 ### Run Tests
 
 ```bash
-bun run test              # 1,012 tests (~11s)
+bun run test              # 2,807 tests (~35s)
 bun run test:watch        # Watch mode
 bun run test:integration  # Integration tests (needs API key, uses haiku)
 bun run test:coverage     # Coverage report
@@ -186,6 +211,19 @@ bun run dev:gateway   # Gateway on http://localhost:4000
 bun run dev:shell     # Shell on http://localhost:3000
 ```
 
+### Docker Development (Primary)
+
+Requires [OrbStack](https://orbstack.dev) on macOS.
+
+```bash
+bun run docker          # Dev only (gateway + shell with HMR)
+bun run docker:full     # + proxy, platform, conduit
+bun run docker:all      # + observability (Grafana, Prometheus, Loki)
+bun run docker:stop     # Stop all containers (preserves data)
+bun run docker:logs     # Tail dev container logs
+bun run docker:shell    # Shell into container
+```
+
 The gateway boots the home directory at `~/matrixos/` on first run.
 
 ### Environment Variables
@@ -194,39 +232,41 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 |----------|-------------|---------|
 | `ANTHROPIC_API_KEY` | Required for AI features | -- |
 | `MATRIX_HOME` | Home directory path | `~/matrixos/` |
+| `MATRIX_HANDLE` | User handle | `dev` |
 | `MATRIX_AUTH_TOKEN` | Bearer token for cloud auth | -- |
 | `PORT` | Gateway port | `4000` |
 | `FAL_API_KEY` | AI icon generation (fal.ai) | -- |
+| `DATABASE_URL` | Postgres connection (social/app data) | -- |
 
 ---
 
 ## Current Status
 
-**1,012 tests passing across 86 test files. 40K lines of TypeScript. 18 completed phases.**
+**2,807 tests passing across 214 test files. 100K+ lines of TypeScript. Platform is live at [matrix-os.com](https://matrix-os.com).**
 
 ### Completed
 
-- **Phase 1**: Monorepo, pnpm workspaces, Vitest, TypeScript strict
-- **Phase 2**: SQLite/Drizzle schema, system prompt builder, agent parser, first-boot
-- **Phase 3**: Kernel (Agent SDK V1 query+resume), IPC MCP server (26 tools), hooks (8 hooks), gateway (Hono HTTP+WS), 5 agent prompts
-- **Phase 4**: Next.js desktop shell -- window management, ChatPanel, AppViewer, Dock, Terminal (xterm.js), InputBar, ResponseOverlay, state persistence, message queuing
-- **Phase 5**: Self-healing -- heartbeat loop, healer sub-agent, backup/restore, activity log
-- **Phase 6**: Self-evolution -- protected files hook, watchdog, evolver prompt
-- **Phase 7**: Concurrent kernel dispatch -- serial queue, maxConcurrency, process registration, conflict avoidance
-- **Phase 9**: SOUL identity + Skills -- soul.md, identity.md, user.md, 20 skills with frontmatter + TOC, load_skill tool
-- **Phase 10**: Multi-channel messaging -- ChannelAdapter interface, ChannelManager lifecycle, Telegram adapter, channel-aware dispatcher
-- **Phase 11**: Cron + Heartbeat -- CronService (interval/once/cron), CronStore, manage_cron tool, HeartbeatRunner with active hours
-- **Phase 12**: Onboarding -- persona engine (7 roles), setup plan, provisioner, Mission Control (kanban/grid), Cmd+K command palette
-- **Phase 8A**: Single-user cloud -- Dockerfile, docker-compose, systemd, auth middleware
-- **Phase 8B**: Multi-tenant platform -- Hono orchestrator, Drizzle, dockerode, Clerk auth, admin dashboard, Cloudflare Tunnels
-- **Phase 9 P0**: Observability + Safety -- interaction logger (JSONL), logs endpoint, safe mode agent
-- **Phase 9 P1**: Identity + Sync -- handle registry (@user:matrix-os.com), profile endpoints, git sync, mobile responsive, PWA
-- **Phase 25**: Security hardening -- content wrapping, SSRF protection, audit tool, sandbox
-- **Phase 31**: Desktop customization -- 6 theme presets, backgrounds, dock config, AI-generated icons, settings UI
+- **Phases 1-6**: Core OS -- monorepo, kernel (Agent SDK V1 query+resume), IPC MCP server (26 tools), 8 hooks, Hono gateway, Next.js desktop shell, self-healing, self-evolution
+- **Phase 7**: Concurrent kernel dispatch -- serial queue, maxConcurrency, process registration
+- **Phase 8**: Cloud deployment -- single-user Docker + multi-tenant platform (dockerode, Clerk auth, Cloudflare Tunnels, admin dashboard)
+- **Phase 9**: SOUL identity + skills + observability -- 20 skills, handle registry (`@user:matrix-os.com`), interaction logger, safe mode, git sync, mobile responsive, PWA
+- **Phase 10**: Multi-channel messaging -- Telegram adapter, channel-aware dispatcher, formatForChannel
+- **Phase 11**: Cron + Heartbeat -- CronService, CronStore, manage_cron tool, HeartbeatRunner
+- **Phase 12**: Onboarding -- persona engine (7 roles), setup plan, provisioner, Mission Control, Cmd+K palette
+- **Phase 25**: Security hardening -- content wrapping, SSRF protection, audit tool
+- **Phase 31**: Desktop customization -- 6 themes, backgrounds, dock config, AI-generated icons
+- **Phase 33**: Documentation site -- Fumadocs at matrix-os.com/docs
+- **Phase 34A**: Prometheus metrics -- gateway, platform, and proxy instrumentation
+- **Phase 35**: Canvas desktop -- infinite pan/zoom, app grouping, minimap
+- **Phase 44**: Docker-primary development -- non-root user, su-exec, identity from env
+- **Phase 46**: Voice system -- TTS (Edge/ElevenLabs/OpenAI), STT (Whisper), telephony (Twilio)
+- **Phase 48**: File browser -- Finder-class with column view, preview, trash, search
+- **Phase 50**: Postgres app data layer -- Kysely, per-app schemas, bridge API
+- **Social**: Social network -- profiles, posts, comments, likes, follows, activity feeds, messages
 
 ### In Progress
 
-- **Phase 13**: Linux distro + Docker deployment
+- **Memory system** (spec 052): Postgres-backed semantic memory with pgvector, interaction logging, LLM extraction
 
 ---
 
@@ -237,7 +277,7 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 3. **Headless Core, Multi-Shell** -- the core is a gateway + kernel. Web shell, mobile app, Telegram bot, voice interface -- all shells.
 4. **Self-Healing and Self-Expanding** -- the OS fixes itself and grows new capabilities on demand.
 5. **Simplicity Over Sophistication** -- the simplest implementation that works.
-6. **TDD** -- tests first, 1,012 passing, targeting 99-100% coverage.
+6. **TDD** -- tests first, 2,807 passing, targeting 99-100% coverage.
 
 ---
 
