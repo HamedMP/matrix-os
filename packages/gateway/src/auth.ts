@@ -1,5 +1,4 @@
 import { timingSafeEqual } from "node:crypto";
-import { normalize } from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 
@@ -42,7 +41,7 @@ export function authMiddleware(
     } catch {
       return c.json({ error: "Bad request" }, 400);
     }
-    const normalizedPath = normalize(decodedPath);
+    const normalizedPath = new URL(decodedPath, "http://localhost").pathname;
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return next();

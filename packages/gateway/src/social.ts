@@ -78,7 +78,7 @@ export async function getPost(
     const row = await engine.findOne(SCHEMA, "posts", id);
     return row as SocialPost | null;
   } catch (e) {
-    if (String(e).includes("invalid input syntax")) return null;
+    if ((e as any).code === "22P02") return null; // invalid UUID syntax
     throw e;
   }
 }
@@ -214,14 +214,22 @@ export async function likePost(
   });
   if (existing.length > 0) return false;
 
-  await engine.insert(SCHEMA, "likes", {
-    post_id: postId,
-    user_id: userId,
-  });
-  await db.raw(
-    `UPDATE "${SCHEMA}"."posts" SET likes_count = likes_count + 1, updated_at = now() WHERE id = $1`,
-    [postId],
-  );
+  await db.raw("BEGIN");
+  try {
+    await engine.insert(SCHEMA, "likes", {
+      post_id: postId,
+      user_id: userId,
+    });
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET likes_count = likes_count + 1, updated_at = now() WHERE id = $1`,
+      [postId],
+    );
+    await db.raw("COMMIT");
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    if ((e as any).code === "23505") return false; // unique constraint (concurrent like)
+    throw e;
+  }
   return true;
 }
 
@@ -238,11 +246,18 @@ export async function unlikePost(
   if (existing.length === 0) return false;
 
   const likeId = (existing[0] as SocialLike).id;
-  await engine.delete(SCHEMA, "likes", likeId);
-  await db.raw(
-    `UPDATE "${SCHEMA}"."posts" SET likes_count = GREATEST(likes_count - 1, 0), updated_at = now() WHERE id = $1`,
-    [postId],
-  );
+  await db.raw("BEGIN");
+  try {
+    await engine.delete(SCHEMA, "likes", likeId);
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET likes_count = GREATEST(likes_count - 1, 0), updated_at = now() WHERE id = $1`,
+      [postId],
+    );
+    await db.raw("COMMIT");
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    throw e;
+  }
   return true;
 }
 
@@ -275,17 +290,24 @@ export async function addComment(
   engine: QueryEngine,
   input: { postId: string; authorId: string; content: string },
 ): Promise<string> {
-  const id = await insertPost(engine, {
-    authorId: input.authorId,
-    content: input.content,
-    type: "text",
-    parentId: input.postId,
-  });
-  await db.raw(
-    `UPDATE "${SCHEMA}"."posts" SET comments_count = comments_count + 1, updated_at = now() WHERE id = $1`,
-    [input.postId],
-  );
-  return id;
+  await db.raw("BEGIN");
+  try {
+    const id = await insertPost(engine, {
+      authorId: input.authorId,
+      content: input.content,
+      type: "text",
+      parentId: input.postId,
+    });
+    await db.raw(
+      `UPDATE "${SCHEMA}"."posts" SET comments_count = comments_count + 1, updated_at = now() WHERE id = $1`,
+      [input.postId],
+    );
+    await db.raw("COMMIT");
+    return id;
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    throw e;
+  }
 }
 
 export async function listComments(
@@ -312,10 +334,15 @@ export async function followUser(
   });
   if (existing.length > 0) return false;
 
-  await engine.insert(SCHEMA, "follows", {
-    follower_id: followerId,
-    followee_id: followeeId,
-  });
+  try {
+    await engine.insert(SCHEMA, "follows", {
+      follower_id: followerId,
+      followee_id: followeeId,
+    });
+  } catch (e) {
+    if ((e as any).code === "23505") return false; // unique constraint violation (race)
+    throw e;
+  }
   return true;
 }
 

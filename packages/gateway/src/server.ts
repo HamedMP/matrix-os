@@ -961,6 +961,9 @@ export async function createGateway(config: GatewayConfig) {
     if ((action === "insert" || action === "update") && (body.data == null || typeof body.data !== "object" || Array.isArray(body.data))) {
       return c.json({ error: "data must be a non-null object" }, 400);
     }
+    if ((action === "insert" || action === "update") && JSON.stringify(body.data).length > 1_000_000) {
+      return c.json({ error: "data too large (max 1MB)" }, 413);
+    }
 
     // Validate table is present for actions that need it
     const needsTable = ["find", "findOne", "insert", "update", "delete", "count"].includes(action);
