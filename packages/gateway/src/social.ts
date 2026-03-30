@@ -279,6 +279,7 @@ export async function getLikers(
 ): Promise<string[]> {
   const rows = await engine.find(SCHEMA, "likes", {
     filter: { post_id: postId },
+    limit: 1000,
   });
   return rows.map((r) => r.user_id as string);
 }
@@ -369,6 +370,7 @@ export async function getFollowers(
   const rows = await engine.find(SCHEMA, "follows", {
     filter: { followee_id: handle },
     orderBy: { created_at: "desc" },
+    limit: 1000,
   });
   return rows as SocialFollow[];
 }
@@ -380,6 +382,7 @@ export async function getFollowing(
   const rows = await engine.find(SCHEMA, "follows", {
     filter: { follower_id: handle },
     orderBy: { created_at: "desc" },
+    limit: 1000,
   });
   return rows as SocialFollow[];
 }
@@ -399,6 +402,7 @@ export async function getFollowingIds(
 ): Promise<string[]> {
   const rows = await engine.find(SCHEMA, "follows", {
     filter: { follower_id: handle },
+    limit: 10000,
   });
   return rows.map((r) => r.followee_id as string);
 }
@@ -565,7 +569,7 @@ export function createSocialRoutes(
       await likePost(db, engine, postId, userId);
     }
     const updatedPost = await getPost(engine, postId);
-    return c.json({ liked: !liked, likesCount: updatedPost!.likes_count });
+    return c.json({ liked: !liked, likesCount: updatedPost?.likes_count ?? 0 });
   });
 
   api.get("/posts/:id/likes", async (c) => {
