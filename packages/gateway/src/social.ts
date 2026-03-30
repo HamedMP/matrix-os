@@ -77,8 +77,9 @@ export async function getPost(
   try {
     const row = await engine.findOne(SCHEMA, "posts", id);
     return row as SocialPost | null;
-  } catch {
-    return null;
+  } catch (e) {
+    if (String(e).includes("invalid input syntax")) return null;
+    throw e;
   }
 }
 
@@ -89,29 +90,32 @@ export async function deletePost(
 ): Promise<boolean> {
   const post = await getPost(engine, id);
   if (!post) return false;
-  // If this is a comment, decrement parent's comments_count
-  if (post.parent_id) {
+  await db.raw("BEGIN");
+  try {
+    if (post.parent_id) {
+      await db.raw(
+        `UPDATE "${SCHEMA}"."posts" SET comments_count = GREATEST(comments_count - 1, 0), updated_at = now() WHERE id = $1`,
+        [post.parent_id],
+      );
+    }
     await db.raw(
-      `UPDATE "${SCHEMA}"."posts" SET comments_count = GREATEST(comments_count - 1, 0), updated_at = now() WHERE id = $1`,
-      [post.parent_id],
+      `DELETE FROM "${SCHEMA}"."likes" WHERE post_id = $1::text`,
+      [id],
     );
+    await db.raw(
+      `DELETE FROM "${SCHEMA}"."likes" WHERE post_id IN (SELECT id::text FROM "${SCHEMA}"."posts" WHERE parent_id = $1::text)`,
+      [id],
+    );
+    await db.raw(
+      `DELETE FROM "${SCHEMA}"."posts" WHERE parent_id = $1::text`,
+      [id],
+    );
+    await engine.delete(SCHEMA, "posts", id);
+    await db.raw("COMMIT");
+  } catch (e) {
+    await db.raw("ROLLBACK");
+    throw e;
   }
-  // Delete likes on the post itself
-  await db.raw(
-    `DELETE FROM "${SCHEMA}"."likes" WHERE post_id = $1::text`,
-    [id],
-  );
-  // Delete likes on child comments
-  await db.raw(
-    `DELETE FROM "${SCHEMA}"."likes" WHERE post_id IN (SELECT id::text FROM "${SCHEMA}"."posts" WHERE parent_id = $1::text)`,
-    [id],
-  );
-  // Delete child comments
-  await db.raw(
-    `DELETE FROM "${SCHEMA}"."posts" WHERE parent_id = $1::text`,
-    [id],
-  );
-  await engine.delete(SCHEMA, "posts", id);
   return true;
 }
 
