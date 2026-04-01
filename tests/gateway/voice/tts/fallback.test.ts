@@ -521,6 +521,15 @@ describe("EdgeTtsProvider", () => {
   });
 
   it("uses default voice en-US-AriaNeural", async () => {
+    vi.resetModules();
+    vi.doMock("node-edge-tts", () => ({
+      EdgeTTS: class {
+        ttsPromise = mockTtsPromise;
+        constructor(opts?: Record<string, unknown>) {
+          if (opts) constructorArgs.push(opts);
+        }
+      },
+    }));
     const { EdgeTtsProvider: MockedEdgeTts } = await import(
       "../../../../packages/gateway/src/voice/tts/edge-tts.js"
     );
