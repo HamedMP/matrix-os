@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useDesktopConfigStore, type DockConfig } from "../../shell/src/stores/desktop-config";
 import {
-  WAVES_PATTERN,
+  MESH_GRADIENT,
   saveDesktopConfig,
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
@@ -53,8 +53,9 @@ describe("Desktop config", () => {
     expect(configs).toHaveLength(4);
   });
 
-  it("WAVES_PATTERN is a valid data URL", () => {
-    expect(WAVES_PATTERN).toMatch(/^url\("data:image\/svg\+xml,/);
+  it("MESH_GRADIENT is a valid CSS background value", () => {
+    expect(MESH_GRADIENT).toMatch(/radial-gradient/);
+    expect(MESH_GRADIENT).toMatch(/linear-gradient/);
   });
 
   it("saveDesktopConfig calls fetch with PUT method", async () => {
@@ -75,7 +76,7 @@ describe("Desktop config", () => {
 
   it("hook exports are defined", () => {
     expect(saveDesktopConfig).toBeTypeOf("function");
-    expect(WAVES_PATTERN).toBeTypeOf("string");
+    expect(MESH_GRADIENT).toBeTypeOf("string");
   });
 
   it("default pinnedApps is empty array", () => {

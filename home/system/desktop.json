@@ -1,9 +1,6 @@
 {
   "background": {
-    "type": "gradient",
-    "from": "#1a0a1e",
-    "to": "#2d0a1f",
-    "angle": 135
+    "type": "pattern"
   },
   "dock": {
     "position": "left",

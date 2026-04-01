@@ -59,7 +59,7 @@ function Nav() {
               href="/signup"
               className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
             >
-              Try it free
+              Join the waitlist
               <ChevronDownIcon className="size-3.5" />
             </a>
           </SignedOut>
@@ -98,7 +98,7 @@ function Hero() {
         <p className="text-lg md:text-xl text-[#191919]/60 leading-relaxed max-w-[600px] mx-auto mb-10">
           Matrix OS is a personal AI that builds software for you, remembers
           everything about you, and works across all your devices. No coding
-          needed. You own everything.
+          needed. You own everything. Now in early access.
         </p>
 
         <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -107,7 +107,7 @@ function Hero() {
               href="/signup"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
-              Get started free
+              Join the waitlist
               <ArrowRightIcon className="size-4" />
             </a>
           </SignedOut>
@@ -445,9 +445,9 @@ function CTA() {
           Your rules.
         </h2>
         <p className="text-lg text-[#191919]/60 leading-relaxed max-w-[500px] mx-auto mb-10">
-          Get a personal instance at{" "}
+          Join the waitlist for early access to your personal instance at{" "}
           <span className="font-mono text-[#191919]">you.matrix-os.com</span>.
-          Start building software that&apos;s made just for you.
+          We&apos;re letting people in gradually.
         </p>
 
         <div className="flex items-center justify-center gap-4 flex-wrap mb-16">
@@ -456,7 +456,7 @@ function CTA() {
               href="/signup"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
-              Get started free
+              Join the waitlist
               <ArrowRightIcon className="size-4" />
             </a>
           </SignedOut>

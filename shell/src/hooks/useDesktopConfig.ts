@@ -24,7 +24,14 @@ const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   pinnedApps: [],
 };
 
-export const WAVES_PATTERN = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800' viewBox='0 0 800 800'%3E%3Cg fill='none' stroke='%23c8b8d0' stroke-width='1' opacity='0.4'%3E%3Cpath d='M0 200 Q200 150 400 200 T800 200'/%3E%3Cpath d='M0 300 Q200 250 400 300 T800 300'/%3E%3Cpath d='M0 400 Q200 350 400 400 T800 400'/%3E%3Cpath d='M0 500 Q200 450 400 500 T800 500'/%3E%3Cpath d='M0 600 Q200 550 400 600 T800 600'/%3E%3Cpath d='M0 250 Q300 200 600 260 T800 240'/%3E%3Cpath d='M0 350 Q300 310 600 370 T800 340'/%3E%3Cpath d='M0 450 Q300 410 600 470 T800 440'/%3E%3Cpath d='M0 550 Q300 510 600 570 T800 540'/%3E%3C/g%3E%3C/svg%3E")`;
+export const MESH_GRADIENT = [
+  "radial-gradient(ellipse at 15% 85%, hsla(25, 55%, 50%, 0.22) 0%, transparent 50%)",
+  "radial-gradient(ellipse at 85% 10%, hsla(252, 70%, 68%, 0.18) 0%, transparent 50%)",
+  "radial-gradient(ellipse at 50% 50%, hsla(280, 25%, 82%, 0.35) 0%, transparent 65%)",
+  "radial-gradient(ellipse at 75% 75%, hsla(195, 45%, 65%, 0.12) 0%, transparent 45%)",
+  "radial-gradient(ellipse at 30% 20%, hsla(340, 40%, 70%, 0.1) 0%, transparent 40%)",
+  "linear-gradient(145deg, #ede6f1 0%, #e4daec 35%, #ddd1e7 55%, #e8dced 75%, #ede6f1 100%)",
+].join(", ");
 
 function applyBackground(config: DesktopConfig["background"], gatewayUrl: string) {
   const body = document.body;
@@ -38,10 +45,8 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
 
   switch (config.type) {
     case "pattern":
-      body.style.backgroundImage = WAVES_PATTERN;
-      body.style.backgroundSize = "cover";
-      body.style.backgroundPosition = "center";
-      body.style.backgroundRepeat = "no-repeat";
+      body.style.background = MESH_GRADIENT;
+      body.style.backgroundAttachment = "fixed";
       break;
     case "solid":
       body.style.backgroundColor = config.color;
