@@ -26,6 +26,12 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const moveWindow = useWindowManager((s) => s.moveWindow);
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
+  const isFocused = useWindowManager((s) => {
+    const visible = s.windows.filter((w) => !w.minimized);
+    if (visible.length === 0) return false;
+    const maxZ = Math.max(...visible.map((w) => w.zIndex));
+    return win.zIndex === maxZ;
+  });
   const showTitles = useCanvasSettings((s) => s.showTitles);
 
   const fitWindow = useCallback(() => {
@@ -127,7 +133,11 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const titleBarHeight = 32;
   const titleBar = showTitles ? (
     <div
-      className="absolute flex items-center gap-1.5 px-2.5 rounded-t-lg bg-muted/60 border-b border-border/40 cursor-grab active:cursor-grabbing select-none group/titlebar"
+      className={`absolute flex items-center gap-1.5 px-2.5 rounded-t-lg border-b cursor-grab active:cursor-grabbing select-none group/titlebar transition-colors duration-150 ${
+        isFocused
+          ? "bg-muted/80 border-border/50"
+          : "bg-muted/40 border-border/20"
+      }`}
       style={{
         transform: `scale(${inverseScale})`,
         transformOrigin: "bottom left",
@@ -195,7 +205,9 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       >
         {titleBar}
         <div
-          className="rounded-lg bg-card overflow-hidden shadow-md flex items-center justify-center"
+          className={`rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
+            isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
+          }`}
           style={{ width: win.width, height: win.height }}
         >
           {iconUrl ? (
@@ -219,7 +231,9 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     >
       {titleBar}
       <div
-        className="rounded-lg bg-card overflow-hidden shadow-lg"
+        className={`rounded-lg bg-card overflow-hidden transition-shadow duration-150 ${
+          isFocused ? "shadow-xl ring-1 ring-primary/30" : "shadow-md"
+        }`}
         style={{ width: win.width, height: win.height }}
       >
         {win.path.startsWith("__terminal__") ? (
