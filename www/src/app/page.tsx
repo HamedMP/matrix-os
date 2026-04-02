@@ -130,6 +130,20 @@ function Hero() {
             Open source
           </a>
         </div>
+
+        <div className="mt-16 mx-auto max-w-[1100px]">
+          <div className="rounded-xl overflow-hidden shadow-2xl shadow-[#191919]/15 border border-[#d5cfc4]">
+            <picture>
+              <source srcSet="/images/screenshot-desktop.webp" type="image/webp" />
+              <img
+                src="/images/screenshot-desktop.png"
+                alt="Matrix OS desktop showing a budget tracker and gym tracker app running side by side"
+                className="w-full h-auto"
+                loading="eager"
+              />
+            </picture>
+          </div>
+        </div>
       </div>
     </section>
   );

@@ -11,6 +11,8 @@ dist/
 coverage/
 .playwright-mcp/
 .superpowers/
+.remember/
+logs/
 
 # Local platform data
 packages/platform/data/
