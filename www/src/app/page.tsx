@@ -40,6 +40,9 @@ function Nav() {
           <a href="#use-cases" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
             Use cases
           </a>
+          <a href="/technical" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+            Technical
+          </a>
           <a href="/docs" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
             Docs
           </a>
