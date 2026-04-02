@@ -3,11 +3,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
+import { useCanvasSettings } from "@/stores/canvas-settings";
 import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
-import { X, Maximize2 } from "lucide-react";
+import { Minus, Maximize2 } from "lucide-react";
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
@@ -20,10 +21,12 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const zoom = useCanvasTransform((s) => s.zoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
   const closeWindow = useWindowManager((s) => s.closeWindow);
+  const minimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const focusWindow = useWindowManager((s) => s.focusWindow);
   const moveWindow = useWindowManager((s) => s.moveWindow);
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
+  const showTitles = useCanvasSettings((s) => s.showTitles);
 
   const fitWindow = useCallback(() => {
     fitAll(
@@ -121,73 +124,82 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     setInteracting(false);
   }, []);
 
-  // Zoomed-out preview: show icon + title card with close/maximize buttons
+  const titleBarHeight = 32;
+  const titleBar = showTitles ? (
+    <div
+      className="absolute flex items-center gap-1.5 px-2.5 rounded-t-lg bg-muted/60 border-b border-border/40 cursor-grab active:cursor-grabbing select-none group/titlebar"
+      style={{
+        transform: `scale(${inverseScale})`,
+        transformOrigin: "bottom left",
+        width: win.width * zoom,
+        height: titleBarHeight,
+        bottom: "100%",
+        left: 0,
+      }}
+      onPointerDown={onDragStart}
+      onPointerMove={onDragMove}
+      onPointerUp={onDragEnd}
+    >
+      {/* macOS traffic lights */}
+      <div className="group/traffic flex items-center gap-1.5 shrink-0">
+        <button
+          className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
+          onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
+          aria-label="Close"
+        >
+          <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+            x
+          </span>
+        </button>
+        <button
+          className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
+          onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
+          aria-label="Minimize"
+        >
+          <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+            -
+          </span>
+        </button>
+        <button
+          className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
+          onClick={(e) => { e.stopPropagation(); fitWindow(); }}
+          aria-label="Maximize"
+        >
+          <Maximize2 className="size-1.5 text-black/0 group-hover/traffic:text-black/60 transition-colors" />
+        </button>
+      </div>
+      {/* Centered title with icon */}
+      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0">
+        {iconUrl ? (
+          <img src={iconUrl} alt="" className="size-4 rounded object-cover shrink-0" draggable={false} />
+        ) : (
+          <span className="size-4 rounded bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
+            {win.title.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <span className="text-xs font-medium text-foreground/70 truncate">
+          {win.title}
+        </span>
+      </div>
+      {/* Spacer to balance the traffic lights */}
+      <div className="w-[42px] shrink-0" />
+    </div>
+  ) : null;
+
+  // Zoomed-out preview: icon card with title bar above
   if (!isInteractive) {
     return (
       <div
         className="absolute"
-        style={{
-          left: win.x,
-          top: win.y,
-          zIndex: win.zIndex,
-          pointerEvents: "auto",
-        }}
+        style={{ left: win.x, top: win.y, zIndex: win.zIndex, pointerEvents: "auto" }}
       >
-        {/* Inverse-scaled controls above the window */}
-        <div
-          className="absolute"
-          style={{
-            bottom: "100%",
-            left: 0,
-            right: 0,
-            transform: `scale(${inverseScale})`,
-            transformOrigin: "left bottom",
-            paddingBottom: 4,
-          }}
-        >
-          <div
-            className="flex items-center gap-1 cursor-grab active:cursor-grabbing select-none group/label whitespace-nowrap"
-            onPointerDown={onDragStart}
-            onPointerMove={onDragMove}
-            onPointerUp={onDragEnd}
-          >
-            <span className="text-sm font-medium text-primary truncate max-w-[300px] flex-1">
-              {win.title}
-            </span>
-            <button
-              className="opacity-0 group-hover/label:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
-              onClick={(e) => {
-                e.stopPropagation();
-                fitWindow();
-              }}
-              aria-label="Zoom to fit"
-            >
-              <Maximize2 className="size-3.5 text-muted-foreground" />
-            </button>
-            <button
-              className="opacity-0 group-hover/label:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeWindow(win.id);
-              }}
-              aria-label="Close"
-            >
-              <X className="size-3.5 text-muted-foreground" />
-            </button>
-          </div>
-        </div>
-        {/* Frame body with icon - no border, just subtle shadow */}
+        {titleBar}
         <div
           className="rounded-lg bg-card overflow-hidden shadow-md flex items-center justify-center"
           style={{ width: win.width, height: win.height }}
         >
           {iconUrl ? (
-            <img
-              src={iconUrl}
-              alt={win.title}
-              className="size-16 object-contain opacity-50"
-              draggable={false}
-            />
+            <img src={iconUrl} alt={win.title} className="size-16 object-contain opacity-50" draggable={false} />
           ) : (
             <span className="text-3xl font-semibold text-muted-foreground/20">
               {win.title.charAt(0).toUpperCase()}
@@ -198,61 +210,14 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     );
   }
 
-  // Zoomed-in interactive: frameless content with subtle shadow
+  // Zoomed-in interactive: title bar above, content below
   return (
     <div
       className="absolute"
-      style={{
-        left: win.x,
-        top: win.y,
-        zIndex: win.zIndex,
-      }}
+      style={{ left: win.x, top: win.y, zIndex: win.zIndex }}
       onMouseDown={() => focusWindow(win.id)}
     >
-      {/* Inverse-scaled controls above the window */}
-      <div
-        className="absolute"
-        style={{
-          bottom: "100%",
-          left: 0,
-          right: 0,
-          transform: `scale(${inverseScale})`,
-          transformOrigin: "left bottom",
-          paddingBottom: 4,
-        }}
-      >
-        <div
-          className="flex items-center gap-1 cursor-grab active:cursor-grabbing select-none group/label whitespace-nowrap"
-          onPointerDown={onDragStart}
-          onPointerMove={onDragMove}
-          onPointerUp={onDragEnd}
-        >
-          <span className="text-[11px] font-medium text-primary truncate max-w-[200px] flex-1">
-            {win.title}
-          </span>
-          <button
-            className="opacity-0 group-hover/label:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
-            onClick={(e) => {
-              e.stopPropagation();
-              fitWindow();
-            }}
-            aria-label="Zoom to fit"
-          >
-            <Maximize2 className="size-3 text-muted-foreground" />
-          </button>
-          <button
-            className="opacity-0 group-hover/label:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
-            onClick={(e) => {
-              e.stopPropagation();
-              closeWindow(win.id);
-            }}
-            aria-label="Close"
-          >
-            <X className="size-3 text-muted-foreground" />
-          </button>
-        </div>
-      </div>
-      {/* Frame body - no border, clean shadow */}
+      {titleBar}
       <div
         className="rounded-lg bg-card overflow-hidden shadow-lg"
         style={{ width: win.width, height: win.height }}

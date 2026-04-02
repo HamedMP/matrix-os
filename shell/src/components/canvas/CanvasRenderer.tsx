@@ -5,6 +5,7 @@ import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useCanvasGroups, type CanvasGroup } from "@/stores/canvas-groups";
 import { useCanvasLabels, type CanvasLabel } from "@/stores/canvas-labels";
+import { useCanvasSettings, type CanvasNavMode } from "@/stores/canvas-settings";
 import { CanvasTransform } from "./CanvasTransform";
 import { CanvasWindow } from "./CanvasWindow";
 import { CanvasGroupRect } from "./CanvasGroup";
@@ -20,6 +21,7 @@ interface CanvasData {
   transform?: { zoom: number; panX: number; panY: number };
   groups?: CanvasGroup[];
   labels?: CanvasLabel[];
+  settings?: { navMode?: CanvasNavMode; showTitles?: boolean };
 }
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -34,6 +36,8 @@ export function CanvasRenderer() {
   const addToGroup = useCanvasGroups((s) => s.addToGroup);
   const labels = useCanvasLabels((s) => s.labels);
   const setLabels = useCanvasLabels((s) => s.setLabels);
+  const setNavMode = useCanvasSettings((s) => s.setNavMode);
+  const setShowTitles = useCanvasSettings((s) => s.setShowTitles);
   const loadedRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -50,6 +54,10 @@ export function CanvasRenderer() {
         if (data?.labels && data.labels.length > 0) {
           setLabels(data.labels);
         }
+        if (data?.settings) {
+          if (data.settings.navMode) setNavMode(data.settings.navMode);
+          if (data.settings.showTitles !== undefined) setShowTitles(data.settings.showTitles);
+        }
         // Always fitAll on mount to ensure windows are visible.
         // Previously we restored saved transform, but that causes users
         // to get stuck in a zoomed-in state after mode switching.
@@ -65,7 +73,7 @@ export function CanvasRenderer() {
         }
       })
       .catch(() => {});
-  }, [setTransform, fitAll, setGroups, setLabels, windows]);
+  }, [setTransform, fitAll, setGroups, setLabels, setNavMode, setShowTitles, windows]);
 
   const autoArrange = useCallback(
     (wins: typeof windows) => {
@@ -104,6 +112,10 @@ export function CanvasRenderer() {
       (state) => state.labels,
       () => scheduleSave(),
     );
+    const unsubSettings = useCanvasSettings.subscribe(
+      (state) => ({ navMode: state.navMode, showTitles: state.showTitles }),
+      () => scheduleSave(),
+    );
 
     function scheduleSave(transformOverride?: { zoom: number; panX: number; panY: number }) {
       clearTimeout(saveTimerRef.current);
@@ -115,10 +127,16 @@ export function CanvasRenderer() {
         };
         const currentGroups = useCanvasGroups.getState().groups;
         const currentLabels = useCanvasLabels.getState().labels;
+        const { navMode, showTitles } = useCanvasSettings.getState();
         fetch(`${GATEWAY_URL}/api/canvas`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transform, groups: currentGroups, labels: currentLabels }),
+          body: JSON.stringify({
+            transform,
+            groups: currentGroups,
+            labels: currentLabels,
+            settings: { navMode, showTitles },
+          }),
         }).catch(() => {});
       }, 500);
     }
@@ -127,6 +145,7 @@ export function CanvasRenderer() {
       unsubTransform();
       unsubGroups();
       unsubLabels();
+      unsubSettings();
       clearTimeout(saveTimerRef.current);
     };
   }, []);
@@ -173,7 +192,7 @@ export function CanvasRenderer() {
       if (!e.metaKey && !e.ctrlKey) return;
       const key = e.key;
 
-      if (key === "k") {
+      if (key === "k" && e.shiftKey) {
         e.preventDefault();
         autoArrangeWindows();
       } else if (key === "0") {

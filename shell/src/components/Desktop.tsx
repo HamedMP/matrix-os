@@ -12,6 +12,7 @@ import { FileBrowser } from "./file-browser/FileBrowser";
 import { PreviewWindow } from "./preview-window/PreviewWindow";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
+import { DotGrid } from "./DotGrid";
 import { Settings } from "./Settings";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
@@ -311,9 +312,10 @@ function ModeSwitcher({
 interface DesktopProps {
   storeOpen?: boolean;
   onToggleStore?: () => void;
+  onCloseStore?: () => void;
 }
 
-export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
+export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
@@ -487,15 +489,16 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
     checkAndGenerateIcon(slug);
   }, [wmSetApps, checkAndGenerateIcon]);
 
+  const onCloseStoreRef = useRef(onCloseStore);
+  onCloseStoreRef.current = onCloseStore;
+
   const openWindow = useCallback((name: string, path: string) => {
     // Terminal windows get unique paths to allow multiple instances
     const actualPath = path === "__terminal__"
       ? `__terminal__:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
       : path;
     wmOpenWindow(name, actualPath, dockXOffset);
-    // Don't reposition windows to canvas coordinates - the canvas transform
-    // handles visual positioning. Mutating actual window positions causes
-    // windows to end up off-screen when switching back to desktop mode.
+    onCloseStoreRef.current?.();
   }, [wmOpenWindow, dockXOffset]);
 
   const loadModules = useCallback(async () => {
@@ -752,6 +755,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
       id: `app:${app.path}`,
       label: app.name,
       group: "Apps" as const,
+      icon: app.iconUrl,
       keywords: [app.path],
       execute: () => openWindowRef.current(app.name, app.path),
     }));
@@ -817,34 +821,65 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
             </TooltipContent>
           </Tooltip>
 
-          {apps.filter((a) => pinnedApps.includes(a.path)).length > 0 && (
-            <div className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"} />
-          )}
-
-          {apps.filter((a) => pinnedApps.includes(a.path)).map((app) => {
-            const win = windows.find(
-              (w) => w.path === app.path && !w.minimized,
-            );
-            return (
-              <DockIcon
-                key={app.path}
-                name={app.name}
-                active={!!win}
-                onClick={() => openWindow(app.name, app.path)}
-                iconSize={dock.iconSize}
-                tooltipSide={tooltipSide}
-                iconUrl={app.iconUrl}
-                onUnpin={() => togglePin(app.path)}
-                onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
-                onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
-                onDelete={() => deleteAppOnServer(nameToSlug(app.name))}
-              />
-            );
-          })}
-
+          {/* Center section: app icons centered like macOS dock */}
           <div className={isHorizontal
-            ? "ml-auto flex flex-row items-center gap-2"
-            : "mt-auto flex flex-col items-center gap-2"
+            ? "flex-1 flex flex-row items-center justify-center gap-2"
+            : "flex-1 flex flex-col items-center justify-center gap-2"
+          }>
+            {(() => {
+              const pinnedSet = new Set(pinnedApps);
+              const openPaths = new Set(windows.filter((w) => !w.minimized).map((w) => w.path));
+              // Show pinned apps first, then open-but-unpinned apps
+              const pinnedList = apps.filter((a) => pinnedSet.has(a.path));
+              const openUnpinned = apps.filter((a) => !pinnedSet.has(a.path) && openPaths.has(a.path));
+              const allDockApps = [...pinnedList, ...openUnpinned];
+
+              return allDockApps.length > 0 ? (
+                <>
+                  {pinnedList.map((app) => {
+                    const win = windows.find((w) => w.path === app.path && !w.minimized);
+                    return (
+                      <DockIcon
+                        key={app.path}
+                        name={app.name}
+                        active={!!win}
+                        onClick={() => openWindow(app.name, app.path)}
+                        iconSize={dock.iconSize}
+                        tooltipSide={tooltipSide}
+                        iconUrl={app.iconUrl}
+                        onUnpin={() => togglePin(app.path)}
+                        onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
+                        onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
+                        onDelete={() => deleteAppOnServer(nameToSlug(app.name))}
+                      />
+                    );
+                  })}
+                  {pinnedList.length > 0 && openUnpinned.length > 0 && (
+                    <div className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"} />
+                  )}
+                  {openUnpinned.map((app) => (
+                    <DockIcon
+                      key={app.path}
+                      name={app.name}
+                      active
+                      onClick={() => openWindow(app.name, app.path)}
+                      iconSize={dock.iconSize}
+                      tooltipSide={tooltipSide}
+                      iconUrl={app.iconUrl}
+                      onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
+                      onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
+                      onDelete={() => deleteAppOnServer(nameToSlug(app.name))}
+                    />
+                  ))}
+                </>
+              ) : null;
+            })()}
+          </div>
+
+          {/* Bottom section: mode switcher, settings, user */}
+          <div className={isHorizontal
+            ? "flex flex-row items-center gap-2"
+            : "flex flex-col items-center gap-2"
           }>
             <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
             <Tooltip>
@@ -929,6 +964,7 @@ export function Desktop({ storeOpen, onToggleStore }: DesktopProps) {
         )}
 
         <div className="relative flex-1 min-h-0">
+          <DotGrid />
           {taskBoardOpen && (
             <MissionControl
               apps={apps}

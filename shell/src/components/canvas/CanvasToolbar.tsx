@@ -4,7 +4,9 @@ import { useCallback } from "react";
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasLabels } from "@/stores/canvas-labels";
-import { Minus, Plus, Maximize, Type, LayoutGrid } from "lucide-react";
+import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff } from "lucide-react";
+import { useDotGrid } from "../DotGrid";
+import { useCanvasSettings } from "@/stores/canvas-settings";
 
 export function autoArrangeWindows() {
   const wm = useWindowManager.getState();
@@ -58,6 +60,12 @@ export function CanvasToolbar() {
   const setZoom = useCanvasTransform((s) => s.setZoom);
   const resetZoom = useCanvasTransform((s) => s.resetZoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
+  const gridEnabled = useDotGrid((s) => s.enabled);
+  const toggleGrid = useDotGrid((s) => s.toggle);
+  const navMode = useCanvasSettings((s) => s.navMode);
+  const setNavMode = useCanvasSettings((s) => s.setNavMode);
+  const showTitles = useCanvasSettings((s) => s.showTitles);
+  const toggleShowTitles = useCanvasSettings((s) => s.toggleShowTitles);
 
   const onFitAll = useCallback(() => {
     const windows = useWindowManager.getState().windows.filter((w) => !w.minimized);
@@ -137,7 +145,7 @@ export function CanvasToolbar() {
         onClick={autoArrangeWindows}
         className="p-1 rounded hover:bg-muted transition-colors"
         aria-label="Auto-align apps"
-        title="Auto-align apps (Cmd+K)"
+        title="Auto-align apps (Cmd+Shift+K)"
       >
         <LayoutGrid className="size-3.5" />
       </button>
@@ -152,6 +160,45 @@ export function CanvasToolbar() {
       >
         <Type className="size-3.5" />
       </button>
+
+      <button
+        onClick={toggleGrid}
+        className={`p-1 rounded transition-colors ${gridEnabled ? "bg-muted text-foreground" : "hover:bg-muted text-muted-foreground"}`}
+        aria-label="Toggle dot grid"
+        title="Toggle dot grid"
+      >
+        <Grid3X3 className="size-3.5" />
+      </button>
+
+      <button
+        onClick={toggleShowTitles}
+        className={`p-1 rounded transition-colors ${showTitles ? "bg-muted text-foreground" : "hover:bg-muted text-muted-foreground"}`}
+        aria-label="Toggle app titles"
+        title={showTitles ? "Hide app titles" : "Show app titles"}
+      >
+        {showTitles ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+      </button>
+
+      <div className="w-px h-4 bg-border" />
+
+      <div className="flex items-center rounded-md bg-muted/50 p-0.5 gap-0.5">
+        <button
+          onClick={() => setNavMode("scroll")}
+          className={`p-1 rounded transition-colors ${navMode === "scroll" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          aria-label="Scroll to navigate"
+          title="Scroll to navigate"
+        >
+          <MousePointer className="size-3.5" />
+        </button>
+        <button
+          onClick={() => setNavMode("grab")}
+          className={`p-1 rounded transition-colors ${navMode === "grab" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          aria-label="Click and drag to navigate"
+          title="Click and drag to navigate"
+        >
+          <Hand className="size-3.5" />
+        </button>
+      </div>
     </div>
   );
 }

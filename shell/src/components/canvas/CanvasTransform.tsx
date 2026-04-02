@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, useEffect, useState, type ReactNode } from "react";
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
+import { useCanvasSettings } from "@/stores/canvas-settings";
 
 interface CanvasTransformProps {
   children: ReactNode;
@@ -16,9 +17,11 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
   const isAnimating = useCanvasTransform((s) => s.isAnimating);
   const zoomAtPoint = useCanvasTransform((s) => s.zoomAtPoint);
   const panBy = useCanvasTransform((s) => s.panBy);
+  const navMode = useCanvasSettings((s) => s.navMode);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const zoomOverlayRef = useRef<HTMLDivElement>(null);
+  const transformRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
   const lastPointer = useRef({ x: 0, y: 0 });
   const spaceDown = useRef(false);
@@ -33,12 +36,13 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         const delta = -e.deltaY * 0.01;
         const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom + delta));
         zoomAtPoint(newZoom, e.clientX, e.clientY);
-      } else {
-        // Regular two-finger scroll = pan (Figma-style)
+      } else if (navMode === "scroll") {
+        // Scroll mode: two-finger scroll = pan (Figma-style)
         panBy(-e.deltaX / zoom, -e.deltaY / zoom);
       }
+      // Grab mode: scroll does nothing (pinch still works via ctrlKey path above)
     },
-    [zoom, zoomAtPoint, panBy],
+    [zoom, zoomAtPoint, panBy, navMode],
   );
 
   useEffect(() => {
@@ -50,15 +54,24 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      // Middle-click or Space+click to pan
-      if (e.button === 1 || (e.button === 0 && spaceDown.current)) {
+      // Middle-click or Space+click to pan (always)
+      const isMiddleOrSpace = e.button === 1 || (e.button === 0 && spaceDown.current);
+      // Grab mode: left-click on canvas background (container, overlay, or inner transform div -- not app windows)
+      const isCanvasBackground =
+        e.target === containerRef.current ||
+        e.target === zoomOverlayRef.current ||
+        e.target === transformRef.current;
+      const isGrabOnBackground =
+        navMode === "grab" && e.button === 0 && isCanvasBackground;
+
+      if (isMiddleOrSpace || isGrabOnBackground) {
         e.preventDefault();
         isPanning.current = true;
         lastPointer.current = { x: e.clientX, y: e.clientY };
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        containerRef.current?.setPointerCapture(e.pointerId);
       }
     },
-    [],
+    [navMode],
   );
 
   const onPointerMove = useCallback(
@@ -118,7 +131,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         position: "relative",
         width: "100%",
         height: "100%",
-        cursor: grabCursor || isPanning.current ? "grab" : "default",
+        cursor: grabCursor || isPanning.current ? "grabbing" : navMode === "grab" ? "grab" : "default",
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -131,6 +144,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         style={{ pointerEvents: "none" }}
       />
       <div
+        ref={transformRef}
         style={{
           transformOrigin: "0 0",
           transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,

@@ -108,7 +108,7 @@ export default function Home() {
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
-          <Desktop storeOpen={storeOpen} onToggleStore={() => setStoreOpen((prev) => !prev)} />
+          <Desktop storeOpen={storeOpen} onToggleStore={() => setStoreOpen((prev) => !prev)} onCloseStore={() => setStoreOpen(false)} />
 
           <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2 md:p-4">
             <div className="flex justify-end">

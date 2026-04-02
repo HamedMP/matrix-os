@@ -33,10 +33,18 @@ export interface AppEntry {
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 
+interface ClosedLayout {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface WindowManagerState {
   windows: AppWindow[];
   nextZ: number;
   closedPaths: Set<string>;
+  closedLayouts: Map<string, ClosedLayout>;
   apps: AppEntry[];
 }
 
@@ -99,6 +107,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     windows: [],
     nextZ: 1,
     closedPaths: new Set<string>(),
+    closedLayouts: new Map<string, ClosedLayout>(),
     apps: [],
 
     openWindow: (name, path, dockXOffset) => {
@@ -114,6 +123,36 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             nextZ: state.nextZ + 1,
           };
         }
+
+        const saved = state.closedLayouts.get(path);
+        const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+        const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+        const defaultWidth = Math.round(Math.min(1200, Math.max(MIN_WIDTH, vw * 0.6)));
+        const defaultHeight = Math.round(Math.min(900, Math.max(MIN_HEIGHT, vh * 0.7)));
+
+        const width = saved?.width ?? defaultWidth;
+        const height = saved?.height ?? defaultHeight;
+
+        let x: number;
+        let y: number;
+        if (saved) {
+          x = saved.x;
+          y = saved.y;
+        } else {
+          // Place to the right of the rightmost visible window
+          const visible = state.windows.filter((w) => !w.minimized);
+          if (visible.length > 0) {
+            const rightmost = visible.reduce((best, w) =>
+              (w.x + w.width) > (best.x + best.width) ? w : best,
+            );
+            x = rightmost.x + rightmost.width + 24;
+            y = rightmost.y;
+          } else {
+            x = dockXOffset + 20;
+            y = 20;
+          }
+        }
+
         return {
           windows: [
             ...state.windows,
@@ -121,10 +160,10 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
               id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
               title: name,
               path,
-              x: dockXOffset + state.windows.length * 30,
-              y: 20 + state.windows.length * 30,
-              width: 640,
-              height: 480,
+              x,
+              y,
+              width,
+              height,
               minimized: false,
               zIndex: state.nextZ,
             },
@@ -138,10 +177,15 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       set((state) => {
         const win = state.windows.find((w) => w.id === id);
         const newClosed = new Set(state.closedPaths);
-        if (win) newClosed.add(win.path);
+        const newLayouts = new Map(state.closedLayouts);
+        if (win) {
+          newClosed.add(win.path);
+          newLayouts.set(win.path, { x: win.x, y: win.y, width: win.width, height: win.height });
+        }
         return {
           windows: state.windows.filter((w) => w.id !== id),
           closedPaths: newClosed,
+          closedLayouts: newLayouts,
         };
       });
     },
@@ -201,11 +245,13 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
       set((state) => {
         const newWindows: AppWindow[] = [];
         const newClosed = new Set(state.closedPaths);
+        const newLayouts = new Map(state.closedLayouts);
         let z = state.nextZ;
 
         for (const s of saved) {
           if (s.state === "closed") {
             newClosed.add(s.path);
+            newLayouts.set(s.path, { x: s.x, y: s.y, width: s.width, height: s.height });
             continue;
           }
           newWindows.push({
@@ -225,6 +271,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           windows: [...state.windows.filter((w) => !saved.some((s) => s.path === w.path)), ...newWindows],
           nextZ: z,
           closedPaths: newClosed,
+          closedLayouts: newLayouts,
         };
       });
     },
