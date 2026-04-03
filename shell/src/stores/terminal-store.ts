@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
 
 export type PaneNode =
-  | { type: "pane"; id: string; cwd: string; claudeMode?: boolean }
+  | { type: "pane"; id: string; cwd: string; sessionId?: string; claudeMode?: boolean }
   | { type: "split"; direction: "horizontal" | "vertical"; children: [PaneNode, PaneNode]; ratio: number };
 
 export interface TerminalTab {
@@ -36,6 +36,7 @@ interface TerminalStore {
   closePane: (paneId: string) => void;
   setFocusedPane: (paneId: string) => void;
   setSplitRatio: (paneId: string, ratio: number) => void;
+  setSessionId: (paneId: string, sessionId: string) => void;
 
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -257,6 +258,24 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       tabs: state.tabs.map((t) =>
         t.id === state.activeTabId
           ? { ...t, paneTree: setSplitRatioInTree(t.paneTree, paneId, ratio) }
+          : t,
+      ),
+    }));
+    get().saveLayout();
+  },
+
+  setSessionId: (paneId, sessionId) => {
+    function setSessionIdInTree(node: PaneNode): PaneNode {
+      if (node.type === "pane") {
+        return node.id === paneId ? { ...node, sessionId } : node;
+      }
+      return { ...node, children: [setSessionIdInTree(node.children[0]), setSessionIdInTree(node.children[1])] };
+    }
+
+    set((state) => ({
+      tabs: state.tabs.map((t) =>
+        t.id === state.activeTabId
+          ? { ...t, paneTree: setSessionIdInTree(t.paneTree) }
           : t,
       ),
     }));

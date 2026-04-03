@@ -6,6 +6,7 @@ import type { Theme } from "@/hooks/useTheme";
 import { getAnsiPalette } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
+import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 
 function buildXtermTheme(theme: Theme) {
   const bg = theme.colors.background || "#1a1a2e";
@@ -27,26 +28,74 @@ interface TerminalPaneProps {
   cwd: string;
   theme: Theme;
   isFocused: boolean;
+  sessionId?: string;
   claudeMode?: boolean;
   onFocus?: (paneId: string) => void;
+  onSessionAttached?: (paneId: string, sessionId: string) => void;
+  isClosing?: boolean;
 }
 
-export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocus }: TerminalPaneProps) {
+export function TerminalPane({
+  paneId,
+  cwd,
+  theme,
+  isFocused,
+  sessionId: initialSessionId,
+  claudeMode,
+  onFocus,
+  onSessionAttached,
+  isClosing,
+}: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<unknown>(null);
   const fitAddonRef = useRef<unknown>(null);
   const searchAddonRef = useRef<unknown>(null);
+  const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
+  const lastSeqRef = useRef<number>(0);
+  const reconnectAttemptRef = useRef<number>(0);
   const [searchOpen, setSearchOpen] = useState(false);
+  const isClosingRef = useRef(false);
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
   }, [paneId, onFocus]);
 
   useEffect(() => {
+    isClosingRef.current = !!isClosing;
+  }, [isClosing]);
+
+  useEffect(() => {
     let disposed = false;
 
     async function init() {
+      // Check cache first — instant tab switch
+      const cached = getCached(paneId);
+      if (cached && containerRef.current) {
+        // Reattach cached terminal to DOM
+        const termElement = (cached.terminal as { element?: HTMLElement }).element;
+        if (termElement) {
+          containerRef.current.appendChild(termElement);
+        }
+        cached.fitAddon.fit();
+        termRef.current = cached.terminal;
+        fitAddonRef.current = cached.fitAddon;
+        searchAddonRef.current = cached.searchAddon;
+        wsRef.current = cached.ws;
+        sessionIdRef.current = cached.sessionId;
+        lastSeqRef.current = cached.lastSeq;
+
+        const resizeObserver = new ResizeObserver(() => {
+          cached.fitAddon.fit();
+        });
+        resizeObserver.observe(containerRef.current);
+
+        return () => {
+          resizeObserver.disconnect();
+        };
+      }
+
+      // Cache miss — create fresh terminal
       const { Terminal: XTerm } = await import("@xterm/xterm");
       const { FitAddon } = await import("@xterm/addon-fit");
 
@@ -69,127 +118,194 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
       termRef.current = term;
       fitAddonRef.current = fitAddon;
 
-      // WebGL addon (canvas 2D fallback is automatic if WebGL unavailable)
+      // WebGL addon
+      let webglAddon: unknown = null;
       try {
         const { WebglAddon } = await import("@xterm/addon-webgl");
-        const webglAddon = new WebglAddon();
-        term.loadAddon(webglAddon);
+        const addon = new WebglAddon();
+        term.loadAddon(addon);
+        webglAddon = addon;
 
         const canvas = containerRef.current?.querySelector("canvas");
         canvas?.addEventListener("webglcontextlost", () => {
-          webglAddon.dispose();
+          (addon as { dispose: () => void }).dispose();
           try {
             const newWebgl = new WebglAddon();
             term.loadAddon(newWebgl);
-          } catch (_contextLossErr: unknown) {
-            // canvas 2D fallback is automatic
-          }
+            webglAddon = newWebgl;
+          } catch (_e: unknown) { /* canvas 2D fallback */ }
         });
-      } catch (_webglErr: unknown) {
-        // WebGL not available -- canvas 2D fallback is automatic
-      }
+      } catch (_e: unknown) { /* canvas 2D fallback */ }
 
       // Search addon
+      let searchAddon: unknown = null;
       try {
         const { SearchAddon } = await import("@xterm/addon-search");
-        const searchAddon = new SearchAddon();
-        term.loadAddon(searchAddon);
-        searchAddonRef.current = searchAddon;
-      } catch (_searchErr: unknown) {
-        // search addon unavailable
-      }
+        const addon = new SearchAddon();
+        term.loadAddon(addon);
+        searchAddon = addon;
+        searchAddonRef.current = addon;
+      } catch (_e: unknown) { /* unavailable */ }
 
       // Serialize addon
       try {
         const { SerializeAddon } = await import("@xterm/addon-serialize");
-        const serializeAddon = new SerializeAddon();
-        term.loadAddon(serializeAddon);
-      } catch (_serializeErr: unknown) {
-        // serialize addon unavailable
-      }
+        term.loadAddon(new SerializeAddon());
+      } catch (_e: unknown) { /* unavailable */ }
 
-      // Link provider for clickable URLs and file paths
+      // Link provider
       term.registerLinkProvider(new WebLinkProvider());
 
-      const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
-      const wsUrl = cwd ? `${baseWs}?cwd=${encodeURIComponent(cwd)}` : baseWs;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      function connectWs() {
+        const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
+        const wsUrl = cwd ? `${baseWs}?cwd=${encodeURIComponent(cwd)}` : baseWs;
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
 
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-        if (claudeMode) {
-          setTimeout(() => {
-            ws.send(JSON.stringify({ type: "input", data: "claude\r" }));
-          }, 100);
-        }
-      };
+        let attachSent = false;
 
-      ws.onerror = () => {
-        term.write("\r\n\x1b[31mConnection error. Is the gateway running?\x1b[0m\r\n");
-      };
+        ws.onopen = () => {
+          reconnectAttemptRef.current = 0;
 
-      ws.onclose = () => {
-        term.write("\r\n\x1b[90m[Disconnected]\x1b[0m\r\n");
-      };
-
-      ws.onmessage = (evt) => {
-        try {
-          const msg = JSON.parse(typeof evt.data === "string" ? evt.data : "");
-          if (msg.type === "output") {
-            term.write(msg.data);
-          } else if (msg.type === "exit") {
-            term.write("\r\n[Process exited]\r\n");
+          if (sessionIdRef.current) {
+            // Reattach to existing session
+            ws.send(JSON.stringify({
+              type: "attach",
+              sessionId: sessionIdRef.current,
+              fromSeq: lastSeqRef.current,
+            }));
+          } else {
+            // Create new session
+            ws.send(JSON.stringify({ type: "attach", cwd }));
           }
-        } catch {
-          // ignore
-        }
-      };
+          attachSent = true;
+
+          ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+
+          if (claudeMode && !sessionIdRef.current) {
+            setTimeout(() => {
+              ws.send(JSON.stringify({ type: "input", data: "claude\r" }));
+            }, 100);
+          }
+        };
+
+        ws.onerror = () => {
+          if (!sessionIdRef.current) {
+            term.write("\r\n\x1b[31mConnection error. Is the gateway running?\x1b[0m\r\n");
+          }
+        };
+
+        ws.onclose = () => {
+          if (disposed || isClosingRef.current) return;
+
+          // Attempt reconnection with exponential backoff
+          const attempt = reconnectAttemptRef.current;
+          if (attempt < 3 && sessionIdRef.current) {
+            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            reconnectAttemptRef.current = attempt + 1;
+            term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
+            setTimeout(() => {
+              if (!disposed && !isClosingRef.current) {
+                connectWs();
+              }
+            }, delay);
+          } else {
+            term.write("\r\n\x1b[90m[Disconnected]\x1b[0m\r\n");
+          }
+        };
+
+        ws.onmessage = (evt) => {
+          try {
+            const msg = JSON.parse(typeof evt.data === "string" ? evt.data : "");
+
+            switch (msg.type) {
+              case "attached":
+                sessionIdRef.current = msg.sessionId;
+                onSessionAttached?.(paneId, msg.sessionId);
+                if (msg.state === "exited") {
+                  term.write(`\r\n[Process exited with code ${msg.exitCode ?? "unknown"}]\r\n`);
+                }
+                break;
+
+              case "output":
+                term.write(msg.data);
+                if (typeof msg.seq === "number") {
+                  lastSeqRef.current = msg.seq + 1;
+                }
+                break;
+
+              case "replay-start":
+                // Replay beginning — output will follow
+                break;
+
+              case "replay-end":
+                // Replay done, live stream follows
+                break;
+
+              case "exit":
+                term.write(`\r\n[Process exited with code ${msg.code}]\r\n`);
+                break;
+
+              case "error":
+                if (msg.message === "Session not found" && sessionIdRef.current) {
+                  // Session gone (gateway restarted) — create new session
+                  sessionIdRef.current = null;
+                  lastSeqRef.current = 0;
+                  term.write("\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n");
+                  ws.send(JSON.stringify({ type: "attach", cwd }));
+                } else {
+                  term.write(`\r\n\x1b[31m[Error: ${msg.message}]\x1b[0m\r\n`);
+                }
+                break;
+            }
+          } catch (_e: unknown) {
+            // ignore malformed messages
+          }
+        };
+      }
+
+      connectWs();
 
       term.onData((data: string) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "input", data }));
         }
       });
 
       term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "resize", cols, rows }));
         }
       });
 
-      // Keyboard shortcuts: search, copy, paste
+      // Keyboard shortcuts
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.type !== "keydown") return true;
 
-        // Ctrl+Shift+F: toggle search
         if (ev.ctrlKey && ev.shiftKey && ev.key === "F") {
           setSearchOpen((prev) => !prev);
           return false;
         }
 
-        // Ctrl+Shift+C: copy selection
         if (ev.ctrlKey && ev.shiftKey && ev.key === "C") {
           const selection = term.getSelection();
           if (selection) {
-            navigator.clipboard.writeText(selection).catch(() => {
-              // clipboard API not available
-            });
+            navigator.clipboard.writeText(selection).catch(() => {});
             term.clearSelection();
             return false;
           }
           return true;
         }
 
-        // Ctrl+Shift+V: paste
         if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
           navigator.clipboard.readText().then((text) => {
-            if (ws.readyState === WebSocket.OPEN) {
+            const ws = wsRef.current;
+            if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: "input", data: text }));
             }
-          }).catch(() => {
-            // clipboard API not available
-          });
+          }).catch(() => {});
           return false;
         }
 
@@ -203,8 +319,33 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
 
       return () => {
         resizeObserver.disconnect();
-        ws.close();
-        term.dispose();
+
+        if (isClosingRef.current) {
+          // Pane is being closed — clean up everything
+          const ws = wsRef.current;
+          if (ws) {
+            ws.send(JSON.stringify({ type: "detach" }));
+            ws.close();
+          }
+          removeCached(paneId);
+          term.dispose();
+        } else {
+          // Tab switch — cache the terminal for instant restore
+          const termElement = (term as { element?: HTMLElement }).element;
+          if (termElement?.parentNode) {
+            termElement.parentNode.removeChild(termElement);
+          }
+
+          cacheTerminal(paneId, {
+            terminal: term,
+            fitAddon,
+            webglAddon,
+            searchAddon,
+            ws: wsRef.current!,
+            lastSeq: lastSeqRef.current,
+            sessionId: sessionIdRef.current ?? "",
+          });
+        }
       };
     }
 
@@ -214,7 +355,7 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
       disposed = true;
       cleanup.then((fn) => fn?.());
     };
-  }, [cwd, claudeMode]);
+  }, [cwd, claudeMode, paneId]);
 
   useEffect(() => {
     if (termRef.current && fitAddonRef.current) {
