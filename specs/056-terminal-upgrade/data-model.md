@@ -66,7 +66,7 @@ interface CachedTerminal {
 ```
 
 - Keyed by `paneId` in a module-level Map
-- No size cap — bounded by pane count
+- LRU cap of MAX_CACHED=20 with eviction (sends detach, closes WS, disposes terminal)
 
 ### AnsiPalette (static config)
 

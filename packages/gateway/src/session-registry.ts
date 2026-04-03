@@ -350,29 +350,32 @@ export class SessionRegistry {
     return session ? session.toInfo() : null;
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     clearTimeout(this.persistTimer);
     for (const session of this.sessions.values()) {
       session.kill();
     }
     this.sessions.clear();
-    this.persistNow();
+    await this.persistNow();
   }
 
   private evictIfNeeded(): void {
     if (this.sessions.size < this.maxSessions) return;
 
-    // Find oldest orphaned session (no attached clients)
-    let oldestOrphan: PtySession | null = null;
+    let candidate: PtySession | null = null;
     for (const session of this.sessions.values()) {
       if (session.attachedClients > 0) continue;
-      if (!oldestOrphan || session.createdAt < oldestOrphan.createdAt) {
-        oldestOrphan = session;
+      if (!candidate) { candidate = session; continue; }
+      // Prefer exited over running, then oldest
+      if (session.state === "exited" && candidate.state !== "exited") {
+        candidate = session;
+      } else if (session.state === candidate.state && session.createdAt < candidate.createdAt) {
+        candidate = session;
       }
     }
 
-    if (oldestOrphan) {
-      this.destroy(oldestOrphan.sessionId);
+    if (candidate) {
+      this.destroy(candidate.sessionId);
     }
   }
 
@@ -381,11 +384,11 @@ export class SessionRegistry {
     this.persistTimer = setTimeout(() => this.persistNow(), 100);
   }
 
-  private persistNow(): void {
+  private persistNow(): Promise<void> {
     const data = JSON.stringify(this.list(), null, 2);
     const dir = dirname(this.persistPath);
     const tmpPath = this.persistPath + ".tmp";
-    void mkdir(dir, { recursive: true })
+    return mkdir(dir, { recursive: true })
       .then(() => writeFile(tmpPath, data))
       .then(() => rename(tmpPath, this.persistPath))
       .catch((err: unknown) => {
