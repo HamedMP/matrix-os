@@ -152,6 +152,8 @@ Every new endpoint, WebSocket, and webhook requires explicit auth design before 
 
 ## Development Workflow
 
+
+
 ### IX. Test-Driven Development (NON-NEGOTIABLE)
 
 The OS is complex and self-modifying. TDD is mandatory to prevent regressions as the system evolves.
@@ -172,7 +174,6 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 - Verify every SDK assumption against actual docs before implementing
 - Test against real Agent SDK behavior, not just docs (docs may be incomplete)
 - Commit working increments -- each phase should produce a demoable state
-- Pre-seed demo apps to avoid generation latency during recordings
 - Keep the system prompt under 7K tokens (3% of context budget)
 - **Documentation-driven development**: every new feature, spec, or plan must include a step to update the public docs at `www/content/docs/`. The docs site (matrix-os.com/docs, built with Fumadocs) is the canonical public reference. When planning a task or writing a spec, include documentation updates as an explicit deliverable alongside tests and implementation
 
@@ -189,4 +190,13 @@ This constitution supersedes all other development practices for Matrix OS. Amen
 - **1.3.0** (2026-02-12): Expanded vision to include personal AI assistant capabilities. Added: SOUL identity (`soul.md`), skills system (`agents/skills/`), multi-channel messaging (Telegram, WhatsApp, Discord, Slack), cron scheduling, proactive heartbeat, cloud deployment. Expanded Principle III with channel shells. Added channel/scheduling tech constraints. Inspired by OpenClaw/Moltbot and Nanobot (both MIT, open source). Matrix OS is now both a visual OS and a personal AI assistant.
 - **1.4.0** (2026-02-25): Added documentation-driven development rule. Every feature, spec, and plan must include public docs updates at `www/content/docs/` (Fumadocs site at matrix-os.com/docs) as an explicit deliverable.
 - **1.5.0** (2026-03-24): Added Defense in Depth principle (VII). Renumbered TDD to VIII. Every spec with endpoints must include auth matrix, input validation plan, resource limits, timeout policies, and integration wiring verification. Motivated by PR #17 (voice system) where 55+ review findings traced back to missing security architecture and integration wiring in the spec. Also added: atomic file writes, constant-time secret comparison, never expose internal errors, never trust forwarded headers.
-- **1.6.0** (2026-04-03): Major philosophy update. Renamed Principle I from "Everything Is a File" to "Everything Is Owned by the User" -- ownership and portability over storage mechanism. Renamed Principle V from "Simplicity Over Sophistication" to "Quality Over Shortcuts" -- apps are Vite+React, no bare HTML/CDN hacks, production-grade UX from day one. PostgreSQL is now the primary database (per-user, schema-per-app via Kysely); SQLite demoted to kernel-internal only. Motivated by social network (Spec 041), app data layer (Spec 050), and prioritizing user experience above all.
+- **2.0.0** (2026-04-03): Platform-scale rewrite. Vision: Matrix OS as the default OS for personal and professional use, with app store and org support. Changes:
+  - **Principle I**: "Everything Is a File" -> "Data Belongs to Its Owner" with ownership scopes (personal, org, shared, published). Postgres is primary, files for config/identity only.
+  - **Principle II**: "Agent Is the Kernel" -> "AI Is the Kernel" -- model-agnostic, smart routing across providers.
+  - **Principle III**: Mobile and desktop elevated to first-class shells with full feature parity. Added offline support goal.
+  - **Principle V**: "Simplicity Over Sophistication" -> "Quality Over Shortcuts" -- Vite+React apps, no bare HTML, production-grade from day one.
+  - **NEW Principle VI**: App Ecosystem -- app packaging, permissions, trust levels, app store, sharing.
+  - **NEW Principle VII**: Multi-Tenancy -- personal OS, org OS, RBAC, shared workspaces, strict personal/org boundary.
+  - **Principle VIII** (was VII): Defense in Depth expanded with app sandboxing, org access control (RBAC, audit logs), and compliance (GDPR, data residency, content moderation).
+  - **Principle IX** (was VIII): TDD renumbered.
+  - **Tech constraints**: AI kernel marked model-agnostic, container-per-user flagged as current implementation (not principle), Postgres preferred over SQLite.
