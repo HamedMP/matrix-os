@@ -23,6 +23,19 @@ const isGatewayProxy = createRouteMatcher([
   "/ws/:path*",
 ]);
 
+function getPublicOrigin(request: NextRequest) {
+  const host =
+    request.headers.get("x-forwarded-host") ??
+    request.headers.get("host") ??
+    request.nextUrl.host;
+  const proto =
+    request.headers.get("x-forwarded-proto") ??
+    request.nextUrl.protocol.replace(":", "") ??
+    "https";
+
+  return `${proto}://${host}`;
+}
+
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
   const { pathname } = request.nextUrl;
@@ -49,8 +62,13 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     const { userId } = await auth();
     if (!userId) {
-      const signInUrl = new URL("/sign-in", request.url);
-      signInUrl.searchParams.set("redirect_url", request.url);
+      const publicOrigin = getPublicOrigin(request);
+      const signInUrl = new URL("/sign-in", publicOrigin);
+      const redirectUrl = new URL(
+        `${request.nextUrl.pathname}${request.nextUrl.search}`,
+        publicOrigin,
+      );
+      signInUrl.searchParams.set("redirect_url", redirectUrl.toString());
       return NextResponse.redirect(signInUrl);
     }
   }

@@ -77,13 +77,15 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
   const path = c.req.path;
   const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
   const targetUrl = `http://${host}:${port}${path}${qs}`;
+  const originalHost = c.req.header('host') ?? 'app.matrix-os.com';
 
   try {
     const headers = new Headers();
     for (const [key, value] of Object.entries(c.req.header())) {
       if (key !== 'host' && value) headers.set(key, String(value));
     }
-    headers.set('x-forwarded-host', 'app.matrix-os.com');
+    headers.set('host', originalHost);
+    headers.set('x-forwarded-host', originalHost);
     headers.set('x-forwarded-proto', 'https');
 
     const upstream = await fetch(targetUrl, {
