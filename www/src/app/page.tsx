@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
-import { ArrowRightIcon, GithubIcon, ChevronDownIcon } from "lucide-react";
+import { ArrowRightIcon, GithubIcon } from "lucide-react";
 // import { MascotGuide } from "@/components/mascot";
 
 export default function LandingPage() {
@@ -59,11 +59,11 @@ function Nav() {
         <div className="flex items-center gap-3">
           <SignedOut>
             <a
-              href="https://app.matrix-os.com/sign-up"
+              href="https://app.matrix-os.com"
               className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
             >
               Join the waitlist
-              <ChevronDownIcon className="size-3.5" />
+              <ArrowRightIcon className="size-3.5" />
             </a>
           </SignedOut>
           <SignedIn>
@@ -107,7 +107,7 @@ function Hero() {
         <div className="flex items-center justify-center gap-4 flex-wrap">
           <SignedOut>
             <a
-              href="https://app.matrix-os.com/sign-up"
+              href="https://app.matrix-os.com"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Join the waitlist
@@ -462,15 +462,15 @@ function CTA() {
           Your rules.
         </h2>
         <p className="text-lg text-[#191919]/60 leading-relaxed max-w-[500px] mx-auto mb-10">
-          Join the waitlist for early access to your personal instance at{" "}
-          <span className="font-mono text-[#191919]">you.matrix-os.com</span>.
+          Join the waitlist from{" "}
+          <span className="font-mono text-[#191919]">app.matrix-os.com</span>.
           We&apos;re letting people in gradually.
         </p>
 
         <div className="flex items-center justify-center gap-4 flex-wrap mb-16">
           <SignedOut>
             <a
-              href="https://app.matrix-os.com/sign-up"
+              href="https://app.matrix-os.com"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Join the waitlist
