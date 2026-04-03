@@ -59,7 +59,7 @@ function Nav() {
         <div className="flex items-center gap-3">
           <SignedOut>
             <a
-              href="/signup"
+              href="https://app.matrix-os.com/sign-up"
               className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
             >
               Join the waitlist
@@ -68,10 +68,10 @@ function Nav() {
           </SignedOut>
           <SignedIn>
             <a
-              href="/dashboard"
+              href="https://app.matrix-os.com"
               className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
             >
-              Dashboard
+              Open Matrix OS
               <ArrowRightIcon className="size-3.5" />
             </a>
           </SignedIn>
@@ -107,7 +107,7 @@ function Hero() {
         <div className="flex items-center justify-center gap-4 flex-wrap">
           <SignedOut>
             <a
-              href="/signup"
+              href="https://app.matrix-os.com/sign-up"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Join the waitlist
@@ -116,7 +116,7 @@ function Hero() {
           </SignedOut>
           <SignedIn>
             <a
-              href="/dashboard"
+              href="https://app.matrix-os.com"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Go to Dashboard
@@ -470,7 +470,7 @@ function CTA() {
         <div className="flex items-center justify-center gap-4 flex-wrap mb-16">
           <SignedOut>
             <a
-              href="/signup"
+              href="https://app.matrix-os.com/sign-up"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Join the waitlist
@@ -479,7 +479,7 @@ function CTA() {
           </SignedOut>
           <SignedIn>
             <a
-              href="/dashboard"
+              href="https://app.matrix-os.com"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Go to Dashboard
