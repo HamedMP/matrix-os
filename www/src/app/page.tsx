@@ -3,9 +3,83 @@ import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { ArrowRightIcon, GithubIcon } from "lucide-react";
 // import { MascotGuide } from "@/components/mascot";
 
+const faqItems = [
+  {
+    q: "What happens to my data?",
+    a: "Everything is a file on your system. Apps, data, settings, your AI's memory. Copy a folder to back up your entire OS. No vendor lock-in. No opaque databases.",
+  },
+  {
+    q: "Do I need to code?",
+    a: "No. You describe what you want in plain English. The AI writes the code, saves it as a file, and it appears on your desktop. You never touch a line of code unless you want to.",
+  },
+  {
+    q: "What if something breaks?",
+    a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost.",
+  },
+  {
+    q: "Is it private?",
+    a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source, MIT licensed, auditable by anyone.",
+  },
+  {
+    q: "How is this different from ChatGPT?",
+    a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep.",
+  },
+  {
+    q: "What does it cost?",
+    a: "Free to start. The platform is open source. You bring your own AI key, or use our hosted instances. No surprise bills, no credit-burning loops.",
+  },
+];
+
+const jsonLd = JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      name: "Matrix OS",
+      url: "https://matrix-os.com",
+      logo: "https://matrix-os.com/logo.png",
+      sameAs: [
+        "https://github.com/HamedMP/matrix-os",
+        "https://x.com/joinmatrixos",
+        "https://discord.gg/cSBBQWtPwV",
+      ],
+    },
+    {
+      "@type": "SoftwareApplication",
+      name: "Matrix OS",
+      url: "https://matrix-os.com",
+      applicationCategory: "OperatingSystem",
+      operatingSystem: "Web, Docker",
+      description:
+        "An AI-native operating system that generates software from conversation. Describe what you need and watch it appear on your desktop.",
+      offers: {
+        "@type": "Offer",
+        price: "0",
+        priceCurrency: "USD",
+      },
+    },
+    {
+      "@type": "FAQPage",
+      mainEntity: faqItems.map((item) => ({
+        "@type": "Question",
+        name: item.q,
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: item.a,
+        },
+      })),
+    },
+  ],
+});
+
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#f5f0e8] text-[#191919]">
+      {/* JSON-LD: static content only, no user input -- safe to inline */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLd }}
+      />
       {/* <MascotGuide /> */}
       <Nav />
       <Hero />
@@ -402,20 +476,7 @@ function WhyDifferent() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
           <div className="space-y-8">
-            {[
-              {
-                q: "What happens to my data?",
-                a: "Everything is a file on your system. Apps, data, settings, your AI's memory. Copy a folder to back up your entire OS. No vendor lock-in. No opaque databases.",
-              },
-              {
-                q: "Do I need to code?",
-                a: "No. You describe what you want in plain English. The AI writes the code, saves it as a file, and it appears on your desktop. You never touch a line of code unless you want to.",
-              },
-              {
-                q: "What if something breaks?",
-                a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost.",
-              },
-            ].map((item) => (
+            {faqItems.slice(0, 3).map((item) => (
               <div key={item.q}>
                 <h3
                   className="text-lg font-bold mb-2"
@@ -429,20 +490,7 @@ function WhyDifferent() {
           </div>
 
           <div className="space-y-8">
-            {[
-              {
-                q: "Is it private?",
-                a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source, MIT licensed, auditable by anyone.",
-              },
-              {
-                q: "How is this different from ChatGPT?",
-                a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep.",
-              },
-              {
-                q: "What does it cost?",
-                a: "Free to start. The platform is open source. You bring your own AI key, or use our hosted instances. No surprise bills, no credit-burning loops.",
-              },
-            ].map((item) => (
+            {faqItems.slice(3).map((item) => (
               <div key={item.q}>
                 <h3
                   className="text-lg font-bold mb-2"
