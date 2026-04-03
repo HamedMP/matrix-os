@@ -25,12 +25,24 @@
 Matrix OS is an AI-native operating system where software doesn't exist until you need it. You speak, and applications materialize -- generated in real time, saved as real files, yours to keep, inspect, and modify. The AI isn't a feature bolted onto the side. It IS the kernel.
 
 <p align="center">
+  <a href="https://youtu.be/CSFIYUeOvlc">
+    <img src="https://img.youtube.com/vi/CSFIYUeOvlc/maxresdefault.jpg" alt="Matrix OS Demo" width="800">
+  </a>
+  <br>
+  <em>Watch the demo</em>
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/HamedMP/matrix-os/main/www/public/images/screenshot-desktop.png" alt="Matrix OS desktop" width="800">
+</p>
+
+Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) (Feb 10-16, 2026) where it placed in the **top 20**. Now being built into a production-ready platform. The entire system -- kernel, shell, platform, website, and this README -- was written with Claude Code.
+
+<p align="center">
   <img src="docs/images/anthropic-hackathon.jpg" alt="Matrix OS at the Claude Code Birthday Party, Anthropic HQ" width="600">
   <br>
   <em>Matrix OS at the Claude Code Birthday Party at Anthropic HQ (Feb 2026) -- Top 20 finalist</em>
 </p>
-
-Built for the [Anthropic "Built with Opus 4.6" Hackathon](https://cv.inc/e/claude-code-hackathon) (Feb 10-16, 2026) where it placed in the **top 20**. Now being built into a production-ready platform. The entire system -- kernel, shell, platform, website, and this README -- was written with Claude Code.
 
 ---
 

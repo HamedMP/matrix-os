@@ -139,16 +139,14 @@ function Hero() {
         </div>
 
         <div className="mt-16 mx-auto max-w-[1100px]">
-          <div className="rounded-xl overflow-hidden shadow-2xl shadow-[#191919]/15 border border-[#d5cfc4]">
-            <picture>
-              <source srcSet="/images/screenshot-desktop.webp" type="image/webp" />
-              <img
-                src="/images/screenshot-desktop.png"
-                alt="Matrix OS desktop showing a budget tracker and gym tracker app running side by side"
-                className="w-full h-auto"
-                loading="eager"
-              />
-            </picture>
+          <div className="rounded-xl overflow-hidden shadow-2xl shadow-[#191919]/15 border border-[#d5cfc4] aspect-video">
+            <iframe
+              src="https://www.youtube.com/embed/CSFIYUeOvlc?rel=0&modestbranding=1"
+              title="Matrix OS Demo"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              className="w-full h-full"
+            />
           </div>
         </div>
       </div>
@@ -203,6 +201,18 @@ function HowItFeels() {
               ))}
             </div>
           </div>
+        </div>
+
+        <div className="mt-12 rounded-xl overflow-hidden shadow-2xl shadow-[#191919]/15 border border-[#d5cfc4]">
+          <picture>
+            <source srcSet="/images/screenshot-desktop.webp" type="image/webp" />
+            <img
+              src="/images/screenshot-desktop.png"
+              alt="Matrix OS desktop showing a budget tracker and gym tracker app running side by side"
+              className="w-full h-auto"
+              loading="lazy"
+            />
+          </picture>
         </div>
       </div>
     </section>
