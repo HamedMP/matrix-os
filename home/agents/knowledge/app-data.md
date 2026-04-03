@@ -2,9 +2,11 @@
 
 Matrix OS apps store data in Postgres via the `app_data` IPC tool. Apps declare their schema in `matrix.json` and the system auto-creates tables on boot.
 
-## IMPORTANT: Always use the app_data tool
+## IMPORTANT: Always use structured app data by default
 
-NEVER read or write files in `~/data/` directly. Always use the `app_data` IPC tool. The file-based path is deprecated and apps read from Postgres, not files.
+NEVER read or write files in `~/data/` directly. Prefer the structured Postgres-backed app data API for new apps.
+
+Do not default to the legacy `/api/bridge/data` KV bridge for new apps. It exists for older apps, but it is easy to misuse and can return JSON as strings unless the app parses and validates values carefully.
 
 ## Structured Actions (Postgres-backed)
 
@@ -75,7 +77,7 @@ Filters support MongoDB-style operators:
 ### pomodoro
 - **sessions**: duration (integer), type (text), completed (boolean)
 
-## Legacy Actions (KV fallback)
+## Legacy Actions (KV fallback only)
 
 For apps without `storage.tables`, use KV actions:
 ```
@@ -86,7 +88,7 @@ app_data { action: "list", app: "calculator" }
 
 ## When building new apps
 
-Always declare `storage.tables` in `matrix.json` for apps that persist data. Use the structured API (find/insert/update/delete), not the legacy KV API.
+Always declare `storage.tables` in `matrix.json` for apps that persist data. Use the structured API (`find`, `insert`, `update`, `delete`, `count`), not the legacy KV API.
 
 ```json
 {
@@ -107,3 +109,14 @@ Always declare `storage.tables` in `matrix.json` for apps that persist data. Use
 ```
 
 Column types: text, string, boolean, bool, integer, int, float, number, date, timestamptz, timestamp, json, jsonb, uuid.
+
+## If you must use the KV bridge
+
+Only use `/api/bridge/data` for older apps or trivial key-value storage with no schema.
+
+Required rules:
+- POST with an explicit `action` field: `"read"` or `"write"`
+- Serialize objects/arrays with `JSON.stringify(...)` before writing
+- Parse JSON strings on read before using them
+- Validate the decoded shape with `Array.isArray(...)`, `typeof value === "object"`, etc. before calling methods like `.map(...)`
+- Never assume the bridge returns an array or object just because that is what you originally wrote

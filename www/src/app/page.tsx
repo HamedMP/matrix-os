@@ -69,6 +69,8 @@ function Nav() {
           <SignedIn>
             <a
               href="https://app.matrix-os.com"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
             >
               Open Matrix OS
@@ -117,6 +119,8 @@ function Hero() {
           <SignedIn>
             <a
               href="https://app.matrix-os.com"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Go to Dashboard
@@ -480,6 +484,8 @@ function CTA() {
           <SignedIn>
             <a
               href="https://app.matrix-os.com"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
             >
               Go to Dashboard

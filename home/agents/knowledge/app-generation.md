@@ -1,25 +1,27 @@
 # App Generation Knowledge
 
-## Default: React Modules (~/modules/)
+## Default: Apps In `~/apps/<slug>/`
 
-The default output type is a **pre-built React app** using Vite. These are static builds served through the gateway -- no running dev server needed.
+The default output type is a **pre-built React app** using Vite in `~/apps/<slug>/`. These are static builds served through the gateway with no separate dev server.
+
+Use `~/modules/<name>/` only when the user explicitly wants a module, when the app must follow existing module conventions, or when you are extending an existing module-based app. Do not default to `~/modules/` for new user-facing apps.
 
 ### Scaffold Steps
 
-1. Create module directory: `~/modules/<name>/`
+1. Create app directory: `~/apps/<slug>/`
 2. Write project files (see structure below)
-3. Run: `cd ~/modules/<name> && pnpm install && pnpm build`
+3. Run: `cd ~/apps/<slug> && pnpm install && pnpm build`
 4. Verify `dist/index.html` exists
 5. Register in `~/system/modules.json`
 
 ### Structure
 ```
-~/modules/todo-app/
+~/apps/todo-app/
   package.json        # Dependencies + build scripts
   vite.config.ts      # Vite config (React plugin)
   tsconfig.json       # TypeScript config
   index.html          # Vite entry (references src/main.tsx)
-  module.json         # Matrix OS module metadata
+  matrix.json         # Matrix OS app manifest
   src/
     main.tsx          # React entry point
     App.tsx           # Root component
@@ -116,12 +118,14 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
-### module.json (Matrix OS metadata)
+### matrix.json (Matrix OS app manifest)
 ```json
 {
   "name": "todo-app",
+  "title": "Todo App",
   "description": "A simple todo list",
   "version": "1.0.0",
+  "type": "react-app",
   "entry": "dist/index.html"
 }
 ```
@@ -147,7 +151,7 @@ body {
 
 ### Build and Verify
 ```bash
-cd ~/modules/<name>
+cd ~/apps/<slug>
 pnpm install
 pnpm build
 # Verify dist/index.html exists
@@ -159,14 +163,14 @@ ls dist/index.html
 {
   "name": "todo-app",
   "type": "react-app",
-  "path": "~/modules/todo-app",
+  "path": "~/apps/todo-app",
   "status": "active"
 }
 ```
 
 ## HTML Apps (~/apps/) -- Simple Alternative
 
-For very simple tools (calculators, clocks, single-screen utilities), a single HTML file is faster to generate and has zero build step.
+For very simple tools (calculators, clocks, single-screen utilities), use `~/apps/<slug>/index.html` plus `~/apps/<slug>/matrix.json`. Do not create bare `~/apps/<slug>.html` files for new apps.
 
 ### When to Use HTML Apps
 - No state management needed
@@ -175,7 +179,9 @@ For very simple tools (calculators, clocks, single-screen utilities), a single H
 - User explicitly asks for something "quick" or "simple"
 
 ### Structure
-- One `.html` file in `~/apps/`
+- One app directory in `~/apps/<slug>/`
+- `matrix.json` manifest
+- `index.html` entry point
 - CSS and JS inline or via CDN imports (esm.sh, unpkg)
 - Theme integration: CSS custom properties
 
@@ -183,8 +189,8 @@ For very simple tools (calculators, clocks, single-screen utilities), a single H
 ```json
 {
   "name": "my-app",
+  "title": "My App",
   "type": "html-app",
-  "path": "~/apps/my-app.html",
   "description": "Short description",
   "status": "active"
 }
@@ -194,18 +200,26 @@ For very simple tools (calculators, clocks, single-screen utilities), a single H
 
 | Signal | Output Type |
 |--------|------------|
-| Default (no preference stated) | React module |
-| "build me an app", "create an app" | React module |
-| Multiple screens or views | React module |
-| State management needed | React module |
-| "quick", "simple", "just a..." | HTML app |
-| Calculator, clock, single widget | HTML app |
+| Default (no preference stated) | React app in `~/apps/<slug>/` |
+| "build me an app", "create an app" | React app in `~/apps/<slug>/` |
+| Multiple screens or views | React app in `~/apps/<slug>/` |
+| State management needed | React app in `~/apps/<slug>/` |
+| User explicitly wants a module or existing module extension | React module in `~/modules/<name>/` |
+| "quick", "simple", "just a..." | HTML app in `~/apps/<slug>/` |
+| Calculator, clock, single widget | HTML app in `~/apps/<slug>/` |
 
 ## Best Practices
-- Default to React modules -- they scale better and are easier to extend
-- Use TypeScript strict mode in all React modules
+- Default to `~/apps/<slug>/matrix.json` + `index.html` for apps
+- Use TypeScript strict mode in all React apps/modules
 - Keep components small and focused
 - Use semantic HTML and accessible markup
 - Make apps responsive
+- If an app persists structured data, declare `storage.tables` in `matrix.json` and use the structured app data API. Do not default to the legacy KV bridge.
+- When consuming `~/system/modules.json`, trust the registry `path` value. Do not hardcode `/files/modules/<name>/...` because some active entries point into `~/apps/<slug>/`.
+- For manifests, support the real on-disk conventions:
+  - `~/apps/<slug>/matrix.json`
+  - `~/modules/<name>/module.json`
+  - `~/modules/<name>/manifest.json`
+- Before finishing, verify the app's manifest and entry file are reachable through the gateway path derived from the registry entry, not from a guessed directory.
 - Always verify the build succeeds before reporting completion
 - If build fails, read the error output and fix before retrying

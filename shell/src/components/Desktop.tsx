@@ -602,11 +602,17 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
             const relativeBasePath = registryPathToRelativePath(mod.path);
             if (!relativeBasePath) continue;
 
-            const metaCandidates = [
-              `${GATEWAY_URL}/files/${relativeBasePath}/module.json`,
-              `${GATEWAY_URL}/files/${relativeBasePath}/manifest.json`,
-              `${GATEWAY_URL}/files/${relativeBasePath}/matrix.json`,
-            ];
+            const metaCandidates = relativeBasePath.startsWith("apps/")
+              ? [
+                  `${GATEWAY_URL}/files/${relativeBasePath}/matrix.json`,
+                  `${GATEWAY_URL}/files/${relativeBasePath}/module.json`,
+                  `${GATEWAY_URL}/files/${relativeBasePath}/manifest.json`,
+                ]
+              : [
+                  `${GATEWAY_URL}/files/${relativeBasePath}/manifest.json`,
+                  `${GATEWAY_URL}/files/${relativeBasePath}/module.json`,
+                  `${GATEWAY_URL}/files/${relativeBasePath}/matrix.json`,
+                ];
 
             let metaRes: Response | undefined;
             for (const candidate of metaCandidates) {
