@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ProvisionButton } from "./provision-button";
 import { UpgradeButton } from "./upgrade-button";
+import { OpenButton } from "./open-button";
 
 const PLATFORM_API_URL = process.env.PLATFORM_API_URL ?? "https://api.matrix-os.com";
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
@@ -111,12 +112,7 @@ export default async function DashboardPage() {
                 )}
 
                 <div className="flex items-center gap-3">
-                  <a
-                    href={isLocal ? `http://localhost:${result.data.shellPort}` : `https://app.matrix-os.com`}
-                    className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-                  >
-                    Open Matrix OS
-                  </a>
+                  <OpenButton shellPort={result.data.shellPort as number} />
                   <UpgradeButton />
                 </div>
               </>

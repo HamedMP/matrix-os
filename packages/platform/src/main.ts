@@ -62,15 +62,34 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       return c.redirect('https://matrix-os.com/login');
     }
 
-    const token = clerkAuth.extractToken(
+    // Accept Clerk JWT from query param (passed by dashboard), cookie, or Authorization header
+    const url = new URL(c.req.url, 'https://app.matrix-os.com');
+    const queryToken = url.searchParams.get('__clerk_token');
+
+    const token = queryToken ?? clerkAuth.extractToken(
       c.req.header('authorization'),
       c.req.header('cookie'),
     );
-    if (!token) {
+
+    // Strip token from URL and redirect to clean URL
+    if (queryToken && token) {
+      url.searchParams.delete('__clerk_token');
+      const cleanPath = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+      // Set a short-lived platform session cookie so subsequent requests don't need the query param
+      const res = c.redirect(`https://app.matrix-os.com${cleanPath}`);
+      res.headers.set('set-cookie', `__platform_token=${queryToken}; Domain=.matrix-os.com; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`);
+      return res;
+    }
+
+    // Also check platform session cookie
+    const platformToken = c.req.header('cookie')?.match(/(?:^|;\s*)__platform_token=([^\s;]+)/)?.[1];
+    const effectiveToken = token ?? platformToken;
+
+    if (!effectiveToken) {
       return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
     }
 
-    const result = await clerkAuth.verify(token);
+    const result = await clerkAuth.verify(effectiveToken);
     if (!result.authenticated || !result.userId) {
       return c.redirect('https://matrix-os.com/login');
     }

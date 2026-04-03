@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { subscribeWithSelector } from "zustand/middleware";
 
 export type CanvasNavMode = "scroll" | "grab";
 
@@ -15,7 +16,7 @@ interface CanvasSettingsActions {
 }
 
 export const useCanvasSettings = create<CanvasSettingsState & CanvasSettingsActions>()(
-  (set) => ({
+  subscribeWithSelector((set) => ({
     navMode: "scroll",
     showTitles: true,
 
@@ -24,5 +25,5 @@ export const useCanvasSettings = create<CanvasSettingsState & CanvasSettingsActi
       set((s) => ({ navMode: s.navMode === "scroll" ? "grab" : "scroll" })),
     setShowTitles: (showTitles) => set({ showTitles }),
     toggleShowTitles: () => set((s) => ({ showTitles: !s.showTitles })),
-  }),
+  })),
 );
