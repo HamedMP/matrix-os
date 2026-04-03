@@ -262,9 +262,12 @@ export function TerminalPane({
               if (outputBufferRef.current.includes("claude.ai/oauth/authorize")) {
                 if (authDetectTimerRef.current) clearTimeout(authDetectTimerRef.current);
                 authDetectTimerRef.current = setTimeout(() => {
-                  // Strip all control chars and whitespace from buffer to rejoin wrapped lines
-                  const stripped = outputBufferRef.current.replace(/[\x00-\x1f\x7f-\x9f\s]/g, "");
-                  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize[^\s<>"')\]]+/);
+                  // Strip ANSI escape sequences, control chars, and whitespace to rejoin wrapped lines
+                  const stripped = outputBufferRef.current
+                    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+                    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+                    .replace(/[\x00-\x1f\x7f-\x9f\s]/g, "");
+                  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize\S*?(?:state|code_challenge_method)=[A-Za-z0-9_\-]+/);
                   if (match) {
                     setAuthUrl(match[0]);
                   }
