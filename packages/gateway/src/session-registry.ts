@@ -266,11 +266,10 @@ export class SessionRegistry {
     const envShell = process.env.SHELL ?? "/bin/bash";
     const defaultShell = this.allowedShells.has(envShell) ? envShell : "/bin/bash";
     const resolvedShell = shell && this.allowedShells.has(shell) ? shell : defaultShell;
-    const validatedCwd = resolveWithinHome(this.homePath, cwd);
-    const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
-
     const buffer = new RingBuffer(this.bufferSize);
-    const ptyProcess = this.spawnFn(resolvedShell, [], {
+    const validatedCwd = resolveWithinHome(this.homePath, cwd);
+    const initialCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
+    const spawnOptions = (targetCwd: string) => ({
       name: "xterm-256color",
       cols: 80,
       rows: 24,
@@ -285,6 +284,19 @@ export class SessionRegistry {
         LOGNAME: process.env.LOGNAME ?? "",
       },
     });
+
+    let ptyProcess: PtyLike;
+    let targetCwd = initialCwd;
+    try {
+      ptyProcess = this.spawnFn(resolvedShell, [], spawnOptions(targetCwd));
+    } catch (error) {
+      if (targetCwd !== this.homePath) {
+        targetCwd = this.homePath;
+        ptyProcess = this.spawnFn(resolvedShell, [], spawnOptions(targetCwd));
+      } else {
+        throw error;
+      }
+    }
 
     const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, resolvedShell);
     this.sessions.set(sessionId, session);

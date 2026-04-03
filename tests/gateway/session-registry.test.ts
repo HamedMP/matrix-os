@@ -92,6 +92,31 @@ describe("SessionRegistry", () => {
       const call = mockSpawn.mock.calls[0];
       expect(call[0]).toBe("/bin/zsh");
     });
+
+    it("falls back to homePath if spawn fails for a vanished cwd", () => {
+      const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      mkdirSync(join(homePath, "projects", "myapp"), { recursive: true });
+      const mockPty = createMockPty();
+      const mockSpawn = vi.fn((shell: string, args: string[], opts: Record<string, unknown>) => {
+        if (opts.cwd === join(homePath, "projects", "myapp")) {
+          throw new Error("ENOENT");
+        }
+        return mockPty;
+      });
+      const registry = new SessionRegistry(
+        homePath,
+        { persistPath: join(homePath, "system", "terminal-sessions.json") },
+        mockSpawn as unknown as ReturnType<typeof createMockSpawn>,
+      );
+
+      registry.create("projects/myapp");
+
+      expect(mockSpawn).toHaveBeenCalledTimes(2);
+      expect(mockSpawn.mock.calls[0]?.[2]).toMatchObject({ cwd: join(homePath, "projects", "myapp") });
+      expect(mockSpawn.mock.calls[1]?.[2]).toMatchObject({ cwd: homePath });
+      rmSync(homePath, { recursive: true, force: true });
+    });
   });
 
   describe("attach", () => {

@@ -140,7 +140,7 @@ export class WebLinkProvider {
         links.push({
           range: {
             start: { x: fp.startIndex + 1, y: bufferLineNumber },
-            end: { x: fp.startIndex + fp.text.length, y: bufferLineNumber },
+            end: { x: fp.startIndex + fp.text.length + 1, y: bufferLineNumber },
           },
           text: fp.text,
           activate: () => {

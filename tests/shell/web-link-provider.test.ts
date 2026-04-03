@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectUrls, detectFilePaths } from "../../shell/src/components/terminal/web-link-provider.js";
+import { detectUrls, detectFilePaths, WebLinkProvider } from "../../shell/src/components/terminal/web-link-provider.js";
 
 describe("Web Link Provider", () => {
   describe("URL detection", () => {
@@ -107,6 +107,39 @@ describe("Web Link Provider", () => {
     it("ignores bare directory paths without extensions", () => {
       const matches = detectFilePaths("In /usr/local/lib directory");
       expect(matches).toHaveLength(0);
+    });
+  });
+
+  describe("link ranges", () => {
+    it("highlights the full file path range", () => {
+      const text = "See ./main.ts here";
+      const line = {
+        translateToString: () => text,
+        isWrapped: false,
+      };
+      const terminal = {
+        buffer: {
+          active: {
+            length: 1,
+            getLine: (_index: number) => line,
+          },
+        },
+      };
+
+      const provider = new WebLinkProvider(terminal as never);
+      let links:
+        | Array<{ range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string }>
+        | undefined;
+
+      provider.provideLinks(1, (nextLinks) => {
+        links = nextLinks;
+      });
+
+      expect(links).toBeDefined();
+      expect(links).toHaveLength(1);
+      expect(links?.[0]?.text).toBe("./main.ts");
+      expect(links?.[0]?.range.start).toEqual({ x: 5, y: 1 });
+      expect(links?.[0]?.range.end).toEqual({ x: 14, y: 1 });
     });
   });
 });
