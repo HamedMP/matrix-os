@@ -8,6 +8,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
+import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
@@ -133,6 +134,12 @@ export async function createGateway(config: GatewayConfig) {
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+
+  const sessionRegistry = new SessionRegistry(homePath, {
+    maxSessions: 20,
+    bufferSize: 5 * 1024 * 1024,
+    persistPath: join(homePath, "system", "terminal-sessions.json"),
+  });
 
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -665,30 +672,110 @@ export async function createGateway(config: GatewayConfig) {
     "/ws/terminal",
     upgradeWebSocket((c) => {
       const cwdParam = c.req.query("cwd");
-      const resolvedCwd = cwdParam ? resolveWithinHome(homePath, cwdParam) : null;
-      const pty = createPtyHandler(homePath, undefined, resolvedCwd ?? undefined);
+      let handle: SessionHandle | null = null;
+      let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
 
       return {
         onOpen(_evt, ws) {
-          pty.onSend((msg) => {
-            ws.send(JSON.stringify(msg));
-          });
-          pty.open();
+          const sendJson = (msg: PtyServerMessage) => {
+            try { ws.send(JSON.stringify(msg)); } catch { /* ws closed */ }
+          };
+
+          // Backward compat: auto-create session if no attach message within 100ms
+          if (cwdParam) {
+            autoCreateTimer = setTimeout(() => {
+              if (handle) return;
+              const sessionId = sessionRegistry.create(cwdParam);
+              handle = sessionRegistry.attach(sessionId);
+              if (handle) {
+                handle.subscribe(sendJson);
+                sendJson({ type: "attached", sessionId, state: "running" });
+                handle.replay(0);
+              }
+            }, 100);
+          }
         },
 
-        onMessage(evt, _ws) {
-          try {
-            const msg = JSON.parse(
-              typeof evt.data === "string" ? evt.data : "",
-            ) as PtyMessage;
-            pty.onMessage(msg);
-          } catch {
-            // ignore malformed
+        onMessage(evt, ws) {
+          const raw = typeof evt.data === "string" ? evt.data : "";
+          let parsed: unknown;
+          try { parsed = JSON.parse(raw); } catch {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
+            return;
+          }
+
+          const result = ClientMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
+            return;
+          }
+
+          const msg = result.data;
+          const sendJson = (m: PtyServerMessage) => {
+            try { ws.send(JSON.stringify(m)); } catch { /* ws closed */ }
+          };
+
+          switch (msg.type) {
+            case "attach": {
+              if (autoCreateTimer) {
+                clearTimeout(autoCreateTimer);
+                autoCreateTimer = null;
+              }
+              if (handle) {
+                handle.detach();
+                handle = null;
+              }
+
+              if ("cwd" in msg) {
+                const sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                handle = sessionRegistry.attach(sessionId);
+                if (handle) {
+                  handle.subscribe(sendJson);
+                  sendJson({ type: "attached", sessionId, state: "running" });
+                  handle.replay(0);
+                }
+              } else {
+                handle = sessionRegistry.attach(msg.sessionId);
+                if (handle) {
+                  const info = sessionRegistry.getSession(msg.sessionId);
+                  handle.subscribe(sendJson);
+                  sendJson({
+                    type: "attached",
+                    sessionId: msg.sessionId,
+                    state: info?.state ?? "running",
+                    exitCode: info?.exitCode,
+                  });
+                  handle.replay(msg.fromSeq ?? 0);
+                } else {
+                  sendJson({ type: "error", message: "Session not found" });
+                }
+              }
+              break;
+            }
+            case "input":
+            case "resize":
+              if (handle) {
+                handle.send(msg);
+              }
+              break;
+            case "detach":
+              if (handle) {
+                handle.detach();
+                handle = null;
+              }
+              break;
           }
         },
 
         onClose() {
-          pty.close();
+          if (autoCreateTimer) {
+            clearTimeout(autoCreateTimer);
+            autoCreateTimer = null;
+          }
+          if (handle) {
+            handle.detach();
+            handle = null;
+          }
         },
       };
     }),
@@ -834,6 +921,20 @@ export async function createGateway(config: GatewayConfig) {
     } catch {
       return c.json({ error: "Failed to save layout" }, 500);
     }
+  });
+
+  app.get("/api/terminal/sessions", (c) => {
+    return c.json(sessionRegistry.list());
+  });
+
+  app.delete("/api/terminal/sessions/:id", (c) => {
+    const id = c.req.param("id");
+    const SESSION_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!SESSION_UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
+    const session = sessionRegistry.getSession(id);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    sessionRegistry.destroy(id);
+    return c.json({ ok: true });
   });
 
   app.post("/api/message", async (c) => {
@@ -1674,6 +1775,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await channelManager.stop();
+      sessionRegistry.shutdown();
       await watcher.close();
       await appDb?.destroy();
       server.close();
