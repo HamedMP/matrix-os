@@ -16,7 +16,30 @@ if [ ! -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME"
 fi
 
-# Fix .next cache ownership (bind-mounted volume)
+# Sync default apps, agents, and system config from source to home volume
+# This ensures new/updated system apps and skills propagate to the running OS
+echo "[matrix-os-dev] Syncing default apps and skills..."
+for dir in apps agents system; do
+  if [ -d "/app/home/$dir" ]; then
+    mkdir -p "$MATRIX_HOME/$dir"
+    cp -a "/app/home/$dir/." "$MATRIX_HOME/$dir/"
+  fi
+done
+
+# Expose Matrix OS skills as Claude Code skills
+# Creates .claude/skills/<name>/SKILL.md symlinks so /skills works in Claude sessions
+CLAUDE_SKILLS_DIR="/home/matrixos/.claude/skills"
+mkdir -p "$CLAUDE_SKILLS_DIR"
+for skill in "$MATRIX_HOME/agents/skills/"*.md; do
+  [ -f "$skill" ] || continue
+  name=$(basename "$skill" .md)
+  mkdir -p "$CLAUDE_SKILLS_DIR/$name"
+  ln -sf "$skill" "$CLAUDE_SKILLS_DIR/$name/SKILL.md"
+done
+
+# Clear stale Turbopack cache (source files are volume-mounted so cache
+# from a previous run often references outdated AST — causes SyntaxErrors)
+rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
 

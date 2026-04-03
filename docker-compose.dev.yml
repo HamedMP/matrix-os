@@ -60,8 +60,8 @@ services:
       # Persistent volumes
       - dev-node-modules:/app/node_modules
       - dev-home:/home/matrixos/home
-      # Shell build cache
-      - dev-next-cache:/app/shell/.next
+      # .next is ephemeral — persistent volume causes stale Turbopack cache
+      # errors during HMR when host source files change
     env_file:
       - .env.docker
     environment:
@@ -136,7 +136,7 @@ services:
       - PLATFORM_PORT=9000
       - PLATFORM_DB_PATH=/data/platform.db
       - PLATFORM_SECRET=${PLATFORM_SECRET:-dev-secret}
-      - FAL_API_KEY=${FAL_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     healthcheck:
       test: wget -qO- http://localhost:9000/health || exit 1
       interval: 10s
@@ -238,7 +238,6 @@ services:
       - ./distro:/app/distro
       - dev-node-modules:/app/node_modules
       - alice-home:/home/matrixos/home
-      - dev-next-cache:/app/shell/.next
       - qmd-models:/data/qmd-models
     env_file:
       - .env.docker
@@ -279,7 +278,6 @@ services:
       - ./distro:/app/distro
       - dev-node-modules:/app/node_modules
       - bob-home:/home/matrixos/home
-      - dev-next-cache-bob:/app/shell/.next
       - qmd-models:/data/qmd-models
     env_file:
       - .env.docker
@@ -301,8 +299,6 @@ volumes:
   pgdata:
   dev-node-modules:
   dev-home:
-  dev-next-cache:
-  dev-next-cache-bob:
   proxy-data:
   platform-data:
   user-data:
