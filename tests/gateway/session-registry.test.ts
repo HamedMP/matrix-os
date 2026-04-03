@@ -73,6 +73,22 @@ describe("SessionRegistry", () => {
       const call = mockSpawn.mock.calls[0];
       expect(call[2].cwd).toBe("/tmp/test-home");
     });
+
+    it("rejects shell not in allowlist and falls back to default", () => {
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+      registry.create("/home", "/usr/bin/python3");
+      const call = mockSpawn.mock.calls[0];
+      expect(call[0]).not.toBe("/usr/bin/python3");
+    });
+
+    it("accepts shell in allowlist", () => {
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+      registry.create("/home", "/bin/zsh");
+      const call = mockSpawn.mock.calls[0];
+      expect(call[0]).toBe("/bin/zsh");
+    });
   });
 
   describe("attach", () => {
@@ -178,7 +194,7 @@ describe("SessionRegistry", () => {
       expect(registry.getSession(id4)).not.toBeNull();
     });
 
-    it("does not evict if all sessions have attached clients (allows exceeding cap)", () => {
+    it("throws when all sessions have attached clients and cap is reached", () => {
       const registry = createRegistry({ maxSessions: 2 });
 
       const id1 = registry.create("/home");
@@ -186,10 +202,9 @@ describe("SessionRegistry", () => {
       registry.attach(id1);
       registry.attach(id2);
 
-      // All attached -- 3rd session should still be created (no eviction candidate)
-      const id3 = registry.create("/home");
-      expect(id3).toMatch(UUID_REGEX);
-      expect(registry.list()).toHaveLength(3);
+      // All attached -- 3rd session should throw (no eviction candidate)
+      expect(() => registry.create("/home")).toThrow("Session limit reached");
+      expect(registry.list()).toHaveLength(2);
     });
   });
 

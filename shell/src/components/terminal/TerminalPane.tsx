@@ -54,8 +54,11 @@ export function TerminalPane({
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const lastSeqRef = useRef<number>(0);
   const reconnectAttemptRef = useRef<number>(0);
+  const onSessionAttachedRef = useRef(onSessionAttached);
   const [searchOpen, setSearchOpen] = useState(false);
   const isClosingRef = useRef(false);
+
+  onSessionAttachedRef.current = onSessionAttached;
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
@@ -72,27 +75,31 @@ export function TerminalPane({
       // Check cache first — instant tab switch
       const cached = getCached(paneId);
       if (cached && containerRef.current) {
-        // Reattach cached terminal to DOM
-        const termElement = (cached.terminal as { element?: HTMLElement }).element;
-        if (termElement) {
-          containerRef.current.appendChild(termElement);
-        }
-        cached.fitAddon.fit();
-        termRef.current = cached.terminal;
-        fitAddonRef.current = cached.fitAddon;
-        searchAddonRef.current = cached.searchAddon;
-        wsRef.current = cached.ws;
-        sessionIdRef.current = cached.sessionId;
-        lastSeqRef.current = cached.lastSeq;
-
-        const resizeObserver = new ResizeObserver(() => {
+        if (cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING) {
+          const termElement = (cached.terminal as { element?: HTMLElement }).element;
+          if (termElement) {
+            containerRef.current.appendChild(termElement);
+          }
           cached.fitAddon.fit();
-        });
-        resizeObserver.observe(containerRef.current);
+          termRef.current = cached.terminal;
+          fitAddonRef.current = cached.fitAddon;
+          searchAddonRef.current = cached.searchAddon;
+          wsRef.current = cached.ws;
+          sessionIdRef.current = cached.sessionId;
+          lastSeqRef.current = cached.lastSeq;
 
-        return () => {
-          resizeObserver.disconnect();
-        };
+          const resizeObserver = new ResizeObserver(() => {
+            cached.fitAddon.fit();
+          });
+          resizeObserver.observe(containerRef.current);
+
+          return () => {
+            resizeObserver.disconnect();
+          };
+        }
+        // WS closed — discard stale cache, create fresh terminal below
+        removeCached(paneId);
+        try { cached.terminal.dispose(); } catch { /* already disposed */ }
       }
 
       // Cache miss — create fresh terminal
@@ -162,23 +169,18 @@ export function TerminalPane({
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
-        let attachSent = false;
-
         ws.onopen = () => {
           reconnectAttemptRef.current = 0;
 
           if (sessionIdRef.current) {
-            // Reattach to existing session
             ws.send(JSON.stringify({
               type: "attach",
               sessionId: sessionIdRef.current,
               fromSeq: lastSeqRef.current,
             }));
           } else {
-            // Create new session
             ws.send(JSON.stringify({ type: "attach", cwd }));
           }
-          attachSent = true;
 
           ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
 
@@ -221,7 +223,7 @@ export function TerminalPane({
             switch (msg.type) {
               case "attached":
                 sessionIdRef.current = msg.sessionId;
-                onSessionAttached?.(paneId, msg.sessionId);
+                onSessionAttachedRef.current?.(paneId, msg.sessionId);
                 if (msg.state === "exited") {
                   term.write(`\r\n[Process exited with code ${msg.exitCode ?? "unknown"}]\r\n`);
                 }

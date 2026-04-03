@@ -685,12 +685,17 @@ export async function createGateway(config: GatewayConfig) {
           if (cwdParam) {
             autoCreateTimer = setTimeout(() => {
               if (handle) return;
-              const sessionId = sessionRegistry.create(cwdParam);
-              handle = sessionRegistry.attach(sessionId);
-              if (handle) {
-                handle.subscribe(sendJson);
-                sendJson({ type: "attached", sessionId, state: "running" });
-                handle.replay(0);
+              try {
+                const sessionId = sessionRegistry.create(cwdParam);
+                handle = sessionRegistry.attach(sessionId);
+                if (handle) {
+                  handle.subscribe(sendJson);
+                  sendJson({ type: "attached", sessionId, state: "running" });
+                  handle.replay(0);
+                }
+              } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : "Failed to create session";
+                sendJson({ type: "error", message });
               }
             }, 100);
           }
@@ -727,12 +732,17 @@ export async function createGateway(config: GatewayConfig) {
               }
 
               if ("cwd" in msg) {
-                const sessionId = sessionRegistry.create(msg.cwd, msg.shell);
-                handle = sessionRegistry.attach(sessionId);
-                if (handle) {
-                  handle.subscribe(sendJson);
-                  sendJson({ type: "attached", sessionId, state: "running" });
-                  handle.replay(0);
+                try {
+                  const sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                  handle = sessionRegistry.attach(sessionId);
+                  if (handle) {
+                    handle.subscribe(sendJson);
+                    sendJson({ type: "attached", sessionId, state: "running" });
+                    handle.replay(0);
+                  }
+                } catch (err: unknown) {
+                  const message = err instanceof Error ? err.message : "Failed to create session";
+                  sendJson({ type: "error", message });
                 }
               } else {
                 handle = sessionRegistry.attach(msg.sessionId);
@@ -902,12 +912,10 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.put("/api/terminal/layout", async (c) => {
+  const terminalLayoutBodyLimit = bodyLimit({ maxSize: 100_000 });
+  app.put("/api/terminal/layout", terminalLayoutBodyLimit, async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     const raw = await c.req.text();
-    if (raw.length > 100_000) {
-      return c.json({ error: "Payload too large" }, 413);
-    }
     let body: unknown;
     try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
     if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {

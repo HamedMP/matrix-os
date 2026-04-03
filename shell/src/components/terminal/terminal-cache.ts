@@ -11,10 +11,22 @@ export interface CachedTerminal {
   sessionId: string;
 }
 
+const MAX_CACHED = 20;
 const cache = new Map<string, CachedTerminal>();
 
 export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
+  cache.delete(paneId);
   cache.set(paneId, entry);
+
+  if (cache.size > MAX_CACHED) {
+    const oldest = cache.keys().next().value!;
+    const evicted = cache.get(oldest);
+    cache.delete(oldest);
+    if (evicted) {
+      try { evicted.ws.close(); } catch { /* already closed */ }
+      try { evicted.terminal.dispose(); } catch { /* already disposed */ }
+    }
+  }
 }
 
 export function getCached(paneId: string): CachedTerminal | null {

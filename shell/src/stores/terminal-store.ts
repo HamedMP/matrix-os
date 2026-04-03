@@ -273,11 +273,10 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }
 
     set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.id === state.activeTabId
-          ? { ...t, paneTree: setSessionIdInTree(t.paneTree) }
-          : t,
-      ),
+      tabs: state.tabs.map((t) => ({
+        ...t,
+        paneTree: setSessionIdInTree(t.paneTree),
+      })),
     }));
     get().saveLayout();
   },
@@ -305,8 +304,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           sidebarWidth: data.sidebarWidth ?? 200,
         });
       }
-    } catch {
-      // fresh start
+    } catch (err: unknown) {
+      console.warn("Failed to load terminal layout:", err instanceof Error ? err.message : err);
     }
   },
 
@@ -319,7 +318,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(layout),
-      }).catch(() => {});
+      }).catch((err: unknown) => {
+        console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      });
     }, 500);
   },
 }));

@@ -69,11 +69,11 @@ export class WebLinkProvider {
       links.push({
         range: {
           start: { x: url.startIndex + 1, y: bufferLineNumber },
-          end: { x: url.startIndex + url.text.length + 1, y: bufferLineNumber },
+          end: { x: url.startIndex + url.text.length, y: bufferLineNumber },
         },
         text: url.text,
         activate: () => {
-          window.open(url.text, "_blank");
+          window.open(url.text, "_blank", "noopener,noreferrer");
         },
       });
     }
@@ -83,7 +83,7 @@ export class WebLinkProvider {
       links.push({
         range: {
           start: { x: fp.startIndex + 1, y: bufferLineNumber },
-          end: { x: fp.startIndex + fp.text.length + 1, y: bufferLineNumber },
+          end: { x: fp.startIndex + fp.text.length, y: bufferLineNumber },
         },
         text: fp.text,
         activate: () => {

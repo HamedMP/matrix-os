@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { writeFileSync, renameSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFile, rename, mkdir } from "node:fs/promises";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
@@ -72,6 +73,7 @@ export interface SessionRegistryOptions {
   maxSessions?: number;
   bufferSize?: number;
   persistPath?: string;
+  allowedShells?: string[];
 }
 
 type SubscriberFn = (msg: PtyServerMessage) => void;
@@ -188,6 +190,12 @@ class PtySession {
   }
 }
 
+const DEFAULT_ALLOWED_SHELLS = new Set([
+  "/bin/bash", "/bin/sh", "/bin/zsh",
+  "/usr/bin/bash", "/usr/bin/zsh", "/usr/bin/fish",
+  "/usr/local/bin/bash", "/usr/local/bin/zsh", "/usr/local/bin/fish",
+]);
+
 export class SessionRegistry {
   private sessions = new Map<string, PtySession>();
   private readonly homePath: string;
@@ -195,6 +203,7 @@ export class SessionRegistry {
   private readonly bufferSize: number;
   private readonly persistPath: string;
   private readonly spawnFn: SpawnFn;
+  private readonly allowedShells: Set<string>;
 
   constructor(
     homePath: string,
@@ -205,6 +214,9 @@ export class SessionRegistry {
     this.maxSessions = options?.maxSessions ?? 20;
     this.bufferSize = options?.bufferSize ?? 5 * 1024 * 1024;
     this.persistPath = options?.persistPath ?? join(homePath, "system", "terminal-sessions.json");
+    this.allowedShells = options?.allowedShells
+      ? new Set(options.allowedShells)
+      : DEFAULT_ALLOWED_SHELLS;
 
     if (spawnFn) {
       this.spawnFn = spawnFn;
@@ -225,8 +237,13 @@ export class SessionRegistry {
   create(cwd: string, shell?: string): string {
     this.evictIfNeeded();
 
+    if (this.sessions.size >= this.maxSessions) {
+      throw new Error("Session limit reached");
+    }
+
     const sessionId = randomUUID();
-    const resolvedShell = shell ?? process.env.SHELL ?? "/bin/bash";
+    const defaultShell = process.env.SHELL ?? "/bin/bash";
+    const resolvedShell = shell && this.allowedShells.has(shell) ? shell : defaultShell;
     const validatedCwd = resolveWithinHome(this.homePath, cwd);
     const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
 
@@ -236,7 +253,15 @@ export class SessionRegistry {
       cols: 80,
       rows: 24,
       cwd: targetCwd,
-      env: { ...process.env },
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        HOME: this.homePath,
+        TERM: "xterm-256color",
+        LANG: process.env.LANG ?? "en_US.UTF-8",
+        SHELL: resolvedShell,
+        USER: process.env.USER ?? "",
+        LOGNAME: process.env.LOGNAME ?? "",
+      },
     });
 
     const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, resolvedShell);
@@ -342,20 +367,17 @@ export class SessionRegistry {
   }
 
   private persist(): void {
-    try {
-      const dir = dirname(this.persistPath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-      const data = JSON.stringify(this.list(), null, 2);
-      const tmpPath = this.persistPath + ".tmp";
-      writeFileSync(tmpPath, data);
-      renameSync(tmpPath, this.persistPath);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        console.error("Failed to persist terminal sessions:", err.message);
-      }
-    }
+    const data = JSON.stringify(this.list(), null, 2);
+    const dir = dirname(this.persistPath);
+    const tmpPath = this.persistPath + ".tmp";
+    void mkdir(dir, { recursive: true })
+      .then(() => writeFile(tmpPath, data))
+      .then(() => rename(tmpPath, this.persistPath))
+      .catch((err: unknown) => {
+        if (err instanceof Error) {
+          console.error("Failed to persist terminal sessions:", err.message);
+        }
+      });
   }
 
   private loadPersistedSessions(): void {
