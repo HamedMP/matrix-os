@@ -36,8 +36,11 @@ describe("Window Manager Store", () => {
       expect(windows).toHaveLength(1);
       expect(windows[0].title).toBe("Notes");
       expect(windows[0].path).toBe("apps/notes.html");
-      expect(windows[0].width).toBe(640);
-      expect(windows[0].height).toBe(480);
+      // Default size is viewport-relative: min(1200, max(320, vw*0.6)) x min(900, max(200, vh*0.7))
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      expect(windows[0].width).toBe(Math.round(Math.min(1200, Math.max(320, vw * 0.6))));
+      expect(windows[0].height).toBe(Math.round(Math.min(900, Math.max(200, vh * 0.7))));
       expect(windows[0].minimized).toBe(false);
     });
 
@@ -53,13 +56,13 @@ describe("Window Manager Store", () => {
       expect(windows[0].minimized).toBe(false);
     });
 
-    it("cascades window positions based on existing window count", () => {
+    it("places second window to the right of the first", () => {
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       openWindow("App2", "apps/app2.html", 80);
       const [w1, w2] = useWindowManager.getState().windows;
-      expect(w2.x).toBe(w1.x + 30);
-      expect(w2.y).toBe(w1.y + 30);
+      expect(w2.x).toBe(w1.x + w1.width + 24);
+      expect(w2.y).toBe(w1.y);
     });
 
     it("assigns incrementing zIndex", () => {

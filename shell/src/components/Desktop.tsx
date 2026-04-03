@@ -5,6 +5,7 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
+import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
@@ -37,6 +38,7 @@ import {
 import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { AmbientClock } from "./AmbientClock";
+import { SetupScreen } from "./SetupScreen";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -332,6 +334,19 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const setupChecked = useRef(false);
+
+  useEffect(() => {
+    if (setupChecked.current) return;
+    setupChecked.current = true;
+    fetch(`${GATEWAY_URL}/api/settings/api-key/status`)
+      .then((r) => r.json())
+      .then((data: { hasKey: boolean }) => {
+        if (!data.hasKey) setShowSetup(true);
+      })
+      .catch(() => {});
+  }, []);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
@@ -499,7 +514,33 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
       : path;
     wmOpenWindow(name, actualPath, dockXOffset);
     onCloseStoreRef.current?.();
+
+    // In canvas mode, pan to center on the window after it opens/focuses
+    if (useDesktopMode.getState().mode === "canvas") {
+      requestAnimationFrame(() => {
+        const win = useWindowManager.getState().windows.find((w) => w.path === actualPath);
+        if (win) {
+          useCanvasTransform.getState().focusOnWindow(
+            win,
+            window.innerWidth,
+            window.innerHeight,
+          );
+        }
+      });
+    }
   }, [wmOpenWindow, dockXOffset]);
+
+  const focusOrOpen = useCallback((name: string, path: string) => {
+    const existing = useWindowManager.getState().windows.find(
+      (w) => w.path === path || w.path.startsWith(path + ":"),
+    );
+    if (existing) {
+      if (existing.minimized) wmMinimizeWindow(existing.id);
+      wmFocusWindow(existing.id);
+    } else {
+      openWindow(name, path);
+    }
+  }, [openWindow, wmFocusWindow, wmMinimizeWindow]);
 
   const loadModules = useCallback(async () => {
     try {
@@ -765,6 +806,12 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
 
   return (
     <TooltipProvider delayDuration={300}>
+      {showSetup && (
+        <SetupScreen
+          onComplete={() => setShowSetup(false)}
+          onOpenTerminal={() => openWindow("Terminal", "__terminal__")}
+        />
+      )}
       <div className="relative flex-1 flex flex-col md:flex-row">
         {/* Desktop dock -- hidden in ambient/conversational modes */}
         {modeConfig.showDock && <aside
@@ -828,22 +875,24 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
           }>
             {(() => {
               const pinnedSet = new Set(pinnedApps);
-              const openPaths = new Set(windows.filter((w) => !w.minimized).map((w) => w.path));
+              const openWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
+              const isAppOpen = (appPath: string) =>
+                openWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
               // Show pinned apps first, then open-but-unpinned apps
               const pinnedList = apps.filter((a) => pinnedSet.has(a.path));
-              const openUnpinned = apps.filter((a) => !pinnedSet.has(a.path) && openPaths.has(a.path));
+              const openUnpinned = apps.filter((a) => !pinnedSet.has(a.path) && isAppOpen(a.path));
               const allDockApps = [...pinnedList, ...openUnpinned];
 
               return allDockApps.length > 0 ? (
                 <>
                   {pinnedList.map((app) => {
-                    const win = windows.find((w) => w.path === app.path && !w.minimized);
+                    const win = windows.find((w) => (w.path === app.path || w.path.startsWith(app.path + ":")) && !w.minimized);
                     return (
                       <DockIcon
                         key={app.path}
                         name={app.name}
                         active={!!win}
-                        onClick={() => openWindow(app.name, app.path)}
+                        onClick={() => focusOrOpen(app.name, app.path)}
                         iconSize={dock.iconSize}
                         tooltipSide={tooltipSide}
                         iconUrl={app.iconUrl}
@@ -862,7 +911,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
                       key={app.path}
                       name={app.name}
                       active
-                      onClick={() => openWindow(app.name, app.path)}
+                      onClick={() => focusOrOpen(app.name, app.path)}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
                       iconUrl={app.iconUrl}

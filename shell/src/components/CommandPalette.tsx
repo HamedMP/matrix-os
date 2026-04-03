@@ -64,6 +64,13 @@ export function CommandPalette({
                   onOpenChange(false);
                 }}
               >
+                {cmd.icon ? (
+                  <img src={cmd.icon} alt="" className="size-7 rounded-lg object-cover shrink-0" />
+                ) : (
+                  <span className="size-7 rounded-lg bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
+                    {cmd.label.charAt(0)}
+                  </span>
+                )}
                 <span>{cmd.label}</span>
                 {cmd.shortcut && (
                   <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>

@@ -37,6 +37,7 @@ interface CanvasTransformActions {
   screenToCanvas: (sx: number, sy: number) => { x: number; y: number };
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
+  focusOnWindow: (win: WindowRect, viewportW: number, viewportH: number) => void;
   setTransform: (zoom: number, panX: number, panY: number) => void;
 }
 
@@ -110,6 +111,15 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
       const panY = viewportH / (2 * zoom) - centerY;
 
       set({ zoom, panX, panY });
+    },
+
+    focusOnWindow: (win, viewportW, viewportH) => {
+      const { zoom } = get();
+      const centerX = win.x + win.width / 2;
+      const centerY = win.y + win.height / 2;
+      const panX = viewportW / (2 * zoom) - centerX;
+      const panY = viewportH / (2 * zoom) - centerY;
+      set({ panX, panY });
     },
 
     setTransform: (zoom, panX, panY) => set({ zoom: clampZoom(zoom), panX, panY }),
