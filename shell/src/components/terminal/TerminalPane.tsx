@@ -330,7 +330,9 @@ export function TerminalPane({
           // Pane is being closed — clean up everything
           const ws = wsRef.current;
           if (ws) {
-            ws.send(JSON.stringify({ type: "detach" }));
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "detach" }));
+            }
             ws.close();
           }
           removeCached(paneId);

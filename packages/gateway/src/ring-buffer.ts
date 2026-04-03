@@ -17,6 +17,10 @@ export class RingBuffer {
     const seq = this._nextSeq++;
     const byteLen = Buffer.byteLength(data);
 
+    if (byteLen > this.maxBytes) {
+      return seq;
+    }
+
     while (this.chunks.length > 0 && this._currentBytes + byteLen > this.maxBytes) {
       const evicted = this.chunks.shift()!;
       this._currentBytes -= Buffer.byteLength(evicted.data);

@@ -79,7 +79,7 @@
     <input id="urlBar" type="text" placeholder="Enter URL" />
   </div>
   <div class="content">
-    <iframe id="viewer" src="about:blank"></iframe>
+    <iframe id="viewer" src="about:blank" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
   </div>
   <script>
     const urlBar = document.getElementById("urlBar");
@@ -95,8 +95,8 @@
         viewer.src = url;
       }
     });
-    backBtn.addEventListener("click", () => history.back());
-    fwdBtn.addEventListener("click", () => history.forward());
+    backBtn.addEventListener("click", () => viewer.contentWindow?.history.back());
+    fwdBtn.addEventListener("click", () => viewer.contentWindow?.history.forward());
     reloadBtn.addEventListener("click", () => {
       if (viewer.src) viewer.src = viewer.src;
     });
