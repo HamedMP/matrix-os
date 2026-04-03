@@ -26,6 +26,107 @@ const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 
+function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
+  const otherMode = mode === 'sign-in' ? 'sign-up' : 'sign-in';
+  const otherLabel = mode === 'sign-in' ? 'Sign up' : 'Sign in';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matrix OS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    #auth { min-height: 400px; display: flex; align-items: center; justify-content: center; }
+    .loading { color: #666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="auth"><span class="loading">Loading...</span></div>
+  <script
+    async
+    crossorigin="anonymous"
+    data-clerk-publishable-key="${publishableKey}"
+    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+    type="text/javascript"
+    onload="initClerk()"
+  ></script>
+  <script>
+    function initClerk() {
+      window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
+        if (window.Clerk.user) {
+          window.location.replace('/');
+          return;
+        }
+        var el = document.getElementById('auth');
+        el.innerHTML = '';
+        if ('${mode}' === 'sign-up') {
+          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', afterSignUpUrl: '/' });
+        } else {
+          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: '/' });
+        }
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
+
+async function proxyToShell(c: import('hono').Context, host: string, port: number) {
+  const path = c.req.path;
+  const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+  const targetUrl = `http://${host}:${port}${path}${qs}`;
+
+  try {
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(c.req.header())) {
+      if (key !== 'host' && value) headers.set(key, String(value));
+    }
+    headers.set('x-forwarded-host', 'app.matrix-os.com');
+    headers.set('x-forwarded-proto', 'https');
+
+    const upstream = await fetch(targetUrl, {
+      method: c.req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+    });
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: upstream.headers,
+    });
+  } catch {
+    return new Response('Auth service unavailable', { status: 502 });
+  }
+}
+
+function getNoContainerPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matrix OS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0a0a0a; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .card { text-align: center; max-width: 400px; padding: 2rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+    p { color: #999; margin-bottom: 1.5rem; line-height: 1.6; }
+    a { color: #3b82f6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>No instance yet</h1>
+    <p>Your account doesn't have a Matrix OS instance provisioned. Visit the <a href="https://matrix-os.com/dashboard">dashboard</a> to set one up.</p>
+  </div>
+</body>
+</html>`;
+}
+
 export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth; matrixProvisioner?: MatrixProvisioner }) {
   const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const app = new Hono();
@@ -53,50 +154,38 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   });
 
   // Session-based routing: app.matrix-os.com -> Clerk session -> container
+  const AUTH_SHELL_HOST = process.env.AUTH_SHELL_HOST ?? 'localhost';
+  const AUTH_SHELL_PORT = Number(process.env.AUTH_SHELL_PORT ?? 3100);
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? '';
     const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
     if (!isAppDomain) return next();
 
     if (!clerkAuth) {
-      return c.redirect('https://matrix-os.com/login');
+      return c.text('Clerk not configured', 500);
     }
 
-    // Accept Clerk JWT from query param (passed by dashboard), cookie, or Authorization header
-    const url = new URL(c.req.url, 'https://app.matrix-os.com');
-    const queryToken = url.searchParams.get('__clerk_token');
-
-    const token = queryToken ?? clerkAuth.extractToken(
+    const token = clerkAuth.extractToken(
       c.req.header('authorization'),
       c.req.header('cookie'),
     );
 
-    // Strip token from URL and redirect to clean URL
-    if (queryToken && token) {
-      url.searchParams.delete('__clerk_token');
-      const cleanPath = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
-      // Set a short-lived platform session cookie so subsequent requests don't need the query param
-      const res = c.redirect(`https://app.matrix-os.com${cleanPath}`);
-      res.headers.set('set-cookie', `__platform_token=${queryToken}; Domain=.matrix-os.com; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600`);
-      return res;
+    // No session -- proxy to auth shell (Clerk handles login/signup)
+    if (!token) {
+      console.log(`[app] no token, proxying to auth-shell path=${c.req.path}`);
+      return proxyToShell(c, AUTH_SHELL_HOST, AUTH_SHELL_PORT);
     }
 
-    // Also check platform session cookie
-    const platformToken = c.req.header('cookie')?.match(/(?:^|;\s*)__platform_token=([^\s;]+)/)?.[1];
-    const effectiveToken = token ?? platformToken;
-
-    if (!effectiveToken) {
-      return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-    }
-
-    const result = await clerkAuth.verify(effectiveToken);
+    const result = await clerkAuth.verify(token);
     if (!result.authenticated || !result.userId) {
-      return c.redirect('https://matrix-os.com/login');
+      console.log(`[app] verify failed: ${result.error}, proxying to auth-shell`);
+      return proxyToShell(c, AUTH_SHELL_HOST, AUTH_SHELL_PORT);
     }
 
+    console.log(`[app] verified userId=${result.userId} path=${c.req.path}`);
     const record = getContainerByClerkId(db, result.userId);
     if (!record) {
-      return c.redirect('https://matrix-os.com/dashboard');
+      return c.html(getNoContainerPage());
     }
 
     if (record.status === 'stopped') {
@@ -122,6 +211,9 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       }
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
+      // Platform already verified Clerk session -- tell user shell to skip re-verification
+      headers.set('x-platform-verified', PLATFORM_SECRET);
+      headers.set('x-platform-user-id', result.userId);
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
@@ -514,11 +606,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
   let clerkAuth: ClerkAuth | undefined;
   if (process.env.CLERK_SECRET_KEY) {
-    const { createClerkClient } = await import('@clerk/backend');
-    const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+    const { verifyToken } = await import('@clerk/backend');
     clerkAuth = createClerkAuth({
       verifyToken: async (token: string) => {
-        const payload = await (clerk as unknown as { verifyToken(t: string): Promise<unknown> }).verifyToken(token);
+        const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY! });
         return payload as { sub: string; [key: string]: unknown };
       },
     });

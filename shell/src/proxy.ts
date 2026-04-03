@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
+const platformSecret = process.env.PLATFORM_SECRET;
 
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
@@ -26,9 +27,32 @@ const isGatewayProxy = createRouteMatcher([
 const withClerk = clerkMiddleware(async (auth, request) => {
   const { pathname } = request.nextUrl;
 
+  // Platform already verified the Clerk session -- skip re-verification
+  const platformVerified = request.headers.get("x-platform-verified");
+  if (platformSecret && platformVerified === platformSecret) {
+    // Proxy gateway API and file requests
+    if (isGatewayProxy(request)) {
+      const target = pathname.startsWith("/gateway/")
+        ? pathname.replace("/gateway", "")
+        : pathname;
+      const url = new URL(target + request.nextUrl.search, gatewayUrl);
+      const headers = new Headers(request.headers);
+      if (authToken) {
+        headers.set("Authorization", `Bearer ${authToken}`);
+      }
+      return NextResponse.rewrite(url, { request: { headers } });
+    }
+    return NextResponse.next();
+  }
+
   // Layer 1: Clerk authentication (skip public routes)
   if (!isPublicRoute(request)) {
-    await auth.protect();
+    const { userId } = await auth();
+    if (!userId) {
+      const signInUrl = new URL("/sign-in", request.url);
+      signInUrl.searchParams.set("redirect_url", request.url);
+      return NextResponse.redirect(signInUrl);
+    }
   }
 
   // Layer 2: Owner verification -- fail closed when configured (skip public routes)

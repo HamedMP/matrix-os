@@ -61,17 +61,47 @@ services:
       - PLATFORM_SECRET=${PLATFORM_SECRET}
       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      - AUTH_SHELL_PORT=3200
+      - AUTH_SHELL_HOST=auth-shell
     ports:
       - "9000:9000"
     volumes:
       - platform-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - user-data:/data/users
+    depends_on:
+      auth-shell:
+        condition: service_healthy
     healthcheck:
       test: wget -qO- http://localhost:9000/health || exit 1
       interval: 10s
       timeout: 3s
       start_period: 5s
+    restart: unless-stopped
+    networks:
+      - matrixos-net
+
+  auth-shell:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+    entrypoint: ["node", "node_modules/next/dist/bin/next", "start", "shell", "-p", "3200"]
+    environment:
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - CLERK_SIGN_IN_URL=/sign-in
+      - CLERK_SIGN_UP_URL=/sign-up
+      - CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/
+      - CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/
+    healthcheck:
+      test: wget -qO- http://localhost:3200/sign-in || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
     restart: unless-stopped
     networks:
       - matrixos-net
