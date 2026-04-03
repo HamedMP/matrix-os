@@ -174,6 +174,10 @@ class PtySession {
     this.subscribers.delete(fn);
   }
 
+  clearSubscribers(): void {
+    this.subscribers.clear();
+  }
+
   write(data: string): void {
     if (this.state === "running") {
       this.ptyProcess.write(data);
@@ -293,8 +297,6 @@ export class SessionRegistry {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
 
-    session.incrementClients();
-
     let subscriberFn: SubscriberFn | null = null;
     let detached = false;
 
@@ -302,9 +304,26 @@ export class SessionRegistry {
       sessionId,
 
       subscribe(cb: (msg: PtyServerMessage) => void) {
-        if (subscriberFn) session.removeSubscriber(subscriberFn);
+        if (detached) return;
+
+        const previousSubscriber = subscriberFn;
+        if (previousSubscriber) {
+          session.removeSubscriber(previousSubscriber);
+        }
+
+        try {
+          session.addSubscriber(cb);
+        } catch (error) {
+          if (previousSubscriber) {
+            session.addSubscriber(previousSubscriber);
+          }
+          throw error;
+        }
+
         subscriberFn = cb;
-        session.addSubscriber(cb);
+        if (!previousSubscriber) {
+          session.incrementClients();
+        }
       },
 
       send(msg: ClientMessage) {
@@ -331,9 +350,9 @@ export class SessionRegistry {
       detach() {
         if (detached) return;
         detached = true;
-        session.decrementClients();
         if (subscriberFn) {
           session.removeSubscriber(subscriberFn);
+          session.decrementClients();
           subscriberFn = null;
         }
       },
@@ -346,7 +365,15 @@ export class SessionRegistry {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    session.kill();
+    try {
+      session.kill();
+    } catch (error: unknown) {
+      console.warn(
+        "Failed to kill terminal session:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    session.clearSubscribers();
     session.buffer.clear();
     this.sessions.delete(sessionId);
     this.schedulePersist();

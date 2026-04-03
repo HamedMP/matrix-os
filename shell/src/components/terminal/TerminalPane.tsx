@@ -389,6 +389,7 @@ export function TerminalPane({
           // Attempt reconnection with exponential backoff
           const attempt = reconnectAttemptRef.current;
           if (attempt < 3 && sessionIdRef.current) {
+            clearReconnectTimer();
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
             reconnectAttemptRef.current = attempt + 1;
             term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
@@ -432,6 +433,10 @@ export function TerminalPane({
                 clearAuthDetectTimer();
                 authDetectTimerRef.current = setTimeout(() => {
                   authDetectTimerRef.current = null;
+                  if (disposed) {
+                    outputBufferRef.current = "";
+                    return;
+                  }
                   const nextAuthUrl = extractTrustedClaudeAuthUrl(outputBufferRef.current);
                   if (nextAuthUrl) {
                     setAuthUrl(nextAuthUrl);

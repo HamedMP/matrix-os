@@ -109,14 +109,36 @@ describe("SessionRegistry", () => {
       expect(handle).toBeNull();
     });
 
-    it("increments attached client count", () => {
+    it("increments attached client count after subscribe succeeds", () => {
       const registry = createRegistry();
       const id = registry.create("/home");
-      registry.attach(id);
-      registry.attach(id);
+      const handle1 = registry.attach(id)!;
+      const handle2 = registry.attach(id)!;
+      handle1.subscribe(() => {});
+      handle2.subscribe(() => {});
 
       const info = registry.getSession(id);
       expect(info!.attachedClients).toBe(2);
+    });
+
+    it("does not increment attached client count when subscribe throws", () => {
+      const registry = createRegistry();
+      const id = registry.create("/home");
+
+      const handles = Array.from({ length: 10 }, () => {
+        const handle = registry.attach(id)!;
+        handle.subscribe(() => {});
+        return handle;
+      });
+
+      const overflowHandle = registry.attach(id)!;
+      expect(() => overflowHandle.subscribe(() => {})).toThrow("Too many subscribers");
+      expect(registry.getSession(id)!.attachedClients).toBe(10);
+
+      overflowHandle.detach();
+      expect(registry.getSession(id)!.attachedClients).toBe(10);
+
+      handles.forEach((handle) => handle.detach());
     });
   });
 
@@ -125,7 +147,9 @@ describe("SessionRegistry", () => {
       const registry = createRegistry();
       const id = registry.create("/home");
       const handle1 = registry.attach(id)!;
-      registry.attach(id);
+      const handle2 = registry.attach(id)!;
+      handle1.subscribe(() => {});
+      handle2.subscribe(() => {});
 
       expect(registry.getSession(id)!.attachedClients).toBe(2);
       handle1.detach();
@@ -136,6 +160,7 @@ describe("SessionRegistry", () => {
       const registry = createRegistry();
       const id = registry.create("/home");
       const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
       handle.detach();
       handle.detach(); // second detach is a no-op
       expect(registry.getSession(id)!.attachedClients).toBe(0);
@@ -152,6 +177,41 @@ describe("SessionRegistry", () => {
       registry.destroy(id);
       expect(mockPty.kill).toHaveBeenCalledOnce();
       expect(registry.getSession(id)).toBeNull();
+    });
+
+    it("clears subscribers after destroy", () => {
+      const mockPty = createMockPty();
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({}, mockSpawn);
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      const sessionMap = (registry as unknown as { sessions: Map<string, { subscribers: Set<unknown> }> }).sessions;
+      const session = sessionMap.get(id)!;
+      expect(session.subscribers.size).toBe(1);
+
+      registry.destroy(id);
+
+      expect(session.subscribers.size).toBe(0);
+      expect(registry.getSession(id)).toBeNull();
+    });
+
+    it("removes session even if PTY kill throws", () => {
+      const mockPty = createMockPty();
+      mockPty.kill.mockImplementation(() => {
+        throw new Error("already dead");
+      });
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({}, mockSpawn);
+      const id = registry.create("/home");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(() => registry.destroy(id)).not.toThrow();
+
+      expect(registry.getSession(id)).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith("Failed to kill terminal session:", "already dead");
+      warnSpy.mockRestore();
     });
 
     it("does nothing for nonexistent session", () => {
@@ -186,7 +246,7 @@ describe("SessionRegistry", () => {
       const id3 = registry.create("/home");
 
       // Attach to id1, making it non-evictable
-      registry.attach(id1);
+      registry.attach(id1)!.subscribe(() => {});
 
       // Creating 4th should skip id1 and evict id2
       const id4 = registry.create("/home");
@@ -202,8 +262,8 @@ describe("SessionRegistry", () => {
 
       const id1 = registry.create("/home");
       const id2 = registry.create("/home");
-      registry.attach(id1);
-      registry.attach(id2);
+      registry.attach(id1)!.subscribe(() => {});
+      registry.attach(id2)!.subscribe(() => {});
 
       // All attached -- 3rd session should throw (no eviction candidate)
       expect(() => registry.create("/home")).toThrow("Session limit reached");
@@ -505,6 +565,7 @@ describe("SessionRegistry", () => {
 
       // Small delay to ensure timestamp differs
       const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
       const after = registry.getSession(id)!.lastAttachedAt;
 
       expect(after).toBeGreaterThanOrEqual(before);

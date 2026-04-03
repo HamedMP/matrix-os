@@ -715,8 +715,9 @@ export async function createGateway(config: GatewayConfig) {
           if (cwdParam && cwdParam.length <= 4096) {
             autoCreateTimer = setTimeout(() => {
               if (handle) return;
+              let sessionId: string | null = null;
               try {
-                const sessionId = sessionRegistry.create(cwdParam);
+                sessionId = sessionRegistry.create(cwdParam);
                 autoCreatedSessionId = sessionId;
                 handle = sessionRegistry.attach(sessionId);
                 if (handle) {
@@ -725,6 +726,14 @@ export async function createGateway(config: GatewayConfig) {
                   handle.replay(0);
                 }
               } catch (err: unknown) {
+                if (handle) {
+                  handle.detach();
+                  handle = null;
+                }
+                if (sessionId) {
+                  sessionRegistry.destroy(sessionId);
+                  autoCreatedSessionId = null;
+                }
                 console.error("Terminal session create error:", err);
                 sendJson({ type: "error", message: "Failed to create session" });
               }
@@ -762,8 +771,10 @@ export async function createGateway(config: GatewayConfig) {
               }
 
               if ("cwd" in msg) {
+                let sessionId: string | null = null;
                 try {
-                  const sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                  sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                  autoCreatedSessionId = null;
                   handle = sessionRegistry.attach(sessionId);
                   if (handle) {
                     handle.subscribe(sendJson);
@@ -771,24 +782,40 @@ export async function createGateway(config: GatewayConfig) {
                     handle.replay(0);
                   }
                 } catch (err: unknown) {
+                  if (handle) {
+                    handle.detach();
+                    handle = null;
+                  }
+                  if (sessionId) {
+                    sessionRegistry.destroy(sessionId);
+                  }
                   console.error("Terminal session create error:", err);
                   sendJson({ type: "error", message: "Failed to create session" });
                 }
               } else {
-                handle = sessionRegistry.attach(msg.sessionId);
-                if (handle) {
-                  const info = sessionRegistry.getSession(msg.sessionId);
-                  autoCreatedSessionId = null;
-                  handle.subscribe(sendJson);
-                  sendJson({
-                    type: "attached",
-                    sessionId: msg.sessionId,
-                    state: info?.state ?? "running",
-                    exitCode: info?.exitCode,
-                  });
-                  handle.replay(msg.fromSeq ?? 0);
-                } else {
-                  sendJson({ type: "error", message: "Session not found" });
+                try {
+                  handle = sessionRegistry.attach(msg.sessionId);
+                  if (handle) {
+                    const info = sessionRegistry.getSession(msg.sessionId);
+                    autoCreatedSessionId = null;
+                    handle.subscribe(sendJson);
+                    sendJson({
+                      type: "attached",
+                      sessionId: msg.sessionId,
+                      state: info?.state ?? "running",
+                      exitCode: info?.exitCode,
+                    });
+                    handle.replay(msg.fromSeq ?? 0);
+                  } else {
+                    sendJson({ type: "error", message: "Session not found" });
+                  }
+                } catch (err: unknown) {
+                  if (handle) {
+                    handle.detach();
+                    handle = null;
+                  }
+                  console.error("Terminal session attach error:", err);
+                  sendJson({ type: "error", message: "Failed to attach session" });
                 }
               }
               break;
