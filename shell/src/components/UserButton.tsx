@@ -38,7 +38,7 @@ export function UserButton() {
           userButtonTrigger: "rounded-xl shadow-sm border border-border/60",
         },
       }}
-      afterSignOutUrl="https://matrix-os.com/login"
+      afterSignOutUrl="https://app.matrix-os.com/sign-in"
     />
   );
 }

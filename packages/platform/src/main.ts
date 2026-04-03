@@ -156,8 +156,6 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   });
 
   // Session-based routing: app.matrix-os.com -> Clerk session -> container
-  const AUTH_SHELL_HOST = process.env.AUTH_SHELL_HOST ?? 'localhost';
-  const AUTH_SHELL_PORT = Number(process.env.AUTH_SHELL_PORT ?? 3100);
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? '';
     const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
@@ -172,19 +170,41 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       c.req.header('cookie'),
     );
 
-    // No session -- proxy to auth shell (Clerk handles login/signup)
+    const path = c.req.path;
+    const isGatewayPath =
+      path.startsWith('/api/') ||
+      path.startsWith('/ws') ||
+      path.startsWith('/files/') ||
+      path.startsWith('/modules/') ||
+      path === '/health';
+    const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
+
+    // No session -- serve Clerk auth directly from the platform.
     if (!token) {
-      console.log(`[app] no token, proxying to auth-shell path=${c.req.path}`);
-      return proxyToShell(c, AUTH_SHELL_HOST, AUTH_SHELL_PORT);
+      console.log(`[app] no token path=${path}`);
+      if (isGatewayPath) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      if (!publishableKey) {
+        return c.text('Clerk publishable key not configured', 500);
+      }
+      return c.html(getAuthPage(publishableKey, authMode));
     }
 
     const result = await clerkAuth.verify(token);
     if (!result.authenticated || !result.userId) {
-      console.log(`[app] verify failed: ${result.error}, proxying to auth-shell`);
-      return proxyToShell(c, AUTH_SHELL_HOST, AUTH_SHELL_PORT);
+      console.log(`[app] verify failed: ${result.error}, path=${path}`);
+      if (isGatewayPath) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      if (!publishableKey) {
+        return c.text('Clerk publishable key not configured', 500);
+      }
+      return c.html(getAuthPage(publishableKey, authMode));
     }
 
-    console.log(`[app] verified userId=${result.userId} path=${c.req.path}`);
+    console.log(`[app] verified userId=${result.userId} path=${path}`);
     const record = getContainerByClerkId(db, result.userId);
     if (!record) {
       return c.html(getNoContainerPage());
@@ -200,9 +220,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
     updateLastActive(db, record.handle);
 
-    const path = c.req.path;
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const isGatewayPath = path.startsWith('/api/') || path.startsWith('/ws') || path.startsWith('/files/') || path.startsWith('/modules/') || path === '/health';
     const targetPort = isGatewayPath ? 4000 : 3000;
     const targetUrl = `http://matrixos-${record.handle}:${targetPort}${path}${qs}`;
 
