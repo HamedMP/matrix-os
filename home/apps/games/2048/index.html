@@ -7,13 +7,19 @@
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
+  --bg: var(--matrix-bg, #f5f5f7);
+  --fg: var(--matrix-fg, #1d1d1f);
+  --accent: var(--matrix-accent, #007aff);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d2d2d7);
+  --muted: var(--matrix-muted-fg, #86868b);
   --board-size: min(88vw, 88vh, 420px);
   --cell-gap: calc(var(--board-size) * 0.022);
   --cell-size: calc((var(--board-size) - var(--cell-gap) * 5) / 4);
   --radius: 10px;
 }
 body {
-  background: var(--matrix-bg, #ece5f0); color: var(--matrix-fg, #1c1917);
+  background: var(--bg); color: var(--fg);
   font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 100vh; overflow: hidden; user-select: none;
@@ -24,30 +30,30 @@ body {
 .back-btn {
   position: fixed; top: 14px; left: 14px; z-index: 100;
   width: 36px; height: 36px; border-radius: 8px;
-  background: var(--matrix-card-bg, #ffffff); border: 1px solid var(--matrix-border, #d8d0de);
-  color: var(--matrix-muted-fg, #78716c); font-size: 20px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--muted); font-size: 20px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.2s, color 0.2s;
   text-decoration: none;
 }
-.back-btn:hover { background: var(--matrix-border, #d8d0de); color: var(--matrix-fg, #1c1917); }
+.back-btn:hover { background: var(--border); color: var(--fg); }
 
 /* Header */
 .header {
   display: flex; align-items: center; gap: 16px;
   width: var(--board-size); margin-bottom: 14px; justify-content: space-between;
 }
-.title { font-size: 32px; font-weight: 800; color: var(--matrix-fg, #1c1917); letter-spacing: -1px; }
+.title { font-size: 32px; font-weight: 800; color: var(--fg); letter-spacing: -1px; }
 .score-group { display: flex; gap: 8px; }
 .score-box {
-  background: var(--matrix-card-bg, #ffffff); border: 1px solid var(--matrix-border, #d8d0de); border-radius: 8px; padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px;
   text-align: center; min-width: 72px; position: relative; overflow: hidden;
 }
-.score-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--matrix-muted-fg, #78716c); font-weight: 600; }
-.score-value { font-size: 20px; font-weight: 700; color: var(--matrix-accent, #c2703a); font-variant-numeric: tabular-nums; }
+.score-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); font-weight: 600; }
+.score-value { font-size: 20px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 .score-pop {
   position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%); color: #f6e05e;
+  transform: translate(-50%, -50%); color: var(--accent);
   font-size: 14px; font-weight: 700; pointer-events: none;
   animation: floatUp 0.7s ease-out forwards; opacity: 0;
 }
@@ -63,24 +69,24 @@ body {
 }
 .ctrl-btn {
   padding: 6px 14px; font-size: 12px; font-weight: 600;
-  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-  color: #888; border-radius: 6px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--muted); border-radius: 6px; cursor: pointer;
   transition: background 0.2s, color 0.2s; text-transform: uppercase; letter-spacing: 0.5px;
 }
-.ctrl-btn:hover { background: rgba(255,255,255,0.12); color: #ccc; }
+.ctrl-btn:hover { background: var(--border); color: var(--fg); }
 .ctrl-btn:disabled { opacity: 0.3; cursor: default; }
 
 /* Board */
 .board-wrap { position: relative; }
 .board {
   width: var(--board-size); height: var(--board-size);
-  background: #1a1a1a; border-radius: 14px; position: relative;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; position: relative;
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--fg) 12%, transparent);
 }
 .cell-bg {
   position: absolute; border-radius: var(--radius);
   width: var(--cell-size); height: var(--cell-size);
-  background: #252525;
+  background: color-mix(in srgb, var(--fg) 6%, var(--surface));
 }
 .tile {
   position: absolute; border-radius: var(--radius);
@@ -110,22 +116,28 @@ body {
 .overlay {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  background: rgba(10,10,10,0.8); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   border-radius: 14px; z-index: 20; opacity: 1; transition: opacity 0.3s;
 }
 .overlay.hidden { opacity: 0; pointer-events: none; }
-.overlay h1 { font-size: 36px; font-weight: 800; margin-bottom: 6px; color: #f6e05e; }
-.overlay .sub { font-size: 15px; color: #888; margin-bottom: 18px; }
+.overlay h1 { font-size: 36px; font-weight: 800; margin-bottom: 6px; color: var(--accent); }
+.overlay .sub { font-size: 15px; color: var(--muted); margin-bottom: 18px; }
 .overlay button {
   padding: 12px 32px; font-size: 15px; font-weight: 700;
-  background: linear-gradient(135deg, #f6e05e, #d69e2e); color: #0a0a0a;
+  background: var(--accent); color: var(--surface);
   border: none; border-radius: 8px; cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
-  box-shadow: 0 4px 16px rgba(246,224,94,0.25);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.overlay button:hover { transform: scale(1.04); box-shadow: 0 6px 24px rgba(246,224,94,0.35); }
+.overlay button:hover { transform: scale(1.04); box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 40%, transparent); }
+.overlay button.secondary {
+  background: var(--surface); color: var(--muted); border: 1px solid var(--border);
+  box-shadow: none;
+}
+.overlay button.secondary:hover { color: var(--fg); box-shadow: none; }
 
-.hint { margin-top: 12px; font-size: 11px; color: #555; text-align: center; width: var(--board-size); }
+.hint { margin-top: 12px; font-size: 11px; color: var(--muted); text-align: center; width: var(--board-size); }
 </style>
 </head>
 <body>
@@ -162,7 +174,7 @@ body {
     <h1>You Win!</h1>
     <div class="sub" id="winSub">Score: 0</div>
     <button id="continueBtn" style="margin-bottom:8px">Keep Going</button>
-    <button id="winNewBtn" style="background:rgba(255,255,255,0.1);color:#ccc;box-shadow:none">New Game</button>
+    <button id="winNewBtn" class="secondary">New Game</button>
   </div>
   <div class="overlay hidden" id="loseOverlay">
     <h1>Game Over</h1>
@@ -246,7 +258,7 @@ function createTileEl(r, c, val, anim) {
   el.style.setProperty('--tx', tx);
   el.style.transform = tx;
   if (val === 2048) el.style.boxShadow = '0 0 24px rgba(246,224,94,0.5), 0 0 48px rgba(246,224,94,0.2)';
-  else el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+  else el.style.boxShadow = '0 2px 8px color-mix(in srgb, var(--fg) 15%, transparent)';
   if (anim === 'pop') el.classList.add('pop-in');
   if (anim === 'merge') el.classList.add('merge-pop');
   return el;

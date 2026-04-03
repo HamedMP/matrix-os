@@ -1,0 +1,9 @@
+{
+  "name": "Weather",
+  "description": "Beautiful weather with forecasts",
+  "runtime": "static",
+  "category": "utility",
+  "icon": "weather",
+  "author": "system",
+  "version": "1.0.0"
+}

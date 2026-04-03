@@ -5,10 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Backgammon</title>
 <style>
+:root {
+  --bg: var(--matrix-bg, #f5f5f7);
+  --fg: var(--matrix-fg, #1d1d1f);
+  --accent: var(--matrix-accent, #007aff);
+  --surface: var(--matrix-card-bg, #ffffff);
+  --border: var(--matrix-border, #d2d2d7);
+  --muted: var(--matrix-muted-fg, #86868b);
+  --input-bg: var(--matrix-input-bg, #f5f5f7);
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: var(--matrix-bg, #ece5f0);
-  color: var(--matrix-fg, #1c1917);
+  background: var(--bg);
+  color: var(--fg);
   font-family: var(--matrix-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   display: flex;
   flex-direction: column;
@@ -20,28 +29,28 @@ body {
 }
 .back-btn {
   position: fixed; top: 10px; left: 12px;
-  font-size: 22px; color: var(--matrix-muted-fg, #78716c);
+  font-size: 22px; color: var(--muted);
   text-decoration: none; z-index: 20;
   width: 32px; height: 32px; display: flex;
   align-items: center; justify-content: center;
-  border-radius: 6px; background: var(--matrix-card-bg, #ffffff);
-  border: 1px solid var(--matrix-border, #d8d0de);
+  border-radius: 6px; background: var(--surface);
+  border: 1px solid var(--border);
 }
-.back-btn:hover { background: var(--matrix-border, #d8d0de); color: var(--matrix-fg, #1c1917); }
+.back-btn:hover { background: var(--border); color: var(--fg); }
 .header {
   display: flex; gap: 16px; margin-bottom: 6px;
   align-items: center; width: 100%; max-width: 780px;
   justify-content: center; padding: 0 40px;
 }
 .header .status {
-  font-size: 14px; font-weight: 600; color: #d4a574;
+  font-size: 14px; font-weight: 600; color: var(--accent);
   min-width: 140px; text-align: center;
 }
 .header .pips {
-  font-size: 12px; color: #888; white-space: nowrap;
+  font-size: 12px; color: var(--muted); white-space: nowrap;
 }
 .header .stats {
-  font-size: 11px; color: #555; white-space: nowrap;
+  font-size: 11px; color: var(--muted); white-space: nowrap;
 }
 canvas { border-radius: 6px; display: block; }
 .controls {
@@ -53,33 +62,40 @@ canvas { border-radius: 6px; display: block; }
   transition: all 0.15s ease;
 }
 .btn-roll {
-  background: linear-gradient(135deg, #d4a574, #b8854a);
-  color: #1a0e06; box-shadow: 0 2px 8px rgba(212,165,116,0.3);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 75%, black));
+  color: #fff; box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.btn-roll:hover { background: linear-gradient(135deg, #e0b584, #c4955a); transform: translateY(-1px); }
+.btn-roll:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 85%, white), var(--accent));
+  transform: translateY(-1px);
+}
 .btn-roll:disabled { opacity: 0.35; cursor: default; transform: none; box-shadow: none; }
 .btn-new {
-  background: #1a1a1a; color: #aaa; border: 1px solid #333;
+  background: var(--surface); color: var(--muted); border: 1px solid var(--border);
 }
-.btn-new:hover { background: #252525; color: #ddd; }
-.msg { font-size: 12px; color: #666; margin-top: 4px; min-height: 18px; text-align: center; }
+.btn-new:hover { background: var(--border); color: var(--fg); }
+.msg { font-size: 12px; color: var(--muted); margin-top: 4px; min-height: 18px; text-align: center; }
 .overlay {
   position: fixed; inset: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  background: rgba(0,0,0,0.88); z-index: 15;
-  backdrop-filter: blur(4px);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  z-index: 15;
+  backdrop-filter: blur(8px);
 }
-.overlay h1 { font-size: 32px; margin-bottom: 6px; color: #d4a574; letter-spacing: 1px; }
-.overlay .sub { font-size: 15px; color: #777; margin-bottom: 20px; }
+.overlay h1 { font-size: 32px; margin-bottom: 6px; color: var(--accent); letter-spacing: 1px; }
+.overlay .sub { font-size: 15px; color: var(--muted); margin-bottom: 20px; }
 .overlay button {
   padding: 12px 36px; font-size: 16px; font-weight: 700;
-  background: linear-gradient(135deg, #d4a574, #b8854a);
-  color: #1a0e06; border: none; border-radius: 8px; cursor: pointer;
-  box-shadow: 0 4px 16px rgba(212,165,116,0.3);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 75%, black));
+  color: #fff; border: none; border-radius: 8px; cursor: pointer;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent);
   transition: all 0.2s ease;
 }
-.overlay button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(212,165,116,0.4); }
+.overlay button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 40%, transparent);
+}
 .hidden { display: none !important; }
 @keyframes diceShake {
   0%   { transform: rotate(0deg) scale(1); }
@@ -153,19 +169,67 @@ const TRI_H = 180;
 
 const WHITE = 'w', BLACK = 'b';
 
-const C = {
-  frameDark: '#2a1810', frameLight: '#3d2518',
-  felt: '#1a120c', feltLight: '#221810',
-  triA: '#8B4513', triB: '#6B1010',
-  barFelt: '#15100a',
-  trayBg: '#15100a', trayBorder: '#3d2518',
-  white: '#f2ece3', whiteEdge: '#d5cfc6', whiteShadow: '#b0a898',
-  black: '#1c1c1c', blackEdge: '#3a3a3a', blackShadow: '#0a0a0a',
-  selected: '#f0c040', validMove: 'rgba(80, 200, 90, 0.55)',
-  diceface: '#fcf8f0', diceDot: '#181818', diceShadow: 'rgba(0,0,0,0.3)',
-  usedDice: '#2a2a2a', usedDot: '#444',
-  textDim: '#555', textMid: '#888',
-};
+// Read CSS custom properties for theme-aware canvas drawing
+function getThemeColors() {
+  const style = getComputedStyle(document.documentElement);
+  const accent = style.getPropertyValue('--accent').trim() || '#007aff';
+  const surface = style.getPropertyValue('--surface').trim() || '#ffffff';
+  const bg = style.getPropertyValue('--bg').trim() || '#f5f5f7';
+  const fg = style.getPropertyValue('--fg').trim() || '#1d1d1f';
+  const border = style.getPropertyValue('--border').trim() || '#d2d2d7';
+  const muted = style.getPropertyValue('--muted').trim() || '#86868b';
+  return { accent, surface, bg, fg, border, muted };
+}
+
+function hexToRgb(hex) {
+  hex = hex.replace('#', '');
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  const r = parseInt(hex.slice(0,2), 16);
+  const g = parseInt(hex.slice(2,4), 16);
+  const b = parseInt(hex.slice(4,6), 16);
+  return { r, g, b };
+}
+
+function mixColor(hex1, hex2, t) {
+  const c1 = hexToRgb(hex1), c2 = hexToRgb(hex2);
+  const r = Math.round(c1.r + (c2.r - c1.r) * t);
+  const g = Math.round(c1.g + (c2.g - c1.g) * t);
+  const b = Math.round(c1.b + (c2.b - c1.b) * t);
+  return '#' + [r, g, b].map(c => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
+}
+
+function rgbaFromHex(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function buildPalette() {
+  const t = getThemeColors();
+  // Derive board colors from theme
+  const accentDark = mixColor(t.accent, '#000000', 0.35);
+  const accentLight = mixColor(t.accent, '#ffffff', 0.3);
+  const surfaceDark = mixColor(t.surface, '#000000', 0.15);
+  const surfaceDarker = mixColor(t.surface, '#000000', 0.3);
+  const borderDark = mixColor(t.border, '#000000', 0.2);
+
+  return {
+    frameDark: surfaceDarker, frameLight: surfaceDark,
+    felt: mixColor(t.bg, '#000000', 0.05), feltLight: mixColor(t.bg, '#000000', 0.02),
+    triA: t.accent, triB: mixColor(t.accent, '#000000', 0.45),
+    barFelt: mixColor(t.bg, '#000000', 0.08),
+    trayBg: mixColor(t.bg, '#000000', 0.08), trayBorder: surfaceDark,
+    white: '#f2ece3', whiteEdge: '#d5cfc6', whiteShadow: '#b0a898',
+    black: '#1c1c1c', blackEdge: '#3a3a3a', blackShadow: '#0a0a0a',
+    selected: mixColor(t.accent, '#ffcc00', 0.5), validMove: 'rgba(80, 200, 90, 0.55)',
+    diceface: mixColor(t.surface, '#fffff0', 0.3), diceDot: t.fg, diceShadow: 'rgba(0,0,0,0.2)',
+    usedDice: mixColor(t.surface, '#000000', 0.4), usedDot: t.muted,
+    textDim: t.muted, textMid: t.muted,
+    // Keep raw theme values accessible
+    accent: t.accent, surface: t.surface, bg: t.bg, fg: t.fg, border: t.border, muted: t.muted,
+  };
+}
+
+let C = buildPalette();
 
 // State
 let board, dice, usedDice, turn, selected, validMoves, gameOver, rolling;
@@ -406,24 +470,26 @@ function checkerY(pt, idx) {
 }
 
 function draw(shaking) {
-  ctx.fillStyle = '#0a0a0a';
+  C = buildPalette();
+
+  ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, W, H);
 
-  // Outer frame with wood gradient
+  // Outer frame
   const frameGrad = ctx.createLinearGradient(BOARD_L - FRAME, BOARD_T - FRAME, BOARD_R + TRAY_W + 20, BOARD_B + FRAME);
-  frameGrad.addColorStop(0, '#3d2518');
-  frameGrad.addColorStop(0.5, '#2a1810');
-  frameGrad.addColorStop(1, '#1e1008');
+  frameGrad.addColorStop(0, C.frameLight);
+  frameGrad.addColorStop(0.5, C.frameDark);
+  frameGrad.addColorStop(1, mixColor(C.frameDark, '#000000', 0.15));
   ctx.fillStyle = frameGrad;
   roundRect(ctx, BOARD_L - FRAME, BOARD_T - FRAME, BOARD_R - BOARD_L + FRAME * 2, BOARD_B - BOARD_T + FRAME * 2, 6);
   ctx.fill();
 
-  // Inner felt
+  // Inner felt (board surface)
   ctx.fillStyle = C.felt;
   ctx.fillRect(BOARD_L, BOARD_T, BOARD_R - BOARD_L, BOARD_B - BOARD_T);
 
-  // Subtle felt texture lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.015)';
+  // Subtle texture lines
+  ctx.strokeStyle = rgbaFromHex(C.fg, 0.03);
   ctx.lineWidth = 0.5;
   for (let y = BOARD_T; y < BOARD_B; y += 6) {
     ctx.beginPath(); ctx.moveTo(BOARD_L, y); ctx.lineTo(BOARD_R, y); ctx.stroke();
@@ -431,9 +497,9 @@ function draw(shaking) {
 
   // Bar
   const barGrad = ctx.createLinearGradient(BAR_X - BAR_W / 2, 0, BAR_X + BAR_W / 2, 0);
-  barGrad.addColorStop(0, '#2a1810');
-  barGrad.addColorStop(0.5, '#3d2518');
-  barGrad.addColorStop(1, '#2a1810');
+  barGrad.addColorStop(0, C.frameDark);
+  barGrad.addColorStop(0.5, C.frameLight);
+  barGrad.addColorStop(1, C.frameDark);
   ctx.fillStyle = barGrad;
   ctx.fillRect(BAR_X - BAR_W / 2, BOARD_T, BAR_W, BOARD_B - BOARD_T);
 
@@ -472,18 +538,18 @@ function draw(shaking) {
 
   // Bearing-off tray
   const trayGrad = ctx.createLinearGradient(TRAY_X, BOARD_T, TRAY_X + TRAY_W, BOARD_T);
-  trayGrad.addColorStop(0, '#2a1810');
-  trayGrad.addColorStop(0.5, '#3d2518');
-  trayGrad.addColorStop(1, '#2a1810');
+  trayGrad.addColorStop(0, C.frameDark);
+  trayGrad.addColorStop(0.5, C.frameLight);
+  trayGrad.addColorStop(1, C.frameDark);
   ctx.fillStyle = trayGrad;
   roundRect(ctx, TRAY_X, BOARD_T - FRAME, TRAY_W, BOARD_B - BOARD_T + FRAME * 2, 4);
   ctx.fill();
-  ctx.strokeStyle = '#4a3020';
+  ctx.strokeStyle = mixColor(C.frameLight, C.accent, 0.2);
   ctx.lineWidth = 1;
   roundRect(ctx, TRAY_X, BOARD_T - FRAME, TRAY_W, BOARD_B - BOARD_T + FRAME * 2, 4);
   ctx.stroke();
   // Tray divider
-  ctx.strokeStyle = '#3d2518';
+  ctx.strokeStyle = C.frameLight;
   ctx.beginPath(); ctx.moveTo(TRAY_X + 2, BOARD_MID); ctx.lineTo(TRAY_X + TRAY_W - 2, BOARD_MID); ctx.stroke();
 
   // Valid move highlights
@@ -515,7 +581,7 @@ function draw(shaking) {
     }
     if (cnt > 5) {
       const yy = checkerY(i, show - 1);
-      ctx.fillStyle = color === WHITE ? '#2a1810' : '#e0d8d0';
+      ctx.fillStyle = color === WHITE ? C.frameDark : '#e0d8d0';
       ctx.font = 'bold 13px sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(cnt, cx, yy);
@@ -544,7 +610,7 @@ function drawBarCheckers(color, count, startY, dir) {
     drawChecker(BAR_X, yy, color, selected === (color === WHITE ? 0 : 25) && j === show - 1);
   }
   if (count > 3) {
-    ctx.fillStyle = color === WHITE ? '#2a1810' : '#e0d8d0';
+    ctx.fillStyle = color === WHITE ? C.frameDark : '#e0d8d0';
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(count, BAR_X, startY + (show - 1) * (CHECKER_R * 2 + 4) * dir);
@@ -673,17 +739,17 @@ function drawDie(x, y, val, used) {
   // Face
   const faceGrad = ctx.createLinearGradient(x, y, x + s, y + s);
   if (used) {
-    faceGrad.addColorStop(0, '#2a2a2a');
-    faceGrad.addColorStop(1, '#1a1a1a');
+    faceGrad.addColorStop(0, C.usedDice);
+    faceGrad.addColorStop(1, mixColor(C.usedDice, '#000000', 0.2));
   } else {
-    faceGrad.addColorStop(0, '#fff8ee');
-    faceGrad.addColorStop(1, '#e8ddd0');
+    faceGrad.addColorStop(0, mixColor(C.surface, '#fffff0', 0.3));
+    faceGrad.addColorStop(1, mixColor(C.surface, '#d0c8b8', 0.3));
   }
   ctx.fillStyle = faceGrad;
   roundRect(ctx, x, y, s, s, r);
   ctx.fill();
 
-  ctx.strokeStyle = used ? '#3a3a3a' : '#b8a890';
+  ctx.strokeStyle = used ? mixColor(C.usedDice, '#ffffff', 0.15) : mixColor(C.border, '#a09080', 0.5);
   ctx.lineWidth = 1;
   roundRect(ctx, x, y, s, s, r);
   ctx.stroke();

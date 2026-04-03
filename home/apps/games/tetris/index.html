@@ -6,24 +6,32 @@
 <title>Tetris</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--matrix-bg,#ece5f0);color:var(--matrix-fg,#1c1917);font-family:var(--matrix-font-sans,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif);display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden;user-select:none}
-.back{position:fixed;top:12px;left:12px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--matrix-card-bg,#ffffff);border:1px solid var(--matrix-border,#d8d0de);border-radius:6px;color:var(--matrix-muted-fg,#78716c);font-size:18px;cursor:pointer;text-decoration:none;z-index:20;transition:background .15s,color .15s}
-.back:hover{background:var(--matrix-border,#d8d0de);color:var(--matrix-fg,#1c1917)}
+:root{
+  --bg:var(--matrix-bg,#f5f5f7);
+  --fg:var(--matrix-fg,#1d1d1f);
+  --accent:var(--matrix-accent,#007aff);
+  --surface:var(--matrix-card-bg,#ffffff);
+  --border:var(--matrix-border,#d2d2d7);
+  --muted:var(--matrix-muted-fg,#86868b);
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--matrix-font-sans,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif);display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden;user-select:none}
+.back{position:fixed;top:12px;left:12px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:18px;cursor:pointer;text-decoration:none;z-index:20;transition:background .15s,color .15s}
+.back:hover{background:var(--border);color:var(--fg)}
 .game-wrap{display:flex;gap:20px;align-items:flex-start}
-canvas#board{border:2px solid #1e1e2e;border-radius:4px;background:#0d0d12}
+canvas#board{border:2px solid var(--border);border-radius:4px;background:var(--surface)}
 .side{display:flex;flex-direction:column;gap:14px;width:120px}
-.box{background:#12121a;border:1px solid #1e1e2e;border-radius:8px;padding:10px 12px;text-align:center}
-.box .lbl{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#555;margin-bottom:4px}
-.box .val{font-size:20px;font-weight:700;color:#a78bfa;font-variant-numeric:tabular-nums}
-.box .val.hi{font-size:12px;color:#555;margin-top:2px}
-canvas.preview{background:#0d0d12;border-radius:4px;display:block;margin:6px auto 0}
-.overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(5,5,10,0.92);z-index:10;backdrop-filter:blur(4px)}
-.overlay h1{font-size:32px;margin-bottom:6px;color:#a78bfa;letter-spacing:2px}
-.overlay .sub{font-size:15px;color:#666;margin-bottom:20px}
-.overlay button{padding:12px 36px;font-size:15px;background:#a78bfa;color:#0a0a0a;border:none;border-radius:8px;cursor:pointer;font-weight:700;letter-spacing:.5px;transition:background .15s,transform .1s}
-.overlay button:hover{background:#8b5cf6;transform:scale(1.03)}
+.box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center}
+.box .lbl{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:4px}
+.box .val{font-size:20px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+.box .val.hi{font-size:12px;color:var(--muted);margin-top:2px}
+canvas.preview{background:var(--surface);border-radius:4px;display:block;margin:6px auto 0}
+.overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 85%,transparent);z-index:10;backdrop-filter:blur(8px)}
+.overlay h1{font-size:32px;margin-bottom:6px;color:var(--accent);letter-spacing:2px}
+.overlay .sub{font-size:15px;color:var(--muted);margin-bottom:20px}
+.overlay button{padding:12px 36px;font-size:15px;background:var(--accent);color:var(--surface);border:none;border-radius:8px;cursor:pointer;font-weight:700;letter-spacing:.5px;transition:background .15s,transform .1s}
+.overlay button:hover{background:color-mix(in srgb,var(--accent) 80%,black);transform:scale(1.03)}
 .hidden{display:none!important}
-.controls{margin-top:10px;font-size:10px;color:#444;text-align:center;line-height:1.6}
+.controls{margin-top:10px;font-size:10px;color:var(--muted);text-align:center;line-height:1.6}
 .flash-overlay{position:fixed;inset:0;background:#fff;pointer-events:none;opacity:0;z-index:5;transition:opacity .15s}
 </style>
 </head>
@@ -83,6 +91,18 @@ const KICK_I=[
   [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
   [[0,0],[1,0],[-2,0],[1,-2],[-2,1]]
 ];
+
+// Read CSS custom properties for canvas drawing
+function getThemeColors() {
+  const s = getComputedStyle(document.documentElement);
+  return {
+    surface: s.getPropertyValue('--surface').trim() || '#ffffff',
+    border: s.getPropertyValue('--border').trim() || '#d2d2d7',
+    fg: s.getPropertyValue('--fg').trim() || '#1d1d1f',
+    muted: s.getPropertyValue('--muted').trim() || '#86868b',
+  };
+}
+let theme = { surface: '#ffffff', border: '#d2d2d7', fg: '#1d1d1f', muted: '#86868b' };
 
 // Audio context (shared, created on first interaction)
 let audioCtx = null;
@@ -227,13 +247,15 @@ function drawBlock(c,x,y,name,alpha){
 }
 
 function draw(flashRows,flashWhite){
-  ctx.fillStyle='#0d0d12';
+  ctx.fillStyle=theme.surface;
   ctx.fillRect(0,0,canvas.width,canvas.height);
   // Grid lines
-  ctx.strokeStyle='rgba(255,255,255,0.03)';
+  ctx.strokeStyle=theme.border;
+  ctx.globalAlpha=0.25;
   ctx.lineWidth=0.5;
   for(let x=1;x<COLS;x++){ctx.beginPath();ctx.moveTo(x*B,0);ctx.lineTo(x*B,canvas.height);ctx.stroke()}
   for(let y=1;y<ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*B);ctx.lineTo(canvas.width,y*B);ctx.stroke()}
+  ctx.globalAlpha=1;
 
   const now=performance.now();
   const lockAlpha=lockFlashTime?Math.max(0,1-(now-lockFlashTime)/200):0;
@@ -282,7 +304,7 @@ function drawParticles(){
 
 function drawPreview(pCtx,name){
   const w=pCtx.canvas.width,h=pCtx.canvas.height;
-  pCtx.fillStyle='#0d0d12';pCtx.fillRect(0,0,w,h);
+  pCtx.fillStyle=theme.surface;pCtx.fillRect(0,0,w,h);
   if(!name)return;
   const cs=getCells(name,0);
   const minX=Math.min(...cs.map(c=>c[0])),maxX=Math.max(...cs.map(c=>c[0]));
@@ -374,6 +396,7 @@ async function saveBest(){
 }
 
 function startGame(){
+  theme = getThemeColors();
   document.getElementById('startScreen').classList.add('hidden');
   document.getElementById('gameOverScreen').classList.add('hidden');
   grid=Array.from({length:ROWS},()=>Array(COLS).fill(null));
@@ -422,7 +445,8 @@ document.addEventListener('keyup',e=>{
 
 // Init
 loadBest().then(updateUI);
-ctx.fillStyle='#0d0d12';ctx.fillRect(0,0,canvas.width,canvas.height);
+theme = getThemeColors();
+ctx.fillStyle=theme.surface;ctx.fillRect(0,0,canvas.width,canvas.height);
 drawPreview(nextCtx,null);drawPreview(holdCtx,null);
 document.getElementById('startBtn').addEventListener('click',startGame);
 document.getElementById('restartBtn').addEventListener('click',startGame);
