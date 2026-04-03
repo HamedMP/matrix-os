@@ -14,6 +14,12 @@ interface Tab {
   paneTree: PaneNode;
 }
 
+interface TerminalLayout {
+  tabs?: Tab[];
+  activeTabId?: string;
+  sidebarOpen?: boolean;
+}
+
 function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
@@ -45,6 +51,29 @@ function getFirstPaneId(node: PaneNode): string {
   return getFirstPaneId(node.children[0]);
 }
 
+function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): PaneNode {
+  if (node.type === "pane") {
+    if (node.id !== paneId || node.sessionId === sessionId) {
+      return node;
+    }
+    return { ...node, sessionId };
+  }
+
+  const left = setPaneSessionId(node.children[0], paneId, sessionId);
+  const right = setPaneSessionId(node.children[1], paneId, sessionId);
+  if (left === node.children[0] && right === node.children[1]) {
+    return node;
+  }
+  return { ...node, children: [left, right] };
+}
+
+function hasPaneId(node: PaneNode, paneId: string): boolean {
+  if (node.type === "pane") {
+    return node.id === paneId;
+  }
+  return hasPaneId(node.children[0], paneId) || hasPaneId(node.children[1], paneId);
+}
+
 const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
@@ -62,6 +91,9 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
+  const tabsRef = useRef<Tab[]>(tabs);
+  tabsRef.current = tabs;
+  const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addTab = useCallback((cwd: string, label?: string, claude?: boolean) => {
     const id = genId();
@@ -77,12 +109,82 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-    if (initialCommand) {
-      addTab(DEFAULT_CWD, "Claude Code", true);
-    } else {
-      addTab(DEFAULT_CWD);
+    let cancelled = false;
+
+    async function initLayout() {
+      if (initialCommand) {
+        addTab(DEFAULT_CWD, "Claude Code", true);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) {
+          const data = await res.json() as TerminalLayout;
+          if (Array.isArray(data.tabs) && data.tabs.length > 0) {
+            if (cancelled) {
+              return;
+            }
+            const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+            const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+            setTabs(data.tabs);
+            setActiveTabId(nextActiveTabId);
+            setSidebarOpen(data.sidebarOpen ?? true);
+            setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+            return;
+          }
+        }
+      } catch (err: unknown) {
+        console.warn("Failed to load terminal layout:", err instanceof Error ? err.message : err);
+      }
+
+      if (!cancelled) {
+        addTab(DEFAULT_CWD);
+      }
     }
+
+    void initLayout();
+
+    return () => {
+      cancelled = true;
+    };
   }, [addTab, initialCommand]);
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      return;
+    }
+
+    if (layoutSaveTimerRef.current) {
+      clearTimeout(layoutSaveTimerRef.current);
+    }
+
+    layoutSaveTimerRef.current = setTimeout(() => {
+      layoutSaveTimerRef.current = null;
+      const layout: TerminalLayout = {
+        tabs: tabsRef.current,
+        activeTabId,
+        sidebarOpen,
+      };
+      fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(layout),
+        signal: AbortSignal.timeout(10_000),
+      }).catch((err: unknown) => {
+        console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      });
+    }, 500);
+
+    return () => {
+      if (layoutSaveTimerRef.current) {
+        clearTimeout(layoutSaveTimerRef.current);
+        layoutSaveTimerRef.current = null;
+      }
+    };
+  }, [activeTabId, sidebarOpen, tabs]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -144,6 +246,17 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 
   const getCwd = useCallback(() => sidebarSelectedPath ?? DEFAULT_CWD, [sidebarSelectedPath]);
 
+  const handleSessionAttached = useCallback((paneId: string, sessionId: string) => {
+    setTabs((prev) => prev.map((tab) => {
+      const nextTree = setPaneSessionId(tab.paneTree, paneId, sessionId);
+      return nextTree === tab.paneTree ? tab : { ...tab, paneTree: nextTree };
+    }));
+  }, []);
+
+  const shouldCachePane = useCallback((paneId: string) => {
+    return tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
+  }, []);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
@@ -183,6 +296,8 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
               theme={theme}
               focusedPaneId={focusedPaneId}
               onFocusPane={setFocusedPaneId}
+              onSessionAttached={handleSessionAttached}
+              shouldCachePane={shouldCachePane}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center" style={{ color: "var(--muted-foreground)" }}>
@@ -284,10 +399,15 @@ function LocalTerminalSidebar() {
 
   const fetchDir = useCallback(async (path: string) => {
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/files/tree?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`${getGatewayUrl()}/api/files/tree?path=${encodeURIComponent(path)}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) return [];
       return res.json();
-    } catch { return []; }
+    } catch (err: unknown) {
+      console.warn("Failed to load terminal directory tree:", err instanceof Error ? err.message : err);
+      return [];
+    }
   }, []);
 
   useEffect(() => {

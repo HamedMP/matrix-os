@@ -4,7 +4,7 @@ import { createRateLimiter } from "./security/rate-limiter.js";
 
 const PUBLIC_PATHS = ["/health"];
 const PUBLIC_PREFIXES = ["/files/system/icons/"];
-const WS_QUERY_TOKEN_PATHS = ["/ws/voice"];
+const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal"];
 
 function timingSafeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);

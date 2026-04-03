@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
-import { dirname, join, normalize, resolve } from "node:path";
-import { Hono } from "hono";
+import { dirname, join, normalize, resolve, relative } from "node:path";
+import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
@@ -8,6 +8,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
+import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
@@ -130,9 +131,23 @@ export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
+  const allowedOrigins = Array.from(new Set(
+    [
+      process.env.SHELL_ORIGIN,
+      process.env.PROXY_ORIGIN,
+      "http://localhost:3000",
+      "http://localhost:4001",
+    ].filter((origin): origin is string => Boolean(origin)),
+  ));
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+
+  const sessionRegistry = new SessionRegistry(homePath, {
+    maxSessions: 20,
+    bufferSize: 5 * 1024 * 1024,
+    persistPath: join(homePath, "system", "terminal-sessions.json"),
+  });
 
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -548,7 +563,14 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.use("*", cors());
+  app.use("*", cors({
+    origin: (origin) => {
+      if (!origin) {
+        return undefined;
+      }
+      return allowedOrigins.includes(origin) ? origin : undefined;
+    },
+  }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
@@ -665,30 +687,166 @@ export async function createGateway(config: GatewayConfig) {
     "/ws/terminal",
     upgradeWebSocket((c) => {
       const cwdParam = c.req.query("cwd");
-      const resolvedCwd = cwdParam ? resolveWithinHome(homePath, cwdParam) : null;
-      const pty = createPtyHandler(homePath, undefined, resolvedCwd ?? undefined);
+      let handle: SessionHandle | null = null;
+      let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
+      let autoCreatedSessionId: string | null = null;
+
+      const cleanupAutoCreatedSession = () => {
+        if (handle) {
+          const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
+          handle.detach();
+          handle = null;
+          if (shouldDestroyAutoCreated && autoCreatedSessionId) {
+            sessionRegistry.destroy(autoCreatedSessionId);
+          }
+        } else if (autoCreatedSessionId) {
+          sessionRegistry.destroy(autoCreatedSessionId);
+        }
+        autoCreatedSessionId = null;
+      };
 
       return {
         onOpen(_evt, ws) {
-          pty.onSend((msg) => {
-            ws.send(JSON.stringify(msg));
-          });
-          pty.open();
+          const sendJson = (msg: PtyServerMessage) => {
+            try { ws.send(JSON.stringify(msg)); } catch { /* ws closed */ }
+          };
+
+          // Backward compat: auto-create session if no attach message within 100ms
+          if (cwdParam && cwdParam.length >= 1 && cwdParam.length <= 4096) {
+            autoCreateTimer = setTimeout(() => {
+              autoCreateTimer = null;
+              if (handle) return;
+              let sessionId: string | null = null;
+              try {
+                sessionId = sessionRegistry.create(cwdParam);
+                autoCreatedSessionId = sessionId;
+                handle = sessionRegistry.attach(sessionId);
+                if (handle) {
+                  handle.subscribe(sendJson);
+                  sendJson({ type: "attached", sessionId, state: "running" });
+                  handle.replay(0);
+                } else {
+                  sessionRegistry.destroy(sessionId);
+                  autoCreatedSessionId = null;
+                }
+              } catch (err: unknown) {
+                if (handle) {
+                  handle.detach();
+                  handle = null;
+                }
+                if (sessionId) {
+                  sessionRegistry.destroy(sessionId);
+                  autoCreatedSessionId = null;
+                }
+                console.error("Terminal session create error:", err);
+                sendJson({ type: "error", message: "Failed to create session" });
+              }
+            }, 100);
+          }
         },
 
-        onMessage(evt, _ws) {
-          try {
-            const msg = JSON.parse(
-              typeof evt.data === "string" ? evt.data : "",
-            ) as PtyMessage;
-            pty.onMessage(msg);
-          } catch {
-            // ignore malformed
+        onMessage(evt, ws) {
+          const raw = typeof evt.data === "string" ? evt.data : "";
+          let parsed: unknown;
+          try { parsed = JSON.parse(raw); } catch {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
+            return;
+          }
+
+          const result = ClientMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
+            return;
+          }
+
+          const msg = result.data;
+          const sendJson = (m: PtyServerMessage) => {
+            try { ws.send(JSON.stringify(m)); } catch { /* ws closed */ }
+          };
+
+          switch (msg.type) {
+            case "attach": {
+              if (autoCreateTimer) {
+                clearTimeout(autoCreateTimer);
+                autoCreateTimer = null;
+              }
+              if (handle) {
+                cleanupAutoCreatedSession();
+              }
+
+              if ("cwd" in msg) {
+                let sessionId: string | null = null;
+                try {
+                  sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                  autoCreatedSessionId = null;
+                  handle = sessionRegistry.attach(sessionId);
+                  if (handle) {
+                    handle.subscribe(sendJson);
+                    sendJson({ type: "attached", sessionId, state: "running" });
+                    handle.replay(0);
+                  } else {
+                    sessionRegistry.destroy(sessionId);
+                  }
+                } catch (err: unknown) {
+                  if (handle) {
+                    handle.detach();
+                    handle = null;
+                  }
+                  if (sessionId) {
+                    sessionRegistry.destroy(sessionId);
+                  }
+                  console.error("Terminal session create error:", err);
+                  sendJson({ type: "error", message: "Failed to create session" });
+                }
+              } else {
+                try {
+                  handle = sessionRegistry.attach(msg.sessionId);
+                  if (handle) {
+                    const info = sessionRegistry.getSession(msg.sessionId);
+                    autoCreatedSessionId = null;
+                    handle.subscribe(sendJson);
+                    sendJson({
+                      type: "attached",
+                      sessionId: msg.sessionId,
+                      state: info?.state ?? "running",
+                      exitCode: info?.exitCode,
+                    });
+                    handle.replay(msg.fromSeq ?? 0);
+                  } else {
+                    sendJson({ type: "error", message: "Session not found" });
+                  }
+                } catch (err: unknown) {
+                  if (handle) {
+                    handle.detach();
+                    handle = null;
+                  }
+                  console.error("Terminal session attach error:", err);
+                  sendJson({ type: "error", message: "Failed to attach session" });
+                }
+              }
+              break;
+            }
+            case "input":
+            case "resize":
+              if (handle) {
+                handle.send(msg);
+              }
+              break;
+            case "detach":
+              if (handle) {
+                handle.detach();
+                handle = null;
+              }
+              break;
           }
         },
 
         onClose() {
-          pty.close();
+          if (autoCreateTimer) {
+            clearTimeout(autoCreateTimer);
+            autoCreateTimer = null;
+          }
+          cleanupAutoCreatedSession();
         },
       };
     }),
@@ -815,12 +973,10 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.put("/api/terminal/layout", async (c) => {
+  const terminalLayoutBodyLimit = bodyLimit({ maxSize: 100_000 });
+  app.put("/api/terminal/layout", terminalLayoutBodyLimit, async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     const raw = await c.req.text();
-    if (raw.length > 100_000) {
-      return c.json({ error: "Payload too large" }, 413);
-    }
     let body: unknown;
     try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
     if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {
@@ -834,6 +990,31 @@ export async function createGateway(config: GatewayConfig) {
     } catch {
       return c.json({ error: "Failed to save layout" }, 500);
     }
+  });
+
+  app.get("/api/terminal/sessions", (c) => {
+    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
+      const displayCwd = relative(homePath, session.cwd) || "~";
+      return {
+        sessionId: session.sessionId,
+        cwd: displayCwd,
+        state: session.state,
+        exitCode: session.exitCode,
+        createdAt: session.createdAt,
+        lastAttachedAt: session.lastAttachedAt,
+        attachedClients: session.attachedClients,
+      };
+    });
+    return c.json(publicSessions);
+  });
+
+  app.delete("/api/terminal/sessions/:id", (c) => {
+    const id = c.req.param("id");
+    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
+    const session = sessionRegistry.getSession(id);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    sessionRegistry.destroy(id);
+    return c.json({ ok: true });
   });
 
   app.post("/api/message", async (c) => {
@@ -1674,6 +1855,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await channelManager.stop();
+      await sessionRegistry.shutdown();
       await watcher.close();
       await appDb?.destroy();
       server.close();

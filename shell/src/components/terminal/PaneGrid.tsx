@@ -10,12 +10,21 @@ interface PaneGridProps {
   theme: Theme;
   focusedPaneId?: string | null;
   onFocusPane?: (paneId: string) => void;
+  onSessionAttached?: (paneId: string, sessionId: string) => void;
+  shouldCachePane?: (paneId: string) => boolean;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-      <PaneNodeRenderer node={paneTree} theme={theme} focusedPaneId={focusedPaneId} onFocusPane={onFocusPane} />
+      <PaneNodeRenderer
+        node={paneTree}
+        theme={theme}
+        focusedPaneId={focusedPaneId}
+        onFocusPane={onFocusPane}
+        onSessionAttached={onSessionAttached}
+        shouldCachePane={shouldCachePane}
+      />
     </div>
   );
 }
@@ -25,9 +34,11 @@ interface PaneNodeRendererProps {
   theme: Theme;
   focusedPaneId?: string | null;
   onFocusPane?: (paneId: string) => void;
+  onSessionAttached?: (paneId: string, sessionId: string) => void;
+  shouldCachePane?: (paneId: string) => boolean;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     return (
       <div className="h-full w-full min-h-0 min-w-0">
@@ -36,8 +47,11 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane }: PaneNodeR
           cwd={node.cwd}
           theme={theme}
           isFocused={focusedPaneId === node.id}
+          sessionId={node.sessionId}
           claudeMode={node.claudeMode === true}
           onFocus={onFocusPane}
+          onSessionAttached={onSessionAttached}
+          shouldCacheOnUnmount={shouldCachePane}
         />
       </div>
     );
@@ -52,6 +66,8 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane }: PaneNodeR
       theme={theme}
       focusedPaneId={focusedPaneId}
       onFocusPane={onFocusPane}
+      onSessionAttached={onSessionAttached}
+      shouldCachePane={shouldCachePane}
     />
   );
 }
@@ -64,9 +80,11 @@ interface SplitContainerProps {
   theme: Theme;
   focusedPaneId?: string | null;
   onFocusPane?: (paneId: string) => void;
+  onSessionAttached?: (paneId: string, sessionId: string) => void;
+  shouldCachePane?: (paneId: string) => boolean;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentRatio, setCurrentRatio] = useState(ratio);
 
@@ -112,7 +130,14 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
       style={{ display: "flex", flexDirection: isHorizontal ? "row" : "column" }}
     >
       <div style={{ [isHorizontal ? "width" : "height"]: firstSize, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-        <PaneNodeRenderer node={left} theme={theme} focusedPaneId={focusedPaneId} onFocusPane={onFocusPane} />
+        <PaneNodeRenderer
+          node={left}
+          theme={theme}
+          focusedPaneId={focusedPaneId}
+          onFocusPane={onFocusPane}
+          onSessionAttached={onSessionAttached}
+          shouldCachePane={shouldCachePane}
+        />
       </div>
       <div
         className="shrink-0 hover:opacity-100 opacity-50 transition-opacity"
@@ -120,7 +145,14 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
         onMouseDown={handleDragStart}
       />
       <div style={{ [isHorizontal ? "width" : "height"]: secondSize, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-        <PaneNodeRenderer node={right} theme={theme} focusedPaneId={focusedPaneId} onFocusPane={onFocusPane} />
+        <PaneNodeRenderer
+          node={right}
+          theme={theme}
+          focusedPaneId={focusedPaneId}
+          onFocusPane={onFocusPane}
+          onSessionAttached={onSessionAttached}
+          shouldCachePane={shouldCachePane}
+        />
       </div>
     </div>
   );

@@ -60,6 +60,20 @@ describe("E2E: Authentication gates", () => {
     expect(res.status).toBe(401);
   });
 
+  it("rejects /api/terminal/sessions without token", async () => {
+    const res = await fetch(`${gw.url}/api/terminal/sessions`);
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects /api/terminal/layout writes without token", async () => {
+    const res = await fetch(`${gw.url}/api/terminal/layout`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tabs: [] }),
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("allows /api/channels/status with correct token", async () => {
     const res = await fetch(`${gw.url}/api/channels/status`, {
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` },

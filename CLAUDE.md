@@ -7,6 +7,7 @@ Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social +
 Read `.specify/memory/constitution.md`: the 8 non-negotiable principles. Re-read after compaction.
 
 Key principles:
+
 1. **Everything Is a File**: filesystem is the single source of truth
 2. **Agent Is the Kernel**: Agent SDK V1 `query()` with `resume`
 3. **Headless Core, Multi-Shell**: core works without UI, shell is one renderer
@@ -50,30 +51,36 @@ Key principles:
 These patterns were identified as recurring defects across 4+ PRs (~317 unresolved review comments). Violations are the #1 source of bugs. Full analysis: `docs/dev/pr-review-analysis.md`
 
 ### Atomicity
+
 - **2+ related DB writes MUST use a transaction**. No exceptions. Like + counter, delete + cascade, insert + update are all multi-step.
 - **Use `ON CONFLICT` for idempotent upserts** instead of check-then-insert (TOCTOU race).
 - **Use `{ flag: 'wx' }` for exclusive file creates** instead of `existsSync` + `writeFile`.
 
 ### External Calls
+
 - **Every `fetch()` to an external service MUST have `signal: AbortSignal.timeout(ms)`**. Default: 10s for APIs, 30s for file downloads. No external call may hang indefinitely.
 - **Never expose provider names or raw error messages to clients**. Log the real error server-side, return a generic message. This includes Postgres errors, Twilio/ElevenLabs/OpenAI errors, and filesystem paths.
 
 ### Input Validation
+
 - **Use Hono `bodyLimit` middleware** on every mutating endpoint. Never check Content-Length after the body is already buffered.
 - **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Use `resolveWithinHome` for paths, `SAFE_SLUG` regex for identifiers.
 - **No wildcard CORS** (`Access-Control-Allow-Origin: *`). Use explicit origin allowlist.
 
 ### Resource Management
+
 - **Every in-memory Map/Set MUST have a size cap and eviction policy**. No unbounded growth. Cap + LRU eviction or TTL-based cleanup.
 - **Every temp file MUST have a cleanup policy** (TTL, max count, or explicit deletion after use).
 - **`appendFileSync`/`writeFileSync` are banned in request handlers**. Use async `fs/promises` to avoid blocking the event loop.
 
 ### Error Handling
+
 - **No bare `catch { return null }`**. Every catch must check error type -- DB connection failures and timeouts are not "not found."
 - **No `catch { }` (empty catch)**. At minimum, log the error.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
 
 ### Wiring Verification
+
 - **Every IPC tool must resolve its dependency at registration time**, not at call time. If a tool needs `callManager`, verify it's not `undefined` when the tool is registered.
 - **Never use `globalThis` for cross-package communication**. Use dependency injection or typed IPC messages.
 
@@ -88,6 +95,7 @@ bun run docker:full       # + proxy, platform, conduit
 ```
 
 **IMPORTANT**: Never `docker compose down -v` unless explicitly resetting. Volumes hold OS state, node_modules, and .next cache.
+**IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
 
 ## Shell Gotchas
 
@@ -102,6 +110,7 @@ bun run docker:full       # + proxy, platform, conduit
 ## UX Guide
 
 Read `specs/ux-guide.md`. Key rules:
+
 1. Toggle consistency: click to open, click same spot to close. Light dismiss. Escape.
 2. No layout shift: transient panels overlay, never push content.
 3. Spatial memory: window positions persist across reloads.
@@ -115,6 +124,7 @@ Every spec with endpoints/WebSockets/IPC/file I/O must include: security archite
 ## Code Review Essentials
 
 Check failure modes, not just happy paths:
+
 - **Error handling**: typed catch blocks (not bare `catch { return null }`), async `.catch()`, no leaking internals
 - **Atomicity**: 3+ sequential DB writes need transactions, no TOCTOU races
 - **API contract**: response field names match frontend, no dead code paths
@@ -123,6 +133,7 @@ Check failure modes, not just happy paths:
 ## Reference Docs
 
 Read these on demand, not every session:
+
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
@@ -137,3 +148,12 @@ Read these on demand, not every session:
 - **Agents MUST commit progress** after each phase/feature
 - **NEVER call TeamDelete** -- team files are cheap, lost work is expensive
 - Agents work on current branch in parallel, no feature branches
+
+## Active Technologies
+
+- TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
+- Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
+
+## Recent Changes
+
+- 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)

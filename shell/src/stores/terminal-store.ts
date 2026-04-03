@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
 
 export type PaneNode =
-  | { type: "pane"; id: string; cwd: string; claudeMode?: boolean }
+  | { type: "pane"; id: string; cwd: string; sessionId?: string; claudeMode?: boolean }
   | { type: "split"; direction: "horizontal" | "vertical"; children: [PaneNode, PaneNode]; ratio: number };
 
 export interface TerminalTab {
@@ -36,6 +36,7 @@ interface TerminalStore {
   closePane: (paneId: string) => void;
   setFocusedPane: (paneId: string) => void;
   setSplitRatio: (paneId: string, ratio: number) => void;
+  setSessionId: (paneId: string, sessionId: string) => void;
 
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -263,6 +264,23 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     get().saveLayout();
   },
 
+  setSessionId: (paneId, sessionId) => {
+    function setSessionIdInTree(node: PaneNode): PaneNode {
+      if (node.type === "pane") {
+        return node.id === paneId ? { ...node, sessionId } : node;
+      }
+      return { ...node, children: [setSessionIdInTree(node.children[0]), setSessionIdInTree(node.children[1])] };
+    }
+
+    set((state) => ({
+      tabs: state.tabs.map((t) => ({
+        ...t,
+        paneTree: setSessionIdInTree(t.paneTree),
+      })),
+    }));
+    get().saveLayout();
+  },
+
   setSidebarOpen: (open) => {
     set({ sidebarOpen: open });
     get().saveLayout();
@@ -275,7 +293,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
   loadLayout: async () => {
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`);
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) return;
       const data = (await res.json()) as Partial<TerminalLayout>;
       if (data.tabs && data.tabs.length > 0) {
@@ -286,8 +306,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           sidebarWidth: data.sidebarWidth ?? 200,
         });
       }
-    } catch {
-      // fresh start
+    } catch (err: unknown) {
+      console.warn("Failed to load terminal layout:", err instanceof Error ? err.message : err);
     }
   },
 
@@ -300,7 +320,10 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(layout),
-      }).catch(() => {});
+        signal: AbortSignal.timeout(10_000),
+      }).catch((err: unknown) => {
+        console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      });
     }, 500);
   },
 }));
