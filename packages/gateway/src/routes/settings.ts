@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlink
 import { join } from "node:path";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
+import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
 
 const DESKTOP_DEFAULTS = {
   background: { type: "pattern" },
@@ -190,6 +191,39 @@ export function createSettingsRoutes(opts: {
     }
     unlinkSync(filePath);
     return c.json({ ok: true });
+  });
+
+  // --- API Key ---
+
+  app.get("/api-key/status", async (c) => {
+    const hasKey = await hasApiKey(homePath);
+    return c.json({ hasKey });
+  });
+
+  app.post("/api-key", async (c) => {
+    let body: { apiKey: string };
+    try {
+      body = await c.req.json<{ apiKey: string }>();
+    } catch {
+      return c.json({ valid: false, error: "Invalid request" }, 400);
+    }
+
+    if (!body.apiKey) {
+      return c.json({ valid: false, error: "API key is required" }, 400);
+    }
+
+    const formatResult = validateApiKeyFormat(body.apiKey);
+    if (!formatResult.valid) {
+      return c.json(formatResult, 400);
+    }
+
+    const liveResult = await validateApiKeyLive(body.apiKey);
+    if (!liveResult.valid) {
+      return c.json(liveResult, 400);
+    }
+
+    await storeApiKey(homePath, body.apiKey);
+    return c.json({ valid: true });
   });
 
   return app;

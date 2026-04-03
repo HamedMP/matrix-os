@@ -13,6 +13,7 @@ import {
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
 import { createInteractionLogger } from "./logger.js";
@@ -148,14 +149,40 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         maxTurns: opts.maxTurns,
       };
 
-      for await (const event of spawnFn(message, config)) {
-        entry.onEvent(event);
-        if (event.type === "init") {
-          resultSessionId = event.sessionId;
-        } else if (event.type === "tool_start") {
-          toolsUsed.push(event.tool);
-        } else if (event.type === "result") {
-          resultData = event.data;
+      // BYOK: read user's API key from config.json and inject into env for kernel
+      let savedApiKey: string | undefined;
+      let didSetKey = false;
+      try {
+        const raw = await readFile(join(homePath, "system/config.json"), "utf-8");
+        const userConfig = JSON.parse(raw);
+        const byokKey = userConfig?.kernel?.anthropicApiKey;
+        if (byokKey && typeof byokKey === "string") {
+          savedApiKey = process.env.ANTHROPIC_API_KEY;
+          process.env.ANTHROPIC_API_KEY = byokKey;
+          didSetKey = true;
+        }
+      } catch {
+        // No config or parse error -- use default env key
+      }
+
+      try {
+        for await (const event of spawnFn(message, config)) {
+          entry.onEvent(event);
+          if (event.type === "init") {
+            resultSessionId = event.sessionId;
+          } else if (event.type === "tool_start") {
+            toolsUsed.push(event.tool);
+          } else if (event.type === "result") {
+            resultData = event.data;
+          }
+        }
+      } finally {
+        if (didSetKey) {
+          if (savedApiKey !== undefined) {
+            process.env.ANTHROPIC_API_KEY = savedApiKey;
+          } else {
+            delete process.env.ANTHROPIC_API_KEY;
+          }
         }
       }
 
