@@ -384,7 +384,7 @@ export function TerminalPane({
       }}
       onClick={handleFocus}
     >
-      {searchOpen && searchAddonRef.current && (
+      {searchOpen && !!searchAddonRef.current && (
         <TerminalSearchBar
           searchAddon={searchAddonRef.current as Parameters<typeof TerminalSearchBar>[0]["searchAddon"]}
           isOpen={searchOpen}
