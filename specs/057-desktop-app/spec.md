@@ -90,7 +90,7 @@ apps/desktop/
 
 **Three layers**:
 
-1. **Main process** — owns the BrowserWindow, manages WebContentsViews (one per tab), handles IPC, tray, auto-update, platform API calls
+1. **Main process** — owns the BaseWindow, manages WebContentsViews (one per tab), handles IPC, tray, auto-update, platform API calls
 2. **Native renderer** — the app's own UI: sidebar and tab bar. This is local HTML/CSS/JS bundled with the app (not loaded from cloud). Lightweight — just the chrome around the WebContentsViews.
 3. **WebContentsViews** — one per tab, each loading a URL on the user's cloud instance. The web shell renders inside these. The terminal, chat, file browser, etc. are all cloud-rendered.
 
@@ -118,9 +118,9 @@ On launch and periodically (every 60s), the main process fetches the user's app 
 ```
 GET https://app.matrix-os.com/api/apps
 → [
-    { slug: "terminal", title: "Terminal", icon: "/files/system/icons/terminal.png", builtIn: true },
-    { slug: "chat", title: "Chat", icon: "/files/system/icons/chat.png", builtIn: true },
-    { slug: "files", title: "Files", icon: "/files/system/icons/files.png", builtIn: true },
+    { slug: "terminal", name: "Terminal", icon: "/files/system/icons/terminal.png", builtIn: true },
+    { slug: "chat", name: "Chat", icon: "/files/system/icons/chat.png", builtIn: true },
+    { slug: "files", name: "Files", icon: "/files/system/icons/files.png", builtIn: true },
     ...
   ]
 ```
@@ -159,7 +159,7 @@ interface Tab {
   id: string
   appSlug: string
   title: string
-  browserView: WebContentsView
+  view: WebContentsView
   url: string
 }
 ```
@@ -193,10 +193,10 @@ Open tabs saved to `electron-store` on change:
 ```json
 {
   "tabs": [
-    { "appSlug": "terminal", "url": "https://app.matrix-os.com/?app=terminal" },
-    { "appSlug": "chat", "url": "https://app.matrix-os.com/?app=chat" }
+    { "id": "abc-123", "appSlug": "terminal", "url": "https://app.matrix-os.com/?app=terminal&desktop=1" },
+    { "id": "def-456", "appSlug": "chat", "url": "https://app.matrix-os.com/?app=chat&desktop=1" }
   ],
-  "activeTabIndex": 0
+  "activeTabId": "abc-123"
 }
 ```
 
@@ -228,14 +228,14 @@ Electron's `Menu` with `accelerator` properties intercepts keys before Chromium.
 The preload script exposes a bridge so the web shell can detect it's running inside the desktop app:
 
 ```typescript
-// preload/index.ts
+// preload/index.ts (WebContentsView preload — sandbox: true, contextIsolation: true)
 contextBridge.exposeInMainWorld("matrixDesktop", {
   isDesktop: true,
-  version: app.getVersion(),
+  version: ipcRenderer.sendSync("desktop:getVersion"),
   onShortcut: (cb: (action: string) => void) =>
     ipcRenderer.on("shortcut", (_, action) => cb(action)),
-  getConnectionInfo: () => ipcRenderer.invoke("get-connection-info"),
-  requestUpgrade: () => ipcRenderer.invoke("request-upgrade"),
+  getConnectionInfo: () => ipcRenderer.invoke("desktop:getConnectionInfo"),
+  requestUpgrade: () => ipcRenderer.invoke("desktop:requestUpgrade"),
 })
 ```
 
@@ -308,13 +308,13 @@ Tray icon and menu update to reflect status. macOS notification sent on state tr
 
 The desktop app calls the platform API through the shell's existing proxy. Since the Clerk session cookie is shared across WebContentsViews, API calls from the main process reuse the same auth.
 
-For container management, the main process extracts the Clerk session cookie from the active WebContentsView's web session (`session.cookies.get()`) and uses it to make authenticated fetch requests:
+For container management, the main process uses `ses.fetch()` on the default Electron session, which automatically includes the Clerk session cookie (no manual cookie extraction needed):
 
 | Action | Request | Auth |
 |--------|---------|------|
-| Start | `POST /api/container/start` | Clerk session cookie (extracted from WebContentsView session) |
-| Stop | `POST /api/container/stop` | Clerk session cookie |
-| Upgrade | `POST /api/container/upgrade` | Clerk session cookie |
+| Start | `POST /api/container/start` | Clerk session cookie (via `ses.fetch()`) |
+| Stop | `POST /api/container/stop` | Clerk session cookie (via `ses.fetch()`) |
+| Upgrade | `POST /api/container/upgrade` | Clerk session cookie (via `ses.fetch()`) |
 | Health | `GET /health` | None (public) |
 
 These endpoints don't exist yet on the shell/gateway — they need to be added as thin proxies that call the platform API with the user's container handle.
@@ -359,7 +359,7 @@ executableName: matrix-os
 publish:
   provider: github
   owner: HamedMP
-  repo: matrix-os  # or a dedicated matrix-os-desktop repo
+  repo: matrix-os
 
 mac:
   category: public.app-category.developer-tools
@@ -531,7 +531,7 @@ Future: file sync (Google Drive-style) would enable offline access to files and 
 
 | Resource | Limit | Notes |
 |----------|-------|-------|
-| WebContentsViews | Max 20 open tabs | Beyond 20, prompt user to close tabs |
+| WebContentsViews | Max 20 open tabs | Beyond 20, show toast notification "Close a tab to open a new one" and block tab creation |
 | Health check interval | 30 seconds | Single fetch, aborted after 5s timeout |
 | Auto-update check | Every 4 hours | Non-blocking |
 | App list refresh | Every 60 seconds | Cached locally, stale data OK |
@@ -548,9 +548,9 @@ Future: file sync (Google Drive-style) would enable offline access to files and 
 - Notification on reconnect
 
 ### Container stopped
-- Platform proxy returns 503 → desktop app shows "Waking up..." screen
+- Platform proxy returns 503 → offline overlay shows "Waking up your instance..." (reuses offline overlay with different text based on health state)
 - Auto-start is already handled by the platform (same as browser)
-- If start fails: show error with manual start button
+- If start fails: offline overlay shows error with manual "Start Container" button
 
 ### Clerk session expired
 - WebContentsView navigates to sign-in page

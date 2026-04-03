@@ -80,7 +80,9 @@
 - [ ] T020 [US1] Add dev and build scripts to `apps/desktop/package.json` — "dev": "electron-vite dev", "build": "electron-vite build", "package": "electron-builder --mac", "test": "vitest run", "test:coverage": "vitest run --coverage"
 - [ ] T021 [US1] Handle Clerk auth flow — detect WebContentsView navigation to `/sign-in`, on initial launch load `https://app.matrix-os.com/` (Clerk redirects to sign-in if not authenticated), after auth, restore saved tabs or open default terminal tab
 
-**Checkpoint**: `bun run dev` in apps/desktop launches Electron, Clerk sign-in works, shell renders in a WebContentsView. Tab unit tests pass.
+- [ ] T021b [US1] Implement auto-wake on launch in `apps/desktop/src/main/index.ts` — on app ready, check container status via platform.getContainerStatus(). If stopped, call platform.startContainer() and show "Waking up your instance..." in offline overlay until health returns connected
+
+**Checkpoint**: `bun run dev` in apps/desktop launches Electron, Clerk sign-in works, shell renders in a WebContentsView. Tab unit tests pass. Stopped container auto-wakes on launch.
 
 ---
 
@@ -138,7 +140,7 @@
 ### Implementation for US4
 
 - [ ] T035 [US4] Implement health check state machine in `apps/desktop/src/main/health.ts` — HealthMonitor class: 30s polling interval, 5s fetch timeout, 3-state machine (connected/starting/unreachable) per data-model.md, 2 consecutive failures before unreachable transition, emits state-change events, tracks lastConnected timestamp
-- [ ] T036 [US4] Implement system tray in `apps/desktop/src/main/tray.ts` — Tray with template icon (monochrome), menu structure per spec Section 4 (Matrix OS header, handle, status, Open/New Terminal, Start/Stop/Upgrade Container, Check for Updates, About, Quit), updateMenu() method that rebuilds menu on connection state change
+- [ ] T036 [US4] Implement system tray in `apps/desktop/src/main/tray.ts` — Tray with template icon (monochrome), menu structure per spec Section 4 (Matrix OS header, handle, status, Open/New Terminal, Start/Stop/Upgrade Container, Check for Updates, About, Quit), updateMenu() method that rebuilds menu on connection state change. About item opens dialog with app version, container handle, and link to matrix-os.com
 - [ ] T037 [US4] Wire health monitor to tray and renderer in `apps/desktop/src/main/index.ts` — start HealthMonitor on app ready, on state change: update tray menu, send connection-changed to native chrome renderer, show macOS Notification on transitions (connected->unreachable, unreachable->connected)
 - [ ] T038 [US4] Create tray icon assets in `apps/desktop/build/` — Template.png (monochrome, 16x16 and 32x32 @2x) for macOS menu bar
 
@@ -154,7 +156,7 @@
 
 ### Tests for US5
 
-- [ ] T039 [P] [US5] Write unit test for gateway container routes — test `packages/gateway/src/container-routes.test.ts`: POST /api/container/start returns 200 on success, POST /api/container/stop returns 200, POST /api/container/upgrade returns 200 with version info, GET /api/container/status returns ContainerStatus, 502 on platform unreachable, auth required (401 without cookie)
+- [ ] T039 [P] [US5] Write unit test for gateway container routes — test `tests/gateway/container-routes.test.ts`: POST /api/container/start returns 200 on success, POST /api/container/stop returns 200, POST /api/container/upgrade returns 200 with version info, GET /api/container/status returns ContainerStatus, 502 on platform unreachable, auth required (401 without cookie), never expose internal platform errors to client
 - [ ] T040 [P] [US5] Write unit test `apps/desktop/tests/unit/platform.test.ts` (extend) — startContainer, stopContainer, upgradeContainer, getContainerStatus call correct endpoints, handle error responses, timeout handling
 
 ### Implementation for US5
@@ -185,9 +187,10 @@
 - [ ] T048 [US6] Implement auto-updater in `apps/desktop/src/main/updater.ts` — initAutoUpdater(tray, nativeChromeView): skip in dev, autoInstallOnAppQuit=true, check on launch + every 4h, events: update-available (update tray + send to renderer), download-progress (send to renderer), update-downloaded (notification + tray + send to renderer). installUpdate() calls quitAndInstall. Per spec Section 6
 - [ ] T049 [US6] Wire updater to main process in `apps/desktop/src/main/index.ts` — call initAutoUpdater after tray creation, register update:check and update:install IPC handlers
 - [ ] T050 [US6] Create GitHub Actions CI workflow `.github/workflows/desktop-release.yml` — trigger on tag push `desktop-v*`, checkout, pnpm install, electron-vite build, electron-builder --mac --publish always. Secrets: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID, CSC_LINK, CSC_KEY_PASSWORD, GH_TOKEN
-- [ ] T051 [US6] Create `apps/desktop/dev-app-update.yml` for local update testing (provider: github, owner, repo)
+- [ ] T051 [US6] Create `apps/desktop/dev-app-update.yml` for local update testing (provider: github, owner: HamedMP, repo: matrix-os)
+- [ ] T051b [US6] Create download page at `www/content/docs/download/page.mdx` (or `www/src/app/download/page.tsx`) — detect OS via user-agent, show macOS DMG download button linking to latest GitHub Release, "coming soon" for Windows/Linux
 
-**Checkpoint**: `electron-builder --mac` produces unsigned DMG locally. CI config ready (secrets need manual setup).
+**Checkpoint**: `electron-builder --mac` produces unsigned DMG locally. CI config ready (secrets need manual setup). Download page live at matrix-os.com/download.
 
 ---
 
@@ -207,7 +210,19 @@
 
 ---
 
-## Phase 10: Polish & Cross-Cutting Concerns
+## Phase 10: Integration Tests
+
+**Purpose**: End-to-end verification of cross-component flows. Constitution VIII mandates test coverage for integration paths.
+
+- [ ] T062 [P] Write integration test `apps/desktop/tests/integration/auth.integration.test.ts` — fresh launch navigates to sign-in page, after Clerk auth WebContentsView loads shell with session cookie, session persists across app restart (mock Electron session)
+- [ ] T063 [P] Write integration test `apps/desktop/tests/integration/tabs.integration.test.ts` — open app from sidebar creates WebContentsView with correct URL (`?app={slug}&desktop=1`), switch tabs shows/hides correct views, close tab destroys WebContentsView (webContents.close called), relaunch restores tabs from electron-store
+- [ ] T064 Write integration test `apps/desktop/tests/integration/container.integration.test.ts` — start container via IPC calls gateway POST /api/container/start, stop transitions status, upgrade triggers reload of all WebContentsViews, health monitor state machine drives tray + offline overlay updates
+
+**Checkpoint**: All integration tests pass. Full auth -> tabs -> container lifecycle verified.
+
+---
+
+## Phase 11: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final quality, security, and documentation
 
@@ -234,7 +249,8 @@
 - **US5 (Phase 7)**: Depends on US4 (needs health monitor + tray for container actions)
 - **US6 (Phase 8)**: Depends on US1 only (updater is independent)
 - **US7 (Phase 9)**: Depends on US4 (needs health monitor for offline detection)
-- **Polish (Phase 10)**: Depends on all user stories
+- **Integration Tests (Phase 10)**: Depends on US1-US5 (all features under test)
+- **Polish (Phase 11)**: Depends on all user stories + integration tests
 
 ### Parallel Opportunities
 
@@ -305,15 +321,16 @@ Agent C: "Phase 8 US6 — auto-updater + CI pipeline"
 
 ## Summary
 
-- **Total tasks**: 61
-- **US1 (MVP)**: 9 tasks (T013-T021)
+- **Total tasks**: 67
+- **US1 (MVP)**: 10 tasks (T013-T021b)
 - **US2 (Sidebar/Tabs)**: 8 tasks (T022-T029)
 - **US3 (Keybindings)**: 3 tasks (T030-T032)
 - **US4 (Tray/Health)**: 6 tasks (T033-T038)
 - **US5 (Container Mgmt)**: 8 tasks (T039-T046)
-- **US6 (Auto-Update)**: 5 tasks (T047-T051)
+- **US6 (Auto-Update)**: 6 tasks (T047-T051b)
 - **US7 (Offline)**: 3 tasks (T052-T054)
 - **Setup + Foundational**: 12 tasks (T001-T012)
+- **Integration Tests**: 3 tasks (T062-T064)
 - **Polish**: 7 tasks (T055-T061)
 - **Parallel tracks after MVP**: 3 independent tracks
 - **Gateway changes**: 2 tasks (T041-T042) — new container proxy routes
