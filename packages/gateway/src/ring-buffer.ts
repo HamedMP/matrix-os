@@ -14,12 +14,13 @@ export class RingBuffer {
   }
 
   write(data: string): number {
-    const seq = this._nextSeq++;
     const byteLen = Buffer.byteLength(data);
 
     if (byteLen > this.maxBytes) {
-      return seq;
+      return this._nextSeq;
     }
+
+    const seq = this._nextSeq++;
 
     while (this.chunks.length > 0 && this._currentBytes + byteLen > this.maxBytes) {
       const evicted = this.chunks.shift()!;

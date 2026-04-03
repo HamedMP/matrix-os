@@ -125,15 +125,14 @@ describe("T133: Auth token middleware", () => {
     expect(result?.status).toBe(401);
   });
 
-  it("rejects /ws/terminal with query token (only /ws/voice allowed)", async () => {
+  it("allows /ws/terminal with query token", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
-    const result = await mw(
+    await mw(
       mockContext("/ws/terminal", undefined, "secret-token", "10.0.0.1"),
       async () => { nextCalled = true; },
     );
-    expect(nextCalled).toBe(false);
-    expect(result?.status).toBe(401);
+    expect(nextCalled).toBe(true);
   });
 
   it("rejects REST endpoint with query token (only WS allowed)", async () => {

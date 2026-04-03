@@ -100,6 +100,7 @@ class PtySession {
   state: "running" | "exited" = "running";
   exitCode?: number;
   private ptyProcess: PtyLike;
+  private static readonly MAX_SUBSCRIBERS = 10;
   private subscribers = new Set<SubscriberFn>();
   private _attachedClients = 0;
 
@@ -152,6 +153,9 @@ class PtySession {
   }
 
   addSubscriber(fn: SubscriberFn): void {
+    if (this.subscribers.size >= PtySession.MAX_SUBSCRIBERS) {
+      throw new Error("Too many subscribers");
+    }
     this.subscribers.add(fn);
   }
 
@@ -244,7 +248,8 @@ export class SessionRegistry {
     }
 
     const sessionId = randomUUID();
-    const defaultShell = process.env.SHELL ?? "/bin/bash";
+    const envShell = process.env.SHELL ?? "/bin/bash";
+    const defaultShell = this.allowedShells.has(envShell) ? envShell : "/bin/bash";
     const resolvedShell = shell && this.allowedShells.has(shell) ? shell : defaultShell;
     const validatedCwd = resolveWithinHome(this.homePath, cwd);
     const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
