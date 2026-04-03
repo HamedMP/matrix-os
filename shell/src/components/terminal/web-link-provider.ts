@@ -36,6 +36,60 @@ export function detectFilePaths(text: string): LinkMatch[] {
   return matches;
 }
 
+interface WrappedLineInfo {
+  text: string;
+  startRow: number;
+  lineLengths: number[];
+}
+
+function getWrappedLine(terminal: Terminal, bufferRow: number): WrappedLineInfo | null {
+  const buffer = terminal.buffer.active;
+  const line = buffer.getLine(bufferRow);
+  if (!line) return null;
+
+  // Walk backward to find the start of this wrapped group
+  let startRow = bufferRow;
+  while (startRow > 0) {
+    const prev = buffer.getLine(startRow);
+    if (!prev || !(prev as unknown as { isWrapped: boolean }).isWrapped) break;
+    startRow--;
+  }
+
+  // Walk forward to collect all wrapped continuations
+  const parts: string[] = [];
+  const lineLengths: number[] = [];
+  let row = startRow;
+  while (row < buffer.length) {
+    const l = buffer.getLine(row);
+    if (!l) break;
+    if (row > startRow && !(l as unknown as { isWrapped: boolean }).isWrapped) break;
+    const t = l.translateToString();
+    parts.push(t);
+    lineLengths.push(t.length);
+    row++;
+  }
+
+  return { text: parts.join(""), startRow, lineLengths };
+}
+
+function offsetToRowCol(lineLengths: number[], startRow: number, offset: number): { x: number; y: number } {
+  let remaining = offset;
+  for (let i = 0; i < lineLengths.length; i++) {
+    if (remaining < lineLengths[i]) {
+      return { x: remaining + 1, y: startRow + i + 1 };
+    }
+    remaining -= lineLengths[i];
+  }
+  const lastIdx = lineLengths.length - 1;
+  return { x: lineLengths[lastIdx], y: startRow + lastIdx + 1 };
+}
+
+type LinkEntry = {
+  range: { start: { x: number; y: number }; end: { x: number; y: number } };
+  text: string;
+  activate: () => void;
+};
+
 export class WebLinkProvider {
   private readonly terminal: Terminal;
 
@@ -45,53 +99,52 @@ export class WebLinkProvider {
 
   provideLinks(
     bufferLineNumber: number,
-    callback: (links: Array<{
-      range: { start: { x: number; y: number }; end: { x: number; y: number } };
-      text: string;
-      activate: () => void;
-    }> | undefined) => void,
+    callback: (links: LinkEntry[] | undefined) => void,
   ): void {
-    const line = this.terminal.buffer.active.getLine(bufferLineNumber - 1);
-    if (!line) {
+    const links: LinkEntry[] = [];
+
+    // Get the full wrapped line group for URL detection
+    const wrapped = getWrappedLine(this.terminal, bufferLineNumber - 1);
+    if (!wrapped) {
       callback(undefined);
       return;
     }
 
-    const text = line.translateToString();
-    const links: Array<{
-      range: { start: { x: number; y: number }; end: { x: number; y: number } };
-      text: string;
-      activate: () => void;
-    }> = [];
-
-    const urls = detectUrls(text);
-    for (const url of urls) {
-      links.push({
-        range: {
-          start: { x: url.startIndex + 1, y: bufferLineNumber },
-          end: { x: url.startIndex + url.text.length, y: bufferLineNumber },
-        },
-        text: url.text,
-        activate: () => {
-          window.open(url.text, "_blank", "noopener,noreferrer");
-        },
-      });
+    // Only process URLs on the first row of a wrapped group to avoid duplicates
+    if (wrapped.startRow === bufferLineNumber - 1) {
+      const urls = detectUrls(wrapped.text);
+      for (const url of urls) {
+        const start = offsetToRowCol(wrapped.lineLengths, wrapped.startRow, url.startIndex);
+        const end = offsetToRowCol(wrapped.lineLengths, wrapped.startRow, url.startIndex + url.text.length - 1);
+        links.push({
+          range: { start, end },
+          text: url.text,
+          activate: () => {
+            window.open(url.text, "_blank", "noopener,noreferrer");
+          },
+        });
+      }
     }
 
-    const filePaths = detectFilePaths(text);
-    for (const fp of filePaths) {
-      links.push({
-        range: {
-          start: { x: fp.startIndex + 1, y: bufferLineNumber },
-          end: { x: fp.startIndex + fp.text.length, y: bufferLineNumber },
-        },
-        text: fp.text,
-        activate: () => {
-          navigator.clipboard.writeText(fp.text).catch((err: unknown) => {
-            console.warn("Failed to copy file path:", err instanceof Error ? err.message : err);
-          });
-        },
-      });
+    // Single-line file paths (no wrapping needed)
+    const line = this.terminal.buffer.active.getLine(bufferLineNumber - 1);
+    if (line) {
+      const text = line.translateToString();
+      const filePaths = detectFilePaths(text);
+      for (const fp of filePaths) {
+        links.push({
+          range: {
+            start: { x: fp.startIndex + 1, y: bufferLineNumber },
+            end: { x: fp.startIndex + fp.text.length, y: bufferLineNumber },
+          },
+          text: fp.text,
+          activate: () => {
+            navigator.clipboard.writeText(fp.text).catch((err: unknown) => {
+              console.warn("Failed to copy file path:", err instanceof Error ? err.message : err);
+            });
+          },
+        });
+      }
     }
 
     callback(links.length > 0 ? links : undefined);

@@ -56,6 +56,8 @@ export function TerminalPane({
   const reconnectAttemptRef = useRef<number>(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const outputBufferRef = useRef("");
   const isClosingRef = useRef(false);
 
   onSessionAttachedRef.current = onSessionAttached;
@@ -245,12 +247,25 @@ export function TerminalPane({
               }
               break;
 
-            case "output":
-              term.write(msg.data as string);
+            case "output": {
+              const outputData = msg.data as string;
+              term.write(outputData);
               if (typeof msg.seq === "number") {
                 lastSeqRef.current = (msg.seq as number) + 1;
               }
+              // Detect auth URLs in streaming output
+              outputBufferRef.current += outputData;
+              if (outputBufferRef.current.length > 8192) {
+                outputBufferRef.current = outputBufferRef.current.slice(-4096);
+              }
+              const authMatch = outputBufferRef.current.match(/https:\/\/claude\.ai\/oauth\/authorize[^\s\x1b]*/);
+              if (authMatch) {
+                const cleaned = authMatch[0].replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+                setAuthUrl(cleaned);
+                outputBufferRef.current = "";
+              }
               break;
+            }
 
             case "replay-start":
               break;
@@ -407,6 +422,78 @@ export function TerminalPane({
       }}
       onClick={handleFocus}
     >
+      {authUrl && (
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            right: 8,
+            zIndex: 20,
+            background: theme.colors.primary || "#c2703a",
+            color: "#fff",
+            borderRadius: 8,
+            padding: "8px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+          }}
+        >
+          <span style={{ flex: 1 }}>Claude Code login required</span>
+          <button
+            onClick={() => {
+              window.open(authUrl, "_blank", "noopener,noreferrer");
+            }}
+            style={{
+              background: "rgba(255,255,255,0.2)",
+              border: "1px solid rgba(255,255,255,0.3)",
+              color: "#fff",
+              borderRadius: 6,
+              padding: "4px 12px",
+              cursor: "pointer",
+              fontSize: 13,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Open login
+          </button>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(authUrl).catch((err: unknown) => {
+                console.warn("Clipboard copy failed:", err instanceof Error ? err.message : err);
+              });
+            }}
+            style={{
+              background: "rgba(255,255,255,0.2)",
+              border: "1px solid rgba(255,255,255,0.3)",
+              color: "#fff",
+              borderRadius: 6,
+              padding: "4px 12px",
+              cursor: "pointer",
+              fontSize: 13,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Copy URL
+          </button>
+          <button
+            onClick={() => setAuthUrl(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "rgba(255,255,255,0.7)",
+              cursor: "pointer",
+              fontSize: 16,
+              padding: "0 4px",
+              lineHeight: 1,
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
       {searchOpen && !!searchAddonRef.current && (
         <TerminalSearchBar
           searchAddon={searchAddonRef.current as Parameters<typeof TerminalSearchBar>[0]["searchAddon"]}
