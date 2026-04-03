@@ -58,6 +58,7 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
+  const authDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
 
   onSessionAttachedRef.current = onSessionAttached;
@@ -253,16 +254,22 @@ export function TerminalPane({
               if (typeof msg.seq === "number") {
                 lastSeqRef.current = (msg.seq as number) + 1;
               }
-              // Detect auth URLs in streaming output
+              // Detect auth URLs in streaming output (debounced -- URL arrives in chunks)
               outputBufferRef.current += outputData;
               if (outputBufferRef.current.length > 8192) {
                 outputBufferRef.current = outputBufferRef.current.slice(-4096);
               }
-              const authMatch = outputBufferRef.current.match(/https:\/\/claude\.ai\/oauth\/authorize[^\s\x1b]*/);
-              if (authMatch) {
-                const cleaned = authMatch[0].replace(/[\x00-\x1f\x7f-\x9f]/g, "");
-                setAuthUrl(cleaned);
-                outputBufferRef.current = "";
+              if (outputBufferRef.current.includes("claude.ai/oauth/authorize")) {
+                if (authDetectTimerRef.current) clearTimeout(authDetectTimerRef.current);
+                authDetectTimerRef.current = setTimeout(() => {
+                  // Strip all control chars and whitespace from buffer to rejoin wrapped lines
+                  const stripped = outputBufferRef.current.replace(/[\x00-\x1f\x7f-\x9f\s]/g, "");
+                  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize[^\s<>"')\]]+/);
+                  if (match) {
+                    setAuthUrl(match[0]);
+                  }
+                  outputBufferRef.current = "";
+                }, 300);
               }
               break;
             }
