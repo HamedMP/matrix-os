@@ -95,7 +95,17 @@ export function TerminalPane({
 
           return () => {
             resizeObserver.disconnect();
-            cached.lastSeq = lastSeqRef.current;
+            if (isClosingRef.current) {
+              const ws = wsRef.current;
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "detach" }));
+              }
+              ws?.close();
+              removeCached(paneId);
+              cached.terminal.dispose();
+            } else {
+              cached.lastSeq = lastSeqRef.current;
+            }
           };
         }
         // WS closed — discard stale cache, create fresh terminal below
@@ -163,7 +173,7 @@ export function TerminalPane({
       } catch (_e: unknown) { /* unavailable */ }
 
       // Link provider
-      term.registerLinkProvider(new WebLinkProvider());
+      term.registerLinkProvider(new WebLinkProvider(term));
 
       function connectWs() {
         const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");

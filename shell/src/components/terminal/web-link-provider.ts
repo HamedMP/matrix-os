@@ -1,3 +1,5 @@
+import type { Terminal } from "@xterm/xterm";
+
 const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
 
 const FILE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|rs|go|md|json|yaml|yml|toml|css|html|sh|sql|rb|java|kt|swift|c|cpp|h)$/;
@@ -14,7 +16,6 @@ export function detectUrls(text: string): LinkMatch[] {
   URL_REGEX.lastIndex = 0;
   while ((match = URL_REGEX.exec(text)) !== null) {
     let url = match[0];
-    // Strip trailing punctuation that's unlikely to be part of the URL
     url = url.replace(/[.,;:!?)]+$/, "");
     matches.push({ text: url, startIndex: match.index });
   }
@@ -27,7 +28,6 @@ export function detectFilePaths(text: string): LinkMatch[] {
   FILE_PATH_REGEX.lastIndex = 0;
   while ((match = FILE_PATH_REGEX.exec(text)) !== null) {
     const raw = match[0];
-    // Extract the base path (strip :line:col suffix for extension check)
     const basePath = raw.replace(/:\d+(?::\d+)?$/, "");
     if (FILE_EXTENSIONS.test(basePath)) {
       matches.push({ text: raw, startIndex: match.index });
@@ -37,6 +37,12 @@ export function detectFilePaths(text: string): LinkMatch[] {
 }
 
 export class WebLinkProvider {
+  private readonly terminal: Terminal;
+
+  constructor(terminal: Terminal) {
+    this.terminal = terminal;
+  }
+
   provideLinks(
     bufferLineNumber: number,
     callback: (links: Array<{
@@ -44,14 +50,8 @@ export class WebLinkProvider {
       text: string;
       activate: () => void;
     }> | undefined) => void,
-    _terminal?: { buffer: { active: { getLine: (n: number) => { translateToString: () => string } | undefined } } },
   ): void {
-    if (!_terminal) {
-      callback(undefined);
-      return;
-    }
-
-    const line = _terminal.buffer.active.getLine(bufferLineNumber - 1);
+    const line = this.terminal.buffer.active.getLine(bufferLineNumber - 1);
     if (!line) {
       callback(undefined);
       return;
@@ -87,8 +87,8 @@ export class WebLinkProvider {
         },
         text: fp.text,
         activate: () => {
-          navigator.clipboard.writeText(fp.text).catch(() => {
-            // clipboard API not available in this environment
+          navigator.clipboard.writeText(fp.text).catch((err: unknown) => {
+            console.warn("Failed to copy file path:", err instanceof Error ? err.message : err);
           });
         },
       });

@@ -60,7 +60,8 @@ describe("Terminal Themes", () => {
 
   it("returns solarized-light palette for 'solarized-light' slug", () => {
     const palette = getAnsiPalette("solarized-light", "#fdf6e3");
-    expect(palette.black).toBe("#073642");
+    expect(palette.black).toBe("#eee8d5");
+    expect(palette.black).not.toBe(getAnsiPalette("solarized-dark", "#002b36").black);
     assertCompleteAnsiPalette(palette);
   });
 

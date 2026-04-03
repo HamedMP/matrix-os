@@ -291,6 +291,7 @@ export class SessionRegistry {
       sessionId,
 
       subscribe(cb: (msg: PtyServerMessage) => void) {
+        if (subscriberFn) session.removeSubscriber(subscriberFn);
         subscriberFn = cb;
         session.addSubscriber(cb);
       },

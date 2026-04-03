@@ -23,9 +23,9 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
     const evicted = cache.get(oldest);
     cache.delete(oldest);
     if (evicted) {
-      try { evicted.ws.send(JSON.stringify({ type: "detach" })); } catch { /* ws closed */ }
-      try { evicted.ws.close(); } catch { /* already closed */ }
-      try { evicted.terminal.dispose(); } catch { /* already disposed */ }
+      try { evicted.ws.send(JSON.stringify({ type: "detach" })); } catch (e: unknown) { console.warn("Cache eviction detach:", e instanceof Error ? e.message : e); }
+      try { evicted.ws.close(); } catch (e: unknown) { console.warn("Cache eviction ws.close:", e instanceof Error ? e.message : e); }
+      try { evicted.terminal.dispose(); } catch (e: unknown) { console.warn("Cache eviction dispose:", e instanceof Error ? e.message : e); }
     }
   }
 }
