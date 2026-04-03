@@ -131,6 +131,14 @@ export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
+  const allowedOrigins = Array.from(new Set(
+    [
+      process.env.SHELL_ORIGIN,
+      process.env.PROXY_ORIGIN,
+      "http://localhost:3000",
+      "http://localhost:4001",
+    ].filter((origin): origin is string => Boolean(origin)),
+  ));
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -555,7 +563,14 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.use("*", cors());
+  app.use("*", cors({
+    origin: (origin) => {
+      if (!origin) {
+        return "";
+      }
+      return allowedOrigins.includes(origin) ? origin : "";
+    },
+  }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
@@ -676,6 +691,20 @@ export async function createGateway(config: GatewayConfig) {
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
+      const cleanupAutoCreatedSession = () => {
+        if (handle) {
+          const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
+          handle.detach();
+          handle = null;
+          if (shouldDestroyAutoCreated && autoCreatedSessionId) {
+            sessionRegistry.destroy(autoCreatedSessionId);
+          }
+        } else if (autoCreatedSessionId) {
+          sessionRegistry.destroy(autoCreatedSessionId);
+        }
+        autoCreatedSessionId = null;
+      };
+
       return {
         onOpen(_evt, ws) {
           const sendJson = (msg: PtyServerMessage) => {
@@ -729,13 +758,7 @@ export async function createGateway(config: GatewayConfig) {
                 autoCreateTimer = null;
               }
               if (handle) {
-                const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
-                handle.detach();
-                handle = null;
-                if (shouldDestroyAutoCreated && autoCreatedSessionId) {
-                  sessionRegistry.destroy(autoCreatedSessionId);
-                  autoCreatedSessionId = null;
-                }
+                cleanupAutoCreatedSession();
               }
 
               if ("cwd" in msg) {
@@ -790,10 +813,7 @@ export async function createGateway(config: GatewayConfig) {
             clearTimeout(autoCreateTimer);
             autoCreateTimer = null;
           }
-          if (handle) {
-            handle.detach();
-            handle = null;
-          }
+          cleanupAutoCreatedSession();
         },
       };
     }),

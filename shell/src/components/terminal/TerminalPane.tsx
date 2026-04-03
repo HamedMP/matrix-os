@@ -159,6 +159,8 @@ export function TerminalPane({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
+  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
@@ -200,6 +202,14 @@ export function TerminalPane({
         }
       };
 
+      const detachWebglContextLostHandler = () => {
+        if (webglCanvasRef.current && webglContextLostHandlerRef.current) {
+          webglCanvasRef.current.removeEventListener("webglcontextlost", webglContextLostHandlerRef.current);
+        }
+        webglCanvasRef.current = null;
+        webglContextLostHandlerRef.current = null;
+      };
+
       const container = containerRef.current;
       if (!container) {
         return;
@@ -216,6 +226,42 @@ export function TerminalPane({
       let fitAddon: FitAddon;
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
+
+      const attachWebglContextLostHandler = () => {
+        detachWebglContextLostHandler();
+        const canvas = container.querySelector("canvas");
+        if (!(canvas instanceof HTMLCanvasElement)) {
+          return;
+        }
+
+        const onWebglContextLost = async () => {
+          if (disposed) {
+            return;
+          }
+
+          try {
+            (webglAddon as { dispose?: () => void } | null)?.dispose?.();
+          } catch (_err: unknown) {
+            // Ignore disposal errors and fall back to 2D rendering.
+          }
+
+          try {
+            const { WebglAddon } = await import("@xterm/addon-webgl");
+            if (disposed) {
+              return;
+            }
+            const nextWebglAddon = new WebglAddon();
+            term.loadAddon(nextWebglAddon);
+            webglAddon = nextWebglAddon;
+          } catch (_err: unknown) {
+            // Canvas 2D fallback is acceptable if WebGL re-init fails.
+          }
+        };
+
+        webglCanvasRef.current = canvas;
+        webglContextLostHandlerRef.current = onWebglContextLost;
+        canvas.addEventListener("webglcontextlost", onWebglContextLost);
+      };
 
       if (canReuseCached && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
@@ -275,16 +321,6 @@ export function TerminalPane({
           const addon = new WebglAddon();
           xterm.loadAddon(addon);
           webglAddon = addon;
-
-          const canvas = container.querySelector("canvas");
-          canvas?.addEventListener("webglcontextlost", () => {
-            (addon as { dispose: () => void }).dispose();
-            try {
-              const newWebgl = new WebglAddon();
-              xterm.loadAddon(newWebgl);
-              webglAddon = newWebgl;
-            } catch (_e: unknown) { /* canvas 2D fallback */ }
-          });
         } catch (_e: unknown) { /* canvas 2D fallback */ }
 
         // Search addon
@@ -305,6 +341,8 @@ export function TerminalPane({
         // Link provider
         xterm.registerLinkProvider(new WebLinkProvider(xterm));
       }
+
+      attachWebglContextLostHandler();
 
       function bindWs(ws: WebSocket, attachOnOpen: boolean) {
         wsRef.current = ws;
@@ -504,6 +542,7 @@ export function TerminalPane({
         resizeObserver.disconnect();
         clearAuthDetectTimer();
         clearReconnectTimer();
+        detachWebglContextLostHandler();
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
 
         if (!shouldCache) {

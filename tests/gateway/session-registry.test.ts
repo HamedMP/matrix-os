@@ -465,6 +465,20 @@ describe("SessionRegistry", () => {
       warnSpy.mockRestore();
       rmSync(homePath, { recursive: true, force: true });
     });
+
+    it("ignores persisted session arrays with invalid entries", () => {
+      const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+      const persistPath = join(homePath, "system", "terminal-sessions.json");
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      writeFileSync(persistPath, JSON.stringify([{ sessionId: "bad", cwd: "/tmp/test-home" }]));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(() => new SessionRegistry(homePath, { persistPath }, createMockSpawn())).not.toThrow();
+
+      expect(warnSpy).toHaveBeenCalledWith("Stale terminal sessions file has invalid entries, ignoring");
+      warnSpy.mockRestore();
+      rmSync(homePath, { recursive: true, force: true });
+    });
   });
 
   describe("getSession", () => {

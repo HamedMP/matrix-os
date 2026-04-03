@@ -322,10 +322,15 @@ function LocalTerminalSidebar() {
 
   const fetchDir = useCallback(async (path: string) => {
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/files/tree?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`${getGatewayUrl()}/api/files/tree?path=${encodeURIComponent(path)}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) return [];
       return res.json();
-    } catch { return []; }
+    } catch (err: unknown) {
+      console.warn("Failed to load terminal directory tree:", err instanceof Error ? err.message : err);
+      return [];
+    }
   }, []);
 
   useEffect(() => {

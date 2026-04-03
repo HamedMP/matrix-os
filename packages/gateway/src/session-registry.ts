@@ -54,6 +54,17 @@ export interface SessionInfo {
   attachedClients: number;
 }
 
+const PersistedSessionInfoSchema = z.object({
+  sessionId: z.string().regex(UUID_REGEX),
+  cwd: z.string().min(1).max(4096),
+  shell: z.string().min(1).max(256),
+  state: z.enum(["running", "exited"]),
+  exitCode: z.number().int().optional(),
+  createdAt: z.number().finite(),
+  lastAttachedAt: z.number().finite(),
+  attachedClients: z.number().int().nonnegative(),
+});
+
 export type PtyServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode?: number }
   | { type: "output"; data: string; seq?: number }
@@ -406,7 +417,12 @@ export class SessionRegistry {
       if (!Array.isArray(raw)) {
         console.warn("Stale terminal sessions file is corrupt, ignoring");
       } else {
-        sessions = raw as SessionInfo[];
+        const parsed = z.array(PersistedSessionInfoSchema).safeParse(raw);
+        if (!parsed.success) {
+          console.warn("Stale terminal sessions file has invalid entries, ignoring");
+        } else {
+          sessions = parsed.data;
+        }
       }
       // Only log info about stale sessions; don't re-create PTY processes
       if (sessions.length > 0) {
