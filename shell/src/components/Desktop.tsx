@@ -58,6 +58,17 @@ interface ModuleMeta {
   version?: string;
 }
 
+function registryPathToRelativePath(path: string): string | null {
+  if (path.startsWith("~/")) {
+    return path.slice(2);
+  }
+  const homePrefix = "/home/matrixos/home/";
+  if (path.startsWith(homePrefix)) {
+    return path.slice(homePrefix.length);
+  }
+  return null;
+}
+
 function nameToSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
@@ -588,29 +599,54 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
           if (mod.status !== "active") continue;
 
           try {
-            let metaRes = await fetch(
-              `${GATEWAY_URL}/files/modules/${mod.name}/module.json`,
-            );
-            if (!metaRes.ok) {
-              metaRes = await fetch(
-                `${GATEWAY_URL}/files/modules/${mod.name}/manifest.json`,
-              );
+            const relativeBasePath = registryPathToRelativePath(mod.path);
+            if (!relativeBasePath) continue;
+
+            const metaCandidates = [
+              `${GATEWAY_URL}/files/${relativeBasePath}/module.json`,
+              `${GATEWAY_URL}/files/${relativeBasePath}/manifest.json`,
+              `${GATEWAY_URL}/files/${relativeBasePath}/matrix.json`,
+            ];
+
+            let metaRes: Response | undefined;
+            for (const candidate of metaCandidates) {
+              const res = await fetch(candidate);
+              if (res.ok) {
+                metaRes = res;
+                break;
+              }
             }
-            if (!metaRes.ok) continue;
+
+            const defaultEntryFile =
+              mod.type === "react-app" ? "dist/index.html" : "index.html";
+            let path = `${relativeBasePath}/${defaultEntryFile}`;
+            let appName = mod.name;
+            let moduleIconUrl: string | undefined;
+
+            if (!metaRes?.ok) {
+              addApp(appName, path);
+              const saved = layoutMap.get(path);
+              if (saved) {
+                layoutToLoad.push(saved);
+              }
+              continue;
+            }
+
             const meta: ModuleMeta = await metaRes.json();
             const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
-            const path = `modules/${mod.name}/${entryFile}`;
+            path = `${relativeBasePath}/${entryFile}`;
+            appName = meta.name ?? mod.name;
 
-            const moduleIconUrl = meta.icon
-              ? `${GATEWAY_URL}/files/modules/${mod.name}/${meta.icon}`
+            moduleIconUrl = meta.icon
+              ? `${GATEWAY_URL}/files/${relativeBasePath}/${meta.icon}`
               : undefined;
-            addApp(meta.name, path, moduleIconUrl);
+            addApp(appName, path, moduleIconUrl);
 
             const saved = layoutMap.get(path);
             if (saved) {
               layoutToLoad.push(saved);
             } else {
-              openWindow(meta.name, path);
+              openWindow(appName, path);
             }
           } catch {
             // module.json missing or invalid, skip
