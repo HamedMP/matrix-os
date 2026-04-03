@@ -31,7 +31,12 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
 }
 
 export function getCached(paneId: string): CachedTerminal | null {
-  return cache.get(paneId) ?? null;
+  const entry = cache.get(paneId);
+  if (entry) {
+    cache.delete(paneId);
+    cache.set(paneId, entry);
+  }
+  return entry ?? null;
 }
 
 export function removeCached(paneId: string): void {

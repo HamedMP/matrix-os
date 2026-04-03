@@ -227,7 +227,8 @@ export class SessionRegistry {
         const esmRequire = createRequire(import.meta.url);
         const nodePty = esmRequire("node-pty");
         this.spawnFn = nodePty.spawn as SpawnFn;
-      } catch {
+      } catch (err: unknown) {
+        console.warn("node-pty unavailable, terminal sessions disabled:", err instanceof Error ? err.message : err);
         this.spawnFn = () => { throw new Error("node-pty not available"); };
       }
     }

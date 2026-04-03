@@ -293,7 +293,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
   loadLayout: async () => {
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`);
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) return;
       const data = (await res.json()) as Partial<TerminalLayout>;
       if (data.tabs && data.tabs.length > 0) {
@@ -318,6 +320,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(layout),
+        signal: AbortSignal.timeout(10_000),
       }).catch((err: unknown) => {
         console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
       });

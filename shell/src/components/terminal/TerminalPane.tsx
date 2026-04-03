@@ -219,51 +219,51 @@ export function TerminalPane({
         };
 
         ws.onmessage = (evt) => {
+          let msg: Record<string, unknown>;
           try {
-            const msg = JSON.parse(typeof evt.data === "string" ? evt.data : "");
+            msg = JSON.parse(typeof evt.data === "string" ? evt.data : "");
+          } catch {
+            return;
+          }
 
-            switch (msg.type) {
-              case "attached":
-                sessionIdRef.current = msg.sessionId;
-                onSessionAttachedRef.current?.(paneId, msg.sessionId);
-                if (msg.state === "exited") {
-                  term.write(`\r\n[Process exited with code ${msg.exitCode ?? "unknown"}]\r\n`);
-                }
-                break;
+          switch (msg.type) {
+            case "attached":
+              sessionIdRef.current = msg.sessionId as string;
+              onSessionAttachedRef.current?.(paneId, msg.sessionId as string);
+              if (msg.state === "exited") {
+                term.write(`\r\n[Process exited with code ${msg.exitCode ?? "unknown"}]\r\n`);
+              }
+              break;
 
-              case "output":
-                term.write(msg.data);
-                if (typeof msg.seq === "number") {
-                  lastSeqRef.current = msg.seq + 1;
-                }
-                break;
+            case "output":
+              term.write(msg.data as string);
+              if (typeof msg.seq === "number") {
+                lastSeqRef.current = (msg.seq as number) + 1;
+              }
+              break;
 
-              case "replay-start":
-                // Replay beginning — output will follow
-                break;
+            case "replay-start":
+              break;
 
-              case "replay-end":
-                // Replay done, live stream follows
-                break;
+            case "replay-end":
+              break;
 
-              case "exit":
-                term.write(`\r\n[Process exited with code ${msg.code}]\r\n`);
-                break;
+            case "exit":
+              term.write(`\r\n[Process exited with code ${msg.code}]\r\n`);
+              break;
 
-              case "error":
-                if (msg.message === "Session not found" && sessionIdRef.current) {
-                  // Session gone (gateway restarted) — create new session
-                  sessionIdRef.current = null;
-                  lastSeqRef.current = 0;
-                  term.write("\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n");
-                  ws.send(JSON.stringify({ type: "attach", cwd }));
-                } else {
-                  term.write(`\r\n\x1b[31m[Error: ${msg.message}]\x1b[0m\r\n`);
-                }
-                break;
+            case "error": {
+              const safeMsg = String(msg.message ?? "Unknown error").replace(/[\x00-\x1f]/g, "");
+              if (safeMsg === "Session not found" && sessionIdRef.current) {
+                sessionIdRef.current = null;
+                lastSeqRef.current = 0;
+                term.write("\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n");
+                ws.send(JSON.stringify({ type: "attach", cwd }));
+              } else {
+                term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
+              }
+              break;
             }
-          } catch (_e: unknown) {
-            // ignore malformed messages
           }
         };
       }
@@ -296,7 +296,9 @@ export function TerminalPane({
         if (ev.ctrlKey && ev.shiftKey && ev.key === "C") {
           const selection = term.getSelection();
           if (selection) {
-            navigator.clipboard.writeText(selection).catch(() => {});
+            navigator.clipboard.writeText(selection).catch((err: unknown) => {
+              console.warn("Clipboard copy failed:", err instanceof Error ? err.message : err);
+            });
             term.clearSelection();
             return false;
           }
@@ -311,7 +313,9 @@ export function TerminalPane({
               const bracketed = `\x1b[200~${capped}\x1b[201~`;
               ws.send(JSON.stringify({ type: "input", data: bracketed }));
             }
-          }).catch(() => {});
+          }).catch((err: unknown) => {
+            console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+          });
           return false;
         }
 
