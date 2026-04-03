@@ -47,8 +47,11 @@ RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
-# Claude Code CLI -- pin version so this layer caches
-RUN npm install -g @anthropic-ai/claude-code@2.1.42
+# AI coding CLIs -- pin versions so this layer caches
+RUN npm install -g \
+    @anthropic-ai/claude-code@2.1.91 \
+    @openai/codex@0.118.0 \
+    opencode-ai@1.3.13
 
 # Non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
 RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
