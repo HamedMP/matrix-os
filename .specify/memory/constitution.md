@@ -2,10 +2,17 @@
 
 ## Core Principles
 
-### I. Everything Is a File (NON-NEGOTIABLE)
+### I. Data Belongs to Its Owner (NON-NEGOTIABLE)
 
-Every piece of state, configuration, application, agent definition, and user data is a file on disk. The file system is the single source of truth. No opaque databases for core state, no hidden processes, no state that exists only in memory. If it matters, it's a file. If it's a file, you can inspect it, copy it, share it, version it, and back it up by copying a folder.
+Every piece of data has a clear owner -- never the platform. Owners can inspect, export, delete, and take their data with them. No vendor lock-in, no opaque systems, no data that exists only in the platform's control.
 
+**Ownership scopes**:
+- **Personal**: belongs to the individual user. Only they can access it. Fully portable.
+- **Org**: belongs to the organization. Admins control access, members use it. Survives employee departure.
+- **Shared**: co-owned by collaborators (e.g., a shared project board). All collaborators have access. Ownership transfers are explicit.
+- **Published**: creator retains IP, installers own their instance data (e.g., app store apps).
+
+**Identity and configuration are files** -- inspectable, version-controlled, copyable:
 - Apps are files in `~/apps/` or codebases in `~/projects/`
 - OS state is files in `~/system/`
 - Agent identity is `~/system/soul.md`
@@ -13,46 +20,92 @@ Every piece of state, configuration, application, agent definition, and user dat
 - Skills are markdown files in `~/agents/skills/`
 - Channel config is in `~/system/config.json`
 - Cron jobs are in `~/system/cron.json`
-- User data is JSON/SQLite in `~/data/`
-- Sharing = sending a file. Backup = copying a folder.
 
-### II. Agent Is the Kernel
+**App data lives in the owner's database** -- queryable, relational, performant:
+- Personal: user's own PostgreSQL database (isolated, exportable)
+- Org: org-level database with schema-per-app isolation and RBAC
+- Social posts, messages, todos, and app state live in Postgres for UX (feeds, search, cross-app queries)
 
-The Claude Agent SDK is not a feature bolted onto the OS -- it IS the OS kernel. The agent has full machine control (file system, shell, processes, network). Every user interaction flows through the agent. The agent makes routing decisions, spawns sub-agents, and writes all artifacts to the file system. No separate "backend logic" -- the agent's reasoning IS the logic.
+**Ownership guarantees**:
+- Export: full data dump at any time, any scope
+- Delete: owner can erase everything in their scope
+- Portability: no data lives outside the owner's control
+- Separation: personal data never merges with org data -- leaving an org takes nothing that isn't yours
 
-- Smart kernel: handles simple requests directly, forks sub-agents for heavy work
+### II. AI Is the Kernel
+
+AI is not a feature bolted onto the OS -- it IS the OS kernel. The kernel dispatches to the best available model for each task. Every user interaction flows through the kernel. The kernel makes routing decisions, spawns sub-agents, and manages all state. No separate "backend logic" -- the kernel's reasoning IS the logic.
+
+- Model-agnostic: Claude today, any model tomorrow. The kernel abstracts the provider.
+- Smart routing: simple requests go to fast/cheap models, complex work goes to frontier models
 - Sub-agents are processes with isolated context windows
 - Custom agents are markdown files the kernel discovers and spawns
 - The agent pool is self-expanding (kernel creates new agents by writing files)
+- Current implementation: Claude Agent SDK V1 `query()` with `resume`
 
 ### III. Headless Core, Multi-Shell
 
-The core (kernel + file system + agent) works without any UI. The web shell is one renderer that watches files and draws what it finds. Messaging channels (Telegram, WhatsApp, Discord, Slack) are additional shells that route through the same kernel. Other shells (CLI, mobile, voice-only, API) read the same files. Never couple core logic to a specific renderer. The shell discovers apps -- it doesn't know what exists ahead of time.
+The core (kernel + database + agents) works without any UI. Shells are renderers that connect to the same kernel. Never couple core logic to a specific renderer. The shell discovers apps -- it doesn't know what exists ahead of time.
 
-- Web desktop: visual interaction (browser at localhost:3000 or cloud URL)
-- Telegram/WhatsApp/Discord/Slack: conversational interaction (text messages)
+**First-class shells** (native experience, full feature parity):
+- Desktop: web app (browser or PWA) -- the flagship visual experience
+- Mobile: native or PWA -- the primary way most users interact daily
+
+**Channel shells** (conversational access, subset of features):
+- Telegram/WhatsApp/Discord/Slack: text-based interaction through messaging
+- Voice: phone calls, voice assistants
+- API: programmatic access for developers and integrations
+
+**System shells**:
 - Heartbeat: proactive interaction (OS reaches out on schedule)
-- All shells route through the same gateway -> dispatcher -> kernel pipeline
+- CLI: power-user and developer access
+
+All shells route through the same gateway -> dispatcher -> kernel pipeline. Offline support is a goal: shells should degrade gracefully when connectivity is intermittent.
 
 ### IV. Self-Healing and Self-Expanding
 
 The OS detects failures, diagnoses root causes, and patches itself. The OS creates new capabilities by writing new agent files, knowledge files, and tools. Safety nets are mandatory: git snapshots before mutations, backup before patching, rollback on test failure, protected files list, watchdog process.
 
-### V. Simplicity Over Sophistication
+### V. Quality Over Shortcuts
 
-Start with the simplest implementation that works. Single-process async concurrency before worker threads. File-based IPC before message queues. SQLite before Postgres. HTML apps before full-stack frameworks. Escalate complexity only when the simpler approach fails under real use.
+Build for the best possible user experience. No throwaway prototypes, no "good enough" HTML pages, no cutting corners on polish. Users deserve production-grade quality from day one.
 
-- YAGNI: don't build infrastructure for hypothetical scale
-- Hackathon scope: working demo > perfect architecture
-- Every abstraction must justify its existence
+- Apps are Vite + React -- no bare HTML/CDN hacks
+- Every abstraction must justify its existence, but don't avoid complexity when it serves the user
+- Ship fewer things, but ship them well
+
+### VI. App Ecosystem
+
+Matrix OS is a platform for building, sharing, and running apps. Users create apps with AI assistance. The app store is how the ecosystem grows.
+
+- **App packaging**: apps are self-contained projects (Vite + React) with a manifest (`matrix.json`) declaring permissions, dependencies, and data schemas
+- **App permissions**: installed apps declare what they need (file access, network, other apps' data, notifications). Users grant permissions explicitly. Untrusted apps are sandboxed -- they cannot access `~/system/`, `~/agents/`, or other apps' data without permission.
+- **App trust levels**:
+  - Self-built: full access (the user made it, they trust it)
+  - From a contact: permissions prompt on install
+  - App store: reviewed, signed, permissions enforced
+  - Org-mandated: admin-installed, org-level permissions
+- **App store**: users publish apps for others to discover and install. Creator retains IP. Installers own their instance data. Free and paid apps supported.
+- **App sharing**: send an app to a friend, share a link, or publish to the store. Installing = copying the app into `~/apps/` and provisioning its database schema.
+
+### VII. Multi-Tenancy: Personal and Org OS
+
+Matrix OS serves individuals and organizations. An org is a group of users with shared apps, data, and administration.
+
+- **Personal OS**: one user, their data, their apps, their agent. The default.
+- **Org OS**: a company or team provisions Matrix OS for members. Shared apps, shared data, centralized admin.
+- **RBAC**: orgs have roles (owner, admin, member, guest) with scoped permissions. Admins manage apps, members use them, guests get limited access.
+- **Shared workspaces**: org members collaborate on shared apps and data. Changes are visible to all members with access.
+- **Org apps**: admins deploy apps to all members. Members can't uninstall org-mandated apps but can add personal apps alongside them.
+- **Boundary**: personal data and org data are strictly separated. Leaving an org removes access to org data but personal data is untouched.
 
 ## Technology Constraints
 
 - **Language**: TypeScript, strict mode, ES modules
 - **Runtime**: Node.js 24+
-- **AI Kernel**: Claude Agent SDK V1 `query()` with `resume` (V2 drops critical options) + Opus 4.6
+- **AI Kernel**: Model-agnostic (current: Claude Agent SDK V1 `query()` with `resume` + Opus 4.6)
 - **Frontend**: React + Nextjs
-- **Database**: SQLite via Drizzle ORM (better-sqlite3 driver, WAL mode)
+- **Database**: PostgreSQL via Kysely (per-user database, schema-per-app isolation) for app data. SQLite via Drizzle ORM (better-sqlite3, WAL mode) for kernel-internal state only.
 - **Web Server**: Hono (lightweight, WebSocket support, channel adapters)
 - **Channels**: node-telegram-bot-api (Telegram), @whiskeysockets/baileys (WhatsApp), discord.js (Discord), @slack/bolt (Slack)
 - **Scheduling**: node-cron (cron expressions), native timers (intervals, one-shot)
@@ -63,13 +116,15 @@ Start with the simplest implementation that works. Single-process async concurre
 - **Context Window**: 200K standard, 1M beta (`betas: ["context-1m-2025-08-07"]`, tier 4+)
 - **Prompt Caching**: `cache_control: {type: "ephemeral"}` on tools + system prompt for 90% input cost savings on subsequent turns
 - **Compaction**: Server-side compaction API for long kernel sessions
+- **User Apps**: Vite + React (generated apps are real projects, not HTML snippets)
+- **Isolation**: Container-per-user (current implementation -- will evolve to shared infrastructure with tenant isolation at scale)
 - No external dependencies when native Node.js APIs suffice
-- Prefer CDN imports in generated HTML apps over npm-installed packages
 
-### VII. Defense in Depth (NON-NEGOTIABLE)
+### VIII. Defense in Depth (NON-NEGOTIABLE)
 
 Every new endpoint, WebSocket, and webhook requires explicit auth design before implementation. Security is not a follow-up -- it is part of the spec.
 
+**Endpoint security**:
 - **Auth matrix in specs**: every spec with endpoints must include a table of routes, their auth method, and which are public
 - **Input validation at every boundary**: user input, webhook payloads, file paths, filenames, IPC tool params -- validate and sanitize at the point of entry
 - **Never trust user-controlled headers** for security decisions (X-Forwarded-*, Host, etc.)
@@ -80,9 +135,24 @@ Every new endpoint, WebSocket, and webhook requires explicit auth design before 
 - **Constant-time comparison** for all secret/token/signature checks (timingSafeEqual)
 - **Integration wiring verification**: every spec must describe how components connect at runtime and include an integration test that exercises the full path end-to-end
 
+**App sandboxing**:
+- Installed apps run in restricted scope -- no access to system files, other apps' data, or kernel internals without explicit permission
+- App permissions are declared in `matrix.json` and granted by the user or org admin
+- Self-built apps get full access; app-store apps are sandboxed by default
+
+**Org and access control**:
+- RBAC for org resources: owner > admin > member > guest
+- Org admins control which apps are available, who has access to what data
+- Audit logs for security-sensitive actions (permission changes, data exports, admin operations)
+
+**Compliance**:
+- Data residency: user/org data stays in the region they choose
+- GDPR: right to export, right to delete, data processing transparency
+- Content moderation: social features and app store require abuse prevention
+
 ## Development Workflow
 
-### VIII. Test-Driven Development (NON-NEGOTIABLE)
+### IX. Test-Driven Development (NON-NEGOTIABLE)
 
 The OS is complex and self-modifying. TDD is mandatory to prevent regressions as the system evolves.
 
@@ -110,7 +180,7 @@ The OS is complex and self-modifying. TDD is mandatory to prevent regressions as
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 1.5.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-03-24
+**Version**: 2.0.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-04-03
 
 ### Amendment Log
 
@@ -119,3 +189,4 @@ This constitution supersedes all other development practices for Matrix OS. Amen
 - **1.3.0** (2026-02-12): Expanded vision to include personal AI assistant capabilities. Added: SOUL identity (`soul.md`), skills system (`agents/skills/`), multi-channel messaging (Telegram, WhatsApp, Discord, Slack), cron scheduling, proactive heartbeat, cloud deployment. Expanded Principle III with channel shells. Added channel/scheduling tech constraints. Inspired by OpenClaw/Moltbot and Nanobot (both MIT, open source). Matrix OS is now both a visual OS and a personal AI assistant.
 - **1.4.0** (2026-02-25): Added documentation-driven development rule. Every feature, spec, and plan must include public docs updates at `www/content/docs/` (Fumadocs site at matrix-os.com/docs) as an explicit deliverable.
 - **1.5.0** (2026-03-24): Added Defense in Depth principle (VII). Renumbered TDD to VIII. Every spec with endpoints must include auth matrix, input validation plan, resource limits, timeout policies, and integration wiring verification. Motivated by PR #17 (voice system) where 55+ review findings traced back to missing security architecture and integration wiring in the spec. Also added: atomic file writes, constant-time secret comparison, never expose internal errors, never trust forwarded headers.
+- **1.6.0** (2026-04-03): Major philosophy update. Renamed Principle I from "Everything Is a File" to "Everything Is Owned by the User" -- ownership and portability over storage mechanism. Renamed Principle V from "Simplicity Over Sophistication" to "Quality Over Shortcuts" -- apps are Vite+React, no bare HTML/CDN hacks, production-grade UX from day one. PostgreSQL is now the primary database (per-user, schema-per-app via Kysely); SQLite demoted to kernel-internal only. Motivated by social network (Spec 041), app data layer (Spec 050), and prioritizing user experience above all.
