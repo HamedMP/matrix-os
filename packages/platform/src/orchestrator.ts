@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import type Dockerode from 'dockerode';
+import pg from 'pg';
 import {
   type PlatformDB,
   type ContainerRecord,
@@ -26,6 +27,7 @@ export interface OrchestratorConfig {
   dataDir?: string;
   platformSecret?: string;
   extraEnv?: string[];
+  postgresUrl?: string;
 }
 
 export interface RollingRestartResult {
@@ -64,7 +66,49 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     dataDir = '/data/users',
     platformSecret = '',
     extraEnv = [],
+    postgresUrl,
   } = config;
+
+  function dbNameForHandle(handle: string): string {
+    return `matrixos_${handle.replace(/[^a-z0-9_]/g, '_')}`;
+  }
+
+  function databaseUrlForHandle(handle: string): string | undefined {
+    if (!postgresUrl) return undefined;
+    return `${postgresUrl}/${dbNameForHandle(handle)}`;
+  }
+
+  async function createUserDatabase(handle: string): Promise<void> {
+    if (!postgresUrl) return;
+    const dbName = dbNameForHandle(handle);
+    const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
+    try {
+      await client.connect();
+      const exists = await client.query(
+        `SELECT 1 FROM pg_database WHERE datname = $1`,
+        [dbName],
+      );
+      if (exists.rows.length === 0) {
+        await client.query(`CREATE DATABASE "${dbName}"`);
+        console.log(`[pg] Created database ${dbName}`);
+      }
+    } finally {
+      await client.end();
+    }
+  }
+
+  async function dropUserDatabase(handle: string): Promise<void> {
+    if (!postgresUrl) return;
+    const dbName = dbNameForHandle(handle);
+    const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
+    try {
+      await client.connect();
+      await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
+      console.log(`[pg] Dropped database ${dbName}`);
+    } finally {
+      await client.end();
+    }
+  }
 
   async function ensureNetwork(): Promise<void> {
     const networks = await docker.listNetworks({ filters: { name: [network] } });
@@ -87,6 +131,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `SHELL_PORT=3000`,
       ...extraEnv,
     ];
+    const dbUrl = databaseUrlForHandle(handle);
+    if (dbUrl) {
+      env.push(`DATABASE_URL=${dbUrl}`);
+    }
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);
@@ -104,6 +152,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const end = provisionDuration.startTimer();
 
       await ensureNetwork();
+      await createUserDatabase(handle);
 
       const gatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
       const shellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
@@ -185,6 +234,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       releasePort(db, `${handle}-gw`);
       releasePort(db, `${handle}-sh`);
       deleteContainer(db, handle);
+      await dropUserDatabase(handle);
     },
 
     async upgrade(handle) {
@@ -199,6 +249,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       await docker.pull(image);
       await ensureNetwork();
+      await createUserDatabase(handle);
 
       const containerName = `matrixos-${handle}`;
       const container = await docker.createContainer({
@@ -251,6 +302,8 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const results: RollingRestartResult['results'] = [];
       for (const record of running) {
         try {
+          await createUserDatabase(record.handle);
+
           if (record.containerId) {
             const old = docker.getContainer(record.containerId);
             try { await old.stop(); } catch {}

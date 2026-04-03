@@ -179,6 +179,7 @@ PLATFORM_SECRET=your-random-secret
 CLERK_SECRET_KEY=sk_live_...
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
 GEMINI_API_KEY=your-gemini-api-key
+POSTGRES_PASSWORD=your-secure-password
 EOF
 ```
 
@@ -189,6 +190,7 @@ EOF
 | `CLERK_SECRET_KEY` | platform + user containers | runtime | Server-side Clerk JWT verification |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Docker image | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
 | `GEMINI_API_KEY` | platform + user containers | runtime | Google Gemini API key for image/icon generation |
+| `POSTGRES_PASSWORD` | postgres + platform | runtime | PostgreSQL password (default: `matrixos`) |
 
 **Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available as Docker build args. All other vars are passed at container runtime via `docker-compose.platform.yml` environment section and the orchestrator's `extraEnv` mechanism.
 
@@ -204,6 +206,9 @@ To use the Hetzner block storage volume instead of Docker volumes, create an ove
 ```bash
 cat > distro/docker-compose.override.yml << 'EOF'
 services:
+  postgres:
+    volumes:
+      - /mnt/data/postgres:/var/lib/postgresql/data
   platform:
     volumes:
       - /mnt/data/platform:/data

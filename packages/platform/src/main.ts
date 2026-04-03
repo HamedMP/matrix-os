@@ -591,6 +591,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     dataDir: process.env.PLATFORM_DATA_DIR,
     platformSecret: PLATFORM_SECRET,
     extraEnv,
+    postgresUrl: process.env.POSTGRES_URL,
   });
 
   const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
