@@ -112,7 +112,7 @@ export default async function DashboardPage() {
 
                 <div className="flex items-center gap-3">
                   <a
-                    href={isLocal ? `http://localhost:${result.data.shellPort}` : `https://${handle}.matrix-os.com`}
+                    href={isLocal ? `http://localhost:${result.data.shellPort}` : `https://app.matrix-os.com`}
                     className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
                   >
                     Open Matrix OS

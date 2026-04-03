@@ -8,6 +8,7 @@ import {
   createPlatformDb,
   type PlatformDB,
   getContainer,
+  getContainerByClerkId,
   updateLastActive,
   listContainers,
 } from './db.js';
@@ -51,11 +52,78 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     });
   });
 
+  // Session-based routing: app.matrix-os.com -> Clerk session -> container
+  app.use('*', async (c, next) => {
+    const host = c.req.header('host') ?? '';
+    const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
+    if (!isAppDomain) return next();
+
+    if (!clerkAuth) {
+      return c.redirect('https://matrix-os.com/login');
+    }
+
+    const token = clerkAuth.extractToken(
+      c.req.header('authorization'),
+      c.req.header('cookie'),
+    );
+    if (!token) {
+      return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
+    }
+
+    const result = await clerkAuth.verify(token);
+    if (!result.authenticated || !result.userId) {
+      return c.redirect('https://matrix-os.com/login');
+    }
+
+    const record = getContainerByClerkId(db, result.userId);
+    if (!record) {
+      return c.redirect('https://matrix-os.com/dashboard');
+    }
+
+    if (record.status === 'stopped') {
+      try {
+        await orchestrator.start(record.handle);
+      } catch {
+        return c.json({ error: 'Failed to wake container' }, 503);
+      }
+    }
+
+    updateLastActive(db, record.handle);
+
+    const path = c.req.path;
+    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const isGatewayPath = path.startsWith('/api/') || path.startsWith('/ws') || path.startsWith('/files/') || path.startsWith('/modules/') || path === '/health';
+    const targetPort = isGatewayPath ? 4000 : 3000;
+    const targetUrl = `http://matrixos-${record.handle}:${targetPort}${path}${qs}`;
+
+    try {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && value) headers.set(key, value);
+      }
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+
+      const upstream = await fetch(targetUrl, {
+        method: c.req.method,
+        headers,
+        body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+      });
+
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: upstream.headers,
+      });
+    } catch {
+      return c.json({ error: 'Container unreachable' }, 502);
+    }
+  });
+
   // Subdomain proxy: {handle}.matrix-os.com -> user container (before auth)
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? '';
     const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
-    if (!match || match[1] === 'api' || match[1] === 'www') return next();
+    if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') return next();
 
     const handle = match[1];
     const record = getContainer(db, handle);
@@ -401,8 +469,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   if (process.env.CLERK_SECRET_KEY) {
     extraEnv.push(`CLERK_SECRET_KEY=${process.env.CLERK_SECRET_KEY}`);
   }
-  if (process.env.FAL_API_KEY) {
-    extraEnv.push(`FAL_API_KEY=${process.env.FAL_API_KEY}`);
+  if (process.env.GEMINI_API_KEY) {
+    extraEnv.push(`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`);
   }
 
   const orchestrator = createOrchestrator({
@@ -460,11 +528,49 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     console.log(`Platform listening on :${PORT}`);
   });
 
-  // WebSocket upgrade handler for subdomain proxy
+  // WebSocket upgrade handler
   (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
     const host = req.headers.host ?? '';
+
+    // Session-based WebSocket routing for app.matrix-os.com
+    const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
+    if (isAppDomain && clerkAuth) {
+      const token = clerkAuth.extractToken(
+        req.headers.authorization as string | undefined,
+        req.headers.cookie,
+      );
+      if (!token) { socket.destroy(); return; }
+
+      const result = await clerkAuth.verify(token);
+      if (!result.authenticated || !result.userId) { socket.destroy(); return; }
+
+      const record = getContainerByClerkId(db, result.userId);
+      if (!record) { socket.destroy(); return; }
+
+      const upstream = createConnection({ host: `matrixos-${record.handle}`, port: 4000 }, () => {
+        const path = req.url ?? '/';
+        const headers = Object.entries(req.headers)
+          .filter(([k]) => k !== 'host')
+          .map(([k, v]) => `${k}: ${v}`)
+          .join('\r\n');
+
+        upstream.write(
+          `${req.method} ${path} HTTP/1.1\r\nHost: matrixos-${record.handle}:4000\r\n${headers}\r\n\r\n`
+        );
+        if (head.length > 0) upstream.write(head);
+
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+
+      upstream.on('error', () => socket.destroy());
+      socket.on('error', () => upstream.destroy());
+      return;
+    }
+
+    // Subdomain-based WebSocket routing
     const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
-    if (!match || match[1] === 'api' || match[1] === 'www') {
+    if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') {
       socket.destroy();
       return;
     }

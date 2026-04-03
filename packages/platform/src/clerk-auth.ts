@@ -18,6 +18,7 @@ export interface ClerkAuth {
     authHeader: string | undefined,
     cookieHeader: string | undefined,
   ): string | null;
+  verify(token: string): Promise<VerifyResult>;
   verifyAndMatchOwner(
     token: string,
     expectedUserId: string,
@@ -42,6 +43,18 @@ export function createClerkAuth(deps: ClerkAuthDeps): ClerkAuth {
       }
 
       return null;
+    },
+
+    async verify(token) {
+      try {
+        const payload = await deps.verifyToken(token);
+        return { authenticated: true, userId: payload.sub };
+      } catch (err) {
+        return {
+          authenticated: false,
+          error: err instanceof Error ? err.message : "Token verification failed",
+        };
+      }
     },
 
     async verifyAndMatchOwner(token, expectedUserId) {
