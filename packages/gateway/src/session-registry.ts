@@ -101,6 +101,34 @@ interface PtyLike {
 
 type SpawnFn = (shell: string, args: string[], opts: Record<string, unknown>) => PtyLike;
 
+function splitByUtf8Bytes(data: string, maxBytes: number): string[] {
+  if (Buffer.byteLength(data) <= maxBytes) {
+    return [data];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+
+  for (const char of data) {
+    const charBytes = Buffer.byteLength(char);
+    if (currentBytes > 0 && currentBytes + charBytes > maxBytes) {
+      chunks.push(current);
+      current = char;
+      currentBytes = charBytes;
+      continue;
+    }
+    current += char;
+    currentBytes += charBytes;
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
 class PtySession {
   readonly sessionId: string;
   readonly buffer: RingBuffer;
@@ -131,10 +159,16 @@ class PtySession {
     this.lastAttachedAt = this.createdAt;
 
     this.ptyProcess.onData((data: string) => {
-      const seq = this.buffer.write(data);
-      const msg: PtyServerMessage = seq === null ? { type: "output", data } : { type: "output", data, seq };
-      for (const sub of this.subscribers) {
-        sub(msg);
+      for (const chunk of splitByUtf8Bytes(data, this.buffer.capacityBytes)) {
+        const seq = this.buffer.write(chunk);
+        if (seq === null) {
+          console.warn("Dropped oversized terminal output chunk");
+          continue;
+        }
+        const msg: PtyServerMessage = { type: "output", data: chunk, seq };
+        for (const sub of this.subscribers) {
+          sub(msg);
+        }
       }
     });
 
@@ -225,6 +259,7 @@ export class SessionRegistry {
   private readonly spawnFn: SpawnFn;
   private readonly allowedShells: Set<string>;
   private persistTimer?: ReturnType<typeof setTimeout>;
+  private persistQueue: Promise<void> = Promise.resolve();
 
   constructor(
     homePath: string,
@@ -431,21 +466,28 @@ export class SessionRegistry {
 
   private schedulePersist(): void {
     clearTimeout(this.persistTimer);
-    this.persistTimer = setTimeout(() => this.persistNow(), 100);
+    this.persistTimer = setTimeout(() => {
+      void this.persistNow();
+    }, 100);
   }
 
   private persistNow(): Promise<void> {
-    const data = JSON.stringify(this.list(), null, 2);
-    const dir = dirname(this.persistPath);
-    const tmpPath = this.persistPath + ".tmp";
-    return mkdir(dir, { recursive: true })
-      .then(() => writeFile(tmpPath, data))
-      .then(() => rename(tmpPath, this.persistPath))
-      .catch((err: unknown) => {
-        if (err instanceof Error) {
-          console.error("Failed to persist terminal sessions:", err.message);
-        }
-      });
+    const runPersist = () => {
+      const data = JSON.stringify(this.list(), null, 2);
+      const dir = dirname(this.persistPath);
+      const tmpPath = this.persistPath + ".tmp";
+      return mkdir(dir, { recursive: true })
+        .then(() => writeFile(tmpPath, data))
+        .then(() => rename(tmpPath, this.persistPath))
+        .catch((err: unknown) => {
+          if (err instanceof Error) {
+            console.error("Failed to persist terminal sessions:", err.message);
+          }
+        });
+    };
+
+    this.persistQueue = this.persistQueue.then(runPersist, runPersist);
+    return this.persistQueue;
   }
 
   private loadPersistedSessions(): void {

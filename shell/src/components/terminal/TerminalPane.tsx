@@ -108,9 +108,13 @@ function extractTrustedClaudeAuthUrl(raw: string): string | null {
   try {
     const url = new URL(match[0]);
     const state = url.searchParams.get("state");
+    const responseType = url.searchParams.get("response_type");
+    const clientId = url.searchParams.get("client_id");
     if (
       url.origin !== "https://claude.ai" ||
       url.pathname !== "/oauth/authorize" ||
+      responseType !== "code" ||
+      !clientId ||
       !state ||
       !/^[A-Za-z0-9_-]+$/.test(state) ||
       url.searchParams.has("redirect")
@@ -650,7 +654,9 @@ export function TerminalPane({
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div>Claude Code login required</div>
-            <div style={{ fontSize: 11, opacity: 0.85 }}>Detected from terminal output. Verify the URL before opening.</div>
+            <div style={{ fontSize: 11, opacity: 0.85 }}>
+              Detected from terminal output. Terminal apps can spoof this. Only continue if you initiated Claude Code login.
+            </div>
             <div
               style={{
                 fontSize: 11,

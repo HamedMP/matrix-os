@@ -49,6 +49,10 @@ export class RingBuffer {
     return this._currentBytes;
   }
 
+  get capacityBytes(): number {
+    return this.maxBytes;
+  }
+
   get nextSeq(): number {
     return this._nextSeq;
   }

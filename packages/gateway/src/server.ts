@@ -725,6 +725,9 @@ export async function createGateway(config: GatewayConfig) {
                   handle.subscribe(sendJson);
                   sendJson({ type: "attached", sessionId, state: "running" });
                   handle.replay(0);
+                } else {
+                  sessionRegistry.destroy(sessionId);
+                  autoCreatedSessionId = null;
                 }
               } catch (err: unknown) {
                 if (handle) {
@@ -781,6 +784,8 @@ export async function createGateway(config: GatewayConfig) {
                     handle.subscribe(sendJson);
                     sendJson({ type: "attached", sessionId, state: "running" });
                     handle.replay(0);
+                  } else {
+                    sessionRegistry.destroy(sessionId);
                   }
                 } catch (err: unknown) {
                   if (handle) {

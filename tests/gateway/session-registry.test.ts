@@ -497,6 +497,34 @@ describe("SessionRegistry", () => {
       expect(outputs).toHaveLength(1);
       expect(outputs[0].type === "output" && outputs[0].data).toBe("before");
     });
+
+    it("splits oversized PTY output into replayable sequenced chunks", () => {
+      const mockPty = createMockPty();
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({ bufferSize: 5 }, mockSpawn);
+      const id = registry.create("/home");
+
+      const handle = registry.attach(id)!;
+      const received: PtyServerMessage[] = [];
+      handle.subscribe((msg) => received.push(msg));
+
+      const dataCb = mockPty.onData.mock.calls[0][0];
+      dataCb("123456");
+
+      const outputs = received.filter((msg): msg is Extract<PtyServerMessage, { type: "output" }> => msg.type === "output");
+      expect(outputs).toEqual([
+        { type: "output", data: "12345", seq: 0 },
+        { type: "output", data: "6", seq: 1 },
+      ]);
+
+      received.length = 0;
+      handle.replay(0);
+      expect(received).toEqual([
+        { type: "replay-start", fromSeq: 0 },
+        { type: "output", data: "6", seq: 1 },
+        { type: "replay-end", toSeq: 2 },
+      ]);
+    });
   });
 
   describe("shutdown", () => {
