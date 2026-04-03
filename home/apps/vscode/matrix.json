@@ -2,7 +2,7 @@
   "name": "VS Code",
   "description": "Code editor powered by code-server",
   "runtime": "node",
-  "entry": "code-server --auth none --bind-addr 0.0.0.0:3101",
+  "entry": "code-server --bind-addr 127.0.0.1:3101",
   "port": 3101,
   "category": "productivity",
   "icon": "vscode",

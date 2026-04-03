@@ -169,11 +169,12 @@ describe("T1410-T1414: Bundled desktop apps", () => {
       expect(manifest.entry).toContain("3101");
     });
 
-    it("entry uses auth none for local access", () => {
+    it("entry binds to localhost only", () => {
       const manifest = JSON.parse(
         readFileSync(join(APPS_DIR, "vscode", "matrix.json"), "utf-8"),
       );
-      expect(manifest.entry).toContain("--auth none");
+      expect(manifest.entry).toContain("127.0.0.1");
+      expect(manifest.entry).not.toContain("--auth none");
     });
 
     it("has filesystem permission", () => {

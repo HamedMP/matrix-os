@@ -8,7 +8,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
+import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
@@ -937,8 +937,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.delete("/api/terminal/sessions/:id", (c) => {
     const id = c.req.param("id");
-    const SESSION_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!SESSION_UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
+    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
     const session = sessionRegistry.getSession(id);
     if (!session) return c.json({ error: "Session not found" }, 404);
     sessionRegistry.destroy(id);
