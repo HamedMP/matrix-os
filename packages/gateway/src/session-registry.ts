@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { writeFile, rename, mkdir, unlink } from "node:fs/promises";
+import { writeFile, rename, mkdir } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -56,7 +56,7 @@ export interface SessionInfo {
 
 export type PtyServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode?: number }
-  | { type: "output"; data: string; seq: number }
+  | { type: "output"; data: string; seq?: number }
   | { type: "replay-start"; fromSeq: number }
   | { type: "replay-end"; toSeq: number }
   | { type: "exit"; code: number }
@@ -121,7 +121,7 @@ class PtySession {
 
     this.ptyProcess.onData((data: string) => {
       const seq = this.buffer.write(data);
-      const msg: PtyServerMessage = { type: "output", data, seq };
+      const msg: PtyServerMessage = seq === null ? { type: "output", data } : { type: "output", data, seq };
       for (const sub of this.subscribers) {
         sub(msg);
       }
@@ -401,7 +401,13 @@ export class SessionRegistry {
   private loadPersistedSessions(): void {
     try {
       const data = readFileSync(this.persistPath, "utf-8");
-      const sessions = JSON.parse(data) as SessionInfo[];
+      const raw: unknown = JSON.parse(data);
+      let sessions: SessionInfo[] = [];
+      if (!Array.isArray(raw)) {
+        console.warn("Stale terminal sessions file is corrupt, ignoring");
+      } else {
+        sessions = raw as SessionInfo[];
+      }
       // Only log info about stale sessions; don't re-create PTY processes
       if (sessions.length > 0) {
         console.log(`Found ${sessions.length} stale terminal session(s) from previous run (cleaned up)`);

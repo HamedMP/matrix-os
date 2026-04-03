@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   cacheTerminal,
   getCached,
@@ -9,11 +9,11 @@ import {
 
 function createMockCachedTerminal(overrides: Partial<CachedTerminal> = {}): CachedTerminal {
   return {
-    terminal: {} as CachedTerminal["terminal"],
+    terminal: { dispose: vi.fn() } as unknown as CachedTerminal["terminal"],
     fitAddon: {} as CachedTerminal["fitAddon"],
     webglAddon: null,
     searchAddon: null,
-    ws: {} as WebSocket,
+    ws: { send: vi.fn(), close: vi.fn() } as unknown as WebSocket,
     lastSeq: 0,
     sessionId: "test-session-id",
     ...overrides,
@@ -22,10 +22,9 @@ function createMockCachedTerminal(overrides: Partial<CachedTerminal> = {}): Cach
 
 describe("Terminal Cache", () => {
   beforeEach(() => {
-    // Clear cache between tests by removing known keys
-    removeCached("pane-1");
-    removeCached("pane-2");
-    removeCached("pane-3");
+    for (let i = 1; i <= 25; i++) {
+      removeCached(`pane-${i}`);
+    }
   });
 
   it("cacheTerminal stores an entry and getCached retrieves it", () => {
@@ -88,5 +87,21 @@ describe("Terminal Cache", () => {
   it("preserves lastSeq value", () => {
     cacheTerminal("pane-1", createMockCachedTerminal({ lastSeq: 42 }));
     expect(getCached("pane-1")!.lastSeq).toBe(42);
+  });
+
+  it("evicts the oldest entry before exceeding the hard cap", () => {
+    const evicted = createMockCachedTerminal();
+
+    for (let i = 1; i <= 20; i++) {
+      cacheTerminal(`pane-${i}`, i === 1 ? evicted : createMockCachedTerminal({ sessionId: `session-${i}` }));
+    }
+
+    cacheTerminal("pane-21", createMockCachedTerminal({ sessionId: "session-21" }));
+
+    expect(hasCached("pane-1")).toBe(false);
+    expect((evicted.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledWith(JSON.stringify({ type: "detach" }));
+    expect((evicted.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
+    expect((evicted.terminal as unknown as { dispose: ReturnType<typeof vi.fn> }).dispose).toHaveBeenCalledOnce();
+    expect(hasCached("pane-21")).toBe(true);
   });
 });

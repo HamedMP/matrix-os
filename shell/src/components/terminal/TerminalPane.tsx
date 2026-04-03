@@ -3,6 +3,8 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { getGatewayWs } from "@/lib/gateway";
 import type { Theme } from "@/hooks/useTheme";
+import type { FitAddon } from "@xterm/addon-fit";
+import type { Terminal } from "@xterm/xterm";
 import { getAnsiPalette } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
@@ -23,6 +25,104 @@ function buildXtermTheme(theme: Theme) {
   };
 }
 
+const BRACKETED_PASTE_OPEN = "\x1b[200~";
+const BRACKETED_PASTE_CLOSE = "\x1b[201~";
+const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
+const MAX_TERMINAL_INPUT = 65_536;
+
+type TerminalServerMessage =
+  | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
+  | { type: "output"; data: string; seq: number | null }
+  | { type: "replay-start" }
+  | { type: "replay-end" }
+  | { type: "exit"; code: number | null }
+  | { type: "error"; message: string };
+
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stripTerminalControls(value: string): string {
+  return value.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
+}
+
+function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  const msg = parsed as Record<string, unknown>;
+  switch (msg.type) {
+    case "attached":
+      if (typeof msg.sessionId !== "string" || (msg.state !== "running" && msg.state !== "exited")) {
+        return null;
+      }
+      return {
+        type: "attached",
+        sessionId: msg.sessionId,
+        state: msg.state,
+        exitCode: toFiniteNumber(msg.exitCode),
+      };
+    case "output":
+      if (typeof msg.data !== "string") {
+        return null;
+      }
+      return {
+        type: "output",
+        data: msg.data,
+        seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
+      };
+    case "replay-start":
+      return { type: "replay-start" };
+    case "replay-end":
+      return { type: "replay-end" };
+    case "exit":
+      return { type: "exit", code: toFiniteNumber(msg.code) };
+    case "error":
+      return {
+        type: "error",
+        message: typeof msg.message === "string" ? msg.message : "Unknown error",
+      };
+    default:
+      return null;
+  }
+}
+
+function extractTrustedClaudeAuthUrl(raw: string): string | null {
+  const stripped = raw
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/[\x00-\x20\x7f-\x9f]/g, "");
+  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize[^"'<>)]{0,2048}?state=[A-Za-z0-9_-]+/);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    const url = new URL(match[0]);
+    const state = url.searchParams.get("state");
+    if (
+      url.origin !== "https://claude.ai" ||
+      url.pathname !== "/oauth/authorize" ||
+      !state ||
+      !/^[A-Za-z0-9_-]+$/.test(state) ||
+      url.searchParams.has("redirect")
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 interface TerminalPaneProps {
   paneId: string;
   cwd: string;
@@ -33,6 +133,7 @@ interface TerminalPaneProps {
   onFocus?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   isClosing?: boolean;
+  shouldCacheOnUnmount?: (paneId: string) => boolean;
 }
 
 export function TerminalPane({
@@ -45,6 +146,7 @@ export function TerminalPane({
   onFocus,
   onSessionAttached,
   isClosing,
+  shouldCacheOnUnmount,
 }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -54,7 +156,9 @@ export function TerminalPane({
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const lastSeqRef = useRef<number>(0);
   const reconnectAttemptRef = useRef<number>(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSessionAttachedRef = useRef(onSessionAttached);
+  const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
@@ -62,6 +166,7 @@ export function TerminalPane({
   const isClosingRef = useRef(false);
 
   onSessionAttachedRef.current = onSessionAttached;
+  shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
@@ -72,121 +177,139 @@ export function TerminalPane({
   }, [isClosing]);
 
   useEffect(() => {
+    if (initialSessionId) {
+      sessionIdRef.current = initialSessionId;
+    }
+  }, [initialSessionId]);
+
+  useEffect(() => {
     let disposed = false;
 
     async function init() {
-      // Check cache first — instant tab switch
-      const cached = getCached(paneId);
-      if (cached && containerRef.current) {
-        if (cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING) {
-          const termElement = (cached.terminal as { element?: HTMLElement }).element;
-          if (termElement) {
-            containerRef.current.appendChild(termElement);
-          }
-          cached.fitAddon.fit();
-          termRef.current = cached.terminal;
-          fitAddonRef.current = cached.fitAddon;
-          searchAddonRef.current = cached.searchAddon;
-          wsRef.current = cached.ws;
-          sessionIdRef.current = cached.sessionId;
-          lastSeqRef.current = cached.lastSeq;
-
-          const resizeObserver = new ResizeObserver(() => {
-            cached.fitAddon.fit();
-          });
-          resizeObserver.observe(containerRef.current);
-
-          return () => {
-            resizeObserver.disconnect();
-            if (isClosingRef.current) {
-              const ws = wsRef.current;
-              if (ws?.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "detach" }));
-              }
-              ws?.close();
-              removeCached(paneId);
-              cached.terminal.dispose();
-            } else {
-              cached.lastSeq = lastSeqRef.current;
-            }
-          };
+      const clearAuthDetectTimer = () => {
+        if (authDetectTimerRef.current) {
+          clearTimeout(authDetectTimerRef.current);
+          authDetectTimerRef.current = null;
         }
-        // WS closed — discard stale cache, create fresh terminal below
-        removeCached(paneId);
-        try { cached.terminal.dispose(); } catch { /* already disposed */ }
+      };
+
+      const clearReconnectTimer = () => {
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+      };
+
+      const container = containerRef.current;
+      if (!container) {
+        return;
       }
 
-      // Cache miss — create fresh terminal
-      const { Terminal: XTerm } = await import("@xterm/xterm");
-      const { FitAddon } = await import("@xterm/addon-fit");
+      // Check cache first — instant tab switch
+      const cached = getCached(paneId);
+      const canReuseCached = Boolean(
+        cached &&
+        (cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING),
+      );
 
-      if (disposed || !containerRef.current) return;
-
-      const xtermTheme = buildXtermTheme(theme);
-
-      const term = new XTerm({
-        cursorBlink: true,
-        allowProposedApi: true,
-        fontSize: 13,
-        fontFamily: theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
-        theme: xtermTheme,
-      });
-
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(containerRef.current);
-      fitAddon.fit();
-
-      termRef.current = term;
-      fitAddonRef.current = fitAddon;
-
-      // WebGL addon
-      let webglAddon: unknown = null;
-      try {
-        const { WebglAddon } = await import("@xterm/addon-webgl");
-        const addon = new WebglAddon();
-        term.loadAddon(addon);
-        webglAddon = addon;
-
-        const canvas = containerRef.current?.querySelector("canvas");
-        canvas?.addEventListener("webglcontextlost", () => {
-          (addon as { dispose: () => void }).dispose();
-          try {
-            const newWebgl = new WebglAddon();
-            term.loadAddon(newWebgl);
-            webglAddon = newWebgl;
-          } catch (_e: unknown) { /* canvas 2D fallback */ }
-        });
-      } catch (_e: unknown) { /* canvas 2D fallback */ }
-
-      // Search addon
+      let term: Terminal;
+      let fitAddon: FitAddon;
       let searchAddon: unknown = null;
-      try {
-        const { SearchAddon } = await import("@xterm/addon-search");
-        const addon = new SearchAddon();
-        term.loadAddon(addon);
-        searchAddon = addon;
-        searchAddonRef.current = addon;
-      } catch (_e: unknown) { /* unavailable */ }
+      let webglAddon: unknown = null;
 
-      // Serialize addon
-      try {
-        const { SerializeAddon } = await import("@xterm/addon-serialize");
-        term.loadAddon(new SerializeAddon());
-      } catch (_e: unknown) { /* unavailable */ }
+      if (canReuseCached && cached) {
+        const termElement = (cached.terminal as { element?: HTMLElement }).element;
+        if (termElement) {
+          container.appendChild(termElement);
+        }
+        term = cached.terminal;
+        fitAddon = cached.fitAddon;
+        searchAddon = cached.searchAddon;
+        webglAddon = cached.webglAddon;
+        fitAddon.fit();
+        termRef.current = cached.terminal;
+        fitAddonRef.current = cached.fitAddon;
+        searchAddonRef.current = cached.searchAddon;
+        wsRef.current = cached.ws;
+        sessionIdRef.current = cached.sessionId;
+        lastSeqRef.current = cached.lastSeq;
+      } else {
+        if (cached) {
+          removeCached(paneId);
+          try {
+            cached.terminal.dispose();
+          } catch (err: unknown) {
+            console.warn("Failed to dispose stale terminal cache:", err instanceof Error ? err.message : err);
+          }
+        }
 
-      // Link provider
-      term.registerLinkProvider(new WebLinkProvider(term));
+        // Cache miss — create fresh terminal
+        const { Terminal: XTerm } = await import("@xterm/xterm");
+        const { FitAddon } = await import("@xterm/addon-fit");
 
-      function connectWs() {
-        const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
-        const wsUrl = cwd ? `${baseWs}?cwd=${encodeURIComponent(cwd)}` : baseWs;
-        const ws = new WebSocket(wsUrl);
+        if (disposed) return;
+
+        const xtermTheme = buildXtermTheme(theme);
+
+        const xterm = new XTerm({
+          cursorBlink: true,
+          allowProposedApi: true,
+          fontSize: 13,
+          fontFamily: theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
+          theme: xtermTheme,
+        });
+
+        const nextFitAddon = new FitAddon();
+        xterm.loadAddon(nextFitAddon);
+        xterm.open(container);
+        nextFitAddon.fit();
+
+        term = xterm;
+        fitAddon = nextFitAddon;
+        termRef.current = xterm;
+        fitAddonRef.current = nextFitAddon;
+
+        // WebGL addon
+        try {
+          const { WebglAddon } = await import("@xterm/addon-webgl");
+          const addon = new WebglAddon();
+          xterm.loadAddon(addon);
+          webglAddon = addon;
+
+          const canvas = container.querySelector("canvas");
+          canvas?.addEventListener("webglcontextlost", () => {
+            (addon as { dispose: () => void }).dispose();
+            try {
+              const newWebgl = new WebglAddon();
+              xterm.loadAddon(newWebgl);
+              webglAddon = newWebgl;
+            } catch (_e: unknown) { /* canvas 2D fallback */ }
+          });
+        } catch (_e: unknown) { /* canvas 2D fallback */ }
+
+        // Search addon
+        try {
+          const { SearchAddon } = await import("@xterm/addon-search");
+          const addon = new SearchAddon();
+          xterm.loadAddon(addon);
+          searchAddon = addon;
+          searchAddonRef.current = addon;
+        } catch (_e: unknown) { /* unavailable */ }
+
+        // Serialize addon
+        try {
+          const { SerializeAddon } = await import("@xterm/addon-serialize");
+          xterm.loadAddon(new SerializeAddon());
+        } catch (_e: unknown) { /* unavailable */ }
+
+        // Link provider
+        xterm.registerLinkProvider(new WebLinkProvider(xterm));
+      }
+
+      function bindWs(ws: WebSocket, attachOnOpen: boolean) {
         wsRef.current = ws;
 
-        ws.onopen = () => {
-          reconnectAttemptRef.current = 0;
-
+        const sendAttach = () => {
           if (sessionIdRef.current) {
             ws.send(JSON.stringify({
               type: "attach",
@@ -201,8 +324,18 @@ export function TerminalPane({
 
           if (claudeMode && !sessionIdRef.current) {
             setTimeout(() => {
-              ws.send(JSON.stringify({ type: "input", data: "claude\r" }));
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "input", data: "claude\r" }));
+              }
             }, 100);
+          }
+        };
+
+        ws.onopen = () => {
+          reconnectAttemptRef.current = 0;
+          clearReconnectTimer();
+          if (attachOnOpen) {
+            sendAttach();
           }
         };
 
@@ -221,7 +354,8 @@ export function TerminalPane({
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
             reconnectAttemptRef.current = attempt + 1;
             term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
-            setTimeout(() => {
+            reconnectTimerRef.current = setTimeout(() => {
+              reconnectTimerRef.current = null;
               if (!disposed && !isClosingRef.current) {
                 connectWs();
               }
@@ -232,64 +366,55 @@ export function TerminalPane({
         };
 
         ws.onmessage = (evt) => {
-          let msg: Record<string, unknown>;
-          try {
-            msg = JSON.parse(typeof evt.data === "string" ? evt.data : "");
-          } catch {
+          const msg = parseTerminalServerMessage(typeof evt.data === "string" ? evt.data : "");
+          if (!msg) {
             return;
           }
 
           switch (msg.type) {
             case "attached":
-              sessionIdRef.current = msg.sessionId as string;
-              onSessionAttachedRef.current?.(paneId, msg.sessionId as string);
+              sessionIdRef.current = msg.sessionId;
+              onSessionAttachedRef.current?.(paneId, msg.sessionId);
               if (msg.state === "exited") {
-                term.write(`\r\n[Process exited with code ${msg.exitCode ?? "unknown"}]\r\n`);
+                const exitCode = msg.exitCode ?? "unknown";
+                term.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
               }
               break;
 
-            case "output": {
-              const outputData = msg.data as string;
-              term.write(outputData);
-              if (typeof msg.seq === "number") {
-                lastSeqRef.current = (msg.seq as number) + 1;
+            case "output":
+              term.write(msg.data);
+              if (msg.seq !== null) {
+                lastSeqRef.current = msg.seq + 1;
               }
-              // Detect auth URLs in streaming output (debounced -- URL arrives in chunks)
-              outputBufferRef.current += outputData;
+              outputBufferRef.current += msg.data;
               if (outputBufferRef.current.length > 8192) {
                 outputBufferRef.current = outputBufferRef.current.slice(-4096);
               }
               if (outputBufferRef.current.includes("claude.ai/oauth/authorize")) {
-                if (authDetectTimerRef.current) clearTimeout(authDetectTimerRef.current);
+                clearAuthDetectTimer();
                 authDetectTimerRef.current = setTimeout(() => {
-                  // Strip ANSI escape sequences and line breaks, keep spaces as delimiters
-                  const stripped = outputBufferRef.current
-                    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-                    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-                    .replace(/[\r\n]/g, "")
-                    .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
-                  const match = stripped.match(/https:\/\/claude\.ai\/oauth\/authorize[^\s]+/);
-                  if (match) {
-                    setAuthUrl(match[0]);
+                  authDetectTimerRef.current = null;
+                  const nextAuthUrl = extractTrustedClaudeAuthUrl(outputBufferRef.current);
+                  if (nextAuthUrl) {
+                    setAuthUrl(nextAuthUrl);
                   }
                   outputBufferRef.current = "";
                 }, 300);
               }
               break;
-            }
 
             case "replay-start":
-              break;
-
             case "replay-end":
               break;
 
-            case "exit":
-              term.write(`\r\n[Process exited with code ${msg.code}]\r\n`);
+            case "exit": {
+              const code = msg.code ?? "unknown";
+              term.write(`\r\n[Process exited with code ${code}]\r\n`);
               break;
+            }
 
             case "error": {
-              const safeMsg = String(msg.message ?? "Unknown error").replace(/[\x00-\x1f]/g, "");
+              const safeMsg = stripTerminalControls(msg.message);
               if (safeMsg === "Session not found" && sessionIdRef.current) {
                 sessionIdRef.current = null;
                 lastSeqRef.current = 0;
@@ -304,7 +429,18 @@ export function TerminalPane({
         };
       }
 
-      connectWs();
+      function connectWs() {
+        const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
+        const wsUrl = cwd ? `${baseWs}?cwd=${encodeURIComponent(cwd)}` : baseWs;
+        const ws = new WebSocket(wsUrl);
+        bindWs(ws, true);
+      }
+
+      if (canReuseCached && cached) {
+        bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING);
+      } else {
+        connectWs();
+      }
 
       term.onData((data: string) => {
         const ws = wsRef.current;
@@ -345,8 +481,9 @@ export function TerminalPane({
           navigator.clipboard.readText().then((text) => {
             const ws = wsRef.current;
             if (ws && ws.readyState === WebSocket.OPEN) {
-              const capped = text.slice(0, 65536);
-              const bracketed = `\x1b[200~${capped}\x1b[201~`;
+              const safe = text.replace(/\x1b\[20[01]~/g, "");
+              const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
+              const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
               ws.send(JSON.stringify({ type: "input", data: bracketed }));
             }
           }).catch((err: unknown) => {
@@ -361,12 +498,15 @@ export function TerminalPane({
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
       });
-      resizeObserver.observe(containerRef.current);
+      resizeObserver.observe(container);
 
       return () => {
         resizeObserver.disconnect();
+        clearAuthDetectTimer();
+        clearReconnectTimer();
+        const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
 
-        if (isClosingRef.current) {
+        if (!shouldCache) {
           // Pane is being closed — clean up everything
           const ws = wsRef.current;
           if (ws) {
@@ -452,7 +592,22 @@ export function TerminalPane({
             boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
           }}
         >
-          <span style={{ flex: 1 }}>Claude Code login required</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div>Claude Code login required</div>
+            <div style={{ fontSize: 11, opacity: 0.85 }}>Detected from terminal output. Verify the URL before opening.</div>
+            <div
+              style={{
+                fontSize: 11,
+                opacity: 0.9,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={authUrl}
+            >
+              {authUrl}
+            </div>
+          </div>
           <button
             onClick={() => {
               window.open(authUrl, "_blank", "noopener,noreferrer");
@@ -472,8 +627,16 @@ export function TerminalPane({
           </button>
           <button
             onClick={() => {
-              navigator.clipboard.writeText(authUrl).catch((err: unknown) => {
-                console.warn("Clipboard copy failed:", err instanceof Error ? err.message : err);
+              navigator.clipboard.writeText(authUrl).catch(() => {
+                // Fallback for insecure contexts / iframe restrictions
+                const ta = document.createElement("textarea");
+                ta.value = authUrl;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
               });
             }}
             style={{

@@ -16,9 +16,7 @@ const cache = new Map<string, CachedTerminal>();
 
 export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
   cache.delete(paneId);
-  cache.set(paneId, entry);
-
-  if (cache.size > MAX_CACHED) {
+  while (cache.size >= MAX_CACHED) {
     const oldest = cache.keys().next().value!;
     const evicted = cache.get(oldest);
     cache.delete(oldest);
@@ -28,6 +26,7 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
       try { evicted.terminal.dispose(); } catch (e: unknown) { console.warn("Cache eviction dispose:", e instanceof Error ? e.message : e); }
     }
   }
+  cache.set(paneId, entry);
 }
 
 export function getCached(paneId: string): CachedTerminal | null {

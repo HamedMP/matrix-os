@@ -1,6 +1,7 @@
 import type { Terminal } from "@xterm/xterm";
 
-const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
+const MAX_URL_LENGTH = 2048;
+const URL_REGEX = /https?:\/\/[^\s<>"')\]]{1,2048}/g;
 
 const FILE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|rs|go|md|json|yaml|yml|toml|css|html|sh|sql|rb|java|kt|swift|c|cpp|h)$/;
 const FILE_PATH_REGEX = /(?:\.{1,2}\/|\/)[^\s:]+(?::\d+(?::\d+)?)?/g;
@@ -15,6 +16,10 @@ export function detectUrls(text: string): LinkMatch[] {
   let match: RegExpExecArray | null;
   URL_REGEX.lastIndex = 0;
   while ((match = URL_REGEX.exec(text)) !== null) {
+    const nextChar = text[match.index + match[0].length];
+    if (match[0].length >= MAX_URL_LENGTH && nextChar && !/[\s<>"')\]]/.test(nextChar)) {
+      continue;
+    }
     let url = match[0];
     url = url.replace(/[.,;:!?)]+$/, "");
     matches.push({ text: url, startIndex: match.index });

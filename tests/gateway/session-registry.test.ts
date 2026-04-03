@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   SessionRegistry,
@@ -448,6 +451,19 @@ describe("SessionRegistry", () => {
       expect(registry.list()).toHaveLength(1);
       registry.destroy(id);
       expect(registry.list()).toHaveLength(0);
+    });
+
+    it("ignores corrupt persisted session files", () => {
+      const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+      const persistPath = join(homePath, "system", "terminal-sessions.json");
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      writeFileSync(persistPath, "{}");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(() => new SessionRegistry(homePath, { persistPath }, createMockSpawn())).not.toThrow();
+
+      warnSpy.mockRestore();
+      rmSync(homePath, { recursive: true, force: true });
     });
   });
 

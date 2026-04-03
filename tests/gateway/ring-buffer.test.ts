@@ -139,6 +139,13 @@ describe("RingBuffer", () => {
     expect(buf.getAll()).toHaveLength(1);
   });
 
+  it("does not consume a sequence number for oversized chunks", () => {
+    const buf = new RingBuffer(5);
+    expect(buf.write("123456")).toBeNull();
+    expect(buf.nextSeq).toBe(0);
+    expect(buf.getAll()).toEqual([]);
+  });
+
   it("handles write of empty string", () => {
     const buf = new RingBuffer();
     const seq = buf.write("");

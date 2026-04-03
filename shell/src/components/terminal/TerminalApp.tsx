@@ -45,6 +45,29 @@ function getFirstPaneId(node: PaneNode): string {
   return getFirstPaneId(node.children[0]);
 }
 
+function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): PaneNode {
+  if (node.type === "pane") {
+    if (node.id !== paneId || node.sessionId === sessionId) {
+      return node;
+    }
+    return { ...node, sessionId };
+  }
+
+  const left = setPaneSessionId(node.children[0], paneId, sessionId);
+  const right = setPaneSessionId(node.children[1], paneId, sessionId);
+  if (left === node.children[0] && right === node.children[1]) {
+    return node;
+  }
+  return { ...node, children: [left, right] };
+}
+
+function hasPaneId(node: PaneNode, paneId: string): boolean {
+  if (node.type === "pane") {
+    return node.id === paneId;
+  }
+  return hasPaneId(node.children[0], paneId) || hasPaneId(node.children[1], paneId);
+}
+
 const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
@@ -62,6 +85,8 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
+  const tabsRef = useRef<Tab[]>(tabs);
+  tabsRef.current = tabs;
 
   const addTab = useCallback((cwd: string, label?: string, claude?: boolean) => {
     const id = genId();
@@ -144,6 +169,17 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 
   const getCwd = useCallback(() => sidebarSelectedPath ?? DEFAULT_CWD, [sidebarSelectedPath]);
 
+  const handleSessionAttached = useCallback((paneId: string, sessionId: string) => {
+    setTabs((prev) => prev.map((tab) => {
+      const nextTree = setPaneSessionId(tab.paneTree, paneId, sessionId);
+      return nextTree === tab.paneTree ? tab : { ...tab, paneTree: nextTree };
+    }));
+  }, []);
+
+  const shouldCachePane = useCallback((paneId: string) => {
+    return tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
+  }, []);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
@@ -183,6 +219,8 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
               theme={theme}
               focusedPaneId={focusedPaneId}
               onFocusPane={setFocusedPaneId}
+              onSessionAttached={handleSessionAttached}
+              shouldCachePane={shouldCachePane}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center" style={{ color: "var(--muted-foreground)" }}>

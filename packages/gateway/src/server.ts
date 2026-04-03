@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
-import { dirname, join, normalize, resolve } from "node:path";
-import { Hono } from "hono";
+import { dirname, join, normalize, resolve, relative } from "node:path";
+import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
@@ -8,7 +8,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
+import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
@@ -674,6 +674,7 @@ export async function createGateway(config: GatewayConfig) {
       const cwdParam = c.req.query("cwd");
       let handle: SessionHandle | null = null;
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
+      let autoCreatedSessionId: string | null = null;
 
       return {
         onOpen(_evt, ws) {
@@ -687,6 +688,7 @@ export async function createGateway(config: GatewayConfig) {
               if (handle) return;
               try {
                 const sessionId = sessionRegistry.create(cwdParam);
+                autoCreatedSessionId = sessionId;
                 handle = sessionRegistry.attach(sessionId);
                 if (handle) {
                   handle.subscribe(sendJson);
@@ -727,8 +729,13 @@ export async function createGateway(config: GatewayConfig) {
                 autoCreateTimer = null;
               }
               if (handle) {
+                const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
                 handle.detach();
                 handle = null;
+                if (shouldDestroyAutoCreated && autoCreatedSessionId) {
+                  sessionRegistry.destroy(autoCreatedSessionId);
+                  autoCreatedSessionId = null;
+                }
               }
 
               if ("cwd" in msg) {
@@ -748,6 +755,7 @@ export async function createGateway(config: GatewayConfig) {
                 handle = sessionRegistry.attach(msg.sessionId);
                 if (handle) {
                   const info = sessionRegistry.getSession(msg.sessionId);
+                  autoCreatedSessionId = null;
                   handle.subscribe(sendJson);
                   sendJson({
                     type: "attached",
@@ -932,7 +940,19 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.get("/api/terminal/sessions", (c) => {
-    return c.json(sessionRegistry.list());
+    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
+      const displayCwd = relative(homePath, session.cwd) || "~";
+      return {
+        sessionId: session.sessionId,
+        cwd: displayCwd,
+        state: session.state,
+        exitCode: session.exitCode,
+        createdAt: session.createdAt,
+        lastAttachedAt: session.lastAttachedAt,
+        attachedClients: session.attachedClients,
+      };
+    });
+    return c.json(publicSessions);
   });
 
   app.delete("/api/terminal/sessions/:id", (c) => {
@@ -1782,7 +1802,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await channelManager.stop();
-      sessionRegistry.shutdown();
+      await sessionRegistry.shutdown();
       await watcher.close();
       await appDb?.destroy();
       server.close();

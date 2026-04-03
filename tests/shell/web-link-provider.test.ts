@@ -48,6 +48,11 @@ describe("Web Link Provider", () => {
       expect(matches).toHaveLength(1);
       expect(matches[0]!.startIndex).toBe(6);
     });
+
+    it("skips URLs that exceed the hot-path length cap", () => {
+      const matches = detectUrls(`https://example.com/${"a".repeat(2050)}`);
+      expect(matches).toHaveLength(0);
+    });
   });
 
   describe("File path detection", () => {
