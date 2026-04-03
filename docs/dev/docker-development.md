@@ -117,7 +117,6 @@ Volumes persist data across container restarts:
 |--------|---------|
 | `dev-node-modules` | pnpm dependencies (cached, ~30s first install) |
 | `dev-home` | Matrix OS home directory (`~/matrixos/`) |
-| `dev-next-cache` | Next.js build cache |
 | `pgdata` | PostgreSQL data (app data layer) |
 | `conduit-data` | Matrix homeserver database |
 | `prometheus-data` | Metrics history |
@@ -148,7 +147,7 @@ All env vars are loaded from `.env.docker` (via `env_file` in compose). The comp
 | `ANTHROPIC_API_KEY` | Yes | - | Claude API key for kernel |
 | `MATRIX_HANDLE` | No | `dev` | User handle (set by platform in prod) |
 | `MATRIX_DISPLAY_NAME` | No | `Developer` | Display name (from Clerk signup in prod) |
-| `FAL_API_KEY` | No | - | Fal.ai key for image generation |
+| `GEMINI_API_KEY` | No | - | Google Gemini key for image generation |
 | `PLATFORM_SECRET` | No | `dev-secret` | Platform JWT secret |
 | `DATABASE_URL` | No | auto-set | PostgreSQL connection string for app data layer |
 | `GRAFANA_ADMIN_PASSWORD` | No | `matrixos` | Grafana admin password |

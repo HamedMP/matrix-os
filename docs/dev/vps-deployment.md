@@ -11,15 +11,16 @@ Internet
   |
   +-- matrix-os.com ---------> Vercel (www/ -- landing, auth, dashboard)
   |
+  +-- app.matrix-os.com ----+  (session-based: Clerk JWT -> container)
   +-- api.matrix-os.com ----+
-  +-- *.matrix-os.com ------+
+  +-- *.matrix-os.com ------+  (handle-based: {handle}.matrix-os.com -> container)
                             |
                      Cloudflare Tunnel
                             |
                      Hetzner VPS (no public ports except SSH)
                      |
                      +-- cloudflared (tunnel daemon)
-                     +-- platform :9000 (orchestrator + subdomain router)
+                     +-- platform :9000 (orchestrator + routing)
                      +-- proxy :8080 (shared Anthropic API key + cost tracking)
                      +-- matrixos-alice :4001/:3001 (user container)
                      +-- matrixos-bob :4002/:3002 (user container)
@@ -164,9 +165,10 @@ cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
 | Type  | Name | Target                         | Proxy |
 |-------|------|-------------------------------|-------|
 | CNAME | api  | `<tunnel-id>.cfargotunnel.com` | Yes   |
+| CNAME | app  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | *    | `<tunnel-id>.cfargotunnel.com` | Yes   |
 
-Root `matrix-os.com` stays pointed at Vercel.
+Root `matrix-os.com` stays pointed at Vercel. The `app` subdomain handles session-based routing (Clerk JWT -> user container). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
 
 ## Step 3: Environment Variables
 
@@ -176,7 +178,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 PLATFORM_SECRET=your-random-secret
 CLERK_SECRET_KEY=sk_live_...
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-FAL_API_KEY=your-fal-api-key
+GEMINI_API_KEY=your-gemini-api-key
 EOF
 ```
 
@@ -186,14 +188,14 @@ EOF
 | `PLATFORM_SECRET` | platform | runtime | Bearer token for admin API auth |
 | `CLERK_SECRET_KEY` | platform + user containers | runtime | Server-side Clerk JWT verification |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Docker image | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
-| `FAL_API_KEY` | platform + user containers | runtime | Fal.ai API key for image/icon generation |
+| `GEMINI_API_KEY` | platform + user containers | runtime | Google Gemini API key for image/icon generation |
 
 **Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available as Docker build args. All other vars are passed at container runtime via `docker-compose.platform.yml` environment section and the orchestrator's `extraEnv` mechanism.
 
 ## Step 4: Start the Platform
 
 ```bash
-# Always pass --env-file .env (reads PLATFORM_SECRET, CLERK_SECRET_KEY, FAL_API_KEY, etc.)
+# Always pass --env-file .env (reads PLATFORM_SECRET, CLERK_SECRET_KEY, GEMINI_API_KEY, etc.)
 docker compose -f distro/docker-compose.platform.yml --env-file .env up -d
 ```
 
@@ -257,11 +259,15 @@ curl https://api.matrix-os.com/health
 1. matrix-os.com -> Clerk signup (choose handle)
 2. Clerk webhook -> Inngest -> POST api.matrix-os.com/containers/provision
 3. Platform: allocate ports -> create Docker container -> start
-4. Dashboard: "Open Matrix OS" -> https://{handle}.matrix-os.com
-5. Cloudflare tunnel -> platform -> reverse proxy to container shell
+4. Dashboard: "Open Matrix OS" -> https://app.matrix-os.com
+5. app.matrix-os.com -> platform reads Clerk session cookie -> resolves user -> proxy to container
 6. After 30 min idle -> container auto-stops
 7. Next visit -> platform auto-wakes container
 ```
+
+**Two routing modes:**
+- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header, looks up container by `clerkUserId`, proxies to it. No handle in URL. Redirects to `/login` if no session.
+- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain, proxies to container. No auth required (public access).
 
 ## Container Management
 
@@ -540,15 +546,20 @@ Until then, single node is simpler and cheaper. Resize the Hetzner server (CPX21
 Understanding the request flow is critical for debugging:
 
 ```
-Browser -> hamedmp.matrix-os.com
-  -> Cloudflare Tunnel -> platform :9000 (subdomain proxy middleware)
-    -> http://matrixos-hamedmp:3000 (Next.js shell)
-      -> shell proxy.ts middleware rewrites /api/*, /files/*, /modules/*, /ws*
-        -> http://localhost:4000 (gateway inside same container)
+Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
+  -> Cloudflare Tunnel -> platform :9000
+    -> session-based: Clerk JWT -> getContainerByClerkId -> proxy
+    -> handle-based: subdomain -> getContainer -> proxy
+      -> http://matrixos-{handle}:3000 (Next.js shell, non-API paths)
+      -> http://matrixos-{handle}:4000 (gateway, /api/*, /ws*, /files/*, /modules/*)
+        -> shell proxy.ts middleware rewrites remaining API paths
+          -> http://localhost:4000 (gateway inside same container)
 ```
 
 **Key points:**
-- Platform routes all `{handle}.matrix-os.com` traffic to the user container's shell (port 3000)
+- Platform has two routing middlewares: `app.matrix-os.com` (session-based, Clerk JWT) and `{handle}.matrix-os.com` (handle-based, no auth)
+- Both resolve to the same container -- different entry points, same destination
+- The session-based route auto-starts stopped containers on access
 - The shell's `proxy.ts` middleware rewrites API/file/WebSocket requests to the gateway (port 4000)
 - Both shell and gateway run inside the same container (started by `docker-entrypoint.sh`)
 - The gateway is PID 1 (foreground); the shell is a background process
@@ -557,12 +568,17 @@ Browser -> hamedmp.matrix-os.com
 
 ### Clerk Auth (subdomain cookies)
 
-Clerk session cookies are scoped to `matrix-os.com` by default. For subdomain auth on `{handle}.matrix-os.com`, Clerk needs cookie domain set to `.matrix-os.com` in the Clerk Dashboard (Domains settings). Until this is configured:
-- Platform-level Clerk JWT verification is disabled (commented out in `main.ts`)
-- Shell-level Clerk middleware is removed (`proxy.ts` does plain proxying)
-- Auth is effectively open on subdomains -- the shell is accessible to anyone with the URL
+Clerk session cookies must be scoped to `.matrix-os.com` for `app.matrix-os.com` routing to work. Configure in Clerk Dashboard > Domains:
+- Primary domain: `matrix-os.com`
+- Cookie domain: `.matrix-os.com`
 
-To re-enable: configure Clerk Dashboard -> Domains with `matrix-os.com` as primary and cookie domain `.matrix-os.com`, then uncomment the JWT verification blocks in `packages/platform/src/main.ts`.
+The `app.matrix-os.com` route extracts the Clerk session from either:
+- `Authorization: Bearer <token>` header
+- `__session` cookie
+
+If no valid session is found, the user is redirected to `matrix-os.com/login`. If the user has no container provisioned, they are redirected to `matrix-os.com/dashboard`.
+
+The `{handle}.matrix-os.com` route does **not** require Clerk auth -- it proxies directly based on the subdomain handle. This means handle-based subdomains are publicly accessible to anyone with the URL.
 
 ## Observability Stack
 
