@@ -1,61 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { getGatewayWs } from "@/lib/gateway";
 import type { Theme } from "@/hooks/useTheme";
-
-const DARK_ANSI = {
-  black: "#282c34",
-  red: "#e06c75",
-  green: "#98c379",
-  yellow: "#e5c07b",
-  blue: "#61afef",
-  magenta: "#c678dd",
-  cyan: "#56b6c2",
-  white: "#abb2bf",
-  brightBlack: "#5c6370",
-  brightRed: "#e06c75",
-  brightGreen: "#98c379",
-  brightYellow: "#e5c07b",
-  brightBlue: "#61afef",
-  brightMagenta: "#c678dd",
-  brightCyan: "#56b6c2",
-  brightWhite: "#ffffff",
-};
-
-const LIGHT_ANSI = {
-  black: "#383a42",
-  red: "#e45649",
-  green: "#50a14f",
-  yellow: "#c18401",
-  blue: "#4078f2",
-  magenta: "#a626a4",
-  cyan: "#0184bc",
-  white: "#a0a1a7",
-  brightBlack: "#696c77",
-  brightRed: "#e45649",
-  brightGreen: "#50a14f",
-  brightYellow: "#c18401",
-  brightBlue: "#4078f2",
-  brightMagenta: "#a626a4",
-  brightCyan: "#0184bc",
-  brightWhite: "#fafafa",
-};
-
-function inferMode(bg: string): "light" | "dark" {
-  const hex = bg.replace("#", "");
-  const r = parseInt(hex.substring(0, 2), 16);
-  const g = parseInt(hex.substring(2, 4), 16);
-  const b = parseInt(hex.substring(4, 6), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5 ? "dark" : "light";
-}
+import { getAnsiPalette } from "./terminal-themes";
+import { TerminalSearchBar } from "./TerminalSearchBar";
+import { WebLinkProvider } from "./web-link-provider";
 
 function buildXtermTheme(theme: Theme) {
   const bg = theme.colors.background || "#1a1a2e";
   const fg = theme.colors.foreground || "#e0e0e0";
-  const mode = theme.mode ?? inferMode(bg);
-  const ansi = mode === "dark" ? DARK_ANSI : LIGHT_ANSI;
+  const slug = (theme as { slug?: string }).slug ?? "";
+  const ansi = getAnsiPalette(slug, bg);
 
   return {
     background: bg,
@@ -80,6 +36,8 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<unknown>(null);
   const fitAddonRef = useRef<unknown>(null);
+  const searchAddonRef = useRef<unknown>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
@@ -110,6 +68,48 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;
+
+      // WebGL addon (canvas 2D fallback is automatic if WebGL unavailable)
+      try {
+        const { WebglAddon } = await import("@xterm/addon-webgl");
+        const webglAddon = new WebglAddon();
+        term.loadAddon(webglAddon);
+
+        const canvas = containerRef.current?.querySelector("canvas");
+        canvas?.addEventListener("webglcontextlost", () => {
+          webglAddon.dispose();
+          try {
+            const newWebgl = new WebglAddon();
+            term.loadAddon(newWebgl);
+          } catch (_contextLossErr: unknown) {
+            // canvas 2D fallback is automatic
+          }
+        });
+      } catch (_webglErr: unknown) {
+        // WebGL not available -- canvas 2D fallback is automatic
+      }
+
+      // Search addon
+      try {
+        const { SearchAddon } = await import("@xterm/addon-search");
+        const searchAddon = new SearchAddon();
+        term.loadAddon(searchAddon);
+        searchAddonRef.current = searchAddon;
+      } catch (_searchErr: unknown) {
+        // search addon unavailable
+      }
+
+      // Serialize addon
+      try {
+        const { SerializeAddon } = await import("@xterm/addon-serialize");
+        const serializeAddon = new SerializeAddon();
+        term.loadAddon(serializeAddon);
+      } catch (_serializeErr: unknown) {
+        // serialize addon unavailable
+      }
+
+      // Link provider for clickable URLs and file paths
+      term.registerLinkProvider(new WebLinkProvider());
 
       const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
       const wsUrl = cwd ? `${baseWs}?cwd=${encodeURIComponent(cwd)}` : baseWs;
@@ -158,6 +158,44 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
         }
       });
 
+      // Keyboard shortcuts: search, copy, paste
+      term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+        if (ev.type !== "keydown") return true;
+
+        // Ctrl+Shift+F: toggle search
+        if (ev.ctrlKey && ev.shiftKey && ev.key === "F") {
+          setSearchOpen((prev) => !prev);
+          return false;
+        }
+
+        // Ctrl+Shift+C: copy selection
+        if (ev.ctrlKey && ev.shiftKey && ev.key === "C") {
+          const selection = term.getSelection();
+          if (selection) {
+            navigator.clipboard.writeText(selection).catch(() => {
+              // clipboard API not available
+            });
+            term.clearSelection();
+            return false;
+          }
+          return true;
+        }
+
+        // Ctrl+Shift+V: paste
+        if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
+          navigator.clipboard.readText().then((text) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "input", data: text }));
+            }
+          }).catch(() => {
+            // clipboard API not available
+          });
+          return false;
+        }
+
+        return true;
+      });
+
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
       });
@@ -196,12 +234,21 @@ export function TerminalPane({ paneId, cwd, theme, isFocused, claudeMode, onFocu
   return (
     <div
       ref={containerRef}
-      className="h-full w-full min-h-0 min-w-0"
+      className="h-full w-full min-h-0 min-w-0 relative overflow-hidden"
       style={{
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
       }}
       onClick={handleFocus}
-    />
+    >
+      {searchOpen && searchAddonRef.current && (
+        <TerminalSearchBar
+          searchAddon={searchAddonRef.current as Parameters<typeof TerminalSearchBar>[0]["searchAddon"]}
+          isOpen={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          theme={theme}
+        />
+      )}
+    </div>
   );
 }
