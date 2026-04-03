@@ -2,7 +2,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ImageResult {
-  url: string;
   localPath: string;
   model: string;
   cost: number;
@@ -10,11 +9,11 @@ export interface ImageResult {
 
 export interface GenerateOptions {
   model?: string;
-  size?: string;
+  aspectRatio?: string;
+  imageSize?: string;
   imageDir: string;
   saveAs?: string;
   fetchFn?: typeof fetch;
-  downloadFn?: (url: string) => Promise<Buffer>;
 }
 
 export interface ImageClient {
@@ -22,11 +21,27 @@ export interface ImageClient {
   isConfigured(): boolean;
 }
 
+const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
 const MODEL_COSTS: Record<string, number> = {
-  "fal-ai/flux/schnell": 0.003,
-  "fal-ai/flux/dev": 0.025,
-  "fal-ai/z-image/turbo": 0.003,
+  "gemini-2.5-flash-image": 0.0002,
+  "gemini-3.1-flash-image-preview": 0.0005,
+  "gemini-3-pro-image-preview": 0.002,
 };
+
+const DEFAULT_MODEL = "gemini-2.5-flash-image";
+
+interface GeminiPart {
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
+}
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: { parts?: GeminiPart[] };
+  }>;
+  error?: { message: string };
+}
 
 export function createImageClient(apiKey: string): ImageClient {
   return {
@@ -36,44 +51,58 @@ export function createImageClient(apiKey: string): ImageClient {
 
     async generateImage(prompt: string, opts: GenerateOptions): Promise<ImageResult> {
       if (!apiKey) {
-        throw new Error("Image generation not configured. Set FAL_API_KEY.");
+        throw new Error("Image generation not configured. Set GEMINI_API_KEY.");
       }
 
-      const model = opts.model ?? "fal-ai/flux/schnell";
-      const size = opts.size ?? "1024x1024";
+      const model = opts.model ?? DEFAULT_MODEL;
       const fetchFn = opts.fetchFn ?? globalThis.fetch;
 
-      const url = `https://fal.run/${model}`;
-      const isZImage = model.includes("z-image");
+      const url = `${API_BASE}/${model}:generateContent`;
+
+      const imageConfig: Record<string, string> = {};
+      if (opts.aspectRatio) imageConfig.aspectRatio = opts.aspectRatio;
+      if (opts.imageSize) imageConfig.imageSize = opts.imageSize;
+
       const body = JSON.stringify({
-        prompt,
-        image_size: size,
-        num_images: 1,
-        ...(isZImage && { num_inference_steps: 4, output_format: "png" }),
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          ...(Object.keys(imageConfig).length > 0 && { imageConfig }),
+        },
       });
 
       const response = await fetchFn(url, {
         method: "POST",
         headers: {
-          Authorization: `Key ${apiKey}`,
+          "x-goog-api-key": apiKey,
           "Content-Type": "application/json",
         },
         body,
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("Invalid API key. Check your FAL_API_KEY.");
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("Invalid API key. Check your GEMINI_API_KEY.");
         }
         if (response.status === 429) {
           throw new Error("Rate limit exceeded. Try again later.");
         }
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Image generation failed: ${response.status} ${(errorData as any).detail ?? response.statusText}`);
+        const errorData = await response.json().catch(() => ({})) as GeminiResponse;
+        throw new Error(`Image generation failed: ${response.status} ${errorData?.error?.message ?? response.statusText}`);
       }
 
-      const data = await response.json() as { images: Array<{ url: string }> };
-      const imageUrl = data.images[0].url;
+      const data = await response.json() as GeminiResponse;
+
+      const imagePart = data.candidates?.[0]?.content?.parts?.find(
+        (p) => p.inlineData?.mimeType?.startsWith("image/"),
+      );
+
+      if (!imagePart?.inlineData) {
+        throw new Error("No image returned. The prompt may have been filtered by safety settings.");
+      }
+
+      const imageBuffer = Buffer.from(imagePart.inlineData.data, "base64");
 
       mkdirSync(opts.imageDir, { recursive: true });
 
@@ -85,19 +114,11 @@ export function createImageClient(apiKey: string): ImageClient {
       const fileName = opts.saveAs ?? `${timestamp}-${slug}.png`;
       const localPath = join(opts.imageDir, fileName);
 
-      const downloadFn = opts.downloadFn ?? defaultDownload;
-      const imageBuffer = await downloadFn(imageUrl);
       writeFileSync(localPath, imageBuffer);
 
-      const cost = MODEL_COSTS[model] ?? 0.003;
+      const cost = MODEL_COSTS[model] ?? 0.0005;
 
-      return { url: imageUrl, localPath, model, cost };
+      return { localPath, model, cost };
     },
   };
-}
-
-async function defaultDownload(url: string): Promise<Buffer> {
-  const response = await fetch(url);
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
 }

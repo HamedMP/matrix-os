@@ -1321,9 +1321,9 @@ export async function createGateway(config: GatewayConfig) {
     if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
       return c.json({ error: "Invalid slug" }, 400);
     }
-    const falKey = process.env.FAL_API_KEY ?? "";
-    if (!falKey) {
-      return c.json({ error: "FAL_API_KEY not configured" }, 503);
+    const geminiKey = process.env.GEMINI_API_KEY ?? "";
+    if (!geminiKey) {
+      return c.json({ error: "GEMINI_API_KEY not configured" }, 503);
     }
     try {
       let body: { style?: string } = {};
@@ -1337,16 +1337,15 @@ export async function createGateway(config: GatewayConfig) {
         } catch { /* ignore */ }
       }
       if (!iconStyle) {
-        iconStyle = "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style";
+        iconStyle = "Digital neo-classic app icon filling the entire frame edge to edge, dark matte background with subtle luminous grid lines, clean geometric 3D forms, soft phosphor glow accents, rounded square shape, premium minimalist design, no margins or padding";
       }
 
-      const client = createImageClient(falKey);
+      const client = createImageClient(geminiKey);
       const name = slug.replace(/-/g, " ").replace(/_/g, " ");
       const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
       const iconsDir = join(homePath, "system/icons");
       const result = await client.generateImage(prompt, {
-        model: "fal-ai/z-image/turbo",
-        size: "square",
+        aspectRatio: "1:1",
         imageDir: iconsDir,
         saveAs: `${slug}.png`,
       });
@@ -1359,9 +1358,9 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/icons/regenerate-all", async (c) => {
-    const falKey = process.env.FAL_API_KEY ?? "";
-    if (!falKey) {
-      return c.json({ error: "FAL_API_KEY not configured" }, 503);
+    const geminiKey = process.env.GEMINI_API_KEY ?? "";
+    if (!geminiKey) {
+      return c.json({ error: "GEMINI_API_KEY not configured" }, 503);
     }
 
     let iconStyle = "";
@@ -1370,7 +1369,7 @@ export async function createGateway(config: GatewayConfig) {
       iconStyle = desktop.iconStyle ?? "";
     } catch { /* ignore */ }
     if (!iconStyle) {
-      iconStyle = "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style";
+      iconStyle = "Digital neo-classic icon, dark matte background with subtle luminous grid lines, clean geometric forms, soft phosphor glow accents, rounded square shape, premium minimalist design";
     }
 
     const iconsDir = join(homePath, "system/icons");
@@ -1379,7 +1378,7 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     const pngFiles = readdirSync(iconsDir).filter((f: string) => f.endsWith(".png"));
-    const client = createImageClient(falKey);
+    const client = createImageClient(geminiKey);
     let regenerated = 0;
     const failed: string[] = [];
 
@@ -1389,8 +1388,7 @@ export async function createGateway(config: GatewayConfig) {
       const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
       try {
         await client.generateImage(prompt, {
-          model: "fal-ai/z-image/turbo",
-          size: "square",
+          aspectRatio: "1:1",
           imageDir: iconsDir,
           saveAs: `${slug}.png`,
         });

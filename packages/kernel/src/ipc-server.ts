@@ -576,30 +576,31 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
 
       tool(
         "generate_image",
-        "Generate an image from a text description using AI. Saves to ~/data/images/. Returns the local file path.",
+        "Generate an image from a text description using Nano Banana (Gemini). Saves to ~/data/images/. Returns the local file path.",
         {
           prompt: z.string().describe("Text description of the image to generate"),
-          model: z.enum(["fal-ai/flux/schnell", "fal-ai/flux/dev"]).optional().describe("Model to use (default: schnell for speed, dev for quality)"),
-          size: z.string().optional().describe("Image dimensions (default: 1024x1024)"),
+          model: z.enum(["gemini-2.5-flash-image", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"]).optional().describe("Model to use (default: gemini-2.5-flash-image for speed, 3.1-flash-image-preview for quality, 3-pro-image-preview for professional assets)"),
+          aspect_ratio: z.string().optional().describe("Aspect ratio (e.g. 1:1, 16:9, 9:16, 3:2). Default: 1:1"),
+          image_size: z.string().optional().describe("Resolution: 512, 1K, 2K, or 4K. Default: 1K"),
           save_as: z.string().optional().describe("Custom filename for the saved image"),
         },
-        async ({ prompt, model, size, save_as }) => {
+        async ({ prompt, model, aspect_ratio, image_size, save_as }) => {
           if (!homePath) {
             return { content: [{ type: "text" as const, text: "Cannot generate image (no home path)" }] };
           }
 
-          const apiKey = process.env.FAL_API_KEY ?? "";
+          const apiKey = process.env.GEMINI_API_KEY ?? "";
           if (!apiKey) {
             try {
               const configPath = join(homePath, "system", "config.json");
               if (existsSync(configPath)) {
                 const config = JSON.parse(readFileSync(configPath, "utf-8"));
-                if (config.media?.fal_api_key) {
-                  return generateWithKey(config.media.fal_api_key);
+                if (config.media?.gemini_api_key) {
+                  return generateWithKey(config.media.gemini_api_key);
                 }
               }
             } catch {}
-            return { content: [{ type: "text" as const, text: "Image generation not configured. Set FAL_API_KEY or add media.fal_api_key to config.json." }] };
+            return { content: [{ type: "text" as const, text: "Image generation not configured. Set GEMINI_API_KEY or add media.gemini_api_key to config.json." }] };
           }
 
           return generateWithKey(apiKey);
@@ -612,7 +613,8 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             try {
               const result = await client.generateImage(prompt, {
                 model,
-                size,
+                aspectRatio: aspect_ratio,
+                imageSize: image_size,
                 imageDir,
                 saveAs: save_as,
               });

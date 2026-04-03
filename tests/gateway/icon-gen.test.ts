@@ -5,9 +5,25 @@ import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import { createImageClient } from "../../packages/kernel/src/image-gen.js";
 
+const fakeImageBase64 = Buffer.from("fake-png-data").toString("base64");
+
+function geminiResponse() {
+  return {
+    ok: true,
+    json: () => Promise.resolve({
+      candidates: [{
+        content: {
+          parts: [{
+            inlineData: { mimeType: "image/png", data: fakeImageBase64 },
+          }],
+        },
+      }],
+    }),
+  };
+}
+
 function createIconApp(homePath: string) {
   const app = new Hono();
-  const fakeBuffer = Buffer.from("fake-png-data");
 
   app.post("/api/apps/:slug/icon", async (c) => {
     const slug = c.req.param("slug");
@@ -26,7 +42,7 @@ function createIconApp(homePath: string) {
       } catch { /* ignore */ }
     }
     if (!iconStyle) {
-      iconStyle = "3D rendered glossy icon, dark background, vibrant glowing neon accents, soft lighting, rounded square shape";
+      iconStyle = "Digital neo-classic app icon filling the entire frame edge to edge, dark matte background with subtle luminous grid lines, clean geometric 3D forms, soft phosphor glow accents, rounded square shape, premium minimalist design, no margins or padding";
     }
 
     const client = createImageClient("test-key");
@@ -34,17 +50,10 @@ function createIconApp(homePath: string) {
     const prompt = `App icon for '${name}': ${iconStyle}, no text, 1:1 square`;
     const iconsDir = join(homePath, "system/icons");
     const result = await client.generateImage(prompt, {
-      model: "fal-ai/z-image/turbo",
-      size: "square",
+      aspectRatio: "1:1",
       imageDir: iconsDir,
       saveAs: `${slug}.png`,
-      fetchFn: vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/icon.png" }],
-        }),
-      }),
-      downloadFn: vi.fn().mockResolvedValue(fakeBuffer),
+      fetchFn: vi.fn().mockResolvedValue(geminiResponse()),
     });
     return c.json({ iconUrl: `/files/system/icons/${slug}.png`, cost: result.cost, prompt });
   });
@@ -94,10 +103,10 @@ describe("POST /api/apps/:slug/icon", () => {
     expect(existsSync(join(homePath, "system/icons"))).toBe(true);
   });
 
-  it("uses default icon style when no desktop.json", async () => {
+  it("uses default neo-classic icon style when no desktop.json", async () => {
     const res = await app.request("/api/apps/timer/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
-    expect(body.prompt).toContain("3D rendered glossy icon");
+    expect(body.prompt).toContain("Digital neo-classic app icon");
     expect(body.prompt).toContain("timer");
   });
 
@@ -109,7 +118,7 @@ describe("POST /api/apps/:slug/icon", () => {
     const res = await app.request("/api/apps/calculator/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
     expect(body.prompt).toContain("pixel art retro 8-bit style");
-    expect(body.prompt).not.toContain("3D rendered glossy");
+    expect(body.prompt).not.toContain("Digital neo-classic");
   });
 
   it("uses style from request body over desktop.json", async () => {

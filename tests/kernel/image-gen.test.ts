@@ -8,7 +8,22 @@ import {
   type ImageResult,
 } from "../../packages/kernel/src/image-gen.js";
 
-const fakeImageBuffer = Buffer.from("fake-png-data");
+const fakeImageBase64 = Buffer.from("fake-png-data").toString("base64");
+
+function geminiResponse(base64 = fakeImageBase64) {
+  return {
+    ok: true,
+    json: () => Promise.resolve({
+      candidates: [{
+        content: {
+          parts: [{
+            inlineData: { mimeType: "image/png", data: base64 },
+          }],
+        },
+      }],
+    }),
+  };
+}
 
 describe("Image Generation Client", () => {
   let imageDir: string;
@@ -42,93 +57,62 @@ describe("Image Generation Client", () => {
   });
 
   describe("generateImage", () => {
-    it("returns image result with url, localPath, model, cost", async () => {
+    it("returns image result with localPath, model, cost", async () => {
       const client = createImageClient("test-key");
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/image.png" }],
-        }),
-      });
-
-      const mockDownload = vi.fn().mockResolvedValue(fakeImageBuffer);
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
 
       const result = await client.generateImage("a sunset over mountains", {
         imageDir,
         fetchFn: mockFetch,
-        downloadFn: mockDownload,
       });
 
-      expect(result.url).toBe("https://fal.ai/result/image.png");
       expect(result.localPath).toBeDefined();
-      expect(result.model).toBe("fal-ai/flux/schnell");
+      expect(result.model).toBe("gemini-2.5-flash-image");
       expect(typeof result.cost).toBe("number");
     });
 
-    it("defaults to flux-schnell model", async () => {
+    it("defaults to gemini-2.5-flash-image model", async () => {
       const client = createImageClient("test-key");
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/image.png" }],
-        }),
-      });
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
 
       await client.generateImage("test prompt", {
         imageDir,
         fetchFn: mockFetch,
-        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("fal-ai/flux/schnell"),
+        expect.stringContaining("gemini-2.5-flash-image"),
         expect.any(Object),
       );
     });
 
     it("allows model selection", async () => {
       const client = createImageClient("test-key");
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/image.png" }],
-        }),
-      });
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
 
       await client.generateImage("test prompt", {
-        model: "fal-ai/flux/dev",
+        model: "gemini-3.1-flash-image-preview",
         imageDir,
         fetchFn: mockFetch,
-        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("fal-ai/flux/dev"),
+        expect.stringContaining("gemini-3.1-flash-image-preview"),
         expect.any(Object),
       );
     });
 
     it("saves image to specified directory", async () => {
       const client = createImageClient("test-key");
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/image.png" }],
-        }),
-      });
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
 
       const result = await client.generateImage("test prompt", {
         imageDir,
         fetchFn: mockFetch,
-        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
       });
 
       expect(existsSync(result.localPath)).toBe(true);
-      expect(readFileSync(result.localPath)).toEqual(fakeImageBuffer);
+      expect(readFileSync(result.localPath)).toEqual(Buffer.from(fakeImageBase64, "base64"));
     });
 
     it("handles API auth errors", async () => {
@@ -138,7 +122,7 @@ describe("Image Generation Client", () => {
         ok: false,
         status: 401,
         statusText: "Unauthorized",
-        json: () => Promise.resolve({ detail: "Invalid API key" }),
+        json: () => Promise.resolve({ error: { message: "Invalid API key" } }),
       });
 
       await expect(
@@ -153,7 +137,7 @@ describe("Image Generation Client", () => {
         ok: false,
         status: 429,
         statusText: "Too Many Requests",
-        json: () => Promise.resolve({ detail: "Rate limited" }),
+        json: () => Promise.resolve({ error: { message: "Rate limited" } }),
       });
 
       await expect(
@@ -169,72 +153,81 @@ describe("Image Generation Client", () => {
       ).rejects.toThrow("not configured");
     });
 
-    it("supports z-image/turbo model with extra params", async () => {
+    it("sends aspect ratio and image size in request", async () => {
       const client = createImageClient("test-key");
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/icon.png" }],
-        }),
-      });
-
-      await client.generateImage("app icon", {
-        model: "fal-ai/z-image/turbo",
+      await client.generateImage("test prompt", {
+        aspectRatio: "16:9",
+        imageSize: "2K",
         imageDir,
         fetchFn: mockFetch,
-        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
       });
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("fal-ai/z-image/turbo"),
-        expect.any(Object),
-      );
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.num_inference_steps).toBe(4);
-      expect(body.output_format).toBe("png");
+      expect(body.generationConfig.imageConfig.aspectRatio).toBe("16:9");
+      expect(body.generationConfig.imageConfig.imageSize).toBe("2K");
     });
 
-    it("does not add z-image params for flux models", async () => {
+    it("omits imageConfig when no aspect ratio or size", async () => {
       const client = createImageClient("test-key");
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/image.png" }],
-        }),
-      });
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
 
       await client.generateImage("test prompt", {
         imageDir,
         fetchFn: mockFetch,
-        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
       });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.num_inference_steps).toBeUndefined();
-      expect(body.output_format).toBeUndefined();
+      expect(body.generationConfig.imageConfig).toBeUndefined();
     });
 
-    it("supports custom size", async () => {
+    it("sends API key in x-goog-api-key header", async () => {
+      const client = createImageClient("my-secret-key");
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
+
+      await client.generateImage("test", { imageDir, fetchFn: mockFetch });
+
+      const headers = mockFetch.mock.calls[0][1].headers;
+      expect(headers["x-goog-api-key"]).toBe("my-secret-key");
+    });
+
+    it("throws when model returns no image (safety filter)", async () => {
       const client = createImageClient("test-key");
 
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
-          images: [{ url: "https://fal.ai/result/image.png" }],
+          candidates: [{ content: { parts: [{ text: "I cannot generate that image." }] } }],
         }),
       });
 
-      await client.generateImage("test prompt", {
-        size: "512x512",
+      await expect(
+        client.generateImage("test", { imageDir, fetchFn: mockFetch }),
+      ).rejects.toThrow("No image returned");
+    });
+
+    it("supports custom saveAs filename", async () => {
+      const client = createImageClient("test-key");
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
+
+      const result = await client.generateImage("test prompt", {
         imageDir,
+        saveAs: "custom-name.png",
         fetchFn: mockFetch,
-        downloadFn: vi.fn().mockResolvedValue(fakeImageBuffer),
       });
 
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.image_size).toBe("512x512");
+      expect(result.localPath).toContain("custom-name.png");
+    });
+
+    it("includes abort signal with 30s timeout", async () => {
+      const client = createImageClient("test-key");
+      const mockFetch = vi.fn().mockResolvedValue(geminiResponse());
+
+      await client.generateImage("test", { imageDir, fetchFn: mockFetch });
+
+      const fetchOpts = mockFetch.mock.calls[0][1];
+      expect(fetchOpts.signal).toBeDefined();
     });
   });
 });
