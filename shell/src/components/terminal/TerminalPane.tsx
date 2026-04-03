@@ -470,6 +470,10 @@ export function TerminalPane({
             }
           }
         };
+
+        if (!attachOnOpen && ws.readyState === WebSocket.OPEN && sessionIdRef.current) {
+          sendAttach();
+        }
       }
 
       function connectWs() {

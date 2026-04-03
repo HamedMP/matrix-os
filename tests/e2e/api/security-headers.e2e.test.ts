@@ -52,6 +52,15 @@ describe("E2E: Security headers", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
+  it("omits CORS headers for non-allowlisted origins", async () => {
+    const res = await fetch(`${gw.url}/health`, {
+      headers: {
+        Origin: "https://evil.example",
+      },
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
   it("responds to CORS preflight requests", async () => {
     const res = await fetch(`${gw.url}/api/tasks`, {
       method: "OPTIONS",

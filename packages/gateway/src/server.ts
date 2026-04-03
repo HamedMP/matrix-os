@@ -566,9 +566,9 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", cors({
     origin: (origin) => {
       if (!origin) {
-        return "";
+        return undefined;
       }
-      return allowedOrigins.includes(origin) ? origin : "";
+      return allowedOrigins.includes(origin) ? origin : undefined;
     },
   }));
   app.use("*", securityHeadersMiddleware());

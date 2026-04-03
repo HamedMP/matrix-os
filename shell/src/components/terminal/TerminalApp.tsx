@@ -14,6 +14,12 @@ interface Tab {
   paneTree: PaneNode;
 }
 
+interface TerminalLayout {
+  tabs?: Tab[];
+  activeTabId?: string;
+  sidebarOpen?: boolean;
+}
+
 function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
@@ -87,6 +93,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   const initializedRef = useRef(false);
   const tabsRef = useRef<Tab[]>(tabs);
   tabsRef.current = tabs;
+  const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addTab = useCallback((cwd: string, label?: string, claude?: boolean) => {
     const id = genId();
@@ -102,12 +109,82 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-    if (initialCommand) {
-      addTab(DEFAULT_CWD, "Claude Code", true);
-    } else {
-      addTab(DEFAULT_CWD);
+    let cancelled = false;
+
+    async function initLayout() {
+      if (initialCommand) {
+        addTab(DEFAULT_CWD, "Claude Code", true);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) {
+          const data = await res.json() as TerminalLayout;
+          if (Array.isArray(data.tabs) && data.tabs.length > 0) {
+            if (cancelled) {
+              return;
+            }
+            const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
+            const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
+            setTabs(data.tabs);
+            setActiveTabId(nextActiveTabId);
+            setSidebarOpen(data.sidebarOpen ?? true);
+            setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+            return;
+          }
+        }
+      } catch (err: unknown) {
+        console.warn("Failed to load terminal layout:", err instanceof Error ? err.message : err);
+      }
+
+      if (!cancelled) {
+        addTab(DEFAULT_CWD);
+      }
     }
+
+    void initLayout();
+
+    return () => {
+      cancelled = true;
+    };
   }, [addTab, initialCommand]);
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      return;
+    }
+
+    if (layoutSaveTimerRef.current) {
+      clearTimeout(layoutSaveTimerRef.current);
+    }
+
+    layoutSaveTimerRef.current = setTimeout(() => {
+      layoutSaveTimerRef.current = null;
+      const layout: TerminalLayout = {
+        tabs: tabsRef.current,
+        activeTabId,
+        sidebarOpen,
+      };
+      fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(layout),
+        signal: AbortSignal.timeout(10_000),
+      }).catch((err: unknown) => {
+        console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+      });
+    }, 500);
+
+    return () => {
+      if (layoutSaveTimerRef.current) {
+        clearTimeout(layoutSaveTimerRef.current);
+        layoutSaveTimerRef.current = null;
+      }
+    };
+  }, [activeTabId, sidebarOpen, tabs]);
 
   useEffect(() => {
     const container = containerRef.current;
