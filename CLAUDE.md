@@ -95,6 +95,7 @@ bun run docker:full       # + proxy, platform, conduit
 ```
 
 **IMPORTANT**: Never `docker compose down -v` unless explicitly resetting. Volumes hold OS state, node_modules, and .next cache.
+**IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
 
 ## Shell Gotchas
 
