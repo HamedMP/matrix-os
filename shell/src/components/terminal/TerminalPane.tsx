@@ -340,6 +340,11 @@ export function TerminalPane({
 
         // Link provider
         xterm.registerLinkProvider(new WebLinkProvider(xterm));
+
+        if (disposed) {
+          xterm.dispose();
+          return;
+        }
       }
 
       attachWebglContextLostHandler();
@@ -447,6 +452,9 @@ export function TerminalPane({
               break;
 
             case "replay-start":
+              clearAuthDetectTimer();
+              outputBufferRef.current = "";
+              break;
             case "replay-end":
               break;
 

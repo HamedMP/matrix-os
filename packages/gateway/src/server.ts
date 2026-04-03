@@ -712,8 +712,9 @@ export async function createGateway(config: GatewayConfig) {
           };
 
           // Backward compat: auto-create session if no attach message within 100ms
-          if (cwdParam && cwdParam.length <= 4096) {
+          if (cwdParam && cwdParam.length >= 1 && cwdParam.length <= 4096) {
             autoCreateTimer = setTimeout(() => {
+              autoCreateTimer = null;
               if (handle) return;
               let sessionId: string | null = null;
               try {

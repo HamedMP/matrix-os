@@ -22,6 +22,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [resultIndex, setResultIndex] = useState(-1);
   const [resultCount, setResultCount] = useState(0);
+  const [hasSearched, setHasSearched] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -35,6 +36,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
     const disposable = searchAddon.onDidChangeResults((result) => {
       setResultIndex(result.resultIndex);
       setResultCount(result.resultCount);
+      setHasSearched(true);
     });
     return () => disposable.dispose();
   }, [searchAddon]);
@@ -54,6 +56,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
     setQuery("");
     setResultIndex(-1);
     setResultCount(0);
+    setHasSearched(false);
     onClose();
   }, [searchAddon, onClose]);
 
@@ -74,11 +77,13 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
 
   useEffect(() => {
     if (query) {
+      setHasSearched(false);
       searchAddon.findNext(query, { caseSensitive });
     } else {
       searchAddon.clearDecorations();
       setResultIndex(-1);
       setResultCount(0);
+      setHasSearched(false);
     }
   }, [query, caseSensitive, searchAddon]);
 
@@ -124,7 +129,7 @@ export function TerminalSearchBar({ searchAddon, isOpen, onClose, theme }: Termi
           fontSize: 12,
         }}
       />
-      {query && resultCount >= 0 && (
+      {query && hasSearched && (
         <span style={{ opacity: 0.7, whiteSpace: "nowrap", fontSize: 11 }}>
           {resultCount > 0 ? `${resultIndex + 1} of ${resultCount}` : "No results"}
         </span>

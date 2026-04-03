@@ -125,7 +125,15 @@ export class WebLinkProvider {
           range: { start, end },
           text: url.text,
           activate: () => {
-            window.open(url.text, "_blank", "noopener,noreferrer");
+            try {
+              const parsed = new URL(url.text);
+              if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+                return;
+              }
+              window.open(parsed.href, "_blank", "noopener,noreferrer");
+            } catch {
+              // Ignore malformed URLs from terminal output.
+            }
           },
         });
       }
