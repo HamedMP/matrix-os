@@ -38,9 +38,18 @@ describe("E2E: Security headers", () => {
     expect(res.headers.get("X-Frame-Options")).toBeNull();
   });
 
-  it("includes CORS headers (Access-Control-Allow-Origin)", async () => {
+  it("includes CORS headers for allowlisted origins", async () => {
+    const res = await fetch(`${gw.url}/health`, {
+      headers: {
+        Origin: "http://localhost:3000",
+      },
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:3000");
+  });
+
+  it("omits CORS headers for requests without an origin", async () => {
     const res = await fetch(`${gw.url}/health`);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
   it("responds to CORS preflight requests", async () => {
@@ -51,7 +60,7 @@ describe("E2E: Security headers", () => {
         "Access-Control-Request-Method": "GET",
       },
     });
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:3000");
     expect(res.headers.get("Access-Control-Allow-Methods")).toBeTruthy();
   });
 
