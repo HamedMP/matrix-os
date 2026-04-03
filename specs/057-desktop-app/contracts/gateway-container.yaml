@@ -1,0 +1,142 @@
+# Gateway Container Management API
+# New endpoints added to packages/gateway for desktop app container management.
+# These proxy to the platform API using the container's self-upgrade HMAC token.
+
+openapi: "3.1.0"
+info:
+  title: Gateway Container Management API
+  version: "1.0.0"
+  description: >
+    Thin proxy endpoints on the gateway that relay container lifecycle
+    operations to the platform API. Authenticated via existing gateway
+    auth (Clerk session cookie or Bearer token).
+
+paths:
+  /api/container/status:
+    get:
+      summary: Get container status and version info
+      operationId: getContainerStatus
+      security:
+        - clerkSession: []
+        - bearerToken: []
+      responses:
+        "200":
+          description: Container status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerStatus"
+        "502":
+          description: Platform API unreachable
+
+  /api/container/start:
+    post:
+      summary: Start a stopped container
+      operationId: startContainer
+      security:
+        - clerkSession: []
+        - bearerToken: []
+      responses:
+        "200":
+          description: Container started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "409":
+          description: Container already running
+        "502":
+          description: Platform API unreachable
+
+  /api/container/stop:
+    post:
+      summary: Stop a running container
+      operationId: stopContainer
+      security:
+        - clerkSession: []
+        - bearerToken: []
+      responses:
+        "200":
+          description: Container stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        "409":
+          description: Container already stopped
+        "502":
+          description: Platform API unreachable
+
+  /api/container/upgrade:
+    post:
+      summary: Upgrade container to latest image
+      operationId: upgradeContainer
+      security:
+        - clerkSession: []
+        - bearerToken: []
+      responses:
+        "200":
+          description: Upgrade initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  previousVersion:
+                    type: string
+                  newVersion:
+                    type: string
+        "304":
+          description: Already on latest version
+        "502":
+          description: Platform API unreachable
+
+components:
+  schemas:
+    ContainerStatus:
+      type: object
+      required: [handle, state, imageVersion]
+      properties:
+        handle:
+          type: string
+          description: Container handle (e.g. "hamed")
+        state:
+          type: string
+          enum: [running, stopped, starting, upgrading]
+        imageVersion:
+          type: string
+          description: Current Docker image tag
+        latestVersion:
+          type: string
+          description: Latest available image tag (if different from current)
+        uptime:
+          type: integer
+          description: Seconds since container start
+        memoryUsageMb:
+          type: number
+          description: Current memory usage in MB
+
+  securitySchemes:
+    clerkSession:
+      type: apiKey
+      in: cookie
+      name: __session
+      description: Clerk session cookie (set by auth flow in WebContentsView)
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: Bearer token for programmatic access

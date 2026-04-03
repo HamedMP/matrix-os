@@ -153,7 +153,9 @@ Read these on demand, not every session:
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
+- TypeScript 5.5+ strict, ES modules + Electron 41.x, electron-vite 5.0.x, electron-builder 26.8.x, electron-updater 6.x, electron-store 10.x (057-desktop-app)
+- electron-store (JSON config file, ~100KB) for tab persistence, sidebar order, window bounds, preferences (057-desktop-app)
 
 ## Recent Changes
-
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
+- 057-desktop-app: Added TypeScript 5.5+ strict, ES modules + Electron 41.x, electron-vite 5.0.x, electron-builder 26.8.x, electron-updater 6.x, electron-store 10.x
