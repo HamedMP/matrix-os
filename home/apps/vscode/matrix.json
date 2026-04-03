@@ -1,0 +1,17 @@
+{
+  "name": "VS Code",
+  "description": "Code editor powered by code-server",
+  "runtime": "node",
+  "entry": "code-server --auth none --bind-addr 0.0.0.0:3101",
+  "port": 3101,
+  "category": "productivity",
+  "icon": "vscode",
+  "author": "system",
+  "version": "1.0.0",
+  "autoStart": false,
+  "permissions": ["network", "filesystem"],
+  "resources": {
+    "memory": "512MB",
+    "cpu": 1.0
+  }
+}

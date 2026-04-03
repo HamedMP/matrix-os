@@ -43,6 +43,8 @@ describe("Canvas Minimap", () => {
       useWindowManager.getState().openWindow("A", "apps/a.html", 0);
       useWindowManager.getState().openWindow("B", "apps/b.html", 0);
       const [w1, w2] = useWindowManager.getState().windows;
+      const winW = w1.width;
+      const winH = w1.height;
       useWindowManager.getState().moveWindow(w1.id, 0, 0);
       useWindowManager.getState().moveWindow(w2.id, 1000, 800);
       const windows = useWindowManager.getState().windows;
@@ -55,8 +57,8 @@ describe("Canvas Minimap", () => {
       }
       expect(minX).toBe(0);
       expect(minY).toBe(0);
-      expect(maxX).toBe(1000 + 640);
-      expect(maxY).toBe(800 + 480);
+      expect(maxX).toBe(1000 + winW);
+      expect(maxY).toBe(800 + winH);
     });
 
     it("returns empty bounds when no windows exist", () => {

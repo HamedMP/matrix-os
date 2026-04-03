@@ -103,6 +103,8 @@ describe("Canvas Groups Store", () => {
       useWindowManager.getState().openWindow("App1", "apps/app1.html", 20);
       useWindowManager.getState().openWindow("App2", "apps/app2.html", 20);
       const [w1, w2] = useWindowManager.getState().windows;
+      const winW = w1.width;
+      const winH = w1.height;
 
       useWindowManager.getState().moveWindow(w1.id, 100, 100);
       useWindowManager.getState().moveWindow(w2.id, 500, 400);
@@ -114,11 +116,11 @@ describe("Canvas Groups Store", () => {
 
       const bounds = useCanvasGroups.getState().getGroupBounds(groupId);
       expect(bounds).toBeDefined();
-      // Min x=100, min y=100, max x=500+640, max y=400+480, + 20px padding
+      // Min x=100, min y=100, max x=500+winW, max y=400+winH, + 20px padding
       expect(bounds!.x).toBe(80); // 100 - 20 padding
       expect(bounds!.y).toBe(80); // 100 - 20 padding
-      expect(bounds!.width).toBe(500 + 640 - 100 + 40); // content + 2*20 padding
-      expect(bounds!.height).toBe(400 + 480 - 100 + 40); // content + 2*20 padding
+      expect(bounds!.width).toBe(500 + winW - 100 + 40); // content + 2*20 padding
+      expect(bounds!.height).toBe(400 + winH - 100 + 40); // content + 2*20 padding
     });
 
     it("returns null for empty group", () => {

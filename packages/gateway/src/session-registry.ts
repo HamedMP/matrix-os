@@ -1,8 +1,9 @@
 import { z } from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { writeFile, rename, mkdir } from "node:fs/promises";
+import { writeFile, rename, mkdir, unlink } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
 
@@ -204,6 +205,7 @@ export class SessionRegistry {
   private readonly persistPath: string;
   private readonly spawnFn: SpawnFn;
   private readonly allowedShells: Set<string>;
+  private persistTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     homePath: string,
@@ -221,10 +223,9 @@ export class SessionRegistry {
     if (spawnFn) {
       this.spawnFn = spawnFn;
     } else {
-      // Lazy-load node-pty to avoid import issues in tests
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const nodePty = require("node-pty");
+        const esmRequire = createRequire(import.meta.url);
+        const nodePty = esmRequire("node-pty");
         this.spawnFn = nodePty.spawn as SpawnFn;
       } catch {
         this.spawnFn = () => { throw new Error("node-pty not available"); };
@@ -266,7 +267,7 @@ export class SessionRegistry {
 
     const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, resolvedShell);
     this.sessions.set(sessionId, session);
-    this.persist();
+    this.schedulePersist();
 
     return sessionId;
   }
@@ -330,7 +331,7 @@ export class SessionRegistry {
     session.kill();
     session.buffer.clear();
     this.sessions.delete(sessionId);
-    this.persist();
+    this.schedulePersist();
   }
 
   list(): SessionInfo[] {
@@ -343,10 +344,12 @@ export class SessionRegistry {
   }
 
   shutdown(): void {
+    clearTimeout(this.persistTimer);
     for (const session of this.sessions.values()) {
       session.kill();
     }
     this.sessions.clear();
+    this.persistNow();
   }
 
   private evictIfNeeded(): void {
@@ -366,7 +369,12 @@ export class SessionRegistry {
     }
   }
 
-  private persist(): void {
+  private schedulePersist(): void {
+    clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => this.persistNow(), 100);
+  }
+
+  private persistNow(): void {
     const data = JSON.stringify(this.list(), null, 2);
     const dir = dirname(this.persistPath);
     const tmpPath = this.persistPath + ".tmp";
@@ -388,12 +396,10 @@ export class SessionRegistry {
       if (sessions.length > 0) {
         console.log(`Found ${sessions.length} stale terminal session(s) from previous run (cleaned up)`);
       }
-      // Clean up the stale persist file
-      try {
-        writeFileSync(this.persistPath, "[]");
-      } catch {
-        // Ignore cleanup errors
-      }
+      // Clean up the stale persist file (fire-and-forget async)
+      void writeFile(this.persistPath, "[]").catch((e: unknown) => {
+        if (e instanceof Error) console.warn("Failed to clean stale sessions file:", e.message);
+      });
     } catch (err: unknown) {
       if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.error("Failed to load persisted terminal sessions:", err.message);

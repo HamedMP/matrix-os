@@ -682,7 +682,7 @@ export async function createGateway(config: GatewayConfig) {
           };
 
           // Backward compat: auto-create session if no attach message within 100ms
-          if (cwdParam) {
+          if (cwdParam && cwdParam.length <= 4096) {
             autoCreateTimer = setTimeout(() => {
               if (handle) return;
               try {
@@ -694,8 +694,8 @@ export async function createGateway(config: GatewayConfig) {
                   handle.replay(0);
                 }
               } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : "Failed to create session";
-                sendJson({ type: "error", message });
+                console.error("Terminal session create error:", err);
+                sendJson({ type: "error", message: "Failed to create session" });
               }
             }, 100);
           }
@@ -741,8 +741,8 @@ export async function createGateway(config: GatewayConfig) {
                     handle.replay(0);
                   }
                 } catch (err: unknown) {
-                  const message = err instanceof Error ? err.message : "Failed to create session";
-                  sendJson({ type: "error", message });
+                  console.error("Terminal session create error:", err);
+                  sendJson({ type: "error", message: "Failed to create session" });
                 }
               } else {
                 handle = sessionRegistry.attach(msg.sessionId);

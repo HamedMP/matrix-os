@@ -71,8 +71,10 @@ describe("T053: Serial dispatch queue", () => {
     const p1 = dispatcher.dispatch("first", undefined, () => {});
     const p2 = dispatcher.dispatch("second", undefined, () => {});
 
-    // Give the event loop a tick so processQueue starts the first entry
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until the spawn function has actually been entered (resolveFirst gets set)
+    for (let i = 0; i < 50 && !resolveFirst; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
 
     // Only the first kernel should be running
     expect(spawn).toHaveBeenCalledTimes(1);
@@ -109,8 +111,11 @@ describe("T053: Serial dispatch queue", () => {
     const p2 = dispatcher.dispatch("b", undefined, () => {});
     const p3 = dispatcher.dispatch("c", undefined, () => {});
 
-    // Give the event loop a tick so processQueue starts "a"
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until the spawn function has actually been entered (releaseGate gets set)
+    for (let i = 0; i < 50 && !releaseGate; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(releaseGate).toBeTruthy();
 
     releaseGate!();
     await Promise.all([p1, p2, p3]);
@@ -161,8 +166,11 @@ describe("T053: Serial dispatch queue", () => {
 
     const p1 = dispatcher.dispatch("first", undefined, () => {});
 
-    // Give the event loop a tick so first dispatch starts processing
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until the spawn function has actually been entered (releaseGate gets set)
+    for (let i = 0; i < 50 && !releaseGate; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(releaseGate).toBeTruthy();
 
     // Second goes into the queue while first is running
     const p2 = dispatcher.dispatch("second", undefined, () => {});

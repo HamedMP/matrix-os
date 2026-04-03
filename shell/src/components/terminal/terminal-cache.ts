@@ -23,6 +23,7 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
     const evicted = cache.get(oldest);
     cache.delete(oldest);
     if (evicted) {
+      try { evicted.ws.send(JSON.stringify({ type: "detach" })); } catch { /* ws closed */ }
       try { evicted.ws.close(); } catch { /* already closed */ }
       try { evicted.terminal.dispose(); } catch { /* already disposed */ }
     }

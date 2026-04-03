@@ -100,7 +100,10 @@ describe("T054: Concurrent dispatch", () => {
     const p1 = dispatcher.dispatch("a", undefined, () => {});
     const p2 = dispatcher.dispatch("b", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until both spawn functions have been entered
+    for (let i = 0; i < 50 && gates.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(dispatcher.activeCount).toBe(2);
 
     gates.forEach((g) => g());
@@ -126,7 +129,10 @@ describe("T054: Concurrent dispatch", () => {
     const p1 = dispatcher.dispatch("a", undefined, () => {});
     const p2 = dispatcher.dispatch("b", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until the spawn function has actually been entered (releaseFirst gets set)
+    for (let i = 0; i < 50 && !releaseFirst; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(order).toEqual(["start-a"]);
 
     releaseFirst!();
@@ -147,7 +153,11 @@ describe("T054: Concurrent dispatch", () => {
     expect(dispatcher.queueLength).toBe(0);
 
     const p1 = dispatcher.dispatch("first", undefined, () => {});
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until the spawn function has actually been entered (releaseGate gets set)
+    for (let i = 0; i < 50 && !releaseGate; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(releaseGate).toBeTruthy();
 
     const p2 = dispatcher.dispatch("second", undefined, () => {});
     expect(dispatcher.queueLength).toBe(1);
@@ -175,7 +185,11 @@ describe("T055: Process registration", () => {
     const dispatcher = createDispatcher({ homePath, spawnFn: spawn });
     const p = dispatcher.dispatch("build a CRM", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until the spawn function has actually been entered
+    for (let i = 0; i < 50 && !releaseSpawn; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(releaseSpawn).toBeTruthy();
     const { listTasks } = await import("../../packages/kernel/src/ipc.js");
     const active = listTasks(dispatcher.db, { status: "in_progress" })
       .filter((t) => t.type === "kernel");
@@ -230,7 +244,10 @@ describe("T055: Process registration", () => {
     const p2 = dispatcher.dispatch("task-2", undefined, () => {});
     const p3 = dispatcher.dispatch("task-3", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 20));
+    // Wait until all three spawn functions have been entered
+    for (let i = 0; i < 50 && gates.length < 3; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     const { listTasks } = await import("../../packages/kernel/src/ipc.js");
     const active = listTasks(dispatcher.db, { status: "in_progress" })
       .filter((t) => t.type === "kernel");

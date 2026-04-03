@@ -95,6 +95,7 @@ export function TerminalPane({
 
           return () => {
             resizeObserver.disconnect();
+            cached.lastSeq = lastSeqRef.current;
           };
         }
         // WS closed — discard stale cache, create fresh terminal below
@@ -112,6 +113,7 @@ export function TerminalPane({
 
       const term = new XTerm({
         cursorBlink: true,
+        allowProposedApi: true,
         fontSize: 13,
         fontFamily: theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
         theme: xtermTheme,
@@ -305,7 +307,9 @@ export function TerminalPane({
           navigator.clipboard.readText().then((text) => {
             const ws = wsRef.current;
             if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "input", data: text }));
+              const capped = text.slice(0, 65536);
+              const bracketed = `\x1b[200~${capped}\x1b[201~`;
+              ws.send(JSON.stringify({ type: "input", data: bracketed }));
             }
           }).catch(() => {});
           return false;
@@ -331,7 +335,7 @@ export function TerminalPane({
           }
           removeCached(paneId);
           term.dispose();
-        } else {
+        } else if (wsRef.current) {
           // Tab switch — cache the terminal for instant restore
           const termElement = (term as { element?: HTMLElement }).element;
           if (termElement?.parentNode) {
@@ -343,10 +347,13 @@ export function TerminalPane({
             fitAddon,
             webglAddon,
             searchAddon,
-            ws: wsRef.current!,
+            ws: wsRef.current,
             lastSeq: lastSeqRef.current,
             sessionId: sessionIdRef.current ?? "",
           });
+        } else {
+          // WS never established — dispose, don't cache
+          term.dispose();
         }
       };
     }
