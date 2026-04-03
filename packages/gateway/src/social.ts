@@ -37,9 +37,39 @@ export interface SocialFollow {
 const SCHEMA = "social";
 const VALID_POST_TYPES = ["text", "image", "link", "app_share", "activity"];
 
-// --- Schema bootstrap (unique constraints not expressible in matrix.json) ---
+// --- Schema bootstrap (creates schema + tables if missing, then adds unique indexes) ---
 
 export async function bootstrapSocialSchema(db: AppDb): Promise<void> {
+  await db.createAppSchema(SCHEMA);
+
+  await db.raw(`CREATE TABLE IF NOT EXISTS "${SCHEMA}"."posts" (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    author_id text NOT NULL,
+    content text NOT NULL,
+    type text NOT NULL DEFAULT 'text',
+    media_urls text,
+    app_ref text,
+    parent_id uuid,
+    likes_count integer NOT NULL DEFAULT 0,
+    comments_count integer NOT NULL DEFAULT 0,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+  )`);
+
+  await db.raw(`CREATE TABLE IF NOT EXISTS "${SCHEMA}"."likes" (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id uuid NOT NULL,
+    user_id text NOT NULL,
+    created_at timestamptz DEFAULT now()
+  )`);
+
+  await db.raw(`CREATE TABLE IF NOT EXISTS "${SCHEMA}"."follows" (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    follower_id text NOT NULL,
+    followee_id text NOT NULL,
+    created_at timestamptz DEFAULT now()
+  )`);
+
   await db.raw(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_likes_unique ON "${SCHEMA}"."likes" ("post_id", "user_id")`);
   await db.raw(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_follows_unique ON "${SCHEMA}"."follows" ("follower_id", "followee_id")`);
 }
