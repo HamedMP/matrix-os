@@ -4,6 +4,7 @@ import { KyselyPGlite } from "kysely-pglite";
 import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
+import { getService } from "../../packages/gateway/src/integrations/registry.js";
 import { createHmac } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -15,7 +16,11 @@ function mockPipedream(overrides?: Partial<PipedreamConnectClient>): PipedreamCo
     createConnectToken: vi.fn().mockResolvedValue({ token: "pd_tok_abc", expiresAt: "2026-12-31T00:00:00Z" }),
     getOAuthUrl: vi.fn().mockReturnValue("https://pipedream.com/connect/test?token=pd_tok_abc&app=gmail"),
     callAction: vi.fn().mockResolvedValue({ messages: [{ id: "1", subject: "Hello" }] }),
+    discoverActions: vi.fn().mockResolvedValue([]),
+    runAction: vi.fn().mockResolvedValue({ exports: { $summary: "Done" }, ret: { ok: true } }),
     revokeAccount: vi.fn().mockResolvedValue(undefined),
+    listAccounts: vi.fn().mockResolvedValue([]),
+    getAppInfo: vi.fn().mockResolvedValue(null),
     ...overrides,
   };
 }
@@ -723,6 +728,121 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(502);
       const data = await res.json();
       expect(data.error).toMatch(/failed/i);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Phase 10C: POST /call with Actions API (runAction)
+  // -----------------------------------------------------------------------
+
+  describe("POST /call -- Actions API (runAction)", () => {
+    beforeEach(async () => {
+      await db.connectService({
+        userId,
+        service: "gmail",
+        pipedreamAccountId: "pd_acc_actions",
+        accountLabel: "Actions Test",
+        scopes: ["read", "send"],
+      });
+
+      // Simulate discovered component key
+      const gmail = getService("gmail")!;
+      gmail.actions.send_email.componentKey = "gmail-send-email";
+      gmail.actions.list_messages.componentKey = "gmail-list-messages";
+    });
+
+    afterEach(() => {
+      // Clean up componentKeys
+      const gmail = getService("gmail")!;
+      for (const action of Object.values(gmail.actions)) {
+        action.componentKey = undefined;
+      }
+    });
+
+    it("uses runAction when componentKey is available", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "send_email",
+          params: { to: "alice@example.com", subject: "Hi", body: "Hello" },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.data).toBeDefined();
+      expect(data.summary).toBe("Done");
+      expect(pipedream.runAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          externalUserId: expect.any(String),
+          componentKey: "gmail-send-email",
+          configuredProps: expect.objectContaining({
+            gmail: { authProvisionId: "pd_acc_actions" },
+            to: "alice@example.com",
+            subject: "Hi",
+            body: "Hello",
+          }),
+        }),
+      );
+      // Should NOT have used the proxy
+      expect(pipedream.callAction).not.toHaveBeenCalled();
+    });
+
+    it("falls back to callAction when no componentKey discovered", async () => {
+      // list_labels has no componentKey set
+      const gmail = getService("gmail")!;
+      gmail.actions.list_labels.componentKey = undefined;
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "list_labels",
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(pipedream.callAction).toHaveBeenCalled();
+      expect(pipedream.runAction).not.toHaveBeenCalled();
+    });
+
+    it("returns summary from action exports", async () => {
+      (pipedream.runAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        exports: { $summary: "Email sent to alice@example.com" },
+        ret: { messageId: "msg_123" },
+      });
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "send_email",
+          params: { to: "alice@example.com", subject: "Hi", body: "Hello" },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.summary).toBe("Email sent to alice@example.com");
+      expect(data.data).toEqual({ messageId: "msg_123" });
+    });
+
+    it("handles runAction errors with proper status codes", async () => {
+      const timeoutErr = new Error("The operation was aborted");
+      timeoutErr.name = "AbortError";
+      (pipedream.runAction as ReturnType<typeof vi.fn>).mockRejectedValueOnce(timeoutErr);
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "send_email",
+          params: { to: "a@b.com", subject: "X", body: "Y" },
+        }),
+      });
+      expect(res.status).toBe(504);
     });
   });
 });

@@ -7,6 +7,7 @@ export interface ActionParam {
 export interface ServiceAction {
   description: string;
   params: Record<string, ActionParam>;
+  componentKey?: string;
 }
 
 export interface ServiceDefinition {

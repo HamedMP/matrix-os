@@ -7,6 +7,17 @@ export interface PipedreamConfig {
   environment?: string;
 }
 
+export interface DiscoveredAction {
+  key: string;
+  name: string;
+  description?: string;
+}
+
+export interface RunActionResult {
+  exports: unknown;
+  ret: unknown;
+}
+
 export interface PipedreamConnectClient {
   createConnectToken(
     externalUserId: string,
@@ -22,6 +33,14 @@ export interface PipedreamConnectClient {
     headers?: Record<string, string>;
   }): Promise<unknown>;
 
+  discoverActions(appSlug: string): Promise<DiscoveredAction[]>;
+
+  runAction(opts: {
+    externalUserId: string;
+    componentKey: string;
+    configuredProps: Record<string, unknown>;
+  }): Promise<RunActionResult>;
+
   revokeAccount(accountId: string): Promise<void>;
 
   listAccounts(externalUserId: string): Promise<Array<{
@@ -34,6 +53,7 @@ export interface PipedreamConnectClient {
 }
 
 const API_TIMEOUT_SECONDS = 10;
+const ACTION_TIMEOUT_SECONDS = 30;
 
 export function createPipedreamClient(
   config: PipedreamConfig,
@@ -76,6 +96,35 @@ export function createPipedreamClient(
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
       return result;
+    },
+
+    async discoverActions(appSlug: string) {
+      const page = await sdk.actions.list(
+        { app: appSlug },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      const items = (page as any).data ?? [];
+      return items.map((c: any) => ({
+        key: c.key,
+        name: c.name,
+        description: c.description,
+      }));
+    },
+
+    async runAction(opts) {
+      const response = await sdk.actions.run(
+        {
+          id: opts.componentKey,
+          externalUserId: opts.externalUserId,
+          configuredProps: opts.configuredProps,
+        },
+        { timeoutInSeconds: ACTION_TIMEOUT_SECONDS },
+      );
+      const body = (response as any).body ?? response;
+      return {
+        exports: body.exports,
+        ret: body.ret,
+      };
     },
 
     async revokeAccount(accountId: string) {

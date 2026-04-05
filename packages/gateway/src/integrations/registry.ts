@@ -1,4 +1,5 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
+import type { PipedreamConnectClient } from "./pipedream.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
 
@@ -287,4 +288,47 @@ export function validateIntegrationManifest(
     if (!getService(serviceId)) missing.push(ref);
   }
   return { valid: missing.length === 0, missing };
+}
+
+export async function discoverComponentKeys(
+  pipedream: PipedreamConnectClient,
+): Promise<{ total: number; matched: number; errors: number }> {
+  let total = 0;
+  let matched = 0;
+  let errors = 0;
+
+  const services = listServices();
+
+  for (const service of services) {
+    try {
+      const actions = await pipedream.discoverActions(service.pipedreamApp);
+      const keySet = new Map(actions.map((a) => [a.key, a]));
+
+      for (const [actionId, actionDef] of Object.entries(service.actions)) {
+        total++;
+        const hyphenated = actionId.replace(/_/g, "-");
+        const candidateKey = `${service.pipedreamApp}-${hyphenated}`;
+
+        if (keySet.has(candidateKey)) {
+          actionDef.componentKey = candidateKey;
+          matched++;
+        } else {
+          actionDef.componentKey = undefined;
+        }
+      }
+    } catch (err) {
+      errors++;
+      if (errors === 1) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isPlan = msg.includes("not available on your current plan");
+        if (isPlan) {
+          console.warn("[registry] Actions API requires a paid Pipedream plan. Falling back to proxy for all services.");
+          break;
+        }
+        console.error(`[registry] discoverComponentKeys failed for ${service.id}:`, msg);
+      }
+    }
+  }
+
+  return { total, matched, errors };
 }

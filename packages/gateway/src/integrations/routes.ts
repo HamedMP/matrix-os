@@ -386,16 +386,34 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const externalId = user?.pipedream_external_id ?? uid;
 
     try {
-      const data = await pipedream.callAction({
-        externalUserId: externalId,
-        accountId: connection.pipedream_account_id,
-        url: `https://api.pipedream.com/v1/connect/${def.pipedreamApp}/${action}`,
-        body: params ?? {},
-      });
+      let data: unknown;
+      let summary: string | undefined;
+
+      if (actionDef.componentKey) {
+        const configuredProps: Record<string, unknown> = {
+          [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
+          ...params,
+        };
+        const result = await pipedream.runAction({
+          externalUserId: externalId,
+          componentKey: actionDef.componentKey,
+          configuredProps,
+        });
+        data = result.ret;
+        const exports = result.exports as Record<string, unknown> | undefined;
+        summary = typeof exports?.$summary === "string" ? exports.$summary : undefined;
+      } else {
+        data = await pipedream.callAction({
+          externalUserId: externalId,
+          accountId: connection.pipedream_account_id,
+          url: `https://api.pipedream.com/v1/connect/${def.pipedreamApp}/${action}`,
+          body: params ?? {},
+        });
+      }
 
       await db.touchServiceUsage(connection.id);
 
-      return c.json({ data, service, action });
+      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
     } catch (err: unknown) {
       if (err instanceof Error && (err as any).status === 429) {
         const retryAfterRaw = (err as any).headers?.["retry-after"];

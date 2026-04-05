@@ -188,7 +188,8 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           scopes               TEXT[] NOT NULL DEFAULT '{}',
           status               TEXT NOT NULL DEFAULT 'active',
           connected_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-          last_used_at         TIMESTAMPTZ
+          last_used_at         TIMESTAMPTZ,
+          UNIQUE(user_id, pipedream_account_id)
         )
       `.execute(kysely);
 
@@ -232,6 +233,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
 
       // Indexes
       await sql`CREATE INDEX IF NOT EXISTS idx_connected_services_user ON connected_services(user_id)`.execute(kysely);
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_connected_services_user_account ON connected_services(user_id, pipedream_account_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_user_apps_user ON user_apps(user_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_event_subs_user ON event_subscriptions(user_id)`.execute(kysely);
     },
@@ -283,6 +285,14 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           account_email: input.accountEmail ?? null,
           scopes: input.scopes,
         })
+        .onConflict((oc) =>
+          oc.columns(["user_id", "pipedream_account_id"]).doUpdateSet({
+            account_label: input.accountLabel,
+            account_email: input.accountEmail ?? null,
+            scopes: input.scopes,
+            status: "active",
+          }),
+        )
         .returningAll()
         .executeTakeFirstOrThrow();
       return result;

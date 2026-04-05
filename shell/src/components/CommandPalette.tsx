@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useCallback } from "react";
 import { useCommandStore, type Command } from "@/stores/commands";
 import {
   CommandDialog,
@@ -30,6 +30,13 @@ export function CommandPalette({
 }) {
   const commands = useCommandStore((s) => s.commands);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const handleInputChange = useCallback(() => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollTo({ top: 0 });
+    });
+  }, []);
+
   const { apps, actions } = useMemo(() => {
     const apps: Command[] = [];
     const actions: Command[] = [];
@@ -50,8 +57,8 @@ export function CommandPalette({
       showCloseButton={false}
       className="top-[20%] translate-y-0 z-[60] max-w-[520px]"
     >
-      <CommandInput placeholder="Search commands..." />
-      <CommandList>
+      <CommandInput placeholder="Search commands..." onValueChange={handleInputChange} />
+      <CommandList ref={listRef}>
         <CommandEmpty>No commands found.</CommandEmpty>
         {apps.length > 0 && (
           <CommandGroup heading="Apps">

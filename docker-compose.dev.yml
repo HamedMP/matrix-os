@@ -60,6 +60,8 @@ services:
       # Persistent volumes
       - dev-node-modules:/app/node_modules
       - dev-home:/home/matrixos/home
+      # AI CLI auth (shared across all branch containers)
+      - ai-auth:/home/matrixos/.ai-auth
       # .next is ephemeral — persistent volume causes stale Turbopack cache
       # errors during HMR when host source files change
     env_file:
@@ -301,6 +303,9 @@ volumes:
   pgdata:
   dev-node-modules:
   dev-home:
+  ai-auth:
+    external: true
+    name: matrixos-ai-auth
   proxy-data:
   platform-data:
   user-data:

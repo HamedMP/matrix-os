@@ -4,6 +4,7 @@ import { KyselyPGlite } from "kysely-pglite";
 import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
+import { getService, discoverComponentKeys } from "../../packages/gateway/src/integrations/registry.js";
 import { createHmac } from "node:crypto";
 
 const WEBHOOK_SECRET = "whsec_e2e_test";
@@ -412,5 +413,144 @@ describe("E2E: cross-user isolation", () => {
 
     const refreshRes = await app.request(`/api/integrations/${aliceConnectionId}/refresh`, { method: "POST" });
     expect(refreshRes.status).toBe(403);
+  });
+});
+
+describe("E2E: Actions API (connect -> discover -> call action)", () => {
+  let db: PlatformDb;
+  let pglite: InstanceType<typeof KyselyPGlite>;
+  let pipedream: PipedreamConnectClient;
+  let app: Hono;
+  let userId: string;
+
+  beforeEach(async () => {
+    pglite = await KyselyPGlite.create();
+    db = createPlatformDb({ dialect: pglite.dialect });
+    await db.migrate();
+
+    pipedream = {
+      createConnectToken: vi.fn().mockResolvedValue({ token: "pd_tok_actions", expiresAt: "2026-12-31T00:00:00Z" }),
+      getOAuthUrl: vi.fn().mockReturnValue("https://pipedream.com/connect/proj?token=pd_tok_actions&app=gmail"),
+      callAction: vi.fn().mockResolvedValue({ raw: "proxy response" }),
+      discoverActions: vi.fn().mockImplementation(async (appSlug: string) => {
+        if (appSlug === "gmail") {
+          return [
+            { key: "gmail-send-email", name: "Send Email", description: "Send an email" },
+            { key: "gmail-list-messages", name: "List Messages", description: "List emails" },
+            { key: "gmail-get-message", name: "Get Message" },
+            { key: "gmail-search", name: "Search" },
+            { key: "gmail-list-labels", name: "List Labels" },
+          ];
+        }
+        return [];
+      }),
+      runAction: vi.fn().mockResolvedValue({
+        exports: { $summary: "Successfully sent email to test@example.com" },
+        ret: { messageId: "msg_e2e_123", threadId: "thread_e2e_456" },
+      }),
+      revokeAccount: vi.fn().mockResolvedValue(undefined),
+      listAccounts: vi.fn().mockResolvedValue([]),
+      getAppInfo: vi.fn().mockResolvedValue(null),
+    };
+
+    const routes = createIntegrationRoutes({
+      db,
+      pipedream,
+      webhookSecret: WEBHOOK_SECRET,
+      resolveUserId: async () => userId,
+    });
+    app = new Hono();
+    app.route("/api/integrations", routes);
+
+    const user = await db.createUser({
+      clerkId: "clerk_actions_e2e",
+      handle: "actionsuser",
+      displayName: "Actions E2E User",
+      email: "actions@example.com",
+      containerId: "container_actions_e2e",
+      pipedreamExternalId: "pd_ext_actions_e2e",
+    });
+    userId = user.id;
+  });
+
+  afterEach(async () => {
+    // Clean up componentKeys from global registry
+    for (const service of ["gmail", "google_calendar", "google_drive", "github", "slack", "discord"]) {
+      const svc = getService(service);
+      if (svc) {
+        for (const action of Object.values(svc.actions)) {
+          action.componentKey = undefined;
+        }
+      }
+    }
+    await db.destroy();
+  });
+
+  it("discovers component keys and uses runAction for service calls", async () => {
+    // Step 1: Discover component keys
+    const stats = await discoverComponentKeys(pipedream);
+    expect(stats.matched).toBeGreaterThan(0);
+    expect(stats.errors).toBe(0);
+
+    // Verify gmail send_email got a componentKey
+    const gmail = getService("gmail")!;
+    expect(gmail.actions.send_email.componentKey).toBe("gmail-send-email");
+
+    // Step 2: Connect Gmail via webhook
+    const webhookPayload = JSON.stringify({
+      external_user_id: "pd_ext_actions_e2e",
+      account_id: "pd_acc_actions_e2e",
+      app: "gmail",
+      label: "E2E Gmail",
+      email: "actionsuser@gmail.com",
+      scopes: ["read", "send"],
+    });
+    const webhookRes = await app.request("/api/integrations/webhook/connected", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pd-signature": signPayload(webhookPayload, WEBHOOK_SECRET),
+      },
+      body: webhookPayload,
+    });
+    expect(webhookRes.status).toBe(200);
+
+    // Step 3: Call action using Actions API
+    const callRes = await app.request("/api/integrations/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service: "gmail",
+        action: "send_email",
+        params: { to: "test@example.com", subject: "E2E Test", body: "Hello from Actions API" },
+      }),
+    });
+    expect(callRes.status).toBe(200);
+    const callData = await callRes.json();
+
+    // Verify the response uses the actions API format
+    expect(callData.summary).toBe("Successfully sent email to test@example.com");
+    expect(callData.data).toEqual({ messageId: "msg_e2e_123", threadId: "thread_e2e_456" });
+    expect(callData.service).toBe("gmail");
+    expect(callData.action).toBe("send_email");
+
+    // Verify runAction was called with correct configuredProps
+    expect(pipedream.runAction).toHaveBeenCalledWith({
+      externalUserId: "pd_ext_actions_e2e",
+      componentKey: "gmail-send-email",
+      configuredProps: {
+        gmail: { authProvisionId: "pd_acc_actions_e2e" },
+        to: "test@example.com",
+        subject: "E2E Test",
+        body: "Hello from Actions API",
+      },
+    });
+
+    // Verify callAction (proxy) was NOT used
+    expect(pipedream.callAction).not.toHaveBeenCalled();
+
+    // Step 4: Verify last_used_at was updated
+    const services = await db.listConnectedServices(userId);
+    expect(services[0].last_used_at).not.toBeNull();
   });
 });

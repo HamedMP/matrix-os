@@ -327,33 +327,33 @@ Agent A or B: T040-T044 (Service call validation in packages/gateway/src/integra
 
 ### 10A: Actions API Methods
 
-- [ ] T068 [P] Write failing test for discoverActions and runAction in tests/integrations/actions.test.ts (mock sdk.actions.list and sdk.actions.run)
-- [ ] T069 Add discoverActions(appSlug) method to PipedreamConnectClient: calls sdk.actions.list({ app: slug }), returns array of { key, name, description }
-- [ ] T070 Add runAction({ externalUserId, componentKey, configuredProps }) method: calls sdk.actions.run(), returns { exports, ret }. Timeout: 30s (actions are slower than proxy)
-- [ ] T071 Run tests to verify actions methods pass
-- [ ] T072 Commit actions API methods
+- [x] T068 [P] Write failing test for discoverActions and runAction in tests/integrations/actions.test.ts (mock sdk.actions.list and sdk.actions.run)
+- [x] T069 Add discoverActions(appSlug) method to PipedreamConnectClient: calls sdk.actions.list({ app: slug }), returns array of { key, name, description }
+- [x] T070 Add runAction({ externalUserId, componentKey, configuredProps }) method: calls sdk.actions.run(), returns { exports, ret }. Timeout: 30s (actions are slower than proxy)
+- [x] T071 Run tests to verify actions methods pass
+- [x] T072 Commit actions API methods
 
 ### 10B: Component Key Discovery
 
-- [ ] T073 [P] Write failing test for discoverComponentKeys in tests/integrations/registry.test.ts
-- [ ] T074 Add componentKey optional field to ServiceAction in packages/gateway/src/integrations/types.ts
-- [ ] T075 Implement discoverComponentKeys(pipedream) in registry.ts: iterates all services, calls discoverActions, matches "{app}-{action}" pattern, sets componentKey on matching actions
-- [ ] T076 Run tests to verify discovery passes
-- [ ] T077 Commit component key discovery
+- [x] T073 [P] Write failing test for discoverComponentKeys in tests/integrations/registry.test.ts
+- [x] T074 Add componentKey optional field to ServiceAction in packages/gateway/src/integrations/types.ts
+- [x] T075 Implement discoverComponentKeys(pipedream) in registry.ts: iterates all services, calls discoverActions, matches "{app}-{action}" pattern, sets componentKey on matching actions
+- [x] T076 Run tests to verify discovery passes
+- [x] T077 Commit component key discovery
 
 ### 10C: Update POST /call to Use Actions API
 
-- [ ] T078 Write failing test: POST /call with discovered componentKey calls runAction instead of callAction proxy
-- [ ] T079 Update POST /call in routes.ts: look up componentKey from action definition, build configuredProps with { [appSlug]: { authProvisionId: pipedream_account_id } }, call pipedream.runAction(), return { data: ret, summary: exports.$summary }
-- [ ] T080 Handle missing componentKey gracefully: if action has no discovered key, return 400 with helpful message
-- [ ] T081 Run tests to verify POST /call with actions API passes
-- [ ] T082 Commit routes update
+- [x] T078 Write failing test: POST /call with discovered componentKey calls runAction instead of callAction proxy
+- [x] T079 Update POST /call in routes.ts: look up componentKey from action definition, build configuredProps with { [appSlug]: { authProvisionId: pipedream_account_id } }, call pipedream.runAction(), return { data: ret, summary: exports.$summary }
+- [x] T080 Handle missing componentKey gracefully: if action has no discovered key, fall back to callAction proxy
+- [x] T081 Run tests to verify POST /call with actions API passes
+- [x] T082 Commit routes update
 
 ### 10D: Startup Wiring + E2E
 
-- [ ] T083 Call discoverComponentKeys(pipedream) in server.ts after mounting routes (non-blocking, log success/failure)
-- [ ] T084 Add E2E test: connect -> discover -> call action -> verify response has summary and ret
-- [ ] T085 Run full test suite: `bun run vitest run tests/integrations/`
+- [x] T083 Call discoverComponentKeys(pipedream) in server.ts after mounting routes (non-blocking, log success/failure)
+- [x] T084 Add E2E test: connect -> discover -> call action -> verify response has summary and ret
+- [x] T085 Run full test suite: `bun run vitest run tests/integrations/`
 - [ ] T086 Commit and rebuild Docker for testing
 
 ### Parallel Opportunities

@@ -61,6 +61,7 @@ import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient } from "./integrations/pipedream.js";
 import { createIntegrationRoutes } from "./integrations/routes.js";
+import { discoverComponentKeys } from "./integrations/registry.js";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -264,12 +265,19 @@ export async function createGateway(config: GatewayConfig) {
         db: platformDb,
         pipedream,
         webhookSecret: process.env.PIPEDREAM_WEBHOOK_SECRET ?? "",
-        resolveUserId: async () => {
-          const clerkId = process.env.MATRIX_CLERK_USER_ID ?? "default";
+        resolveUserId: async (c) => {
+          // Prefer platform-verified identity from proxy header
+          const platformUserId = c.req.header("x-platform-user-id");
+          if (platformUserId) {
+            const user = await platformDb!.getUserById(platformUserId);
+            if (user) return user.id;
+          }
+
+          // Local dev fallback: single-tenant from env vars
           const handle = process.env.MATRIX_HANDLE ?? "default";
+          const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
           const existing = await platformDb!.getUserByClerkId(clerkId);
           if (existing) {
-            // Ensure pipedream_external_id is set (stable across DB resets)
             if (!existing.pipedream_external_id) {
               await platformDb!.raw(
                 "UPDATE users SET pipedream_external_id = $1 WHERE id = $2",
@@ -284,18 +292,22 @@ export async function createGateway(config: GatewayConfig) {
             displayName: handle,
             email: `${handle}@matrix-os.local`,
             containerId: process.env.HOSTNAME ?? "local",
+            pipedreamExternalId: handle,
           });
-          // Set pipedream_external_id = handle for stability
-          await platformDb!.raw(
-            "UPDATE users SET pipedream_external_id = $1 WHERE id = $2",
-            [handle, user.id],
-          );
           return user.id;
         },
         broadcast,
       });
       app.route("/api/integrations", integrationRoutes);
       console.log("[platform-db] Integration routes mounted");
+
+      discoverComponentKeys(pipedream)
+        .then((stats) => {
+          console.log(`[integrations] Component keys discovered: ${stats.matched}/${stats.total} matched, ${stats.errors} errors`);
+        })
+        .catch((err) => {
+          console.error("[integrations] Component key discovery failed:", err instanceof Error ? err.message : err);
+        });
     } catch (err) {
       console.error("[platform-db] Failed to initialize:", (err as Error).message);
       platformDb = null;
