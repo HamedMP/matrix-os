@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
+import type { ServiceAction } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 
@@ -43,6 +44,59 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
     return false;
   }
   return timingSafeEqual(sigBuf, expBuf);
+}
+
+// ---------------------------------------------------------------------------
+// Per-action param validation
+// ---------------------------------------------------------------------------
+
+function validateActionParams(
+  actionDef: ServiceAction,
+  params: Record<string, unknown> | undefined,
+): { valid: true } | { valid: false; missing: string[]; typeErrors: string[] } {
+  const missing: string[] = [];
+  const typeErrors: string[] = [];
+
+  for (const [name, def] of Object.entries(actionDef.params)) {
+    const value = params?.[name];
+    if (def.required && (value === undefined || value === null)) {
+      missing.push(name);
+      continue;
+    }
+    if (value !== undefined && value !== null) {
+      const expectedType = def.type;
+      const actualType = typeof value;
+      if (expectedType === "string" && actualType !== "string") {
+        typeErrors.push(`${name}: expected string, got ${actualType}`);
+      } else if (expectedType === "number" && actualType !== "number") {
+        typeErrors.push(`${name}: expected number, got ${actualType}`);
+      } else if (expectedType === "boolean" && actualType !== "boolean") {
+        typeErrors.push(`${name}: expected boolean, got ${actualType}`);
+      } else if (expectedType === "object" && (actualType !== "object" || Array.isArray(value))) {
+        typeErrors.push(`${name}: expected object, got ${actualType}`);
+      }
+    }
+  }
+
+  if (missing.length > 0 || typeErrors.length > 0) {
+    return { valid: false, missing, typeErrors };
+  }
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Connection error classification
+// ---------------------------------------------------------------------------
+
+function isConnectionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("enetunreach");
+}
+
+function isTimeoutError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.name === "AbortError" || err.name === "TimeoutError" || err.message.includes("timed out");
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +277,23 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown action: ${action} for service ${service}` }, 400);
     }
 
+    // Validate action params against the registry definition
+    const paramValidation = validateActionParams(actionDef, params);
+    if (!paramValidation.valid) {
+      const parts: string[] = [];
+      if (paramValidation.missing.length > 0) {
+        parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
+      }
+      if (paramValidation.typeErrors.length > 0) {
+        parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
+      }
+      return c.json({
+        error: parts.join(". "),
+        missing: paramValidation.missing.length > 0 ? paramValidation.missing : undefined,
+        type_errors: paramValidation.typeErrors.length > 0 ? paramValidation.typeErrors : undefined,
+      }, 400);
+    }
+
     // Find the user's active connection for this service
     const connections = await db.listConnectedServices(uid);
     let connection = connections.find((s) => s.service === service);
@@ -230,7 +301,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       connection = connections.find((s) => s.service === service && s.account_label === label) ?? connection;
     }
     if (!connection) {
-      return c.json({ error: `Service ${service} is not connected` }, 404);
+      return c.json({
+        error: `Service ${service} is not connected`,
+        connect_hint: `Use POST /api/integrations/connect with { "service": "${service}" } to connect it first.`,
+      }, 404);
     }
 
     const user = await db.getUserById(uid);
@@ -249,7 +323,20 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ data, service, action });
     } catch (err: unknown) {
       if (err instanceof Error && (err as any).status === 429) {
-        return c.json({ error: "Rate limited by provider. Please try again later." }, 429);
+        const retryAfterRaw = (err as any).headers?.["retry-after"];
+        const retryAfter = retryAfterRaw ? parseInt(retryAfterRaw, 10) : 60;
+        return c.json(
+          { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        );
+      }
+      if (isTimeoutError(err)) {
+        console.error(`[integrations] callAction timeout for ${service}/${action}`);
+        return c.json({ error: "Integration call timed out" }, 504);
+      }
+      if (isConnectionError(err)) {
+        console.error(`[integrations] callAction connection error for ${service}/${action}:`, err);
+        return c.json({ error: "Integration service unavailable" }, 503);
       }
       console.error(`[integrations] callAction error for ${service}/${action}:`, err);
       return c.json({ error: "Integration call failed" }, 502);

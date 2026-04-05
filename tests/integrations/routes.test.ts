@@ -532,4 +532,197 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(400);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Phase 5: Enhanced call validation
+  // -----------------------------------------------------------------------
+
+  describe("POST /call -- param validation", () => {
+    beforeEach(async () => {
+      await db.connectService({
+        userId,
+        service: "gmail",
+        pipedreamAccountId: "pd_acc_val",
+        accountLabel: "Validation Test",
+        scopes: ["read", "send"],
+      });
+    });
+
+    it("rejects missing required params for an action", async () => {
+      // send_email requires to, subject, body
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "send_email",
+          params: { to: "alice@example.com" },
+          // missing subject and body
+        }),
+      });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/required/i);
+      expect(data.missing).toBeDefined();
+      expect(data.missing).toContain("subject");
+      expect(data.missing).toContain("body");
+    });
+
+    it("accepts call with all required params", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "send_email",
+          params: { to: "a@b.com", subject: "Hi", body: "Hello" },
+        }),
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("accepts call with no params when action has no required params", async () => {
+      // list_labels has no required params
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "list_labels",
+        }),
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("rejects param with wrong type", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "gmail",
+          action: "list_messages",
+          params: { maxResults: "not_a_number" },
+        }),
+      });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/type/i);
+    });
+  });
+
+  describe("POST /call -- unconnected service error", () => {
+    it("includes connect hint when service is not connected", async () => {
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "github", action: "list_repos" }),
+      });
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toContain("not connected");
+      expect(data.connect_hint).toBeDefined();
+      expect(data.connect_hint).toMatch(/connect/i);
+    });
+  });
+
+  describe("POST /call -- rate limiting", () => {
+    beforeEach(async () => {
+      await db.connectService({
+        userId,
+        service: "gmail",
+        pipedreamAccountId: "pd_acc_rl",
+        accountLabel: "Rate Limit Test",
+        scopes: ["read"],
+      });
+    });
+
+    it("returns 429 with Retry-After header on rate limit", async () => {
+      const rateLimitError = new Error("Rate limited");
+      (rateLimitError as any).status = 429;
+      (rateLimitError as any).headers = { "retry-after": "30" };
+      pipedream.callAction = vi.fn().mockRejectedValue(rateLimitError);
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", action: "list_messages" }),
+      });
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("30");
+      const data = await res.json();
+      expect(data.error).toMatch(/rate.?limit/i);
+      expect(data.retry_after).toBe(30);
+    });
+
+    it("returns default Retry-After when not provided by upstream", async () => {
+      const rateLimitError = new Error("Rate limited");
+      (rateLimitError as any).status = 429;
+      pipedream.callAction = vi.fn().mockRejectedValue(rateLimitError);
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", action: "list_messages" }),
+      });
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("60");
+      const data = await res.json();
+      expect(data.retry_after).toBe(60);
+    });
+  });
+
+  describe("POST /call -- Pipedream down", () => {
+    beforeEach(async () => {
+      await db.connectService({
+        userId,
+        service: "gmail",
+        pipedreamAccountId: "pd_acc_down",
+        accountLabel: "Down Test",
+        scopes: ["read"],
+      });
+    });
+
+    it("returns 503 when Pipedream is unreachable", async () => {
+      pipedream.callAction = vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", action: "list_messages" }),
+      });
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.error).toMatch(/unavailable/i);
+    });
+
+    it("returns 504 on timeout", async () => {
+      const timeoutErr = new Error("The operation was aborted");
+      timeoutErr.name = "AbortError";
+      pipedream.callAction = vi.fn().mockRejectedValue(timeoutErr);
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", action: "list_messages" }),
+      });
+      expect(res.status).toBe(504);
+      const data = await res.json();
+      expect(data.error).toMatch(/timed?\s*out|timeout/i);
+    });
+
+    it("returns 502 for other Pipedream errors", async () => {
+      const err = new Error("Internal server error");
+      (err as any).status = 500;
+      pipedream.callAction = vi.fn().mockRejectedValue(err);
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", action: "list_messages" }),
+      });
+      expect(res.status).toBe(502);
+      const data = await res.json();
+      expect(data.error).toMatch(/failed/i);
+    });
+  });
 });
