@@ -152,7 +152,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // -----------------------------------------------------------------------
 
   async function requireOwnedService(c: Context, id: string, uid: string) {
-    if (!UUID_RE.test(id)) return null;
+    if (!UUID_RE.test(id)) return "invalid" as const;
     const svc = await db.getConnectedService(id);
     if (!svc) return null;
     if (svc.user_id !== uid) return "forbidden" as const;
@@ -169,7 +169,6 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
   async function loadLogos() {
     if (logosLoaded) return;
-    logosLoaded = true;
     const services = listServices();
     const results = await Promise.allSettled(
       services.map(async (s) => {
@@ -185,6 +184,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         console.error("[integrations] Logo fetch failed:", r.reason);
       }
     }
+    logosLoaded = true;
   }
   loadLogos();
 
@@ -226,7 +226,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      const newAccounts = pdAccounts.filter((acc) => !existingPdIds.has(acc.id));
+      const newAccounts = pdAccounts.filter((acc) => !existingPdIds.has(acc.id) && getService(acc.app));
       await Promise.all(
         newAccounts.map((acc) =>
           db.connectService({
@@ -326,6 +326,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     const { external_user_id, account_id, app: appName, label, email, scopes } = parsed.data;
+
+    if (!getService(appName)) {
+      return c.json({ error: "Unsupported app" }, 400);
+    }
 
     const webhookUser = await db.getUserByPipedreamExternalId(external_user_id);
     if (!webhookUser) {
@@ -505,6 +509,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const id = c.req.param("id");
     const result = await requireOwnedService(c, id, uid);
+    if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
 
@@ -528,6 +533,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const id = c.req.param("id");
     const result = await requireOwnedService(c, id, uid);
+    if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
 
@@ -554,6 +560,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const id = c.req.param("id");
     const result = await requireOwnedService(c, id, uid);
+    if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
     if (result.status === "revoked") return c.json({ error: "Not found" }, 404);

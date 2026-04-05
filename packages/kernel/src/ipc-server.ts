@@ -1047,19 +1047,11 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
         {
           service: z.string().describe("Service to call: gmail, google_calendar, google_drive, github, slack, discord"),
           action: z.string().describe("Action to perform (e.g. list_messages, send_email, list_events, list_repos, send_message)"),
-          params: z.string().optional().describe("JSON string of action parameters"),
+          params: z.record(z.string(), z.unknown()).optional().describe("Action parameters as key-value pairs"),
           label: z.string().optional().describe("Which account to use if multiple are connected (e.g. 'Work Gmail')"),
         },
         async ({ service, action, params, label }) => {
-          let parsedParams: Record<string, unknown> | undefined;
-          if (params) {
-            try {
-              parsedParams = JSON.parse(params);
-            } catch {
-              return { content: [{ type: "text" as const, text: "Invalid params JSON. Please provide a valid JSON string." }] };
-            }
-          }
-          return callServiceHandler({ service, action, params: parsedParams, label });
+          return callServiceHandler({ service, action, params, label });
         },
       ),
     ],
