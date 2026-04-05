@@ -226,20 +226,23 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      let synced = 0;
-      for (const acc of pdAccounts) {
-        if (existingPdIds.has(acc.id)) continue;
-        await db.connectService({
-          userId: uid,
-          service: acc.app,
-          pipedreamAccountId: acc.id,
-          accountLabel: acc.app,
-          accountEmail: acc.email,
-          scopes: [],
-        });
-        synced++;
+      const newAccounts = pdAccounts.filter((acc) => !existingPdIds.has(acc.id));
+      await Promise.all(
+        newAccounts.map((acc) =>
+          db.connectService({
+            userId: uid,
+            service: acc.app,
+            pipedreamAccountId: acc.id,
+            accountLabel: acc.app,
+            accountEmail: acc.email,
+            scopes: [],
+          }),
+        ),
+      );
+      for (const acc of newAccounts) {
         emit({ type: "integration:connected", service: acc.app, accountLabel: acc.app });
       }
+      const synced = newAccounts.length;
 
       const services = await db.listConnectedServices(uid);
       return c.json({ synced, services });
@@ -278,7 +281,13 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const user = await db.getUserById(uid);
     const externalId = user?.pipedream_external_id ?? uid;
 
-    const { connectLinkUrl } = await pipedream.createConnectToken(externalId);
+    let connectLinkUrl: string;
+    try {
+      ({ connectLinkUrl } = await pipedream.createConnectToken(externalId));
+    } catch (err) {
+      console.error("[integrations] createConnectToken error:", err instanceof Error ? err.message : err);
+      return c.json({ error: "Failed to initiate connection. Please try again." }, 502);
+    }
     const url = pipedream.getOAuthUrl(connectLinkUrl, def.pipedreamApp);
 
     if (label) {
@@ -320,7 +329,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const webhookUser = await db.getUserByPipedreamExternalId(external_user_id);
     if (!webhookUser) {
-      return c.json({ error: "User not found" }, 404);
+      console.warn("[integrations] Webhook for unknown external_user_id:", external_user_id);
+      return c.json({ error: "Unknown user" }, 400);
     }
     const webhookUserId = webhookUser.id;
 
@@ -332,14 +342,19 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       : (label ?? appName);
     pendingLabels.delete(pendingKey);
 
-    await db.connectService({
-      userId: webhookUserId,
-      service: appName,
-      pipedreamAccountId: account_id,
-      accountLabel: resolvedLabel,
-      accountEmail: email,
-      scopes: scopes ?? [],
-    });
+    try {
+      await db.connectService({
+        userId: webhookUserId,
+        service: appName,
+        pipedreamAccountId: account_id,
+        accountLabel: resolvedLabel,
+        accountEmail: email,
+        scopes: scopes ?? [],
+      });
+    } catch (err) {
+      console.error("[integrations] webhook connectService failed:", err instanceof Error ? err.message : err);
+      return c.json({ error: "Internal error" }, 500);
+    }
 
     emit({ type: "integration:connected", service: appName, accountLabel: resolvedLabel });
 

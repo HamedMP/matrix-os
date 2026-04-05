@@ -21,9 +21,12 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    command: "E2E_TEST_BYPASS=1 pnpm start",
+    command: "pnpm start",
     port: 3000,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
+    env: {
+      E2E_TEST_BYPASS: "1",
+    },
   },
 });

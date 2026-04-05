@@ -1,5 +1,6 @@
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const API_TIMEOUT_MS = 10_000;
+const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -93,7 +94,7 @@ export async function callServiceHandler(
         params: input.params,
         label: input.label,
       }),
-      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      signal: AbortSignal.timeout(ACTION_TIMEOUT_MS),
     });
 
     if (!res.ok) {

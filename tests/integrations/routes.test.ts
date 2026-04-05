@@ -238,7 +238,7 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(401);
     });
 
-    it("returns 404 when external user not found", async () => {
+    it("returns 400 when external user not found", async () => {
       const payload = JSON.stringify({
         external_user_id: "nonexistent_user",
         account_id: "pd_acc_x",
@@ -254,7 +254,7 @@ describe("Integration Routes", () => {
         },
         body: payload,
       });
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(400);
     });
   });
 
