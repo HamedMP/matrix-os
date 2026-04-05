@@ -5,6 +5,7 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
+import { useNativeDesktop } from "@/hooks/useNativeDesktop";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
@@ -769,7 +770,11 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const allModes = useDesktopMode((s) => s.allModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const modeConfig = getModeConfig(desktopMode);
+  const rawModeConfig = getModeConfig(desktopMode);
+  const { isEmbedded } = useNativeDesktop();
+  const modeConfig = isEmbedded
+    ? { ...rawModeConfig, showDock: false, showWindows: true, showBottomPanel: false }
+    : rawModeConfig;
 
   // When switching from canvas to a non-canvas mode, cascade windows to fit
   // the viewport. Canvas positions (from autoArrange) use a wide grid that

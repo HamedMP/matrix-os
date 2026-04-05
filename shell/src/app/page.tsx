@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useChatState } from "@/hooks/useChatState";
@@ -8,6 +9,7 @@ import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { Desktop } from "@/components/Desktop";
+import { AppViewer } from "@/components/AppViewer";
 import { ChatPanel } from "@/components/ChatPanel";
 import { CommandPalette } from "@/components/CommandPalette";
 import { InputBar } from "@/components/InputBar";
@@ -17,11 +19,94 @@ import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { AppStore } from "@/components/app-store/AppStore";
 import { BottomPanel } from "@/components/BottomPanel";
+import { FileBrowser } from "@/components/file-browser/FileBrowser";
+import { Settings } from "@/components/Settings";
+import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { VoiceMode } from "@/components/VoiceMode";
 import { Button } from "@/components/ui/button";
 import { MessageSquareIcon } from "lucide-react";
 
 export default function Home() {
+  const searchParams = useSearchParams();
+  const embeddedAppSlug =
+    searchParams.get("desktop") === "1" ? searchParams.get("app") : null;
+
+  if (embeddedAppSlug) {
+    return <EmbeddedDesktopApp slug={embeddedAppSlug} />;
+  }
+
+  return <HomeShell />;
+}
+
+function EmbeddedDesktopApp({ slug }: { slug: string }) {
+  useTheme();
+
+  if (slug === "terminal") {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background">
+        <TerminalApp embedded />
+      </div>
+    );
+  }
+
+  if (slug === "files") {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background">
+        <FileBrowser windowId="embedded-files" />
+      </div>
+    );
+  }
+
+  if (slug === "chat") {
+    return <EmbeddedChatApp />;
+  }
+
+  if (slug === "settings") {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background">
+        <Settings open onOpenChange={() => {}} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-background">
+      <AppViewer path={`apps/${slug}/index.html`} />
+    </div>
+  );
+}
+
+function EmbeddedChatApp() {
+  useTheme();
+  const chat = useChatState();
+
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-background">
+      <ChatPanel
+        messages={chat.messages}
+        sessionId={chat.sessionId}
+        busy={chat.busy}
+        connected={chat.connected}
+        conversations={chat.conversations}
+        onNewChat={chat.newChat}
+        onSwitchConversation={chat.switchConversation}
+        onClose={() => {}}
+        onSubmit={chat.submitMessage}
+        inputBar={
+          <InputBar
+            sessionId={chat.sessionId}
+            busy={chat.busy}
+            queueLength={chat.queue.length}
+            onSubmit={chat.submitMessage}
+            embedded
+          />
+        }
+      />
+    </div>
+  );
+}
+
+function HomeShell() {
   useTheme();
   useDesktopConfig();
 

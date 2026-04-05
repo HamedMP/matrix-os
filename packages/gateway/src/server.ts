@@ -1729,6 +1729,10 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
+  // Container management routes (desktop app)
+  const { createContainerRoutes } = await import("./container-routes.js");
+  app.route("/api/container", createContainerRoutes());
+
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);

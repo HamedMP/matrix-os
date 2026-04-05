@@ -38,8 +38,9 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
-      "node-pty",
+      "electron",
       "esbuild",
+      "node-pty",
       "sharp",
       "unrs-resolver",
       "@next/swc-linux-arm64-musl",

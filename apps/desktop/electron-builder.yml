@@ -1,0 +1,39 @@
+appId: com.matrix-os.desktop
+productName: Matrix OS
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+  - "!out/**/*.map"
+mac:
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+  category: public.app-category.developer-tools
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  icon: build/icon.icns
+  extendInfo:
+    NSBluetoothAlwaysUsageDescription: "Matrix OS needs Bluetooth for passkey authentication."
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+publish:
+  provider: github
+  owner: HamedMP
+  repo: matrix-os
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

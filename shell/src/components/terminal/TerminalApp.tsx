@@ -78,15 +78,19 @@ const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
   initialCommand?: string;
+  embedded?: boolean;
 }
 
-export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
+export function TerminalApp({
+  initialCommand,
+  embedded = false,
+}: TerminalAppProps = {}) {
   const theme = useTheme();
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !embedded);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
