@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SecurityBadge } from "@/components/app-store/SecurityBadge";
 import { ReviewSection } from "@/components/app-store/ReviewSection";
@@ -19,6 +20,37 @@ async function fetchListing(author: string, slug: string) {
   } catch {
     return null;
   }
+}
+
+export async function generateMetadata({ params }: StoreListingPageProps): Promise<Metadata> {
+  const { author, slug } = await params;
+  const listing = await fetchListing(author, slug);
+
+  if (!listing) {
+    return { title: "App Not Found - Matrix OS Store" };
+  }
+
+  const title = `${listing.name} - Matrix OS Store`;
+  const description = listing.description ?? `${listing.name} on the Matrix OS App Store`;
+  const url = `https://matrix-os.com/store/${author}/${slug}`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url,
+      siteName: "Matrix OS",
+      type: "website",
+      ...(listing.icon_url ? { images: [{ url: listing.icon_url }] } : {}),
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+    },
+  };
 }
 
 export default async function StoreListingPage({ params }: StoreListingPageProps) {

@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Kysely } from 'kysely';
+import { z } from 'zod/v4';
 import type { GalleryDatabase } from './gallery/types.js';
 import {
   listPublic,
@@ -23,12 +25,66 @@ import {
   getRatingDistribution,
 } from './gallery/reviews.js';
 
+// --- Zod schemas for request validation ---
+
+const ReviewSubmitSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  body: z.string().max(2000).optional(),
+});
+
+const ReviewUpdateSchema = z.object({
+  rating: z.number().int().min(1).max(5).optional(),
+  body: z.string().max(2000).optional(),
+});
+
+const AuthorResponseSchema = z.object({
+  response: z.string().min(1).max(2000),
+});
+
+const DelistSchema = z.object({
+  reason: z.string().min(1).max(500).optional(),
+});
+
+// --- Rate limiter for gallery mutations ---
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_WRITES = 30;
+const writeCounters = new Map<string, { count: number; windowStart: number }>();
+const MAX_TRACKED_IPS = 10_000;
+
+function checkWriteRate(userId: string): boolean {
+  const now = Date.now();
+  let record = writeCounters.get(userId);
+  if (!record || now - record.windowStart > RATE_WINDOW_MS) {
+    if (writeCounters.size >= MAX_TRACKED_IPS) {
+      const oldest = [...writeCounters.entries()].sort((a, b) => a[1].windowStart - b[1].windowStart)[0];
+      if (oldest) writeCounters.delete(oldest[0]);
+    }
+    record = { count: 0, windowStart: now };
+    writeCounters.set(userId, record);
+  }
+  record.count++;
+  return record.count <= RATE_MAX_WRITES;
+}
+
+// --- Helper: extract authenticated user or return 401 ---
+function requireAuth(c: { req: { header: (name: string) => string | undefined } }): string | null {
+  return c.req.header('x-user-id') ?? null;
+}
+
 /**
  * Gallery store API -- Postgres/Kysely backed.
  * Mount: /api/store
  */
 export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono {
   const api = new Hono();
+
+  // Body limit for all POST/PUT/DELETE
+  api.use('*', async (c, next) => {
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(c.req.method)) {
+      return bodyLimit({ maxSize: 64 * 1024 })(c, next);
+    }
+    return next();
+  });
 
   // GET /apps -- browse gallery listings
   api.get('/apps', async (c) => {
@@ -76,7 +132,7 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
 
   // GET /installations -- user's installed apps (authenticated)
   api.get('/installations', async (c) => {
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
     }
@@ -89,7 +145,7 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
   // GET /apps/:id/audit -- latest audit results (author only)
   api.get('/apps/:id/audit', async (c) => {
     const listingId = c.req.param('id');
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
 
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
@@ -132,7 +188,7 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
 
   // GET /installations/updates -- user's installations with update status
   api.get('/installations/updates', async (c) => {
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
     }
@@ -171,24 +227,28 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
   // POST /apps/:id/reviews -- submit a review (requires installation)
   api.post('/apps/:id/reviews', async (c) => {
     const listingId = c.req.param('id');
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
     }
 
-    const body = await c.req.json<{ rating: number; body?: string }>();
-    if (!body.rating || body.rating < 1 || body.rating > 5) {
-      return c.json({ error: 'Rating must be between 1 and 5' }, 400);
+    if (!checkWriteRate(userId)) {
+      return c.json({ error: 'Too many requests' }, 429);
     }
 
-    // Installation check: reviewer must have installed the app
+    const raw = await c.req.json().catch(() => null);
+    const parsed = ReviewSubmitSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request', details: parsed.error.issues }, 400);
+    }
+
     const installation = await getByUserAndListing(galleryDb, userId, listingId);
     if (!installation) {
       return c.json({ error: 'You must install this app before reviewing it' }, 403);
     }
 
     try {
-      const review = await submitReview(galleryDb, listingId, userId, body.rating, body.body);
+      const review = await submitReview(galleryDb, listingId, userId, parsed.data.rating, parsed.data.body);
       return c.json(review, 201);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to submit review';
@@ -202,18 +262,23 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
   // PUT /apps/:id/reviews/:reviewId -- update a review
   api.put('/apps/:id/reviews/:reviewId', async (c) => {
     const reviewId = c.req.param('reviewId');
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
     }
 
-    const body = await c.req.json<{ rating?: number; body?: string }>();
-    if (body.rating !== undefined && (body.rating < 1 || body.rating > 5)) {
-      return c.json({ error: 'Rating must be between 1 and 5' }, 400);
+    if (!checkWriteRate(userId)) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+
+    const raw = await c.req.json().catch(() => null);
+    const parsed = ReviewUpdateSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request', details: parsed.error.issues }, 400);
     }
 
     try {
-      const review = await updateReview(galleryDb, reviewId, userId, body);
+      const review = await updateReview(galleryDb, reviewId, userId, parsed.data);
       return c.json(review);
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
@@ -227,9 +292,13 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
   // DELETE /apps/:id/reviews/:reviewId -- delete a review
   api.delete('/apps/:id/reviews/:reviewId', async (c) => {
     const reviewId = c.req.param('reviewId');
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (!checkWriteRate(userId)) {
+      return c.json({ error: 'Too many requests' }, 429);
     }
 
     try {
@@ -247,18 +316,23 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
   // POST /apps/:id/reviews/:reviewId/respond -- author responds to review
   api.post('/apps/:id/reviews/:reviewId/respond', async (c) => {
     const reviewId = c.req.param('reviewId');
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
     }
 
-    const body = await c.req.json<{ response: string }>();
-    if (!body.response) {
-      return c.json({ error: 'Response text is required' }, 400);
+    if (!checkWriteRate(userId)) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+
+    const raw = await c.req.json().catch(() => null);
+    const parsed = AuthorResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request', details: parsed.error.issues }, 400);
     }
 
     try {
-      const review = await addAuthorResponse(galleryDb, reviewId, userId, body.response);
+      const review = await addAuthorResponse(galleryDb, reviewId, userId, parsed.data.response);
       return c.json(review);
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
@@ -275,9 +349,13 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
   // POST /apps/:id/reviews/:reviewId/flag -- flag a review
   api.post('/apps/:id/reviews/:reviewId/flag', async (c) => {
     const reviewId = c.req.param('reviewId');
-    const userId = c.req.header('x-user-id');
+    const userId = requireAuth(c);
     if (!userId) {
       return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (!checkWriteRate(userId)) {
+      return c.json({ error: 'Too many requests' }, 429);
     }
 
     try {
@@ -290,6 +368,106 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
       }
       return c.json({ error: 'Failed to flag review' }, 500);
     }
+  });
+
+  // --- Delisting & Flagging Endpoints (FR-035, FR-038) ---
+
+  // POST /apps/:id/delist -- author delists their app
+  api.post('/apps/:id/delist', async (c) => {
+    const listingId = c.req.param('id');
+    const userId = requireAuth(c);
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = DelistSchema.safeParse(raw);
+
+    const listing = await galleryDb.selectFrom('app_listings')
+      .select(['id', 'author_id', 'status'])
+      .where('id', '=', listingId)
+      .executeTakeFirst();
+
+    if (!listing) {
+      return c.json({ error: 'Listing not found' }, 404);
+    }
+
+    if (listing.author_id !== userId) {
+      return c.json({ error: 'Only the listing author can delist' }, 403);
+    }
+
+    if (listing.status === 'delisted') {
+      return c.json({ error: 'Listing is already delisted' }, 400);
+    }
+
+    await galleryDb.updateTable('app_listings')
+      .set({ status: 'delisted', updated_at: new Date() })
+      .where('id', '=', listingId)
+      .execute();
+
+    return c.json({ delisted: true, listingId });
+  });
+
+  // POST /apps/:id/relist -- author relists their app
+  api.post('/apps/:id/relist', async (c) => {
+    const listingId = c.req.param('id');
+    const userId = requireAuth(c);
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const listing = await galleryDb.selectFrom('app_listings')
+      .select(['id', 'author_id', 'status'])
+      .where('id', '=', listingId)
+      .executeTakeFirst();
+
+    if (!listing) {
+      return c.json({ error: 'Listing not found' }, 404);
+    }
+
+    if (listing.author_id !== userId) {
+      return c.json({ error: 'Only the listing author can relist' }, 403);
+    }
+
+    if (listing.status !== 'delisted') {
+      return c.json({ error: 'Listing is not delisted' }, 400);
+    }
+
+    await galleryDb.updateTable('app_listings')
+      .set({ status: 'active', updated_at: new Date() })
+      .where('id', '=', listingId)
+      .execute();
+
+    return c.json({ relisted: true, listingId });
+  });
+
+  // POST /apps/:id/flag -- flag a listing for review (any authenticated user)
+  api.post('/apps/:id/flag', async (c) => {
+    const listingId = c.req.param('id');
+    const userId = requireAuth(c);
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (!checkWriteRate(userId)) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+
+    const listing = await galleryDb.selectFrom('app_listings')
+      .select(['id', 'status'])
+      .where('id', '=', listingId)
+      .executeTakeFirst();
+
+    if (!listing) {
+      return c.json({ error: 'Listing not found' }, 404);
+    }
+
+    await galleryDb.updateTable('app_listings')
+      .set({ status: 'flagged', updated_at: new Date() })
+      .where('id', '=', listingId)
+      .execute();
+
+    return c.json({ flagged: true, listingId });
   });
 
   return api;
