@@ -151,11 +151,36 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   }
 
   // -----------------------------------------------------------------------
-  // GET /available -- public, no auth
+  // GET /available -- public, no auth. Enriches registry with Pipedream logos.
   // -----------------------------------------------------------------------
 
+  const logoCache = new Map<string, string>();
+  let logosLoaded = false;
+
+  async function loadLogos() {
+    if (logosLoaded) return;
+    logosLoaded = true;
+    const services = listServices();
+    const results = await Promise.allSettled(
+      services.map(async (s) => {
+        const info = await pipedream.getAppInfo(s.pipedreamApp);
+        if (info?.imgSrc) logoCache.set(s.id, info.imgSrc);
+      }),
+    );
+    for (const r of results) {
+      if (r.status === "rejected") {
+        console.error("[integrations] Logo fetch failed:", r.reason);
+      }
+    }
+  }
+  loadLogos();
+
   app.get("/available", (c) => {
-    return c.json(listServices());
+    const services = listServices().map((s) => ({
+      ...s,
+      logoUrl: logoCache.get(s.id) || s.logoUrl,
+    }));
+    return c.json(services);
   });
 
   // -----------------------------------------------------------------------

@@ -29,6 +29,8 @@ export interface PipedreamConnectClient {
     app: string;
     email?: string;
   }>>;
+
+  getAppInfo(slug: string): Promise<{ name: string; imgSrc: string; description?: string } | null>;
 }
 
 const API_TIMEOUT_SECONDS = 10;
@@ -80,6 +82,26 @@ export function createPipedreamClient(
       await sdk.accounts.delete(accountId, {
         timeoutInSeconds: API_TIMEOUT_SECONDS,
       });
+    },
+
+    async getAppInfo(slug: string) {
+      try {
+        const result = await sdk.apps.list(
+          { q: slug, limit: 1, sortKey: "featured_weight", sortDirection: "desc" } as any,
+          { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        );
+        const items = (result as any)?.data ?? [];
+        const match = items.find((a: any) => (a.nameSlug ?? a.name_slug) === slug);
+        if (!match) return null;
+        return {
+          name: match.name ?? slug,
+          imgSrc: match.imgSrc ?? match.img_src ?? "",
+          description: match.description ?? undefined,
+        };
+      } catch (err) {
+        console.error("[pipedream] getAppInfo failed for", slug, ":", err instanceof Error ? err.message : err);
+        return null;
+      }
     },
 
     async listAccounts(externalUserId: string) {
