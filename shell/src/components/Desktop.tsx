@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/context-menu";
 import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
+import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { SetupScreen } from "./SetupScreen";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -993,6 +994,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
                 Settings
               </TooltipContent>
             </Tooltip>
+            <ConnectionIndicator />
             <UserButton />
           </div>
         </aside>}

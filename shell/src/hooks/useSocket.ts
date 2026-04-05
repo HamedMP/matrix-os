@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getGatewayWs } from "@/lib/gateway";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
+import { useConnectionHealth } from "./useConnectionHealth";
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
@@ -53,6 +54,7 @@ const heartbeat = createSocketHealth({
 function setConnectionState(state: typeof connectionState) {
   if (connectionState === state) return;
   connectionState = state;
+  useConnectionHealth.setState({ state });
   for (const listener of stateListeners) listener();
 }
 
