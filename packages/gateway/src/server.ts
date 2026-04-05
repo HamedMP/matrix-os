@@ -265,12 +265,19 @@ export async function createGateway(config: GatewayConfig) {
         pipedream,
         webhookSecret: process.env.PIPEDREAM_WEBHOOK_SECRET ?? "",
         resolveUserId: async () => {
-          // Single-user mode: find or create default user from env
           const clerkId = process.env.MATRIX_CLERK_USER_ID ?? "default";
-          const existing = await platformDb!.getUserByClerkId(clerkId);
-          if (existing) return existing.id;
-          // Auto-create on first request
           const handle = process.env.MATRIX_HANDLE ?? "default";
+          const existing = await platformDb!.getUserByClerkId(clerkId);
+          if (existing) {
+            // Ensure pipedream_external_id is set (stable across DB resets)
+            if (!existing.pipedream_external_id) {
+              await platformDb!.raw(
+                "UPDATE users SET pipedream_external_id = $1 WHERE id = $2",
+                [handle, existing.id],
+              );
+            }
+            return existing.id;
+          }
           const user = await platformDb!.createUser({
             clerkId,
             handle,
@@ -278,6 +285,11 @@ export async function createGateway(config: GatewayConfig) {
             email: `${handle}@matrix-os.local`,
             containerId: process.env.HOSTNAME ?? "local",
           });
+          // Set pipedream_external_id = handle for stability
+          await platformDb!.raw(
+            "UPDATE users SET pipedream_external_id = $1 WHERE id = $2",
+            [handle, user.id],
+          );
           return user.id;
         },
         broadcast,
