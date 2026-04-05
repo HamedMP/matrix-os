@@ -410,5 +410,119 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     return c.json({ id, status: "active", service: result.service });
   });
 
+  // -----------------------------------------------------------------------
+  // User Apps -- CRUD + integration manifest validation
+  // -----------------------------------------------------------------------
+
+  const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+  const CreateAppBodySchema = z.object({
+    name: z.string().min(1).max(100),
+    slug: z.string().regex(SAFE_SLUG, "Slug must be lowercase alphanumeric with hyphens"),
+    description: z.string().max(500).optional(),
+    integrations: z.object({
+      required: z.array(z.string()).optional(),
+      optional: z.array(z.string()).optional(),
+    }).optional(),
+  });
+
+  app.get("/apps", async (c) => {
+    const uid = await requireUser(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    const apps = await db.listUserApps(uid);
+    return c.json(apps);
+  });
+
+  app.get("/apps/:appId", async (c) => {
+    const uid = await requireUser(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    const appId = c.req.param("appId");
+    if (!UUID_RE.test(appId)) return c.json({ error: "Invalid app ID" }, 400);
+
+    const userApp = await db.getUserApp(appId);
+    if (!userApp) return c.json({ error: "Not found" }, 404);
+    if (userApp.user_id !== uid) return c.json({ error: "Forbidden" }, 403);
+
+    // Enrich with integration status
+    const connections = await db.listConnectedServices(uid);
+    const connectedIds = new Set(connections.map((c) => c.service));
+    const required = userApp.services_used;
+    const missing = required.filter((s) => !connectedIds.has(s));
+
+    return c.json({
+      ...userApp,
+      integration_status: {
+        connected: required.filter((s) => connectedIds.has(s)),
+        missing,
+        ready: missing.length === 0,
+      },
+    });
+  });
+
+  app.post("/apps", bodyLimit({ maxSize: 8192 }), async (c) => {
+    const uid = await requireUser(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const parsed = CreateAppBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
+    }
+
+    const { name, slug, description, integrations } = parsed.data;
+
+    // Validate integration manifest against service registry
+    const allServices = new Set([
+      ...(integrations?.required ?? []),
+      ...(integrations?.optional ?? []),
+    ]);
+    const unknownServices: string[] = [];
+    for (const svcId of allServices) {
+      if (!getService(svcId)) {
+        unknownServices.push(svcId);
+      }
+    }
+    if (unknownServices.length > 0) {
+      return c.json({
+        error: "Unknown services in integration manifest",
+        unknown_services: unknownServices,
+        available: listServices().map((s) => s.id),
+      }, 400);
+    }
+
+    // services_used = required services (the ones the app depends on)
+    const servicesUsed = integrations?.required ?? [];
+
+    const userApp = await db.createUserApp({
+      userId: uid,
+      name,
+      slug,
+      description,
+      servicesUsed,
+    });
+
+    // Check which required services are already connected
+    const connections = await db.listConnectedServices(uid);
+    const connectedIds = new Set(connections.map((c) => c.service));
+    const missing = servicesUsed.filter((s) => !connectedIds.has(s));
+
+    return c.json({
+      ...userApp,
+      integration_status: {
+        connected: servicesUsed.filter((s) => connectedIds.has(s)),
+        missing,
+        ready: missing.length === 0,
+      },
+    }, 201);
+  });
+
   return app;
 }

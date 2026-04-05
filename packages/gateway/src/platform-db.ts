@@ -96,6 +96,14 @@ export interface ConnectServiceInput {
   scopes: string[];
 }
 
+export interface CreateUserAppInput {
+  userId: string;
+  name: string;
+  slug: string;
+  description?: string;
+  servicesUsed: string[];
+}
+
 // ---------------------------------------------------------------------------
 // PlatformDb interface
 // ---------------------------------------------------------------------------
@@ -113,6 +121,10 @@ export interface PlatformDb {
   disconnectService(id: string): Promise<void>;
   updateServiceStatus(id: string, status: string): Promise<void>;
   touchServiceUsage(id: string): Promise<void>;
+
+  createUserApp(input: CreateUserAppInput): Promise<UserAppsTable>;
+  listUserApps(userId: string): Promise<UserAppsTable[]>;
+  getUserApp(id: string): Promise<UserAppsTable | null>;
 
   raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   destroy(): Promise<void>;
@@ -307,6 +319,47 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .set({ last_used_at: sql`now()` })
         .where("id", "=", id)
         .execute();
+    },
+
+    async createUserApp(input: CreateUserAppInput): Promise<UserAppsTable> {
+      const result = await kysely
+        .insertInto("user_apps")
+        .values({
+          user_id: input.userId,
+          name: input.name,
+          slug: input.slug,
+          description: input.description ?? null,
+          services_used: input.servicesUsed,
+        })
+        .onConflict((oc) =>
+          oc.columns(["user_id", "slug"]).doUpdateSet({
+            name: input.name,
+            description: input.description ?? null,
+            services_used: input.servicesUsed,
+            updated_at: sql`now()`,
+          }),
+        )
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return result;
+    },
+
+    async listUserApps(userId: string): Promise<UserAppsTable[]> {
+      return kysely
+        .selectFrom("user_apps")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .orderBy("created_at", "desc")
+        .execute();
+    },
+
+    async getUserApp(id: string): Promise<UserAppsTable | null> {
+      const result = await kysely
+        .selectFrom("user_apps")
+        .selectAll()
+        .where("id", "=", id)
+        .executeTakeFirst();
+      return result ?? null;
     },
 
     async raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
