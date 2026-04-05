@@ -23,6 +23,12 @@ export interface PipedreamConnectClient {
   }): Promise<unknown>;
 
   revokeAccount(accountId: string): Promise<void>;
+
+  listAccounts(externalUserId: string): Promise<Array<{
+    id: string;
+    app: string;
+    email?: string;
+  }>>;
 }
 
 const API_TIMEOUT_SECONDS = 10;
@@ -74,6 +80,19 @@ export function createPipedreamClient(
       await sdk.accounts.delete(accountId, {
         timeoutInSeconds: API_TIMEOUT_SECONDS,
       });
+    },
+
+    async listAccounts(externalUserId: string) {
+      const result = await sdk.accounts.list(
+        { externalUserId, include_credentials: false } as any,
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      const accounts = (result as any)?.data ?? (Array.isArray(result) ? result : []);
+      return accounts.map((a: any) => ({
+        id: a.id,
+        app: a.app?.name_slug ?? a.app_slug ?? a.app ?? "",
+        email: a.email ?? a.display_name ?? undefined,
+      }));
     },
   };
 }

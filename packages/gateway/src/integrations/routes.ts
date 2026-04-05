@@ -170,6 +170,46 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   });
 
   // -----------------------------------------------------------------------
+  // POST /sync -- sync connected accounts from Pipedream to platform DB
+  // Used when webhooks can't reach the gateway (e.g. local dev)
+  // -----------------------------------------------------------------------
+
+  app.post("/sync", async (c) => {
+    const uid = await requireUser(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    const user = await db.getUserById(uid);
+    const externalId = user?.pipedream_external_id ?? uid;
+
+    try {
+      const pdAccounts = await pipedream.listAccounts(externalId);
+      const existing = await db.listConnectedServices(uid);
+      const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
+
+      let synced = 0;
+      for (const acc of pdAccounts) {
+        if (existingPdIds.has(acc.id)) continue;
+        await db.connectService({
+          userId: uid,
+          service: acc.app,
+          pipedreamAccountId: acc.id,
+          accountLabel: acc.app,
+          accountEmail: acc.email,
+          scopes: [],
+        });
+        synced++;
+        emit({ type: "integration:connected", service: acc.app, accountLabel: acc.app });
+      }
+
+      const services = await db.listConnectedServices(uid);
+      return c.json({ synced, services });
+    } catch (err) {
+      console.error("[integrations] Sync failed:", err instanceof Error ? err.message : err);
+      return c.json({ error: "Failed to sync accounts" }, 502);
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // POST /connect -- initiate OAuth flow
   // -----------------------------------------------------------------------
 

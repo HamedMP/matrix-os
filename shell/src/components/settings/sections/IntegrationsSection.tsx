@@ -174,16 +174,17 @@ export function IntegrationsSection() {
       const { url } = await res.json();
       window.open(url, "_blank", "width=600,height=700");
 
-      // Poll for new connection every 2s
+      // Poll by syncing from Pipedream every 2s
       const previousIds = new Set(connected.map((c) => c.id));
       pollRef.current = setInterval(async () => {
         try {
-          const pollRes = await fetch(`${GATEWAY}/api/integrations`, {
+          const syncRes = await fetch(`${GATEWAY}/api/integrations/sync`, {
+            method: "POST",
             signal: AbortSignal.timeout(10_000),
           });
-          if (pollRes.ok) {
-            const data = await pollRes.json();
-            const list: ConnectedService[] = data.connections ?? data;
+          if (syncRes.ok) {
+            const data = await syncRes.json();
+            const list: ConnectedService[] = data.services ?? [];
             const hasNew = list.some((c) => !previousIds.has(c.id));
             if (hasNew) {
               setConnected(list);
