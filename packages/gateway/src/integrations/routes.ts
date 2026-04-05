@@ -36,14 +36,13 @@ const WebhookBodySchema = z.object({
 // ---------------------------------------------------------------------------
 
 function verifyHmac(payload: string, signature: string, secret: string): boolean {
+  if (!secret) return false;
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
-  const sigBuf = Buffer.from(signature);
-  const expBuf = Buffer.from(expected);
-  if (sigBuf.length !== expBuf.length) {
-    timingSafeEqual(expBuf, expBuf);
-    return false;
-  }
-  return timingSafeEqual(sigBuf, expBuf);
+  const a = Buffer.alloc(64, 0);
+  const b = Buffer.alloc(64, 0);
+  Buffer.from(expected, "utf8").copy(a);
+  Buffer.from(signature, "utf8").copy(b);
+  return timingSafeEqual(a, b) && signature.length === expected.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,9 +128,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const app = new Hono();
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
-  // Keyed by "externalUserId:appSlug", TTL 10 minutes.
+  // Keyed by "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
   const pendingLabels = new Map<string, { label: string; ts: number }>();
   const LABEL_TTL_MS = 10 * 60 * 1000;
+  const PENDING_MAX = 1000;
+  const pendingLabelCleanup = setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of pendingLabels) {
+      if (now - v.ts > LABEL_TTL_MS) pendingLabels.delete(k);
+    }
+  }, 5 * 60 * 1000);
+  pendingLabelCleanup.unref();
 
   // -----------------------------------------------------------------------
   // Auth helper -- returns userId or sends 401
@@ -160,6 +167,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // -----------------------------------------------------------------------
 
   const logoCache = new Map<string, string>();
+  const LOGO_CACHE_MAX = 200;
   let logosLoaded = false;
 
   async function loadLogos() {
@@ -169,7 +177,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const results = await Promise.allSettled(
       services.map(async (s) => {
         const info = await pipedream.getAppInfo(s.pipedreamApp);
-        if (info?.imgSrc) logoCache.set(s.id, info.imgSrc);
+        if (info?.imgSrc) {
+          if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);
+          logoCache.set(s.id, info.imgSrc);
+        }
       }),
     );
     for (const r of results) {
@@ -196,7 +207,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
     const services = await db.listConnectedServices(uid);
-    return c.json(services);
+    return c.json(services.map(({ id, service, account_label, account_email, scopes, status, connected_at, last_used_at }) => ({
+      id, service, account_label, account_email, scopes, status, connected_at, last_used_at,
+    })));
   });
 
   // -----------------------------------------------------------------------
@@ -272,6 +285,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const url = pipedream.getOAuthUrl(connectLinkUrl, def.pipedreamApp);
 
     if (label) {
+      if (pendingLabels.size >= PENDING_MAX) {
+        const oldest = [...pendingLabels.entries()].reduce((a, b) => a[1].ts < b[1].ts ? a : b);
+        pendingLabels.delete(oldest[0]);
+      }
       pendingLabels.set(`${externalId}:${def.pipedreamApp}`, { label, ts: Date.now() });
     }
 
@@ -304,15 +321,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const { external_user_id, account_id, app: appName, label, email, scopes } = parsed.data;
 
-    // Find user by pipedream_external_id
-    const result = await db.raw(
-      "SELECT id FROM users WHERE pipedream_external_id = $1 LIMIT 1",
-      [external_user_id],
-    );
-    if (result.rows.length === 0) {
+    const webhookUser = await db.getUserByPipedreamExternalId(external_user_id);
+    if (!webhookUser) {
       return c.json({ error: "User not found" }, 404);
     }
-    const webhookUserId = result.rows[0].id as string;
+    const webhookUserId = webhookUser.id;
 
     // Recover the user-entered label from /connect (Pipedream doesn't relay it)
     const pendingKey = `${external_user_id}:${appName}`;
@@ -421,9 +434,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       let summary: string | undefined;
 
       if (actionDef.componentKey) {
+        const safeParams = Object.fromEntries(
+          Object.entries(params ?? {}).filter(([k]) => k !== def.pipedreamApp),
+        );
         const configuredProps: Record<string, unknown> = {
+          ...safeParams,
           [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
-          ...params,
         };
         const result = await pipedream.runAction({
           externalUserId: externalId,

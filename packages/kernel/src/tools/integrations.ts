@@ -1,6 +1,13 @@
 const GATEWAY_BASE = "http://localhost:4000";
 const API_TIMEOUT_MS = 10_000;
 
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = process.env.MATRIX_AUTH_TOKEN;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
 export interface GatewayFetchResponse {
   ok: boolean;
   status: number;
@@ -41,7 +48,7 @@ export async function connectServiceHandler(
   try {
     const res = await fetcher(`${GATEWAY_BASE}/api/integrations/connect`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({ service: input.service, label: input.label }),
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
@@ -79,7 +86,7 @@ export async function callServiceHandler(
   try {
     const res = await fetcher(`${GATEWAY_BASE}/api/integrations/call`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
       body: JSON.stringify({
         service: input.service,
         action: input.action,

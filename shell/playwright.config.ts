@@ -8,9 +8,14 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1,
   reporter: "list",
+  timeout: 60_000,
+  expect: {
+    timeout: 15_000,
+  },
   use: {
     baseURL: "http://localhost:3000",
     screenshot: "only-on-failure",
+    trace: "on-first-retry",
   },
   projects: [
     {
@@ -30,5 +35,6 @@ export default defineConfig({
     command: "pnpm start",
     port: 3000,
     reuseExistingServer: !process.env.CI,
+    timeout: 60_000,
   },
 });

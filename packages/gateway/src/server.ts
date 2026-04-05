@@ -265,7 +265,11 @@ export async function createGateway(config: GatewayConfig) {
       integrationRoutes = createIntegrationRoutes({
         db: platformDb,
         pipedream,
-        webhookSecret: process.env.PIPEDREAM_WEBHOOK_SECRET ?? "",
+        webhookSecret: (() => {
+          const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
+          if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
+          return s ?? "";
+        })(),
         resolveUserId: async (c) => {
           // Prefer platform-verified identity from proxy header (Clerk user ID)
           const clerkIdFromPlatform = c.req.header("x-platform-user-id");
@@ -281,10 +285,7 @@ export async function createGateway(config: GatewayConfig) {
           const existing = await platformDb!.getUserByClerkId(clerkId);
           if (existing) {
             if (!existing.pipedream_external_id) {
-              await platformDb!.raw(
-                "UPDATE users SET pipedream_external_id = $1 WHERE id = $2",
-                [handle, existing.id],
-              );
+              await platformDb!.updatePipedreamExternalId(existing.id, handle);
             }
             return existing.id;
           }

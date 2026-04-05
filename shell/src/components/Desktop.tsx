@@ -875,6 +875,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                data-testid="dock-tasks"
                 onClick={() => setTaskBoardOpen((prev) => !prev)}
                 className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                   taskBoardOpen
@@ -976,6 +977,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  data-testid="dock-settings"
                   onClick={() => setSettingsOpen((prev) => !prev)}
                   className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                     settingsOpen

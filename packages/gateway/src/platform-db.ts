@@ -120,6 +120,8 @@ export interface PlatformDb {
   createUser(input: CreateUserInput): Promise<UsersTable>;
   getUserByClerkId(clerkId: string): Promise<UsersTable | null>;
   getUserById(id: string): Promise<UsersTable | null>;
+  getUserByPipedreamExternalId(externalId: string): Promise<UsersTable | null>;
+  updatePipedreamExternalId(userId: string, externalId: string): Promise<void>;
 
   connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable>;
   listConnectedServices(userId: string): Promise<ConnectedServicesTable[]>;
@@ -236,6 +238,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_connected_services_user_account ON connected_services(user_id, pipedream_account_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_user_apps_user ON user_apps(user_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_event_subs_user ON event_subscriptions(user_id)`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_users_pipedream_ext_id ON users(pipedream_external_id)`.execute(kysely);
     },
 
     async createUser(input: CreateUserInput): Promise<UsersTable> {
@@ -272,6 +275,23 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .where("id", "=", id)
         .executeTakeFirst();
       return result ?? null;
+    },
+
+    async getUserByPipedreamExternalId(externalId: string): Promise<UsersTable | null> {
+      const result = await kysely
+        .selectFrom("users")
+        .selectAll()
+        .where("pipedream_external_id", "=", externalId)
+        .executeTakeFirst();
+      return result ?? null;
+    },
+
+    async updatePipedreamExternalId(userId: string, externalId: string): Promise<void> {
+      await kysely
+        .updateTable("users")
+        .set({ pipedream_external_id: externalId })
+        .where("id", "=", userId)
+        .execute();
     },
 
     async connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable> {
