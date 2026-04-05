@@ -33,6 +33,8 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__sync_files",
   "mcp__matrix-os-ipc__publish_app",
   "mcp__matrix-os-ipc__fork_app",
+  "mcp__matrix-os-ipc__connect_service",
+  "mcp__matrix-os-ipc__call_service",
 ];
 
 const BROWSER_TOOL_NAMES = [
