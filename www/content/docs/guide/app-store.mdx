@@ -97,11 +97,87 @@ install_app({ author: "alice", slug: "chess" })
 
 ## Ratings and Reviews
 
-After installing an app, you can rate it 1-5 stars. Ratings are averaged and displayed on the store page. Ratings drive the "Top Rated" sort order.
+After installing an app, you can rate it 1-5 stars and write an optional text review. Ratings are averaged and displayed on the store page. The distribution chart shows how many 1-5 star ratings exist.
+
+### Submitting a Review
+
+Only users who have installed the app can leave a review.
 
 ```
-POST /api/store/apps/:id/rate
-{ "rating": 5, "review": "Great chess AI!" }
+POST /api/gallery/apps/:id/reviews
+{ "rating": 5, "body": "Great chess AI!" }
+```
+
+### Author Responses
+
+App authors can respond to reviews:
+
+```
+POST /api/gallery/apps/:id/reviews/:reviewId/respond
+{ "response": "Thanks for the feedback!" }
+```
+
+### Flagging
+
+Any authenticated user can flag a review or listing for moderator review:
+
+```
+POST /api/gallery/apps/:id/reviews/:reviewId/flag
+POST /api/gallery/apps/:id/flag
+```
+
+## App Updates
+
+When an app author publishes a new version, installed users see an update badge. Updates preserve your data through automatic snapshots.
+
+### Updating
+
+```
+POST /api/apps/:slug/update
+{ "listingId": "..." }
+```
+
+### Rolling Back
+
+If an update causes issues, roll back to the previous version:
+
+```
+POST /api/apps/:slug/rollback
+{ "listingId": "..." }
+```
+
+Data snapshots are restored when rolling back to a version that had a snapshot taken.
+
+## Delisting Apps
+
+App authors can delist their app to remove it from the store:
+
+```
+POST /api/gallery/apps/:id/delist
+```
+
+Existing installations continue to work. The listing can be relisted later:
+
+```
+POST /api/gallery/apps/:id/relist
+```
+
+## Security Audit
+
+Every published app goes through a 3-layer security audit:
+
+1. **Manifest validation** -- checks permissions, required fields, no path traversal
+2. **Static code scan** -- scans source files for dangerous patterns (eval, child_process, network access)
+3. **Sandbox policy** -- validates the app runs within allowed permissions
+
+Apps that pass get a green "Verified" badge. Failed audits can be resubmitted after fixing the flagged issues.
+
+## Version History
+
+Each listing tracks its version history with changelogs. View at:
+
+```
+GET /api/gallery/apps/:id/versions
 ```
 
 ## Personal Websites
@@ -141,15 +217,44 @@ Browse skills in the "Skills" tab of the App Store. Each skill shows name, descr
 
 ## Store API Reference
 
+### Gallery API (Postgres-backed)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/gallery/apps` | GET | Public | Browse listings (pagination, category, sort) |
+| `/api/gallery/apps/search?q=...` | GET | Public | Full-text search |
+| `/api/gallery/apps/:author/:slug` | GET | Public | Listing detail |
+| `/api/gallery/categories` | GET | Public | Categories with counts |
+| `/api/gallery/apps/:id/versions` | GET | Public | Version history |
+| `/api/gallery/apps/:id/reviews` | GET | Public | Reviews with distribution |
+| `/api/gallery/apps/:id/reviews` | POST | Auth | Submit review (requires install) |
+| `/api/gallery/apps/:id/reviews/:id` | PUT | Auth | Update your review |
+| `/api/gallery/apps/:id/reviews/:id` | DELETE | Auth | Delete your review |
+| `/api/gallery/apps/:id/reviews/:id/respond` | POST | Author | Respond to a review |
+| `/api/gallery/apps/:id/reviews/:id/flag` | POST | Auth | Flag a review |
+| `/api/gallery/apps/:id/delist` | POST | Author | Remove from store |
+| `/api/gallery/apps/:id/relist` | POST | Author | Restore to store |
+| `/api/gallery/apps/:id/flag` | POST | Auth | Flag listing for review |
+| `/api/gallery/apps/:id/audit` | GET | Author | Latest audit results |
+| `/api/gallery/installations` | GET | Auth | User's installed apps |
+| `/api/gallery/installations/updates` | GET | Auth | Installations with update status |
+
+### Gateway Routes
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/apps/install` | POST | Auth | Install from gallery |
+| `/api/apps/:slug/uninstall` | DELETE | Auth | Uninstall app |
+| `/api/apps/:slug/publish` | POST | Auth | Publish to gallery |
+| `/api/apps/:slug/publish/resubmit` | POST | Auth | Re-audit after fixes |
+| `/api/apps/:slug/update` | POST | Auth | Update to latest version |
+| `/api/apps/:slug/rollback` | POST | Auth | Roll back to previous version |
+
+### Legacy API (SQLite-backed)
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/store/apps` | GET | List apps (pagination, category filter, sort) |
-| `/api/store/apps/:author/:slug` | GET | Single app detail |
-| `/api/store/apps/search?q=...` | GET | Full-text search |
-| `/api/store/apps/featured` | GET | Curated list |
-| `/api/store/apps` | POST | Create/update registry entry (auth required) |
-| `/api/store/apps/:id/rate` | POST | Submit rating (auth required) |
-| `/api/store/apps/:id/install` | POST | Track install |
-| `/api/store/skills` | GET | List skills |
-| `/api/store/skills/:name` | GET | Skill detail |
-| `/api/store/categories` | GET | Category list with counts |
+| `/api/store/apps` | GET | List apps |
+| `/api/store/apps/:author/:slug` | GET | App detail |
+| `/api/store/apps/search?q=...` | GET | Search |
+| `/api/store/categories` | GET | Categories |

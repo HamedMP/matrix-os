@@ -87,6 +87,34 @@ import { markInstallationUpdated, getPreviousVersion } from "../../../platform/s
 import { applyUpdate, rollbackUpdate, snapshotAppData } from "./app-update.js";
 import { getGalleryDb } from "../../../platform/src/gallery/pg.js";
 import { validateForPublish, generateSlug } from "./app-publish.js";
+import { z } from "zod/v4";
+
+const InstallBodySchema = z.object({
+  listingId: z.string().min(1),
+  target: z.enum(["personal", "organization"]).default("personal"),
+  orgId: z.string().optional(),
+  approvedPermissions: z.array(z.string()).default([]),
+});
+
+const PublishBodySchema = z.object({
+  description: z.string().min(1).max(5000),
+  longDescription: z.string().max(20000).optional(),
+  category: z.string().min(1).max(50),
+  tags: z.array(z.string().max(50)).max(20).optional(),
+  screenshots: z.array(z.string()).max(10).optional(),
+  visibility: z.enum(["public", "organization", "unlisted"]).default("public"),
+  orgId: z.string().optional(),
+  version: z.string().min(1).max(50),
+  changelog: z.string().max(5000).optional(),
+});
+
+const UpdateBodySchema = z.object({
+  listingId: z.string().min(1),
+});
+
+const ResubmitBodySchema = z.object({
+  versionId: z.string().min(1),
+});
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -1520,21 +1548,17 @@ export async function createGateway(config: GatewayConfig) {
   // --- Gallery Install/Uninstall/Publish Routes ---
 
   app.post("/api/apps/install", async (c) => {
-    const body = await c.req.json<{
-      listingId: string;
-      target?: string;
-      orgId?: string;
-      approvedPermissions?: string[];
-    }>();
-
-    if (!body.listingId) {
-      return c.json({ error: "listingId is required" }, 400);
-    }
-
     const userId = c.req.header("x-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }
+
+    const raw = await c.req.json().catch(() => null);
+    const parsed = InstallBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
+    }
+    const body = parsed.data;
 
     try {
       const galleryDb = getGalleryDb();
@@ -1623,21 +1647,12 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Authentication required" }, 401);
     }
 
-    const body = await c.req.json<{
-      description: string;
-      longDescription?: string;
-      category: string;
-      tags?: string[];
-      screenshots?: string[];
-      visibility?: string;
-      orgId?: string;
-      version: string;
-      changelog?: string;
-    }>();
-
-    if (!body.description || !body.category || !body.version) {
-      return c.json({ error: "description, category, and version are required" }, 400);
+    const raw = await c.req.json().catch(() => null);
+    const parsed = PublishBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
+    const body = parsed.data;
 
     const appDir = join(homePath, "apps", slug);
     if (!existsSync(appDir)) {
@@ -1684,10 +1699,12 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Authentication required" }, 401);
     }
 
-    const body = await c.req.json<{ versionId: string }>();
-    if (!body.versionId) {
-      return c.json({ error: "versionId is required" }, 400);
+    const raw = await c.req.json().catch(() => null);
+    const parsed = ResubmitBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
+    const body = parsed.data;
 
     const appDir = join(homePath, "apps", slug);
     if (!existsSync(appDir)) {
@@ -1736,10 +1753,12 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Authentication required" }, 401);
     }
 
-    const body = await c.req.json<{ listingId: string }>().catch(() => ({ listingId: '' }));
-    if (!body.listingId) {
-      return c.json({ error: "listingId is required" }, 400);
+    const raw = await c.req.json().catch(() => null);
+    const parsed = UpdateBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request", details: parsed.error.issues }, 400);
     }
+    const body = parsed.data;
 
     try {
       const galleryDb = getGalleryDb();
@@ -1785,10 +1804,12 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Authentication required" }, 401);
     }
 
-    const body = await c.req.json<{ listingId: string }>().catch(() => ({ listingId: '' }));
-    if (!body.listingId) {
-      return c.json({ error: "listingId is required" }, 400);
+    const raw = await c.req.json().catch(() => null);
+    const parsedRb = UpdateBodySchema.safeParse(raw);
+    if (!parsedRb.success) {
+      return c.json({ error: "Invalid request", details: parsedRb.error.issues }, 400);
     }
+    const body = parsedRb.data;
 
     try {
       const galleryDb = getGalleryDb();
