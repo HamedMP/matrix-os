@@ -2,6 +2,31 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod/v4";
 
+export const IntegrationsSchema = z.object({
+  required: z.array(z.string()).optional(),
+  optional: z.array(z.string()).optional(),
+});
+
+export const DistributionSchema = z.object({
+  visibility: z.enum(["public", "organization", "unlisted"]),
+  org_id: z.string().optional(),
+  published_at: z.string().optional(),
+  listing_id: z.string().optional(),
+});
+
+export const ForkedFromSchema = z.object({
+  author: z.string(),
+  slug: z.string(),
+  version: z.string(),
+});
+
+export const InstalledFromSchema = z.object({
+  slug: z.string(),
+  installedAt: z.string(),
+  listing_id: z.string().optional(),
+  version_id: z.string().optional(),
+});
+
 export const AppManifestSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -32,6 +57,10 @@ export const AppManifestSchema = z.object({
       ).default({}),
     })
     .optional(),
+  integrations: IntegrationsSchema.optional(),
+  distribution: DistributionSchema.optional(),
+  forked_from: ForkedFromSchema.optional(),
+  installed_from: InstalledFromSchema.optional(),
 });
 
 export type AppManifest = z.infer<typeof AppManifestSchema>;

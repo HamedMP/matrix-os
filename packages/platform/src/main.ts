@@ -21,6 +21,7 @@ import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provisioning.js';
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
+import { createGalleryDb, runGalleryMigrations } from './gallery/index.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -602,6 +603,17 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
   if (process.env.GEMINI_API_KEY) {
     extraEnv.push(`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`);
+  }
+
+  // Run gallery Postgres migrations if POSTGRES_URL is configured
+  if (process.env.POSTGRES_URL) {
+    try {
+      const galleryDb = createGalleryDb(process.env.POSTGRES_URL);
+      await runGalleryMigrations(galleryDb);
+      console.log('[gallery] Postgres migrations complete');
+    } catch (err) {
+      console.error('[gallery] Migration failed:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   const orchestrator = createOrchestrator({
