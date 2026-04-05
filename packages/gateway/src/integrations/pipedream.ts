@@ -1,0 +1,78 @@
+import { PipedreamClient as SdkClient } from "@pipedream/sdk";
+
+export interface PipedreamConfig {
+  clientId: string;
+  clientSecret: string;
+  projectId: string;
+  environment?: string;
+}
+
+export interface PipedreamConnectClient {
+  createConnectToken(
+    externalUserId: string,
+  ): Promise<{ token: string; expiresAt: string }>;
+
+  getOAuthUrl(token: string, app: string): string;
+
+  callAction(opts: {
+    externalUserId: string;
+    accountId: string;
+    url: string;
+    body: Record<string, unknown>;
+    headers?: Record<string, string>;
+  }): Promise<unknown>;
+
+  revokeAccount(accountId: string): Promise<void>;
+}
+
+const API_TIMEOUT_SECONDS = 10;
+
+export function createPipedreamClient(
+  config: PipedreamConfig,
+): PipedreamConnectClient {
+  const sdk = new SdkClient({
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    projectId: config.projectId,
+  });
+
+  return {
+    async createConnectToken(externalUserId: string) {
+      const response = await sdk.tokens.create(
+        { externalUserId },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return {
+        token: response.token,
+        expiresAt:
+          response.expiresAt instanceof Date
+            ? response.expiresAt.toISOString()
+            : String(response.expiresAt),
+      };
+    },
+
+    getOAuthUrl(token: string, app: string) {
+      return `https://pipedream.com/connect/${config.projectId}?token=${encodeURIComponent(token)}&app=${encodeURIComponent(app)}`;
+    },
+
+    async callAction(opts) {
+      const result = await sdk.proxy.post(
+        {
+          url: opts.url,
+          externalUserId: opts.externalUserId,
+          accountId: opts.accountId,
+          body: opts.body,
+          headers: opts.headers,
+        },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return result;
+    },
+
+    async revokeAccount(accountId: string) {
+      await sdk.accounts.delete(accountId, {
+        timeoutInSeconds: API_TIMEOUT_SECONDS,
+      });
+    },
+  };
+}
