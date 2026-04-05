@@ -114,11 +114,28 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         overlay.style.pointerEvents = "none";
       }
     };
+
+    // Reset overlay when tab becomes visible or window loses focus
+    const resetOverlay = () => {
+      spaceDown.current = false;
+      setGrabCursor(false);
+      if (overlay) overlay.style.pointerEvents = "none";
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") resetOverlay();
+    };
+
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", resetOverlay);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", resetOverlay);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 

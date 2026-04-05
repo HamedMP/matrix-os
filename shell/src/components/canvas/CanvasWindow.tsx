@@ -60,6 +60,8 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     origH: number;
   } | null>(null);
 
+  const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const onDragStart = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
@@ -73,6 +75,13 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       setInteracting(true);
       focusWindow(win.id);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+      // Safety: auto-clear if pointer up never fires
+      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = setTimeout(() => {
+        dragRef.current = null;
+        setInteracting(false);
+      }, 5000);
     },
     [win.x, win.y, win.id, focusWindow],
   );
@@ -91,6 +100,7 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const onDragEnd = useCallback(() => {
     dragRef.current = null;
     setInteracting(false);
+    if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
   }, []);
 
   const onResizeStart = useCallback(
@@ -106,6 +116,13 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       setInteracting(true);
       focusWindow(win.id);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+      // Safety: auto-clear if pointer up never fires
+      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = setTimeout(() => {
+        resizeRef.current = null;
+        setInteracting(false);
+      }, 5000);
     },
     [win.width, win.height, win.id, focusWindow],
   );
@@ -128,6 +145,7 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const onResizeEnd = useCallback(() => {
     resizeRef.current = null;
     setInteracting(false);
+    if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
   }, []);
 
   const titleBarHeight = 32;
@@ -149,6 +167,7 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       onPointerDown={onDragStart}
       onPointerMove={onDragMove}
       onPointerUp={onDragEnd}
+      onPointerCancel={onDragEnd}
     >
       {/* macOS traffic lights */}
       <div className="group/traffic flex items-center gap-1.5 shrink-0">
@@ -253,6 +272,7 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
         onPointerDown={onResizeStart}
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
+        onPointerCancel={onResizeEnd}
       >
         <svg viewBox="0 0 12 12" className="size-3 text-muted-foreground/30">
           <path d="M11 1v10H1" fill="none" stroke="currentColor" strokeWidth="1" />
