@@ -273,6 +273,11 @@ export async function createOrUpdateFromPublish(
     .executeTakeFirst();
 
   if (existing) {
+    // Prevent overwriting another author's listing
+    if (existing.author_id !== input.author_id) {
+      throw new Error(`Slug "${input.slug}" is already taken by another author`);
+    }
+
     return db.updateTable('app_listings')
       .set({
         name: input.name,

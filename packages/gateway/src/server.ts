@@ -1548,7 +1548,7 @@ export async function createGateway(config: GatewayConfig) {
   // --- Gallery Install/Uninstall/Publish Routes ---
 
   app.post("/api/apps/install", async (c) => {
-    const userId = c.req.header("x-user-id");
+    const userId = c.req.header("x-platform-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }
@@ -1597,7 +1597,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.delete("/api/apps/:slug/uninstall", async (c) => {
     const slug = c.req.param("slug");
-    const userId = c.req.header("x-user-id");
+    const userId = c.req.header("x-platform-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }
@@ -1642,7 +1642,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.post("/api/apps/:slug/publish", async (c) => {
     const slug = c.req.param("slug");
-    const userId = c.req.header("x-user-id");
+    const userId = c.req.header("x-platform-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }
@@ -1694,7 +1694,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.post("/api/apps/:slug/publish/resubmit", async (c) => {
     const slug = c.req.param("slug");
-    const userId = c.req.header("x-user-id");
+    const userId = c.req.header("x-platform-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }
@@ -1748,7 +1748,7 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid slug" }, 400);
     }
 
-    const userId = c.req.header("x-user-id");
+    const userId = c.req.header("x-platform-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }
@@ -1799,7 +1799,7 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid slug" }, 400);
     }
 
-    const userId = c.req.header("x-user-id");
+    const userId = c.req.header("x-platform-user-id");
     if (!userId) {
       return c.json({ error: "Authentication required" }, 401);
     }

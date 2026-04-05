@@ -70,12 +70,15 @@ export async function handleInstall(
   }
   const slug = listing.slug;
 
-  // Copy app files
+  // Copy app files -- fail if copy fails (don't record a phantom installation)
   const copyResult = deps.copyAppFiles({
     sourceDir: version.bundle_path ?? '',
     homePath: input.homePath,
     slug,
   });
+  if (!copyResult.success) {
+    return { status: 500, body: { error: copyResult.error ?? 'Failed to copy app files' } };
+  }
 
   // Create installation record
   const installation = await deps.createInstallation({

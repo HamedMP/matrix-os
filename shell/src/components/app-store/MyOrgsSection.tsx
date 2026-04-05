@@ -35,7 +35,7 @@ export function MyOrgsSection({ userId }: MyOrgsSectionProps) {
     setLoading(true);
     const controller = new AbortController();
     fetch(`${GATEWAY_URL}/api/store/orgs`, {
-      headers: { "x-user-id": userId },
+      // Auth handled by platform proxy (x-platform-user-id)
       signal: controller.signal,
     })
       .then((res) => (res.ok ? res.json() : { orgs: [] }))
@@ -48,7 +48,7 @@ export function MyOrgsSection({ userId }: MyOrgsSectionProps) {
               const res = await fetch(
                 `${GATEWAY_URL}/api/store/orgs/${org.slug}/apps`,
                 {
-                  headers: { "x-user-id": userId },
+                  // Auth handled by platform proxy (x-platform-user-id)
                   signal: controller.signal,
                 },
               );

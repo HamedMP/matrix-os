@@ -31,9 +31,10 @@ function slugify(name: string): string {
 export function createOrgApi(db: Kysely<GalleryDatabase>): Hono {
   const api = new Hono();
 
-  // Auth helper: extract userId from x-user-id header
+  // Auth helper: extract userId from platform-verified header
+  // NEVER read x-user-id -- it's client-controlled and spoofable.
   function getUserId(c: import('hono').Context): string | null {
-    return c.req.header('x-user-id') ?? null;
+    return c.req.header('x-platform-user-id') ?? null;
   }
 
   function requireAuth(c: import('hono').Context): string | Response {

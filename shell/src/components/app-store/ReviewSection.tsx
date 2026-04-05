@@ -65,7 +65,7 @@ export function ReviewSection({ listingId, authorId, currentUserId, isInstalled 
     try {
       const res = await fetch(`${GATEWAY_URL}/api/gallery/apps/${listingId}/reviews`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-user-id": currentUserId },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rating: submitRating, body: submitBody || undefined }),
       });
 
@@ -212,7 +212,7 @@ function ReviewItem({
     try {
       await fetch(`${GATEWAY_URL}/api/gallery/apps/${listingId}/reviews/${review.id}/respond`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-user-id": currentUserId },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ response: responseText }),
       });
       setResponding(false);
@@ -228,7 +228,7 @@ function ReviewItem({
     try {
       await fetch(`${GATEWAY_URL}/api/gallery/apps/${listingId}/reviews/${review.id}/flag`, {
         method: "POST",
-        headers: { "x-user-id": currentUserId },
+        headers: { "Content-Type": "application/json" },
       });
       onUpdated();
     } catch {

@@ -66,9 +66,11 @@ function checkWriteRate(userId: string): boolean {
   return record.count <= RATE_MAX_WRITES;
 }
 
-// --- Helper: extract authenticated user or return 401 ---
+// --- Helper: extract authenticated user from platform-verified header ---
+// The platform proxy sets x-platform-user-id after verifying the Clerk session.
+// NEVER read x-user-id -- it's client-controlled and spoofable.
 function requireAuth(c: { req: { header: (name: string) => string | undefined } }): string | null {
-  return c.req.header('x-user-id') ?? null;
+  return c.req.header('x-platform-user-id') ?? null;
 }
 
 /**

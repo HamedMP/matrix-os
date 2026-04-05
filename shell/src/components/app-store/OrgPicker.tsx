@@ -28,7 +28,6 @@ export function OrgPicker({ value, onChange, userId }: OrgPickerProps) {
     setLoading(true);
     const controller = new AbortController();
     fetch(`${GATEWAY_URL}/api/store/orgs`, {
-      headers: { "x-user-id": userId },
       signal: controller.signal,
     })
       .then((res) => (res.ok ? res.json() : { orgs: [] }))
