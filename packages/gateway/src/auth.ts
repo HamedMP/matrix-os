@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 
-const PUBLIC_PATHS = ["/health"];
+const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
   "/files/system/icons/",
   "/api/integrations/webhook/",

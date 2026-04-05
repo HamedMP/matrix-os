@@ -128,6 +128,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const emit = broadcast ?? (() => {});
   const app = new Hono();
 
+  // Pending labels from /connect that need to survive the OAuth round-trip.
+  // Keyed by "externalUserId:appSlug", TTL 10 minutes.
+  const pendingLabels = new Map<string, { label: string; ts: number }>();
+  const LABEL_TTL_MS = 10 * 60 * 1000;
+
   // -----------------------------------------------------------------------
   // Auth helper -- returns userId or sends 401
   // -----------------------------------------------------------------------
@@ -266,6 +271,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const { connectLinkUrl } = await pipedream.createConnectToken(externalId);
     const url = pipedream.getOAuthUrl(connectLinkUrl, def.pipedreamApp);
 
+    if (label) {
+      pendingLabels.set(`${externalId}:${def.pipedreamApp}`, { label, ts: Date.now() });
+    }
+
     return c.json({ url, service });
   });
 
@@ -305,16 +314,24 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
     const webhookUserId = result.rows[0].id as string;
 
+    // Recover the user-entered label from /connect (Pipedream doesn't relay it)
+    const pendingKey = `${external_user_id}:${appName}`;
+    const pending = pendingLabels.get(pendingKey);
+    const resolvedLabel = pending && (Date.now() - pending.ts < LABEL_TTL_MS)
+      ? pending.label
+      : (label ?? appName);
+    pendingLabels.delete(pendingKey);
+
     await db.connectService({
       userId: webhookUserId,
       service: appName,
       pipedreamAccountId: account_id,
-      accountLabel: label ?? appName,
+      accountLabel: resolvedLabel,
       accountEmail: email,
       scopes: scopes ?? [],
     });
 
-    emit({ type: "integration:connected", service: appName, accountLabel: label ?? appName });
+    emit({ type: "integration:connected", service: appName, accountLabel: resolvedLabel });
 
     return c.json({ ok: true });
   });
