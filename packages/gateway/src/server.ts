@@ -280,6 +280,10 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           // Local dev fallback: single-tenant from env vars
+          if (process.env.NODE_ENV === "production") {
+            console.error("[integrations] No x-platform-user-id header in production -- cannot resolve user");
+            return null;
+          }
           const handle = process.env.MATRIX_HANDLE ?? "default";
           const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
           const existing = await platformDb!.getUserByClerkId(clerkId);

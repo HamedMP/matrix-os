@@ -38,11 +38,8 @@ const WebhookBodySchema = z.object({
 function verifyHmac(payload: string, signature: string, secret: string): boolean {
   if (!secret) return false;
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
-  const a = Buffer.alloc(64, 0);
-  const b = Buffer.alloc(64, 0);
-  Buffer.from(expected, "utf8").copy(a);
-  Buffer.from(signature, "utf8").copy(b);
-  return timingSafeEqual(a, b) && signature.length === expected.length;
+  if (signature.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
 // ---------------------------------------------------------------------------

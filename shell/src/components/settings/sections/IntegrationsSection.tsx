@@ -174,6 +174,11 @@ export function IntegrationsSection() {
       const { url } = await res.json();
       window.open(url, "_blank", "width=600,height=700");
 
+      // Clear any existing poll before starting a new one
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
       // Poll by syncing from Pipedream every 2s
       const previousIds = new Set(connected.map((c) => c.id));
       pollRef.current = setInterval(async () => {
