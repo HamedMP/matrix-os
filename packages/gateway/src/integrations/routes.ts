@@ -217,7 +217,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // Used when webhooks can't reach the gateway (e.g. local dev)
   // -----------------------------------------------------------------------
 
-  app.post("/sync", async (c) => {
+  app.post("/sync", bodyLimit({ maxSize: 4096 }), async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 

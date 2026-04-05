@@ -1,4 +1,4 @@
-const GATEWAY_BASE = "http://localhost:4000";
+const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const API_TIMEOUT_MS = 10_000;
 
 function authHeaders(): Record<string, string> {

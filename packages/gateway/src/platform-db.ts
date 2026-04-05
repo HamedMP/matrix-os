@@ -444,6 +444,8 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         const result = await compiled.execute(kysely);
         return { rows: (result.rows ?? []) as Record<string, unknown>[] };
       }
+      // No-params path: only safe for DDL/transaction control (hardcoded strings).
+      // Never pass user-controlled input here -- use parameterized queries instead.
       const result = await sql.raw(query).execute(kysely);
       return { rows: (result.rows ?? []) as Record<string, unknown>[] };
     },

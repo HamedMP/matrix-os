@@ -95,7 +95,7 @@ export function IntegrationsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
-  const [connectLabel, setConnectLabel] = useState("");
+  const [connectLabels, setConnectLabels] = useState<Record<string, string>>({});
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
@@ -417,16 +417,16 @@ export function IntegrationsSection() {
                   <input
                     type="text"
                     placeholder="Label (e.g. Work, Personal)"
-                    value={connecting === service.id ? "" : connectLabel}
-                    onChange={(e) => setConnectLabel(e.target.value)}
+                    value={connecting === service.id ? "" : (connectLabels[service.id] ?? "")}
+                    onChange={(e) => setConnectLabels((prev) => ({ ...prev, [service.id]: e.target.value }))}
                     disabled={isConnecting}
                     className="w-full rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
                   />
                 )}
                 <button
                   onClick={() => {
-                    handleConnect(service.id, isConnected ? connectLabel : undefined);
-                    setConnectLabel("");
+                    handleConnect(service.id, isConnected ? connectLabels[service.id] : undefined);
+                    setConnectLabels((prev) => ({ ...prev, [service.id]: "" }));
                   }}
                   disabled={isConnecting}
                   className={`mt-auto w-full rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${

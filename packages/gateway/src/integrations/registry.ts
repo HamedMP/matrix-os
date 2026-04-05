@@ -299,6 +299,10 @@ export async function discoverComponentKeys(
 
   const services = listServices();
 
+  // Collect all discoveries first, then apply atomically to avoid
+  // concurrent requests seeing partially-mutated registry state.
+  const pending: Array<{ actionDef: ServiceAction; key: string | undefined }> = [];
+
   for (const service of services) {
     try {
       const actions = await pipedream.discoverActions(service.pipedreamApp);
@@ -310,10 +314,10 @@ export async function discoverComponentKeys(
         const candidateKey = `${service.pipedreamApp}-${hyphenated}`;
 
         if (keySet.has(candidateKey)) {
-          actionDef.componentKey = candidateKey;
+          pending.push({ actionDef, key: candidateKey });
           matched++;
         } else {
-          actionDef.componentKey = undefined;
+          pending.push({ actionDef, key: undefined });
         }
       }
     } catch (err) {
@@ -328,6 +332,11 @@ export async function discoverComponentKeys(
         console.error(`[registry] discoverComponentKeys failed for ${service.id}:`, msg);
       }
     }
+  }
+
+  // Apply all mutations at once
+  for (const { actionDef, key } of pending) {
+    actionDef.componentKey = key;
   }
 
   return { total, matched, errors };
