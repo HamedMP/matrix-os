@@ -107,7 +107,7 @@ export default function middleware(
   event: import("next/server").NextFetchEvent,
 ) {
   // E2E screenshot tests: skip auth so the shell renders without Clerk
-  if (process.env.E2E_TEST_BYPASS === "1") {
+  if (process.env.E2E_TEST_BYPASS === "1" && process.env.NODE_ENV !== "production") {
     return NextResponse.next();
   }
   return withClerk(request, event);

@@ -248,7 +248,8 @@ export async function createGateway(config: GatewayConfig) {
   // Platform DB + Integrations (Pipedream Connect)
   let platformDb: PlatformDb | null = null;
   let integrationRoutes: Hono | null = null;
-  const platformDbUrl = process.env.PLATFORM_DATABASE_URL || process.env.DATABASE_URL;
+  const platformDbUrl = process.env.PLATFORM_DATABASE_URL
+    || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
   if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID) {
     try {
       platformDb = createPlatformDb(platformDbUrl);

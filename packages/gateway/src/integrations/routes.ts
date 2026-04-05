@@ -366,8 +366,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, action, label } = parsed.data;
-    const params = (body as Record<string, unknown>).params as Record<string, unknown> | undefined;
+    const { service, action, label, ...rest } = parsed.data;
+    const params = rest.params as Record<string, unknown> | undefined;
 
     const def = getService(service);
     if (!def) {
@@ -541,6 +541,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const result = await requireOwnedService(c, id, uid);
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
+    if (result.status === "revoked") return c.json({ error: "Not found" }, 404);
 
     // Pipedream handles token refresh automatically.
     // We update status to active in case it was marked expired.
