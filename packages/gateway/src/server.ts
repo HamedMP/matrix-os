@@ -109,7 +109,10 @@ export type ServerMessage =
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
   | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
-  | { type: "data:change"; app: string; key: string };
+  | { type: "data:change"; app: string; key: string }
+  | { type: "integration:connected"; service: string; accountLabel: string }
+  | { type: "integration:disconnected"; service: string; id: string }
+  | { type: "integration:expired"; service: string; id: string; accountLabel: string };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -277,6 +280,7 @@ export async function createGateway(config: GatewayConfig) {
           });
           return user.id;
         },
+        broadcast,
       });
       app.route("/api/integrations", integrationRoutes);
       console.log("[platform-db] Integration routes mounted");

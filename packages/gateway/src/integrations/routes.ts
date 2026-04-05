@@ -109,15 +109,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Route factory
 // ---------------------------------------------------------------------------
 
+export interface IntegrationBroadcast {
+  (msg: { type: "integration:connected"; service: string; accountLabel: string }): void;
+  (msg: { type: "integration:disconnected"; service: string; id: string }): void;
+  (msg: { type: "integration:expired"; service: string; id: string; accountLabel: string }): void;
+}
+
 export interface IntegrationRoutesOpts {
   db: PlatformDb;
   pipedream: PipedreamConnectClient;
   webhookSecret: string;
   resolveUserId: (c: Context) => Promise<string | null>;
+  broadcast?: IntegrationBroadcast;
 }
 
 export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId } = opts;
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast } = opts;
+  const emit = broadcast ?? (() => {});
   const app = new Hono();
 
   // -----------------------------------------------------------------------
@@ -240,6 +248,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       accountEmail: email,
       scopes: scopes ?? [],
     });
+
+    emit({ type: "integration:connected", service: appName, accountLabel: label ?? appName });
 
     return c.json({ ok: true });
   });
@@ -386,6 +396,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     await db.disconnectService(id);
+
+    emit({ type: "integration:disconnected", service: result.service, id });
 
     return c.json({ ok: true });
   });

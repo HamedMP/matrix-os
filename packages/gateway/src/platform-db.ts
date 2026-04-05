@@ -104,6 +104,12 @@ export interface CreateUserAppInput {
   servicesUsed: string[];
 }
 
+export interface CreateEventSubscriptionInput {
+  userId: string;
+  service: string;
+  eventType: string;
+}
+
 // ---------------------------------------------------------------------------
 // PlatformDb interface
 // ---------------------------------------------------------------------------
@@ -125,6 +131,10 @@ export interface PlatformDb {
   createUserApp(input: CreateUserAppInput): Promise<UserAppsTable>;
   listUserApps(userId: string): Promise<UserAppsTable[]>;
   getUserApp(id: string): Promise<UserAppsTable | null>;
+
+  createEventSubscription(input: CreateEventSubscriptionInput): Promise<EventSubscriptionsTable>;
+  listEventSubscriptions(userId: string): Promise<EventSubscriptionsTable[]>;
+  deleteEventSubscription(id: string): Promise<void>;
 
   raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   destroy(): Promise<void>;
@@ -360,6 +370,36 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .where("id", "=", id)
         .executeTakeFirst();
       return result ?? null;
+    },
+
+    async createEventSubscription(input: CreateEventSubscriptionInput): Promise<EventSubscriptionsTable> {
+      const result = await kysely
+        .insertInto("event_subscriptions")
+        .values({
+          user_id: input.userId,
+          service: input.service,
+          event_type: input.eventType,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return result;
+    },
+
+    async listEventSubscriptions(userId: string): Promise<EventSubscriptionsTable[]> {
+      return kysely
+        .selectFrom("event_subscriptions")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .where("status", "=", "active")
+        .orderBy("created_at", "desc")
+        .execute();
+    },
+
+    async deleteEventSubscription(id: string): Promise<void> {
+      await kysely
+        .deleteFrom("event_subscriptions")
+        .where("id", "=", id)
+        .execute();
     },
 
     async raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
