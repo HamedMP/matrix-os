@@ -571,8 +571,10 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
       // Register built-in apps
       addApp("Terminal", "__terminal__");
       addApp("Files", "__file-browser__");
-      const savedTerminal = layoutMap.get("__terminal__");
-      if (savedTerminal) layoutToLoad.push(savedTerminal);
+      const savedTerminals = savedWindows.filter((w) => w.path.startsWith("__terminal__"));
+      for (const saved of savedTerminals) {
+        layoutToLoad.push(saved);
+      }
 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (appsRes?.ok) {
