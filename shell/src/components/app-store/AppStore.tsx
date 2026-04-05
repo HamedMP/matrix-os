@@ -4,20 +4,27 @@ import { useEffect, useCallback, useMemo, useState } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useAppStore, type AppStoreEntry } from "@/stores/app-store";
 import { AppStoreHeader } from "./AppStoreHeader";
-import { AppStoreFeatured } from "./AppStoreFeatured";
-import { AppStoreSection } from "./AppStoreSection";
-import { AppStoreCategory } from "./AppStoreCategory";
 import { AppDetail } from "./AppDetail";
 import { InstallDialog } from "./InstallDialog";
 import { PublishDialog } from "./PublishDialog";
-import { FALLBACK_CATALOG } from "./catalog";
 import { getGatewayUrl } from "@/lib/gateway";
+import { StoreIcon, UploadIcon, PackageIcon } from "lucide-react";
 
 const GATEWAY_URL = getGatewayUrl();
 
 interface AppStoreProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+interface LocalApp {
+  name: string;
+  description?: string;
+  icon?: string;
+  category?: string;
+  version?: string;
+  file: string;
+  path: string;
 }
 
 export function AppStore({ open, onOpenChange }: AppStoreProps) {
@@ -28,7 +35,6 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
   const selectedApp = useAppStore((s) => s.selectedApp);
   const installedIds = useAppStore((s) => s.installedIds);
   const loading = useAppStore((s) => s.loading);
-  const setEntries = useAppStore((s) => s.setEntries);
   const setSearch = useAppStore((s) => s.setSearch);
   const setCategory = useAppStore((s) => s.setCategory);
   const selectApp = useAppStore((s) => s.selectApp);
@@ -38,45 +44,15 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
 
   const [installTarget, setInstallTarget] = useState<AppStoreEntry | null>(null);
   const [publishTarget, setPublishTarget] = useState<{ slug: string; name: string } | null>(null);
+  const [showPublishPicker, setShowPublishPicker] = useState(false);
+  const [localApps, setLocalApps] = useState<LocalApp[]>([]);
+  const [loadingApps, setLoadingApps] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-
-    // Fetch gallery apps from API
     fetchGalleryApps();
     fetchInstallations();
-
-    // Also try loading local app-store.json as supplemental data
-    fetch(`${GATEWAY_URL}/files/system/app-store.json`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: AppStoreEntry[] | null) => {
-        if (!data || data.length === 0) return;
-        const byId = new Map(data.map((e) => [e.id, e]));
-        for (const fallback of FALLBACK_CATALOG) {
-          if (!byId.has(fallback.id)) {
-            byId.set(fallback.id, fallback);
-          } else {
-            const existing = byId.get(fallback.id)!;
-            byId.set(fallback.id, {
-              ...existing,
-              category: fallback.category,
-              icon: existing.icon ?? fallback.icon,
-              iconColor: existing.iconColor ?? fallback.iconColor,
-              rating: existing.rating ?? fallback.rating,
-              ratingCount: existing.ratingCount ?? fallback.ratingCount,
-              downloads: existing.downloads ?? fallback.downloads,
-              tags: existing.tags ?? fallback.tags,
-              featured: existing.featured ?? fallback.featured,
-              featuredTagline: existing.featuredTagline ?? fallback.featuredTagline,
-              new: existing.new ?? fallback.new,
-              longDescription: existing.longDescription ?? fallback.longDescription,
-            });
-          }
-        }
-        setEntries(Array.from(byId.values()));
-      })
-      .catch(() => {});
-  }, [open, setEntries, fetchGalleryApps, fetchInstallations]);
+  }, [open, fetchGalleryApps, fetchInstallations]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,6 +62,8 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
           setInstallTarget(null);
         } else if (publishTarget) {
           setPublishTarget(null);
+        } else if (showPublishPicker) {
+          setShowPublishPicker(false);
         } else if (selectedApp) {
           selectApp(null);
         } else {
@@ -95,7 +73,7 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, selectedApp, selectApp, onOpenChange, installTarget, publishTarget]);
+  }, [open, selectedApp, selectApp, onOpenChange, installTarget, publishTarget, showPublishPicker]);
 
   useEffect(() => {
     if (!open) {
@@ -104,55 +82,39 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
       selectApp(null);
       setInstallTarget(null);
       setPublishTarget(null);
+      setShowPublishPicker(false);
     }
   }, [open, setSearch, setCategory, selectApp]);
 
+  const openPublishPicker = useCallback(async () => {
+    setShowPublishPicker(true);
+    setLoadingApps(true);
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/apps`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const apps = await res.json();
+        setLocalApps(Array.isArray(apps) ? apps : []);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingApps(false);
+    }
+  }, []);
+
   const install = useCallback(
-    (entry: (typeof entries)[number]) => {
-      if (entry.source === "bundled") {
-        onOpenChange(false);
-      } else if (entry.source === "prompt" && entry.prompt) {
-        send({
-          type: "message",
-          text: `Build an app called "${entry.name}": ${entry.prompt}`,
-        });
-        markInstalled(entry.id);
-        onOpenChange(false);
-      } else if (entry.source === "gallery" && entry.listingId) {
+    (entry: AppStoreEntry) => {
+      if (entry.source === "gallery" && entry.listingId) {
         setInstallTarget(entry);
       }
     },
-    [send, onOpenChange, markInstalled],
+    [],
   );
 
   const isSearching = search.length > 0;
   const isFiltered = selectedCategory !== "All";
-  const showBrowse = !isSearching && !isFiltered;
-
-  const featuredEntries = useMemo(
-    () => entries.filter((e) => e.featured),
-    [entries],
-  );
-
-  const bundledApps = useMemo(
-    () => entries.filter((e) => e.source === "bundled"),
-    [entries],
-  );
-
-  const promptApps = useMemo(
-    () => entries.filter((e) => e.source === "prompt"),
-    [entries],
-  );
-
-  const galleryApps = useMemo(
-    () => entries.filter((e) => e.source === "gallery"),
-    [entries],
-  );
-
-  const newEntries = useMemo(
-    () => entries.filter((e) => e.new),
-    [entries],
-  );
 
   const results = useMemo(() => {
     let filtered = selectedCategory === "All"
@@ -175,15 +137,8 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[45]">
-      <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-lg"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onOpenChange(false);
-        }}
-      />
-
-      <div className="relative flex flex-col h-full z-10 overflow-hidden md:pl-14">
+    <div className="fixed inset-0 z-[45] bg-background">
+      <div className="flex flex-col h-full overflow-hidden md:pl-14">
         <AppStoreHeader
           search={search}
           selectedCategory={selectedCategory}
@@ -194,95 +149,61 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
 
         <div className="flex flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto px-6 py-4">
-            {showBrowse ? (
-              <>
-                {featuredEntries.length > 0 && (
-                  <AppStoreFeatured
-                    entries={featuredEntries}
-                    onSelect={selectApp}
-                    onInstall={install}
-                  />
-                )}
+            {/* Publish button */}
+            <div className="flex items-center gap-3 mb-6">
+              <button
+                onClick={openPublishPicker}
+                className="flex items-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-2.5 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
+              >
+                <UploadIcon className="size-4" />
+                Publish an App
+              </button>
+              {entries.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {entries.length} app{entries.length !== 1 ? "s" : ""} in gallery
+                </span>
+              )}
+            </div>
 
-                {newEntries.length > 0 && (
-                  <AppStoreSection
-                    title="New This Week"
-                    entries={newEntries}
+            {/* Gallery content */}
+            {entries.length === 0 && !loading ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="size-16 rounded-2xl bg-muted/60 flex items-center justify-center mb-4">
+                  <StoreIcon className="size-7 text-muted-foreground" />
+                </div>
+                <h2 className="text-lg font-semibold mb-1">No apps published yet</h2>
+                <p className="text-sm text-muted-foreground max-w-sm mb-4">
+                  Build an app with your AI agent, then publish it to the gallery for everyone to discover and install.
+                </p>
+                <button
+                  onClick={openPublishPicker}
+                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  <UploadIcon className="size-4" />
+                  Publish Your First App
+                </button>
+              </div>
+            ) : loading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="size-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : results.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+                {results.map((entry) => (
+                  <AppCardInGrid
+                    key={entry.id}
+                    entry={entry}
                     installedIds={installedIds}
                     onSelect={selectApp}
                     onInstall={install}
                   />
-                )}
-
-                {galleryApps.length > 0 && (
-                  <section className="mb-8">
-                    <div className="flex items-center gap-2 mb-3 px-1">
-                      <h3 className="text-sm font-semibold">Community Apps</h3>
-                      <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2 py-0.5">
-                        {galleryApps.length} apps
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
-                      {galleryApps.map((entry) => (
-                        <AppCardInGrid
-                          key={entry.id}
-                          entry={entry}
-                          installedIds={installedIds}
-                          onSelect={selectApp}
-                          onInstall={install}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {bundledApps.length > 0 && (
-                  <section className="mb-8">
-                    <h3 className="text-sm font-semibold mb-3 px-1">Ready to Use</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
-                      {bundledApps.map((entry) => (
-                        <AppCardInGrid
-                          key={entry.id}
-                          entry={entry}
-                          installedIds={installedIds}
-                          onSelect={selectApp}
-                          onInstall={install}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {promptApps.length > 0 && (
-                  <section className="mb-8">
-                    <div className="flex items-center gap-2 mb-3 px-1">
-                      <h3 className="text-sm font-semibold">Build with AI</h3>
-                      <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2 py-0.5">
-                        {promptApps.length} prompts
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
-                      {promptApps.map((entry) => (
-                        <AppCardInGrid
-                          key={entry.id}
-                          entry={entry}
-                          installedIds={installedIds}
-                          onSelect={selectApp}
-                          onInstall={install}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )}
-              </>
-            ) : (
-              <AppStoreCategory
-                entries={results}
-                installedIds={installedIds}
-                onSelect={selectApp}
-                onInstall={install}
-              />
-            )}
+                ))}
+              </div>
+            ) : (isSearching || isFiltered) ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <p className="text-sm text-muted-foreground">No apps match your search.</p>
+              </div>
+            ) : null}
           </div>
 
           {selectedApp && (
@@ -296,6 +217,67 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
         </div>
       </div>
 
+      {/* Publish picker overlay */}
+      {showPublishPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowPublishPicker(false)} />
+          <div className="relative bg-card rounded-2xl border border-border shadow-xl w-full max-w-md max-h-[80vh] overflow-hidden z-10">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-base font-semibold">Choose an app to publish</h2>
+              <button
+                onClick={() => setShowPublishPicker(false)}
+                className="size-7 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-[60vh] p-2">
+              {loadingApps ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : localApps.length === 0 ? (
+                <div className="text-center py-12 text-sm text-muted-foreground">
+                  <PackageIcon className="size-8 mx-auto mb-2 text-muted-foreground/50" />
+                  <p>No apps found in your workspace.</p>
+                  <p className="mt-1">Ask your AI agent to build one first.</p>
+                </div>
+              ) : (
+                localApps.map((app) => {
+                  const slug = app.file.replace(/^apps\//, "").replace(/\/$/, "").split("/")[0];
+                  return (
+                    <button
+                      key={app.path}
+                      onClick={() => {
+                        setShowPublishPicker(false);
+                        setPublishTarget({ slug, name: app.name });
+                      }}
+                      className="w-full flex items-center gap-3 rounded-lg p-3 text-left hover:bg-muted/80 transition-colors"
+                    >
+                      <div
+                        className="size-10 rounded-xl flex items-center justify-center text-sm font-bold text-white shrink-0"
+                        style={{ backgroundColor: "#6366f1" }}
+                      >
+                        {app.icon || app.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm truncate">{app.name}</div>
+                        {app.description && (
+                          <div className="text-xs text-muted-foreground truncate">{app.description}</div>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground shrink-0">
+                        {app.version ?? "1.0.0"}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {installTarget && installTarget.listingId && (
         <InstallDialog
           listingId={installTarget.listingId}
@@ -303,7 +285,7 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
           permissions={installTarget.permissions ?? []}
           integrations={installTarget.integrations}
           onClose={() => setInstallTarget(null)}
-          onInstalled={(result) => {
+          onInstalled={() => {
             markInstalled(installTarget.id);
             setInstallTarget(null);
             selectApp(null);
@@ -315,7 +297,10 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
         <PublishDialog
           appSlug={publishTarget.slug}
           appName={publishTarget.name}
-          onClose={() => setPublishTarget(null)}
+          onClose={() => {
+            setPublishTarget(null);
+            fetchGalleryApps();
+          }}
         />
       )}
     </div>

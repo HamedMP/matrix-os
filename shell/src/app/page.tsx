@@ -58,14 +58,14 @@ export default function Home() {
         execute: () => chat.newChat(),
       },
       {
-        id: "action:app-store",
-        label: "App Store",
+        id: "action:app-gallery",
+        label: "App Gallery",
         group: "Actions",
-        keywords: ["store", "install", "browse", "apps", "marketplace"],
+        keywords: ["store", "install", "browse", "apps", "marketplace", "gallery"],
         execute: () => setStoreOpen((prev) => !prev),
       },
     ]);
-    return () => unregister(["action:toggle-sidebar", "action:new-chat", "action:app-store"]);
+    return () => unregister(["action:toggle-sidebar", "action:new-chat", "action:app-gallery"]);
   }, [register, unregister, chat.newChat]);
 
   const chipContext = useMemo(() => {

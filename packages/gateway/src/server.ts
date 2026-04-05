@@ -79,13 +79,13 @@ import {
   type GalleryPublishDeps,
   type GalleryUpdateDeps,
 } from "./gallery-routes.js";
-import { createOrUpdateFromPublish } from "../../../platform/src/gallery/listings.js";
-import { createInstallation, getByUserAndListing, deleteInstallation as deleteGalleryInstallation, incrementInstallCount, decrementInstallCount } from "../../../platform/src/gallery/installations.js";
-import { createVersion, setCurrent } from "../../../platform/src/gallery/versions.js";
-import { runFullAudit } from "../../../platform/src/gallery/security-audit.js";
-import { markInstallationUpdated, getPreviousVersion } from "../../../platform/src/gallery/update-detection.js";
+import { createOrUpdateFromPublish } from "../../platform/src/gallery/listings.js";
+import { createInstallation, getByUserAndListing, deleteInstallation as deleteGalleryInstallation, incrementInstallCount, decrementInstallCount } from "../../platform/src/gallery/installations.js";
+import { createVersion, setCurrent } from "../../platform/src/gallery/versions.js";
+import { runFullAudit } from "../../platform/src/gallery/security-audit.js";
+import { markInstallationUpdated, getPreviousVersion } from "../../platform/src/gallery/update-detection.js";
 import { applyUpdate, rollbackUpdate, snapshotAppData } from "./app-update.js";
-import { getGalleryDb } from "../../../platform/src/gallery/pg.js";
+import { getGalleryDb } from "../../platform/src/gallery/pg.js";
 import { validateForPublish, generateSlug } from "./app-publish.js";
 import { z } from "zod/v4";
 

@@ -1,0 +1,64 @@
+# Reviews & Ratings API
+# Mount: /api/store (platform)
+# Auth: Authenticated for writes, public for reads
+
+endpoints:
+  POST /api/store/apps/:id/reviews:
+    description: Submit or update a review
+    auth: authenticated (must have installed the app)
+    body:
+      rating: integer (required, 1-5)
+      body: string (optional)
+    response:
+      201:
+        reviewId: uuid
+        avgRating: number (updated listing average)
+        ratingsCount: integer
+      400: error (invalid rating)
+      403: error (not installed -- cannot review)
+      409: error (already reviewed -- use PUT to update)
+    notes: One review per user per listing. Recalculates listing denormalized avg.
+
+  PUT /api/store/apps/:id/reviews/:reviewId:
+    description: Update an existing review
+    auth: authenticated (must be review author)
+    body:
+      rating: integer (optional, 1-5)
+      body: string (optional)
+    response:
+      200:
+        reviewId: uuid
+        avgRating: number
+        ratingsCount: integer
+      403: error (not review author)
+      404: error (review not found)
+
+  DELETE /api/store/apps/:id/reviews/:reviewId:
+    description: Delete own review
+    auth: authenticated (must be review author)
+    response:
+      200:
+        deleted: true
+        avgRating: number
+        ratingsCount: integer
+
+  POST /api/store/apps/:id/reviews/:reviewId/respond:
+    description: Listing author responds to a review
+    auth: authenticated (must be listing author)
+    body:
+      response: string (required)
+    response:
+      200:
+        authorResponse: string
+        authorRespondedAt: string
+      403: error (not listing author)
+      409: error (already responded)
+
+  POST /api/store/apps/:id/reviews/:reviewId/flag:
+    description: Flag a review for moderation
+    auth: authenticated
+    body:
+      reason: string (optional)
+    response:
+      200:
+        flagged: true

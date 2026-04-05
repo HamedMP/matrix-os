@@ -1,58 +1,109 @@
 ---
 name: publish-app
-description: Publish an app to the Matrix OS App Store. Validates manifest, generates store listing, uploads to registry.
+description: Publish an app to the Matrix OS App Gallery with security audit, versioning, and gallery listing
 triggers:
   - publish my app
-  - publish to store
+  - publish to gallery
   - share my app
-  - put on app store
+  - put in gallery
   - make app public
-category: builder
+  - submit app
+  - distribute app
+  - update published app
+category: system
 tools_needed:
-  - Read
+  - read_state
   - Bash
-  - publish_app
 channel_hints:
   - web
   - telegram
 examples:
-  - publish my chess game
-  - put my snake game on the app store
-  - share my calculator app with everyone
+  - publish my calculator app
+  - share my todo app with everyone
+  - put my budget tracker in the gallery
+  - update my published app to version 2
 composable_with:
   - build-for-matrix
   - build-html-app
   - build-game
+  - app-builder
 ---
 
-# Publish App to Store
+# Publish App to Gallery
 
-Publish a user's app to the Matrix OS App Store so others can discover, install, and fork it.
+Publish a locally-built app to the Matrix OS App Gallery. The gallery runs a 3-layer security audit before listing.
 
 ## Steps
 
-1. **Identify the app**: Ask the user which app to publish, or detect from context. Look in `~/apps/` for the app directory.
+### 1. Identify the app
 
-2. **Validate**: Check the app has a valid `matrix.json` manifest with `name` and `description`. If missing, help the user add them.
+Find the app in `~/apps/{slug}/`. Read its `matrix.json` manifest:
 
-3. **Generate listing**: If no description exists, generate one from the app code. Suggest a category (game, productivity, utility, social, dev, creative) and tags.
+```bash
+cat ~/apps/{slug}/matrix.json
+```
 
-4. **Publish**: Use the `publish_app` IPC tool with the app name. This validates the manifest, creates a store entry, and returns a public URL.
+If `description` is missing, ask the user or generate one from the app code.
 
-5. **Confirm**: Share the public URL with the user: `matrix-os.com/store/@handle/slug`
+### 2. Publish via the gateway API
 
-## Publish Checklist
+```bash
+curl -X POST http://localhost:4000/api/apps/{slug}/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Short description for gallery listing",
+    "longDescription": "Optional detailed description for the detail page",
+    "category": "utility",
+    "tags": ["tag1", "tag2"],
+    "version": "1.0.0",
+    "changelog": "Initial release",
+    "visibility": "public"
+  }'
+```
 
-- [ ] `matrix.json` has `name` and `description`
-- [ ] App runs without errors (at least has an index.html)
-- [ ] No secrets in source code (API keys, tokens)
-- [ ] Size under 50MB
+**Required**: `description`, `category`, `version`
+**Optional**: `longDescription`, `tags`, `changelog`, `visibility`
 
-## Category Guide
+### 3. Handle audit results
 
-- **game**: Games, puzzles, entertainment
-- **productivity**: Todo, calendar, notes, project management
-- **utility**: Calculator, converter, timer, tools
-- **social**: Chat, profiles, social features
-- **dev**: Developer tools, code editors, API clients
-- **creative**: Art, music, design, writing tools
+The response includes `auditStatus` ("passed" or "failed") and `auditFindings`:
+
+**If passed**: App is live. Share the `storeUrl` from the response.
+
+**If failed**: Read `auditFindings` -- each has `layer`, `rule`, `message`, `severity`. Fix the issues and resubmit.
+
+Common findings:
+- `path-traversal`: Code contains `../../` -- use paths within app directory only
+- `credential-access`: Code uses `process.env` -- use MatrixOS integration APIs instead
+- `dynamic-code-execution`: Code uses dynamic code construction -- refactor to avoid
+
+### 4. Update a published app
+
+Same endpoint, bumped `version` and `changelog`:
+
+```bash
+curl -X POST http://localhost:4000/api/apps/{slug}/publish \
+  -H "Content-Type: application/json" \
+  -d '{"description": "...", "version": "1.1.0", "changelog": "Added dark mode", "category": "utility", "visibility": "public"}'
+```
+
+Installed users see an update badge automatically.
+
+## Pre-Publish Checklist
+
+- `matrix.json` has `name` and `description`
+- App has at least an `index.html`
+- No secrets in source (API keys, tokens, passwords)
+- Size under 50MB
+- No `../../` path traversal in code
+- No `process.env` access
+
+## Categories
+
+utility, productivity, games, developer-tools, education, finance, health-fitness, social, music, photo-video, news, entertainment, lifestyle
+
+## Visibility
+
+- `public` -- everyone sees it in the gallery
+- `unlisted` -- direct link only
+- `organization` -- org members only (pass `orgId`)

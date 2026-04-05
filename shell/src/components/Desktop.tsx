@@ -906,7 +906,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
               </button>
             </TooltipTrigger>
             <TooltipContent side={tooltipSide} sideOffset={8}>
-              App Store
+              App Gallery
             </TooltipContent>
           </Tooltip>
 

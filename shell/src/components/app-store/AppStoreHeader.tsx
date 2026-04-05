@@ -35,9 +35,9 @@ export function AppStoreHeader({
     <div className="bg-card/60 backdrop-blur-xl border-b border-border/50">
       <div className="flex items-center gap-4 px-6 pt-5 pb-3">
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight">App Store</h1>
+          <h1 className="text-2xl font-bold tracking-tight">App Gallery</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Discover, build, and install apps
+            Discover, publish, and install apps
           </p>
         </div>
 

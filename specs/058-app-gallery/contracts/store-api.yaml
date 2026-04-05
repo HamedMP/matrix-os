@@ -1,0 +1,124 @@
+# Gallery Listing & Discovery API
+# Mount: /api/store (platform)
+# Auth: Public for reads, authenticated for writes
+
+endpoints:
+  # --- Public Discovery ---
+
+  GET /api/store/apps:
+    description: Browse gallery listings with filters
+    auth: none (public)
+    query:
+      category: string (optional)
+      sort: "popular" | "rated" | "new" (default "popular")
+      visibility: "public" (only option for unauthenticated)
+      limit: integer (default 50, max 100)
+      offset: integer (default 0)
+    response:
+      200:
+        apps: AppListingCard[]
+        total: integer
+        hasMore: boolean
+    notes: Only returns public + active listings for unauthenticated users
+
+  GET /api/store/apps/search:
+    description: Full-text search across listings
+    auth: none (public)
+    query:
+      q: string (required, min 2 chars)
+      category: string (optional)
+      limit: integer (default 20)
+    response:
+      200:
+        results: AppListingCard[]
+        total: integer
+    notes: Uses tsvector search with ranking
+
+  GET /api/store/apps/:author/:slug:
+    description: Get listing detail page data
+    auth: none for public listings; authenticated for org/unlisted
+    params:
+      author: string (user handle)
+      slug: string (listing slug)
+    response:
+      200: AppListingDetail
+      403: error (org-private, not a member)
+      404: error (not found or delisted)
+
+  GET /api/store/categories:
+    description: List categories with app counts
+    auth: none (public)
+    response:
+      200: CategoryCount[]
+
+  # --- Listing detail sub-resources ---
+
+  GET /api/store/apps/:id/versions:
+    description: List all versions for a listing
+    auth: none (public)
+    response:
+      200: AppVersion[]
+
+  GET /api/store/apps/:id/reviews:
+    description: List reviews for a listing
+    auth: none (public)
+    query:
+      sort: "recent" | "helpful" (default "recent")
+      limit: integer (default 20)
+      offset: integer (default 0)
+    response:
+      200:
+        reviews: AppReview[]
+        total: integer
+        averageRating: number
+        distribution: { 1: int, 2: int, 3: int, 4: int, 5: int }
+
+types:
+  AppListingCard:
+    id: uuid
+    slug: string
+    name: string
+    author: { id: uuid, handle: string, displayName: string }
+    description: string
+    category: string
+    iconUrl: string | null
+    avgRating: number
+    ratingsCount: integer
+    installsCount: integer
+    price: integer
+    tags: string[]
+
+  AppListingDetail:
+    extends: AppListingCard
+    longDescription: string | null
+    screenshots: string[]
+    currentVersion: AppVersion
+    manifest: object
+    integrations: { required: string[], optional: string[] }
+    permissions: string[]
+    visibility: string
+    createdAt: string
+    updatedAt: string
+    isInstalled: boolean (if authenticated)
+    installedVersion: string | null (if authenticated)
+
+  AppVersion:
+    id: uuid
+    version: string
+    changelog: string | null
+    auditStatus: "pending" | "passed" | "failed"
+    isCurrent: boolean
+    createdAt: string
+
+  AppReview:
+    id: uuid
+    reviewer: { id: uuid, handle: string, displayName: string }
+    rating: integer (1-5)
+    body: string | null
+    authorResponse: string | null
+    authorRespondedAt: string | null
+    createdAt: string
+
+  CategoryCount:
+    category: string
+    count: integer

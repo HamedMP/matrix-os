@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { FALLBACK_CATALOG } from "@/components/app-store/catalog";
 import { getGatewayUrl } from "@/lib/gateway";
 
 export interface AppStoreEntry {
@@ -132,7 +131,7 @@ function mapListingToEntry(listing: any): AppStoreEntry {
 }
 
 export const useAppStore = create<AppStoreState>()((set, get) => ({
-  entries: FALLBACK_CATALOG,
+  entries: [],
   search: "",
   selectedCategory: "All",
   selectedApp: null,
@@ -163,17 +162,9 @@ export const useAppStore = create<AppStoreState>()((set, get) => ({
       if (!res.ok) return;
       const data = await res.json();
       const galleryEntries = (data.apps ?? []).map(mapListingToEntry);
-
-      // Merge gallery listings with fallback catalog
-      const merged = [...FALLBACK_CATALOG];
-      for (const entry of galleryEntries) {
-        if (!merged.some((e) => e.id === entry.id || e.slug === entry.slug)) {
-          merged.push(entry);
-        }
-      }
-      set({ entries: merged });
+      set({ entries: galleryEntries });
     } catch {
-      // Keep fallback catalog on error
+      // Keep empty on error
     } finally {
       set({ loading: false });
     }

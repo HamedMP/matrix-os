@@ -150,6 +150,8 @@ Read these on demand, not every session:
 - Agents work on current branch in parallel, no feature branches
 
 ## Active Technologies
+- TypeScript 5.5+ strict, ES modules + Hono (gateway API), Next.js 16 (shell routes), Kysely (Postgres queries), Zod 4 (validation), Zustand (shell state) (058-app-gallery)
+- PostgreSQL via Kysely (platform Postgres from 049). Per-user app data already on Postgres via gateway `app-db.ts`. (058-app-gallery)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
