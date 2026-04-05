@@ -60,12 +60,26 @@ function formatDate(iso: string): string {
   }
 }
 
+function groupByService(connections: ConnectedService[]): Map<string, ConnectedService[]> {
+  const groups = new Map<string, ConnectedService[]>();
+  for (const conn of connections) {
+    const existing = groups.get(conn.service);
+    if (existing) {
+      existing.push(conn);
+    } else {
+      groups.set(conn.service, [conn]);
+    }
+  }
+  return groups;
+}
+
 export function IntegrationsSection() {
   const [available, setAvailable] = useState<ServiceDef[]>([]);
   const [connected, setConnected] = useState<ConnectedService[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [connectLabel, setConnectLabel] = useState("");
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -121,14 +135,16 @@ export function IntegrationsSection() {
     };
   }, [loadData]);
 
-  const handleConnect = useCallback(async (serviceId: string) => {
+  const handleConnect = useCallback(async (serviceId: string, label?: string) => {
     setConnecting(serviceId);
     setError(null);
     try {
+      const payload: Record<string, string> = { service: serviceId };
+      if (label?.trim()) payload.label = label.trim();
       const res = await fetch(`${GATEWAY}/api/integrations/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ service: serviceId }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
@@ -233,48 +249,72 @@ export function IntegrationsSection() {
         </div>
       )}
 
-      {/* Connected Services */}
+      {/* Connected Services -- grouped by service */}
       {connected.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
             Connected
           </h3>
-          <div className="space-y-2">
-            {connected.map((conn) => {
-              const def = available.find((s) => s.id === conn.service);
+          <div className="space-y-4">
+            {Array.from(groupByService(connected)).map(([serviceId, accounts]) => {
+              const def = available.find((s) => s.id === serviceId);
+              const serviceName = def?.name ?? serviceId;
+              const category = def?.category ?? "developer";
+              const hasMultiple = accounts.length > 1;
               return (
-                <div
-                  key={conn.id}
-                  className="flex items-center gap-4 rounded-lg border border-border/60 bg-card/50 px-4 py-3"
-                >
-                  <ServiceInitial
-                    name={def?.name ?? conn.service}
-                    category={def?.category ?? "developer"}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium truncate">
-                        {def?.name ?? conn.service}
-                      </span>
-                      <StatusDot status={conn.status} />
-                      <span className="text-xs text-muted-foreground capitalize">
-                        {conn.status}
+                <div key={serviceId} className="space-y-1">
+                  {hasMultiple && (
+                    <div className="flex items-center gap-2 mb-2">
+                      <ServiceInitial name={serviceName} category={category} />
+                      <span className="text-sm font-medium">{serviceName}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {accounts.length} accounts
                       </span>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {conn.account_label}
-                      {conn.account_email && ` (${conn.account_email})`}
-                      {" -- "}
-                      Connected {formatDate(conn.connected_at)}
-                    </div>
+                  )}
+                  <div className={`space-y-2 ${hasMultiple ? "ml-12" : ""}`}>
+                    {accounts.map((conn) => (
+                      <div
+                        key={conn.id}
+                        className="flex items-center gap-4 rounded-lg border border-border/60 bg-card/50 px-4 py-3"
+                      >
+                        {!hasMultiple && (
+                          <ServiceInitial name={serviceName} category={category} />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            {!hasMultiple && (
+                              <span className="text-sm font-medium truncate">
+                                {serviceName}
+                              </span>
+                            )}
+                            {hasMultiple && (
+                              <span className="text-sm font-medium truncate">
+                                {conn.account_label}
+                              </span>
+                            )}
+                            <StatusDot status={conn.status} />
+                            <span className="text-xs text-muted-foreground capitalize">
+                              {conn.status}
+                            </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {!hasMultiple && conn.account_label}
+                            {conn.account_email && (hasMultiple ? conn.account_email : ` (${conn.account_email})`)}
+                            {" -- "}
+                            Connected {formatDate(conn.connected_at)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDisconnect(conn.id)}
+                          disabled={disconnecting === conn.id}
+                          className="shrink-0 rounded-md border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-50"
+                        >
+                          {disconnecting === conn.id ? "Disconnecting..." : "Disconnect"}
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <button
-                    onClick={() => handleDisconnect(conn.id)}
-                    disabled={disconnecting === conn.id}
-                    className="shrink-0 rounded-md border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-50"
-                  >
-                    {disconnecting === conn.id ? "Disconnecting..." : "Disconnect"}
-                  </button>
                 </div>
               );
             })}
@@ -305,8 +345,21 @@ export function IntegrationsSection() {
                     </div>
                   </div>
                 </div>
+                {isConnected && (
+                  <input
+                    type="text"
+                    placeholder="Label (e.g. Work, Personal)"
+                    value={connecting === service.id ? "" : connectLabel}
+                    onChange={(e) => setConnectLabel(e.target.value)}
+                    disabled={isConnecting}
+                    className="w-full rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                )}
                 <button
-                  onClick={() => handleConnect(service.id)}
+                  onClick={() => {
+                    handleConnect(service.id, isConnected ? connectLabel : undefined);
+                    setConnectLabel("");
+                  }}
                   disabled={isConnecting}
                   className={`mt-auto w-full rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                     isConnecting
