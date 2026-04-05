@@ -10,7 +10,7 @@ Matrix OS is a platform where every user has a computer in the cloud. To make th
 
 This spec covers three things:
 
-1. **Platform database** -- centralized Postgres for managing users, connections, apps, and billing across the entire Matrix OS platform
+1. **Platform database** -- centralized Postgres for managing users, connections, service registry, and billing foundations across the entire Matrix OS platform
 2. **Pipedream Connect integration** -- OAuth, credential management, and API proxy for 3,000+ services
 3. **Shell settings UI** -- click-to-connect integration management alongside the existing conversational flow
 
@@ -51,15 +51,13 @@ Platform Postgres (shared, managed by gateway)
 │   ├── connected_at (timestamptz)
 │   └── last_used_at (timestamptz)
 │
-├── apps (all user-built apps on the platform, not just integration-using ones)
+├── user_apps (local workspace apps authored by this user -- NOT gallery listings)
 │   ├── id (uuid, PK)
 │   ├── user_id (uuid, FK → users)
 │   ├── name (text)
 │   ├── slug (text)                       -- unique per user
-│   ├── description (text)
+│   ├── description (text, nullable)
 │   ├── services_used (text[])            -- ['gmail', 'slack'] or []
-│   ├── is_public (boolean, default false)-- shared to app store
-│   ├── installs (integer, default 0)
 │   ├── created_at (timestamptz)
 │   └── updated_at (timestamptz)
 │
@@ -132,19 +130,21 @@ User clicks [Connect Gmail] in settings    User says "connect my Gmail"
                └─────────────────┘
 ```
 
-**Using a service (API call):**
+**Using a service (API call via Pipedream Actions):**
 
 ```
 Agent: call_service("gmail", "list_messages", { query: "is:unread" })
   │
   ▼
-Gateway ──▶ Pipedream Connect Proxy ──▶ Gmail API
-  │                                        │
-  ◀────────────── response ────────────────┘
+Gateway ──▶ Pipedream Actions API ──▶ Gmail API
+  │         (client.actions.run)        │
+  ◀────────────── response ────────────┘
   │
   ▼
 Agent receives unread emails
 ```
+
+The gateway translates our action names (e.g., `list_messages`) to Pipedream component keys (e.g., `gmail-list-messages`) and calls `client.actions.run()` with the user's connected account (`authProvisionId`). Pipedream handles the actual API call, auth injection, and response formatting.
 
 ### Gateway API
 
@@ -160,7 +160,20 @@ GET    /api/integrations/:id/status       -- check connection health
 POST   /api/integrations/:id/refresh      -- force token refresh
 ```
 
-All endpoints require authentication (Clerk session or container IPC token). The gateway maps the authenticated user to their `pipedream_external_id` for all Pipedream SDK calls.
+**Auth Matrix:**
+
+| Endpoint | Auth Method | Public? |
+|----------|-------------|---------|
+| `GET /api/integrations/available` | None (public catalog) | Yes |
+| `GET /api/integrations` | Clerk session or IPC token | No |
+| `POST /api/integrations/connect` | Clerk session or IPC token | No |
+| `POST /api/integrations/webhook/connected` | Pipedream webhook signature (HMAC) | Yes (webhook) |
+| `POST /api/integrations/call` | Clerk session or IPC token | No |
+| `GET /api/integrations/:id/status` | Clerk session or IPC token | No |
+| `DELETE /api/integrations/:id` | Clerk session or IPC token | No |
+| `POST /api/integrations/:id/refresh` | Clerk session or IPC token | No |
+
+The gateway maps the authenticated user to their `pipedream_external_id` for all Pipedream SDK calls. The webhook endpoint uses HMAC signature verification (Pipedream signs payloads with a shared secret) instead of session auth.
 
 ### IPC Tools (Agent-Facing)
 
@@ -361,7 +374,7 @@ The AI uses connected services proactively via cron and heartbeat.
 - **FR-001**: Gateway MUST expose REST API endpoints for connecting, listing, disconnecting, and calling integrations.
 - **FR-002**: Gateway MUST use Pipedream Connect SDK for OAuth flows, credential storage, token refresh, and API proxying.
 - **FR-003**: Gateway MUST map authenticated Matrix OS users to Pipedream `external_user_id`.
-- **FR-004**: Platform Postgres MUST store user records, connected services, apps, event subscriptions, and billing data.
+- **FR-004**: Platform Postgres MUST store user records, connected services, user apps (local workspace metadata), event subscriptions, and billing data.
 - **FR-005**: Platform Postgres MUST NOT store OAuth credentials -- only Pipedream account ID references.
 - **FR-006**: Shell MUST provide a Settings > Integrations page for click-to-connect management.
 - **FR-007**: Shell settings MUST update in real-time via WebSocket when connections change.
@@ -371,11 +384,11 @@ The AI uses connected services proactively via cron and heartbeat.
 - **FR-011**: System MUST provide a service registry that powers both the agent's knowledge and the settings UI.
 - **FR-012**: System MUST handle API rate limiting by queuing and informing the user.
 - **FR-013**: System MUST support cross-service action chaining in a single conversation turn.
-- **FR-014**: System MUST allow apps to use `call_service` for integration access, with cron-triggered execution.
+- **FR-014**: System MUST allow user apps to use `call_service` for integration access, with cron-triggered execution.
 
 ### Non-Functional Requirements
 
-- **NFR-001**: OAuth connection flow completes in under 60 seconds.
+- **NFR-001**: Gateway returns OAuth URL within 5 seconds. The full user-facing flow (including consent screen interaction) should complete within 60 seconds of clicking Connect.
 - **NFR-002**: API calls via `call_service` return within 5 seconds (excluding provider latency).
 - **NFR-003**: All Pipedream SDK calls MUST have `AbortSignal.timeout()` -- 10s for API calls, 30s for OAuth flows.
 - **NFR-004**: Gateway MUST NOT expose Pipedream project credentials to containers.
@@ -387,7 +400,7 @@ The AI uses connected services proactively via cron and heartbeat.
 - **User**: A Matrix OS platform user. Clerk ID, handle, container mapping, plan, status.
 - **Connected Service**: A user's authorized link to an external service. Service name, Pipedream account ID, label, status, scopes.
 - **Service Registry**: Static catalog of available services with actions, parameters, and Pipedream app mappings.
-- **App**: A user-built application that may use connected services. Name, description, services used, public/private.
+- **User App**: A locally authored application in a user's workspace that may use connected services. Name, slug, description, services used. NOT the gallery listing (see spec 058).
 
 ## Security
 
@@ -397,6 +410,7 @@ The AI uses connected services proactively via cron and heartbeat.
 - **Revocation**: Disconnecting a service calls Pipedream's API to revoke credentials, then removes the platform DB row.
 - **No wildcard CORS**: Integration endpoints use the existing origin allowlist.
 - **Input validation**: Service names validated against the registry. Action names validated against the service's action list. Parameters validated with Zod schemas.
+- **Webhook verification**: The `/webhook/connected` endpoint verifies Pipedream's HMAC signature using the shared webhook secret before processing any payload. Invalid signatures return 401.
 
 ## Dependencies
 
@@ -406,21 +420,83 @@ The AI uses connected services proactively via cron and heartbeat.
 - Clerk -- user authentication (existing)
 - Existing gateway (Hono), shell (Next.js), kernel IPC
 
+## Cross-Spec Interface Contract (049 ↔ 058)
+
+049 and 058 will be implemented in parallel. To prevent overlapping work, each spec has exclusive table ownership.
+
+**049 provides (platform foundation)**:
+
+- Platform Postgres connection, Kysely query builder, migration tooling
+- `users` table (id, clerk_id, handle, display_name, email, container_id, plan, status)
+- `connected_services` table
+- `user_apps` table (local workspace metadata only -- no gallery semantics)
+- `billing` table
+- Service registry (available integrations, their actions/scopes)
+- Integration manifest shape validation (see below)
+
+**058 consumes and defines separately (gallery/marketplace domain)**:
+
+- `app_listings` -- marketplace metadata, discovery, publishing
+- `app_versions` -- versioned releases, changelogs, audit status
+- `app_installations` -- who installed what, at which version
+- `app_reviews` -- ratings, text reviews
+- `security_audits` -- per-version audit results
+- `organizations`, `org_memberships` -- 058 owns for now
+
+**Foreign key contracts** (058 references 049):
+
+- `app_listings.author_id` -> `users.id`
+- `app_reviews.reviewer_id` -> `users.id`
+- `app_installations.user_id` -> `users.id`
+- `org_memberships.user_id` -> `users.id`
+
+**049 does NOT own**: gallery listings, publishing flows, install/update/rollback UX, reviews, security audits, org management.
+
+### Integration Manifest Contract
+
+049 defines the manifest shape that apps declare for their integration requirements. This is used by 058 at publish/install time to validate integration dependencies.
+
+```typescript
+// Part of the app manifest (defined by 049, consumed by 058)
+interface IntegrationManifest {
+  integrations?: {
+    required?: string[]   // e.g. ['gmail.read', 'gmail.send'] -- app won't function without these
+    optional?: string[]   // e.g. ['slack.send_message'] -- enhances app but not required
+  }
+}
+```
+
+049 validates manifest entries against the service registry. 058 uses this at publish time (audit layer 1) and install time (prompt user to connect missing services).
+
+### Minimum Unblocker for 058
+
+058 may begin implementation once these are in place:
+
+1. Postgres connection + Kysely migration tooling operational
+2. `users` table populated (Clerk auth -> user record creation)
+3. Service registry readable (even if no OAuth flows work yet)
+
+058 does NOT depend on:
+
+- 049 OAuth connect flows being complete
+- 049 billing being implemented
+- 049 event subscriptions / webhook ingestion
+
 ## Scope Boundaries
 
 **In scope**:
-- Platform Postgres database (users, connected_services, apps, billing, event_subscriptions)
+- Platform Postgres database (users, connected_services, user_apps, billing, event_subscriptions)
 - Pipedream Connect integration for OAuth and API proxy
 - Gateway REST API for integration management
 - IPC tools (`connect_service`, `call_service`) for the AI agent
 - Shell Settings > Integrations page (connect, disconnect, view status)
 - Service registry for 6 launch services
-- Apps using `call_service` with cron triggers
+- User apps using `call_service` with cron triggers
 
 **Out of scope (future)**:
 - Event streaming / real-time webhook ingestion (event_subscriptions table is reserved but not implemented)
 - n8n self-hosted alternative (revisit when needed)
-- App store / template marketplace (apps table supports `is_public` but no discovery UI yet)
+- App gallery / marketplace (owned by spec 058 -- gallery listings, versions, installs, reviews, security audits)
 - Browse all 3,000+ Pipedream services in settings (launch with 6, expand later)
 - Native file-system sync connectors (agent builds this per-user as apps instead)
 - Visual workflow editor
@@ -436,3 +512,84 @@ Once the connect-and-call foundation is solid, add event streaming:
 5. `event_subscriptions` table tracks what each user is listening for
 
 This enables "my computer receives everything" -- bank transactions, email arrivals, PR reviews, Slack mentions -- all flowing into the user's Matrix OS container for the AI to act on.
+
+## Phase 2: Pipedream Actions API Integration
+
+Phase 1 (implemented) established OAuth, platform DB, settings UI, and IPC tools. Phase 2 makes `call_service` actually work by using Pipedream's Actions API instead of the raw proxy.
+
+### Problem
+
+The current `call_service` IPC tool and `POST /api/integrations/call` route accept an action name (e.g., `list_messages`) but have no way to execute it. The Pipedream proxy API requires a raw HTTP URL, which means we'd need to know every service's API structure. Pipedream's Actions API solves this -- 10,000+ pre-built components handle the API details.
+
+### Architecture
+
+```
+call_service("gmail", "list_messages", { query: "is:unread" })
+  │
+  ▼
+Gateway maps action to Pipedream component key:
+  "gmail" + "list_messages" → "gmail-list-messages"
+  │
+  ▼
+client.actions.run({
+  externalUserId: "dev",
+  id: "gmail-list-messages",
+  configuredProps: {
+    gmail: { authProvisionId: "apn_V1hxyb6" },  // from connected_services
+    query: "is:unread"
+  }
+})
+  │
+  ▼
+Pipedream executes the action, returns:
+{ exports: { "$summary": "Found 5 messages" }, ret: [...messages] }
+```
+
+### Component Key Convention
+
+Pipedream component keys follow the pattern `{app_slug}-{action_name}`. Our registry maps our action names to component keys:
+
+| Service | Action | Pipedream Component Key |
+|---------|--------|------------------------|
+| gmail | list_messages | gmail-list-messages |
+| gmail | send_email | gmail-send-email |
+| google_calendar | list_events | google_calendar-list-events |
+| google_calendar | create_event | google_calendar-create-event |
+| github | list_repos | github-list-repos |
+| slack | send_message | slack-send-message |
+| discord | send_message | discord-send-message |
+
+Note: Actual Pipedream component keys may differ. Discovery step: call `client.actions.list({ app: "gmail" })` to get real keys and map them.
+
+### Action Discovery
+
+Before hardcoding component keys, the gateway should discover available actions per service at startup:
+
+```typescript
+const actions = await client.actions.list({ app: "gmail" });
+// Returns: [{ key: "gmail-send-email", name: "Send Email", ... }, ...]
+```
+
+This populates a runtime action map that bridges our registry action names to real Pipedream component keys.
+
+### Dynamic Properties
+
+Some actions have dynamic properties (e.g., Slack's `send_message` needs to list channels first). The gateway handles this by calling `client.components.configureProps()` to resolve dynamic options before running the action.
+
+### Requirements (Phase 2)
+
+- **FR-015**: Gateway MUST use Pipedream Actions API (`client.actions.run()`) for `call_service`, not the raw proxy.
+- **FR-016**: Gateway MUST discover available Pipedream component keys per service at startup via `client.actions.list()`.
+- **FR-017**: Gateway MUST map connected account's `pipedream_account_id` to `authProvisionId` in `configuredProps`.
+- **FR-018**: Gateway MUST handle dynamic properties by calling `configureProps()` when an action has `remoteOptions`.
+- **FR-019**: Service registry MUST store Pipedream component key mappings alongside our action definitions.
+
+## Clarifications
+
+### Session 2026-04-05
+
+- Q: Should 049 own the `apps` table with gallery fields, or narrow it? -> A: Rename to `user_apps`, strip gallery fields (`is_public`, `installs`). Local workspace metadata only. Gallery tables (`app_listings`, `app_versions`, `app_installations`, `app_reviews`, `security_audits`) are exclusively owned by spec 058.
+- Q: What is the interface boundary between 049 and 058? -> A: 049 provides platform Postgres, `users`, `connected_services`, service registry, integration manifest validation. 058 consumes those and defines all gallery/marketplace tables independently, referencing `users.id` via foreign keys.
+- Q: What does 058 need from 049 to start? -> A: Postgres connection + migration tooling, `users` table populated, service registry readable. 058 does not depend on OAuth flows or billing.
+- Q: Should 049 define integration manifest shape? -> A: Yes. 049 defines `integrations.required` and `integrations.optional` manifest fields, validates against service registry. 058 consumes at publish/install time.
+- Q: Who owns orgs? -> A: 058 owns `organizations` and `org_memberships` for now. May move to a platform spec later.
