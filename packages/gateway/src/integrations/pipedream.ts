@@ -88,11 +88,16 @@ export function createPipedreamClient(
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
       const accounts = (result as any)?.data ?? (Array.isArray(result) ? result : []);
-      return accounts.map((a: any) => ({
-        id: a.id,
-        app: a.app?.name_slug ?? a.app_slug ?? a.app ?? "",
-        email: a.email ?? a.display_name ?? undefined,
-      }));
+      return accounts.map((a: any) => {
+        const app = a.app;
+        const appSlug = typeof app === "string" ? app
+          : app?.nameSlug ?? app?.name_slug ?? app?.slug ?? String(app ?? "");
+        return {
+          id: a.id,
+          app: appSlug,
+          email: a.email ?? a.display_name ?? undefined,
+        };
+      });
     },
   };
 }
