@@ -269,3 +269,14 @@ export function getAction(
   if (!service) return undefined;
   return service.actions[actionId];
 }
+
+export function validateIntegrationManifest(
+  manifest: { integrations?: { required?: string[]; optional?: string[] } },
+): { valid: boolean; missing: string[] } {
+  const missing: string[] = [];
+  for (const ref of manifest.integrations?.required ?? []) {
+    const [serviceId] = ref.split(".");
+    if (!getService(serviceId)) missing.push(ref);
+  }
+  return { valid: missing.length === 0, missing };
+}

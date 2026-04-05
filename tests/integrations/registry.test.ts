@@ -4,6 +4,7 @@ import {
   getService,
   listServices,
   getAction,
+  validateIntegrationManifest,
 } from "../../packages/gateway/src/integrations/registry.js";
 
 describe("Service Registry", () => {
@@ -80,5 +81,43 @@ describe("Service Registry", () => {
     expect(ids).toContain("github");
     expect(ids).toContain("slack");
     expect(ids).toContain("discord");
+  });
+
+  describe("validateIntegrationManifest", () => {
+    it("returns valid for known services", () => {
+      const result = validateIntegrationManifest({
+        integrations: { required: ["gmail", "slack"] },
+      });
+      expect(result.valid).toBe(true);
+      expect(result.missing).toEqual([]);
+    });
+
+    it("returns invalid for unknown services", () => {
+      const result = validateIntegrationManifest({
+        integrations: { required: ["gmail", "notion"] },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.missing).toEqual(["notion"]);
+    });
+
+    it("handles dotted service.action refs", () => {
+      const result = validateIntegrationManifest({
+        integrations: { required: ["gmail.send_email"] },
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it("returns valid for empty manifest", () => {
+      expect(validateIntegrationManifest({}).valid).toBe(true);
+      expect(validateIntegrationManifest({ integrations: {} }).valid).toBe(true);
+      expect(validateIntegrationManifest({ integrations: { required: [] } }).valid).toBe(true);
+    });
+
+    it("ignores optional services for validity", () => {
+      const result = validateIntegrationManifest({
+        integrations: { optional: ["nonexistent"] },
+      });
+      expect(result.valid).toBe(true);
+    });
   });
 });

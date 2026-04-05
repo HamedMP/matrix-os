@@ -287,6 +287,150 @@ describe("PlatformDb", () => {
     });
   });
 
+  describe("user_apps", () => {
+    let userId: string;
+
+    beforeEach(async () => {
+      const user = await db.createUser({
+        clerkId: "clerk_apps",
+        handle: "appuser",
+        displayName: "App User",
+        email: "apps@example.com",
+        containerId: "container_apps",
+      });
+      userId = user.id;
+    });
+
+    it("creates and lists user apps", async () => {
+      const app = await db.createUserApp({
+        userId,
+        name: "My Email App",
+        slug: "my-email-app",
+        description: "Sends emails",
+        servicesUsed: ["gmail"],
+      });
+
+      expect(app.id).toBeDefined();
+      expect(app.name).toBe("My Email App");
+      expect(app.slug).toBe("my-email-app");
+      expect(app.services_used).toEqual(["gmail"]);
+
+      const list = await db.listUserApps(userId);
+      expect(list).toHaveLength(1);
+      expect(list[0].slug).toBe("my-email-app");
+    });
+
+    it("retrieves a single app by id", async () => {
+      const app = await db.createUserApp({
+        userId,
+        name: "Calendar Bot",
+        slug: "calendar-bot",
+        servicesUsed: ["google_calendar"],
+      });
+
+      const found = await db.getUserApp(app.id);
+      expect(found).not.toBeNull();
+      expect(found!.name).toBe("Calendar Bot");
+      expect(found!.description).toBeNull();
+    });
+
+    it("returns null for non-existent app", async () => {
+      const found = await db.getUserApp("00000000-0000-0000-0000-000000000000");
+      expect(found).toBeNull();
+    });
+
+    it("upserts on duplicate (user_id, slug)", async () => {
+      await db.createUserApp({
+        userId,
+        name: "Version 1",
+        slug: "my-app",
+        servicesUsed: ["gmail"],
+      });
+
+      const updated = await db.createUserApp({
+        userId,
+        name: "Version 2",
+        slug: "my-app",
+        servicesUsed: ["gmail", "slack"],
+      });
+
+      expect(updated.name).toBe("Version 2");
+      expect(updated.services_used).toEqual(["gmail", "slack"]);
+
+      const list = await db.listUserApps(userId);
+      expect(list).toHaveLength(1);
+    });
+
+    it("supports multiple apps per user", async () => {
+      await db.createUserApp({ userId, name: "App 1", slug: "app-1", servicesUsed: [] });
+      await db.createUserApp({ userId, name: "App 2", slug: "app-2", servicesUsed: [] });
+
+      const list = await db.listUserApps(userId);
+      expect(list).toHaveLength(2);
+    });
+
+    it("cascades delete when user is removed", async () => {
+      await db.createUserApp({ userId, name: "Cascade", slug: "cascade", servicesUsed: [] });
+      await db.raw("DELETE FROM users WHERE id = $1", [userId]);
+
+      const result = await db.raw("SELECT * FROM user_apps WHERE user_id = $1", [userId]);
+      expect(result.rows).toHaveLength(0);
+    });
+  });
+
+  describe("event_subscriptions", () => {
+    let userId: string;
+
+    beforeEach(async () => {
+      const user = await db.createUser({
+        clerkId: "clerk_events",
+        handle: "eventuser",
+        displayName: "Event User",
+        email: "events@example.com",
+        containerId: "container_events",
+      });
+      userId = user.id;
+    });
+
+    it("creates and lists subscriptions", async () => {
+      const sub = await db.createEventSubscription({
+        userId,
+        service: "gmail",
+        eventType: "new_email",
+      });
+
+      expect(sub.id).toBeDefined();
+      expect(sub.service).toBe("gmail");
+      expect(sub.event_type).toBe("new_email");
+      expect(sub.status).toBe("active");
+
+      const list = await db.listEventSubscriptions(userId);
+      expect(list).toHaveLength(1);
+      expect(list[0].event_type).toBe("new_email");
+    });
+
+    it("deletes a subscription", async () => {
+      const sub = await db.createEventSubscription({
+        userId,
+        service: "github",
+        eventType: "new_pr",
+      });
+
+      await db.deleteEventSubscription(sub.id);
+
+      const list = await db.listEventSubscriptions(userId);
+      expect(list).toHaveLength(0);
+    });
+
+    it("supports multiple subscriptions per user", async () => {
+      await db.createEventSubscription({ userId, service: "gmail", eventType: "new_email" });
+      await db.createEventSubscription({ userId, service: "slack", eventType: "new_message" });
+
+      const list = await db.listEventSubscriptions(userId);
+      expect(list).toHaveLength(2);
+    });
+  });
+
   describe("raw()", () => {
     it("executes arbitrary SQL", async () => {
       const result = await db.raw("SELECT 1 + 1 AS sum");
