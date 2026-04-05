@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useMemo } from "react";
+import { useEffect, useCallback, useMemo, useState } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useAppStore, type AppStoreEntry } from "@/stores/app-store";
 import { AppStoreHeader } from "./AppStoreHeader";
@@ -8,6 +8,8 @@ import { AppStoreFeatured } from "./AppStoreFeatured";
 import { AppStoreSection } from "./AppStoreSection";
 import { AppStoreCategory } from "./AppStoreCategory";
 import { AppDetail } from "./AppDetail";
+import { InstallDialog } from "./InstallDialog";
+import { PublishDialog } from "./PublishDialog";
 import { FALLBACK_CATALOG } from "./catalog";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -25,19 +27,30 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
   const selectedCategory = useAppStore((s) => s.selectedCategory);
   const selectedApp = useAppStore((s) => s.selectedApp);
   const installedIds = useAppStore((s) => s.installedIds);
+  const loading = useAppStore((s) => s.loading);
   const setEntries = useAppStore((s) => s.setEntries);
   const setSearch = useAppStore((s) => s.setSearch);
   const setCategory = useAppStore((s) => s.setCategory);
   const selectApp = useAppStore((s) => s.selectApp);
   const markInstalled = useAppStore((s) => s.markInstalled);
+  const fetchGalleryApps = useAppStore((s) => s.fetchGalleryApps);
+  const fetchInstallations = useAppStore((s) => s.fetchInstallations);
+
+  const [installTarget, setInstallTarget] = useState<AppStoreEntry | null>(null);
+  const [publishTarget, setPublishTarget] = useState<{ slug: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
+
+    // Fetch gallery apps from API
+    fetchGalleryApps();
+    fetchInstallations();
+
+    // Also try loading local app-store.json as supplemental data
     fetch(`${GATEWAY_URL}/files/system/app-store.json`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: AppStoreEntry[] | null) => {
         if (!data || data.length === 0) return;
-        // Merge: runtime data enriched with fallback metadata
         const byId = new Map(data.map((e) => [e.id, e]));
         for (const fallback of FALLBACK_CATALOG) {
           if (!byId.has(fallback.id)) {
@@ -63,13 +76,17 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
         setEntries(Array.from(byId.values()));
       })
       .catch(() => {});
-  }, [open, setEntries]);
+  }, [open, setEntries, fetchGalleryApps, fetchInstallations]);
 
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (selectedApp) {
+        if (installTarget) {
+          setInstallTarget(null);
+        } else if (publishTarget) {
+          setPublishTarget(null);
+        } else if (selectedApp) {
           selectApp(null);
         } else {
           onOpenChange(false);
@@ -78,13 +95,15 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, selectedApp, selectApp, onOpenChange]);
+  }, [open, selectedApp, selectApp, onOpenChange, installTarget, publishTarget]);
 
   useEffect(() => {
     if (!open) {
       setSearch("");
       setCategory("All");
       selectApp(null);
+      setInstallTarget(null);
+      setPublishTarget(null);
     }
   }, [open, setSearch, setCategory, selectApp]);
 
@@ -99,6 +118,8 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
         });
         markInstalled(entry.id);
         onOpenChange(false);
+      } else if (entry.source === "gallery" && entry.listingId) {
+        setInstallTarget(entry);
       }
     },
     [send, onOpenChange, markInstalled],
@@ -120,6 +141,11 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
 
   const promptApps = useMemo(
     () => entries.filter((e) => e.source === "prompt"),
+    [entries],
+  );
+
+  const galleryApps = useMemo(
+    () => entries.filter((e) => e.source === "gallery"),
     [entries],
   );
 
@@ -188,6 +214,28 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
                   />
                 )}
 
+                {galleryApps.length > 0 && (
+                  <section className="mb-8">
+                    <div className="flex items-center gap-2 mb-3 px-1">
+                      <h3 className="text-sm font-semibold">Community Apps</h3>
+                      <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2 py-0.5">
+                        {galleryApps.length} apps
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+                      {galleryApps.map((entry) => (
+                        <AppCardInGrid
+                          key={entry.id}
+                          entry={entry}
+                          installedIds={installedIds}
+                          onSelect={selectApp}
+                          onInstall={install}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 {bundledApps.length > 0 && (
                   <section className="mb-8">
                     <h3 className="text-sm font-semibold mb-3 px-1">Ready to Use</h3>
@@ -247,6 +295,29 @@ export function AppStore({ open, onOpenChange }: AppStoreProps) {
           )}
         </div>
       </div>
+
+      {installTarget && installTarget.listingId && (
+        <InstallDialog
+          listingId={installTarget.listingId}
+          name={installTarget.name}
+          permissions={installTarget.permissions ?? []}
+          integrations={installTarget.integrations}
+          onClose={() => setInstallTarget(null)}
+          onInstalled={(result) => {
+            markInstalled(installTarget.id);
+            setInstallTarget(null);
+            selectApp(null);
+          }}
+        />
+      )}
+
+      {publishTarget && (
+        <PublishDialog
+          appSlug={publishTarget.slug}
+          appName={publishTarget.name}
+          onClose={() => setPublishTarget(null)}
+        />
+      )}
     </div>
   );
 }

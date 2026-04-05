@@ -2,7 +2,8 @@
 
 import { Button } from "@/components/ui/button";
 import { StarRating } from "./StarRating";
-import { XIcon, DownloadIcon, SparklesIcon, GitForkIcon } from "lucide-react";
+import { SecurityBadge } from "./SecurityBadge";
+import { XIcon, DownloadIcon, SparklesIcon, GitForkIcon, ShieldCheckIcon } from "lucide-react";
 import type { AppStoreEntry } from "@/stores/app-store";
 
 function formatDownloads(n: number): string {
@@ -22,6 +23,7 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
   const isBundled = entry.source === "bundled";
   const showOpen = isBundled || installed;
   const isRegistryApp = entry.source === "registry" || entry.source === "community";
+  const isGalleryApp = entry.source === "gallery";
 
   return (
     <div className="w-[380px] h-full bg-card border-l border-border flex flex-col overflow-hidden">
@@ -46,6 +48,12 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
 
           <h2 className="text-lg font-bold">{entry.name}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">{entry.category}</p>
+
+          {entry.auditStatus && (
+            <div className="mt-1.5">
+              <SecurityBadge status={entry.auditStatus} />
+            </div>
+          )}
 
           {entry.rating !== undefined && (
             <div className="mt-2">
@@ -101,6 +109,37 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
             </p>
           </div>
 
+          {/* Permissions section for gallery apps */}
+          {isGalleryApp && entry.permissions && entry.permissions.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Permissions
+              </h4>
+              <ul className="space-y-1">
+                {entry.permissions.map((perm) => (
+                  <li key={perm} className="flex items-center gap-2 text-xs">
+                    <ShieldCheckIcon className="size-3 text-green-500 shrink-0" />
+                    <span>{perm}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Required integrations for gallery apps */}
+          {isGalleryApp && entry.integrations?.required && entry.integrations.required.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Required Integrations
+              </h4>
+              <ul className="space-y-1">
+                {entry.integrations.required.map((int) => (
+                  <li key={int} className="text-xs text-amber-600">{int}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <InfoItem label="Author" value={entry.authorId ?? entry.author} />
             <InfoItem label="Source" value={entry.source} />
@@ -110,6 +149,9 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
             )}
             {entry.forksCount !== undefined && entry.forksCount > 0 && (
               <InfoItem label="Forks" value={String(entry.forksCount)} />
+            )}
+            {isGalleryApp && entry.visibility && (
+              <InfoItem label="Visibility" value={entry.visibility} />
             )}
           </div>
 
