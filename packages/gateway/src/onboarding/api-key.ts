@@ -54,6 +54,8 @@ export async function storeApiKey(homePath: string, apiKey: string): Promise<voi
 }
 
 export async function hasApiKey(homePath: string): Promise<boolean> {
+  // Check env var first (set in Docker/.env)
+  if (process.env.ANTHROPIC_API_KEY) return true;
   try {
     const raw = await readFile(join(homePath, "system", "config.json"), "utf-8");
     const config = JSON.parse(raw);
