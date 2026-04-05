@@ -7,8 +7,17 @@ import {
   getByAuthorSlug,
   listCategories,
 } from './gallery/listings.js';
-import { listByUser } from './gallery/installations.js';
+import { listByUser, getByUserAndListing } from './gallery/installations.js';
 import { getLatestAudit } from './gallery/security-audit.js';
+import {
+  submitReview,
+  updateReview,
+  deleteReview,
+  listByListing,
+  flagReview,
+  addAuthorResponse,
+  getRatingDistribution,
+} from './gallery/reviews.js';
 
 /**
  * Gallery store API -- Postgres/Kysely backed.
@@ -106,6 +115,157 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
     }
 
     return c.json(audit);
+  });
+
+  // --- Review Endpoints ---
+
+  // GET /apps/:id/reviews -- list reviews with distribution
+  api.get('/apps/:id/reviews', async (c) => {
+    const listingId = c.req.param('id');
+    const sort = (c.req.query('sort') ?? 'recent') as 'recent' | 'highest' | 'lowest';
+    const limit = Math.min(Number(c.req.query('limit')) || 20, 100);
+    const offset = Number(c.req.query('offset')) || 0;
+
+    const [reviews, distribution] = await Promise.all([
+      listByListing(galleryDb, listingId, { sort, limit, offset }),
+      getRatingDistribution(galleryDb, listingId),
+    ]);
+
+    const listing = await galleryDb.selectFrom('app_listings')
+      .select(['avg_rating', 'ratings_count'])
+      .where('id', '=', listingId)
+      .executeTakeFirst();
+
+    return c.json({
+      reviews,
+      total: reviews.length,
+      averageRating: listing ? Number(listing.avg_rating) : 0,
+      distribution,
+    });
+  });
+
+  // POST /apps/:id/reviews -- submit a review (requires installation)
+  api.post('/apps/:id/reviews', async (c) => {
+    const listingId = c.req.param('id');
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const body = await c.req.json<{ rating: number; body?: string }>();
+    if (!body.rating || body.rating < 1 || body.rating > 5) {
+      return c.json({ error: 'Rating must be between 1 and 5' }, 400);
+    }
+
+    // Installation check: reviewer must have installed the app
+    const installation = await getByUserAndListing(galleryDb, userId, listingId);
+    if (!installation) {
+      return c.json({ error: 'You must install this app before reviewing it' }, 403);
+    }
+
+    try {
+      const review = await submitReview(galleryDb, listingId, userId, body.rating, body.body);
+      return c.json(review, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to submit review';
+      if (message.includes('unique') || message.includes('duplicate')) {
+        return c.json({ error: 'You have already reviewed this app' }, 409);
+      }
+      return c.json({ error: 'Failed to submit review' }, 500);
+    }
+  });
+
+  // PUT /apps/:id/reviews/:reviewId -- update a review
+  api.put('/apps/:id/reviews/:reviewId', async (c) => {
+    const reviewId = c.req.param('reviewId');
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const body = await c.req.json<{ rating?: number; body?: string }>();
+    if (body.rating !== undefined && (body.rating < 1 || body.rating > 5)) {
+      return c.json({ error: 'Rating must be between 1 and 5' }, 400);
+    }
+
+    try {
+      const review = await updateReview(galleryDb, reviewId, userId, body);
+      return c.json(review);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('not found') || message.includes('not owned')) {
+        return c.json({ error: 'Review not found or not owned by you' }, 404);
+      }
+      return c.json({ error: 'Failed to update review' }, 500);
+    }
+  });
+
+  // DELETE /apps/:id/reviews/:reviewId -- delete a review
+  api.delete('/apps/:id/reviews/:reviewId', async (c) => {
+    const reviewId = c.req.param('reviewId');
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    try {
+      await deleteReview(galleryDb, reviewId, userId);
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('not found') || message.includes('not owned')) {
+        return c.json({ error: 'Review not found or not owned by you' }, 404);
+      }
+      return c.json({ error: 'Failed to delete review' }, 500);
+    }
+  });
+
+  // POST /apps/:id/reviews/:reviewId/respond -- author responds to review
+  api.post('/apps/:id/reviews/:reviewId/respond', async (c) => {
+    const reviewId = c.req.param('reviewId');
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const body = await c.req.json<{ response: string }>();
+    if (!body.response) {
+      return c.json({ error: 'Response text is required' }, 400);
+    }
+
+    try {
+      const review = await addAuthorResponse(galleryDb, reviewId, userId, body.response);
+      return c.json(review);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('not found')) {
+        return c.json({ error: 'Review not found' }, 404);
+      }
+      if (message.includes('Only the listing author')) {
+        return c.json({ error: 'Only the listing author can respond to reviews' }, 403);
+      }
+      return c.json({ error: 'Failed to add response' }, 500);
+    }
+  });
+
+  // POST /apps/:id/reviews/:reviewId/flag -- flag a review
+  api.post('/apps/:id/reviews/:reviewId/flag', async (c) => {
+    const reviewId = c.req.param('reviewId');
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    try {
+      const review = await flagReview(galleryDb, reviewId);
+      return c.json(review);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('not found')) {
+        return c.json({ error: 'Review not found' }, 404);
+      }
+      return c.json({ error: 'Failed to flag review' }, 500);
+    }
   });
 
   return api;

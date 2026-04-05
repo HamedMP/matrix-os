@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { SecurityBadge } from "@/components/app-store/SecurityBadge";
+import { ReviewSection } from "@/components/app-store/ReviewSection";
 
 interface StoreListingPageProps {
   params: Promise<{ author: string; slug: string }>;
@@ -120,7 +121,7 @@ export default async function StoreListingPage({ params }: StoreListingPageProps
 
         {/* Tags */}
         {listing.tags && listing.tags.length > 0 && (
-          <section>
+          <section className="mb-8">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
               Tags
             </h2>
@@ -136,6 +137,15 @@ export default async function StoreListingPage({ params }: StoreListingPageProps
             </div>
           </section>
         )}
+
+        {/* Reviews */}
+        <section className="mb-8">
+          <ReviewSection
+            listingId={listing.id}
+            authorId={listing.author_id}
+            isInstalled={false}
+          />
+        </section>
       </div>
     </div>
   );
