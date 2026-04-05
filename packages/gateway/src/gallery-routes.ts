@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely';
 import type { GalleryDatabase } from '../../platform/src/gallery/types.js';
 import { installApp } from './app-fork.js';
 import { validateForPublish, generateSlug } from './app-publish.js';
+import { applyUpdate, rollbackUpdate, snapshotAppData } from './app-update.js';
 
 // Install dependencies (injectable for testing)
 export interface GalleryInstallDeps {
@@ -272,6 +273,133 @@ export async function handleResubmit(
     body: {
       auditStatus: auditResult.status,
       auditFindings: allFindings,
+    },
+  };
+}
+
+// Update dependencies (injectable for testing)
+export interface GalleryUpdateDeps {
+  galleryDb: Kysely<GalleryDatabase>;
+  getInstallation: (userId: string, listingId: string) => Promise<any>;
+  getListingById: (id: string) => Promise<any>;
+  getVersionById: (id: string) => Promise<any>;
+  markInstallationUpdated: (installationId: string, newVersionId: string) => Promise<void>;
+  getPreviousVersion: (listingId: string, currentVersionId: string) => Promise<{ id: string; version: string; changelog: string | null } | null>;
+  applyUpdate: typeof applyUpdate;
+  rollbackUpdate: typeof rollbackUpdate;
+  snapshotAppData: typeof snapshotAppData;
+}
+
+interface UpdateInput {
+  slug: string;
+  userId: string;
+  homePath: string;
+  listingId: string;
+}
+
+export async function handleUpdate(
+  deps: GalleryUpdateDeps,
+  input: UpdateInput,
+): Promise<RouteResult> {
+  const installation = await deps.getInstallation(input.userId, input.listingId);
+  if (!installation) {
+    return { status: 404, body: { error: 'App is not installed' } };
+  }
+
+  const listing = await deps.getListingById(input.listingId);
+  if (!listing || !listing.current_version_id) {
+    return { status: 404, body: { error: 'Listing or current version not found' } };
+  }
+
+  if (installation.version_id === listing.current_version_id) {
+    return { status: 400, body: { error: 'App is already on the latest version' } };
+  }
+
+  const newVersion = await deps.getVersionById(listing.current_version_id);
+  if (!newVersion || !newVersion.bundle_path) {
+    return { status: 400, body: { error: 'New version bundle not available' } };
+  }
+
+  // Snapshot current data before updating
+  const oldVersion = await deps.getVersionById(installation.version_id);
+  const versionTag = oldVersion?.version ?? installation.version_id;
+  await deps.snapshotAppData({ homePath: input.homePath, slug: input.slug, versionTag });
+
+  // Apply filesystem update
+  const updateResult = await deps.applyUpdate({
+    homePath: input.homePath,
+    slug: input.slug,
+    newVersionBundlePath: newVersion.bundle_path,
+  });
+
+  if (!updateResult.success) {
+    return { status: 500, body: { error: updateResult.error ?? 'Update failed' } };
+  }
+
+  // Update installation record
+  await deps.markInstallationUpdated(installation.id, listing.current_version_id);
+
+  return {
+    status: 200,
+    body: {
+      updated: true,
+      previousVersion: oldVersion?.version ?? null,
+      newVersion: newVersion.version,
+      changelog: newVersion.changelog ?? null,
+    },
+  };
+}
+
+interface RollbackInput {
+  slug: string;
+  userId: string;
+  homePath: string;
+  listingId: string;
+}
+
+export async function handleRollback(
+  deps: GalleryUpdateDeps,
+  input: RollbackInput,
+): Promise<RouteResult> {
+  const installation = await deps.getInstallation(input.userId, input.listingId);
+  if (!installation) {
+    return { status: 404, body: { error: 'App is not installed' } };
+  }
+
+  const previous = await deps.getPreviousVersion(input.listingId, installation.version_id);
+  if (!previous) {
+    return { status: 400, body: { error: 'No previous version to roll back to' } };
+  }
+
+  const previousVersion = await deps.getVersionById(previous.id);
+  if (!previousVersion || !previousVersion.bundle_path) {
+    return { status: 400, body: { error: 'Previous version bundle not available' } };
+  }
+
+  const currentVersion = await deps.getVersionById(installation.version_id);
+  const versionTag = currentVersion?.version ?? installation.version_id;
+  const snapshotPath = join(input.homePath, 'data', '.snapshots', `${input.slug}-${previous.version}`);
+
+  const result = await deps.rollbackUpdate({
+    homePath: input.homePath,
+    slug: input.slug,
+    previousVersionBundlePath: previousVersion.bundle_path,
+    snapshotPath,
+  });
+
+  if (!result.success) {
+    return { status: 500, body: { error: result.error ?? 'Rollback failed' } };
+  }
+
+  await deps.markInstallationUpdated(installation.id, previous.id);
+
+  return {
+    status: 200,
+    body: {
+      rolledBack: true,
+      previousVersion: versionTag,
+      restoredVersion: previous.version,
+      dataRestored: result.dataRestored,
     },
   };
 }

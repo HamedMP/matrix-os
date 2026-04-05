@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { SecurityBadge } from "@/components/app-store/SecurityBadge";
 import { ReviewSection } from "@/components/app-store/ReviewSection";
+import { VersionHistory } from "@/components/app-store/VersionHistory";
 
 interface StoreListingPageProps {
   params: Promise<{ author: string; slug: string }>;
@@ -137,6 +138,11 @@ export default async function StoreListingPage({ params }: StoreListingPageProps
             </div>
           </section>
         )}
+
+        {/* Version History */}
+        <section className="mb-8">
+          <VersionHistory listingId={listing.id} />
+        </section>
 
         {/* Reviews */}
         <section className="mb-8">

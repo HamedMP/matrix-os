@@ -3,23 +3,33 @@
 import { Button } from "@/components/ui/button";
 import { StarRating } from "./StarRating";
 import { SecurityBadge } from "./SecurityBadge";
-import { XIcon, DownloadIcon, SparklesIcon, GitForkIcon, ShieldCheckIcon } from "lucide-react";
+import { XIcon, DownloadIcon, SparklesIcon, GitForkIcon, ShieldCheckIcon, ArrowUpCircleIcon, HistoryIcon } from "lucide-react";
 import type { AppStoreEntry } from "@/stores/app-store";
+import { UpdateBadge } from "./UpdateBadge";
 
 function formatDownloads(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`;
   return String(n);
 }
 
+interface UpdateInfo {
+  installedVersion: string;
+  currentVersion: string;
+  hasUpdate: boolean;
+}
+
 interface AppDetailProps {
   entry: AppStoreEntry;
   installed: boolean;
+  updateInfo?: UpdateInfo;
   onClose: () => void;
   onInstall: () => void;
   onFork?: () => void;
+  onUpdate?: () => void;
+  onRollback?: () => void;
 }
 
-export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppDetailProps) {
+export function AppDetail({ entry, installed, updateInfo, onClose, onInstall, onFork, onUpdate, onRollback }: AppDetailProps) {
   const isBundled = entry.source === "bundled";
   const showOpen = isBundled || installed;
   const isRegistryApp = entry.source === "registry" || entry.source === "community";
@@ -52,6 +62,15 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
           {entry.auditStatus && (
             <div className="mt-1.5">
               <SecurityBadge status={entry.auditStatus} />
+            </div>
+          )}
+
+          {updateInfo?.hasUpdate && (
+            <div className="mt-1.5">
+              <UpdateBadge
+                installedVersion={updateInfo.installedVersion}
+                currentVersion={updateInfo.currentVersion}
+              />
             </div>
           )}
 
@@ -97,6 +116,29 @@ export function AppDetail({ entry, installed, onClose, onInstall, onFork }: AppD
               </Button>
             )}
           </div>
+
+          {installed && updateInfo?.hasUpdate && onUpdate && (
+            <div className="flex gap-2 mt-2 w-full max-w-[240px]">
+              <Button
+                className="flex-1 rounded-full"
+                variant="default"
+                onClick={onUpdate}
+              >
+                <ArrowUpCircleIcon className="size-4 mr-1" />
+                Update to {updateInfo.currentVersion}
+              </Button>
+              {onRollback && (
+                <Button
+                  className="rounded-full"
+                  variant="outline"
+                  onClick={onRollback}
+                >
+                  <HistoryIcon className="size-4 mr-1" />
+                  Rollback
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-5 space-y-4">

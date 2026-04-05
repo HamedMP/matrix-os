@@ -9,6 +9,10 @@ import {
 } from './gallery/listings.js';
 import { listByUser, getByUserAndListing } from './gallery/installations.js';
 import { getLatestAudit } from './gallery/security-audit.js';
+import { listVersions } from './gallery/versions.js';
+import {
+  getInstallationsWithUpdateStatus,
+} from './gallery/update-detection.js';
 import {
   submitReview,
   updateReview,
@@ -115,6 +119,26 @@ export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono 
     }
 
     return c.json(audit);
+  });
+
+  // --- Version & Update Endpoints ---
+
+  // GET /apps/:id/versions -- list all versions for a listing
+  api.get('/apps/:id/versions', async (c) => {
+    const listingId = c.req.param('id');
+    const versions = await listVersions(galleryDb, listingId);
+    return c.json(versions);
+  });
+
+  // GET /installations/updates -- user's installations with update status
+  api.get('/installations/updates', async (c) => {
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const installations = await getInstallationsWithUpdateStatus(galleryDb, userId);
+    return c.json({ installations });
   });
 
   // --- Review Endpoints ---

@@ -60,6 +60,16 @@ interface Installation {
   status: string;
 }
 
+interface InstallationUpdate {
+  installationId: string;
+  listingId: string;
+  listingSlug: string;
+  listingName: string;
+  installedVersion: string;
+  currentVersion: string;
+  hasUpdate: boolean;
+}
+
 interface AppStoreState {
   entries: AppStoreEntry[];
   search: string;
@@ -67,6 +77,7 @@ interface AppStoreState {
   selectedApp: AppStoreEntry | null;
   installedIds: Set<string>;
   installations: Map<string, Installation>;
+  updatesAvailable: Map<string, InstallationUpdate>;
   loading: boolean;
 
   setEntries: (entries: AppStoreEntry[]) => void;
@@ -78,6 +89,7 @@ interface AppStoreState {
 
   fetchGalleryApps: () => Promise<void>;
   fetchInstallations: () => Promise<void>;
+  fetchUpdates: () => Promise<void>;
 
   featured: () => AppStoreEntry[];
   bundled: () => AppStoreEntry[];
@@ -87,6 +99,7 @@ interface AppStoreState {
   searchResults: () => AppStoreEntry[];
   newApps: () => AppStoreEntry[];
   topRated: () => AppStoreEntry[];
+  appsWithUpdates: () => InstallationUpdate[];
 }
 
 function matchCategory(entry: AppStoreEntry, category: string): boolean {
@@ -125,6 +138,7 @@ export const useAppStore = create<AppStoreState>()((set, get) => ({
   selectedApp: null,
   installedIds: new Set(),
   installations: new Map(),
+  updatesAvailable: new Map(),
   loading: false,
 
   setEntries: (entries) => set({ entries }),
@@ -185,6 +199,26 @@ export const useAppStore = create<AppStoreState>()((set, get) => ({
     }
   },
 
+  fetchUpdates: async () => {
+    try {
+      const gatewayUrl = getGatewayUrl();
+      const res = await fetch(`${gatewayUrl}/api/gallery/installations/updates`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const updates = new Map<string, InstallationUpdate>();
+      for (const inst of data.installations ?? []) {
+        if (inst.hasUpdate) {
+          updates.set(inst.listingId, inst);
+        }
+      }
+      set({ updatesAvailable: updates });
+    } catch {
+      // ignore
+    }
+  },
+
   featured: () => get().entries.filter((e) => e.featured),
 
   bundled: () => get().entries.filter((e) => e.source === "bundled"),
@@ -223,4 +257,6 @@ export const useAppStore = create<AppStoreState>()((set, get) => ({
       .filter((e) => e.rating !== undefined)
       .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
       .slice(0, 10),
+
+  appsWithUpdates: () => Array.from(get().updatesAvailable.values()),
 }));

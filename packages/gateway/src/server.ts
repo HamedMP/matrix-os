@@ -72,14 +72,19 @@ import {
   handleUninstall,
   handlePublish,
   handleResubmit,
+  handleUpdate,
+  handleRollback,
   readAppFiles,
   type GalleryInstallDeps,
   type GalleryPublishDeps,
+  type GalleryUpdateDeps,
 } from "./gallery-routes.js";
 import { createOrUpdateFromPublish } from "../../../platform/src/gallery/listings.js";
 import { createInstallation, getByUserAndListing, deleteInstallation as deleteGalleryInstallation, incrementInstallCount, decrementInstallCount } from "../../../platform/src/gallery/installations.js";
 import { createVersion, setCurrent } from "../../../platform/src/gallery/versions.js";
 import { runFullAudit } from "../../../platform/src/gallery/security-audit.js";
+import { markInstallationUpdated, getPreviousVersion } from "../../../platform/src/gallery/update-detection.js";
+import { applyUpdate, rollbackUpdate, snapshotAppData } from "./app-update.js";
 import { getGalleryDb } from "../../../platform/src/gallery/pg.js";
 import { validateForPublish, generateSlug } from "./app-publish.js";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
@@ -1716,6 +1721,104 @@ export async function createGateway(config: GatewayConfig) {
     } catch (err) {
       console.error('[gallery] Resubmit error:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'Resubmission failed' }, 500);
+    }
+  });
+
+  // POST /api/apps/:slug/update -- update installed app to latest version
+  app.post("/api/apps/:slug/update", async (c) => {
+    const slug = c.req.param("slug");
+    if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+
+    const userId = c.req.header("x-user-id");
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const body = await c.req.json<{ listingId: string }>().catch(() => ({ listingId: '' }));
+    if (!body.listingId) {
+      return c.json({ error: "listingId is required" }, 400);
+    }
+
+    try {
+      const galleryDb = getGalleryDb();
+      const deps: GalleryUpdateDeps = {
+        galleryDb,
+        getInstallation: (uid, lid) => getByUserAndListing(galleryDb, uid, lid),
+        getListingById: async (id) => {
+          return galleryDb.selectFrom('app_listings').selectAll().where('id', '=', id).executeTakeFirst() ?? null;
+        },
+        getVersionById: async (id) => {
+          return galleryDb.selectFrom('app_versions').selectAll().where('id', '=', id).executeTakeFirst() ?? null;
+        },
+        markInstallationUpdated: (iid, vid) => markInstallationUpdated(galleryDb, iid, vid),
+        getPreviousVersion: (lid, vid) => getPreviousVersion(galleryDb, lid, vid),
+        applyUpdate,
+        rollbackUpdate,
+        snapshotAppData,
+      };
+
+      const result = await handleUpdate(deps, {
+        slug,
+        userId,
+        homePath,
+        listingId: body.listingId,
+      });
+
+      return c.json(result.body, result.status as any);
+    } catch (err) {
+      console.error('[gallery] Update error:', err instanceof Error ? err.message : String(err));
+      return c.json({ error: 'Update failed' }, 500);
+    }
+  });
+
+  // POST /api/apps/:slug/rollback -- roll back to previous version
+  app.post("/api/apps/:slug/rollback", async (c) => {
+    const slug = c.req.param("slug");
+    if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+
+    const userId = c.req.header("x-user-id");
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const body = await c.req.json<{ listingId: string }>().catch(() => ({ listingId: '' }));
+    if (!body.listingId) {
+      return c.json({ error: "listingId is required" }, 400);
+    }
+
+    try {
+      const galleryDb = getGalleryDb();
+      const deps: GalleryUpdateDeps = {
+        galleryDb,
+        getInstallation: (uid, lid) => getByUserAndListing(galleryDb, uid, lid),
+        getListingById: async (id) => {
+          return galleryDb.selectFrom('app_listings').selectAll().where('id', '=', id).executeTakeFirst() ?? null;
+        },
+        getVersionById: async (id) => {
+          return galleryDb.selectFrom('app_versions').selectAll().where('id', '=', id).executeTakeFirst() ?? null;
+        },
+        markInstallationUpdated: (iid, vid) => markInstallationUpdated(galleryDb, iid, vid),
+        getPreviousVersion: (lid, vid) => getPreviousVersion(galleryDb, lid, vid),
+        applyUpdate,
+        rollbackUpdate,
+        snapshotAppData,
+      };
+
+      const result = await handleRollback(deps, {
+        slug,
+        userId,
+        homePath,
+        listingId: body.listingId,
+      });
+
+      return c.json(result.body, result.status as any);
+    } catch (err) {
+      console.error('[gallery] Rollback error:', err instanceof Error ? err.message : String(err));
+      return c.json({ error: 'Rollback failed' }, 500);
     }
   });
 
