@@ -55,10 +55,12 @@ interface InstallOptions {
   sourceDir: string;
   homePath: string;
   slug: string;
+  listingId?: string;
+  versionId?: string;
 }
 
 export function installApp(options: InstallOptions): ForkResult {
-  const { sourceDir, homePath, slug } = options;
+  const { sourceDir, homePath, slug, listingId, versionId } = options;
 
   if (!existsSync(sourceDir)) {
     return { success: false, error: `Source app not found: ${sourceDir}` };
@@ -75,7 +77,12 @@ export function installApp(options: InstallOptions): ForkResult {
   if (existsSync(manifestPath)) {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-      manifest.installed_from = { slug, installedAt: new Date().toISOString() };
+      manifest.installed_from = {
+        slug,
+        installedAt: new Date().toISOString(),
+        listing_id: listingId,
+        version_id: versionId,
+      };
       writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
     } catch {
       // leave as-is

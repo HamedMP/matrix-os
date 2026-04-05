@@ -1,5 +1,118 @@
 import { Hono } from 'hono';
-import { randomUUID } from 'node:crypto';
+import type { Kysely } from 'kysely';
+import type { GalleryDatabase } from './gallery/types.js';
+import {
+  listPublic,
+  search,
+  getByAuthorSlug,
+  listCategories,
+} from './gallery/listings.js';
+import { listByUser } from './gallery/installations.js';
+import { getLatestAudit } from './gallery/security-audit.js';
+
+/**
+ * Gallery store API -- Postgres/Kysely backed.
+ * Mount: /api/store
+ */
+export function createGalleryStoreApi(galleryDb: Kysely<GalleryDatabase>): Hono {
+  const api = new Hono();
+
+  // GET /apps -- browse gallery listings
+  api.get('/apps', async (c) => {
+    const category = c.req.query('category');
+    const sort = c.req.query('sort') as 'popular' | 'rated' | 'new' | undefined;
+    const limit = Math.min(Number(c.req.query('limit')) || 50, 100);
+    const offset = Number(c.req.query('offset')) || 0;
+
+    const result = await listPublic(galleryDb, { category, sort, limit, offset });
+    return c.json(result);
+  });
+
+  // GET /apps/search -- full-text search
+  api.get('/apps/search', async (c) => {
+    const q = c.req.query('q');
+    if (!q || q.length < 2) {
+      return c.json({ error: 'Query parameter "q" is required (min 2 chars)' }, 400);
+    }
+
+    const category = c.req.query('category');
+    const limit = Math.min(Number(c.req.query('limit')) || 20, 100);
+
+    const result = await search(galleryDb, q, { category, limit });
+    return c.json(result);
+  });
+
+  // GET /apps/:author/:slug -- listing detail
+  api.get('/apps/:author/:slug', async (c) => {
+    const authorId = c.req.param('author');
+    const slug = c.req.param('slug');
+
+    const listing = await getByAuthorSlug(galleryDb, authorId, slug);
+    if (!listing) {
+      return c.json({ error: 'App not found' }, 404);
+    }
+
+    return c.json(listing);
+  });
+
+  // GET /categories -- list categories with counts
+  api.get('/categories', async (c) => {
+    const categories = await listCategories(galleryDb);
+    return c.json(categories);
+  });
+
+  // GET /installations -- user's installed apps (authenticated)
+  api.get('/installations', async (c) => {
+    const userId = c.req.header('x-user-id');
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const orgId = c.req.query('orgId');
+    const installations = await listByUser(galleryDb, userId, orgId);
+    return c.json({ installations });
+  });
+
+  // GET /apps/:id/audit -- latest audit results (author only)
+  api.get('/apps/:id/audit', async (c) => {
+    const listingId = c.req.param('id');
+    const userId = c.req.header('x-user-id');
+
+    if (!userId) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    // Verify user is the listing author
+    const listing = await galleryDb.selectFrom('app_listings')
+      .select(['id', 'author_id', 'current_version_id'])
+      .where('id', '=', listingId)
+      .executeTakeFirst();
+
+    if (!listing) {
+      return c.json({ error: 'Listing not found' }, 404);
+    }
+
+    if (listing.author_id !== userId) {
+      return c.json({ error: 'Only the listing author can view audit results' }, 403);
+    }
+
+    if (!listing.current_version_id) {
+      return c.json({ error: 'No version published yet' }, 404);
+    }
+
+    const audit = await getLatestAudit(galleryDb, listing.current_version_id);
+    if (!audit) {
+      return c.json({ error: 'No audit found' }, 404);
+    }
+
+    return c.json(audit);
+  });
+
+  return api;
+}
+
+// Re-export legacy createStoreApi for backward compatibility
+// The old SQLite-based store API is preserved for the platform DB
 import type { PlatformDB } from './db.js';
 import {
   insertApp,
@@ -12,7 +125,7 @@ import {
   incrementInstalls,
   submitRating,
   recordInstall,
-  listCategories,
+  listCategories as listCategoriesLegacy,
 } from './app-registry.js';
 
 export function createStoreApi(db: PlatformDB): Hono {
@@ -77,7 +190,7 @@ export function createStoreApi(db: PlatformDB): Hono {
     }
 
     const slug = body.slug ?? body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const id = `app_${randomUUID().slice(0, 12)}`;
+    const id = `app_${crypto.randomUUID().slice(0, 12)}`;
 
     insertApp(db, {
       id,
@@ -133,7 +246,7 @@ export function createStoreApi(db: PlatformDB): Hono {
   });
 
   api.get('/categories', (c) => {
-    const categories = listCategories(db);
+    const categories = listCategoriesLegacy(db);
     return c.json(categories);
   });
 

@@ -15,13 +15,13 @@ import {
 import { createOrchestrator, type Orchestrator } from './orchestrator.js';
 import { createLifecycleManager, type LifecycleManager } from './lifecycle.js';
 import { createSocialApi } from './social.js';
-import { createStoreApi } from './store-api.js';
+import { createStoreApi, createGalleryStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
 import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provisioning.js';
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
-import { createGalleryDb, runGalleryMigrations } from './gallery/index.js';
+import { createGalleryDb, getGalleryDb, runGalleryMigrations, createOrgApi } from './gallery/index.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -511,6 +511,15 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   // --- Store API (public, no auth) ---
 
   app.route('/api/store', createStoreApi(db));
+
+  // --- Gallery Store API (Postgres-backed) ---
+  try {
+    const galleryDb = getGalleryDb();
+    app.route('/api/gallery', createGalleryStoreApi(galleryDb));
+    app.route('/api/store', createOrgApi(galleryDb));
+  } catch {
+    // Gallery DB not initialized -- gallery/org routes unavailable
+  }
 
   // --- Social Feed API (public) ---
 

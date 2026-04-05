@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -67,6 +67,21 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import {
+  handleInstall,
+  handleUninstall,
+  handlePublish,
+  handleResubmit,
+  readAppFiles,
+  type GalleryInstallDeps,
+  type GalleryPublishDeps,
+} from "./gallery-routes.js";
+import { createOrUpdateFromPublish } from "../../../platform/src/gallery/listings.js";
+import { createInstallation, getByUserAndListing, deleteInstallation as deleteGalleryInstallation, incrementInstallCount, decrementInstallCount } from "../../../platform/src/gallery/installations.js";
+import { createVersion, setCurrent } from "../../../platform/src/gallery/versions.js";
+import { runFullAudit } from "../../../platform/src/gallery/security-audit.js";
+import { getGalleryDb } from "../../../platform/src/gallery/pg.js";
+import { validateForPublish, generateSlug } from "./app-publish.js";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -1495,6 +1510,213 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: result.error }, status);
     }
     return c.json({ ok: true });
+  });
+
+  // --- Gallery Install/Uninstall/Publish Routes ---
+
+  app.post("/api/apps/install", async (c) => {
+    const body = await c.req.json<{
+      listingId: string;
+      target?: string;
+      orgId?: string;
+      approvedPermissions?: string[];
+    }>();
+
+    if (!body.listingId) {
+      return c.json({ error: "listingId is required" }, 400);
+    }
+
+    const userId = c.req.header("x-user-id");
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    try {
+      const galleryDb = getGalleryDb();
+      const deps: GalleryInstallDeps = {
+        galleryDb,
+        getListingById: async (id) => {
+          return galleryDb.selectFrom('app_listings').selectAll().where('id', '=', id).executeTakeFirst() ?? null;
+        },
+        getVersionById: async (id) => {
+          return galleryDb.selectFrom('app_versions').selectAll().where('id', '=', id).executeTakeFirst() ?? null;
+        },
+        getExistingInstall: (uid, lid) => getByUserAndListing(galleryDb, uid, lid),
+        createInstallation: (input) => createInstallation(galleryDb, input),
+        incrementInstallCount: (lid) => incrementInstallCount(galleryDb, lid).then(() => {}),
+        deleteInstallation: (id) => deleteGalleryInstallation(galleryDb, id).then(() => {}),
+        decrementInstallCount: (lid) => decrementInstallCount(galleryDb, lid).then(() => {}),
+        copyAppFiles: (opts) => installApp({ ...opts }),
+        removeAppFiles: (dir) => { try { rmSync(dir, { recursive: true }); return true; } catch { return false; } },
+      };
+
+      const result = await handleInstall(deps, {
+        listingId: body.listingId,
+        userId,
+        homePath,
+        target: body.target ?? 'personal',
+        orgId: body.orgId,
+        approvedPermissions: body.approvedPermissions ?? [],
+      });
+
+      return c.json(result.body, result.status as any);
+    } catch (err) {
+      console.error('[gallery] Install error:', err instanceof Error ? err.message : String(err));
+      return c.json({ error: 'Installation failed' }, 500);
+    }
+  });
+
+  app.delete("/api/apps/:slug/uninstall", async (c) => {
+    const slug = c.req.param("slug");
+    const userId = c.req.header("x-user-id");
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const body = await c.req.json<{ installationId: string; preserveData?: boolean }>().catch(() => ({ installationId: '', preserveData: false }));
+    if (!body.installationId) {
+      return c.json({ error: "installationId is required" }, 400);
+    }
+
+    try {
+      const galleryDb = getGalleryDb();
+      const deps: GalleryInstallDeps = {
+        galleryDb,
+        getListingById: async () => null,
+        getVersionById: async () => null,
+        getExistingInstall: async () => {
+          const install = await galleryDb.selectFrom('app_installations').selectAll().where('id', '=', body.installationId).executeTakeFirst();
+          return install ?? null;
+        },
+        createInstallation: async () => null,
+        incrementInstallCount: async () => {},
+        deleteInstallation: (id) => deleteGalleryInstallation(galleryDb, id).then(() => {}),
+        decrementInstallCount: (lid) => decrementInstallCount(galleryDb, lid).then(() => {}),
+        copyAppFiles: () => ({ success: true }),
+        removeAppFiles: (dir) => { try { rmSync(dir, { recursive: true }); return true; } catch { return false; } },
+      };
+
+      const result = await handleUninstall(deps, {
+        slug,
+        userId,
+        homePath,
+        installationId: body.installationId,
+        preserveData: body.preserveData ?? false,
+      });
+
+      return c.json(result.body, result.status as any);
+    } catch (err) {
+      console.error('[gallery] Uninstall error:', err instanceof Error ? err.message : String(err));
+      return c.json({ error: 'Uninstall failed' }, 500);
+    }
+  });
+
+  app.post("/api/apps/:slug/publish", async (c) => {
+    const slug = c.req.param("slug");
+    const userId = c.req.header("x-user-id");
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const body = await c.req.json<{
+      description: string;
+      longDescription?: string;
+      category: string;
+      tags?: string[];
+      screenshots?: string[];
+      visibility?: string;
+      orgId?: string;
+      version: string;
+      changelog?: string;
+    }>();
+
+    if (!body.description || !body.category || !body.version) {
+      return c.json({ error: "description, category, and version are required" }, 400);
+    }
+
+    const appDir = join(homePath, "apps", slug);
+    if (!existsSync(appDir)) {
+      return c.json({ error: `App "${slug}" not found` }, 404);
+    }
+
+    try {
+      const galleryDb = getGalleryDb();
+      const deps: GalleryPublishDeps = {
+        galleryDb,
+        validateForPublish: (dir) => validateForPublish(dir),
+        createOrUpdateFromPublish: (input) => createOrUpdateFromPublish(galleryDb, input),
+        createVersion: (input) => createVersion(galleryDb, input),
+        runFullAudit: (db, vid, input) => runFullAudit(db, vid, input),
+        setCurrent: (db, lid, vid) => setCurrent(db, lid, vid),
+        readAppFiles: (dir) => readAppFiles(dir),
+      };
+
+      const result = await handlePublish(deps, {
+        appDir,
+        authorId: userId,
+        description: body.description,
+        longDescription: body.longDescription,
+        category: body.category,
+        tags: body.tags,
+        screenshots: body.screenshots,
+        version: body.version,
+        changelog: body.changelog,
+        visibility: body.visibility ?? 'public',
+        orgId: body.orgId,
+      });
+
+      return c.json(result.body, result.status as any);
+    } catch (err) {
+      console.error('[gallery] Publish error:', err instanceof Error ? err.message : String(err));
+      return c.json({ error: 'Publication failed' }, 500);
+    }
+  });
+
+  app.post("/api/apps/:slug/publish/resubmit", async (c) => {
+    const slug = c.req.param("slug");
+    const userId = c.req.header("x-user-id");
+    if (!userId) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+
+    const body = await c.req.json<{ versionId: string }>();
+    if (!body.versionId) {
+      return c.json({ error: "versionId is required" }, 400);
+    }
+
+    const appDir = join(homePath, "apps", slug);
+    if (!existsSync(appDir)) {
+      return c.json({ error: `App "${slug}" not found` }, 404);
+    }
+
+    try {
+      const galleryDb = getGalleryDb();
+      const version = await galleryDb.selectFrom('app_versions').selectAll().where('id', '=', body.versionId).executeTakeFirst();
+      if (!version) {
+        return c.json({ error: "Version not found" }, 404);
+      }
+
+      const deps: GalleryPublishDeps = {
+        galleryDb,
+        validateForPublish: (dir) => validateForPublish(dir),
+        createOrUpdateFromPublish: async () => null,
+        createVersion: async () => null,
+        runFullAudit: (db, vid, input) => runFullAudit(db, vid, input),
+        setCurrent: (db, lid, vid) => setCurrent(db, lid, vid),
+        readAppFiles: (dir) => readAppFiles(dir),
+      };
+
+      const result = await handleResubmit(deps, {
+        versionId: body.versionId,
+        appDir,
+        listingId: version.listing_id,
+      });
+
+      return c.json(result.body, result.status as any);
+    } catch (err) {
+      console.error('[gallery] Resubmit error:', err instanceof Error ? err.message : String(err));
+      return c.json({ error: 'Resubmission failed' }, 500);
+    }
   });
 
   app.post("/api/apps/:slug/icon", async (c) => {
