@@ -3,7 +3,10 @@ import type { MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 
 const PUBLIC_PATHS = ["/health"];
-const PUBLIC_PREFIXES = ["/files/system/icons/"];
+const PUBLIC_PREFIXES = [
+  "/files/system/icons/",
+  "/api/integrations/webhook/",
+];
 const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal"];
 
 function timingSafeCompare(a: string, b: string): boolean {

@@ -56,9 +56,8 @@ export async function connectServiceHandler(
       `To connect ${data.service}, open this URL in your browser:\n\n${data.url}\n\nAfter authorizing, the connection will appear automatically.`,
     );
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[integrations] connect_service error:", msg);
-    return textResult(`Integration service unavailable: ${msg}`);
+    console.error("[integrations] connect_service error:", err instanceof Error ? err.message : err);
+    return textResult("Integration service is temporarily unavailable. Please try again later.");
   }
 }
 
@@ -98,8 +97,7 @@ export async function callServiceHandler(
     const data = await res.json();
     return textResult(JSON.stringify(data, null, 2));
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[integrations] call_service error:", msg);
-    return textResult(`Integration service unavailable: ${msg}`);
+    console.error("[integrations] call_service error:", err instanceof Error ? err.message : err);
+    return textResult("Integration service is temporarily unavailable. Please try again later.");
   }
 }

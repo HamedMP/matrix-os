@@ -247,6 +247,7 @@ export async function createGateway(config: GatewayConfig) {
 
   // Platform DB + Integrations (Pipedream Connect)
   let platformDb: PlatformDb | null = null;
+  let integrationRoutes: Hono | null = null;
   const platformDbUrl = process.env.PLATFORM_DATABASE_URL || process.env.DATABASE_URL;
   if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID) {
     try {
@@ -261,16 +262,17 @@ export async function createGateway(config: GatewayConfig) {
         environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
       });
 
-      const integrationRoutes = createIntegrationRoutes({
+      integrationRoutes = createIntegrationRoutes({
         db: platformDb,
         pipedream,
         webhookSecret: process.env.PIPEDREAM_WEBHOOK_SECRET ?? "",
         resolveUserId: async (c) => {
-          // Prefer platform-verified identity from proxy header
-          const platformUserId = c.req.header("x-platform-user-id");
-          if (platformUserId) {
-            const user = await platformDb!.getUserById(platformUserId);
+          // Prefer platform-verified identity from proxy header (Clerk user ID)
+          const clerkIdFromPlatform = c.req.header("x-platform-user-id");
+          if (clerkIdFromPlatform) {
+            const user = await platformDb!.getUserByClerkId(clerkIdFromPlatform);
             if (user) return user.id;
+            return null;
           }
 
           // Local dev fallback: single-tenant from env vars
@@ -298,8 +300,8 @@ export async function createGateway(config: GatewayConfig) {
         },
         broadcast,
       });
-      app.route("/api/integrations", integrationRoutes);
-      console.log("[platform-db] Integration routes mounted");
+      // Routes mounted after auth middleware below (see "deferred route mounts")
+      console.log("[platform-db] Integration routes ready");
 
       discoverComponentKeys(pipedream)
         .then((stats) => {
@@ -649,6 +651,12 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+
+  // Deferred route mounts -- must come AFTER auth middleware
+  if (integrationRoutes) {
+    app.route("/api/integrations", integrationRoutes);
+    console.log("[platform-db] Integration routes mounted (after auth)");
+  }
 
   app.use("*", async (c, next) => {
     const start = performance.now();

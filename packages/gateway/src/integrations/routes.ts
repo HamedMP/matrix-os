@@ -371,9 +371,23 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     // Find the user's active connection for this service
     const connections = await db.listConnectedServices(uid);
-    let connection = connections.find((s) => s.service === service);
+    let connection;
     if (label) {
-      connection = connections.find((s) => s.service === service && s.account_label === label) ?? connection;
+      connection = connections.find((s) => s.service === service && s.account_label === label);
+      if (!connection) {
+        const available = connections
+          .filter((s) => s.service === service)
+          .map((s) => s.account_label);
+        return c.json({
+          error: `No ${service} account with label "${label}"`,
+          available_labels: available.length > 0 ? available : undefined,
+          connect_hint: available.length === 0
+            ? `Use POST /api/integrations/connect with { "service": "${service}" } to connect it first.`
+            : undefined,
+        }, available.length > 0 ? 400 : 404);
+      }
+    } else {
+      connection = connections.find((s) => s.service === service);
     }
     if (!connection) {
       return c.json({
