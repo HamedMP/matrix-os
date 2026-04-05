@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  testMatch: /screenshots\.spec\.ts/,
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -16,23 +17,11 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     screenshot: "only-on-failure",
     trace: "on-first-retry",
+    ...devices["Desktop Chrome"],
+    viewport: { width: 1440, height: 900 },
   },
-  projects: [
-    {
-      name: "global setup",
-      testMatch: /global\.setup\.ts/,
-    },
-    {
-      name: "Desktop Chrome",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: { width: 1440, height: 900 },
-      },
-      dependencies: ["global setup"],
-    },
-  ],
   webServer: {
-    command: "pnpm start",
+    command: "E2E_TEST_BYPASS=1 pnpm start",
     port: 3000,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

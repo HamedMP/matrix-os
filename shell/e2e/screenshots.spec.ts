@@ -1,4 +1,3 @@
-import { setupClerkTestingToken } from "@clerk/testing/playwright";
 import { test, expect } from "@playwright/test";
 
 test.describe("Visual regression", () => {
@@ -33,9 +32,8 @@ test.describe("Visual regression", () => {
     // Block WebSocket upgrade requests so they don't keep reconnecting
     await page.route("**/ws/**", (route) => route.abort());
 
-    await setupClerkTestingToken({ page });
     await page.goto("/");
-    // Wait for the dock to render instead of networkidle (WS reconnections prevent idle)
+    // Wait for the dock to render (confirms the shell loaded past auth)
     await page.waitForSelector("[data-testid='dock-settings']", {
       timeout: 15000,
     });
