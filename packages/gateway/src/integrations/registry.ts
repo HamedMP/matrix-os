@@ -1,5 +1,7 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 
+const LOGO_BASE = "https://pipedream.com/s.v0";
+
 export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
   gmail: {
     id: "gmail",
@@ -7,6 +9,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     category: "google",
     pipedreamApp: "gmail",
     icon: "mail",
+    logoUrl: `${LOGO_BASE}/gmail/logo/48`,
     actions: {
       list_messages: {
         description: "List recent email messages",
@@ -50,6 +53,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     category: "google",
     pipedreamApp: "google_calendar",
     icon: "calendar",
+    logoUrl: `${LOGO_BASE}/google_calendar/logo/48`,
     actions: {
       list_events: {
         description: "List calendar events",
@@ -93,6 +97,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     category: "google",
     pipedreamApp: "google_drive",
     icon: "hard-drive",
+    logoUrl: `${LOGO_BASE}/google_drive/logo/48`,
     actions: {
       list_files: {
         description: "List files in Google Drive",
@@ -134,6 +139,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     category: "developer",
     pipedreamApp: "github",
     icon: "github",
+    logoUrl: `${LOGO_BASE}/github/logo/48`,
     actions: {
       list_repos: {
         description: "List repositories",
@@ -180,6 +186,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     category: "communication",
     pipedreamApp: "slack",
     icon: "message-square",
+    logoUrl: `${LOGO_BASE}/slack/logo/48`,
     actions: {
       send_message: {
         description: "Send a message to a channel",
@@ -224,6 +231,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     category: "communication",
     pipedreamApp: "discord",
     icon: "message-circle",
+    logoUrl: `${LOGO_BASE}/discord/logo/48`,
     actions: {
       send_message: {
         description: "Send a message to a channel",

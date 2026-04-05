@@ -10,9 +10,9 @@ export interface PipedreamConfig {
 export interface PipedreamConnectClient {
   createConnectToken(
     externalUserId: string,
-  ): Promise<{ token: string; expiresAt: string }>;
+  ): Promise<{ token: string; expiresAt: string; connectLinkUrl: string }>;
 
-  getOAuthUrl(token: string, app: string): string;
+  getOAuthUrl(connectLinkUrl: string, app: string): string;
 
   callAction(opts: {
     externalUserId: string;
@@ -48,11 +48,12 @@ export function createPipedreamClient(
           response.expiresAt instanceof Date
             ? response.expiresAt.toISOString()
             : String(response.expiresAt),
+        connectLinkUrl: (response as any).connectLinkUrl ?? `https://pipedream.com/connect/${config.projectId}?token=${encodeURIComponent(response.token)}`,
       };
     },
 
-    getOAuthUrl(token: string, app: string) {
-      return `https://pipedream.com/connect/${config.projectId}?token=${encodeURIComponent(token)}&app=${encodeURIComponent(app)}`;
+    getOAuthUrl(connectLinkUrl: string, app: string) {
+      return `${connectLinkUrl}&app=${encodeURIComponent(app)}`;
     },
 
     async callAction(opts) {

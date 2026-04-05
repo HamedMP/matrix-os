@@ -15,6 +15,7 @@ export interface ServiceDefinition {
   category: string;
   pipedreamApp: string;
   icon: string;
+  logoUrl: string;
   actions: Record<string, ServiceAction>;
 }
 

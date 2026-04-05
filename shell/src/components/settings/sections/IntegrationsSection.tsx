@@ -10,6 +10,7 @@ interface ServiceDef {
   name: string;
   category: string;
   icon: string;
+  logoUrl?: string;
   actions: Record<string, unknown>;
 }
 
@@ -29,8 +30,23 @@ const CATEGORY_COLORS: Record<string, string> = {
   communication: "bg-indigo-500",
 };
 
-function ServiceInitial({ name, category }: { name: string; category: string }) {
+function ServiceLogo({ name, category, logoUrl }: { name: string; category: string; logoUrl?: string }) {
+  const [imgError, setImgError] = useState(false);
   const bg = CATEGORY_COLORS[category] ?? "bg-primary";
+
+  if (logoUrl && !imgError) {
+    return (
+      <img
+        src={logoUrl}
+        alt={name}
+        width={40}
+        height={40}
+        className="size-10 rounded-lg shrink-0 object-contain"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
   return (
     <div className={`size-10 rounded-lg ${bg} flex items-center justify-center text-white font-semibold text-sm shrink-0`}>
       {name.charAt(0).toUpperCase()}
@@ -290,7 +306,7 @@ export function IntegrationsSection() {
                 <div key={serviceId} className="space-y-1">
                   {hasMultiple && (
                     <div className="flex items-center gap-2 mb-2">
-                      <ServiceInitial name={serviceName} category={category} />
+                      <ServiceLogo name={serviceName} category={category} logoUrl={def?.logoUrl} />
                       <span className="text-sm font-medium">{serviceName}</span>
                       <span className="text-xs text-muted-foreground">
                         {accounts.length} accounts
@@ -304,7 +320,7 @@ export function IntegrationsSection() {
                         className="flex items-center gap-4 rounded-lg border border-border/60 bg-card/50 px-4 py-3"
                       >
                         {!hasMultiple && (
-                          <ServiceInitial name={serviceName} category={category} />
+                          <ServiceLogo name={serviceName} category={category} logoUrl={def?.logoUrl} />
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
@@ -388,7 +404,7 @@ export function IntegrationsSection() {
                 className="rounded-lg border border-border/60 bg-card/50 p-4 flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
-                  <ServiceInitial name={service.name} category={service.category} />
+                  <ServiceLogo name={service.name} category={service.category} logoUrl={service.logoUrl} />
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">{service.name}</div>
                     <div className="text-xs text-muted-foreground capitalize">

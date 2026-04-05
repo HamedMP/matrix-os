@@ -198,8 +198,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const user = await db.getUserById(uid);
     const externalId = user?.pipedream_external_id ?? uid;
 
-    const { token } = await pipedream.createConnectToken(externalId);
-    const url = pipedream.getOAuthUrl(token, def.pipedreamApp);
+    const { connectLinkUrl } = await pipedream.createConnectToken(externalId);
+    const url = pipedream.getOAuthUrl(connectLinkUrl, def.pipedreamApp);
 
     return c.json({ url, service });
   });

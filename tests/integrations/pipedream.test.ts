@@ -42,6 +42,7 @@ describe("Pipedream Connect SDK Wrapper", () => {
 
     expect(result.token).toBe("ctok_abc123");
     expect(result.expiresAt).toBe("2026-04-06T00:00:00.000Z");
+    expect(result.connectLinkUrl).toContain("pipedream.com/connect");
     expect(mockTokensCreate).toHaveBeenCalledOnce();
     expect(mockTokensCreate).toHaveBeenCalledWith(
       { externalUserId: "user-42" },
@@ -51,12 +52,11 @@ describe("Pipedream Connect SDK Wrapper", () => {
 
   it("gets the OAuth URL for a service", () => {
     const client = createPipedreamClient(TEST_CONFIG);
-    const url = client.getOAuthUrl("ctok_abc123", "gmail");
+    const url = client.getOAuthUrl("https://pipedream.com/connect/proj_abc?token=ctok_abc123", "gmail");
 
     expect(url).toContain("pipedream.com");
     expect(url).toContain("gmail");
     expect(url).toContain("ctok_abc123");
-    expect(url).toContain("test-project-id");
   });
 
   it("calls a service action via proxy", async () => {

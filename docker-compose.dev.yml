@@ -75,10 +75,7 @@ services:
       - GATEWAY_URL=http://localhost:4000
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
       - PLATFORM_DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_platform
-      - PIPEDREAM_CLIENT_ID=${PIPEDREAM_CLIENT_ID:-}
-      - PIPEDREAM_CLIENT_SECRET=${PIPEDREAM_CLIENT_SECRET:-}
-      - PIPEDREAM_PROJECT_ID=${PIPEDREAM_PROJECT_ID:-}
-      - PIPEDREAM_WEBHOOK_SECRET=${PIPEDREAM_WEBHOOK_SECRET:-}
+      # Pipedream vars loaded from .env.docker via env_file
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1
       interval: 10s
