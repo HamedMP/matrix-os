@@ -81,6 +81,8 @@ export function IntegrationsSection() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [connectLabel, setConnectLabel] = useState("");
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
@@ -205,6 +207,7 @@ export function IntegrationsSection() {
 
   const handleDisconnect = useCallback(async (id: string) => {
     setDisconnecting(id);
+    setConfirmDisconnect(null);
     setError(null);
     try {
       const res = await fetch(`${GATEWAY}/api/integrations/${id}`, {
@@ -220,6 +223,28 @@ export function IntegrationsSection() {
       setError("Failed to disconnect service");
     } finally {
       setDisconnecting(null);
+    }
+  }, []);
+
+  const handleCheckStatus = useCallback(async (id: string) => {
+    setCheckingStatus(id);
+    setError(null);
+    try {
+      const res = await fetch(`${GATEWAY}/api/integrations/${id}/status`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setConnected((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, status: data.status } : c)),
+        );
+      } else {
+        setError("Failed to check connection status");
+      }
+    } catch {
+      setError("Failed to check connection status");
+    } finally {
+      setCheckingStatus(null);
     }
   }, []);
 
@@ -305,13 +330,39 @@ export function IntegrationsSection() {
                             Connected {formatDate(conn.connected_at)}
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDisconnect(conn.id)}
-                          disabled={disconnecting === conn.id}
-                          className="shrink-0 rounded-md border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors disabled:opacity-50"
-                        >
-                          {disconnecting === conn.id ? "Disconnecting..." : "Disconnect"}
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleCheckStatus(conn.id)}
+                            disabled={checkingStatus === conn.id}
+                            className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
+                          >
+                            {checkingStatus === conn.id ? "Checking..." : "Check Status"}
+                          </button>
+                          {confirmDisconnect === conn.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleDisconnect(conn.id)}
+                                disabled={disconnecting === conn.id}
+                                className="rounded-md bg-red-500/15 border border-red-500/40 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+                              >
+                                {disconnecting === conn.id ? "Removing..." : "Confirm"}
+                              </button>
+                              <button
+                                onClick={() => setConfirmDisconnect(null)}
+                                className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDisconnect(conn.id)}
+                              className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/40 transition-colors"
+                            >
+                              Disconnect
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -372,7 +423,7 @@ export function IntegrationsSection() {
                   {isConnecting
                     ? "Connecting..."
                     : isConnected
-                      ? "Connect Another"
+                      ? "Add Account"
                       : "Connect"}
                 </button>
               </div>
