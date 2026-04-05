@@ -58,6 +58,9 @@ import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
+import { createPlatformDb, type PlatformDb } from "./platform-db.js";
+import { createPipedreamClient } from "./integrations/pipedream.js";
+import { createIntegrationRoutes } from "./integrations/routes.js";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -235,6 +238,51 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = null;
       kvStore = null;
       appRegistry = null;
+    }
+  }
+
+  // Platform DB + Integrations (Pipedream Connect)
+  let platformDb: PlatformDb | null = null;
+  const platformDbUrl = process.env.PLATFORM_DATABASE_URL || process.env.DATABASE_URL;
+  if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID) {
+    try {
+      platformDb = createPlatformDb(platformDbUrl);
+      await platformDb.migrate();
+      console.log("[platform-db] Initialized");
+
+      const pipedream = createPipedreamClient({
+        clientId: process.env.PIPEDREAM_CLIENT_ID,
+        clientSecret: process.env.PIPEDREAM_CLIENT_SECRET!,
+        projectId: process.env.PIPEDREAM_PROJECT_ID!,
+        environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
+      });
+
+      const integrationRoutes = createIntegrationRoutes({
+        db: platformDb,
+        pipedream,
+        webhookSecret: process.env.PIPEDREAM_WEBHOOK_SECRET ?? "",
+        resolveUserId: async () => {
+          // Single-user mode: find or create default user from env
+          const clerkId = process.env.MATRIX_CLERK_USER_ID ?? "default";
+          const existing = await platformDb!.getUserByClerkId(clerkId);
+          if (existing) return existing.id;
+          // Auto-create on first request
+          const handle = process.env.MATRIX_HANDLE ?? "default";
+          const user = await platformDb!.createUser({
+            clerkId,
+            handle,
+            displayName: handle,
+            email: `${handle}@matrix-os.local`,
+            containerId: process.env.HOSTNAME ?? "local",
+          });
+          return user.id;
+        },
+      });
+      app.route("/api/integrations", integrationRoutes);
+      console.log("[platform-db] Integration routes mounted");
+    } catch (err) {
+      console.error("[platform-db] Failed to initialize:", (err as Error).message);
+      platformDb = null;
     }
   }
 
