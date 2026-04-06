@@ -59,9 +59,9 @@ import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
-import { createPipedreamClient } from "./integrations/pipedream.js";
+import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { createIntegrationRoutes } from "./integrations/routes.js";
-import { discoverComponentKeys } from "./integrations/registry.js";
+import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -247,6 +247,7 @@ export async function createGateway(config: GatewayConfig) {
 
   // Platform DB + Integrations (Pipedream Connect)
   let platformDb: PlatformDb | null = null;
+  let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   const platformDbUrl = process.env.PLATFORM_DATABASE_URL
     || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
@@ -256,7 +257,7 @@ export async function createGateway(config: GatewayConfig) {
       await platformDb.migrate();
       console.log("[platform-db] Initialized");
 
-      const pipedream = createPipedreamClient({
+      pipedreamClient = createPipedreamClient({
         clientId: process.env.PIPEDREAM_CLIENT_ID,
         clientSecret: process.env.PIPEDREAM_CLIENT_SECRET!,
         projectId: process.env.PIPEDREAM_PROJECT_ID!,
@@ -265,7 +266,7 @@ export async function createGateway(config: GatewayConfig) {
 
       integrationRoutes = createIntegrationRoutes({
         db: platformDb,
-        pipedream,
+        pipedream: pipedreamClient,
         webhookSecret: (() => {
           const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
           if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
@@ -294,6 +295,18 @@ export async function createGateway(config: GatewayConfig) {
             }
             return existing.id;
           }
+          // Handle may already exist with a different clerk_id (e.g. DB from previous run).
+          // Look up by handle before creating to avoid unique constraint violation.
+          const byHandle = await platformDb!.raw(
+            `SELECT * FROM users WHERE handle = $1 LIMIT 1`, [handle],
+          );
+          if (byHandle.rows.length > 0) {
+            const row = byHandle.rows[0] as { id: string; pipedream_external_id: string | null };
+            if (!row.pipedream_external_id) {
+              await platformDb!.updatePipedreamExternalId(row.id, handle);
+            }
+            return row.id;
+          }
           const user = await platformDb!.createUser({
             clerkId,
             handle,
@@ -309,7 +322,7 @@ export async function createGateway(config: GatewayConfig) {
       // Routes mounted after auth middleware below (see "deferred route mounts")
       console.log("[platform-db] Integration routes ready");
 
-      discoverComponentKeys(pipedream)
+      discoverComponentKeys(pipedreamClient)
         .then((stats) => {
           console.log(`[integrations] Component keys discovered: ${stats.matched}/${stats.total} matched, ${stats.errors} errors`);
         })
@@ -1414,6 +1427,120 @@ export async function createGateway(config: GatewayConfig) {
     writeFileSync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bridge: Integration service calls (for apps in iframes)
+  // ---------------------------------------------------------------------------
+
+  app.get("/api/bridge/service", async (c) => {
+    if (!platformDb) return c.json({ error: "Integrations not configured" }, 503);
+    const handle = process.env.MATRIX_HANDLE ?? "default";
+    const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
+    const user = await platformDb.getUserByClerkId(clerkId)
+      ?? (await platformDb.raw(`SELECT * FROM users WHERE handle = $1 LIMIT 1`, [handle])).rows[0] as { id: string } | undefined;
+    if (!user) return c.json({ services: [] });
+    const services = await platformDb.listConnectedServices(user.id);
+    return c.json({
+      services: services.map((s) => ({
+        service: s.service,
+        account_label: s.account_label,
+        account_email: s.account_email,
+        status: s.status,
+      })),
+    });
+  });
+
+  app.post("/api/bridge/service", bodyLimit({ maxSize: 65536 }), async (c) => {
+    if (!platformDb || !pipedreamClient) {
+      return c.json({ error: "Integrations not configured" }, 503);
+    }
+
+    let body: { service: string; action: string; params?: Record<string, unknown>; label?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const { service, action, label } = body;
+    const params = body.params;
+    if (!service || !action) return c.json({ error: "service and action are required" }, 400);
+
+    const def = getService(service);
+    if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);
+    const actionDef = getAction(service, action);
+    if (!actionDef) return c.json({ error: `Unknown action: ${action}` }, 400);
+
+    // Resolve user (local dev path)
+    const handle = process.env.MATRIX_HANDLE ?? "default";
+    const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
+    const user = await platformDb.getUserByClerkId(clerkId)
+      ?? (await platformDb.raw(`SELECT * FROM users WHERE handle = $1 LIMIT 1`, [handle])).rows[0] as { id: string; pipedream_external_id?: string } | undefined;
+    if (!user) return c.json({ error: "User not found" }, 401);
+    const uid = user.id;
+
+    const connections = await platformDb.listConnectedServices(uid);
+    let connection;
+    if (label) {
+      connection = connections.find((s) => s.service === service && s.account_label === label);
+    } else {
+      connection = connections.find((s) => s.service === service);
+    }
+    if (!connection) {
+      return c.json({ error: `Service ${service} is not connected` }, 404);
+    }
+
+    const fullUser = await platformDb.getUserById(uid);
+    const externalId = fullUser?.pipedream_external_id ?? uid;
+
+    try {
+      let data: unknown;
+      if (actionDef.componentKey) {
+        const configuredProps: Record<string, unknown> = {
+          ...(params ?? {}),
+          [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
+        };
+        const result = await pipedreamClient.runAction({
+          externalUserId: externalId,
+          componentKey: actionDef.componentKey,
+          configuredProps,
+        });
+        data = result.ret;
+      } else if (actionDef.directApi) {
+        const api = actionDef.directApi;
+        const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
+        if (api.method === "GET") {
+          const queryParams = api.mapParams ? api.mapParams(params ?? {}) : undefined;
+          data = await pipedreamClient.proxyGet({
+            externalUserId: externalId,
+            accountId: connection.pipedream_account_id,
+            url,
+            params: queryParams,
+          });
+        } else {
+          const body = api.mapBody ? api.mapBody(params ?? {}) : (params ?? {});
+          data = await pipedreamClient.proxyPost({
+            externalUserId: externalId,
+            accountId: connection.pipedream_account_id,
+            url,
+            body,
+          });
+        }
+      } else {
+        data = await pipedreamClient.callAction({
+          externalUserId: externalId,
+          accountId: connection.pipedream_account_id,
+          url: `https://api.pipedream.com/v1/connect/${def.pipedreamApp}/${action}`,
+          body: params ?? {},
+        });
+      }
+      await platformDb.touchServiceUsage(connection.id);
+      return c.json({ data, service, action });
+    } catch (err) {
+      console.error(`[bridge/service] ${service}/${action} error:`, err instanceof Error ? err.message : err);
+      return c.json({ error: "Integration call failed" }, 502);
+    }
   });
 
   app.get("/api/conversations", (c) => {

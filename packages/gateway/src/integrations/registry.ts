@@ -18,11 +18,23 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           query: { type: "string" },
           maxResults: { type: "number" },
         },
+        directApi: {
+          method: "GET",
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+          mapParams: (p) => ({
+            ...(p.maxResults ? { maxResults: String(p.maxResults) } : {}),
+            ...(p.query ? { q: String(p.query) } : {}),
+          }),
+        },
       },
       get_message: {
         description: "Get a specific email message by ID",
         params: {
           messageId: { type: "string", required: true },
+        },
+        directApi: {
+          method: "GET",
+          url: (p) => `https://gmail.googleapis.com/gmail/v1/users/me/messages/${p.messageId}?format=full`,
         },
       },
       send_email: {
@@ -40,10 +52,22 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           query: { type: "string", required: true },
           maxResults: { type: "number" },
         },
+        directApi: {
+          method: "GET",
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+          mapParams: (p) => ({
+            q: String(p.query),
+            ...(p.maxResults ? { maxResults: String(p.maxResults) } : {}),
+          }),
+        },
       },
       list_labels: {
         description: "List all email labels",
         params: {},
+        directApi: {
+          method: "GET",
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        },
       },
     },
   },

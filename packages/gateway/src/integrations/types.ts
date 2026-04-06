@@ -4,10 +4,18 @@ export interface ActionParam {
   required?: boolean;
 }
 
+export interface DirectApi {
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  url: string | ((params: Record<string, unknown>) => string);
+  mapParams?: (params: Record<string, unknown>) => Record<string, string>;
+  mapBody?: (params: Record<string, unknown>) => Record<string, unknown>;
+}
+
 export interface ServiceAction {
   description: string;
   params: Record<string, ActionParam>;
   componentKey?: string;
+  directApi?: DirectApi;
 }
 
 export interface ServiceDefinition {

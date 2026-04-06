@@ -68,6 +68,7 @@ services:
       - .env.docker
     environment:
       - NODE_ENV=development
+      - ANTHROPIC_API_KEY=
       - MATRIX_HOME=/home/matrixos/home
       - MATRIX_HANDLE=${MATRIX_HANDLE:-dev}
       - MATRIX_DISPLAY_NAME=${MATRIX_DISPLAY_NAME:-Developer}

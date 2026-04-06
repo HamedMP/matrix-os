@@ -41,6 +41,20 @@ export interface PipedreamConnectClient {
     configuredProps: Record<string, unknown>;
   }): Promise<RunActionResult>;
 
+  proxyGet(opts: {
+    externalUserId: string;
+    accountId: string;
+    url: string;
+    params?: Record<string, string>;
+  }): Promise<unknown>;
+
+  proxyPost(opts: {
+    externalUserId: string;
+    accountId: string;
+    url: string;
+    body?: Record<string, unknown>;
+  }): Promise<unknown>;
+
   revokeAccount(accountId: string): Promise<void>;
 
   listAccounts(externalUserId: string): Promise<Array<{
@@ -125,6 +139,32 @@ export function createPipedreamClient(
         exports: body.exports,
         ret: body.ret,
       };
+    },
+
+    async proxyGet(opts) {
+      const result = await (sdk.proxy as any).get(
+        {
+          url: opts.url,
+          externalUserId: opts.externalUserId,
+          accountId: opts.accountId,
+          params: opts.params,
+        },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return result;
+    },
+
+    async proxyPost(opts) {
+      const result = await (sdk.proxy as any).post(
+        {
+          url: opts.url,
+          externalUserId: opts.externalUserId,
+          accountId: opts.accountId,
+          body: opts.body ?? {},
+        },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return result;
     },
 
     async revokeAccount(accountId: string) {

@@ -128,6 +128,7 @@ export interface PlatformDb {
   getConnectedService(id: string): Promise<ConnectedServicesTable | null>;
   disconnectService(id: string): Promise<void>;
   updateServiceStatus(id: string, status: string): Promise<void>;
+  updateAccountEmail(id: string, email: string): Promise<void>;
   touchServiceUsage(id: string): Promise<void>;
 
   createUserApp(input: CreateUserAppInput): Promise<UserAppsTable>;
@@ -349,6 +350,14 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       await kysely
         .updateTable("connected_services")
         .set({ status })
+        .where("id", "=", id)
+        .execute();
+    },
+
+    async updateAccountEmail(id: string, email: string): Promise<void> {
+      await kysely
+        .updateTable("connected_services")
+        .set({ account_email: email })
         .where("id", "=", id)
         .execute();
     },

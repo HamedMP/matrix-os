@@ -681,13 +681,20 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
         }
 
         if (path.startsWith("apps/")) {
-          const name = path.replace("apps/", "").replace(".html", "");
+          // Only react to actual app entry points, not every file under apps/
+          const isRootHtml = path.match(/^apps\/[^/]+\.html$/);
+          const isAppIndex = path.match(/^apps\/[^/]+\/(index\.html|dist\/index\.html)$/);
+          if (!isRootHtml && !isAppIndex) return;
+
+          const name = path.replace("apps/", "").replace(/\/(dist\/)?index\.html$/, "").replace(".html", "");
           if (event === "unlink") {
             wmSetApps((prev) => prev.filter((a) => a.path !== path));
             wmSetWindows((prev) => prev.filter((w) => w.path !== path));
-          } else {
+          } else if (event === "add") {
             addApp(name, path);
-            openWindow(name, path);
+          } else {
+            // "change" on existing app -- refresh open windows, don't force-open
+            addApp(name, path);
           }
         }
       },

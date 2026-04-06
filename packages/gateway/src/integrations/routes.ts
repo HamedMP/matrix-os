@@ -102,6 +102,61 @@ function isTimeoutError(err: unknown): boolean {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
+// Profile email resolution -- call each service's own API to get the email
+// ---------------------------------------------------------------------------
+
+const PROFILE_ENDPOINTS: Record<string, {
+  url: string;
+  extract: (data: any) => string | undefined;
+}> = {
+  gmail: {
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    extract: (d) => d?.emailAddress,
+  },
+  google_calendar: {
+    url: "https://www.googleapis.com/oauth2/v1/userinfo",
+    extract: (d) => d?.email,
+  },
+  google_drive: {
+    url: "https://www.googleapis.com/oauth2/v1/userinfo",
+    extract: (d) => d?.email,
+  },
+  github: {
+    url: "https://api.github.com/user",
+    extract: (d) => d?.login ? `${d.login}` : d?.email,
+  },
+  slack: {
+    url: "https://slack.com/api/auth.test",
+    extract: (d) => d?.user,
+  },
+  discord: {
+    url: "https://discord.com/api/v10/users/@me",
+    extract: (d) => d?.email ?? d?.username,
+  },
+};
+
+async function resolveAccountEmail(
+  pipedream: PipedreamConnectClient,
+  externalUserId: string,
+  accountId: string,
+  service: string,
+): Promise<string | undefined> {
+  const endpoint = PROFILE_ENDPOINTS[service];
+  if (!endpoint) return undefined;
+  try {
+    const result = await pipedream.proxyGet({
+      externalUserId,
+      accountId,
+      url: endpoint.url,
+    });
+    return endpoint.extract(result);
+  } catch (err) {
+    console.warn(`[integrations] resolveAccountEmail failed for ${service}:`, err instanceof Error ? err.message : err);
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Route factory
 // ---------------------------------------------------------------------------
 
@@ -227,14 +282,23 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
       const newAccounts = pdAccounts.filter((acc) => !existingPdIds.has(acc.id) && getService(acc.app));
+
+      // Resolve emails for new accounts missing them
+      const resolvedEmails = await Promise.all(
+        newAccounts.map(async (acc) => {
+          if (acc.email) return acc.email;
+          return resolveAccountEmail(pipedream, externalId, acc.id, acc.app);
+        }),
+      );
+
       await Promise.all(
-        newAccounts.map((acc) =>
+        newAccounts.map((acc, i) =>
           db.connectService({
             userId: uid,
             service: acc.app,
             pipedreamAccountId: acc.id,
             accountLabel: acc.app,
-            accountEmail: acc.email,
+            accountEmail: resolvedEmails[i],
             scopes: [],
           }),
         ),
@@ -243,6 +307,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         emit({ type: "integration:connected", service: acc.app, accountLabel: acc.app });
       }
       const synced = newAccounts.length;
+
+      // Also backfill emails for existing connections missing them
+      const missingEmail = existing.filter((s) => !s.account_email);
+      await Promise.all(
+        missingEmail.map(async (s) => {
+          const conn = pdAccounts.find((a) => a.id === s.pipedream_account_id);
+          if (!conn) return;
+          const email = await resolveAccountEmail(pipedream, externalId, conn.id, s.service);
+          if (email) await db.updateAccountEmail(s.id, email);
+        }),
+      );
 
       const services = await db.listConnectedServices(uid);
       return c.json({ synced, services });
@@ -346,13 +421,18 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       : (label ?? appName);
     pendingLabels.delete(pendingKey);
 
+    let resolvedEmail = email;
+    if (!resolvedEmail) {
+      resolvedEmail = await resolveAccountEmail(pipedream, external_user_id, account_id, appName);
+    }
+
     try {
       await db.connectService({
         userId: webhookUserId,
         service: appName,
         pipedreamAccountId: account_id,
         accountLabel: resolvedLabel,
-        accountEmail: email,
+        accountEmail: resolvedEmail,
         scopes: scopes ?? [],
       });
     } catch (err) {
@@ -465,6 +545,26 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         data = result.ret;
         const exports = result.exports as Record<string, unknown> | undefined;
         summary = typeof exports?.$summary === "string" ? exports.$summary : undefined;
+      } else if (actionDef.directApi) {
+        const api = actionDef.directApi;
+        const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
+        if (api.method === "GET") {
+          const queryParams = api.mapParams ? api.mapParams(params ?? {}) : undefined;
+          data = await pipedream.proxyGet({
+            externalUserId: externalId,
+            accountId: connection.pipedream_account_id,
+            url,
+            params: queryParams,
+          });
+        } else {
+          const body = api.mapBody ? api.mapBody(params ?? {}) : (params ?? {});
+          data = await pipedream.proxyPost({
+            externalUserId: externalId,
+            accountId: connection.pipedream_account_id,
+            url,
+            body,
+          });
+        }
       } else {
         data = await pipedream.callAction({
           externalUserId: externalId,

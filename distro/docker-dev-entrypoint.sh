@@ -63,18 +63,33 @@ done
 # AI CLI auth persistence via shared external volume (matrixos-ai-auth)
 # Survives container rebuilds and is shared across feature branch containers.
 AI_AUTH="/home/matrixos/.ai-auth"
+USER_CLAUDE="/home/matrixos/.claude"
+USER_CODEX="/home/matrixos/.codex"
 if [ -d "$AI_AUTH" ]; then
   mkdir -p "$AI_AUTH/claude" "$AI_AUTH/codex"
-  # Restore auth into project-level dirs if not already present
-  [ -f "$AI_AUTH/claude/.credentials.json" ] && [ ! -f "$MATRIX_HOME/.claude/.credentials.json" ] && \
-    mkdir -p "$MATRIX_HOME/.claude" && cp "$AI_AUTH/claude/.credentials.json" "$MATRIX_HOME/.claude/.credentials.json" && \
-    echo "[matrix-os-dev] Restored Claude auth from shared volume"
-  [ -f "$AI_AUTH/codex/auth.json" ] && [ ! -f "$MATRIX_HOME/.codex/auth.json" ] && \
-    mkdir -p "$MATRIX_HOME/.codex" && cp "$AI_AUTH/codex/auth.json" "$MATRIX_HOME/.codex/auth.json" && \
-    echo "[matrix-os-dev] Restored Codex auth from shared volume"
-  # Save current auth back (in case user logged in during previous session)
-  [ -f "$MATRIX_HOME/.claude/.credentials.json" ] && cp "$MATRIX_HOME/.claude/.credentials.json" "$AI_AUTH/claude/.credentials.json" 2>/dev/null || true
-  [ -f "$MATRIX_HOME/.codex/auth.json" ] && cp "$MATRIX_HOME/.codex/auth.json" "$AI_AUTH/codex/auth.json" 2>/dev/null || true
+  # Restore auth into both $HOME/.claude/ and $MATRIX_HOME/.claude/
+  # The kernel's query() spawns claude from /app, so it needs $HOME/.claude/
+  for dest in "$USER_CLAUDE" "$MATRIX_HOME/.claude"; do
+    if [ -f "$AI_AUTH/claude/.credentials.json" ] && [ ! -f "$dest/.credentials.json" ]; then
+      mkdir -p "$dest"
+      cp "$AI_AUTH/claude/.credentials.json" "$dest/.credentials.json"
+      echo "[matrix-os-dev] Restored Claude auth to $dest"
+    fi
+  done
+  for dest in "$USER_CODEX" "$MATRIX_HOME/.codex"; do
+    if [ -f "$AI_AUTH/codex/auth.json" ] && [ ! -f "$dest/auth.json" ]; then
+      mkdir -p "$dest"
+      cp "$AI_AUTH/codex/auth.json" "$dest/auth.json"
+      echo "[matrix-os-dev] Restored Codex auth to $dest"
+    fi
+  done
+  # Save current auth back (check both locations)
+  for src in "$USER_CLAUDE" "$MATRIX_HOME/.claude"; do
+    [ -f "$src/.credentials.json" ] && cp "$src/.credentials.json" "$AI_AUTH/claude/.credentials.json" 2>/dev/null && break || true
+  done
+  for src in "$USER_CODEX" "$MATRIX_HOME/.codex"; do
+    [ -f "$src/auth.json" ] && cp "$src/auth.json" "$AI_AUTH/codex/auth.json" 2>/dev/null && break || true
+  done
 fi
 
 # Clear stale Turbopack cache (source files are volume-mounted so cache
@@ -91,6 +106,8 @@ fi
 
 # Fix ownership of everything created as root before dropping to matrixos
 chown -R matrixos:matrixos "$MATRIX_HOME"
+chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
+chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
 if command -v zsh >/dev/null 2>&1; then
@@ -132,12 +149,16 @@ exec su-exec matrixos bash -c '
   GATEWAY_PID=$!
 
   trap "
-    # Save auth to shared volume before exit
+    # Save auth to shared volume before exit (check both $HOME and $MATRIX_HOME)
     AI_AUTH=/home/matrixos/.ai-auth
     if [ -d \"\$AI_AUTH\" ]; then
       mkdir -p \"\$AI_AUTH/claude\" \"\$AI_AUTH/codex\"
-      [ -f \"$MATRIX_HOME/.claude/.credentials.json\" ] && cp \"$MATRIX_HOME/.claude/.credentials.json\" \"\$AI_AUTH/claude/.credentials.json\" 2>/dev/null
-      [ -f \"$MATRIX_HOME/.codex/auth.json\" ] && cp \"$MATRIX_HOME/.codex/auth.json\" \"\$AI_AUTH/codex/auth.json\" 2>/dev/null
+      for src in /home/matrixos/.claude \"$MATRIX_HOME/.claude\"; do
+        [ -f \"\$src/.credentials.json\" ] && cp \"\$src/.credentials.json\" \"\$AI_AUTH/claude/.credentials.json\" 2>/dev/null && break
+      done
+      for src in /home/matrixos/.codex \"$MATRIX_HOME/.codex\"; do
+        [ -f \"\$src/auth.json\" ] && cp \"\$src/auth.json\" \"\$AI_AUTH/codex/auth.json\" 2>/dev/null && break
+      done
     fi
     kill \$SHELL_PID \$GATEWAY_PID 2>/dev/null; exit 0
   " SIGTERM SIGINT

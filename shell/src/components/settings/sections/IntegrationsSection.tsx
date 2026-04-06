@@ -113,7 +113,22 @@ export function IntegrationsSection() {
       }
       if (connRes.ok) {
         const data = await connRes.json();
-        setConnected(data.connections ?? data);
+        const connections: ConnectedService[] = data.connections ?? data;
+        setConnected(connections);
+
+        // Trigger background sync to backfill missing emails
+        const hasMissingEmail = connections.some((c) => !c.account_email);
+        if (hasMissingEmail) {
+          fetch(`${GATEWAY}/api/integrations/sync`, {
+            method: "POST",
+            signal: AbortSignal.timeout(30_000),
+          })
+            .then((r) => r.ok ? r.json() : null)
+            .then((data) => {
+              if (data?.services) setConnected(data.services);
+            })
+            .catch(() => {});
+        }
       }
     } catch (err) {
       setError("Failed to load integrations");
@@ -330,25 +345,22 @@ export function IntegrationsSection() {
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            {!hasMultiple && (
-                              <span className="text-sm font-medium truncate">
-                                {serviceName}
-                              </span>
-                            )}
-                            {hasMultiple && (
-                              <span className="text-sm font-medium truncate">
-                                {conn.account_label}
-                              </span>
-                            )}
+                            <span className="text-sm font-medium truncate">
+                              {hasMultiple ? conn.account_label : serviceName}
+                            </span>
                             <StatusDot status={conn.status} />
                             <span className="text-xs text-muted-foreground capitalize">
                               {conn.status}
                             </span>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {!hasMultiple && conn.account_label}
-                            {conn.account_email && (hasMultiple ? conn.account_email : ` (${conn.account_email})`)}
-                            {" -- "}
+                          {conn.account_email && (
+                            <div className="text-sm text-muted-foreground truncate mt-0.5">
+                              {conn.account_email}
+                            </div>
+                          )}
+                          <div className="text-xs text-muted-foreground/60 mt-0.5">
+                            {!hasMultiple && conn.account_label !== serviceName && conn.account_label}
+                            {!hasMultiple && conn.account_label !== serviceName && " · "}
                             Connected {formatDate(conn.connected_at)}
                           </div>
                         </div>

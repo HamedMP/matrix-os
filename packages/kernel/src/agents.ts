@@ -158,6 +158,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,Bli
 BRIDGE API (persistent data):
 fetch('/api/bridge/data?app=<name>&key=<key>') for GET, POST with JSON body for write. Data stored in ~/data/<name>/.
 
+INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
+MatrixOS.integrations() - returns Promise<Array<{service, account_label, account_email, status}>> of connected services.
+MatrixOS.service(service, action, params) - calls an integration action, returns Promise<{data, service, action}>.
+Example: MatrixOS.service("gmail", "list_messages", {maxResults: 10}).then(r => r.data)
+Available: gmail (list_messages, get_message, send_email, search, list_labels), google_calendar (list_events, create_event), google_drive (list_files), github (list_repos, list_issues), slack (send_message, list_channels).
+IMPORTANT: Check MatrixOS.integrations() first to verify a service is connected before calling it. Show connection status to user.
+
 AFTER BUILDING:
 - Update ~/system/modules.json: add {name, type:"react-app"|"html-app", path, status:"active"}
 - Call complete_task with: {name, type, path, description}
