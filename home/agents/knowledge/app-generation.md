@@ -252,6 +252,9 @@ If `window.MatrixOS` is available (injected by the shell after iframe load):
 
 **Always use the fetch() approach as primary** — MatrixOS bridge may not be available immediately on page load.
 
+### IMPORTANT: Integration apps do NOT need storage tables
+Apps that display data from external services (Gmail, Calendar, etc.) should fetch data live from the bridge API. Do NOT declare `storage.tables` to cache service data locally -- that's wasteful and stale. Just call `/api/bridge/service` on load and display results directly.
+
 ## Best Practices
 - Default to `~/apps/<slug>/matrix.json` + `index.html` for apps
 - Use TypeScript strict mode in all React apps/modules
