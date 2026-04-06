@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export interface ConversationMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  tool?: string;
+  toolInput?: Record<string, unknown>;
 }
 
 export interface ConversationFile {
@@ -26,7 +28,7 @@ export interface ConversationMeta {
 export interface SearchResult {
   sessionId: string;
   messageIndex: number;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
   preview: string;
@@ -36,6 +38,8 @@ export interface ConversationStore {
   begin(sessionId: string): void;
   addUserMessage(sessionId: string, content: string): void;
   appendAssistantText(sessionId: string, text: string): void;
+  addToolStart(sessionId: string, tool: string): void;
+  addToolEnd(sessionId: string, tool: string, input?: Record<string, unknown>): void;
   finalize(sessionId: string): void;
   list(): ConversationMeta[];
   get(id: string): ConversationFile | null;
@@ -94,6 +98,42 @@ export function createConversationStore(homePath: string): ConversationStore {
     appendAssistantText(sessionId, text) {
       const current = buffers.get(sessionId) ?? "";
       buffers.set(sessionId, current + text);
+    },
+
+    addToolStart(sessionId, tool) {
+      const conv = active.get(sessionId);
+      if (!conv) return;
+
+      const buffered = buffers.get(sessionId);
+      if (buffered) {
+        conv.messages.push({ role: "assistant", content: buffered, timestamp: Date.now() });
+        buffers.delete(sessionId);
+      }
+
+      conv.messages.push({
+        role: "system",
+        content: `Using ${tool}...`,
+        tool,
+        timestamp: Date.now(),
+      });
+      conv.updatedAt = Date.now();
+      writeToDisk(conv);
+    },
+
+    addToolEnd(sessionId, tool, input) {
+      const conv = active.get(sessionId);
+      if (!conv) return;
+
+      for (let i = conv.messages.length - 1; i >= 0; i--) {
+        const m = conv.messages[i];
+        if (m.tool === tool && m.content.startsWith("Using ")) {
+          m.content = `Used ${tool}`;
+          m.toolInput = input;
+          break;
+        }
+      }
+      conv.updatedAt = Date.now();
+      writeToDisk(conv);
     },
 
     finalize(sessionId) {

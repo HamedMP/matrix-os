@@ -122,7 +122,7 @@ export function ChatPanel({
                       {isVoice && (
                         <MicIcon className="inline-block size-3.5 mr-1.5 text-muted-foreground align-text-bottom" />
                       )}
-                      {msg.content}
+                      <span className="whitespace-pre-wrap">{msg.content}</span>
                     </MessageContent>
                   </Message>
                 ) : msg.role === "system" ? (

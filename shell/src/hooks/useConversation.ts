@@ -17,9 +17,11 @@ interface ConversationFile {
   createdAt: number;
   updatedAt: number;
   messages: Array<{
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "system";
     content: string;
     timestamp: number;
+    tool?: string;
+    toolInput?: Record<string, unknown>;
   }>;
 }
 

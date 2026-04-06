@@ -482,6 +482,12 @@ export async function createGateway(config: GatewayConfig) {
                 stream.append(event.text);
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.appendAssistantText(sid, event.text);
+              } else if (event.type === "tool_start") {
+                const sid = channelSessions.get(sessionKey);
+                if (sid) conversations.addToolStart(sid, event.tool);
+              } else if (event.type === "tool_end") {
+                const sid = channelSessions.get(sessionKey);
+                if (sid) conversations.addToolEnd(sid, event.tool, event.input);
               } else if (event.type === "result") {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) finalizeWithSummary(sid);
@@ -522,6 +528,12 @@ export async function createGateway(config: GatewayConfig) {
             responseText += event.text;
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.appendAssistantText(sid, event.text);
+          } else if (event.type === "tool_start") {
+            const sid = channelSessions.get(sessionKey);
+            if (sid) conversations.addToolStart(sid, event.tool);
+          } else if (event.type === "tool_end") {
+            const sid = channelSessions.get(sessionKey);
+            if (sid) conversations.addToolEnd(sid, event.tool, event.input);
           } else if (event.type === "result") {
             const sid = channelSessions.get(sessionKey);
             if (sid) finalizeWithSummary(sid);
@@ -761,6 +773,10 @@ export async function createGateway(config: GatewayConfig) {
                   }
                 } else if (msg.type === "kernel:text" && activeSessionId) {
                   conversations.appendAssistantText(activeSessionId, msg.text);
+                } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                  conversations.addToolStart(activeSessionId, msg.tool);
+                } else if (msg.type === "kernel:tool_end" && activeSessionId) {
+                  conversations.addToolEnd(activeSessionId, event.tool, event.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
                   finalizeWithSummary(activeSessionId);
                 }
