@@ -8,11 +8,6 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: resolve(__dirname, ".."),
   },
-  // Disable Turbopack filesystem cache in Docker -- stale cache causes
-  // phantom build errors after host file changes via volume mount
-  turbopackFileSystemCache: process.env.NODE_ENV === "development" && process.env.MATRIX_HOME
-    ? false
-    : undefined,
   async rewrites() {
     return [
       {
