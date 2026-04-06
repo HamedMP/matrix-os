@@ -17,13 +17,17 @@ if [ ! -d "$MATRIX_HOME" ]; then
 fi
 
 # Sync default apps, agents, and system config from source to home volume
-echo "[matrix-os-dev] Syncing default apps and skills..."
-for dir in apps agents system; do
+# Apps are only copied on first boot -- user-built apps must survive restarts.
+echo "[matrix-os-dev] Syncing default agents and system config..."
+for dir in agents system; do
   if [ -d "/app/home/$dir" ]; then
     rm -rf "$MATRIX_HOME/$dir"
     cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"
   fi
 done
+if [ ! -d "$MATRIX_HOME/apps" ]; then
+  cp -r /app/home/apps "$MATRIX_HOME/apps"
+fi
 
 # Expose Matrix OS skills to Claude Code and Codex
 # Clean stale copies from previous runs, then create fresh ones.
