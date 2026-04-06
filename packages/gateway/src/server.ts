@@ -60,7 +60,7 @@ import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
-import { createIntegrationRoutes } from "./integrations/routes.js";
+import { createIntegrationRoutes, validateActionParams } from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
 import {
   createPluginRegistry,
@@ -253,7 +253,7 @@ export async function createGateway(config: GatewayConfig) {
   let integrationRoutes: Hono | null = null;
   const platformDbUrl = process.env.PLATFORM_DATABASE_URL
     || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
-  if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID) {
+  if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
     try {
       platformDb = createPlatformDb(platformDbUrl);
       await platformDb.migrate();
@@ -261,8 +261,8 @@ export async function createGateway(config: GatewayConfig) {
 
       pipedreamClient = createPipedreamClient({
         clientId: process.env.PIPEDREAM_CLIENT_ID,
-        clientSecret: process.env.PIPEDREAM_CLIENT_SECRET!,
-        projectId: process.env.PIPEDREAM_PROJECT_ID!,
+        clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
+        projectId: process.env.PIPEDREAM_PROJECT_ID,
         environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
       });
 
@@ -765,6 +765,7 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "message") {
             pendingText = parsed.text;
             const requestId = parsed.requestId;
+            let lastToolName: string | undefined;
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
@@ -781,9 +782,10 @@ export async function createGateway(config: GatewayConfig) {
                 } else if (msg.type === "kernel:text" && activeSessionId) {
                   conversations.appendAssistantText(activeSessionId, msg.text);
                 } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                  lastToolName = msg.tool;
                   conversations.addToolStart(activeSessionId, msg.tool);
                 } else if (msg.type === "kernel:tool_end" && activeSessionId) {
-                  conversations.addToolEnd(activeSessionId, event.tool, event.input);
+                  conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
                   finalizeWithSummary(activeSessionId);
                 }
@@ -1478,6 +1480,9 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/bridge/service", bodyLimit({ maxSize: 65536 }), async (c) => {
+    if (process.env.NODE_ENV === "production") {
+      return c.json({ error: "Bridge not available in production" }, 403);
+    }
     if (!platformDb || !pipedreamClient) {
       return c.json({ error: "Integrations not configured" }, 503);
     }
@@ -1497,6 +1502,14 @@ export async function createGateway(config: GatewayConfig) {
     if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);
     const actionDef = getAction(service, action);
     if (!actionDef) return c.json({ error: `Unknown action: ${action}` }, 400);
+
+    const paramValidation = validateActionParams(actionDef, params);
+    if (!paramValidation.valid) {
+      const parts: string[] = [];
+      if (paramValidation.missing.length > 0) parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
+      if (paramValidation.typeErrors.length > 0) parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
+      return c.json({ error: parts.join(". ") }, 400);
+    }
 
     // Resolve user (local dev path)
     const handle = process.env.MATRIX_HANDLE ?? "default";

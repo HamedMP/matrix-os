@@ -21,6 +21,8 @@ function mockPipedream(overrides?: Partial<PipedreamConnectClient>): PipedreamCo
     revokeAccount: vi.fn().mockResolvedValue(undefined),
     listAccounts: vi.fn().mockResolvedValue([]),
     getAppInfo: vi.fn().mockResolvedValue(null),
+    proxyGet: vi.fn().mockResolvedValue({ messages: [{ id: "1", subject: "Hello" }] }),
+    proxyPost: vi.fn().mockResolvedValue({ ok: true }),
     ...overrides,
   };
 }
@@ -291,7 +293,7 @@ describe("Integration Routes", () => {
       expect(data.data).toBeDefined();
       expect(data.service).toBe("gmail");
       expect(data.action).toBe("list_messages");
-      expect(pipedream.callAction).toHaveBeenCalled();
+      expect(pipedream.proxyGet).toHaveBeenCalled();
     });
 
     it("touches last_used_at on successful call", async () => {
@@ -348,7 +350,7 @@ describe("Integration Routes", () => {
     it("handles Pipedream 429 rate limit errors", async () => {
       const rateLimitError = new Error("Rate limited");
       (rateLimitError as any).status = 429;
-      pipedream.callAction = vi.fn().mockRejectedValue(rateLimitError);
+      pipedream.proxyGet = vi.fn().mockRejectedValue(rateLimitError);
 
       const res = await app.request("/api/integrations/call", {
         method: "POST",
@@ -645,7 +647,7 @@ describe("Integration Routes", () => {
       const rateLimitError = new Error("Rate limited");
       (rateLimitError as any).status = 429;
       (rateLimitError as any).headers = { "retry-after": "30" };
-      pipedream.callAction = vi.fn().mockRejectedValue(rateLimitError);
+      pipedream.proxyGet = vi.fn().mockRejectedValue(rateLimitError);
 
       const res = await app.request("/api/integrations/call", {
         method: "POST",
@@ -662,7 +664,7 @@ describe("Integration Routes", () => {
     it("returns default Retry-After when not provided by upstream", async () => {
       const rateLimitError = new Error("Rate limited");
       (rateLimitError as any).status = 429;
-      pipedream.callAction = vi.fn().mockRejectedValue(rateLimitError);
+      pipedream.proxyGet = vi.fn().mockRejectedValue(rateLimitError);
 
       const res = await app.request("/api/integrations/call", {
         method: "POST",
@@ -688,7 +690,7 @@ describe("Integration Routes", () => {
     });
 
     it("returns 503 when Pipedream is unreachable", async () => {
-      pipedream.callAction = vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED"));
+      pipedream.proxyGet = vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED"));
 
       const res = await app.request("/api/integrations/call", {
         method: "POST",
@@ -703,7 +705,7 @@ describe("Integration Routes", () => {
     it("returns 504 on timeout", async () => {
       const timeoutErr = new Error("The operation was aborted");
       timeoutErr.name = "AbortError";
-      pipedream.callAction = vi.fn().mockRejectedValue(timeoutErr);
+      pipedream.proxyGet = vi.fn().mockRejectedValue(timeoutErr);
 
       const res = await app.request("/api/integrations/call", {
         method: "POST",
@@ -718,7 +720,7 @@ describe("Integration Routes", () => {
     it("returns 502 for other Pipedream errors", async () => {
       const err = new Error("Internal server error");
       (err as any).status = 500;
-      pipedream.callAction = vi.fn().mockRejectedValue(err);
+      pipedream.proxyGet = vi.fn().mockRejectedValue(err);
 
       const res = await app.request("/api/integrations/call", {
         method: "POST",
@@ -789,8 +791,8 @@ describe("Integration Routes", () => {
       expect(pipedream.callAction).not.toHaveBeenCalled();
     });
 
-    it("falls back to callAction when no componentKey discovered", async () => {
-      // list_labels has no componentKey set
+    it("falls back to directApi when no componentKey discovered", async () => {
+      // list_labels has directApi set but no componentKey
       const gmail = getService("gmail")!;
       gmail.actions.list_labels.componentKey = undefined;
 
@@ -803,7 +805,7 @@ describe("Integration Routes", () => {
         }),
       });
       expect(res.status).toBe(200);
-      expect(pipedream.callAction).toHaveBeenCalled();
+      expect(pipedream.proxyGet).toHaveBeenCalled();
       expect(pipedream.runAction).not.toHaveBeenCalled();
     });
 

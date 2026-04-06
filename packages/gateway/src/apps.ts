@@ -53,9 +53,8 @@ function scanAppsDir(
             path: `/files/apps/${relativePath}/index.html`,
           });
         }
-        // Don't recurse into app directories -- they're complete apps
-        continue;
       }
+      // Always recurse to discover nested apps (e.g. games/snake inside games/)
       scanAppsDir(baseDir, relativePath, result, seen);
       continue;
     }

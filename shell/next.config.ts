@@ -8,10 +8,6 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: resolve(__dirname, ".."),
   },
-  turbopackFileSystemCache:
-    process.env.NODE_ENV === "development" && process.env.MATRIX_HOME
-      ? false
-      : undefined,
   async rewrites() {
     return [
       {

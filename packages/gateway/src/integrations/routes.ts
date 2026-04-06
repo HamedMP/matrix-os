@@ -16,10 +16,11 @@ const ConnectBodySchema = z.object({
   label: z.string().optional(),
 });
 
-const CallBodySchema = z.looseObject({
+const CallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
   label: z.string().optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
 });
 
 const WebhookBodySchema = z.object({
@@ -46,7 +47,7 @@ function verifyHmac(payload: string, signature: string, secret: string): boolean
 // Per-action param validation
 // ---------------------------------------------------------------------------
 
-function validateActionParams(
+export function validateActionParams(
   actionDef: ServiceAction,
   params: Record<string, unknown> | undefined,
 ): { valid: true } | { valid: false; missing: string[]; typeErrors: string[] } {
@@ -465,8 +466,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, action, label, ...rest } = parsed.data;
-    const params = rest.params as Record<string, unknown> | undefined;
+    const { service, action, label, params } = parsed.data;
 
     const def = getService(service);
     if (!def) {

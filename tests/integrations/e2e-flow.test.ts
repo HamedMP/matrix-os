@@ -30,6 +30,12 @@ describe("E2E: connect -> call -> disconnect flow", () => {
       getOAuthUrl: vi.fn().mockReturnValue("https://pipedream.com/connect/proj?token=pd_tok_e2e&app=gmail"),
       callAction: vi.fn().mockResolvedValue({ messages: [{ id: "msg_1", subject: "Welcome" }] }),
       revokeAccount: vi.fn().mockResolvedValue(undefined),
+      discoverActions: vi.fn().mockResolvedValue([]),
+      runAction: vi.fn().mockResolvedValue({ exports: { $summary: "Done" }, ret: { ok: true } }),
+      listAccounts: vi.fn().mockResolvedValue([]),
+      getAppInfo: vi.fn().mockResolvedValue(null),
+      proxyGet: vi.fn().mockResolvedValue({ messages: [{ id: "msg_1", subject: "Welcome" }] }),
+      proxyPost: vi.fn().mockResolvedValue({ ok: true }),
     };
 
     const routes = createIntegrationRoutes({
@@ -194,18 +200,23 @@ describe("E2E: multi-account flow", () => {
     db = createPlatformDb({ dialect: pglite.dialect });
     await db.migrate();
 
-    let callCount = 0;
+    const proxyByAccount = async (opts: { accountId: string }) => {
+      if (opts.accountId === "pd_acc_work") {
+        return { messages: [{ id: "w1", subject: "Work email" }] };
+      }
+      return { messages: [{ id: "p1", subject: "Personal email" }] };
+    };
     pipedream = {
       createConnectToken: vi.fn().mockResolvedValue({ token: "pd_tok_multi", expiresAt: "2026-12-31T00:00:00Z" }),
       getOAuthUrl: vi.fn().mockReturnValue("https://pipedream.com/connect/proj?token=pd_tok_multi&app=gmail"),
-      callAction: vi.fn().mockImplementation(async (opts) => {
-        // Return different data based on accountId to verify correct account is used
-        if (opts.accountId === "pd_acc_work") {
-          return { messages: [{ id: "w1", subject: "Work email" }] };
-        }
-        return { messages: [{ id: "p1", subject: "Personal email" }] };
-      }),
+      callAction: vi.fn().mockImplementation(proxyByAccount),
       revokeAccount: vi.fn().mockResolvedValue(undefined),
+      discoverActions: vi.fn().mockResolvedValue([]),
+      runAction: vi.fn().mockResolvedValue({ exports: { $summary: "Done" }, ret: { ok: true } }),
+      listAccounts: vi.fn().mockResolvedValue([]),
+      getAppInfo: vi.fn().mockResolvedValue(null),
+      proxyGet: vi.fn().mockImplementation(proxyByAccount),
+      proxyPost: vi.fn().mockResolvedValue({ ok: true }),
     };
 
     const routes = createIntegrationRoutes({
@@ -290,7 +301,7 @@ describe("E2E: multi-account flow", () => {
     expect(workData.data.messages[0].subject).toBe("Work email");
 
     // Verify correct accountId was passed to Pipedream
-    const lastCall = (pipedream.callAction as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const lastCall = (pipedream.proxyGet as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(lastCall.accountId).toBe("pd_acc_work");
 
     // Call with Personal label
@@ -336,6 +347,12 @@ describe("E2E: cross-user isolation", () => {
       getOAuthUrl: vi.fn().mockReturnValue("https://example.com"),
       callAction: vi.fn().mockResolvedValue({ data: "ok" }),
       revokeAccount: vi.fn().mockResolvedValue(undefined),
+      discoverActions: vi.fn().mockResolvedValue([]),
+      runAction: vi.fn().mockResolvedValue({ exports: { $summary: "Done" }, ret: { ok: true } }),
+      listAccounts: vi.fn().mockResolvedValue([]),
+      getAppInfo: vi.fn().mockResolvedValue(null),
+      proxyGet: vi.fn().mockResolvedValue({ data: "ok" }),
+      proxyPost: vi.fn().mockResolvedValue({ ok: true }),
     };
 
     const routes = createIntegrationRoutes({
@@ -451,6 +468,8 @@ describe("E2E: Actions API (connect -> discover -> call action)", () => {
       revokeAccount: vi.fn().mockResolvedValue(undefined),
       listAccounts: vi.fn().mockResolvedValue([]),
       getAppInfo: vi.fn().mockResolvedValue(null),
+      proxyGet: vi.fn().mockResolvedValue({ messages: [] }),
+      proxyPost: vi.fn().mockResolvedValue({ ok: true }),
     };
 
     const routes = createIntegrationRoutes({
