@@ -208,6 +208,50 @@ For very simple tools (calculators, clocks, single-screen utilities), use `~/app
 | "quick", "simple", "just a..." | HTML app in `~/apps/<slug>/` |
 | Calculator, clock, single widget | HTML app in `~/apps/<slug>/` |
 
+## Integrations Bridge API (Gmail, Calendar, GitHub, Slack, etc.)
+
+Apps can call connected external services through the bridge API. The user connects services in Settings > Integrations via OAuth.
+
+### Check Connected Services
+```javascript
+// GET /api/bridge/service → {services: [{service, account_label, account_email, status}]}
+const res = await fetch("/api/bridge/service");
+const { services } = await res.json();
+const gmail = services.find(s => s.service === "gmail" && s.status === "active");
+if (!gmail) { /* show "Connect Gmail in Settings" */ }
+```
+
+### Call a Service Action
+```javascript
+// POST /api/bridge/service with {service, action, params}
+const res = await fetch("/api/bridge/service", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    service: "gmail",
+    action: "list_messages",
+    params: { maxResults: 20 }
+  })
+});
+const { data } = await res.json();
+// data.messages = [{id, threadId}, ...]
+```
+
+### Available Services & Actions
+- **gmail**: `list_messages`, `get_message`, `send_email`, `search`, `list_labels`
+- **google_calendar**: `list_events`, `create_event`, `update_event`, `delete_event`
+- **google_drive**: `list_files`, `get_file`, `upload_file`, `share_file`
+- **github**: `list_repos`, `list_issues`, `create_issue`, `list_prs`
+- **slack**: `send_message`, `list_channels`, `list_messages`, `search`
+- **discord**: `send_message`, `list_servers`, `list_channels`, `list_messages`
+
+### MatrixOS Bridge (alternative, injected after load)
+If `window.MatrixOS` is available (injected by the shell after iframe load):
+- `MatrixOS.integrations()` → same as GET /api/bridge/service
+- `MatrixOS.service(service, action, params)` → same as POST /api/bridge/service
+
+**Always use the fetch() approach as primary** — MatrixOS bridge may not be available immediately on page load.
+
 ## Best Practices
 - Default to `~/apps/<slug>/matrix.json` + `index.html` for apps
 - Use TypeScript strict mode in all React apps/modules

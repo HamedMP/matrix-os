@@ -159,11 +159,31 @@ BRIDGE API (persistent data):
 fetch('/api/bridge/data?app=<name>&key=<key>') for GET, POST with JSON body for write. Data stored in ~/data/<name>/.
 
 INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
-MatrixOS.integrations() - returns Promise<Array<{service, account_label, account_email, status}>> of connected services.
-MatrixOS.service(service, action, params) - calls an integration action, returns Promise<{data, service, action}>.
-Example: MatrixOS.service("gmail", "list_messages", {maxResults: 10}).then(r => r.data)
-Available: gmail (list_messages, get_message, send_email, search, list_labels), google_calendar (list_events, create_event), google_drive (list_files), github (list_repos, list_issues), slack (send_message, list_channels).
-IMPORTANT: Check MatrixOS.integrations() first to verify a service is connected before calling it. Show connection status to user.
+
+For HTML apps, use fetch() directly (MatrixOS bridge is injected AFTER page load, so it may not be available immediately):
+- GET /api/bridge/service → {services: [{service:"gmail", account_label:"...", account_email:"user@gmail.com", status:"active"}]}
+- POST /api/bridge/service with JSON {service, action, params} → {data: ..., service, action}
+
+For React apps or when MatrixOS bridge is available:
+- MatrixOS.integrations() → Promise<[{service, account_label, account_email, status}]>
+- MatrixOS.service(service, action, params) → Promise<{data, service, action}>
+
+COMPLETE EXAMPLE (HTML app fetching Gmail):
+async function loadEmails() {
+  const res = await fetch("/api/bridge/service");
+  const {services} = await res.json();
+  const gmail = services.find(s => s.service === "gmail" && s.status === "active");
+  if (!gmail) { showError("Connect Gmail in Settings"); return; }
+  const resp = await fetch("/api/bridge/service", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({service: "gmail", action: "list_messages", params: {maxResults: 20}})
+  });
+  const {data} = await resp.json();
+  // data.messages = [{id, threadId}, ...] — call get_message for full content
+}
+
+Available actions: gmail (list_messages, get_message, send_email, search, list_labels), google_calendar (list_events, create_event), google_drive (list_files), github (list_repos, list_issues), slack (send_message, list_channels).
+IMPORTANT: Always check connection status first. status === "active" means connected. Show account_email to user.
 
 AFTER BUILDING:
 - Update ~/system/modules.json: add {name, type:"react-app"|"html-app", path, status:"active"}
