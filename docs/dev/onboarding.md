@@ -4,30 +4,34 @@ Get Matrix OS running locally and make your first contribution.
 
 ## Prerequisites
 
-- **Docker**: [OrbStack](https://orbstack.dev) on macOS, Docker Engine on Linux
-- **[Flox](https://flox.dev)** (recommended) -- or manually install Node.js 24+, pnpm 10, bun, git
+1. **[Flox](https://flox.dev)** -- provisions Node 24, pnpm 10, bun, git in one command
+2. **Docker**: [OrbStack](https://orbstack.dev) on macOS, Docker Engine on Linux
 
-## Quick Start (Docker -- recommended)
-
-Docker is the fastest path. You only need one API key.
+## Quick Start
 
 ```bash
 git clone https://github.com/hamedmp/matrix-os.git
 cd matrix-os
-
-# Option A: Flox (installs Node 24, pnpm, bun, git + runs pnpm install)
 flox activate
+```
 
-# Option B: Manual
-pnpm install
+`flox activate` handles everything: installs toolchain, runs `pnpm install`, and creates `.env.docker` from the template. You'll see:
 
-# Add your Anthropic key (flox activate creates .env.docker automatically)
+```
+Matrix OS dev environment ready
+  bun run docker    -- start dev (Docker)
+  bun run dev       -- start dev (local)
+  bun run test      -- run tests
+```
+
+Next, add your API key and start:
+
+```bash
 # Edit .env.docker -- set ANTHROPIC_API_KEY
-
 bun run docker
 ```
 
-First start takes ~30s (dependency install). After that, starts are instant.
+First Docker start takes ~30s. After that, starts are instant.
 
 | Service | URL |
 |---------|-----|
@@ -38,6 +42,17 @@ Verify it works:
 
 ```bash
 curl http://localhost:4000/health
+```
+
+### Without Flox
+
+If you prefer manual setup, install Node.js 24+, pnpm 10, bun, and git yourself:
+
+```bash
+pnpm install
+cp .env.docker.example .env.docker
+# Edit .env.docker -- set ANTHROPIC_API_KEY
+bun run docker
 ```
 
 ## API Keys
@@ -69,7 +84,7 @@ The Docker image has Clerk baked in at build time, so you don't need Clerk keys 
 
 | File | Purpose |
 |------|---------|
-| `.env.docker` | Docker dev (copy from `.env.docker.example`) |
+| `.env.docker` | Docker dev (created by `flox activate`, or copy from `.env.docker.example`) |
 | `.env` | Local dev without Docker (copy from `.env.example`) |
 | `shell/.env` | Shell-specific (Clerk keys, copy from `shell/.env.example`) |
 | `www/.env` | Website (Clerk keys, copy from `www/.env.example`) |
@@ -84,7 +99,6 @@ cp shell/.env.example shell/.env
 # Fill in ANTHROPIC_API_KEY in .env
 # Fill in Clerk keys in shell/.env
 
-pnpm install
 bun run dev
 ```
 
