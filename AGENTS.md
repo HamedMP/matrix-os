@@ -1,6 +1,6 @@
 # AGENTS.md: Matrix OS
 
-Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social + AI + games). Codex Agent SDK is the kernel. Everything persists as files. Reachable via web desktop, Telegram, WhatsApp, Discord, Slack, Matrix protocol. Vision: `specs/web4-vision.md`. Website: matrix-os.com
+Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social + AI + games). Claude Agent SDK is the kernel. Everything persists as files. Reachable via web desktop, Telegram, WhatsApp, Discord, Slack, Matrix protocol. Vision: `specs/web4-vision.md`. Website: matrix-os.com
 
 ## Constitution
 
@@ -17,7 +17,7 @@ Key principles:
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
-- **AI**: Codex Agent SDK V1 `query()` + `resume`, Opus 4.6
+- **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 4.6
 - **Frontend**: Next.js 16 (`proxy.ts` replaces middleware, Turbopack, React Compiler, `cacheComponents`), React 19
 - **Backend**: Hono (HTTP/WS gateway + channel adapters)
 - **Database**: SQLite/Drizzle ORM (kernel), Postgres/Kysely (social/app data)
@@ -31,7 +31,7 @@ Key principles:
 - `createSdkMcpServer()` + `tool()` for in-process MCP tools (Zod 4 schemas)
 - `allowedTools` is auto-approve, NOT filter: use `tools`/`disallowedTools` to restrict
 - `bypassPermissions` propagates to ALL subagents: use PreToolUse hooks for access control
-- Agent SDK bundles its own Codex runtime -- no separate install needed
+- Agent SDK bundles its own claude runtime -- no separate install needed
 - `bypassPermissions` refuses root -- Docker must run as non-root user
 - Prompt caching: `cache_control: {type: "ephemeral"}` on system prompt + tools (90% savings)
 - Integration tests use haiku (<$0.10 per run)
@@ -84,10 +84,35 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **Every IPC tool must resolve its dependency at registration time**, not at call time. If a tool needs `callManager`, verify it's not `undefined` when the tool is registered.
 - **Never use `globalThis` for cross-package communication**. Use dependency injection or typed IPC messages.
 
+## Setup
+
+```bash
+git clone https://github.com/hamedmp/matrix-os.git && cd matrix-os
+flox activate        # provisions Node 24, pnpm 10, bun, git + runs pnpm install
+# Edit .env.docker -- set ANTHROPIC_API_KEY
+bun run docker       # start dev environment
+```
+
+Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full guide: `docs/dev/onboarding.md`
+
+## Project Structure
+
+| Directory | What it is |
+|-----------|------------|
+| `packages/kernel/` | AI kernel -- Agent SDK, agents, hooks, SOUL, skills |
+| `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
+| `packages/platform/` | Multi-tenant orchestrator (Clerk auth, Docker provisioning) |
+| `packages/proxy/` | Shared API proxy, usage tracking |
+| `packages/ui/` | Shared UI components |
+| `shell/` | Next.js 16 desktop shell frontend |
+| `www/` | matrix-os.com website (Vercel) |
+| `home/` | File system template (copied to `~/matrixos/` on first boot) |
+| `specs/` | Architecture and feature specs |
+| `tests/` | Vitest test suites |
+
 ## Running
 
 ```bash
-pnpm install              # install deps
 bun run test              # unit tests
 bun run dev               # gateway (:4000) + shell (:3000)
 bun run docker            # Docker dev (primary, requires OrbStack on macOS)
@@ -134,6 +159,7 @@ Check failure modes, not just happy paths:
 
 Read these on demand, not every session:
 
+- `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS

@@ -9,6 +9,7 @@ import { getAnsiPalette } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
+import { createSocketHealth } from "@/lib/socket-health";
 
 function buildXtermTheme(theme: Theme) {
   const bg = theme.colors.background || "#1a1a2e";
@@ -170,6 +171,7 @@ export function TerminalPane({
   const outputBufferRef = useRef("");
   const authDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
+  const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
 
   onSessionAttachedRef.current = onSessionAttached;
   shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
@@ -381,6 +383,21 @@ export function TerminalPane({
         ws.onopen = () => {
           reconnectAttemptRef.current = 0;
           clearReconnectTimer();
+
+          // Start heartbeat
+          if (heartbeatRef.current) heartbeatRef.current.stop();
+          heartbeatRef.current = createSocketHealth({
+            pingIntervalMs: 30_000,
+            pongTimeoutMs: 5_000,
+            send: (data) => {
+              if (ws.readyState === WebSocket.OPEN) ws.send(data);
+            },
+            onDead: () => {
+              ws.close(); // triggers onclose -> reconnect
+            },
+          });
+          heartbeatRef.current.start();
+
           if (attachOnOpen) {
             sendAttach();
           }
@@ -393,6 +410,7 @@ export function TerminalPane({
         };
 
         ws.onclose = () => {
+          heartbeatRef.current?.stop();
           if (disposed || isClosingRef.current) return;
 
           // Attempt reconnection with exponential backoff
@@ -414,7 +432,19 @@ export function TerminalPane({
         };
 
         ws.onmessage = (evt) => {
-          const msg = parseTerminalServerMessage(typeof evt.data === "string" ? evt.data : "");
+          const raw = typeof evt.data === "string" ? evt.data : "";
+          // Fast pong handling (skip full parse)
+          if (raw.includes('"pong"')) {
+            try {
+              const quick = JSON.parse(raw) as { type: string };
+              if (quick.type === "pong") {
+                heartbeatRef.current?.receivedPong();
+                return;
+              }
+            } catch { /* fall through to normal parse */ }
+          }
+
+          const msg = parseTerminalServerMessage(raw);
           if (!msg) {
             return;
           }
@@ -501,6 +531,22 @@ export function TerminalPane({
         connectWs();
       }
 
+      const onVisibilityChange = () => {
+        if (document.visibilityState === "visible") {
+          const ws = wsRef.current;
+          if (ws?.readyState === WebSocket.OPEN) {
+            heartbeatRef.current?.pingNow();
+          } else if (!disposed && !isClosingRef.current && sessionIdRef.current) {
+            // Disconnected while hidden, reconnect now
+            reconnectAttemptRef.current = 0;
+            clearReconnectTimer();
+            connectWs();
+          }
+        }
+      };
+
+      document.addEventListener("visibilitychange", onVisibilityChange);
+
       term.onData((data: string) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -560,9 +606,11 @@ export function TerminalPane({
       resizeObserver.observe(container);
 
       return () => {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
         resizeObserver.disconnect();
         clearAuthDetectTimer();
         clearReconnectTimer();
+        heartbeatRef.current?.stop();
         detachWebglContextLostHandler();
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
 

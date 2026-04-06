@@ -1,0 +1,38 @@
+schema-version = "1.11.0"
+
+[install]
+nodejs_24.pkg-path = "nodejs_24"
+pnpm_10.pkg-path = "pnpm_10"
+bun.pkg-path = "bun"
+git.pkg-path = "git"
+
+[hook]
+on-activate = '''
+  if [ ! -d node_modules ]; then
+    echo "Installing dependencies..."
+    pnpm install
+  fi
+
+  if [ ! -f .env.docker ]; then
+    cp .env.docker.example .env.docker
+    echo ""
+    echo "Created .env.docker -- add your ANTHROPIC_API_KEY:"
+    echo "  \$EDITOR .env.docker"
+    echo ""
+  fi
+
+  echo ""
+  echo "Matrix OS dev environment ready"
+  echo "  bun run docker    -- start dev (Docker)"
+  echo "  bun run dev       -- start dev (local)"
+  echo "  bun run test      -- run tests"
+  echo ""
+'''
+
+[options]
+systems = [
+  "aarch64-darwin",
+  "aarch64-linux",
+  "x86_64-darwin",
+  "x86_64-linux",
+]

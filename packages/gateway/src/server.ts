@@ -93,7 +93,8 @@ export interface GatewayConfig {
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string; requestId?: string }
   | { type: "switch_session"; sessionId: string }
-  | { type: "approval_response"; id: string; approved: boolean };
+  | { type: "approval_response"; id: string; approved: boolean }
+  | { type: "ping" };
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
@@ -113,7 +114,8 @@ export type ServerMessage =
   | { type: "data:change"; app: string; key: string }
   | { type: "integration:connected"; service: string; accountLabel: string }
   | { type: "integration:disconnected"; service: string; id: string }
-  | { type: "integration:expired"; service: string; id: string; accountLabel: string };
+  | { type: "integration:expired"; service: string; id: string; accountLabel: string }
+  | { type: "pong" };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -744,6 +746,11 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
+          if (parsed.type === "ping") {
+            send(ws, { type: "pong" } as ServerMessage);
+            return;
+          }
+
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
             send(ws, { type: "session:switched", sessionId: parsed.sessionId });
@@ -884,6 +891,9 @@ export async function createGateway(config: GatewayConfig) {
           };
 
           switch (msg.type) {
+            case "ping":
+              ws.send(JSON.stringify({ type: "pong" }));
+              break;
             case "attach": {
               if (autoCreateTimer) {
                 clearTimeout(autoCreateTimer);

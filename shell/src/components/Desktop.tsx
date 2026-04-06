@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/context-menu";
 import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
+import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
 import { SetupScreen } from "./SetupScreen";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -571,8 +572,10 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
       // Register built-in apps
       addApp("Terminal", "__terminal__");
       addApp("Files", "__file-browser__");
-      const savedTerminal = layoutMap.get("__terminal__");
-      if (savedTerminal) layoutToLoad.push(savedTerminal);
+      const savedTerminals = savedWindows.filter((w) => w.path.startsWith("__terminal__"));
+      for (const saved of savedTerminals) {
+        layoutToLoad.push(saved);
+      }
 
       // Load pre-installed apps from /api/apps (apps/ directory)
       if (appsRes?.ok) {
@@ -1000,6 +1003,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore }: DesktopProps
                 Settings
               </TooltipContent>
             </Tooltip>
+            <ConnectionIndicator />
             <UserButton />
           </div>
         </aside>}

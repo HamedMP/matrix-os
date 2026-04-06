@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getGatewayWs } from "@/lib/gateway";
+import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
+import { useConnectionHealth } from "./useConnectionHealth";
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
@@ -17,25 +19,74 @@ export type ServerMessage =
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
-  | { type: "data:change"; app: string; key: string };
+  | { type: "data:change"; app: string; key: string }
+  | { type: "pong" };
 
 type MessageHandler = (msg: ServerMessage) => void;
 
 const GATEWAY_WS = getGatewayWs();
+const PING_INTERVAL = 30_000;
+const PONG_TIMEOUT = 5_000;
+const MAX_RECONNECT_ATTEMPTS = 60;
 
 let globalSocket: WebSocket | null = null;
 let handlers = new Set<MessageHandler>();
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempt = 0;
+let connectionState: "connected" | "reconnecting" | "disconnected" = "disconnected";
+let stateListeners = new Set<() => void>();
+
+const messageQueue = new MessageQueue({ maxSize: 50, ttlMs: 30_000 });
+
+const heartbeat = createSocketHealth({
+  pingIntervalMs: PING_INTERVAL,
+  pongTimeoutMs: PONG_TIMEOUT,
+  send: (data) => {
+    if (globalSocket?.readyState === WebSocket.OPEN) {
+      globalSocket.send(data);
+    }
+  },
+  onDead: () => {
+    globalSocket?.close();
+  },
+});
+
+function setConnectionState(state: typeof connectionState) {
+  if (connectionState === state) return;
+  connectionState = state;
+  useConnectionHealth.setState({ state });
+  for (const listener of stateListeners) listener();
+}
+
+function drainQueue() {
+  if (globalSocket?.readyState !== WebSocket.OPEN) return;
+  const messages = messageQueue.drain();
+  for (const msg of messages) {
+    globalSocket.send(msg);
+  }
+}
 
 function connect() {
   if (globalSocket?.readyState === WebSocket.OPEN) return;
   if (globalSocket?.readyState === WebSocket.CONNECTING) return;
 
+  setConnectionState("reconnecting");
   globalSocket = new WebSocket(GATEWAY_WS);
+
+  globalSocket.onopen = () => {
+    reconnectAttempt = 0;
+    setConnectionState("connected");
+    heartbeat.start();
+    drainQueue();
+  };
 
   globalSocket.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data) as ServerMessage;
+      if (msg.type === "pong") {
+        heartbeat.receivedPong();
+        return;
+      }
       for (const handler of handlers) {
         handler(msg);
       }
@@ -45,7 +96,15 @@ function connect() {
   };
 
   globalSocket.onclose = () => {
-    reconnectTimer = setTimeout(connect, 2000);
+    heartbeat.stop();
+    if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+      setConnectionState("disconnected");
+      return;
+    }
+    setConnectionState("reconnecting");
+    const delay = reconnectDelay(reconnectAttempt);
+    reconnectAttempt++;
+    reconnectTimer = setTimeout(connect, delay);
   };
 
   globalSocket.onerror = () => {
@@ -53,10 +112,48 @@ function connect() {
   };
 }
 
-function ensureConnected() {
+export function ensureConnected() {
   if (!globalSocket || globalSocket.readyState === WebSocket.CLOSED) {
     connect();
   }
+}
+
+export function sendMessage(msg: { type: string; text?: string; sessionId?: string; requestId?: string }) {
+  const data = JSON.stringify(msg);
+  if (globalSocket?.readyState === WebSocket.OPEN) {
+    globalSocket.send(data);
+  } else {
+    messageQueue.enqueue(data);
+  }
+}
+
+export function manualReconnect() {
+  reconnectAttempt = 0;
+  connect();
+}
+
+export function getConnectionState() {
+  return connectionState;
+}
+
+export function subscribeConnectionState(listener: () => void): () => void {
+  stateListeners.add(listener);
+  return () => { stateListeners.delete(listener); };
+}
+
+export function getGlobalSocket() {
+  return globalSocket;
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && globalSocket?.readyState === WebSocket.OPEN) {
+      heartbeat.pingNow();
+    } else if (document.visibilityState === "visible" && connectionState !== "connected") {
+      reconnectAttempt = 0;
+      connect();
+    }
+  });
 }
 
 export function useSocket() {
@@ -73,23 +170,19 @@ export function useSocket() {
   }, []);
 
   const send = useCallback((msg: { type: string; text?: string; sessionId?: string; requestId?: string }) => {
-    if (globalSocket?.readyState === WebSocket.OPEN) {
-      globalSocket.send(JSON.stringify(msg));
-    }
+    sendMessage(msg);
   }, []);
 
   useEffect(() => {
     ensureConnected();
 
-    const checkConnection = () => {
-      setConnected(globalSocket?.readyState === WebSocket.OPEN);
-    };
-
-    const interval = setInterval(checkConnection, 1000);
-    checkConnection();
+    const unsubState = subscribeConnectionState(() => {
+      setConnected(connectionState === "connected");
+    });
+    setConnected(connectionState === "connected");
 
     return () => {
-      clearInterval(interval);
+      unsubState();
       if (handlerRef.current) {
         handlers.delete(handlerRef.current);
       }

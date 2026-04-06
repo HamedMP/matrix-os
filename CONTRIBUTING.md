@@ -2,12 +2,12 @@
 
 ## Prerequisites
 
-**Recommended**: Install [Flox](https://flox.dev) and run `flox activate` in the repo root. This provisions Node.js 24, pnpm, bun, and git automatically.
+**Recommended**: Install [Flox](https://flox.dev) and run `flox activate` in the repo root. This provisions Node.js 24, pnpm 10, bun, and git automatically -- plus runs `pnpm install` and creates `.env.docker` for you.
 
 **Manual setup** (if not using Flox):
 
 - Node.js 24+
-- pnpm (`corepack enable && corepack prepare pnpm@latest --activate`)
+- pnpm 10 (`corepack enable && corepack prepare pnpm@latest --activate`)
 - bun (for running scripts)
 - git
 
@@ -17,13 +17,15 @@
 git clone https://github.com/hamedmp/matrix-os.git
 cd matrix-os
 
-# With Flox:
+# With Flox (recommended -- handles everything):
 flox activate
 
-# Or manually ensure Node 24, pnpm, and bun are installed
-
+# Or manually:
 pnpm install
+cp .env.docker.example .env.docker
 ```
+
+See [Developer Onboarding](docs/dev/onboarding.md) for the full setup guide including API keys and Docker.
 
 ### Dev Servers
 

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   readyState = 1; // OPEN
+  onopen: (() => void) | null = null;
   onmessage: ((evt: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
@@ -10,6 +11,12 @@ class MockWebSocket {
 
   constructor(public url: string) {
     MockWebSocket.instances.push(this);
+    // Auto-fire onopen in next microtask to simulate real WS
+    queueMicrotask(() => {
+      if (this.readyState === 1) {
+        this.onopen?.();
+      }
+    });
   }
 
   send(data: string) {
@@ -18,6 +25,7 @@ class MockWebSocket {
 
   close() {
     this.readyState = 3; // CLOSED
+    this.onclose?.();
   }
 
   simulateMessage(data: unknown) {
@@ -159,5 +167,72 @@ describe("useSocket message protocol", () => {
 
     ws.onmessage({ data: "not-json{{{" });
     expect(received).toHaveLength(0);
+  });
+});
+
+describe("useSocket heartbeat and resilience", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    MockWebSocket.instances = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends ping every 30 seconds when connected", async () => {
+    vi.resetModules();
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("document", { addEventListener: vi.fn(), visibilityState: "visible" });
+
+    const { ensureConnected, getGlobalSocket } = await import("../../shell/src/hooks/useSocket.js");
+    ensureConnected();
+
+    // Flush the queueMicrotask so onopen fires
+    await vi.advanceTimersByTimeAsync(0);
+
+    const ws = MockWebSocket.instances[0];
+
+    // Advance 30s for first ping
+    vi.advanceTimersByTime(30_000);
+
+    const pings = ws.sent.filter((s) => JSON.parse(s).type === "ping");
+    expect(pings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("queues messages during disconnect and replays on reconnect", async () => {
+    vi.resetModules();
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("document", { addEventListener: vi.fn(), visibilityState: "visible" });
+
+    const { ensureConnected, sendMessage } = await import("../../shell/src/hooks/useSocket.js");
+    ensureConnected();
+
+    // Flush onopen
+    await vi.advanceTimersByTimeAsync(0);
+
+    const ws1 = MockWebSocket.instances[0];
+
+    // Simulate disconnect -- set readyState first then trigger close
+    ws1.readyState = 3;
+    ws1.onclose?.();
+
+    // Messages sent while disconnected should be queued
+    sendMessage({ type: "message", text: "queued1" });
+    sendMessage({ type: "message", text: "queued2" });
+
+    // Reconnect happens after backoff (1s for attempt 0)
+    await vi.advanceTimersByTimeAsync(1000);
+    const ws2 = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+
+    // Simulate the new socket opening
+    ws2.readyState = 1;
+    // Flush onopen microtask
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Drain should have replayed the queued messages
+    const msgs = ws2.sent.map((s) => JSON.parse(s));
+    const queued = msgs.filter((m: { text?: string }) => m.text === "queued1" || m.text === "queued2");
+    expect(queued).toHaveLength(2);
   });
 });
