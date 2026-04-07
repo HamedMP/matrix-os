@@ -16,18 +16,18 @@ if [ ! -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME"
 fi
 
-# Sync default apps, agents, and system config from source to home volume
-# Apps are only copied on first boot -- user-built apps must survive restarts.
-echo "[matrix-os-dev] Syncing default agents and system config..."
-for dir in agents system; do
-  if [ -d "/app/home/$dir" ]; then
-    rm -rf "$MATRIX_HOME/$dir"
+# First-boot only: seed agents/system/apps from the template so the skills-to-
+# Claude/Codex adapter below has files to read. On subsequent boots the kernel's
+# smartSyncTemplate (packages/kernel/src/boot.ts) takes over -- it respects user
+# customizations via .template-manifest.json hash compare, adds new template
+# files, and skips files the user has touched. The previous version of this
+# block did `rm -rf` + `cp -r` on every boot, which clobbered user
+# customizations and broke the docker-test customized-files scenario.
+for dir in agents system apps; do
+  if [ -d "/app/home/$dir" ] && [ ! -d "$MATRIX_HOME/$dir" ]; then
     cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"
   fi
 done
-if [ ! -d "$MATRIX_HOME/apps" ]; then
-  cp -r /app/home/apps "$MATRIX_HOME/apps"
-fi
 
 # Expose Matrix OS skills to Claude Code and Codex
 # Clean stale copies from previous runs, then create fresh ones.
