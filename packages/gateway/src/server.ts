@@ -62,6 +62,7 @@ import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { createIntegrationRoutes, validateActionParams, getErrorStatusCode, getRetryAfterSeconds } from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { z } from "zod/v4";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -81,6 +82,16 @@ import {
   wsConnectionsActive,
   normalizePath,
 } from "./metrics.js";
+
+// Mirrors CallBodySchema in integrations/routes.ts so the dev-only
+// /api/bridge/service POST validates its body the same way the public
+// /api/integrations/call endpoint does.
+const BridgeCallBodySchema = z.object({
+  service: z.string().min(1),
+  action: z.string().min(1),
+  label: z.string().optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
+});
 
 export interface GatewayConfig {
   homePath: string;
@@ -1509,16 +1520,22 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Integrations not configured" }, 503);
     }
 
-    let body: { service: string; action: string; params?: Record<string, unknown>; label?: string };
+    // Mirror CallBodySchema from integrations/routes.ts. The route is dev-only
+    // (production returns 403 above) so the security risk of an unvalidated
+    // body is minimal, but the cast was inconsistent with every other mutating
+    // endpoint in this PR and provided zero runtime protection.
+    let parsedJson: unknown;
     try {
-      body = await c.req.json();
+      parsedJson = await c.req.json();
     } catch {
       return c.json({ error: "Invalid JSON" }, 400);
     }
+    const parsed = BridgeCallBodySchema.safeParse(parsedJson);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
+    }
 
-    const { service, action, label } = body;
-    const params = body.params;
-    if (!service || !action) return c.json({ error: "service and action are required" }, 400);
+    const { service, action, label, params } = parsed.data;
 
     const def = getService(service);
     if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);

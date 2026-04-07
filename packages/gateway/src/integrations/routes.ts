@@ -169,7 +169,12 @@ const PROFILE_ENDPOINTS: Record<string, {
   },
   github: {
     url: "https://api.github.com/user",
-    extract: (d) => d?.login ? `${d.login}` : d?.email,
+    // GitHub /user.email is null unless the user has a public email; don't
+    // fall back to .login because it's a username, not an email, and writing
+    // it into account_email is misleading. Returning undefined leaves the
+    // column empty -- that's accurate. (Future: call /user/emails and pick
+    // the verified primary if we want fuller coverage.)
+    extract: (d) => d?.email ?? undefined,
   },
   slack: {
     url: "https://slack.com/api/auth.test",

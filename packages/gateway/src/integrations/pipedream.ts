@@ -84,13 +84,25 @@ export function createPipedreamClient(
         { externalUserId },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
+      // The SDK exposes connectLinkUrl on the response but the published
+      // typings don't include it yet, hence the cast. If it's ever missing
+      // (SDK regression, API change), fail loudly here -- the previous
+      // fabricated fallback URL was a guess and silently sent users to a
+      // broken OAuth page.
+      const connectLinkUrl = (response as { connectLinkUrl?: string }).connectLinkUrl;
+      if (!connectLinkUrl) {
+        throw new Error(
+          "Pipedream SDK did not return connectLinkUrl on tokens.create response. " +
+          "This usually means the @pipedream/sdk version changed; check the SDK changelog.",
+        );
+      }
       return {
         token: response.token,
         expiresAt:
           response.expiresAt instanceof Date
             ? response.expiresAt.toISOString()
             : String(response.expiresAt),
-        connectLinkUrl: (response as any).connectLinkUrl ?? `https://pipedream.com/connect/${config.projectId}?token=${encodeURIComponent(response.token)}`,
+        connectLinkUrl,
       };
     },
 

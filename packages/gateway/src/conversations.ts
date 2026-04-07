@@ -127,8 +127,11 @@ export function createConversationStore(homePath: string): ConversationStore {
       for (let i = conv.messages.length - 1; i >= 0; i--) {
         const m = conv.messages[i];
         if (m.tool === tool && m.content.startsWith("Using ")) {
-          m.content = `Used ${tool}`;
-          m.toolInput = input;
+          // Replace the message with a fresh object instead of mutating in
+          // place. CLAUDE.md "Never mutate state in reducers": shallow copies
+          // can share refs and in-place mutation causes streaming text
+          // duplication elsewhere in the system.
+          conv.messages[i] = { ...m, content: `Used ${tool}`, toolInput: input };
           break;
         }
       }
