@@ -39,8 +39,18 @@ const WebhookBodySchema = z.object({
 function verifyHmac(payload: string, signature: string, secret: string): boolean {
   if (!secret) return false;
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
-  if (signature.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  // timingSafeEqual requires equal-length buffers. Copy the (untrusted)
+  // signature into a zero-filled buffer sized to the expected digest so the
+  // comparison runs in constant time regardless of input length. A shorter
+  // signature leaves trailing zero bytes that won't match the hex digest; a
+  // longer signature is silently truncated and still won't match unless the
+  // first 64 bytes are the correct digest -- in which case the attacker
+  // already knows the answer. The previous explicit length check leaked a
+  // small amount of timing information about the input length.
+  const expectedBuf = Buffer.from(expected);
+  const sigBuf = Buffer.alloc(expectedBuf.length);
+  Buffer.from(signature).copy(sigBuf, 0, 0, expectedBuf.length);
+  return timingSafeEqual(sigBuf, expectedBuf);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +270,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
   function loadLogos(): Promise<void> {
     if (logosPromise) return logosPromise;
-    logosPromise = (async () => {
+    // The IIFE flips this to true when *every* fetch fails, signaling the
+    // outer scope to drop the memoized promise so a later call can retry.
+    let allFailed = false;
+    const promise = (async () => {
       const services = listServices();
       const results = await Promise.allSettled(
         services.map(async (s) => {
@@ -276,8 +289,18 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
           console.error("[integrations] Logo fetch failed:", r.reason);
         }
       }
+      if (results.length > 0 && results.every((r) => r.status === "rejected")) {
+        allFailed = true;
+      }
     })();
-    return logosPromise;
+    logosPromise = promise;
+    // Clear the memoized promise on total failure (Pipedream down at
+    // startup). Identity guard so a stale closure can't clobber a newer
+    // in-flight retry that already started.
+    promise.then(() => {
+      if (allFailed && logosPromise === promise) logosPromise = null;
+    });
+    return promise;
   }
   // Best-effort startup warm; the IIFE swallows individual errors via
   // Promise.allSettled, so this can't reject -- but attach .catch defensively

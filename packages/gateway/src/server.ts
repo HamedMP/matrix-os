@@ -289,34 +289,44 @@ export async function createGateway(config: GatewayConfig) {
           }
           const handle = process.env.MATRIX_HANDLE ?? "default";
           const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
-          const existing = await platformDb!.getUserByClerkId(clerkId);
-          if (existing) {
-            if (!existing.pipedream_external_id) {
-              await platformDb!.updatePipedreamExternalId(existing.id, handle);
+          const containerId = process.env.HOSTNAME ?? "local";
+
+          // Atomic upsert eliminates the SELECT->INSERT TOCTOU race that
+          // could let two concurrent first-time dev requests both reach
+          // createUser and have one fail on the unique constraint. The
+          // ON CONFLICT clause covers the common case (same env vars across
+          // parallel requests => same clerk_id). On match, backfill
+          // pipedream_external_id if it was missing on a pre-existing row.
+          try {
+            const upserted = await platformDb!.raw(
+              `INSERT INTO users (clerk_id, handle, display_name, email, container_id, pipedream_external_id)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (clerk_id) DO UPDATE
+                 SET pipedream_external_id = COALESCE(users.pipedream_external_id, EXCLUDED.pipedream_external_id)
+               RETURNING id`,
+              [clerkId, handle, handle, `${handle}@matrix-os.local`, containerId, handle],
+            );
+            const row = upserted.rows[0] as { id: string } | undefined;
+            if (row) return row.id;
+          } catch (err) {
+            // The upsert handles clerk_id conflicts but not handle/container_id
+            // ones. Those occur when MATRIX_CLERK_USER_ID was changed between
+            // runs and the orphaned row still owns the handle. Recover by
+            // returning the orphaned row so dev keeps working without a wipe.
+            const byHandle = await platformDb!.raw(
+              `SELECT id, pipedream_external_id FROM users WHERE handle = $1 LIMIT 1`,
+              [handle],
+            );
+            if (byHandle.rows.length > 0) {
+              const row = byHandle.rows[0] as { id: string; pipedream_external_id: string | null };
+              if (!row.pipedream_external_id) {
+                await platformDb!.updatePipedreamExternalId(row.id, handle);
+              }
+              return row.id;
             }
-            return existing.id;
+            throw err;
           }
-          // Handle may already exist with a different clerk_id (e.g. DB from previous run).
-          // Look up by handle before creating to avoid unique constraint violation.
-          const byHandle = await platformDb!.raw(
-            `SELECT * FROM users WHERE handle = $1 LIMIT 1`, [handle],
-          );
-          if (byHandle.rows.length > 0) {
-            const row = byHandle.rows[0] as { id: string; pipedream_external_id: string | null };
-            if (!row.pipedream_external_id) {
-              await platformDb!.updatePipedreamExternalId(row.id, handle);
-            }
-            return row.id;
-          }
-          const user = await platformDb!.createUser({
-            clerkId,
-            handle,
-            displayName: handle,
-            email: `${handle}@matrix-os.local`,
-            containerId: process.env.HOSTNAME ?? "local",
-            pipedreamExternalId: handle,
-          });
-          return user.id;
+          return null;
         } catch (err) {
           console.error("[integrations] resolveIntegrationUserId failed:", err instanceof Error ? err.message : err);
           return null;

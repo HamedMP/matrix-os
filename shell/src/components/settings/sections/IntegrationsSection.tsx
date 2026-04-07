@@ -21,7 +21,6 @@ interface ConnectedService {
   account_email: string | null;
   status: string;
   connected_at: string;
-  pipedream_account_id: string;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -100,6 +99,7 @@ export function IntegrationsSection() {
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -194,6 +194,10 @@ export function IntegrationsSection() {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
       // Poll by syncing from Pipedream every 2s
       const previousIds = new Set(connected.map((c) => c.id));
       pollRef.current = setInterval(async () => {
@@ -213,6 +217,10 @@ export function IntegrationsSection() {
                 clearInterval(pollRef.current);
                 pollRef.current = null;
               }
+              if (pollTimeoutRef.current) {
+                clearTimeout(pollTimeoutRef.current);
+                pollTimeoutRef.current = null;
+              }
             }
           }
         } catch {
@@ -221,12 +229,13 @@ export function IntegrationsSection() {
       }, 2000);
 
       // Stop polling after 2 minutes
-      setTimeout(() => {
+      pollTimeoutRef.current = setTimeout(() => {
         if (pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
           setConnecting(null);
         }
+        pollTimeoutRef.current = null;
       }, 120_000);
     } catch {
       setError("Failed to initiate connection");
@@ -238,6 +247,11 @@ export function IntegrationsSection() {
     return () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
       }
     };
   }, []);
