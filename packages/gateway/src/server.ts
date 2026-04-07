@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
 import { dirname, join, normalize, resolve, relative } from "node:path";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
@@ -60,7 +60,7 @@ import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
-import { createIntegrationRoutes, validateActionParams } from "./integrations/routes.js";
+import { createIntegrationRoutes, validateActionParams, getErrorStatusCode, getRetryAfterSeconds } from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
 import {
   createPluginRegistry,
@@ -251,6 +251,7 @@ export async function createGateway(config: GatewayConfig) {
   let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
+  let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
   const platformDbUrl = process.env.PLATFORM_DATABASE_URL
     || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
   if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
@@ -266,15 +267,13 @@ export async function createGateway(config: GatewayConfig) {
         environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
       });
 
-      integrationRoutes = createIntegrationRoutes({
-        db: platformDb,
-        pipedream: pipedreamClient,
-        webhookSecret: (() => {
-          const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
-          if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
-          return s ?? "";
-        })(),
-        resolveUserId: async (c) => {
+      // Single source of truth for user resolution -- used by /api/integrations/*
+      // and the /api/bridge/service handlers. Prefers platform-verified Clerk
+      // identity from the proxy header; falls back to env vars only in dev.
+      // Returns null on any failure (DB down, no user, prod without header) so
+      // callers can return 401 instead of leaking a 500.
+      resolveIntegrationUserId = async (c) => {
+        try {
           // Prefer platform-verified identity from proxy header (Clerk user ID)
           const clerkIdFromPlatform = c.req.header("x-platform-user-id");
           if (clerkIdFromPlatform) {
@@ -318,7 +317,21 @@ export async function createGateway(config: GatewayConfig) {
             pipedreamExternalId: handle,
           });
           return user.id;
-        },
+        } catch (err) {
+          console.error("[integrations] resolveIntegrationUserId failed:", err instanceof Error ? err.message : err);
+          return null;
+        }
+      };
+
+      integrationRoutes = createIntegrationRoutes({
+        db: platformDb,
+        pipedream: pipedreamClient,
+        webhookSecret: (() => {
+          const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
+          if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
+          return s ?? "";
+        })(),
+        resolveUserId: resolveIntegrationUserId,
         broadcast,
       });
       // Routes mounted after auth middleware below (see "deferred route mounts")
@@ -1462,13 +1475,12 @@ export async function createGateway(config: GatewayConfig) {
   // ---------------------------------------------------------------------------
 
   app.get("/api/bridge/service", async (c) => {
-    if (!platformDb) return c.json({ error: "Integrations not configured" }, 503);
-    const handle = process.env.MATRIX_HANDLE ?? "default";
-    const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
-    const user = await platformDb.getUserByClerkId(clerkId)
-      ?? (await platformDb.raw(`SELECT * FROM users WHERE handle = $1 LIMIT 1`, [handle])).rows[0] as { id: string } | undefined;
-    if (!user) return c.json({ services: [] });
-    const services = await platformDb.listConnectedServices(user.id);
+    if (!platformDb || !resolveIntegrationUserId) {
+      return c.json({ error: "Integrations not configured" }, 503);
+    }
+    const uid = await resolveIntegrationUserId(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+    const services = await platformDb.listConnectedServices(uid);
     return c.json({
       services: services.map((s) => ({
         service: s.service,
@@ -1483,7 +1495,7 @@ export async function createGateway(config: GatewayConfig) {
     if (process.env.NODE_ENV === "production") {
       return c.json({ error: "Bridge not available in production" }, 403);
     }
-    if (!platformDb || !pipedreamClient) {
+    if (!platformDb || !pipedreamClient || !resolveIntegrationUserId) {
       return c.json({ error: "Integrations not configured" }, 503);
     }
 
@@ -1511,13 +1523,8 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: parts.join(". ") }, 400);
     }
 
-    // Resolve user (local dev path)
-    const handle = process.env.MATRIX_HANDLE ?? "default";
-    const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
-    const user = await platformDb.getUserByClerkId(clerkId)
-      ?? (await platformDb.raw(`SELECT * FROM users WHERE handle = $1 LIMIT 1`, [handle])).rows[0] as { id: string; pipedream_external_id?: string } | undefined;
-    if (!user) return c.json({ error: "User not found" }, 401);
-    const uid = user.id;
+    const uid = await resolveIntegrationUserId(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
     const connections = await platformDb.listConnectedServices(uid);
     let connection;
@@ -1577,6 +1584,23 @@ export async function createGateway(config: GatewayConfig) {
       await platformDb.touchServiceUsage(connection.id);
       return c.json({ data, service, action });
     } catch (err) {
+      if (getErrorStatusCode(err) === 429) {
+        const retryAfter = getRetryAfterSeconds(err);
+        return c.json(
+          { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        );
+      }
+      const isAbort = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+      if (isAbort) {
+        console.error(`[bridge/service] ${service}/${action} timeout`);
+        return c.json({ error: "Integration call timed out" }, 504);
+      }
+      const msg = err instanceof Error ? err.message.toLowerCase() : "";
+      if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("enetunreach")) {
+        console.error(`[bridge/service] ${service}/${action} connection error:`, err);
+        return c.json({ error: "Integration service unavailable" }, 503);
+      }
       console.error(`[bridge/service] ${service}/${action} error:`, err instanceof Error ? err.message : err);
       return c.json({ error: "Integration call failed" }, 502);
     }

@@ -34,7 +34,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
         },
         directApi: {
           method: "GET",
-          url: (p) => `https://gmail.googleapis.com/gmail/v1/users/me/messages/${p.messageId}?format=full`,
+          url: (p) => `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(String(p.messageId))}?format=full`,
         },
       },
       send_email: {

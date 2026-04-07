@@ -20,6 +20,8 @@ export interface UsersTable {
   updated_at: Date;
 }
 
+export type ServiceStatus = "active" | "revoked" | "expired";
+
 export interface ConnectedServicesTable {
   id: string;
   user_id: string;
@@ -28,7 +30,7 @@ export interface ConnectedServicesTable {
   account_label: string;
   account_email: string | null;
   scopes: string[];
-  status: string;
+  status: ServiceStatus;
   connected_at: Date;
   last_used_at: Date | null;
 }
@@ -127,7 +129,7 @@ export interface PlatformDb {
   listConnectedServices(userId: string): Promise<ConnectedServicesTable[]>;
   getConnectedService(id: string): Promise<ConnectedServicesTable | null>;
   disconnectService(id: string): Promise<void>;
-  updateServiceStatus(id: string, status: string): Promise<void>;
+  updateServiceStatus(id: string, status: ServiceStatus): Promise<void>;
   updateAccountEmail(id: string, email: string): Promise<void>;
   touchServiceUsage(id: string): Promise<void>;
 
@@ -346,7 +348,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .execute();
     },
 
-    async updateServiceStatus(id: string, status: string): Promise<void> {
+    async updateServiceStatus(id: string, status: ServiceStatus): Promise<void> {
       await kysely
         .updateTable("connected_services")
         .set({ status })

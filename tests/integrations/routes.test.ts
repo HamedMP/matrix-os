@@ -347,9 +347,11 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(401);
     });
 
-    it("handles Pipedream 429 rate limit errors", async () => {
+    it("handles Pipedream 429 rate limit errors (PipedreamError shape)", async () => {
+      // Real Pipedream SDK throws PipedreamError { statusCode, rawResponse }
       const rateLimitError = new Error("Rate limited");
-      (rateLimitError as any).status = 429;
+      (rateLimitError as any).statusCode = 429;
+      (rateLimitError as any).rawResponse = { headers: new Headers({ "retry-after": "45" }) };
       pipedream.proxyGet = vi.fn().mockRejectedValue(rateLimitError);
 
       const res = await app.request("/api/integrations/call", {
@@ -358,8 +360,10 @@ describe("Integration Routes", () => {
         body: JSON.stringify({ service: "gmail", action: "list_messages" }),
       });
       expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("45");
       const data = await res.json();
       expect(data.error).toMatch(/rate.?limit/i);
+      expect(data.retry_after).toBe(45);
     });
   });
 
@@ -461,6 +465,49 @@ describe("Integration Routes", () => {
         method: "DELETE",
       });
       expect(res.status).toBe(403);
+    });
+
+    it("returns 502 and keeps the local row when revokeAccount fails", async () => {
+      const svc = await db.connectService({
+        userId,
+        service: "github",
+        pipedreamAccountId: "pd_acc_revoke_fail",
+        accountLabel: "Revoke Fail",
+        scopes: ["repo"],
+      });
+      const upstreamErr = new Error("Internal Server Error");
+      (upstreamErr as any).statusCode = 500;
+      pipedream.revokeAccount = vi.fn().mockRejectedValue(upstreamErr);
+
+      const res = await app.request(`/api/integrations/${svc.id}`, {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(502);
+
+      // Local row must remain active so the user can retry
+      const found = await db.getConnectedService(svc.id);
+      expect(found!.status).toBe("active");
+    });
+
+    it("disconnects locally when revokeAccount returns 404 (already gone upstream)", async () => {
+      const svc = await db.connectService({
+        userId,
+        service: "github",
+        pipedreamAccountId: "pd_acc_revoke_404",
+        accountLabel: "Revoke 404",
+        scopes: ["repo"],
+      });
+      const goneErr = new Error("Not Found");
+      (goneErr as any).statusCode = 404;
+      pipedream.revokeAccount = vi.fn().mockRejectedValue(goneErr);
+
+      const res = await app.request(`/api/integrations/${svc.id}`, {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(200);
+
+      const found = await db.getConnectedService(svc.id);
+      expect(found!.status).toBe("revoked");
     });
   });
 
@@ -643,10 +690,10 @@ describe("Integration Routes", () => {
       });
     });
 
-    it("returns 429 with Retry-After header on rate limit", async () => {
+    it("returns 429 with Retry-After header on rate limit (PipedreamError shape)", async () => {
       const rateLimitError = new Error("Rate limited");
-      (rateLimitError as any).status = 429;
-      (rateLimitError as any).headers = { "retry-after": "30" };
+      (rateLimitError as any).statusCode = 429;
+      (rateLimitError as any).rawResponse = { headers: new Headers({ "retry-after": "30" }) };
       pipedream.proxyGet = vi.fn().mockRejectedValue(rateLimitError);
 
       const res = await app.request("/api/integrations/call", {
@@ -663,7 +710,7 @@ describe("Integration Routes", () => {
 
     it("returns default Retry-After when not provided by upstream", async () => {
       const rateLimitError = new Error("Rate limited");
-      (rateLimitError as any).status = 429;
+      (rateLimitError as any).statusCode = 429;
       pipedream.proxyGet = vi.fn().mockRejectedValue(rateLimitError);
 
       const res = await app.request("/api/integrations/call", {
@@ -719,7 +766,7 @@ describe("Integration Routes", () => {
 
     it("returns 502 for other Pipedream errors", async () => {
       const err = new Error("Internal server error");
-      (err as any).status = 500;
+      (err as any).statusCode = 500;
       pipedream.proxyGet = vi.fn().mockRejectedValue(err);
 
       const res = await app.request("/api/integrations/call", {

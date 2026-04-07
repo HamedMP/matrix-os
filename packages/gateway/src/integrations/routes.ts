@@ -102,6 +102,41 @@ function isTimeoutError(err: unknown): boolean {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Strip control characters and truncate to a safe length before logging
+// untrusted input. Prevents log injection (CR/LF, ANSI escape) from external
+// payloads like webhook bodies.
+function safeForLog(value: unknown, maxLen = 64): string {
+  return String(value).replace(/[\r\n\x00-\x1f\x7f]/g, "?").slice(0, maxLen);
+}
+
+// Pipedream SDK throws PipedreamError { statusCode, rawResponse }, but other
+// callers (and our tests) historically used { status, headers }. Read both
+// shapes so this code works against the real SDK and against legacy mocks.
+export function getErrorStatusCode(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const e = err as { statusCode?: number; status?: number; rawResponse?: { status?: number } };
+  return e.statusCode ?? e.status ?? e.rawResponse?.status;
+}
+
+export function getRetryAfterSeconds(err: unknown, fallback = 60): number {
+  if (!err || typeof err !== "object") return fallback;
+  const e = err as {
+    headers?: Record<string, string> | { get?: (k: string) => string | null };
+    rawResponse?: { headers?: { get?: (k: string) => string | null } };
+  };
+  // Web Headers (rawResponse.headers) uses .get(); plain object uses indexing.
+  let raw: string | null | undefined;
+  if (e.rawResponse?.headers?.get) {
+    raw = e.rawResponse.headers.get("retry-after");
+  } else if (e.headers && typeof (e.headers as { get?: unknown }).get === "function") {
+    raw = (e.headers as { get: (k: string) => string | null }).get("retry-after");
+  } else if (e.headers && typeof e.headers === "object") {
+    raw = (e.headers as Record<string, string>)["retry-after"];
+  }
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 // ---------------------------------------------------------------------------
 // Profile email resolution -- call each service's own API to get the email
 // ---------------------------------------------------------------------------
@@ -221,28 +256,33 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
   const logoCache = new Map<string, string>();
   const LOGO_CACHE_MAX = 200;
-  let logosLoaded = false;
+  let logosPromise: Promise<void> | null = null;
 
-  async function loadLogos() {
-    if (logosLoaded) return;
-    const services = listServices();
-    const results = await Promise.allSettled(
-      services.map(async (s) => {
-        const info = await pipedream.getAppInfo(s.pipedreamApp);
-        if (info?.imgSrc) {
-          if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);
-          logoCache.set(s.id, info.imgSrc);
+  function loadLogos(): Promise<void> {
+    if (logosPromise) return logosPromise;
+    logosPromise = (async () => {
+      const services = listServices();
+      const results = await Promise.allSettled(
+        services.map(async (s) => {
+          const info = await pipedream.getAppInfo(s.pipedreamApp);
+          if (info?.imgSrc) {
+            if (logoCache.size >= LOGO_CACHE_MAX) logoCache.delete(logoCache.keys().next().value!);
+            logoCache.set(s.id, info.imgSrc);
+          }
+        }),
+      );
+      for (const r of results) {
+        if (r.status === "rejected") {
+          console.error("[integrations] Logo fetch failed:", r.reason);
         }
-      }),
-    );
-    for (const r of results) {
-      if (r.status === "rejected") {
-        console.error("[integrations] Logo fetch failed:", r.reason);
       }
-    }
-    logosLoaded = true;
+    })();
+    return logosPromise;
   }
-  loadLogos();
+  // Best-effort startup warm; the IIFE swallows individual errors via
+  // Promise.allSettled, so this can't reject -- but attach .catch defensively
+  // to satisfy lint and avoid any unhandled-rejection surprises.
+  loadLogos().catch(() => {});
 
   app.get("/available", (c) => {
     const services = listServices().map((s) => ({
@@ -409,7 +449,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     const webhookUser = await db.getUserByPipedreamExternalId(external_user_id);
     if (!webhookUser) {
-      console.warn("[integrations] Webhook for unknown external_user_id:", external_user_id);
+      console.warn("[integrations] Webhook for unknown external_user_id:", safeForLog(external_user_id));
       return c.json({ error: "Unknown user" }, 400);
     }
     const webhookUserId = webhookUser.id;
@@ -578,9 +618,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
       return c.json({ data, service, action, ...(summary ? { summary } : {}) });
     } catch (err: unknown) {
-      if (err instanceof Error && (err as any).status === 429) {
-        const retryAfterRaw = (err as any).headers?.["retry-after"];
-        const retryAfter = retryAfterRaw ? parseInt(retryAfterRaw, 10) : 60;
+      if (getErrorStatusCode(err) === 429) {
+        const retryAfter = getRetryAfterSeconds(err);
         return c.json(
           { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
           { status: 429, headers: { "Retry-After": String(retryAfter) } },
@@ -640,7 +679,15 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     try {
       await pipedream.revokeAccount(result.pipedream_account_id);
     } catch (err: unknown) {
-      console.error("[integrations] revokeAccount error:", err);
+      // If the account is already gone at Pipedream (404), proceed to mark
+      // the local row as revoked. Otherwise, fail loudly so the credential
+      // doesn't dangle: the local row stays active and the user can retry.
+      const status = getErrorStatusCode(err);
+      if (status !== 404) {
+        console.error("[integrations] revokeAccount error:", err);
+        return c.json({ error: "Failed to revoke with provider" }, 502);
+      }
+      console.warn("[integrations] revokeAccount 404 -- already gone at provider, continuing");
     }
 
     await db.disconnectService(id);
