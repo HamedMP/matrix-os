@@ -534,7 +534,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     try {
-      await db.connectService({
+      const row = await db.connectService({
         userId: webhookUserId,
         service: appName,
         pipedreamAccountId: account_id,
@@ -542,12 +542,21 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         accountEmail: resolvedEmail,
         scopes: scopes ?? [],
       });
+      // Only emit when this webhook actually inserted a new row. Pipedream
+      // retries webhooks on non-2xx responses and network timeouts (standard
+      // exponential backoff), so a retry lands on the same
+      // (user_id, pipedream_account_id) pair, hits ON CONFLICT DO UPDATE,
+      // and without this guard would emit a duplicate integration:connected
+      // event. The shell reacts to that event by calling /sync, which (if a
+      // parallel webhook is still in flight) can emit yet again -- the same
+      // cascading WebSocket noise R3 was designed to prevent in /sync.
+      if (row.inserted) {
+        emit({ type: "integration:connected", service: appName, accountLabel: resolvedLabel });
+      }
     } catch (err) {
       console.error("[integrations] webhook connectService failed:", err instanceof Error ? err.message : err);
       return c.json({ error: "Internal error" }, 500);
     }
-
-    emit({ type: "integration:connected", service: appName, accountLabel: resolvedLabel });
 
     return c.json({ ok: true });
   });
