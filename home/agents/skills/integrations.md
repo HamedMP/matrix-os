@@ -23,6 +23,8 @@ category: system
 tools_needed:
   - connect_service
   - call_service
+  - list_connected_services
+  - sync_services
 channel_hints:
   - any
 examples:
@@ -55,9 +57,35 @@ Connect and use external services through Pipedream. The user connects via OAuth
 | Slack | `slack` | `send_message`, `list_channels`, `list_messages`, `search`, `react` |
 | Discord | `discord` | `send_message`, `list_servers`, `list_channels`, `list_messages` |
 
-## Step 1: Check Connection Status
+## Step 1: Check Connection Status (MANDATORY before claiming anything is not connected)
 
-Before calling a service, check if it's connected. If the user says "send an email" but Gmail isn't connected, guide them through connecting first.
+**Always call `list_connected_services` before asking the user to connect something.** The local DB may be stale -- if the user just finished OAuth in another tab, a fresh `list_connected_services` call may still not show it yet (see Step 1b).
+
+```
+list_connected_services()
+// -> "Connected services (2):
+//     - gmail (Work Gmail, alice@example.com) [active]
+//     - google_calendar (google_calendar, alice@example.com) [active]"
+```
+
+If the service the user wants is in the list, skip directly to Step 3.
+If it's not, continue to Step 2.
+
+## Step 1b: After Connect, Run `sync_services` Before Claiming Failure
+
+**This is the most common mistake.** After `connect_service`, when the user tells you "I authorized it" or "I clicked the link," the connection may have completed at Pipedream but not yet been synced to the local DB -- because in local dev environments, Pipedream's webhook cannot reach the gateway. **Running `list_connected_services` alone will return stale data and you'll wrongly conclude the user didn't finish the flow.**
+
+**Correct sequence after the user confirms authorization:**
+
+```
+sync_services()              // pulls latest state from Pipedream
+// -> "Synced 1 new service(s). All connected services (3): - github (github) ..."
+list_connected_services()    // optional confirmation; sync_services already lists them
+```
+
+If `sync_services` reports `synced: 0` and the service isn't in the full list, THEN the user's authorization genuinely didn't complete -- generate a fresh connect link.
+
+**Never loop on `connect_service`** -- if a link didn't work once, calling `connect_service` again just generates another identical link. The problem is almost always the sync, not the OAuth.
 
 ## Step 2: Connect a Service
 
@@ -70,7 +98,9 @@ connect_service({ service: "google_calendar" })
 connect_service({ service: "slack", label: "Team Slack" })
 ```
 
-This returns a URL. Present it to the user -- they click it, authorize in their browser, and the connection appears automatically.
+This returns a URL. Present it to the user -- they click it, authorize in their browser, and the gateway does its best to detect the connection automatically.
+
+**After returning the URL:** do NOT immediately call `list_connected_services` -- the user hasn't authorized yet. Wait for the user to tell you they finished (e.g. "done", "authorized", "I clicked it"), THEN run `sync_services` (see Step 1b).
 
 ## Step 3: Call a Service
 
@@ -175,11 +205,12 @@ call_service({
 
 ## Error Handling
 
-- **Service not connected**: You'll get an error with a connect hint. Guide the user to connect first.
+- **Service not connected (404)**: The gateway already auto-retries by pulling from Pipedream once before returning this error, so if you see it, the service really isn't connected at Pipedream either. Call `list_connected_services` to confirm, then `connect_service` to start OAuth. Do NOT loop on `connect_service` -- if the user already tried and it didn't take, run `sync_services` instead of generating a new link.
 - **Rate limited (429)**: Tell the user to wait and try again. The `retry_after` field tells you how long.
 - **Timeout (504)**: The service took too long. Try again or simplify the request.
 - **Service unavailable (503)**: Pipedream is temporarily down. Try again later.
 - **Missing params (400)**: Check the required params for the action and try again.
+- **Not implemented (501)**: The action exists in the registry but has no wiring. Tell the user this is a gateway bug and reference `packages/gateway/src/integrations/registry.ts`. Should never happen for the 27 shipped actions -- if it does, the registry is out of sync with the action list.
 
 ## Common Patterns
 
@@ -203,3 +234,13 @@ call_service({
 - For Gmail search, use Gmail's query syntax: "is:unread", "from:alice", "subject:meeting", "after:2026/04/01".
 - For calendar events, always use ISO 8601 datetime with timezone.
 - If a service returns a lot of data, summarize it for the user rather than dumping raw JSON.
+- **GitHub `repo` param** must be in `owner/name` format (e.g. `"HamedMP/matrix-os"`). The gateway rejects anything else to prevent path injection.
+- **Discord IDs** must be 17-20 digit numeric strings (snowflakes). Same validation.
+- **Slack emoji** in the `react` action is the shortcode without colons -- pass `"thumbsup"`, not `":thumbsup:"` (the gateway strips colons defensively, but the unadorned form is preferred).
+
+## Anti-patterns (things that will loop or confuse the user)
+
+- **Calling `connect_service` multiple times in a row** without waiting for the user to actually click the link.
+- **Calling `list_connected_services` immediately after the user says "I authorized it"** -- run `sync_services` first.
+- **Assuming "not connected" means "never connected"** -- it means "not in the local cache right now." Always give `sync_services` one chance.
+- **Telling the user to reconnect because a call_service returned 401 or 403** -- those usually mean the OAuth scope didn't include what the action needs (e.g. Slack `search.messages` needs a user token, not a bot token). Tell the user the specific scope, don't just say "reconnect."
