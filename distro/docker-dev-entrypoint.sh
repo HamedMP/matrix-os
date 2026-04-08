@@ -29,6 +29,23 @@ for dir in agents system apps; do
   fi
 done
 
+# Unify $HOME/.claude and $MATRIX_HOME/.claude (and same for .codex) into a
+# single directory. The gateway runs with HOME=/home/matrixos and reads
+# $HOME/.claude/.credentials.json, but the in-app terminal opens with
+# HOME=$MATRIX_HOME -- so `claude login` from inside Matrix OS used to write
+# to a file the gateway never read. Symlinking $MATRIX_HOME/.claude to the
+# canonical /home/matrixos/.claude makes both paths the same on disk.
+mkdir -p /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
+for tool in .claude .codex; do
+  if [ -e "$MATRIX_HOME/$tool" ] && [ ! -L "$MATRIX_HOME/$tool" ]; then
+    # First-run migration: move any pre-existing files into the canonical
+    # location (-n = no clobber, so a fresher token there always wins).
+    cp -an "$MATRIX_HOME/$tool/." "/home/matrixos/$tool/" 2>/dev/null || true
+    rm -rf "$MATRIX_HOME/$tool"
+  fi
+  ln -sfn "/home/matrixos/$tool" "$MATRIX_HOME/$tool"
+done
+
 # Expose Matrix OS skills to Claude Code and Codex
 # Clean stale copies from previous runs, then create fresh ones.
 # Both tools discover skills in project-level and user-level directories.
