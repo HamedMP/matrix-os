@@ -1,8 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockTokensCreate = vi.fn();
-const mockAccountsDelete = vi.fn();
-const mockProxyPost = vi.fn();
+// vi.mock is hoisted above all imports by vitest's transformer, so any
+// `const` declared at module scope won't exist when the factory runs and
+// the mock silently falls through to the real @pipedream/sdk (which then
+// 401s against the real API using test credentials). vi.hoisted() is the
+// canonical way to create shared fn references that survive hoisting.
+const {
+  mockTokensCreate,
+  mockAccountsDelete,
+  mockProxyPost,
+} = vi.hoisted(() => ({
+  mockTokensCreate: vi.fn(),
+  mockAccountsDelete: vi.fn(),
+  mockProxyPost: vi.fn(),
+}));
 
 vi.mock("@pipedream/sdk", () => {
   return {

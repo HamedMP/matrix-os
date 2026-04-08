@@ -1,12 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockTokensCreate = vi.fn();
-const mockAccountsDelete = vi.fn();
-const mockAccountsList = vi.fn();
-const mockProxyPost = vi.fn();
-const mockActionsList = vi.fn();
-const mockActionsRun = vi.fn();
-const mockAppsList = vi.fn();
+// vi.mock is hoisted above all imports. Module-scope `const`s are dead at
+// factory-invocation time, so the factory closes over `undefined` and vitest
+// silently falls through to the real @pipedream/sdk. vi.hoisted() creates
+// the shared references during the same hoisted phase so they're live when
+// the factory runs.
+const {
+  mockTokensCreate,
+  mockAccountsDelete,
+  mockAccountsList,
+  mockProxyPost,
+  mockActionsList,
+  mockActionsRun,
+  mockAppsList,
+} = vi.hoisted(() => ({
+  mockTokensCreate: vi.fn(),
+  mockAccountsDelete: vi.fn(),
+  mockAccountsList: vi.fn(),
+  mockProxyPost: vi.fn(),
+  mockActionsList: vi.fn(),
+  mockActionsRun: vi.fn(),
+  mockAppsList: vi.fn(),
+}));
 
 vi.mock("@pipedream/sdk", () => {
   return {

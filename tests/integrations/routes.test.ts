@@ -600,6 +600,23 @@ describe("Integration Routes", () => {
         accountLabel: "Validation Test",
         scopes: ["read", "send"],
       });
+      // After R2, /call's "neither componentKey nor directApi" fall-through
+      // returns 501 instead of proxying to a fabricated URL. These tests
+      // exercise the 200 path via send_email, which in prod gets componentKey
+      // populated by discoverComponentKeys() at startup. The mock pipedream
+      // here returns [] from discoverActions, so we populate the key by hand
+      // to mirror the prod-after-discovery state. Cleaned up in afterEach to
+      // avoid state leaking between describe blocks (registry is a module
+      // singleton).
+      const gmail = getService("gmail")!;
+      gmail.actions.send_email.componentKey = "gmail-send-email";
+    });
+
+    afterEach(() => {
+      const gmail = getService("gmail")!;
+      for (const action of Object.values(gmail.actions)) {
+        action.componentKey = undefined;
+      }
     });
 
     it("rejects missing required params for an action", async () => {
