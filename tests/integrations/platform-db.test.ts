@@ -26,6 +26,7 @@ describe("PlatformDb", () => {
          WHERE table_schema = 'public'
            AND table_name IN ('users', 'connected_services', 'user_apps', 'event_subscriptions', 'billing')
          ORDER BY table_name`,
+        [],
       );
       expect(result.rows.map((r) => r.table_name)).toEqual([
         "billing",
@@ -42,6 +43,7 @@ describe("PlatformDb", () => {
          WHERE schemaname = 'public'
            AND indexname IN ('idx_connected_services_user', 'idx_user_apps_user', 'idx_event_subs_user')
          ORDER BY indexname`,
+        [],
       );
       expect(result.rows.map((r) => r.indexname)).toEqual([
         "idx_connected_services_user",
@@ -55,6 +57,7 @@ describe("PlatformDb", () => {
       const result = await db.raw(
         `SELECT table_name FROM information_schema.tables
          WHERE table_schema = 'public' AND table_name = 'users'`,
+        [],
       );
       expect(result.rows).toHaveLength(1);
     });
@@ -432,8 +435,12 @@ describe("PlatformDb", () => {
   });
 
   describe("raw()", () => {
-    it("executes arbitrary SQL", async () => {
-      const result = await db.raw("SELECT 1 + 1 AS sum");
+    it("executes a zero-param query (explicit empty array)", async () => {
+      // params is REQUIRED on the new signature -- the no-params overload
+      // was a SQL injection sink. Callers pass `[]` for queries without
+      // placeholders, which forces them to stop and think about whether
+      // any values SHOULD have been parameterized.
+      const result = await db.raw("SELECT 1 + 1 AS sum", []);
       expect(result.rows[0].sum).toBe(2);
     });
 

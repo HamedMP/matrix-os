@@ -142,7 +142,14 @@ export interface PlatformDb {
   listEventSubscriptions(userId: string): Promise<EventSubscriptionsTable[]>;
   deleteEventSubscription(id: string): Promise<void>;
 
-  raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  // Escape hatch for queries that Kysely's builder doesn't express cleanly
+  // (e.g. RETURNING with custom projections, system columns, or pg-specific
+  // features). The `params` array is REQUIRED even when empty -- passing
+  // user-controlled input as part of `query` is a SQL injection sink and
+  // the required-array shape forces callers to stop and think about what
+  // they're interpolating. The previous no-params overload silently accepted
+  // any string via `sql.raw(query)`, which is a classic footgun.
+  raw(query: string, params: readonly unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   destroy(): Promise<void>;
 }
 
@@ -301,10 +308,20 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
     async connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable & { inserted: boolean }> {
       // Postgres exposes a system column `xmax` that's 0 on a fresh INSERT
       // and the txid of the updater on UPDATE (including ON CONFLICT DO
-      // UPDATE). Returning `(xmax = 0)` lets callers distinguish a new row
-      // from an upsert-that-was-actually-an-update without a separate query.
-      // Used by /sync to suppress duplicate `integration:connected` events
-      // when two concurrent /sync calls race over the same Pipedream account.
+      // UPDATE). Returning the insert-vs-update flag lets callers distinguish
+      // a new row from an upsert-that-was-actually-an-update without a
+      // separate query. Used by /sync and /webhook/connected to suppress
+      // duplicate `integration:connected` events when concurrent callers
+      // race over the same Pipedream account.
+      //
+      // The comparison `xmax = 0` works at first but breaks after autovacuum
+      // freezes the row -- frozen xmax is replaced with FrozenTransactionId
+      // (internal txid 2), making `xmax = 0` return false on subsequent
+      // upserts of long-lived rows. That would silently suppress
+      // integration:connected events (false "not inserted"). Casting through
+      // text -- `xmax::text::bigint = 0` -- bypasses the freeze bookkeeping
+      // because the text representation of a frozen row's xmax is "0" for
+      // visibility purposes, matching the expected insert-vs-update semantics.
       const result = await sql<ConnectedServicesTable & { inserted: boolean }>`
         INSERT INTO connected_services
           (user_id, service, pipedream_account_id, account_label, account_email, scopes)
@@ -316,7 +333,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           account_email = EXCLUDED.account_email,
           scopes        = EXCLUDED.scopes,
           status        = 'active'
-        RETURNING *, (xmax = 0) AS inserted
+        RETURNING *, (xmax::text::bigint = 0) AS inserted
       `.execute(kysely);
       const row = result.rows[0];
       if (!row) {
@@ -455,21 +472,24 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .execute();
     },
 
-    async raw(query: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
+    async raw(query: string, params: readonly unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
       if (pool) {
-        const result = await pool.query(query, params);
+        // pg driver: parameterized query -- $1/$2/... are bound via the
+        // second argument, the query string itself is expected to be a
+        // developer-authored template, never user input.
+        const result = await pool.query(query, params as unknown[]);
         return { rows: result.rows };
       }
-      if (params && params.length > 0) {
-        const parts = query.split(/\$\d+/);
-        const strings = Object.assign([...parts], { raw: [...parts] }) as unknown as TemplateStringsArray;
-        const compiled = sql(strings, ...params);
-        const result = await compiled.execute(kysely);
-        return { rows: (result.rows ?? []) as Record<string, unknown>[] };
-      }
-      // No-params path: only safe for DDL/transaction control (hardcoded strings).
-      // Never pass user-controlled input here -- use parameterized queries instead.
-      const result = await sql.raw(query).execute(kysely);
+      // Test path: Kysely dialect (e.g. KyselyPGlite). Split the query on
+      // $N placeholders and rebuild as a tagged-template call so Kysely
+      // parameterizes correctly. Empty params still go through this path
+      // (strings.length === 1, no interpolations); the `sql.raw` no-params
+      // fallback was removed because it's a silent injection sink any
+      // caller could trip by passing user input as `query`.
+      const parts = query.split(/\$\d+/);
+      const strings = Object.assign([...parts], { raw: [...parts] }) as unknown as TemplateStringsArray;
+      const compiled = sql(strings, ...params);
+      const result = await compiled.execute(kysely);
       return { rows: (result.rows ?? []) as Record<string, unknown>[] };
     },
 
