@@ -165,7 +165,7 @@ call_service({
 
 **list_files**: `query` (Drive search), `maxResults` (number), `folderId`
 **get_file**: `fileId` (required)
-**upload_file**: `name` (required), `content` (required), `mimeType`, `folderId`
+**upload_file**: `name` (required), `content` (required), `mimeType`, `folderId` -- **requires a paid Pipedream plan**. On a free plan this returns 501; fall back to having the user upload the file via the Drive UI, then use `get_file` + `share_file` to work with it.
 **share_file**: `fileId` (required), `email` (required), `role` ("reader"/"writer"/"commenter")
 
 ### GitHub

@@ -36,6 +36,33 @@ function encodeDiscordSnowflake(value: unknown): string {
   return value;
 }
 
+// Drive Query Language string-literal escape. Drive QL treats `\\` as a
+// literal backslash and `\'` as a literal single quote -- so a naive
+// quote-only escape like .replace(/'/g, "\\'") is bypassable with a trailing
+// backslash (input "test\'" becomes `'test\\''`, and Drive parses `\\` as a
+// literal \, terminates the string at the next `'`, then interprets the rest
+// as QL operators). Classic SQL-string escape rule: backslashes FIRST, then
+// quotes. Used for both the free-text `query` filter and the `folderId`
+// containment clause in google_drive.list_files.
+const escapeDriveQL = (s: string): string =>
+  s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+// RFC 2822 header-injection guard for Gmail send_email. Strips CR and LF
+// from any user-supplied header value before it goes into the raw MIME
+// message. Without this, a caller could sneak `\r\nBcc: attacker@x` into
+// the subject field and spray hidden recipients.
+const stripCrLf = (s: unknown): string => String(s).replace(/[\r\n]/g, "");
+
+// Base64url encoder for Gmail's `raw` field. RFC 4648 sec 5: replace + with
+// -, / with _, strip trailing =. Node's Buffer doesn't ship a base64url
+// variant pre-16, and we want this to stay portable.
+const toBase64Url = (msg: string): string =>
+  Buffer.from(msg, "utf-8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
 export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
   gmail: {
     id: "gmail",
@@ -70,6 +97,18 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           url: (p) => `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(String(p.messageId))}?format=full`,
         },
       },
+      // Gmail API: users.messages.send. The API expects a base64url-encoded
+      // RFC 2822 message in the `raw` field. We build a minimal plain-text
+      // MIME message from the caller's fields -- HTML bodies and attachments
+      // need multipart/alternative and multipart/mixed respectively, which
+      // is more complexity than this directApi is worth. For those, fall
+      // back to the gmail-send-email Pipedream component (paid plan only).
+      //
+      // Header injection guard: sanitize CR and LF out of every user-supplied
+      // header value before it lands in the raw message. Without this, a
+      // caller could smuggle `\r\nBcc: attacker@example.com` into the
+      // subject and spray hidden recipients. The body is not sanitized --
+      // CR/LF in the body is legitimate message content.
       send_email: {
         description: "Send an email",
         params: {
@@ -77,6 +116,21 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           subject: { type: "string", required: true },
           body: { type: "string", required: true },
           cc: { type: "string" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+          mapBody: (p) => {
+            const headers = [
+              `To: ${stripCrLf(p.to)}`,
+              `Subject: ${stripCrLf(p.subject)}`,
+              ...(p.cc ? [`Cc: ${stripCrLf(p.cc)}`] : []),
+              'Content-Type: text/plain; charset="UTF-8"',
+              "MIME-Version: 1.0",
+            ];
+            const msg = `${headers.join("\r\n")}\r\n\r\n${String(p.body)}`;
+            return { raw: toBase64Url(msg) };
+          },
         },
       },
       search: {
@@ -220,8 +274,8 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           url: "https://www.googleapis.com/drive/v3/files",
           mapParams: (p) => {
             const clauses: string[] = [];
-            if (p.query) clauses.push(`name contains '${String(p.query).replace(/'/g, "\\'")}'`);
-            if (p.folderId) clauses.push(`'${String(p.folderId).replace(/'/g, "\\'")}' in parents`);
+            if (p.query) clauses.push(`name contains '${escapeDriveQL(String(p.query))}'`);
+            if (p.folderId) clauses.push(`'${escapeDriveQL(String(p.folderId))}' in parents`);
             return {
               fields: "files(id,name,mimeType,modifiedTime,size,parents,webViewLink)",
               ...(clauses.length > 0 ? { q: clauses.join(" and ") } : {}),
@@ -247,8 +301,19 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           }),
         },
       },
+      // upload_file deliberately has NO directApi block. Drive's single-
+      // request media upload (POST /upload/drive/v3/files?uploadType=multipart)
+      // requires a hand-built multipart/related body with boundary framing,
+      // a metadata JSON part, and a content part with correct
+      // Content-Transfer-Encoding. That's ~25 lines of careful code that only
+      // handles text content cleanly -- binary uploads need base64 plus
+      // re-encoding. Not worth the complexity here. upload_file falls through
+      // to the google_drive-upload-file Pipedream component, which requires
+      // a paid Pipedream plan. On a free plan, agents should fall back to
+      // get_file + share_file workflows instead. Documented in the
+      // integrations skill at home/agents/skills/integrations.md.
       upload_file: {
-        description: "Upload a file to Google Drive",
+        description: "Upload a file to Google Drive (requires paid Pipedream plan)",
         params: {
           name: { type: "string", required: true },
           content: { type: "string", required: true },
@@ -401,11 +466,23 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     // conversations.list etc. Channel param accepts either a channel ID (C...)
     // or a `#channelname` string -- Slack resolves both.
     actions: {
+      // Slack Web API: chat.postMessage. JSON body works as long as the
+      // token is passed via Authorization header (Pipedream's proxy handles
+      // that). Channel can be either a channel ID (C012AB34) or a public
+      // channel name like "#general" -- Slack resolves both.
       send_message: {
         description: "Send a message to a channel",
         params: {
           channel: { type: "string", required: true },
           text: { type: "string", required: true },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://slack.com/api/chat.postMessage",
+          mapBody: (p) => ({
+            channel: String(p.channel),
+            text: String(p.text),
+          }),
         },
       },
       list_channels: {
@@ -493,11 +570,20 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     // Discord IDs (snowflakes) are numeric strings; we validate to refuse
     // path-injection attempts.
     actions: {
+      // Discord REST: POST /channels/{channel.id}/messages. Requires the bot
+      // to have SEND_MESSAGES permission on the channel. Snowflake is
+      // strictly validated before interpolation.
       send_message: {
         description: "Send a message to a channel",
         params: {
           channelId: { type: "string", required: true },
           content: { type: "string", required: true },
+        },
+        directApi: {
+          method: "POST",
+          url: (p) =>
+            `https://discord.com/api/v10/channels/${encodeDiscordSnowflake(p.channelId)}/messages`,
+          mapBody: (p) => ({ content: String(p.content) }),
         },
       },
       // GET /users/@me/guilds returns the list of servers (guilds) the
