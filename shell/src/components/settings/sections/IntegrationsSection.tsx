@@ -98,6 +98,12 @@ export function IntegrationsSection() {
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
+  // UI2 fix: rename existing connected accounts. renamingId = the row in
+  // edit mode (or null), renameDraft = the in-progress text, savingRename =
+  // the row currently mid-PATCH (disables Save while in flight).
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState<string>("");
+  const [savingRename, setSavingRename] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -116,9 +122,16 @@ export function IntegrationsSection() {
         const connections: ConnectedService[] = data.connections ?? data;
         setConnected(connections);
 
-        // Trigger background sync to backfill missing emails
+        // Trigger background sync to pull any Pipedream-side accounts that
+        // completed OAuth but whose webhook never reached the gateway (local
+        // dev, behind NAT). Previously this only fired when an existing row
+        // had a missing email, so a freshly-empty list (just-connected user)
+        // never triggered a sync and the UI showed "no integrations" despite
+        // Pipedream holding an account. Fire on: (a) empty list, OR (b) any
+        // row missing an email.
         const hasMissingEmail = connections.some((c) => !c.account_email);
-        if (hasMissingEmail) {
+        const shouldSync = connections.length === 0 || hasMissingEmail;
+        if (shouldSync) {
           fetch(`${GATEWAY}/api/integrations/sync`, {
             method: "POST",
             signal: AbortSignal.timeout(30_000),
@@ -135,6 +148,32 @@ export function IntegrationsSection() {
       console.error("Failed to load integrations:", err);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Explicit refresh button handler. Unlike loadData, this always issues a
+  // sync -- user intent is "pull whatever Pipedream has, I just authorized
+  // something." Reuses the same /sync endpoint.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      const res = await fetch(`${GATEWAY}/api/integrations/sync`, {
+        method: "POST",
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.services) setConnected(data.services);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? "Failed to refresh");
+      }
+    } catch {
+      setError("Failed to refresh");
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
@@ -277,6 +316,41 @@ export function IntegrationsSection() {
     }
   }, []);
 
+  // UI2 fix: rename a connected account. Optimistically updates the local
+  // list on success so the UI reflects the new label without waiting for a
+  // refetch. On failure, reverts and surfaces the error.
+  const handleRename = useCallback(async (id: string) => {
+    const trimmed = renameDraft.trim();
+    if (!trimmed) {
+      setRenamingId(null);
+      return;
+    }
+    setSavingRename(id);
+    setError(null);
+    try {
+      const res = await fetch(`${GATEWAY}/api/integrations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: trimmed }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        setConnected((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, account_label: trimmed } : c)),
+        );
+        setRenamingId(null);
+        setRenameDraft("");
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? "Failed to rename account");
+      }
+    } catch {
+      setError("Failed to rename account");
+    } finally {
+      setSavingRename(null);
+    }
+  }, [renameDraft]);
+
   const handleCheckStatus = useCallback(async (id: string) => {
     setCheckingStatus(id);
     setError(null);
@@ -312,11 +386,21 @@ export function IntegrationsSection() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-8">
-      <div>
-        <h2 className="text-lg font-semibold">Integrations</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Connect external services to extend your agent's capabilities.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Integrations</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Connect external services to extend your agent's capabilities.
+          </p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Pull latest state from Pipedream. Useful if you just finished OAuth in another tab and don't see the connection yet."
+          className="shrink-0 rounded-md border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
+        >
+          {refreshing ? "Refreshing..." : "Refresh"}
+        </button>
       </div>
 
       {error && (
@@ -359,9 +443,29 @@ export function IntegrationsSection() {
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium truncate">
-                              {hasMultiple ? conn.account_label : serviceName}
-                            </span>
+                            {renamingId === conn.id ? (
+                              <input
+                                type="text"
+                                autoFocus
+                                value={renameDraft}
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleRename(conn.id);
+                                  if (e.key === "Escape") {
+                                    setRenamingId(null);
+                                    setRenameDraft("");
+                                  }
+                                }}
+                                disabled={savingRename === conn.id}
+                                placeholder="Label (e.g. Work, Personal)"
+                                maxLength={100}
+                                className="flex-1 min-w-0 rounded-md border border-border/60 bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary/40"
+                              />
+                            ) : (
+                              <span className="text-sm font-medium truncate">
+                                {hasMultiple ? conn.account_label : serviceName}
+                              </span>
+                            )}
                             <StatusDot status={conn.status} />
                             <span className="text-xs text-muted-foreground capitalize">
                               {conn.status}
@@ -379,6 +483,37 @@ export function IntegrationsSection() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
+                          {renamingId === conn.id ? (
+                            <>
+                              <button
+                                onClick={() => handleRename(conn.id)}
+                                disabled={savingRename === conn.id || !renameDraft.trim()}
+                                className="rounded-md bg-primary text-primary-foreground px-2.5 py-1.5 text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                              >
+                                {savingRename === conn.id ? "Saving..." : "Save"}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRenamingId(null);
+                                  setRenameDraft("");
+                                }}
+                                disabled={savingRename === conn.id}
+                                className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setRenamingId(conn.id);
+                                setRenameDraft(conn.account_label);
+                              }}
+                              className="rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+                            >
+                              Rename
+                            </button>
+                          )}
                           <button
                             onClick={() => handleCheckStatus(conn.id)}
                             disabled={checkingStatus === conn.id}
@@ -444,19 +579,24 @@ export function IntegrationsSection() {
                     </div>
                   </div>
                 </div>
-                {isConnected && (
-                  <input
-                    type="text"
-                    placeholder="Label (e.g. Work, Personal)"
-                    value={connecting === service.id ? "" : (connectLabels[service.id] ?? "")}
-                    onChange={(e) => setConnectLabels((prev) => ({ ...prev, [service.id]: e.target.value }))}
-                    disabled={isConnecting}
-                    className="w-full rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
-                )}
+                {/* UI2 fix: label input is no longer gated on isConnected.
+                    Previously the input only appeared after at least one
+                    account existed for the service ("Add Account" path), so
+                    a user with a single Gmail could never label it. Now the
+                    input is always visible, and the entered label is passed
+                    to /connect on first AND subsequent connects. */}
+                <input
+                  type="text"
+                  placeholder={isConnected ? "Label for additional account" : "Label (optional, e.g. Work, Personal)"}
+                  value={connecting === service.id ? "" : (connectLabels[service.id] ?? "")}
+                  onChange={(e) => setConnectLabels((prev) => ({ ...prev, [service.id]: e.target.value }))}
+                  disabled={isConnecting}
+                  maxLength={100}
+                  className="w-full rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
                 <button
                   onClick={() => {
-                    handleConnect(service.id, isConnected ? connectLabels[service.id] : undefined);
+                    handleConnect(service.id, connectLabels[service.id]);
                     setConnectLabels((prev) => ({ ...prev, [service.id]: "" }));
                   }}
                   disabled={isConnecting}
