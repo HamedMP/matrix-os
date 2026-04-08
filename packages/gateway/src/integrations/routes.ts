@@ -11,22 +11,28 @@ import type { PlatformDb } from "../platform-db.js";
 // Zod schemas
 // ---------------------------------------------------------------------------
 
+// Shared bound for every user-facing `label` field. The bodyLimit middleware
+// caps the request body at 4KB, but without a per-field cap a single request
+// could still stash a ~4KB label into pendingLabels (memory) and the DB
+// column. Matching LabelPatchSchema keeps behavior consistent across the
+// connect, call, webhook, and patch endpoints -- no schema should accept a
+// label the patch endpoint would later reject. trim() strips whitespace
+// padding so a value of "    " (100 spaces) still counts as empty.
+const LabelField = z.string().trim().min(1).max(100);
+
 const ConnectBodySchema = z.object({
   service: z.string().min(1),
-  label: z.string().optional(),
+  label: LabelField.optional(),
 });
 
-// Bounded length stops a malicious client from filling the DB column with
-// megabytes of garbage; trim() prevents whitespace-only labels from masquerading
-// as valid input.
 const LabelPatchSchema = z.object({
-  label: z.string().trim().min(1).max(100),
+  label: LabelField,
 });
 
 const CallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
-  label: z.string().optional(),
+  label: LabelField.optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -34,7 +40,7 @@ const WebhookBodySchema = z.object({
   external_user_id: z.string().min(1),
   account_id: z.string().min(1),
   app: z.string().min(1),
-  label: z.string().optional(),
+  label: LabelField.optional(),
   email: z.string().optional(),
   scopes: z.array(z.string()).optional(),
 });
@@ -473,9 +479,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const url = pipedream.getOAuthUrl(connectLinkUrl, def.pipedreamApp);
 
     if (label) {
+      // JS Map preserves insertion order, so the first key returned by
+      // keys() is always the oldest -- O(1) eviction. The previous
+      // spread + reduce scan copied the full 1000-entry Map on every
+      // /connect call that hit capacity, which is wasted allocation when
+      // the answer is sitting at the head of the map's iteration order.
+      // (The TTL sweeper above also keeps the map trim; this branch only
+      // matters if 1000 distinct (user, app) pairs /connect within the
+      // 5-minute sweep interval.)
       if (pendingLabels.size >= PENDING_MAX) {
-        const oldest = [...pendingLabels.entries()].reduce((a, b) => a[1].ts < b[1].ts ? a : b);
-        pendingLabels.delete(oldest[0]);
+        const oldestKey = pendingLabels.keys().next().value;
+        if (oldestKey !== undefined) pendingLabels.delete(oldestKey);
       }
       pendingLabels.set(`${externalId}:${def.pipedreamApp}`, { label, ts: Date.now() });
     }
