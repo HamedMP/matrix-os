@@ -16,6 +16,13 @@ const ConnectBodySchema = z.object({
   label: z.string().optional(),
 });
 
+// Bounded length stops a malicious client from filling the DB column with
+// megabytes of garbage; trim() prevents whitespace-only labels from masquerading
+// as valid input.
+const LabelPatchSchema = z.object({
+  label: z.string().trim().min(1).max(100),
+});
+
 const CallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
@@ -185,6 +192,20 @@ const PROFILE_ENDPOINTS: Record<string, {
     extract: (d) => d?.email ?? d?.username,
   },
 };
+
+// Shared lookup used by /call's cache-hit and cache-miss paths. Returns the
+// first active connection matching the service, or -- if a label is provided
+// -- the connection whose account_label exactly matches.
+function findConnection<T extends { service: string; account_label: string }>(
+  connections: T[],
+  service: string,
+  label?: string,
+): T | undefined {
+  if (label) {
+    return connections.find((s) => s.service === service && s.account_label === label);
+  }
+  return connections.find((s) => s.service === service);
+}
 
 async function resolveAccountEmail(
   pipedream: PipedreamConnectClient,
@@ -360,22 +381,39 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         }),
       );
 
-      await Promise.all(
-        newAccounts.map((acc, i) =>
-          db.connectService({
+      // R1 + R3: look up the user-entered label (set in /connect, awaiting
+      // OAuth round-trip) instead of hardcoding the service slug, AND only
+      // broadcast `integration:connected` for accounts that were actually
+      // inserted just now. The previous code emitted unconditionally over
+      // newAccounts, so two concurrent /sync calls (e.g. shell polling +
+      // webhook arriving) both computed the same newAccounts and both fired
+      // the WS event, which triggered the shell to call /sync again. The
+      // upsert is idempotent (DB is safe), but the WS noise was real.
+      const upserted = await Promise.all(
+        newAccounts.map(async (acc, i) => {
+          const pendingKey = `${externalId}:${acc.app}`;
+          const pending = pendingLabels.get(pendingKey);
+          const label = pending && (Date.now() - pending.ts < LABEL_TTL_MS)
+            ? pending.label
+            : acc.app;
+          if (pending) pendingLabels.delete(pendingKey);
+          const row = await db.connectService({
             userId: uid,
             service: acc.app,
             pipedreamAccountId: acc.id,
-            accountLabel: acc.app,
+            accountLabel: label,
             accountEmail: resolvedEmails[i],
             scopes: [],
-          }),
-        ),
+          });
+          return { row, label };
+        }),
       );
-      for (const acc of newAccounts) {
-        emit({ type: "integration:connected", service: acc.app, accountLabel: acc.app });
+      for (const { row, label } of upserted) {
+        if (row.inserted) {
+          emit({ type: "integration:connected", service: row.service, accountLabel: label });
+        }
       }
-      const synced = newAccounts.length;
+      const synced = upserted.filter((u) => u.row.inserted).length;
 
       // Also backfill emails for existing connections missing them
       const missingEmail = existing.filter((s) => !s.account_email);
@@ -563,12 +601,66 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 400);
     }
 
-    // Find the user's active connection for this service
+    // Find the user's active connection for this service. On cache miss
+    // (no row in local DB), pull the authoritative list from Pipedream and
+    // upsert any new accounts -- this fixes the "just connected via chat, no
+    // webhook available in local dev" flow where the OAuth completes at
+    // Pipedream but the webhook never reaches the gateway. Without this
+    // retry, the agent saw "not connected" forever and looped on new connect
+    // links.
     const connections = await db.listConnectedServices(uid);
-    let connection;
-    if (label) {
-      connection = connections.find((s) => s.service === service && s.account_label === label);
-      if (!connection) {
+    let connection = findConnection(connections, service, label);
+
+    if (!connection) {
+      try {
+        const user = await db.getUserById(uid);
+        const extId = user?.pipedream_external_id ?? uid;
+        const pdAccounts = await pipedream.listAccounts(extId);
+        const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
+        const newAccounts = pdAccounts.filter(
+          (acc) => !existingPdIds.has(acc.id) && getService(acc.app),
+        );
+        if (newAccounts.length > 0) {
+          await Promise.all(
+            newAccounts.map(async (acc) => {
+              const pendingKey = `${extId}:${acc.app}`;
+              const pending = pendingLabels.get(pendingKey);
+              const lbl = pending && (Date.now() - pending.ts < LABEL_TTL_MS)
+                ? pending.label
+                : acc.app;
+              if (pending) pendingLabels.delete(pendingKey);
+              const resolvedEmail = acc.email
+                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
+              const row = await db.connectService({
+                userId: uid,
+                service: acc.app,
+                pipedreamAccountId: acc.id,
+                accountLabel: lbl,
+                accountEmail: resolvedEmail,
+                scopes: [],
+              });
+              if (row.inserted) {
+                emit({ type: "integration:connected", service: row.service, accountLabel: lbl });
+              }
+            }),
+          );
+          // Re-read after the upserts and retry the lookup.
+          const refreshed = await db.listConnectedServices(uid);
+          connection = findConnection(refreshed, service, label);
+        }
+      } catch (err) {
+        // Sync-on-miss is best-effort. If Pipedream is down or the listAccounts
+        // call fails, fall through to the normal "not connected" response
+        // instead of 500'ing the request. The error is logged for debugging.
+        console.warn(
+          `[integrations] sync-on-miss failed for ${service}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    if (!connection) {
+      if (label) {
         const available = connections
           .filter((s) => s.service === service)
           .map((s) => s.account_label);
@@ -580,10 +672,6 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
             : undefined,
         }, available.length > 0 ? 400 : 404);
       }
-    } else {
-      connection = connections.find((s) => s.service === service);
-    }
-    if (!connection) {
       return c.json({
         error: `Service ${service} is not connected`,
         connect_hint: `Use POST /api/integrations/connect with { "service": "${service}" } to connect it first.`,
@@ -616,30 +704,82 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       } else if (actionDef.directApi) {
         const api = actionDef.directApi;
         const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
-        if (api.method === "GET") {
-          const queryParams = api.mapParams ? api.mapParams(params ?? {}) : undefined;
-          data = await pipedream.proxyGet({
-            externalUserId: externalId,
-            accountId: connection.pipedream_account_id,
-            url,
-            params: queryParams,
-          });
-        } else {
-          const body = api.mapBody ? api.mapBody(params ?? {}) : (params ?? {});
-          data = await pipedream.proxyPost({
-            externalUserId: externalId,
-            accountId: connection.pipedream_account_id,
-            url,
-            body,
-          });
+        const accountId = connection.pipedream_account_id;
+        // Dispatch on the verb. GET/DELETE pass params as query string;
+        // POST/PUT/PATCH carry a body. mapParams + mapBody are both optional
+        // -- if absent, the raw params object is forwarded as-is.
+        switch (api.method) {
+          case "GET": {
+            data = await pipedream.proxyGet({
+              externalUserId: externalId,
+              accountId,
+              url,
+              params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
+            });
+            break;
+          }
+          case "DELETE": {
+            data = await pipedream.proxyDelete({
+              externalUserId: externalId,
+              accountId,
+              url,
+              params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
+            });
+            break;
+          }
+          case "POST": {
+            data = await pipedream.proxyPost({
+              externalUserId: externalId,
+              accountId,
+              url,
+              body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
+            });
+            break;
+          }
+          case "PUT": {
+            data = await pipedream.proxyPut({
+              externalUserId: externalId,
+              accountId,
+              url,
+              body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
+            });
+            break;
+          }
+          case "PATCH": {
+            data = await pipedream.proxyPatch({
+              externalUserId: externalId,
+              accountId,
+              url,
+              body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
+            });
+            break;
+          }
+          default: {
+            // Type-narrowed exhaustiveness check -- if a new verb is added to
+            // DirectApi.method, this throws at compile time via _exhaustive.
+            const _exhaustive: never = api.method;
+            throw new Error(`Unsupported directApi method: ${String(_exhaustive)}`);
+          }
         }
       } else {
-        data = await pipedream.callAction({
-          externalUserId: externalId,
-          accountId: connection.pipedream_account_id,
-          url: `https://api.pipedream.com/v1/connect/${def.pipedreamApp}/${action}`,
-          body: params ?? {},
-        });
+        // Last resort: no componentKey, no directApi. The previous code
+        // fabricated a `/v1/connect/{app}/{action}` URL that doesn't exist
+        // in Pipedream's API and would 404. We now refuse with a clear error
+        // so the operator knows the action is unwired, instead of a confusing
+        // 502 from a fake URL. R2 added directApi blocks for every existing
+        // action; this branch only fires if a new action is added without
+        // either componentKey discovery or a directApi block.
+        console.error(
+          `[integrations] Action ${service}/${action} has neither componentKey nor directApi -- registry incomplete`,
+        );
+        return c.json(
+          {
+            error: `Action ${service}/${action} is not implemented on this gateway. ` +
+              `It has no componentKey (Pipedream Actions API didn't match it) and no directApi block. ` +
+              `Add one to packages/gateway/src/integrations/registry.ts.`,
+          },
+          501,
+        );
       }
 
       await db.touchServiceUsage(connection.id);
@@ -723,6 +863,44 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     emit({ type: "integration:disconnected", service: result.service, id });
 
     return c.json({ ok: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // PATCH /:id -- rename a connected account (UI2 fix). Only the label
+  // field is mutable through this endpoint; identity, service, and email
+  // are immutable post-connect.
+  // -----------------------------------------------------------------------
+
+  app.patch("/:id", bodyLimit({ maxSize: 1024 }), async (c) => {
+    const uid = await requireUser(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const result = await requireOwnedService(c, id, uid);
+    if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
+    if (result === null) return c.json({ error: "Not found" }, 404);
+    if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const parsed = LabelPatchSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
+    }
+
+    try {
+      await db.updateAccountLabel(id, parsed.data.label);
+    } catch (err) {
+      console.error("[integrations] updateAccountLabel failed:", err instanceof Error ? err.message : err);
+      return c.json({ error: "Failed to update label" }, 500);
+    }
+
+    return c.json({ id, account_label: parsed.data.label, service: result.service });
   });
 
   // -----------------------------------------------------------------------

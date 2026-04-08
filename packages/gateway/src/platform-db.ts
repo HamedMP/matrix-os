@@ -125,12 +125,13 @@ export interface PlatformDb {
   getUserByPipedreamExternalId(externalId: string): Promise<UsersTable | null>;
   updatePipedreamExternalId(userId: string, externalId: string): Promise<void>;
 
-  connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable>;
+  connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable & { inserted: boolean }>;
   listConnectedServices(userId: string): Promise<ConnectedServicesTable[]>;
   getConnectedService(id: string): Promise<ConnectedServicesTable | null>;
   disconnectService(id: string): Promise<void>;
   updateServiceStatus(id: string, status: ServiceStatus): Promise<void>;
   updateAccountEmail(id: string, email: string): Promise<void>;
+  updateAccountLabel(id: string, label: string): Promise<void>;
   touchServiceUsage(id: string): Promise<void>;
 
   createUserApp(input: CreateUserAppInput): Promise<UserAppsTable>;
@@ -297,28 +298,31 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         .execute();
     },
 
-    async connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable> {
-      const result = await kysely
-        .insertInto("connected_services")
-        .values({
-          user_id: input.userId,
-          service: input.service,
-          pipedream_account_id: input.pipedreamAccountId,
-          account_label: input.accountLabel,
-          account_email: input.accountEmail ?? null,
-          scopes: input.scopes,
-        })
-        .onConflict((oc) =>
-          oc.columns(["user_id", "pipedream_account_id"]).doUpdateSet({
-            account_label: input.accountLabel,
-            account_email: input.accountEmail ?? null,
-            scopes: input.scopes,
-            status: "active",
-          }),
-        )
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      return result;
+    async connectService(input: ConnectServiceInput): Promise<ConnectedServicesTable & { inserted: boolean }> {
+      // Postgres exposes a system column `xmax` that's 0 on a fresh INSERT
+      // and the txid of the updater on UPDATE (including ON CONFLICT DO
+      // UPDATE). Returning `(xmax = 0)` lets callers distinguish a new row
+      // from an upsert-that-was-actually-an-update without a separate query.
+      // Used by /sync to suppress duplicate `integration:connected` events
+      // when two concurrent /sync calls race over the same Pipedream account.
+      const result = await sql<ConnectedServicesTable & { inserted: boolean }>`
+        INSERT INTO connected_services
+          (user_id, service, pipedream_account_id, account_label, account_email, scopes)
+        VALUES
+          (${input.userId}, ${input.service}, ${input.pipedreamAccountId},
+           ${input.accountLabel}, ${input.accountEmail ?? null}, ${input.scopes})
+        ON CONFLICT (user_id, pipedream_account_id) DO UPDATE SET
+          account_label = EXCLUDED.account_label,
+          account_email = EXCLUDED.account_email,
+          scopes        = EXCLUDED.scopes,
+          status        = 'active'
+        RETURNING *, (xmax = 0) AS inserted
+      `.execute(kysely);
+      const row = result.rows[0];
+      if (!row) {
+        throw new Error("connectService upsert returned no row");
+      }
+      return row;
     },
 
     async listConnectedServices(userId: string): Promise<ConnectedServicesTable[]> {
@@ -360,6 +364,14 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       await kysely
         .updateTable("connected_services")
         .set({ account_email: email })
+        .where("id", "=", id)
+        .execute();
+    },
+
+    async updateAccountLabel(id: string, label: string): Promise<void> {
+      await kysely
+        .updateTable("connected_services")
+        .set({ account_label: label })
         .where("id", "=", id)
         .execute();
     },

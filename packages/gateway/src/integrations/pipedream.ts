@@ -55,6 +55,27 @@ export interface PipedreamConnectClient {
     body?: Record<string, unknown>;
   }): Promise<unknown>;
 
+  proxyPut(opts: {
+    externalUserId: string;
+    accountId: string;
+    url: string;
+    body?: Record<string, unknown>;
+  }): Promise<unknown>;
+
+  proxyPatch(opts: {
+    externalUserId: string;
+    accountId: string;
+    url: string;
+    body?: Record<string, unknown>;
+  }): Promise<unknown>;
+
+  proxyDelete(opts: {
+    externalUserId: string;
+    accountId: string;
+    url: string;
+    params?: Record<string, string>;
+  }): Promise<unknown>;
+
   revokeAccount(accountId: string): Promise<void>;
 
   listAccounts(externalUserId: string): Promise<Array<{
@@ -107,7 +128,18 @@ export function createPipedreamClient(
     },
 
     getOAuthUrl(connectLinkUrl: string, app: string) {
-      return `${connectLinkUrl}&app=${encodeURIComponent(app)}`;
+      // Pipedream's connectLinkUrl currently includes a `?token=...` query
+      // string, but the SDK doesn't guarantee that shape -- a future version
+      // could return a bare URL or one ending in a fragment. Pick the right
+      // separator instead of assuming `&`. Anything past `#` is dropped from
+      // the query, so refuse to append after a fragment rather than producing
+      // a malformed URL.
+      const hashIdx = connectLinkUrl.indexOf("#");
+      if (hashIdx !== -1) {
+        throw new Error("Pipedream connectLinkUrl unexpectedly contains a fragment; cannot append app param");
+      }
+      const separator = connectLinkUrl.includes("?") ? "&" : "?";
+      return `${connectLinkUrl}${separator}app=${encodeURIComponent(app)}`;
     },
 
     async callAction(opts) {
@@ -173,6 +205,50 @@ export function createPipedreamClient(
           externalUserId: opts.externalUserId,
           accountId: opts.accountId,
           body: opts.body ?? {},
+        },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return result;
+    },
+
+    async proxyPut(opts) {
+      const result = await (sdk.proxy as any).put(
+        {
+          url: opts.url,
+          externalUserId: opts.externalUserId,
+          accountId: opts.accountId,
+          body: opts.body ?? {},
+        },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return result;
+    },
+
+    async proxyPatch(opts) {
+      const result = await (sdk.proxy as any).patch(
+        {
+          url: opts.url,
+          externalUserId: opts.externalUserId,
+          accountId: opts.accountId,
+          body: opts.body ?? {},
+        },
+        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+      );
+      return result;
+    },
+
+    async proxyDelete(opts) {
+      // Pipedream's ProxyDeleteRequest accepts URL + query params (no body),
+      // matching standard REST DELETE semantics. If a target API needs a
+      // DELETE-with-body (rare; e.g. some Elasticsearch endpoints), use
+      // proxyPost with method override -- but none of our registered actions
+      // need that today.
+      const result = await (sdk.proxy as any).delete(
+        {
+          url: opts.url,
+          externalUserId: opts.externalUserId,
+          accountId: opts.accountId,
+          params: opts.params,
         },
         { timeoutInSeconds: API_TIMEOUT_SECONDS },
       );
