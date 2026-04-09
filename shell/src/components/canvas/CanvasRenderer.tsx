@@ -226,7 +226,7 @@ export function CanvasRenderer() {
         ))}
         {visibleWindows.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-white/50 drop-shadow-md">
               No apps running. Try &quot;Build me a notes app&quot; in the chat.
             </p>
           </div>

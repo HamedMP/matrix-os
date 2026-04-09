@@ -208,7 +208,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   ];
 
   return (
-    <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:flex h-7 items-center justify-between px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
+    <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-7 items-center px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
       {/* Left: Logo + active app name + menus */}
       <div className="flex items-center gap-0.5">
         <button className="flex items-center px-2 py-0.5 rounded hover:bg-foreground/10">
@@ -222,15 +222,13 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
         <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
       </div>
 
-      {/* Center: contextual toolbar controls inline in menu bar */}
-      {children && (
-        <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
-          {children}
-        </div>
-      )}
+      {/* Center: contextual toolbar controls — always centered via grid */}
+      <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+        {children}
+      </div>
 
       {/* Right: Search + clock + user */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 justify-end">
         <button
           className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
           onClick={onOpenCommandPalette}

@@ -1093,18 +1093,17 @@ export function Desktop({ onOpenCommandPalette, chatContent }: DesktopProps) {
           }>
             {(() => {
               const pinnedSet = new Set(pinnedApps);
-              const allWindowPaths = windows.map((w) => w.path);
-              const hasWindow = (appPath: string) =>
-                allWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
-              // Show pinned apps first, then any app with an open window (including minimized)
+              const visibleWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
+              const hasVisibleWindow = (appPath: string) =>
+                visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
               const pinnedList = apps.filter((a) => pinnedSet.has(a.path));
-              const openUnpinned = apps.filter((a) => !pinnedSet.has(a.path) && hasWindow(a.path));
+              const openUnpinned = apps.filter((a) => !pinnedSet.has(a.path) && hasVisibleWindow(a.path));
               const allDockApps = [...pinnedList, ...openUnpinned];
 
               return allDockApps.length > 0 ? (
                 <>
                   {pinnedList.map((app) => {
-                    const hasAny = hasWindow(app.path);
+                    const hasAny = hasVisibleWindow(app.path);
                     return (
                       <DockIcon
                         key={app.path}
@@ -1302,7 +1301,7 @@ export function Desktop({ onOpenCommandPalette, chatContent }: DesktopProps) {
           {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-white/50 drop-shadow-md">
                   No apps running. Try &quot;Build me a notes app&quot; in
                   the chat.
                 </p>
