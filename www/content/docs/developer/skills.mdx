@@ -1,0 +1,135 @@
+---
+title: Skills System
+description: Skill validation, caching, composable skills, domain-specific app skills, and build pipeline optimization.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The skills system enables demand-loaded capabilities for the AI kernel. Skills are markdown files in `~/matrixos/agents/skills/` with YAML frontmatter and a body that gets loaded into context when needed.
+
+## Skill Format
+
+```md title="~/matrixos/agents/skills/build-react-app.md"
+---
+name: build-react-app
+description: React module scaffold recipe for Matrix OS
+category: app-building
+triggers:
+  - react app
+  - react module
+  - build react
+examples:
+  - "Build me a dashboard in React"
+  - "Create a React todo app"
+composable_with:
+  - app-builder
+tools_needed:
+  - Write
+  - Edit
+  - Bash
+---
+
+When building a React app for Matrix OS, follow this process:
+...
+```
+
+## Frontmatter Schema
+
+Skills are validated at boot time with a Zod schema in `packages/kernel/src/skills.ts`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique skill identifier |
+| `description` | string | Yes | Short description (shown in skills TOC) |
+| `category` | string | No | Grouping: `app-building`, `automation`, `data`, `communication`, `custom` |
+| `triggers` | string[] | No | Keywords that activate the skill |
+| `examples` | string[] | No | Example user messages that should trigger this skill |
+| `composable_with` | string[] | No | Skills to auto-load alongside this one |
+| `tools_needed` | string[] | No | Tools the agent needs when using this skill |
+| `channel_hints` | string[] | No | Channels this skill is relevant for |
+
+### Validation Behavior
+
+- Missing `name` or `description`: error logged, skill skipped
+- Unknown fields: ignored (forward-compatible)
+- Malformed YAML: skill file skipped with a warning
+- All validation happens in `loadSkills()` at kernel boot
+
+## Skill Loading Flow
+
+1. **Boot**: `loadSkills()` reads all `~/agents/skills/*.md`, validates frontmatter, builds a Map
+2. **TOC injection**: `buildSkillsToc()` creates a concise table of contents injected into the system prompt
+3. **Trigger matching**: when a user message matches a skill's triggers or examples, the kernel decides to load it
+4. **On-demand load**: the `load_skill` IPC tool fetches the full skill body into the agent's context
+5. **Composable loading**: if the loaded skill has `composable_with`, companion skills are auto-loaded too
+
+<Callout type="info" title="Circular loading prevention">
+  The skill loader tracks which skills have already been loaded in the current session. Circular `composable_with` references are detected and skipped.
+</Callout>
+
+## Skill Caching
+
+To avoid redundant disk reads:
+
+- **Memory cache**: an in-memory `Map<string, string>` stores skill bodies after first read
+- **Hot skills**: frequently used skills (`app-builder`, `web-search`, `code-review`) are pre-cached at boot
+- **Cache invalidation**: the file watcher clears a cache entry when a skill file changes on disk
+
+Knowledge files (e.g., `app-generation.md`) are also cached at kernel boot via `getKnowledge(name)`.
+
+## Domain-Specific App Skills
+
+Matrix OS ships with skills for common app patterns:
+
+| Skill | Covers |
+|-------|--------|
+| `build-react-app` | Component architecture, state management, bridge API, theme CSS variables |
+| `build-html-app` | Single-file apps, CDN imports (esm.sh), inline theming |
+| `build-dashboard` | Chart.js/recharts, responsive grids, real-time data refresh |
+| `build-crud-app` | Bridge API CRUD patterns, list/detail views, form validation |
+| `build-game` | Canvas 2D, requestAnimationFrame, game state, p5.js, score persistence |
+| `build-for-matrix` | Master skill: `matrix.json`, app lifecycle, bridge API, theming, permissions |
+| `build-nextjs-app` | Next.js 16 App Router, server components, proxy setup |
+| `build-vite-app` | Vite + React, HMR configuration, port setup |
+| `build-python-app` | FastAPI/Flask scaffold, virtualenv, bridge API access from Python |
+| `design-matrix-app` | UX/UI guidelines, window sizes, dark/light mode, accessibility |
+
+Each domain skill is composable with `app-builder` so core build patterns are always available.
+
+## Build Pipeline
+
+The build pipeline optimizes app generation speed:
+
+### HTML Fast Path
+
+Simple apps (single screen, no server component) are detected and built as HTML-only. No `pnpm install`, no build step. Target: under 3 seconds.
+
+### Offline-First Builds
+
+- pnpm store path configured in `~/system/.pnpm-store`
+- `pnpm install --prefer-offline` skips registry checks when packages are cached
+- Common dependencies (react, react-dom, vite, typescript) pre-populated in the store
+
+### Template Projects
+
+Pre-built scaffolds in `~/templates/react-app/` are copied and modified (only `App.tsx` + `App.css` change). Skips `pnpm install` when `node_modules` already exist.
+
+### Build Error Recovery
+
+On build failure:
+
+1. Parse the error
+2. Attempt a single fix
+3. Rebuild (max 2 retries)
+4. If still failing: fall back to an HTML app and inform the user
+
+## Publishing and Installing Skills
+
+Skills are shareable through the [App Store](/docs/guide/app-store):
+
+| IPC Tool | Description |
+|----------|-------------|
+| `publish_skill` | Validates and pushes a local skill to the platform registry |
+| `install_skill` | Downloads a skill from the registry to `~/agents/skills/` |
+
+See the [App Store docs](/docs/guide/app-store) for store UI and browsing.

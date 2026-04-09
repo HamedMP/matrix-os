@@ -1,0 +1,134 @@
+---
+title: Agent System
+description: The five core agents, SOUL identity, custom agents, and the skills system.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The kernel doesn't handle everything itself. It delegates to five specialized sub-agents, each with its own prompt, tools, and personality. The kernel selects which agent to spawn based on the user's request.
+
+## Core Agents
+
+The five core agents are defined in `packages/kernel/src/agents.ts` and their prompts live in `home/agents/custom/` as markdown files.
+
+<Cards>
+  <Card title="Builder">
+    Generates software from natural language. Creates HTML apps in `~/apps/` or React modules in `~/modules/`. Has access to file tools and task management IPC tools.
+  </Card>
+  <Card title="Researcher">
+    Investigates problems, reads docs, gathers context from the web or local files. Uses web fetch and search tools to find information.
+  </Card>
+  <Card title="Deployer">
+    Ships code to production. Manages module deployment including starting, stopping, and validating services. Handles infrastructure provisioning.
+  </Card>
+  <Card title="Healer">
+    Detects and repairs broken modules autonomously. Often spawned by the heartbeat system without user intervention. Restores files from git snapshots.
+  </Card>
+  <Card title="Evolver">
+    Grows the OS's capabilities. Writes new agent prompts, skills, and knowledge files. Modifies the system's own interface and behavior.
+  </Card>
+</Cards>
+
+## How Agent Selection Works
+
+```
+User message
+  |
+  +---> Kernel (main agent)
+          |
+          +---> Reads agent descriptions from AgentDefinition records
+          +---> Selects the best agent based on request
+          +---> Spawns sub-agent via Agent SDK Task tool
+          +---> Sub-agent executes with its own tools and prompt
+          +---> Result flows back to kernel -> user
+```
+
+The `kernelOptions()` function in `packages/kernel/src/options.ts` assembles the agent set by calling `getCoreAgents()` for built-in agents and `loadCustomAgents()` for user-defined agents from `~/agents/custom/`.
+
+## AgentDefinition
+
+Each agent is represented by an `AgentDefinition` object with:
+
+- **`description`** -- used by the kernel to decide when to spawn this agent
+- **`prompt`** -- the agent's system prompt (from the markdown file body)
+- **`tools`** -- explicit allow-list of tools the agent can use
+- **`disallowedTools`** -- tools to deny (alternative to `tools`)
+- **`model`** -- which Claude model to use (defaults to Opus)
+- **`maxTurns`** -- maximum conversation turns before stopping
+
+## Custom Agents
+
+Create your own agent by adding a markdown file to `~/matrixos/agents/custom/`:
+
+```md title="~/matrixos/agents/custom/analyst.md"
+---
+name: analyst
+description: Analyzes data files and produces reports with visualizations
+model: claude-sonnet-4-6
+maxTurns: 10
+---
+
+You are a data analyst agent. When given data files, you:
+1. Read and understand the data structure
+2. Identify patterns and anomalies
+3. Create visualizations as HTML files
+4. Write a summary report
+
+Always save outputs to ~/data/reports/.
+```
+
+Custom agents override core agents if they share the same name. The `parseFrontmatter()` function extracts YAML metadata and the prompt body.
+
+## SOUL Identity
+
+The SOUL system defines your AI's personality. Three files in `~/matrixos/system/` shape every interaction:
+
+| File | Purpose |
+|------|---------|
+| `soul.md` | Core personality, values, and behavior rules. Injected into every kernel prompt at the L0 cache level. |
+| `identity.md` | Public identity: name, avatar, nature. Defines how the AI presents itself. |
+| `user.md` | Your profile and context. Helps the AI understand who it's talking to. |
+
+These are loaded by `buildSystemPrompt()` in `packages/kernel/src/prompt.ts` and injected into the system prompt for every kernel invocation.
+
+<Callout type="info" title="Edit your AI's personality">
+  Change `~/matrixos/system/soul.md` to alter your AI's tone, style, and values. Changes take effect on the next message.
+</Callout>
+
+## Skills System
+
+Skills are markdown files in `~/matrixos/agents/skills/` that extend what the kernel can do. They use a demand-loading pattern to keep the context window lean.
+
+### How Skills Work
+
+1. **TOC in prompt** -- `buildSkillsToc()` generates a table of contents listing all skills. This is injected into the system prompt so the kernel knows what's available.
+2. **Trigger matching** -- each skill has `triggers` in its frontmatter (keywords or patterns).
+3. **On-demand loading** -- when a request matches, the kernel calls the `load_skill` IPC tool to fetch the full skill body into context.
+
+### Skill File Format
+
+```md title="~/matrixos/agents/skills/summarize.md"
+---
+name: summarize
+description: Condense long text into key points
+triggers:
+  - summarize
+  - tldr
+  - key points
+---
+
+When asked to summarize, follow this process:
+1. Read the full content
+2. Identify the 3-5 most important points
+3. Write a concise summary with bullet points
+4. Include any action items or decisions
+```
+
+### Built-in Skills
+
+Matrix OS ships with seven skills: Summarize, Weather, Reminder, Budget Helper, Study Timer, Setup Wizard, and Skill Creator. The Skill Creator can generate new skills from natural language descriptions.
+
+## Onboarding
+
+The onboarding system uses a persona engine with 7 roles (developer, student, creative, etc.) to customize the initial setup. The `get_persona_suggestions` and `write_setup_plan` IPC tools drive this process, provisioning skills and configuring the system based on the user's needs.

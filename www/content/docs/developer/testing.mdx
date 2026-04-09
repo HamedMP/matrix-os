@@ -1,0 +1,86 @@
+---
+title: Testing
+description: Test-driven development, running tests, coverage targets, and test structure.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## TDD is Non-Negotiable
+
+Matrix OS follows strict Test-Driven Development. Every feature starts with a failing test:
+
+1. **Red** -- write a failing test that describes the desired behavior
+2. **Green** -- write the minimum code to make it pass
+3. **Refactor** -- clean up while keeping tests green
+
+<Callout type="warn" title="No implementation without a failing test">
+  If a test can't be written for a feature, its necessity is questioned. This is a core development principle.
+</Callout>
+
+## Coverage Target
+
+**99-100%** across kernel and gateway packages. Current state: **993+ tests** across 85+ test files.
+
+## Running Tests
+
+```bash
+bun run test              # Unit tests (~993 tests, ~11s)
+bun run test:watch        # Watch mode for development
+bun run test:coverage     # Generate coverage report
+bun run test:integration  # Integration tests (needs ANTHROPIC_API_KEY)
+```
+
+## Test Structure
+
+Tests live in `tests/` at the project root, organized by package:
+
+```
+tests/
+  kernel/             # Kernel unit tests
+    spawn.test.ts     # spawnKernel() tests
+    options.test.ts   # kernelOptions() tests
+    prompt.test.ts    # buildSystemPrompt() tests
+    ipc-server.test.ts # IPC tool tests
+    agents.test.ts    # Agent loading and parsing tests
+    hooks.test.ts     # Hook behavior tests
+    soul.test.ts      # SOUL identity tests
+  gateway/            # Gateway unit tests
+    dispatcher.test.ts # Dispatch queue tests
+    watcher.test.ts   # File watcher tests
+    channels/         # Channel adapter tests
+    cron.test.ts      # Cron service tests
+    heartbeat.test.ts # Heartbeat tests
+  shell/              # Shell component tests
+  integration/        # Integration tests (real API calls)
+  e2e/                # End-to-end tests (101 tests across 13 files)
+```
+
+## Test Categories
+
+### Unit Tests
+Pure function tests with mocked dependencies. Use `vi.mock()` for external services. One test file per source module.
+
+### Integration Tests
+Make real API calls to Claude. Requirements:
+- `ANTHROPIC_API_KEY` environment variable set
+- Uses Claude Haiku model to keep costs under **$0.10 per run**
+- Run separately: `bun run test:integration`
+
+### Contract Tests
+Verify IPC tool schemas match their implementations. Ensure Zod schemas correctly validate inputs and tools return expected shapes.
+
+### E2E Tests
+Full system tests covering 101 scenarios across 13 files. Test the complete flow from user input through the gateway to kernel response.
+
+## Spike Before Spec
+
+For undocumented SDK behavior, write a throwaway spike test against the real SDK before committing to an approach. Spike files go in `spike/` and are excluded from the main test suite. This prevents building on unverified assumptions.
+
+## Writing Tests
+
+Conventions:
+- Descriptive `describe` blocks matching module structure
+- Test names describe the expected behavior, not the implementation
+- Use `vi.mock()` for external dependencies (API calls, file system)
+- Keep tests focused -- one assertion per `it` block when practical
+- Integration tests are clearly separated and use Claude Haiku

@@ -1,0 +1,125 @@
+---
+title: File System
+description: The home directory, config, themes, git snapshots, and the "Everything Is a File" philosophy.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Everything Is a File
+
+The core philosophy of Matrix OS is that all state lives on the file system. Applications, configuration, agent definitions, SOUL identity, themes, and user data are all stored as files. This means you can:
+
+- **Inspect** anything by reading a file
+- **Back up** your entire OS by copying `~/matrixos/`
+- **Share** an app by sending an HTML file
+- **Version** everything with git (automatic snapshots on every change)
+- **Sync** across devices with peer-to-peer git
+
+## Home Directory Structure
+
+All persistent state resides under `~/matrixos/` (configurable via `MATRIX_HOME`):
+
+```
+~/matrixos/
+  +-- apps/              # Generated HTML applications
+  |     +-- expense-tracker.html
+  |     +-- notes.html
+  |
+  +-- agents/
+  |     +-- custom/      # Agent prompt files (builder.md, researcher.md, ...)
+  |     +-- skills/      # Skill markdown files (summarize.md, weather.md, ...)
+  |     +-- knowledge/   # Knowledge files loaded into agent context
+  |
+  +-- system/
+  |     +-- soul.md      # AI personality and values
+  |     +-- identity.md  # AI public identity (name, avatar)
+  |     +-- user.md      # Human user profile
+  |     +-- config.json  # Channel tokens, heartbeat, approval policies
+  |     +-- cron.json    # Scheduled tasks (interval, once, cron expressions)
+  |     +-- theme.json   # Active theme (colors, background, dock config)
+  |     +-- handle.json  # Federated handle registry
+  |     +-- conversations/ # Multi-session conversation history (JSON files)
+  |
+  +-- data/              # App-specific data (scoped per app name)
+  |     +-- expenses/items.json
+  |     +-- notes/store.json
+  |
+  +-- modules/           # Deployed module services (React apps on ports 3100-3999)
+  +-- logs/              # Activity and interaction logs (JSONL daily rotation)
+  +-- .backup/           # Git-managed snapshots
+```
+
+## First-Boot Template
+
+On first boot, the gateway copies the `home/` directory from the repository to `~/matrixos/` and initializes a git repository. This template includes default agents, starter skills, SOUL identity, and configuration.
+
+## Config File
+
+`~/matrixos/system/config.json` is the central configuration:
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "token": "bot-token-here",
+      "allowFrom": [123456789]
+    },
+    "discord": {
+      "token": "discord-bot-token"
+    }
+  },
+  "heartbeat": {
+    "enabled": true,
+    "intervalMinutes": 30,
+    "activeHours": { "start": 8, "end": 22 }
+  }
+}
+```
+
+New configuration sections are added additively -- existing sections are never modified by the system.
+
+## Theme System
+
+The active theme is defined in `~/matrixos/system/theme.json`. The shell's `useTheme` hook reads this file via the file watcher and applies CSS custom properties. Theme changes propagate instantly.
+
+Matrix OS ships with 6 theme presets and supports custom backgrounds (patterns, solid colors, gradients, wallpapers), dock configuration (position, size, auto-hide), and full color customization.
+
+## Git Snapshots
+
+Every file change triggers a git commit via the `gitSnapshotHook`. This provides:
+
+- **Version history** -- roll back any file to any previous state
+- **Self-healing** -- the Healer agent restores broken files from git history
+- **Sync** -- the `sync_files` IPC tool can commit, push, and pull for cross-device sync
+- **Audit trail** -- every change is tracked with timestamps
+
+<Callout type="info" title="Automatic versioning">
+  You never need to manually save or commit. The `gitSnapshotHook` fires after every `Write` and `Edit` operation, creating atomic git commits automatically.
+</Callout>
+
+## File Serving
+
+The gateway serves files from `~/matrixos/` through several endpoints:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/files/*` | Static file serving from the home directory (path-sandboxed) |
+| `/modules/*` | Reverse proxy to deployed module web servers (ports 3100-3999) |
+| `/api/theme` | Current theme JSON |
+| `/api/bridge/data` | Scoped read/write for app data (`~/data/{appName}/`) |
+
+## File Watcher
+
+A `chokidar`-based file watcher in `packages/gateway/src/watcher.ts` monitors `~/matrixos/` for changes. When files change, it broadcasts `file:change` events over WebSocket. The shell's `useFileWatcher` hook consumes these events to render updates in real time -- new apps appear as windows, theme changes apply instantly, and the dock updates automatically.
+
+## SQLite Database
+
+While most state is file-based, a SQLite database (`matrixos.db`) managed by Drizzle ORM handles structured data:
+
+| Table | Purpose |
+|-------|---------|
+| `tasks` | Workflow queue and kernel process registry. Replaces `processes.json` for tracking active processes. |
+| `messages` | Inter-agent IPC messaging |
+| `memories` | RAG storage with FTS5 full-text search |
+
+The database runs in WAL mode for concurrent read access. Schema is defined in `packages/kernel/src/schema.ts`.

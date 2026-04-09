@@ -1,0 +1,230 @@
+---
+title: Storage
+description: S3-backed file system, git versioning, SQLite and PostgreSQL databases, and storage tracking.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Matrix OS provides durable, portable storage. Your files are backed up to S3 (like a personal iCloud), versioned with git, and apps can use SQLite or PostgreSQL databases with zero configuration.
+
+## S3 Backup
+
+The VPS has local disk for fast reads and writes, but S3 is the durable backing store. If your container dies, everything is recoverable.
+
+### How Sync Works
+
+```
+~/matrixos/ (local disk)
+  |
+  +-- sync daemon ---> S3 bucket (s3://matrix-users/{handle}/)
+                         |
+                         +-- versioned objects (S3 versioning)
+                         +-- daily snapshots
+```
+
+- **Write-through**: file writes go to local disk immediately, then async-upload to S3
+- **Periodic reconciliation**: every 5 minutes, local and S3 are compared to catch missed writes
+- **Boot recovery**: if local disk is empty (new container), the full home directory is pulled from S3
+- **Debouncing**: rapid changes are batched (2-second debounce before upload)
+
+### .syncignore
+
+Control what gets synced with `~/.syncignore` (same syntax as `.gitignore`):
+
+```
+node_modules/
+.cache/
+tmp/
+*.log
+```
+
+Default exclusions: `node_modules/`, `.cache/`, `tmp/`, running process state.
+
+### Recovery Flow
+
+1. Container dies or user migrates to a new VPS
+2. New container boots, detects empty home directory
+3. Gateway triggers S3 pull (`fullRestore()`)
+4. Full home directory restored
+5. Apps restart, user continues where they left off
+
+### S3 Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `S3_BUCKET` | S3 bucket name |
+| `S3_PREFIX` | Prefix within bucket (default: user handle) |
+| `AWS_ACCESS_KEY_ID` | AWS credentials |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials |
+
+Configure the bucket and prefix in `~/system/config.json`.
+
+## Git Versioning
+
+All text files in `~/matrixos/` are git-tracked. Beyond the existing `gitSnapshotHook` (which commits after every file write), enhanced versioning features include:
+
+### Auto-Commit
+
+Every 10 minutes, uncommitted changes are committed with a summary (count of files changed, top 3 filenames). This catches changes made outside the kernel (e.g., manual edits, app writes).
+
+### Named Snapshots
+
+Create a tagged checkpoint:
+
+> Save a snapshot called "before-redesign"
+
+The `create_snapshot` IPC tool creates a git tag:
+
+```
+create_snapshot({ name: "before-redesign" })
+```
+
+### File History
+
+Browse the commit history for any file:
+
+```
+GET /api/files/history/apps/chess/index.html?limit=20&offset=0
+-> [{ commit: "abc123", message: "Auto-save: updated chess", date: "2026-03-01", author: "matrixos" }]
+```
+
+### File Restore
+
+Restore any file to a previous version:
+
+```
+POST /api/files/restore/apps/chess/index.html
+{ "commit": "abc123" }
+```
+
+This checks out the file from git history, creates a new commit ("Restored \{path\} from \{commit\}"), and triggers an S3 sync.
+
+### S3 Versioning
+
+S3 bucket versioning is enabled, so every file has version history in S3 independently of git:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/files/s3-versions/:path` | GET | List S3 versions for a file |
+| `/api/files/s3-restore/:path?versionId=...` | POST | Restore a specific S3 version |
+
+### Git History API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/files/history/:path` | GET | Commit log for a file (paginated) |
+| `/api/files/diff/:path?commit=...` | GET | Diff for a file at a commit |
+| `/api/files/restore/:path` | POST | Restore a file from a commit |
+| `/api/files/snapshot` | POST | Create a named snapshot |
+| `/api/files/snapshots` | GET | List all snapshots |
+
+## SQLite for Apps
+
+Every app gets a SQLite database at `~/data/{appName}/db.sqlite` with zero setup. Apps access it through the Bridge SQL API.
+
+### Bridge SQL API
+
+```
+POST /api/bridge/sql
+{
+  "appName": "budget-tracker",
+  "sql": "SELECT * FROM expenses WHERE month = ?",
+  "params": ["2026-03"]
+}
+-> { "rows": [...], "changes": 0, "lastInsertRowid": null }
+```
+
+All queries are parameterized to prevent SQL injection. The database file is auto-created on the first query.
+
+### Security
+
+- **App scoping**: apps can only access their own database (validated by request origin)
+- **SQL safety**: `ATTACH DATABASE` and dangerous PRAGMAs are rejected
+- **Size limits**: 1MB max query result, 100MB max database size per app (configurable)
+
+### Client Library
+
+A copy-paste client snippet is available at `~/templates/sqlite-client.js`:
+
+```js
+const db = {
+  async query(sql, params = []) {
+    const res = await fetch('/api/bridge/sql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appName: 'my-app', sql, params })
+    });
+    return res.json();
+  }
+};
+
+// Usage
+const { rows } = await db.query('SELECT * FROM items WHERE status = ?', ['active']);
+```
+
+### Backup
+
+- **Hourly**: `.dump` (text SQL) for git-friendly snapshots
+- **Daily**: full `.sqlite` file copy to S3
+- Backup status tracked in `~/system/logs/backup.jsonl`
+
+## PostgreSQL Addon
+
+For advanced apps that need a full relational database with concurrent access:
+
+### Activation
+
+Activate PostgreSQL via the API or chat:
+
+> Activate PostgreSQL
+
+```
+POST /api/postgres/activate
+-> { "status": "running", "version": "16" }
+```
+
+A single PostgreSQL 16 instance starts in the user's container. Data is stored at `~/system/postgres/data/`.
+
+### Per-App Databases
+
+Each app that requests `"database": "postgres"` in its `matrix.json` gets its own database and role:
+
+- Database: `{appName}_db`
+- Role: `app_{appName}` (limited to its own database)
+- Connection string injected as `DATABASE_URL` environment variable
+
+Apps access Postgres directly (not through the bridge API) since they are server-side processes.
+
+### PostgreSQL API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/postgres/activate` | POST | Start PostgreSQL |
+| `/api/postgres/deactivate` | POST | Stop PostgreSQL (data preserved) |
+| `/api/postgres/status` | GET | Status, databases, storage used |
+
+### PostgreSQL Backup
+
+- **Daily**: `pg_dump` per database to S3
+- **Hourly**: WAL archiving for point-in-time recovery
+- Restore via `pg_restore` from S3
+
+<Callout type="info" title="Resource limits">
+  Default PostgreSQL limits: 1GB storage, 100 connections. Configurable via platform config.
+</Callout>
+
+## Storage Usage Tracking
+
+Monitor your storage consumption:
+
+```
+GET /api/storage/usage
+-> {
+  "disk": { "bytes": 2400000000, "human": "2.3 GB" },
+  "s3": { "bytes": 2400000000, "human": "2.3 GB" },
+  "sqlite": { "bytes": 5000000, "human": "5 MB" },
+  "postgres": { "bytes": 150000000, "human": "150 MB" }
+}
+```
+
+Storage measurements are recorded daily in `~/system/logs/storage.jsonl`.

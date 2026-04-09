@@ -1,0 +1,133 @@
+---
+title: IPC Tools & Hooks
+description: The 26 IPC tools, hook lifecycle, and permission model.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## IPC Tool System
+
+The kernel interacts with the system through IPC tools exposed as an in-process MCP server. The `createIpcServer()` function in `packages/kernel/src/ipc-server.ts` creates a server named `matrix-os-ipc` using `createSdkMcpServer()`.
+
+Each tool is defined with:
+- **Name** -- the tool identifier (e.g., `list_tasks`)
+- **Description** -- what the tool does (helps the agent decide when to use it)
+- **Zod schema** -- input validation
+- **Handler** -- async function that executes the tool's logic
+
+## Available IPC Tools
+
+### Task Management
+
+| Tool | Description |
+|------|-------------|
+| `list_tasks` | List tasks with optional status/assignee filtering |
+| `create_task` | Create a new task for an agent |
+| `claim_task` | Claim an unassigned pending task |
+| `complete_task` | Mark a task as completed with output |
+| `fail_task` | Mark a task as failed with error details |
+
+### Messaging
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Send a message (inter-agent or to user) |
+| `read_messages` | Read messages from the message queue |
+| `read_state` | Read the current system state |
+
+### Skills & Knowledge
+
+| Tool | Description |
+|------|-------------|
+| `load_skill` | Load a skill's full body into context on demand |
+
+### Identity & Sync
+
+| Tool | Description |
+|------|-------------|
+| `set_handle` | Set the user's federated handle |
+| `sync_files` | Git commit, push, and pull for cross-device sync |
+
+### Scheduling
+
+| Tool | Description |
+|------|-------------|
+| `manage_cron` | Create, update, delete, and list cron jobs |
+
+### Onboarding
+
+| Tool | Description |
+|------|-------------|
+| `get_persona_suggestions` | Get persona-based setup suggestions |
+| `write_setup_plan` | Write a personalized setup plan |
+
+### File Tools (SDK Built-in)
+
+In addition to IPC tools, agents have access to standard file tools via the Agent SDK:
+
+| Tool | Description |
+|------|-------------|
+| `Read` | Read file contents |
+| `Write` | Write/create files |
+| `Edit` | Edit existing files |
+| `Glob` | Search for files by pattern |
+| `Grep` | Search file contents |
+| `Bash` | Execute shell commands |
+
+These are tracked by the `FILE_TOOLS` constant and controlled per-agent via `allowedTools` and `disallowedTools`.
+
+## Hook System
+
+Hooks intercept agent actions at specific lifecycle points. They're configured in `kernelOptions()` and defined in `packages/kernel/src/hooks.ts`.
+
+### PreToolUse Hooks
+
+Run **before** a tool executes. Can block or modify the tool call.
+
+| Hook | Applied To | Purpose |
+|------|-----------|---------|
+| `safetyGuardHook` | Bash, Write, Edit | Prevents dangerous commands (rm -rf, etc.) |
+| `protectedFilesHook` | Write, Edit | Blocks modifications to critical system files |
+
+### PostToolUse Hooks
+
+Run **after** a tool executes. Can observe or react to the result.
+
+| Hook | Applied To | Purpose |
+|------|-----------|---------|
+| `gitSnapshotHook` | Write, Edit | Creates a git commit after file changes |
+| `updateStateHook` | Write, Edit | Updates system state after file operations |
+| `notifyShellHook` | Write, Edit | Sends file:change event to connected shells |
+| `logActivityHook` | Bash | Logs shell command execution |
+
+### Lifecycle Hooks
+
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `persistSessionHook` | Stop | Saves the conversation session on kernel exit |
+| `onSubagentComplete` | SubagentStop | Logs completion of sub-agent tasks |
+| `preCompactHook` | PreCompact | Runs before context window compaction |
+
+## Permission Model
+
+The kernel uses two mechanisms to control tool access:
+
+### allowedTools
+
+A baseline allow-list set in `kernelOptions()` for the main kernel agent. Includes file tools, task management, web tools, and all IPC tools.
+
+<Callout type="warn" title="allowedTools is auto-approve, not filter">
+  In the Agent SDK, `allowedTools` controls which tools are auto-approved (skip user confirmation). It does NOT filter which tools are available. Use `tools` or `disallowedTools` to restrict access.
+</Callout>
+
+### Per-Agent Restrictions
+
+Each `AgentDefinition` can specify:
+- **`tools`** -- explicit allow-list (only these tools are available)
+- **`disallowedTools`** -- deny-list (these tools are blocked, all others allowed)
+
+For example, the Builder agent has access to `FILE_TOOLS` plus `claim_task`, `complete_task`, `fail_task`, and `send_message` from IPC tools -- but not `manage_cron` or `set_handle`.
+
+### Permission Bypass
+
+The kernel runs with `permissionMode: "bypassPermissions"` which propagates to all sub-agents. This means tool access control relies entirely on `allowedTools`/`disallowedTools` lists and `PreToolUse` hooks, not on a separate permission prompt.
