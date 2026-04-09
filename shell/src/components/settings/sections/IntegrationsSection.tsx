@@ -189,7 +189,13 @@ export function IntegrationsSection() {
         const body = await res.json().catch(() => ({}));
         setError(body.error ?? "Failed to refresh");
       }
-    } catch {
+    } catch (err) {
+      if (shouldLogIntegrationWarning(err)) {
+        console.warn(
+          "[integrations] handleRefresh failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
       setError("Failed to refresh");
     } finally {
       setRefreshing(false);
@@ -300,7 +306,13 @@ export function IntegrationsSection() {
         }
         pollTimeoutRef.current = null;
       }, 120_000);
-    } catch {
+    } catch (err) {
+      if (shouldLogIntegrationWarning(err)) {
+        console.warn(
+          "[integrations] handleConnect failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
       setError("Failed to initiate connection");
       setConnecting(null);
     }
@@ -333,7 +345,13 @@ export function IntegrationsSection() {
       } else {
         setError("Failed to disconnect service");
       }
-    } catch {
+    } catch (err) {
+      if (shouldLogIntegrationWarning(err)) {
+        console.warn(
+          "[integrations] handleDisconnect failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
       setError("Failed to disconnect service");
     } finally {
       setDisconnecting(null);
@@ -368,7 +386,13 @@ export function IntegrationsSection() {
         const body = await res.json().catch(() => ({}));
         setError(body.error ?? "Failed to rename account");
       }
-    } catch {
+    } catch (err) {
+      if (shouldLogIntegrationWarning(err)) {
+        console.warn(
+          "[integrations] handleRename failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
       setError("Failed to rename account");
     } finally {
       setSavingRename(null);
@@ -390,7 +414,13 @@ export function IntegrationsSection() {
       } else {
         setError("Failed to check connection status");
       }
-    } catch {
+    } catch (err) {
+      if (shouldLogIntegrationWarning(err)) {
+        console.warn(
+          "[integrations] handleCheckStatus failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
       setError("Failed to check connection status");
     } finally {
       setCheckingStatus(null);

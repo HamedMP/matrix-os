@@ -366,6 +366,51 @@ describe("Integration Routes", () => {
       ]);
     });
 
+    it("updates an existing connection label when the same account is reconnected with a new explicit label", async () => {
+      const initialPayload = JSON.stringify({
+        external_user_id: "pd_ext_route",
+        account_id: "pd_acc_reconnect",
+        app: "gmail",
+        label: "Work Gmail",
+        email: "work@example.com",
+      });
+      const initialRes = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": signPayload(initialPayload, WEBHOOK_SECRET),
+        },
+        body: initialPayload,
+      });
+      expect(initialRes.status).toBe(200);
+
+      await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", label: "Personal Gmail" }),
+      });
+
+      const reconnectPayload = JSON.stringify({
+        external_user_id: "pd_ext_route",
+        account_id: "pd_acc_reconnect",
+        app: "gmail",
+        email: "work@example.com",
+      });
+      const reconnectRes = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": signPayload(reconnectPayload, WEBHOOK_SECRET),
+        },
+        body: reconnectPayload,
+      });
+      expect(reconnectRes.status).toBe(200);
+
+      const services = await db.listConnectedServices(userId);
+      expect(services).toHaveLength(1);
+      expect(services[0].account_label).toBe("Personal Gmail");
+    });
+
     it("does not store Slack usernames in account_email", async () => {
       pipedream.proxyGet = vi.fn().mockImplementation(async (opts: { url: string }) => {
         if (opts.url === "https://slack.com/api/auth.test") {

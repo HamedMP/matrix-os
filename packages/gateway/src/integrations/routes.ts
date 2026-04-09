@@ -471,6 +471,14 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     return svc;
   }
 
+  async function applyExplicitReconnectLabel(
+    row: { id: string; inserted: boolean },
+    explicitLabel: string | undefined,
+  ): Promise<void> {
+    if (!explicitLabel || row.inserted) return;
+    await db.updateAccountLabel(row.id, explicitLabel);
+  }
+
   // -----------------------------------------------------------------------
   // GET /available -- public, no auth. Enriches registry with Pipedream logos.
   // -----------------------------------------------------------------------
@@ -576,7 +584,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const upserted = await Promise.all(
         newAccounts.map(async (acc, i) => {
           const pendingKey = `${externalId}:${acc.app}`;
-          const label = consumePendingLabel(pendingKey) ?? acc.app;
+          const explicitLabel = consumePendingLabel(pendingKey);
+          const label = explicitLabel ?? acc.app;
           const row = await db.connectService({
             userId: uid,
             service: acc.app,
@@ -585,6 +594,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
             accountEmail: resolvedEmails[i],
             scopes: [],
           });
+          await applyExplicitReconnectLabel(row, explicitLabel);
           return { row, label };
         }),
       );
@@ -697,7 +707,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     // Recover the user-entered label from /connect (Pipedream doesn't relay it)
     const pendingKey = `${external_user_id}:${appName}`;
-    const resolvedLabel = consumePendingLabel(pendingKey) ?? (label ?? appName);
+    const explicitLabel = consumePendingLabel(pendingKey);
+    const resolvedLabel = explicitLabel ?? (label ?? appName);
 
     let resolvedEmail = email;
     if (!resolvedEmail) {
@@ -713,6 +724,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         accountEmail: resolvedEmail,
         scopes: scopes ?? [],
       });
+      await applyExplicitReconnectLabel(row, explicitLabel);
       // Only emit when this webhook actually inserted a new row. Pipedream
       // retries webhooks on non-2xx responses and network timeouts (standard
       // exponential backoff), so a retry lands on the same
@@ -809,7 +821,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
           await Promise.all(
             newAccounts.map(async (acc) => {
               const pendingKey = `${extId}:${acc.app}`;
-              const lbl = consumePendingLabel(pendingKey) ?? acc.app;
+              const explicitLabel = consumePendingLabel(pendingKey);
+              const lbl = explicitLabel ?? acc.app;
               const resolvedEmail = acc.email
                 ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
               const row = await db.connectService({
@@ -820,6 +833,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
                 accountEmail: resolvedEmail,
                 scopes: [],
               });
+              await applyExplicitReconnectLabel(row, explicitLabel);
               if (row.inserted) {
                 emit({ type: "integration:connected", service: row.service, accountLabel: lbl });
               }
