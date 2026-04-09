@@ -3,7 +3,7 @@ import { create } from "zustand";
 export interface Command {
   id: string;
   label: string;
-  group: "Apps" | "Actions";
+  group: "Apps" | "Actions" | "File" | "Edit" | "View";
   icon?: string;
   shortcut?: string;
   keywords?: string[];

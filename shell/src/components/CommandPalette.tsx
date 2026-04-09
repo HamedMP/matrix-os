@@ -21,6 +21,8 @@ function formatShortcut(shortcut: string): string {
     .replace(/Alt/gi, isMac ? "\u2325" : "Alt");
 }
 
+const GROUP_ORDER = ["Apps", "Actions", "File", "Edit", "View"] as const;
+
 export function CommandPalette({
   open,
   onOpenChange,
@@ -30,17 +32,21 @@ export function CommandPalette({
 }) {
   const commands = useCommandStore((s) => s.commands);
 
-  const { apps, actions } = useMemo(() => {
-    const apps: Command[] = [];
-    const actions: Command[] = [];
-    const grouped = { apps, actions };
+  const groups = useMemo(() => {
+    const grouped = new Map<string, Command[]>();
     for (const cmd of commands.values()) {
-      if (cmd.group === "Apps") apps.push(cmd);
-      else actions.push(cmd);
+      const list = grouped.get(cmd.group) ?? [];
+      list.push(cmd);
+      grouped.set(cmd.group, list);
     }
-    apps.sort((a, b) => a.label.localeCompare(b.label));
-    actions.sort((a, b) => a.label.localeCompare(b.label));
-    return grouped;
+    // Sort each group alphabetically
+    for (const list of grouped.values()) {
+      list.sort((a, b) => a.label.localeCompare(b.label));
+    }
+    // Return in defined order
+    return GROUP_ORDER
+      .filter((g) => grouped.has(g))
+      .map((g) => ({ name: g, commands: grouped.get(g)! }));
   }, [commands]);
 
   return (
@@ -50,12 +56,12 @@ export function CommandPalette({
       showCloseButton={false}
       className="top-[20%] translate-y-0 z-[60] max-w-[520px]"
     >
-      <CommandInput placeholder="Search commands..." />
+      <CommandInput placeholder="Search commands, apps..." />
       <CommandList>
-        <CommandEmpty>No commands found.</CommandEmpty>
-        {apps.length > 0 && (
-          <CommandGroup heading="Apps">
-            {apps.map((cmd) => (
+        <CommandEmpty>No results found.</CommandEmpty>
+        {groups.map((group) => (
+          <CommandGroup key={group.name} heading={group.name}>
+            {group.commands.map((cmd) => (
               <CommandItem
                 key={cmd.id}
                 value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
@@ -66,11 +72,11 @@ export function CommandPalette({
               >
                 {cmd.icon ? (
                   <img src={cmd.icon} alt="" className="size-7 rounded-lg object-cover shrink-0" />
-                ) : (
+                ) : group.name === "Apps" ? (
                   <span className="size-7 rounded-lg bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
                     {cmd.label.charAt(0)}
                   </span>
-                )}
+                ) : null}
                 <span>{cmd.label}</span>
                 {cmd.shortcut && (
                   <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>
@@ -78,26 +84,7 @@ export function CommandPalette({
               </CommandItem>
             ))}
           </CommandGroup>
-        )}
-        {actions.length > 0 && (
-          <CommandGroup heading="Actions">
-            {actions.map((cmd) => (
-              <CommandItem
-                key={cmd.id}
-                value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
-                onSelect={() => {
-                  cmd.execute();
-                  onOpenChange(false);
-                }}
-              >
-                <span>{cmd.label}</span>
-                {cmd.shortcut && (
-                  <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>
-                )}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
+        ))}
       </CommandList>
     </CommandDialog>
   );

@@ -17,7 +17,7 @@ interface DesktopConfigStore {
 }
 
 export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
-  dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+  dock: { position: "left", size: 44, iconSize: 30, autoHide: false },
   pinnedApps: [],
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),

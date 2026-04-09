@@ -24,14 +24,19 @@ const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   pinnedApps: [],
 };
 
-export const MESH_GRADIENT = [
-  "radial-gradient(ellipse at 15% 85%, hsla(25, 55%, 50%, 0.22) 0%, transparent 50%)",
-  "radial-gradient(ellipse at 85% 10%, hsla(252, 70%, 68%, 0.18) 0%, transparent 50%)",
-  "radial-gradient(ellipse at 50% 50%, hsla(280, 25%, 82%, 0.35) 0%, transparent 65%)",
-  "radial-gradient(ellipse at 75% 75%, hsla(195, 45%, 65%, 0.12) 0%, transparent 45%)",
-  "radial-gradient(ellipse at 30% 20%, hsla(340, 40%, 70%, 0.1) 0%, transparent 40%)",
-  "linear-gradient(145deg, #ede6f1 0%, #e4daec 35%, #ddd1e7 55%, #e8dced 75%, #ede6f1 100%)",
-].join(", ");
+// Page background mesh gradient — uses --gradient-* tokens from :root.
+// These are separate from --background (which controls app window tint).
+// Change the gradient by editing the --gradient-* vars in globals.css.
+export function buildMeshGradient(): string {
+  return [
+    "radial-gradient(ellipse at 20% 80%, var(--gradient-deep) 0%, transparent 60%)",
+    "radial-gradient(ellipse at 80% 15%, var(--gradient-light) 0%, transparent 55%)",
+    "radial-gradient(ellipse at 50% 50%, var(--gradient-mid) 0%, transparent 70%)",
+    "radial-gradient(ellipse at 75% 70%, var(--gradient-accent) 0%, transparent 50%)",
+    "radial-gradient(ellipse at 10% 20%, var(--gradient-deep) 0%, transparent 45%)",
+    "var(--gradient-mid)",
+  ].join(", ");
+}
 
 function applyBackground(config: DesktopConfig["background"], gatewayUrl: string) {
   const body = document.body;
@@ -45,7 +50,7 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
 
   switch (config.type) {
     case "pattern":
-      body.style.background = MESH_GRADIENT;
+      body.style.background = buildMeshGradient();
       body.style.backgroundAttachment = "fixed";
       break;
     case "solid":
@@ -86,7 +91,7 @@ export function useDesktopConfig() {
 
   useEffect(() => {
     applyBackground(config.background, gatewayUrl);
-  }, [config, gatewayUrl]);
+  }, [config.background, gatewayUrl]);
 
   useFileWatcher((path, event) => {
     if (path === "system/desktop.json" && event !== "unlink") {
