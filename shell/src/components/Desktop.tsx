@@ -35,7 +35,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, StoreIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -323,14 +323,11 @@ function ModeSwitcher({
 }
 
 interface DesktopProps {
-  storeOpen?: boolean;
-  onToggleStore?: () => void;
-  onCloseStore?: () => void;
   onOpenCommandPalette?: () => void;
   chatContent?: React.ReactNode;
 }
 
-export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandPalette, chatContent }: DesktopProps) {
+export function Desktop({ onOpenCommandPalette, chatContent }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -552,8 +549,6 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
     checkAndGenerateIcon(slug);
   }, [wmSetApps, checkAndGenerateIcon]);
 
-  const onCloseStoreRef = useRef(onCloseStore);
-  onCloseStoreRef.current = onCloseStore;
 
   const openWindow = useCallback((name: string, path: string) => {
     // Terminal windows get unique paths to allow multiple instances
@@ -563,7 +558,6 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
 
     // Open without minimizing other windows — allow multiple apps visible
     wmOpenWindow(name, actualPath, dockXOffset);
-    onCloseStoreRef.current?.();
 
     // In canvas mode, pan to center on the window after it opens/focuses
     if (useDesktopMode.getState().mode === "canvas") {
@@ -1087,28 +1081,10 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
               </button>
             </TooltipTrigger>
             <TooltipContent side={tooltipSide} sideOffset={8}>
-              Tasks
+              Launcher
             </TooltipContent>
           </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleStore}
-                className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                  storeOpen
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card border-border/60"
-                }`}
-                style={{ width: dock.iconSize, height: dock.iconSize }}
-              >
-                <StoreIcon className="size-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side={tooltipSide} sideOffset={8}>
-              App Store
-            </TooltipContent>
-          </Tooltip>
 
           {/* Center section: app icons */}
           <div className={isHorizontal
@@ -1247,16 +1223,6 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
               }`}
             >
               <KanbanSquareIcon className="size-4" />
-            </button>
-            <button
-              onClick={onToggleStore}
-              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
-                storeOpen
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border/60"
-              }`}
-            >
-              <StoreIcon className="size-4" />
             </button>
             <ModeSwitcher iconSize={36} tooltipSide="top" />
             <button

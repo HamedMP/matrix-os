@@ -14,7 +14,6 @@ import { InputBar } from "@/components/InputBar";
 import { ThoughtCard } from "@/components/ThoughtCard";
 import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
-import { AppStore } from "@/components/app-store/AppStore";
 import { VoiceMode } from "@/components/VoiceMode";
 
 export default function Home() {
@@ -24,7 +23,6 @@ export default function Home() {
   const chat = useChatState();
   const [overlayDismissed, setOverlayDismissed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [storeOpen, setStoreOpen] = useState(false);
   const [voiceModeActive, setVoiceModeActive] = useState(false);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
@@ -42,15 +40,8 @@ export default function Home() {
         keywords: ["conversation", "session"],
         execute: () => chat.newChat(),
       },
-      {
-        id: "action:app-store",
-        label: "App Store",
-        group: "Actions",
-        keywords: ["store", "install", "browse", "apps", "marketplace"],
-        execute: () => setStoreOpen((prev) => !prev),
-      },
     ]);
-    return () => unregister(["action:new-chat", "action:app-store"]);
+    return () => unregister(["action:new-chat"]);
   }, [register, unregister, chat.newChat]);
 
   const handleSubmit = useCallback(
@@ -95,9 +86,6 @@ export default function Home() {
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
           <Desktop
-            storeOpen={storeOpen}
-            onToggleStore={() => setStoreOpen((prev) => !prev)}
-            onCloseStore={() => setStoreOpen(false)}
             onOpenCommandPalette={() => setPaletteOpen(true)}
             chatContent={chatWindowContent}
           />
@@ -112,7 +100,6 @@ export default function Home() {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ApprovalDialog />
-      <AppStore open={storeOpen} onOpenChange={setStoreOpen} />
 
       {!overlayDismissed && (
         <ResponseOverlay

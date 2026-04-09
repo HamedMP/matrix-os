@@ -111,7 +111,9 @@ async function fetchDesktopConfig(gatewayUrl: string): Promise<DesktopConfig> {
     const res = await fetch(`${gatewayUrl}/api/settings/desktop`);
     if (res.ok) {
       const data = await res.json();
-      return { ...DEFAULT_DESKTOP_CONFIG, ...data };
+      const merged = { ...DEFAULT_DESKTOP_CONFIG, ...data };
+      merged.dock = { ...merged.dock, autoHide: false };
+      return merged;
     }
   } catch {
     // fall through

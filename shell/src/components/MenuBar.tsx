@@ -18,9 +18,14 @@ function formatMenuBarClock(date: Date): string {
 }
 
 function MenuBarClock() {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    setNow(new Date());
+  }, []);
+
+  useEffect(() => {
+    if (!now) return;
     const ms = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
     const timeout = setTimeout(() => {
       setNow(new Date());
@@ -33,7 +38,7 @@ function MenuBarClock() {
   }, [now]);
 
   return (
-    <span className="tabular-nums whitespace-pre">{formatMenuBarClock(now)}</span>
+    <span className="tabular-nums whitespace-pre">{now ? formatMenuBarClock(now) : "\u00A0"}</span>
   );
 }
 
