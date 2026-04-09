@@ -39,5 +39,6 @@ jobs:
             Be concise. Only flag real issues, not style nitpicks.
             Use the gh CLI to read the PR diff and post inline comments on specific lines.
           claude_args: |
-            --max-turns 100
+            --model claude-opus-4-6
+            --max-turns 50
             --allowedTools "Bash(gh pr:*),Bash(gh api:*),Bash(gh diff:*),Bash(cat:*),Bash(head:*),Bash(wc:*),Read,Glob,Grep"
