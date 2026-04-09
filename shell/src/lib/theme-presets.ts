@@ -176,6 +176,46 @@ export const THEME_PRESETS: Theme[] = [
   },
 ];
 
+export const RETRO_THEME: Theme = {
+  name: "retro",
+  mode: "light",
+  style: "neumorphic",
+  colors: {
+    background: "#D4D4D4",
+    foreground: "#2D2D2D",
+    card: "#D4D4D4",
+    "card-foreground": "#2D2D2D",
+    popover: "#D4D4D4",
+    "popover-foreground": "#2D2D2D",
+    primary: "#008080",
+    "primary-foreground": "#ffffff",
+    secondary: "#DCDCDC",
+    "secondary-foreground": "#3A3A3A",
+    muted: "#C8C8C8",
+    "muted-foreground": "#5A5A5A",
+    accent: "#DCDCDC",
+    "accent-foreground": "#3A3A3A",
+    destructive: "#C42B1C",
+    success: "#16825D",
+    warning: "#9D8500",
+    border: "#BEBEBE",
+    input: "#C8C8C8",
+    ring: "#008080",
+    // Neumorphic shadow tokens — auto-become CSS vars via applyTheme()
+    "neu-shadow-light": "rgba(255, 255, 255, 0.7)",
+    "neu-shadow-dark": "rgba(163, 163, 163, 0.5)",
+    "neu-distance": "5px",
+    "neu-blur": "10px",
+  },
+  fonts: {
+    mono: "JetBrains Mono, monospace",
+    sans: "Tahoma, Geneva, sans-serif",
+  },
+  radius: "0.5rem",
+};
+
+THEME_PRESETS.push(RETRO_THEME);
+
 export function getPreset(name: string): Theme | undefined {
   return THEME_PRESETS.find((p) => p.name === name);
 }
