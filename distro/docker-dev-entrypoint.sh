@@ -125,10 +125,15 @@ if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME/system/qmd"
 fi
 
+# Sync shell config from bind mount (so zshrc/p10k changes don't need rebuild)
+cp /app/distro/zshrc /home/matrixos/.zshrc 2>/dev/null || true
+cp /app/distro/p10k.zsh /home/matrixos/.p10k.zsh 2>/dev/null || true
+
 # Fix ownership of everything created as root before dropping to matrixos
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
+chown matrixos:matrixos /home/matrixos/.zshrc /home/matrixos/.p10k.zsh 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
 if command -v zsh >/dev/null 2>&1; then

@@ -91,4 +91,55 @@ describe("TerminalApp", () => {
       ],
     });
   });
+
+  it("flushes attached session ids on pagehide before the debounce fires", async () => {
+    render(<TerminalApp />);
+
+    // Flush microtasks so async initLayout completes and setInitialized(true) propagates
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+
+    act(() => {
+      props.onSessionAttached(props.paneTree.id, "session-refresh");
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const layoutPutCalls = fetchMock.mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+    ));
+
+    expect(layoutPutCalls.length).toBeGreaterThan(0);
+    const latestBody = layoutPutCalls.at(-1)?.[1]?.body;
+    expect(typeof latestBody).toBe("string");
+    expect(JSON.parse(latestBody as string)).toMatchObject({
+      tabs: [
+        {
+          paneTree: {
+            sessionId: "session-refresh",
+          },
+        },
+      ],
+    });
+  });
 });

@@ -23,9 +23,21 @@ RUN npm install -g @tobilu/qmd
 # Non-root user (Agent SDK refuses bypassPermissions as root)
 RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos -s /bin/zsh
 
-# Zsh config for matrixos user
+# Oh My Zsh + Powerlevel10k for a proper terminal prompt
+RUN sh -c "RUNZSH=no CHSH=no ZSH=/home/matrixos/.oh-my-zsh \
+    $(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
+      /home/matrixos/.oh-my-zsh/custom/themes/powerlevel10k && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
+      /home/matrixos/.oh-my-zsh/custom/plugins/zsh-autosuggestions && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting \
+      /home/matrixos/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting && \
+    chown -R matrixos:matrixos /home/matrixos/.oh-my-zsh
+
+# Zsh + p10k config for matrixos user
 COPY distro/zshrc /home/matrixos/.zshrc
-RUN chown matrixos:matrixos /home/matrixos/.zshrc
+COPY distro/p10k.zsh /home/matrixos/.p10k.zsh
+RUN chown matrixos:matrixos /home/matrixos/.zshrc /home/matrixos/.p10k.zsh
 
 WORKDIR /app
 

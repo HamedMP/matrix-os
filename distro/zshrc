@@ -1,45 +1,37 @@
-# Matrix OS Terminal - zsh config
+# Matrix OS Terminal - zsh config with Oh My Zsh + Powerlevel10k
 
-# History
+# Absolute path -- PTY sets HOME to MATRIX_HOME, not /home/matrixos
+export ZSH="/home/matrixos/.oh-my-zsh"
+ZSH_THEME="powerlevel10k/powerlevel10k"
+
+plugins=(
+  git
+  zsh-autosuggestions
+  zsh-syntax-highlighting
+)
+
 HISTFILE=~/.zsh_history
 HISTSIZE=5000
 SAVEHIST=5000
 setopt appendhistory sharehistory hist_ignore_dups hist_ignore_space
 
-# Completion
-autoload -Uz compinit && compinit
-zstyle ':completion:*' menu select
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
-
-# Key bindings
+# Key bindings (xterm.js compatibility)
 bindkey '^[[A' up-line-or-search
 bindkey '^[[B' down-line-or-search
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
 bindkey '^[[3~' delete-char
 
-# Git branch for prompt (no vcs_info needed)
-git_branch() {
-  local branch
-  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
-  echo " %F{yellow}${branch}%f"
-}
+# Set USER from Matrix handle (Alpine doesn't set USER for service accounts)
+export USER="${MATRIX_HANDLE:-matrixos}"
 
-setopt PROMPT_SUBST
+source "$ZSH/oh-my-zsh.sh"
 
-# Sanitize handle for prompt (prevent command injection via PROMPT_SUBST)
-_safe_handle="${MATRIX_HANDLE:-matrixos}"
-_safe_handle="${_safe_handle//\$/}"
-_safe_handle="${_safe_handle//\`/}"
+# p10k config (use absolute path, same reason as ZSH)
+[[ -f /home/matrixos/.p10k.zsh ]] && source /home/matrixos/.p10k.zsh
 
-PROMPT="%F{green}${_safe_handle}%f %F{blue}%~%f"'$(git_branch)
-%F{green}>%f '
-unset _safe_handle
-
-# Aliases
 alias ll='ls -la'
 alias la='ls -A'
 alias gs='git status'
 alias gd='git diff'
 alias gl='git log --oneline -20'
-
