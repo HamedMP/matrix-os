@@ -33,6 +33,10 @@ export function hasNewConnectionForService(
   );
 }
 
+export function shouldLogIntegrationWarning(err: unknown): boolean {
+  return !(err instanceof DOMException && err.name === "AbortError");
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   google: "bg-blue-500",
   developer: "bg-gray-700",
@@ -150,7 +154,12 @@ export function IntegrationsSection() {
             .then((data) => {
               if (data?.services) setConnected(data.services);
             })
-            .catch(() => {});
+            .catch((err) => {
+              console.warn(
+                "[integrations] Background sync failed:",
+                err instanceof Error ? err.message : err,
+              );
+            });
         }
       }
     } catch (err) {
@@ -272,8 +281,13 @@ export function IntegrationsSection() {
               }
             }
           }
-        } catch {
-          // keep polling
+        } catch (err) {
+          if (shouldLogIntegrationWarning(err)) {
+            console.warn(
+              "[integrations] poll sync error:",
+              err instanceof Error ? err.message : err,
+            );
+          }
         }
       }, 2000);
 

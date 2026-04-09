@@ -65,10 +65,12 @@
 - **Iframe-app integration calls can now disambiguate multiple connected accounts by label.**
   - `shell/src/lib/os-bridge.ts` now exposes `MatrixOS.service(service, action, params, label)` and forwards `label` to `/api/bridge/service`
   - This matches the spec’s multi-account behavior (`account_label`) instead of always hitting the first account for a service
+  - Follow-up shell hardening: both `MatrixOS.integrations()` and `MatrixOS.service(...)` now use `AbortSignal.timeout(...)` for bridge fetches
 
 - **The settings poller now waits for the requested service, not any new connection.**
   - `shell/src/components/settings/sections/IntegrationsSection.tsx` now uses `hasNewConnectionForService(...)`
   - A new Slack/GitHub/etc. connection appearing from another tab no longer clears the current card’s `Connecting...` state for Gmail (or vice versa)
+  - Follow-up shell hardening: background sync and poll-sync failures now log warnings instead of using empty catches; `AbortError` remains suppressed for poll noise via `shouldLogIntegrationWarning(...)`
 
 ### Regression coverage added for the new fixes
 
@@ -85,15 +87,18 @@
 
 - `tests/shell/os-bridge.test.ts`
   - verifies `MatrixOS.service(...)` includes optional `label` forwarding
+  - verifies bridge integration fetches include timeouts
 
 - `tests/shell/integrations-section.test.ts`
   - verifies the connect poller ignores new accounts for other services and only completes when the requested service gains a new connection
+  - verifies `AbortError` is suppressed while real polling failures still log warnings
 
 ### Focused verification rerun
 
 - `pnpm test tests/integrations/routes.test.ts tests/integrations/ipc-tools.test.ts tests/gateway/auth.test.ts` → **78/78 passing**
 - `pnpm test tests/integrations/action-execution.test.ts tests/shell/os-bridge.test.ts tests/shell/integrations-section.test.ts tests/integrations/routes.test.ts tests/integrations/ipc-tools.test.ts` → **79/79 passing**
 - `pnpm test tests/integrations/ tests/gateway/auth.test.ts tests/shell/os-bridge.test.ts tests/shell/integrations-section.test.ts` → **159/159 passing**
+- `pnpm test tests/integrations/ tests/gateway/auth.test.ts tests/shell/os-bridge.test.ts tests/shell/integrations-section.test.ts` after the latest shell follow-up fixes → **162/162 passing**
 
 ---
 

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { hasNewConnectionForService } from "../../shell/src/components/settings/sections/IntegrationsSection";
+import {
+  hasNewConnectionForService,
+  shouldLogIntegrationWarning,
+} from "../../shell/src/components/settings/sections/IntegrationsSection";
 
 describe("IntegrationsSection polling helper", () => {
   it("ignores newly added connections for a different service", () => {
@@ -20,5 +23,14 @@ describe("IntegrationsSection polling helper", () => {
     ];
 
     expect(hasNewConnectionForService(previousIds, "gmail", list)).toBe(true);
+  });
+
+  it("suppresses timeout warnings for AbortError", () => {
+    const err = new DOMException("The operation was aborted", "AbortError");
+    expect(shouldLogIntegrationWarning(err)).toBe(false);
+  });
+
+  it("logs non-timeout polling failures", () => {
+    expect(shouldLogIntegrationWarning(new Error("ECONNREFUSED"))).toBe(true);
   });
 });
