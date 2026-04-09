@@ -8,7 +8,7 @@ import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
 
 const DESKTOP_DEFAULTS = {
-  background: { type: "pattern" },
+  background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: [] as string[],
   iconStyle: "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style",

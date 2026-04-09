@@ -1,6 +1,7 @@
 {
   "background": {
-    "type": "pattern"
+    "type": "wallpaper",
+    "name": "moraine-lake.jpg"
   },
   "dock": {
     "position": "left",
