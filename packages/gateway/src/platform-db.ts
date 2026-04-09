@@ -329,7 +329,6 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           (${input.userId}, ${input.service}, ${input.pipedreamAccountId},
            ${input.accountLabel}, ${input.accountEmail ?? null}, ${input.scopes})
         ON CONFLICT (user_id, pipedream_account_id) DO UPDATE SET
-          account_label = EXCLUDED.account_label,
           account_email = EXCLUDED.account_email,
           scopes        = EXCLUDED.scopes,
           status        = 'active'

@@ -251,6 +251,38 @@ describe("PlatformDb", () => {
       expect(found!.last_used_at).not.toBeNull();
     });
 
+    it("preserves a user-renamed label on connectService upsert", async () => {
+      const svc = await db.connectService({
+        userId,
+        service: "gmail",
+        pipedreamAccountId: "pd_acc_retry",
+        accountLabel: "Initial Gmail",
+        accountEmail: "initial@gmail.com",
+        scopes: ["read"],
+      });
+
+      await db.updateAccountLabel(svc.id, "Work Gmail");
+      await db.updateServiceStatus(svc.id, "expired");
+
+      const upserted = await db.connectService({
+        userId,
+        service: "gmail",
+        pipedreamAccountId: "pd_acc_retry",
+        accountLabel: "Webhook Gmail",
+        accountEmail: "updated@gmail.com",
+        scopes: ["read", "send"],
+      });
+
+      expect(upserted.inserted).toBe(false);
+
+      const found = await db.getConnectedService(svc.id);
+      expect(found).not.toBeNull();
+      expect(found!.account_label).toBe("Work Gmail");
+      expect(found!.account_email).toBe("updated@gmail.com");
+      expect(found!.scopes).toEqual(["read", "send"]);
+      expect(found!.status).toBe("active");
+    });
+
     it("supports multiple services per user", async () => {
       await db.connectService({
         userId,
