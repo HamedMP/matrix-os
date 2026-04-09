@@ -14,7 +14,7 @@ interface AIButtonProps {
 export function AIButton({ appName, appPath, sessionId }: AIButtonProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const { send } = useSocket();
 
   useEffect(() => {
@@ -54,17 +54,20 @@ export function AIButton({ appName, appPath, sessionId }: AIButtonProps) {
       className="flex items-center gap-1 absolute right-2 top-1/2 -translate-y-1/2 z-10"
       onClick={(e) => e.stopPropagation()}
     >
-      <input
+      <textarea
         ref={inputRef}
-        type="text"
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") submit();
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            submit();
+          }
           if (e.key === "Escape") setOpen(false);
         }}
         placeholder={`Change ${appName}...`}
-        className="h-6 w-44 rounded border border-border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+        rows={1}
+        className="min-h-6 max-h-24 w-44 rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring resize-none field-sizing-content"
       />
       <Button
         variant="ghost"

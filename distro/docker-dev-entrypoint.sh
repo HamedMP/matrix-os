@@ -16,29 +16,105 @@ if [ ! -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME"
 fi
 
-# Sync default apps, agents, and system config from source to home volume
-# This ensures new/updated system apps and skills propagate to the running OS
-echo "[matrix-os-dev] Syncing default apps and skills..."
-for dir in apps agents system; do
-  if [ -d "/app/home/$dir" ]; then
-    mkdir -p "$MATRIX_HOME/$dir"
-    cp -a "/app/home/$dir/." "$MATRIX_HOME/$dir/"
+# First-boot only: seed agents/system/apps from the template so the skills-to-
+# Claude/Codex adapter below has files to read. On subsequent boots the kernel's
+# smartSyncTemplate (packages/kernel/src/boot.ts) takes over -- it respects user
+# customizations via .template-manifest.json hash compare, adds new template
+# files, and skips files the user has touched. The previous version of this
+# block did `rm -rf` + `cp -r` on every boot, which clobbered user
+# customizations and broke the docker-test customized-files scenario.
+for dir in agents system apps; do
+  if [ -d "/app/home/$dir" ] && [ ! -d "$MATRIX_HOME/$dir" ]; then
+    cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"
   fi
 done
 
-# Expose Matrix OS skills as Claude Code skills
-# Creates .claude/skills/<name>/SKILL.md symlinks so /skills works in Claude sessions
-CLAUDE_SKILLS_DIR="/home/matrixos/.claude/skills"
-mkdir -p "$CLAUDE_SKILLS_DIR"
-for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-  [ -f "$skill" ] || continue
-  name=$(basename "$skill" .md)
-  mkdir -p "$CLAUDE_SKILLS_DIR/$name"
-  ln -sf "$skill" "$CLAUDE_SKILLS_DIR/$name/SKILL.md"
+# Unify $HOME/.claude and $MATRIX_HOME/.claude (and same for .codex) into a
+# single directory. The gateway runs with HOME=/home/matrixos and reads
+# $HOME/.claude/.credentials.json, but the in-app terminal opens with
+# HOME=$MATRIX_HOME -- so `claude login` from inside Matrix OS used to write
+# to a file the gateway never read. Symlinking $MATRIX_HOME/.claude to the
+# canonical /home/matrixos/.claude makes both paths the same on disk.
+mkdir -p /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
+for tool in .claude .codex; do
+  if [ -e "$MATRIX_HOME/$tool" ] && [ ! -L "$MATRIX_HOME/$tool" ]; then
+    # First-run migration: move any pre-existing files into the canonical
+    # location (-n = no clobber, so a fresher token there always wins).
+    cp -an "$MATRIX_HOME/$tool/." "/home/matrixos/$tool/" 2>/dev/null || true
+    rm -rf "$MATRIX_HOME/$tool"
+  fi
+  ln -sfn "/home/matrixos/$tool" "$MATRIX_HOME/$tool"
 done
 
+# Expose Matrix OS skills to Claude Code and Codex
+# Clean stale copies from previous runs, then create fresh ones.
+# Both tools discover skills in project-level and user-level directories.
+rm -rf "$MATRIX_HOME/.claude/skills" "$MATRIX_HOME/.codex/skills" \
+       "/home/matrixos/.claude/skills" "/home/matrixos/.codex/skills"
+
+for skills_root in "/home/matrixos/.claude/skills" "$MATRIX_HOME/.claude/skills"; do
+  mkdir -p "$skills_root"
+  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
+    [ -f "$skill" ] || continue
+    name=$(basename "$skill" .md)
+    mkdir -p "$skills_root/$name"
+    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$skills_root/$name/SKILL.md"
+  done
+done
+
+# Codex ignores symlinks and needs agents/openai.yaml for discovery
+for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; do
+  mkdir -p "$skills_root"
+  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
+    [ -f "$skill" ] || continue
+    name=$(basename "$skill" .md)
+    mkdir -p "$skills_root/$name/agents"
+    cp -f "$skill" "$skills_root/$name/SKILL.md"
+    display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
+    desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
+    cat > "$skills_root/$name/agents/openai.yaml" <<EOYAML
+interface:
+  display_name: "Matrix: $display"
+  short_description: "${desc:-$display skill}"
+  default_prompt: "Use \$$name for ${desc:-this task}."
+EOYAML
+  done
+done
+
+# AI CLI auth persistence via shared external volume (matrixos-ai-auth)
+# Survives container rebuilds and is shared across feature branch containers.
+AI_AUTH="/home/matrixos/.ai-auth"
+USER_CLAUDE="/home/matrixos/.claude"
+USER_CODEX="/home/matrixos/.codex"
+if [ -d "$AI_AUTH" ]; then
+  mkdir -p "$AI_AUTH/claude" "$AI_AUTH/codex"
+  # Restore auth into both $HOME/.claude/ and $MATRIX_HOME/.claude/
+  # The kernel's query() spawns claude from /app, so it needs $HOME/.claude/
+  for dest in "$USER_CLAUDE" "$MATRIX_HOME/.claude"; do
+    if [ -f "$AI_AUTH/claude/.credentials.json" ] && [ ! -f "$dest/.credentials.json" ]; then
+      mkdir -p "$dest"
+      cp "$AI_AUTH/claude/.credentials.json" "$dest/.credentials.json"
+      echo "[matrix-os-dev] Restored Claude auth to $dest"
+    fi
+  done
+  for dest in "$USER_CODEX" "$MATRIX_HOME/.codex"; do
+    if [ -f "$AI_AUTH/codex/auth.json" ] && [ ! -f "$dest/auth.json" ]; then
+      mkdir -p "$dest"
+      cp "$AI_AUTH/codex/auth.json" "$dest/auth.json"
+      echo "[matrix-os-dev] Restored Codex auth to $dest"
+    fi
+  done
+  # Save current auth back (check both locations)
+  for src in "$USER_CLAUDE" "$MATRIX_HOME/.claude"; do
+    [ -f "$src/.credentials.json" ] && cp "$src/.credentials.json" "$AI_AUTH/claude/.credentials.json" 2>/dev/null && break || true
+  done
+  for src in "$USER_CODEX" "$MATRIX_HOME/.codex"; do
+    [ -f "$src/auth.json" ] && cp "$src/auth.json" "$AI_AUTH/codex/auth.json" 2>/dev/null && break || true
+  done
+fi
+
 # Clear stale Turbopack cache (source files are volume-mounted so cache
-# from a previous run often references outdated AST — causes SyntaxErrors)
+# from a previous run often references outdated AST -- causes SyntaxErrors)
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
@@ -51,6 +127,8 @@ fi
 
 # Fix ownership of everything created as root before dropping to matrixos
 chown -R matrixos:matrixos "$MATRIX_HOME"
+chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
+chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
 if command -v zsh >/dev/null 2>&1; then
@@ -91,7 +169,20 @@ exec su-exec matrixos bash -c '
   node --import=tsx --watch packages/gateway/src/main.ts &
   GATEWAY_PID=$!
 
-  trap "kill $SHELL_PID $GATEWAY_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+  trap "
+    # Save auth to shared volume before exit (check both $HOME and $MATRIX_HOME)
+    AI_AUTH=/home/matrixos/.ai-auth
+    if [ -d \"\$AI_AUTH\" ]; then
+      mkdir -p \"\$AI_AUTH/claude\" \"\$AI_AUTH/codex\"
+      for src in /home/matrixos/.claude \"$MATRIX_HOME/.claude\"; do
+        [ -f \"\$src/.credentials.json\" ] && cp \"\$src/.credentials.json\" \"\$AI_AUTH/claude/.credentials.json\" 2>/dev/null && break
+      done
+      for src in /home/matrixos/.codex \"$MATRIX_HOME/.codex\"; do
+        [ -f \"\$src/auth.json\" ] && cp \"\$src/auth.json\" \"\$AI_AUTH/codex/auth.json\" 2>/dev/null && break
+      done
+    fi
+    kill \$SHELL_PID \$GATEWAY_PID 2>/dev/null; exit 0
+  " SIGTERM SIGINT
 
   wait -n $SHELL_PID $GATEWAY_PID
   EXIT_CODE=$?

@@ -98,6 +98,27 @@ await dbRequest('update', 'notes', { id: note.id, data: { title: 'Updated' } });
 await dbRequest('delete', 'notes', { id: note.id });
 ```
 
+### External Service Integrations (Gmail, Calendar, GitHub, Slack, etc.)
+
+Apps can call connected services via the bridge API:
+
+```javascript
+// Check what's connected
+const res = await fetch("/api/bridge/service");
+const { services } = await res.json();
+const gmail = services.find(s => s.service === "gmail" && s.status === "active");
+
+// Call an action
+const resp = await fetch("/api/bridge/service", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ service: "gmail", action: "list_messages", params: { maxResults: 20 } })
+});
+const { data } = await resp.json();
+```
+
+Services: gmail, google_calendar, google_drive, github, slack, discord. User connects in Settings > Integrations.
+
 For apps without database storage, use localStorage:
 
 ```javascript

@@ -1,9 +1,11 @@
 import type { ServerMessage } from "@/hooks/useSocket";
 
 interface PersistedMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  tool?: string;
+  toolInput?: Record<string, unknown>;
 }
 
 export function hydrateMessages(messages: PersistedMessage[]): ChatMessage[] {
@@ -12,6 +14,8 @@ export function hydrateMessages(messages: PersistedMessage[]): ChatMessage[] {
     role: m.role,
     content: m.content,
     timestamp: m.timestamp,
+    tool: m.tool,
+    toolInput: m.toolInput,
   }));
 }
 
@@ -66,11 +70,16 @@ export function reduceChat(
       let targetIdx = -1;
 
       if (reqId) {
-        // With requestId: scan back to find matching assistant message, skipping tool msgs
+        // With requestId: scan back to find matching assistant message,
+        // but stop if we hit a tool message from the same request --
+        // post-tool text should get its own bubble
         for (let i = next.length - 1; i >= 0; i--) {
           const m = next[i];
           if (m.role === "assistant" && !m.tool && m.requestId === reqId) {
             targetIdx = i;
+            break;
+          }
+          if (m.tool && m.requestId === reqId) {
             break;
           }
         }

@@ -4,7 +4,7 @@
 
 **Goal:** Add platform-level integrations to Matrix OS so users can connect external services (Gmail, Calendar, Drive, GitHub, Slack, Discord) via settings UI or conversation, and the AI agent can call those services on their behalf.
 
-**Architecture:** Pipedream Connect SDK handles OAuth, credential storage, and API proxying. A new platform Postgres database tracks users, connected services, apps, and billing. Gateway exposes REST endpoints used by both the shell settings UI and the kernel's IPC tools. The kernel gets two new tools: `connect_service` and `call_service`.
+**Architecture:** Pipedream Connect SDK handles OAuth, credential storage, and API proxying. A new platform Postgres database tracks users, connected services, user apps (local workspace metadata), and billing. Gateway exposes REST endpoints used by both the shell settings UI and the kernel's IPC tools. The kernel gets two new tools: `connect_service` and `call_service`.
 
 **Tech Stack:** Pipedream Connect SDK (`@pipedream/sdk`), Postgres + Kysely (platform DB), Hono (gateway routes), React 19 (shell settings UI), Zod 4 (validation), Vitest (tests)
 
@@ -88,7 +88,7 @@ describe("PlatformDb", () => {
     const tables = result.rows.map((r) => r.table_name);
     expect(tables).toContain("users");
     expect(tables).toContain("connected_services");
-    expect(tables).toContain("apps");
+    expect(tables).toContain("user_apps");
     expect(tables).toContain("event_subscriptions");
     expect(tables).toContain("billing");
   });
@@ -198,15 +198,13 @@ export interface PlatformDatabase {
     connected_at: Date;
     last_used_at: Date | null;
   };
-  apps: {
+  user_apps: {
     id: string;
     user_id: string;
     name: string;
     slug: string;
     description: string | null;
     services_used: string[];
-    is_public: boolean;
-    installs: number;
     created_at: Date;
     updated_at: Date;
   };
@@ -311,15 +309,13 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       `.execute(kysely);
 
       await sql`
-        CREATE TABLE IF NOT EXISTS apps (
+        CREATE TABLE IF NOT EXISTS user_apps (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           name TEXT NOT NULL,
           slug TEXT NOT NULL,
           description TEXT,
           services_used TEXT[] NOT NULL DEFAULT '{}',
-          is_public BOOLEAN NOT NULL DEFAULT false,
-          installs INTEGER NOT NULL DEFAULT 0,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           UNIQUE(user_id, slug)
@@ -351,7 +347,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       `.execute(kysely);
 
       await sql`CREATE INDEX IF NOT EXISTS idx_connected_services_user ON connected_services(user_id)`.execute(kysely);
-      await sql`CREATE INDEX IF NOT EXISTS idx_apps_user ON apps(user_id)`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_user_apps_user ON user_apps(user_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_event_subs_user ON event_subscriptions(user_id)`.execute(kysely);
     },
 
@@ -1242,7 +1238,23 @@ export function createIntegrationRoutes(opts: {
 
   // Handle OAuth callback webhook from Pipedream
   app.post("/webhook/connected", bodyLimit({ maxSize: 4096 }), async (c) => {
-    const body = await c.req.json();
+    // Verify Pipedream webhook signature (HMAC)
+    const signature = c.req.header("x-pd-signature");
+    const webhookSecret = process.env.PIPEDREAM_WEBHOOK_SECRET;
+    if (webhookSecret) {
+      const rawBody = await c.req.text();
+      const { createHmac, timingSafeEqual } = await import("node:crypto");
+      const expected = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
+      if (!signature || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+        return c.json({ error: "Invalid webhook signature" }, 401);
+      }
+      // Re-parse body after consuming as text
+      var body = JSON.parse(rawBody);
+    } else {
+      var body = await c.req.json();
+      console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhook signature verification disabled");
+    }
+
     // Pipedream sends: { external_id, account: { id, app, ... }, ... }
     const externalUserId = body.external_id;
     const account = body.account;
@@ -1322,8 +1334,8 @@ export function createIntegrationRoutes(opts: {
     try {
       const userId = await getUserId(c);
       await pipedream.revokeAccount(userId, svc.pipedream_account_id);
-    } catch {
-      // Pipedream revocation is best-effort -- still remove from our DB
+    } catch (err) {
+      console.error("[integrations] Pipedream revocation failed for", svc.pipedream_account_id, ":", err instanceof Error ? err.message : err);
     }
 
     await platformDb.disconnectService(id);
@@ -1363,6 +1375,7 @@ PIPEDREAM_CLIENT_ID=
 PIPEDREAM_CLIENT_SECRET=
 PIPEDREAM_PROJECT_ID=
 PIPEDREAM_ENVIRONMENT=development
+PIPEDREAM_WEBHOOK_SECRET=
 # Platform DB (can reuse DATABASE_URL or separate)
 PLATFORM_DATABASE_URL=
 ```
@@ -2013,7 +2026,7 @@ git commit -m "test(049): add E2E integration flow tests"
 
 | Task | What it delivers | Files |
 |------|-----------------|-------|
-| 1 | Platform database (users, services, apps, billing) | `platform-db.ts` + tests |
+| 1 | Platform database (users, services, user_apps, billing) | `platform-db.ts` + tests |
 | 2 | Service registry (6 services, actions, params) | `integrations/registry.ts` + `types.ts` + tests |
 | 3 | Pipedream Connect SDK wrapper | `integrations/pipedream.ts` + tests |
 | 4 | Gateway REST API routes | `integrations/routes.ts` + tests |
@@ -2024,3 +2037,155 @@ git commit -m "test(049): add E2E integration flow tests"
 | 9 | Full E2E integration test | `e2e-flow.test.ts` |
 
 Tasks 1-4 can be parallelized (no dependencies between them). Task 5 depends on 1, 3, 4. Task 6 depends on 4 (routes must exist). Task 7 depends on 4 (API must exist). Tasks 8-9 are final wiring and validation.
+
+---
+
+## Task 10: Pipedream Actions API Integration (Phase 2)
+
+**Goal:** Replace the proxy-based `callAction` with Pipedream's Actions API (`client.actions.run()`) so `call_service` actually works end-to-end.
+
+**Files:**
+- Modify: `packages/gateway/src/integrations/pipedream.ts`
+- Modify: `packages/gateway/src/integrations/registry.ts`
+- Modify: `packages/gateway/src/integrations/types.ts`
+- Modify: `packages/gateway/src/integrations/routes.ts`
+- Create: `tests/integrations/actions.test.ts`
+
+### Step 1: Add Actions API methods to Pipedream client
+
+In `packages/gateway/src/integrations/pipedream.ts`, add:
+
+```typescript
+// Add to PipedreamConnectClient interface:
+discoverActions(appSlug: string): Promise<Array<{
+  key: string;          // e.g. "gmail-send-email"
+  name: string;         // e.g. "Send Email"
+  description?: string;
+}>>;
+
+runAction(opts: {
+  externalUserId: string;
+  componentKey: string;      // e.g. "gmail-send-email"
+  configuredProps: Record<string, unknown>;  // includes { gmail: { authProvisionId: "apn_..." } }
+}): Promise<{ exports: Record<string, unknown>; ret: unknown }>;
+
+// Implementation:
+async discoverActions(appSlug: string) {
+  const result = await sdk.actions.list(
+    { app: appSlug } as any,
+    { timeoutInSeconds: API_TIMEOUT_SECONDS },
+  );
+  const items = (result as any)?.data ?? [];
+  return items.map((a: any) => ({
+    key: a.key ?? a.name_slug,
+    name: a.name ?? a.key,
+    description: a.description,
+  }));
+},
+
+async runAction({ externalUserId, componentKey, configuredProps }) {
+  const result = await sdk.actions.run(
+    { externalUserId, id: componentKey, configuredProps } as any,
+    { timeoutInSeconds: 30 },  // actions can be slow
+  );
+  return {
+    exports: (result as any)?.exports ?? {},
+    ret: (result as any)?.ret ?? (result as any)?.data ?? result,
+  };
+},
+```
+
+### Step 2: Add component key mappings to registry
+
+In `packages/gateway/src/integrations/types.ts`, add `componentKey` to `ServiceAction`:
+
+```typescript
+export interface ServiceAction {
+  description: string;
+  componentKey?: string;  // Pipedream component key, e.g. "gmail-send-email"
+  params: Record<string, ActionParam>;
+}
+```
+
+In `packages/gateway/src/integrations/registry.ts`, add a startup discovery function:
+
+```typescript
+export async function discoverComponentKeys(
+  pipedream: PipedreamConnectClient,
+): Promise<void> {
+  for (const service of listServices()) {
+    try {
+      const actions = await pipedream.discoverActions(service.pipedreamApp);
+      for (const [actionId, actionDef] of Object.entries(service.actions)) {
+        // Try exact match: "{app}-{action}" e.g. "gmail-send_email" or "gmail-send-email"
+        const candidates = [
+          `${service.pipedreamApp}-${actionId}`,
+          `${service.pipedreamApp}-${actionId.replace(/_/g, "-")}`,
+        ];
+        const match = actions.find((a) => candidates.includes(a.key));
+        if (match) {
+          actionDef.componentKey = match.key;
+        }
+      }
+    } catch (err) {
+      console.error(`[registry] Failed to discover actions for ${service.id}:`, err);
+    }
+  }
+}
+```
+
+### Step 3: Update POST /call route to use Actions API
+
+In `packages/gateway/src/integrations/routes.ts`, change the POST /call handler:
+
+```typescript
+// Instead of:
+//   await pipedream.callAction({ externalUserId, accountId, url, body })
+// Use:
+const actionDef = getAction(service, action);
+if (!actionDef?.componentKey) {
+  return c.json({ error: `Action ${action} not available for ${service}` }, 400);
+}
+
+const configuredProps: Record<string, unknown> = {
+  [def.pipedreamApp]: { authProvisionId: match.pipedream_account_id },
+  ...params,
+};
+
+const result = await pipedream.runAction({
+  externalUserId: externalId,
+  componentKey: actionDef.componentKey,
+  configuredProps,
+});
+
+return c.json({ data: result.ret, summary: result.exports["$summary"], service, action });
+```
+
+### Step 4: Call discoverComponentKeys at startup
+
+In `packages/gateway/src/server.ts`, after mounting integration routes:
+
+```typescript
+import { discoverComponentKeys } from "./integrations/registry.js";
+
+// After: app.route("/api/integrations", integrationRoutes);
+discoverComponentKeys(pipedream).then(() => {
+  console.log("[platform-db] Action component keys discovered");
+}).catch((err) => {
+  console.error("[platform-db] Action discovery failed:", err.message);
+});
+```
+
+### Step 5: Write tests
+
+Create `tests/integrations/actions.test.ts`:
+- Mock `sdk.actions.list()` and `sdk.actions.run()`
+- Test `discoverActions` returns mapped keys
+- Test `runAction` passes correct configuredProps with authProvisionId
+- Test POST /call with discovered component key returns action result
+- Test POST /call with unknown action (no component key) returns 400
+
+### Step 6: E2E test
+
+Add to `tests/integrations/e2e-flow.test.ts`:
+- Connect gmail -> discover actions -> call send_email with mocked action -> verify response has `summary` and `ret`

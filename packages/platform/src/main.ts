@@ -603,6 +603,15 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   if (process.env.GEMINI_API_KEY) {
     extraEnv.push(`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`);
   }
+  for (const key of [
+    'PIPEDREAM_CLIENT_ID',
+    'PIPEDREAM_CLIENT_SECRET',
+    'PIPEDREAM_PROJECT_ID',
+    'PIPEDREAM_ENVIRONMENT',
+    'PIPEDREAM_WEBHOOK_SECRET',
+  ]) {
+    if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
+  }
 
   const orchestrator = createOrchestrator({
     db,

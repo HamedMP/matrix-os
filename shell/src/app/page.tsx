@@ -145,6 +145,7 @@ export default function Home() {
 
       {!isCenterChat && !sidebarOpen && (
         <Button
+          data-testid="chat-toggle"
           variant="ghost"
           size="icon"
           className="fixed right-3 top-3 z-50 size-8 rounded-lg border border-border bg-card/80 backdrop-blur-sm"

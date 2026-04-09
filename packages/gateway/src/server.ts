@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
 import { dirname, join, normalize, resolve, relative } from "node:path";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
@@ -58,6 +58,18 @@ import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
+import { createPlatformDb, type PlatformDb } from "./platform-db.js";
+import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
+import {
+  createIntegrationRoutes,
+  validateActionParams,
+  getErrorStatusCode,
+  getRetryAfterSeconds,
+  executeIntegrationAction,
+  IntegrationActionNotImplementedError,
+} from "./integrations/routes.js";
+import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
+import { z } from "zod/v4";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -77,6 +89,16 @@ import {
   wsConnectionsActive,
   normalizePath,
 } from "./metrics.js";
+
+// Mirrors CallBodySchema in integrations/routes.ts so the dev-only
+// /api/bridge/service POST validates its body the same way the public
+// /api/integrations/call endpoint does.
+const BridgeCallBodySchema = z.object({
+  service: z.string().min(1),
+  action: z.string().min(1),
+  label: z.string().trim().min(1).max(100).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
+});
 
 export interface GatewayConfig {
   homePath: string;
@@ -108,6 +130,9 @@ export type ServerMessage =
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
   | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
   | { type: "data:change"; app: string; key: string }
+  | { type: "integration:connected"; service: string; accountLabel: string }
+  | { type: "integration:disconnected"; service: string; id: string }
+  | { type: "integration:expired"; service: string; id: string; accountLabel: string }
   | { type: "pong" };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
@@ -237,6 +262,158 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = null;
       kvStore = null;
       appRegistry = null;
+    }
+  }
+
+  // Platform DB + Integrations (Pipedream Connect)
+  let platformDb: PlatformDb | null = null;
+  let pipedreamClient: PipedreamConnectClient | null = null;
+  let integrationRoutes: Hono | null = null;
+  let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
+  const platformDbUrl = process.env.PLATFORM_DATABASE_URL
+    || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
+  if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
+    try {
+      platformDb = createPlatformDb(platformDbUrl);
+      await platformDb.migrate();
+      console.log("[platform-db] Initialized");
+
+      pipedreamClient = createPipedreamClient({
+        clientId: process.env.PIPEDREAM_CLIENT_ID,
+        clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
+        projectId: process.env.PIPEDREAM_PROJECT_ID,
+        environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
+      });
+
+      // Single source of truth for user resolution -- used by /api/integrations/*
+      // and the /api/bridge/service handlers. Prefers platform-verified Clerk
+      // identity from the proxy header; falls back to env vars only in dev.
+      //
+      // Returns null on any failure so callers can return 401 instead of
+      // leaking a 500. Each failure mode logs a distinct stable string so
+      // prod incidents are debuggable: a 401 spike that's actually a Postgres
+      // outage shows up as `[integrations][auth] db_error` in logs, while a
+      // legitimate "user not in platform DB" shows as `[integrations][auth]
+      // no_user_for_clerk_id`. Grep on those tags to triage.
+      resolveIntegrationUserId = async (c) => {
+        // ---- Path A: prod / platform header ----
+        const clerkIdFromPlatform = c.req.header("x-platform-user-id");
+        if (clerkIdFromPlatform) {
+          try {
+            const user = await platformDb!.getUserByClerkId(clerkIdFromPlatform);
+            if (!user) {
+              // Genuine auth failure: header is present but no platform row.
+              // The user signed in via Clerk but their container/platform-db
+              // row hasn't been provisioned yet. Distinct from a DB error.
+              console.warn("[integrations][auth] no_user_for_clerk_id:", clerkIdFromPlatform.slice(0, 32));
+              return null;
+            }
+            return user.id;
+          } catch (err) {
+            // Platform DB is down or query failed. This is a 500 masquerading
+            // as a 401. Log loudly so the symptom (401 to client) maps to the
+            // root cause (DB outage) without trial-and-error debugging.
+            console.error(
+              "[integrations][auth] db_error during getUserByClerkId:",
+              err instanceof Error ? err.message : err,
+            );
+            return null;
+          }
+        }
+
+        // ---- Path B: prod with no header = locked out (not an error) ----
+        if (process.env.NODE_ENV === "production") {
+          // Not console.error -- this is a routine "missing header" outcome,
+          // not a server fault. The proxy is supposed to inject this header;
+          // if it isn't, that's a deployment issue, not a per-request error.
+          console.warn("[integrations][auth] no_platform_header_in_production");
+          return null;
+        }
+
+        // ---- Path C: dev env-var fallback ----
+        const handle = process.env.MATRIX_HANDLE ?? "default";
+        const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
+        const containerId = process.env.HOSTNAME ?? "local";
+
+        // Atomic upsert eliminates the SELECT->INSERT TOCTOU race that could
+        // let two concurrent first-time dev requests both reach createUser and
+        // have one fail on the unique constraint. ON CONFLICT covers the
+        // common case (same env vars across parallel requests => same
+        // clerk_id). On match, backfill pipedream_external_id if missing.
+        try {
+          const upserted = await platformDb!.raw(
+            `INSERT INTO users (clerk_id, handle, display_name, email, container_id, pipedream_external_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (clerk_id) DO UPDATE
+               SET pipedream_external_id = COALESCE(users.pipedream_external_id, EXCLUDED.pipedream_external_id)
+             RETURNING id`,
+            [clerkId, handle, handle, `${handle}@matrix-os.local`, containerId, handle],
+          );
+          const row = upserted.rows[0] as { id: string } | undefined;
+          if (row) return row.id;
+          console.warn("[integrations][auth] dev_upsert_returned_no_row");
+          return null;
+        } catch (err) {
+          // The upsert handles clerk_id conflicts but not handle/container_id
+          // ones. Those occur when MATRIX_CLERK_USER_ID was changed between
+          // runs and the orphaned row still owns the handle. Try to recover
+          // by returning the orphaned row so dev keeps working without a wipe.
+          try {
+            const byHandle = await platformDb!.raw(
+              `SELECT id, pipedream_external_id FROM users WHERE handle = $1 LIMIT 1`,
+              [handle],
+            );
+            if (byHandle.rows.length > 0) {
+              const row = byHandle.rows[0] as { id: string; pipedream_external_id: string | null };
+              if (!row.pipedream_external_id) {
+                await platformDb!.updatePipedreamExternalId(row.id, handle);
+              }
+              return row.id;
+            }
+            // Upsert raised, recovery SELECT found nothing. Whatever caused
+            // the original error is real (DB down, schema drift, etc.).
+            console.error(
+              "[integrations][auth] db_error during dev fallback upsert (recovery select empty):",
+              err instanceof Error ? err.message : err,
+            );
+            return null;
+          } catch (recoveryErr) {
+            // Both queries failed -- DB is genuinely unreachable.
+            console.error(
+              "[integrations][auth] db_error during dev fallback (both upsert and recovery failed):",
+              err instanceof Error ? err.message : err,
+              "recovery:",
+              recoveryErr instanceof Error ? recoveryErr.message : recoveryErr,
+            );
+            return null;
+          }
+        }
+      };
+
+      integrationRoutes = createIntegrationRoutes({
+        db: platformDb,
+        pipedream: pipedreamClient,
+        webhookSecret: (() => {
+          const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
+          if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
+          return s ?? "";
+        })(),
+        resolveUserId: resolveIntegrationUserId,
+        broadcast,
+      });
+      // Routes mounted after auth middleware below (see "deferred route mounts")
+      console.log("[platform-db] Integration routes ready");
+
+      discoverComponentKeys(pipedreamClient)
+        .then((stats) => {
+          console.log(`[integrations] Component keys discovered: ${stats.matched}/${stats.total} matched, ${stats.errors} errors`);
+        })
+        .catch((err) => {
+          console.error("[integrations] Component key discovery failed:", err instanceof Error ? err.message : err);
+        });
+    } catch (err) {
+      console.error("[platform-db] Failed to initialize:", (err as Error).message);
+      platformDb = null;
     }
   }
 
@@ -387,6 +564,12 @@ export async function createGateway(config: GatewayConfig) {
                 stream.append(event.text);
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.appendAssistantText(sid, event.text);
+              } else if (event.type === "tool_start") {
+                const sid = channelSessions.get(sessionKey);
+                if (sid) conversations.addToolStart(sid, event.tool);
+              } else if (event.type === "tool_end") {
+                const sid = channelSessions.get(sessionKey);
+                if (sid) conversations.addToolEnd(sid, event.tool, event.input);
               } else if (event.type === "result") {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) finalizeWithSummary(sid);
@@ -427,6 +610,12 @@ export async function createGateway(config: GatewayConfig) {
             responseText += event.text;
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.appendAssistantText(sid, event.text);
+          } else if (event.type === "tool_start") {
+            const sid = channelSessions.get(sessionKey);
+            if (sid) conversations.addToolStart(sid, event.tool);
+          } else if (event.type === "tool_end") {
+            const sid = channelSessions.get(sessionKey);
+            if (sid) conversations.addToolEnd(sid, event.tool, event.input);
           } else if (event.type === "result") {
             const sid = channelSessions.get(sessionKey);
             if (sid) finalizeWithSummary(sid);
@@ -576,6 +765,12 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
+  // Deferred route mounts -- must come AFTER auth middleware
+  if (integrationRoutes) {
+    app.route("/api/integrations", integrationRoutes);
+    console.log("[platform-db] Integration routes mounted (after auth)");
+  }
+
   app.use("*", async (c, next) => {
     const start = performance.now();
     await next();
@@ -650,6 +845,7 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "message") {
             pendingText = parsed.text;
             const requestId = parsed.requestId;
+            let lastToolName: string | undefined;
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
@@ -665,6 +861,11 @@ export async function createGateway(config: GatewayConfig) {
                   }
                 } else if (msg.type === "kernel:text" && activeSessionId) {
                   conversations.appendAssistantText(activeSessionId, msg.text);
+                } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                  lastToolName = msg.tool;
+                  conversations.addToolStart(activeSessionId, msg.tool);
+                } else if (msg.type === "kernel:tool_end" && activeSessionId) {
+                  conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
                   finalizeWithSummary(activeSessionId);
                 }
@@ -1334,6 +1535,124 @@ export async function createGateway(config: GatewayConfig) {
     writeFileSync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bridge: Integration service calls (for apps in iframes)
+  // ---------------------------------------------------------------------------
+
+  app.get("/api/bridge/service", async (c) => {
+    if (!platformDb || !resolveIntegrationUserId) {
+      return c.json({ error: "Integrations not configured" }, 503);
+    }
+    const uid = await resolveIntegrationUserId(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+    const services = await platformDb.listConnectedServices(uid);
+    return c.json({
+      services: services.map((s) => ({
+        service: s.service,
+        account_label: s.account_label,
+        account_email: s.account_email,
+        status: s.status,
+      })),
+    });
+  });
+
+  app.post("/api/bridge/service", bodyLimit({ maxSize: 65536 }), async (c) => {
+    if (process.env.NODE_ENV === "production") {
+      return c.json({ error: "Bridge not available in production" }, 403);
+    }
+    if (!platformDb || !pipedreamClient || !resolveIntegrationUserId) {
+      return c.json({ error: "Integrations not configured" }, 503);
+    }
+
+    // Mirror CallBodySchema from integrations/routes.ts. The route is dev-only
+    // (production returns 403 above) so the security risk of an unvalidated
+    // body is minimal, but the cast was inconsistent with every other mutating
+    // endpoint in this PR and provided zero runtime protection.
+    let parsedJson: unknown;
+    try {
+      parsedJson = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = BridgeCallBodySchema.safeParse(parsedJson);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
+    }
+
+    const { service, action, label, params } = parsed.data;
+
+    const def = getService(service);
+    if (!def) return c.json({ error: `Unknown service: ${service}` }, 400);
+    const actionDef = getAction(service, action);
+    if (!actionDef) return c.json({ error: `Unknown action: ${action}` }, 400);
+
+    const paramValidation = validateActionParams(actionDef, params);
+    if (!paramValidation.valid) {
+      const parts: string[] = [];
+      if (paramValidation.missing.length > 0) parts.push(`Missing required params: ${paramValidation.missing.join(", ")}`);
+      if (paramValidation.typeErrors.length > 0) parts.push(`Invalid param type: ${paramValidation.typeErrors.join("; ")}`);
+      return c.json({ error: parts.join(". ") }, 400);
+    }
+
+    const uid = await resolveIntegrationUserId(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    const connections = await platformDb.listConnectedServices(uid);
+    let connection;
+    if (label) {
+      connection = connections.find((s) => s.service === service && s.account_label === label);
+    } else {
+      connection = connections.find((s) => s.service === service);
+    }
+    if (!connection) {
+      return c.json({ error: `Service ${service} is not connected` }, 404);
+    }
+
+    const fullUser = await platformDb.getUserById(uid);
+    const externalId = fullUser?.pipedream_external_id || uid;
+    if (!fullUser?.pipedream_external_id) {
+      await platformDb.updatePipedreamExternalId(uid, externalId);
+    }
+
+    try {
+      const { data, summary } = await executeIntegrationAction({
+        pipedream: pipedreamClient,
+        externalUserId: externalId,
+        connection,
+        def,
+        actionDef,
+        serviceId: service,
+        actionId: action,
+        params,
+      });
+      await platformDb.touchServiceUsage(connection.id);
+      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
+    } catch (err) {
+      if (err instanceof IntegrationActionNotImplementedError) {
+        return c.json({ error: err.message }, 501);
+      }
+      if (getErrorStatusCode(err) === 429) {
+        const retryAfter = getRetryAfterSeconds(err);
+        return c.json(
+          { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
+          { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        );
+      }
+      const isAbort = err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+      if (isAbort) {
+        console.error(`[bridge/service] ${service}/${action} timeout`);
+        return c.json({ error: "Integration call timed out" }, 504);
+      }
+      const msg = err instanceof Error ? err.message.toLowerCase() : "";
+      if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("enetunreach")) {
+        console.error(`[bridge/service] ${service}/${action} connection error:`, err);
+        return c.json({ error: "Integration service unavailable" }, 503);
+      }
+      console.error(`[bridge/service] ${service}/${action} error:`, err instanceof Error ? err.message : err);
+      return c.json({ error: "Integration call failed" }, 502);
+    }
   });
 
   app.get("/api/conversations", (c) => {

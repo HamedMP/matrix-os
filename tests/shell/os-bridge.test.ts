@@ -189,5 +189,17 @@ describe("OS Bridge", () => {
       const script = buildBridgeScript("expense-tracker");
       expect(script).toContain("expense-tracker");
     });
+
+    it("includes optional label forwarding in MatrixOS.service", () => {
+      const script = buildBridgeScript("test-app");
+      expect(script).toContain("service: function(service, action, params, label)");
+      expect(script).toContain("label: label");
+    });
+
+    it("includes timeouts for bridge integration fetches", () => {
+      const script = buildBridgeScript("test-app");
+      expect(script).toContain('fetch("/api/bridge/service", { signal: AbortSignal.timeout(10000) })');
+      expect(script).toContain("signal: AbortSignal.timeout(35000)");
+    });
   });
 });

@@ -10,10 +10,12 @@ import {
   ClockIcon,
   PuzzleIcon,
   MonitorIcon,
+  CableIcon,
 } from "lucide-react";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
 import { ChannelsSection } from "./settings/sections/ChannelsSection";
+import { IntegrationsSection } from "./settings/sections/IntegrationsSection";
 import { SkillsSection } from "./settings/sections/SkillsSection";
 import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
@@ -25,6 +27,7 @@ const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "agent", label: "Agent", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
+  { id: "integrations", label: "Integrations", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
@@ -147,6 +150,7 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "agent" && <AgentSection />}
               {activeSection === "channels" && <ChannelsSection />}
+              {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}

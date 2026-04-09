@@ -135,6 +135,9 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (dbUrl) {
       env.push(`DATABASE_URL=${dbUrl}`);
     }
+    if (postgresUrl) {
+      env.push(`PLATFORM_DATABASE_URL=${postgresUrl}/matrixos_platform`);
+    }
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);

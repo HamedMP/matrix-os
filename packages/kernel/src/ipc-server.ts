@@ -27,6 +27,12 @@ import { promisify } from "node:util";
 import { WebCache } from "./tools/web-cache.js";
 import { createWebFetchTool } from "./tools/web-fetch.js";
 import { createWebSearchTool, type ApiKeys } from "./tools/web-search.js";
+import {
+  connectServiceHandler,
+  callServiceHandler,
+  listConnectedServicesHandler,
+  syncServicesHandler,
+} from "./tools/integrations.js";
 const execAsync = promisify(execFile);
 
 export function createIpcServer(db: MatrixDB, homePath?: string) {
@@ -1027,6 +1033,50 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
       ),
 
       ...createWebTools(homePath),
+
+      tool(
+        "connect_service",
+        "Connect an external service (Gmail, Google Calendar, Google Drive, GitHub, Slack, Discord) via OAuth. Returns a URL for the user to authorize.",
+        {
+          service: z.string().describe("Service to connect: gmail, google_calendar, google_drive, github, slack, discord"),
+          label: z.string().optional().describe("Label for the connection (e.g. 'Work Gmail', 'Personal GitHub')"),
+        },
+        async ({ service, label }) => {
+          return connectServiceHandler({ service, label });
+        },
+      ),
+
+      tool(
+        "call_service",
+        "Call a connected external service API. The service must be connected first via connect_service. Use this to read emails, send messages, list calendar events, etc.",
+        {
+          service: z.string().describe("Service to call: gmail, google_calendar, google_drive, github, slack, discord"),
+          action: z.string().describe("Action to perform (e.g. list_messages, send_email, list_events, list_repos, send_message)"),
+          params: z.record(z.string(), z.unknown()).optional().describe("Action parameters as key-value pairs"),
+          label: z.string().optional().describe("Which account to use if multiple are connected (e.g. 'Work Gmail')"),
+        },
+        async ({ service, action, params, label }) => {
+          return callServiceHandler({ service, action, params, label });
+        },
+      ),
+
+      tool(
+        "list_connected_services",
+        "List all external services currently connected to this user's account. Use this BEFORE claiming a service is not connected -- the local DB may be stale if the user just finished OAuth in a separate tab. If empty, call sync_services to pull the latest state from Pipedream.",
+        {},
+        async () => {
+          return listConnectedServicesHandler();
+        },
+      ),
+
+      tool(
+        "sync_services",
+        "Force-sync connected services from Pipedream into the local DB. Use this AFTER the user tells you they authorized a service but list_connected_services doesn't show it yet -- this happens in local dev because Pipedream's webhook can't reach the gateway. Safe to call repeatedly; no-op if nothing new.",
+        {},
+        async () => {
+          return syncServicesHandler();
+        },
+      ),
     ],
   });
 }
