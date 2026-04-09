@@ -1,11 +1,42 @@
-import { setupClerkTestingToken } from "@clerk/testing/playwright";
 import { test, expect } from "@playwright/test";
 
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
-    await setupClerkTestingToken({ page });
+    // Mock gateway APIs so the shell renders without a running backend
+    await page.route("**/api/settings/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          background: { type: "pattern" },
+          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+          pinnedApps: [],
+          hasKey: true,
+        }),
+      }),
+    );
+    await page.route("**/api/identity", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ handle: "test", displayName: "Test User" }),
+      }),
+    );
+    await page.route("**/api/apps**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      }),
+    );
+    // Block WebSocket upgrade requests so they don't keep reconnecting
+    await page.route("**/ws/**", (route) => route.abort());
+
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    // Wait for the dock to render (confirms the shell loaded past auth)
+    await page.waitForSelector("[data-testid='dock-settings']", {
+      timeout: 15000,
+    });
   });
 
   test("desktop default state", async ({ page }) => {
@@ -15,7 +46,7 @@ test.describe("Visual regression", () => {
   });
 
   test("chat sidebar open", async ({ page }) => {
-    const chatToggle = page.locator("button", { has: page.locator("svg.lucide-message-square") }).first();
+    const chatToggle = page.getByTestId("chat-toggle");
     await chatToggle.click();
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("chat-sidebar.png", {
@@ -24,7 +55,7 @@ test.describe("Visual regression", () => {
   });
 
   test("settings panel", async ({ page }) => {
-    const settingsButton = page.locator("aside button", { has: page.locator("svg.lucide-settings") }).first();
+    const settingsButton = page.getByTestId("dock-settings");
     await settingsButton.click();
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("settings-panel.png", {
@@ -41,7 +72,7 @@ test.describe("Visual regression", () => {
   });
 
   test("mission control", async ({ page }) => {
-    const tasksButton = page.locator("aside button", { has: page.locator("svg.lucide-square-kanban") }).first();
+    const tasksButton = page.getByTestId("dock-tasks");
     await tasksButton.click();
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot("mission-control.png", {
@@ -50,7 +81,6 @@ test.describe("Visual regression", () => {
   });
 
   test("file browser", async ({ page }) => {
-    // Open via command palette since file browser may not be in the dock
     await page.keyboard.press("Meta+k");
     await page.waitForTimeout(300);
     await page.keyboard.type("File Browser");

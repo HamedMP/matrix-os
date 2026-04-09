@@ -34,6 +34,9 @@ jobs:
         run: |
           echo "ANTHROPIC_API_KEY=test-not-used-in-docker-scenarios" > .env.docker
 
+      - name: Create external volumes
+        run: docker volume create matrixos-ai-auth
+
       - name: Build dev image
         run: |
           docker compose -f docker-compose.dev.yml build dev

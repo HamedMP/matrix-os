@@ -161,4 +161,57 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(false);
     expect(result?.status).toBe(429);
   });
+
+  it("allows integrations webhook without bearer token (HMAC handled downstream)", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/integrations/webhook/connected"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
+  it("rate-limits integrations webhook separately from auth failures", async () => {
+    // The integrations webhook limiter is more permissive (120/min) than the
+    // failed-auth limiter (10/min) because legit providers retry aggressively.
+    // A burst from a single source IP must still eventually be throttled so
+    // HMAC verification can't become a free DoS target. This test fires 121
+    // webhook requests from one IP and verifies the last one gets 429.
+    const mw = authMiddleware("secret-token");
+    const testIp = "10.88.88.88";
+    for (let i = 0; i < 120; i++) {
+      await mw(
+        mockContext("/api/integrations/webhook/connected", undefined, undefined, testIp),
+        async () => {},
+      );
+    }
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/api/integrations/webhook/connected", undefined, undefined, testIp),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(429);
+  });
+
+  it("isolates integrations webhook limiter from failed-auth limiter", async () => {
+    // Fire 10 bad auth attempts to exhaust the failed-auth limiter for an IP,
+    // then send a webhook request from that same IP -- it should pass because
+    // the webhook limiter has its own counter.
+    const mw = authMiddleware("secret-token");
+    const testIp = "10.77.77.77";
+    for (let i = 0; i < 11; i++) {
+      await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, testIp),
+        async () => {},
+      );
+    }
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/integrations/webhook/connected", undefined, undefined, testIp),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
 });

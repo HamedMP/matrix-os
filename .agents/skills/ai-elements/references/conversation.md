@@ -34,7 +34,8 @@ import {
   MessageResponse,
 } from "@/components/ai-elements/message";
 import {
-  Input,
+  PromptInput,
+  type PromptInputMessage,
   PromptInputTextarea,
   PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
@@ -46,10 +47,9 @@ const ConversationDemo = () => {
   const [input, setInput] = useState("");
   const { messages, sendMessage, status } = useChat();
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (input.trim()) {
-      sendMessage({ text: input });
+  const handleSubmit = (message: PromptInputMessage) => {
+    if (message.text.trim()) {
+      sendMessage({ text: message.text });
       setInput("");
     }
   };
@@ -90,7 +90,7 @@ const ConversationDemo = () => {
           <ConversationScrollButton />
         </Conversation>
 
-        <Input
+        <PromptInput
           onSubmit={handleSubmit}
           className="mt-4 w-full max-w-2xl mx-auto relative"
         >
@@ -105,7 +105,7 @@ const ConversationDemo = () => {
             disabled={!input.trim()}
             className="absolute bottom-1 right-1"
           />
-        </Input>
+        </PromptInput>
       </div>
     </div>
   );
@@ -198,9 +198,9 @@ import { ConversationDownload } from "@/components/ai-elements/conversation";
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `messages` | `ConversationMessage[]` | Required | Array of messages to include in the download. |
+| `messages` | `UIMessage[]` | Required | Array of messages to include in the download. |
 | `filename` | `string` | - | The filename for the downloaded file. |
-| `formatMessage` | `(message: ConversationMessage, index: number) => string` | - | Custom function to format each message in the output. |
+| `formatMessage` | `(message: UIMessage, index: number) => string` | - | Custom function to format each message in the output. |
 | `...props` | `Omit<ComponentProps<typeof Button>, ` | - | Any other props are spread to the underlying shadcn/ui Button component. |
 
 ### `messagesToMarkdown`
@@ -215,6 +215,10 @@ const markdown = messagesToMarkdown(messages);
 // With custom formatter
 const customMarkdown = messagesToMarkdown(
   messages,
-  (msg, i) => `[${msg.role}]: ${msg.content}`
+  (msg, i) =>
+    `[${msg.role}]: ${msg.parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("")}`
 );
 ```

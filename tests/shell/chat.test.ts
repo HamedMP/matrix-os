@@ -36,6 +36,9 @@ function reduceChat(
             targetIdx = i;
             break;
           }
+          if (m.tool && m.requestId === reqId) {
+            break;
+          }
         }
       } else {
         const last = next[next.length - 1];
@@ -604,12 +607,13 @@ describe("parallel response rendering (T2003)", () => {
     msgs = reduceChat(msgs, { type: "kernel:tool_end", requestId: "req-1" });
     msgs = reduceChat(msgs, { type: "kernel:text", text: " Done!", requestId: "req-1" });
 
-    // req-1: text, Read tool, more text
+    // req-1: text, Read tool, then more text in a separate bubble
     // req-2: text, Write tool
     const req1Text = msgs.filter((m) => m.requestId === "req-1" && m.role === "assistant");
     const req2Text = msgs.filter((m) => m.requestId === "req-2" && m.role === "assistant");
-    expect(req1Text).toHaveLength(1);
-    expect(req1Text[0].content).toBe("Starting... Done!");
+    expect(req1Text).toHaveLength(2);
+    expect(req1Text[0].content).toBe("Starting...");
+    expect(req1Text[1].content).toBe(" Done!");
     expect(req2Text).toHaveLength(1);
     expect(req2Text[0].content).toBe("Also starting...");
 
@@ -617,6 +621,39 @@ describe("parallel response rendering (T2003)", () => {
     const req2Tools = msgs.filter((m) => m.requestId === "req-2" && m.tool);
     expect(req1Tools[0].content).toBe("Used Read");
     expect(req2Tools[0].content).toBe("Used Write");
+  });
+
+  it("post-tool text gets its own bubble within same requestId", () => {
+    let msgs: ChatMessage[] = [];
+    msgs = reduceChat(msgs, { type: "kernel:text", text: "Let me check...", requestId: "req-1" });
+    msgs = reduceChat(msgs, { type: "kernel:tool_start", tool: "Read", requestId: "req-1" });
+    msgs = reduceChat(msgs, { type: "kernel:tool_end", requestId: "req-1" });
+    msgs = reduceChat(msgs, { type: "kernel:text", text: "Here's what I found", requestId: "req-1" });
+
+    const assistants = msgs.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    expect(assistants[0].content).toBe("Let me check...");
+    expect(assistants[1].content).toBe("Here's what I found");
+  });
+
+  it("second turn response does not append to first turn", () => {
+    let msgs: ChatMessage[] = [];
+    // Turn 1
+    msgs = reduceChat(msgs, { type: "kernel:text", text: "Answer 1", requestId: "req-1" });
+    msgs = reduceChat(msgs, { type: "kernel:tool_start", tool: "Read", requestId: "req-1" });
+    msgs = reduceChat(msgs, { type: "kernel:tool_end", requestId: "req-1" });
+    msgs = reduceChat(msgs, { type: "kernel:text", text: "After tool", requestId: "req-1" });
+    // User message 2
+    msgs.push({ id: "user-2", role: "user", content: "Follow-up", timestamp: 2 });
+    // Turn 2
+    msgs = reduceChat(msgs, { type: "kernel:text", text: "Answer 2", requestId: "req-2" });
+
+    const assistants = msgs.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(3);
+    expect(assistants[0].content).toBe("Answer 1");
+    expect(assistants[1].content).toBe("After tool");
+    expect(assistants[2].content).toBe("Answer 2");
+    expect(assistants[2].requestId).toBe("req-2");
   });
 
   it("groupMessages preserves requestId in groups", () => {

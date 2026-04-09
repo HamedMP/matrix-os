@@ -184,6 +184,21 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 
     app: { name: app },
 
+    integrations: function() {
+      return fetch("/api/bridge/service", { signal: AbortSignal.timeout(10000) })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { return d.services || []; });
+    },
+
+    service: function(service, action, params, label) {
+      return fetch("/api/bridge/service", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label }),
+        signal: AbortSignal.timeout(35000)
+      }).then(function(r) { return r.json(); });
+    },
+
     db: {
       find: function(table, opts) {
         var body = { app: app, action: "find", table: table };

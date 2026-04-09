@@ -1,7 +1,5 @@
 "use client";
 
-import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
-
 import {
   Attachment,
   AttachmentPreview,
@@ -21,9 +19,11 @@ import {
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
+import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import {
   PromptInput,
   PromptInputActionAddAttachments,
+  PromptInputActionAddScreenshot,
   PromptInputActionMenu,
   PromptInputActionMenuContent,
   PromptInputActionMenuTrigger,
@@ -209,6 +209,7 @@ const Example = () => {
                 <PromptInputActionMenuTrigger />
                 <PromptInputActionMenuContent>
                   <PromptInputActionAddAttachments />
+                  <PromptInputActionAddScreenshot />
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
               <PromptInputButton>

@@ -40,9 +40,16 @@ jobs:
 
       - name: Run Playwright tests
         run: cd shell && pnpm exec playwright test --update-snapshots
-        env:
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            shell/test-results/
+            shell/playwright-report/
+          retention-days: 7
 
       - name: Check for snapshot changes
         id: snapshots

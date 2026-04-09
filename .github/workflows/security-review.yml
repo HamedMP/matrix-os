@@ -8,7 +8,7 @@ on:
       - "packages/kernel/src/**"
       - "packages/platform/src/**"
       - "shell/src/lib/**"
-      - "shell/proxy.ts"
+      - "shell/src/proxy.ts"
       - ".github/workflows/**"
 
 jobs:
@@ -57,5 +57,6 @@ jobs:
             Only report real issues, not theoretical concerns.
             Use inline comments on the specific lines.
           claude_args: |
-            --max-turns 10
+            --model claude-opus-4-6
+            --max-turns 25
             --allowedTools "Bash(gh pr:*),Bash(gh api:*),Read,Glob,Grep"

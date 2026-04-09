@@ -723,13 +723,20 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
         }
 
         if (path.startsWith("apps/")) {
-          const name = path.replace("apps/", "").replace(".html", "");
+          // Only react to actual app entry points, not every file under apps/
+          const isRootHtml = path.match(/^apps\/[^/]+\.html$/);
+          const isAppIndex = path.match(/^apps\/[^/]+\/(index\.html|dist\/index\.html)$/);
+          if (!isRootHtml && !isAppIndex) return;
+
+          const name = path.replace("apps/", "").replace(/\/(dist\/)?index\.html$/, "").replace(".html", "");
           if (event === "unlink") {
             wmSetApps((prev) => prev.filter((a) => a.path !== path));
             wmSetWindows((prev) => prev.filter((w) => w.path !== path));
-          } else {
+          } else if (event === "add") {
             addApp(name, path);
-            openWindow(name, path);
+          } else {
+            // "change" on existing app -- refresh open windows, don't force-open
+            addApp(name, path);
           }
         }
       },
@@ -1067,6 +1074,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                data-testid="dock-tasks"
                 onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                 className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                   taskBoardOpen
@@ -1206,6 +1214,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  data-testid="dock-settings"
                   onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
                   className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                     settingsOpen

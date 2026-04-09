@@ -79,4 +79,14 @@ describe("T828: Auth hardening", () => {
     await mw(ctx, async () => {});
     expect(getBody()).toEqual({ error: "Unauthorized" });
   });
+
+  it("rejects bearer tokens with extra trailing bytes", async () => {
+    const mw = authMiddleware("my-secret-token-that-is-long");
+    const { ctx, getBody } = mockContext(
+      "/api/message",
+      "Bearer my-secret-token-that-is-long_garbage",
+    );
+    await mw(ctx, async () => {});
+    expect(getBody()).toEqual({ error: "Unauthorized" });
+  });
 });

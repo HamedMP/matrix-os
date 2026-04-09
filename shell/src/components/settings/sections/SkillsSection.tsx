@@ -54,17 +54,18 @@ export function SkillsSection() {
 
   const loadSkills = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY}/files/agents/skills/`);
+      const res = await fetch(`${GATEWAY}/api/settings/skills`);
       if (!res.ok) return;
-      const text = await res.text();
-      const files = text.match(/[\w-]+\.md/g) ?? [];
+      const data: Array<{ name: string; file: string; description?: string; enabled: boolean }> = await res.json();
       const loaded: SkillInfo[] = [];
-      for (const file of files) {
+      for (const entry of data) {
         try {
-          const r = await fetch(`${GATEWAY}/files/agents/skills/${file}`);
+          const r = await fetch(`${GATEWAY}/files/agents/skills/${entry.file}`);
           if (r.ok) {
             const content = await r.text();
-            loaded.push(parseSkillFrontmatter(file.replace(".md", ""), content));
+            const skill = parseSkillFrontmatter(entry.name, content);
+            if (!skill.description && entry.description) skill.description = entry.description;
+            loaded.push(skill);
           }
         } catch { /* skip */ }
       }

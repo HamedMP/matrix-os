@@ -20,6 +20,8 @@ export function listApps(homePath: string): AppEntry[] {
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", ".cache", ".vite"]);
+
 function scanAppsDir(
   baseDir: string,
   prefix: string,
@@ -30,6 +32,8 @@ function scanAppsDir(
   const entries = readdirSync(dir);
 
   for (const entry of entries) {
+    if (SKIP_DIRS.has(entry)) continue;
+
     const fullPath = join(dir, entry);
     const relativePath = prefix ? `${prefix}/${entry}` : entry;
 
@@ -50,6 +54,7 @@ function scanAppsDir(
           });
         }
       }
+      // Always recurse to discover nested apps (e.g. games/snake inside games/)
       scanAppsDir(baseDir, relativePath, result, seen);
       continue;
     }

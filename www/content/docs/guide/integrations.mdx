@@ -1,0 +1,212 @@
+---
+title: Integrations
+description: Connect external services like Gmail, Google Calendar, GitHub, Slack, and Discord to Matrix OS.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+Matrix OS connects to external services through [Pipedream Connect](https://pipedream.com/connect). You authorize once via OAuth, and your AI agent can read emails, create calendar events, post to Slack, and more -- all from conversation.
+
+## Available Services
+
+| Service | What your agent can do |
+|---------|----------------------|
+| **Gmail** | Read, search, send emails. List labels. |
+| **Google Calendar** | List, create, update, delete events. |
+| **Google Drive** | List, read, upload, share files. |
+| **GitHub** | List repos, issues, PRs. Create issues. Get notifications. |
+| **Slack** | Send messages, list channels, search, add reactions. |
+| **Discord** | Send messages, list servers and channels. |
+
+## Connecting a Service
+
+There are two ways to connect:
+
+### From Settings
+
+Open **Settings > Integrations**. You'll see all available services with a **Connect** button. Click it, authorize in the popup, and the connection appears automatically.
+
+### From Conversation
+
+Tell your agent what you need:
+
+> "Connect my Gmail"
+
+The agent will give you an authorization link. Click it, authorize, done. The agent confirms once the connection is active.
+
+You can also label connections for multiple accounts:
+
+> "Connect my work Gmail as Work Gmail"
+
+## Using Connected Services
+
+Once connected, just ask naturally:
+
+> "What are my unread emails?"
+> "Create a meeting with Alice tomorrow at 3pm"
+> "Post 'deploy complete' to #engineering in Slack"
+> "List my open GitHub issues in myorg/myrepo"
+
+The agent uses two IPC tools under the hood:
+
+- **`connect_service`** -- starts the OAuth flow for a service
+- **`call_service`** -- calls an action on a connected service
+
+<Callout type="info" title="Actions API">
+  When component keys are discovered at startup, Matrix OS uses Pipedream's Actions API to execute real service components with proper auth binding. This is more reliable than raw API proxying and returns structured summaries (e.g., "Email sent to alice@example.com").
+</Callout>
+
+## Service Actions Reference
+
+### Gmail
+
+| Action | Description | Required Params |
+|--------|-------------|-----------------|
+| `list_messages` | List emails matching a query | -- |
+| `get_message` | Read a specific email | `messageId` |
+| `send_email` | Send an email | `to`, `subject`, `body` |
+| `search` | Search emails | `query` |
+| `list_labels` | List email labels/folders | -- |
+
+Optional params: `query` (Gmail search syntax like `is:unread`, `from:alice`), `maxResults`, `cc`.
+
+### Google Calendar
+
+| Action | Description | Required Params |
+|--------|-------------|-----------------|
+| `list_events` | List upcoming events | -- |
+| `create_event` | Create a new event | `summary`, `start`, `end` |
+| `update_event` | Update an existing event | `eventId` |
+| `delete_event` | Delete an event | `eventId` |
+
+Date params use ISO 8601 format: `2026-04-06T09:00:00Z`.
+
+### Google Drive
+
+| Action | Description | Required Params |
+|--------|-------------|-----------------|
+| `list_files` | List files in Drive | -- |
+| `get_file` | Get file metadata | `fileId` |
+| `upload_file` | Upload a file | `name`, `content` |
+| `share_file` | Share a file | `fileId`, `email` |
+
+### GitHub
+
+| Action | Description | Required Params |
+|--------|-------------|-----------------|
+| `list_repos` | List your repositories | -- |
+| `list_issues` | List issues for a repo | `repo` (e.g., `owner/name`) |
+| `create_issue` | Create a new issue | `repo`, `title` |
+| `list_prs` | List pull requests | `repo` |
+| `get_notifications` | Get notifications | -- |
+
+### Slack
+
+| Action | Description | Required Params |
+|--------|-------------|-----------------|
+| `send_message` | Send a message to a channel | `channel`, `text` |
+| `list_channels` | List available channels | -- |
+| `list_messages` | List messages in a channel | `channel` |
+| `search` | Search messages | `query` |
+| `react` | Add emoji reaction | `channel`, `timestamp`, `emoji` |
+
+### Discord
+
+| Action | Description | Required Params |
+|--------|-------------|-----------------|
+| `send_message` | Send a message | `channelId`, `content` |
+| `list_servers` | List servers the bot is in | -- |
+| `list_channels` | List channels in a server | `serverId` |
+| `list_messages` | List messages in a channel | `channelId` |
+
+## Multiple Accounts
+
+You can connect multiple accounts for the same service. For example, a Work Gmail and a Personal Gmail. Use labels to differentiate:
+
+> "Send from my Work Gmail: email alice@company.com about the Q2 report"
+
+The agent uses the `label` parameter to target the right account. If no label is specified, the most recently connected account is used.
+
+## Managing Connections
+
+### View connections
+
+> "What services are connected?"
+
+Or open **Settings > Integrations** to see all active connections with status indicators.
+
+### Disconnect a service
+
+> "Disconnect my GitHub"
+
+Or click **Disconnect** in Settings. This revokes the OAuth credentials on Pipedream's side and removes the connection from your account.
+
+## Building Apps with Integrations
+
+Apps you build can use connected services. When the agent creates an app that needs Gmail or Slack, the platform tracks which services each app requires:
+
+```json
+{
+  "name": "Morning Briefing",
+  "integrations": {
+    "required": ["gmail", "google_calendar"],
+    "optional": ["slack"]
+  }
+}
+```
+
+If a required service isn't connected, the platform tells you what's missing and how to connect it.
+
+## How It Works (Architecture)
+
+```
+User -> Shell (Settings UI / Conversation)
+         |
+    Gateway (:4000)
+    /api/integrations/*
+         |
+    Pipedream Connect SDK
+    - OAuth token management
+    - Actions API (component execution)
+    - Credential storage
+         |
+    External Service APIs
+    (Gmail API, GitHub API, Slack API, etc.)
+```
+
+1. **Gateway** hosts the integration REST API and manages the platform database (users, connections, apps)
+2. **Pipedream** handles OAuth flows, credential storage, token refresh, and API execution
+3. **Kernel** exposes `connect_service` and `call_service` as IPC tools for the agent
+4. **Shell** provides the Settings UI for visual connection management
+
+<Callout type="warn" title="Environment required">
+  Integrations require Pipedream credentials (`PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, `PIPEDREAM_PROJECT_ID`) and a platform database (`PLATFORM_DATABASE_URL`). See the [Getting Started](/docs/guide/getting-started) guide for setup.
+</Callout>
+
+## Error Handling
+
+| Error | What it means | What to do |
+|-------|---------------|------------|
+| "Service not connected" | The service hasn't been authorized yet | Connect it first via Settings or conversation |
+| "Rate limited" (429) | Too many requests to the service | Wait and try again (the `retry_after` field tells you how long) |
+| "Timed out" (504) | The service took too long to respond | Try again or simplify the request |
+| "Service unavailable" (503) | Pipedream is temporarily down | Try again in a few minutes |
+| "Missing required params" (400) | The action is missing required input | Check the action reference above |
+
+## Common Workflows
+
+<Cards>
+  <Card title="Morning Briefing">
+    "Give me my morning briefing" -- agent reads unread emails, today's calendar, and summarizes both.
+  </Card>
+  <Card title="Cross-Service Automation">
+    "Summarize open GitHub issues and post to #standup in Slack" -- agent reads from GitHub, formats, and posts to Slack.
+  </Card>
+  <Card title="Email + Calendar">
+    "Email alice about the meeting and add it to my calendar" -- agent sends the email and creates the event in one conversation.
+  </Card>
+  <Card title="Drive Sharing">
+    "Share the Q2 report with the marketing team" -- agent finds the file in Drive and shares it with specified emails.
+  </Card>
+</Cards>

@@ -4,7 +4,7 @@ import { useState, useCallback, type ReactNode } from "react";
 import { useSocket } from "@/hooks/useSocket";
 import { useVoice } from "@/hooks/useVoice";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { SendIcon, MicIcon, MicOffIcon, Loader2Icon, AudioLinesIcon } from "lucide-react";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 
@@ -81,9 +81,15 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
           onFilesSelected={addFiles}
           disabled={!connected}
         />
-        <Input
+        <Textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit(e);
+            }
+          }}
           placeholder={
             isTranscribing
               ? "Transcribing..."
@@ -94,7 +100,8 @@ export function InputBar({ sessionId, busy, queueLength = 0, onSubmit, chips, em
                   : "Connecting..."
           }
           disabled={!connected || isRecording}
-          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-base md:text-sm"
+          rows={1}
+          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-base md:text-sm min-h-0 max-h-40 resize-none py-1"
         />
         {queueLength > 0 && (
           <span className="shrink-0 text-xs text-muted-foreground tabular-nums">

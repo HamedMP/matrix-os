@@ -1,0 +1,52 @@
+export interface ActionParam {
+  type: "string" | "number" | "boolean" | "object";
+  description?: string;
+  required?: boolean;
+}
+
+export interface DirectApi {
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  url: string | ((params: Record<string, unknown>) => string);
+  mapParams?: (params: Record<string, unknown>) => Record<string, string>;
+  mapBody?: (params: Record<string, unknown>) => Record<string, unknown>;
+}
+
+export interface ServiceAction {
+  description: string;
+  params: Record<string, ActionParam>;
+  componentKey?: string;
+  directApi?: DirectApi;
+}
+
+export interface ServiceDefinition {
+  id: string;
+  name: string;
+  category: string;
+  pipedreamApp: string;
+  icon: string;
+  logoUrl: string;
+  actions: Record<string, ServiceAction>;
+}
+
+export interface ConnectRequest {
+  service: string;
+  label?: string;
+}
+
+export interface CallRequest {
+  service: string;
+  action: string;
+  params?: Record<string, unknown>;
+  label?: string;
+}
+
+export interface ConnectResult {
+  url: string;
+  service: string;
+}
+
+export interface CallResult {
+  data: unknown;
+  service: string;
+  action: string;
+}
