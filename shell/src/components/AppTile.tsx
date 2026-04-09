@@ -35,10 +35,12 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
   const tile = (
     <button
       onClick={onClick}
+      data-app-tile
       className="relative flex flex-col items-center gap-1.5 p-1.5 rounded-xl hover:bg-accent/50 transition-colors group"
     >
       <div className="relative">
         <div
+          data-app-icon
           className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all ${
             showIcon
               ? `overflow-hidden ${isOpen ? "ring-2 ring-primary/40 shadow-primary/20 shadow-md" : "group-hover:shadow-md"}`
@@ -48,7 +50,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           }`}
         >
           {showIcon ? (
-            <img src={iconUrl} alt={name} className="w-[115%] h-[115%] object-cover" onError={() => setImgFailed(true)} />
+            <img src={iconUrl} alt={name} className="size-full object-cover" onError={() => setImgFailed(true)} />
           ) : (
             initial
           )}
@@ -71,7 +73,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
           </span>
         )}
       </div>
-      <span className="text-xs text-muted-foreground truncate max-w-[100px]">
+      <span className="text-xs text-white truncate max-w-[100px]">
         {name}
       </span>
       {isOpen && (
