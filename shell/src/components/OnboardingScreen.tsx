@@ -138,7 +138,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 transition: "all 1.2s ease-in-out",
               }}
             >
-              Enter
+              Enter Matrix OS
             </span>
           </button>
         </div>
@@ -183,7 +183,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               className="text-[11px] uppercase tracking-[0.25em] text-muted-foreground/70 mb-4"
               style={{ fontFamily: "var(--font-inter), system-ui, sans-serif" }}
             >
-              Aoede
+              Aoede · Matrix OS
             </p>
 
             {/* Live transcript — serif, editorial */}
