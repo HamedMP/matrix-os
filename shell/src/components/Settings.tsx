@@ -19,7 +19,7 @@ import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
-import { useDesktopConfigStore } from "@/stores/desktop-config";
+
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
@@ -74,8 +74,6 @@ interface SettingsProps {
 
 export function Settings({ open, onOpenChange }: SettingsProps) {
   const [activeSection, setActiveSection] = useState<SectionId>("appearance");
-  const dockPosition = useDesktopConfigStore((s) => s.dock.position);
-  const dockSize = useDesktopConfigStore((s) => s.dock.size);
 
   useEffect(() => {
     if (!open) return;
@@ -99,20 +97,14 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
   return (
     <div className="fixed inset-0 z-[45]">
       <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-lg"
+        className="absolute inset-0 bg-black/30 backdrop-blur-xl"
         onClick={(e) => {
           if (e.target === e.currentTarget) onOpenChange(false);
         }}
       />
 
-      <div
-        className="relative flex h-full z-10 overflow-hidden"
-        style={{
-          paddingLeft: dockPosition === "left" ? dockSize : undefined,
-          paddingRight: dockPosition === "right" ? dockSize : undefined,
-        }}
-      >
-        <div className="flex flex-col flex-1 bg-card/95 backdrop-blur-xl m-4 md:m-8 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="relative flex items-center justify-center h-full z-10 overflow-hidden">
+        <div className="flex flex-col w-[880px] max-w-[92vw] h-[680px] max-h-[88vh] bg-card/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden">
           <header className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none">
             <TrafficLights onClose={() => onOpenChange(false)} />
             <h1 className="text-xs font-medium text-center flex-1">Settings</h1>

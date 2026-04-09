@@ -151,14 +151,9 @@ export function createSettingsRoutes(opts: {
   const wallpapersDir = join(homePath, "system/wallpapers");
 
   app.get("/wallpapers", (c) => {
-    if (!existsSync(wallpapersDir)) return c.json([]);
+    if (!existsSync(wallpapersDir)) return c.json({ wallpapers: [] });
     const files = readdirSync(wallpapersDir);
-    return c.json(
-      files.map((name) => ({
-        name,
-        url: `/files/system/wallpapers/${name}`,
-      })),
-    );
+    return c.json({ wallpapers: files });
   });
 
   app.post("/wallpaper", async (c) => {
@@ -176,7 +171,9 @@ export function createSettingsRoutes(opts: {
     }
     mkdirSync(wallpapersDir, { recursive: true });
     const filePath = join(wallpapersDir, body.name);
-    writeFileSync(filePath, Buffer.from(body.data, "base64"));
+    // Strip data URL prefix (e.g. "data:image/png;base64,") if present
+    const raw = body.data.includes(",") ? body.data.split(",")[1] : body.data;
+    writeFileSync(filePath, Buffer.from(raw, "base64"));
     return c.json({ ok: true });
   });
 

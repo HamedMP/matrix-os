@@ -1528,7 +1528,7 @@ export async function createGateway(config: GatewayConfig) {
         } catch { /* ignore */ }
       }
       if (!iconStyle) {
-        iconStyle = "Digital neo-classic app icon filling the entire frame edge to edge, dark matte background with subtle luminous grid lines, clean geometric 3D forms, soft phosphor glow accents, rounded square shape, premium minimalist design, no margins or padding";
+        iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
       }
 
       const client = createImageClient(geminiKey);
@@ -1560,7 +1560,7 @@ export async function createGateway(config: GatewayConfig) {
       iconStyle = desktop.iconStyle ?? "";
     } catch { /* ignore */ }
     if (!iconStyle) {
-      iconStyle = "Digital neo-classic icon, dark matte background with subtle luminous grid lines, clean geometric forms, soft phosphor glow accents, rounded square shape, premium minimalist design";
+      iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
     }
 
     const iconsDir = join(homePath, "system/icons");
