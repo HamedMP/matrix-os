@@ -60,7 +60,14 @@ import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
-import { createIntegrationRoutes, validateActionParams, getErrorStatusCode, getRetryAfterSeconds } from "./integrations/routes.js";
+import {
+  createIntegrationRoutes,
+  validateActionParams,
+  getErrorStatusCode,
+  getRetryAfterSeconds,
+  executeIntegrationAction,
+  IntegrationActionNotImplementedError,
+} from "./integrations/routes.js";
 import { discoverComponentKeys, getService, getAction } from "./integrations/registry.js";
 import { z } from "zod/v4";
 import {
@@ -89,7 +96,7 @@ import {
 const BridgeCallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
-  label: z.string().optional(),
+  label: z.string().trim().min(1).max(100).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -1604,52 +1611,28 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     const fullUser = await platformDb.getUserById(uid);
-    const externalId = fullUser?.pipedream_external_id ?? uid;
+    const externalId = fullUser?.pipedream_external_id || uid;
+    if (!fullUser?.pipedream_external_id) {
+      await platformDb.updatePipedreamExternalId(uid, externalId);
+    }
 
     try {
-      let data: unknown;
-      if (actionDef.componentKey) {
-        const configuredProps: Record<string, unknown> = {
-          ...(params ?? {}),
-          [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
-        };
-        const result = await pipedreamClient.runAction({
-          externalUserId: externalId,
-          componentKey: actionDef.componentKey,
-          configuredProps,
-        });
-        data = result.ret;
-      } else if (actionDef.directApi) {
-        const api = actionDef.directApi;
-        const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
-        if (api.method === "GET") {
-          const queryParams = api.mapParams ? api.mapParams(params ?? {}) : undefined;
-          data = await pipedreamClient.proxyGet({
-            externalUserId: externalId,
-            accountId: connection.pipedream_account_id,
-            url,
-            params: queryParams,
-          });
-        } else {
-          const body = api.mapBody ? api.mapBody(params ?? {}) : (params ?? {});
-          data = await pipedreamClient.proxyPost({
-            externalUserId: externalId,
-            accountId: connection.pipedream_account_id,
-            url,
-            body,
-          });
-        }
-      } else {
-        data = await pipedreamClient.callAction({
-          externalUserId: externalId,
-          accountId: connection.pipedream_account_id,
-          url: `https://api.pipedream.com/v1/connect/${def.pipedreamApp}/${action}`,
-          body: params ?? {},
-        });
-      }
+      const { data, summary } = await executeIntegrationAction({
+        pipedream: pipedreamClient,
+        externalUserId: externalId,
+        connection,
+        def,
+        actionDef,
+        serviceId: service,
+        actionId: action,
+        params,
+      });
       await platformDb.touchServiceUsage(connection.id);
-      return c.json({ data, service, action });
+      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
     } catch (err) {
+      if (err instanceof IntegrationActionNotImplementedError) {
+        return c.json({ error: err.message }, 501);
+      }
       if (getErrorStatusCode(err) === 429) {
         const retryAfter = getRetryAfterSeconds(err);
         return c.json(

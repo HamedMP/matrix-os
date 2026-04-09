@@ -23,6 +23,16 @@ interface ConnectedService {
   connected_at: string;
 }
 
+export function hasNewConnectionForService(
+  previousIds: Set<string>,
+  serviceId: string,
+  connections: Array<Pick<ConnectedService, "id" | "service">>,
+): boolean {
+  return connections.some((connection) =>
+    connection.service === serviceId && !previousIds.has(connection.id),
+  );
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   google: "bg-blue-500",
   developer: "bg-gray-700",
@@ -248,7 +258,7 @@ export function IntegrationsSection() {
           if (syncRes.ok) {
             const data = await syncRes.json();
             const list: ConnectedService[] = data.services ?? [];
-            const hasNew = list.some((c) => !previousIds.has(c.id));
+            const hasNew = hasNewConnectionForService(previousIds, serviceId, list);
             if (hasNew) {
               setConnected(list);
               setConnecting(null);

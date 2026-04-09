@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
-import type { ServiceAction } from "./types.js";
+import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 
@@ -102,6 +102,115 @@ export function validateActionParams(
     return { valid: false, missing, typeErrors };
   }
   return { valid: true };
+}
+
+export class IntegrationActionNotImplementedError extends Error {
+  readonly serviceId: string;
+  readonly actionId: string;
+
+  constructor(serviceId: string, actionId: string) {
+    super(
+      `Action ${serviceId}/${actionId} is not implemented on this gateway. ` +
+      `It has no componentKey (Pipedream Actions API didn't match it) and no directApi block. ` +
+      `Add one to packages/gateway/src/integrations/registry.ts.`,
+    );
+    this.name = "IntegrationActionNotImplementedError";
+    this.serviceId = serviceId;
+    this.actionId = actionId;
+  }
+}
+
+export async function executeIntegrationAction(opts: {
+  pipedream: PipedreamConnectClient;
+  externalUserId: string;
+  connection: { pipedream_account_id: string };
+  def: ServiceDefinition;
+  actionDef: ServiceAction;
+  serviceId: string;
+  actionId: string;
+  params?: Record<string, unknown>;
+}): Promise<{ data: unknown; summary?: string }> {
+  const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
+
+  if (actionDef.componentKey) {
+    const safeParams = Object.fromEntries(
+      Object.entries(params ?? {}).filter(([k]) => k !== def.pipedreamApp),
+    );
+    const configuredProps: Record<string, unknown> = {
+      ...safeParams,
+      [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
+    };
+    const result = await pipedream.runAction({
+      externalUserId,
+      componentKey: actionDef.componentKey,
+      configuredProps,
+    });
+    const exports = result.exports as Record<string, unknown> | undefined;
+    return {
+      data: result.ret,
+      summary: typeof exports?.$summary === "string" ? exports.$summary : undefined,
+    };
+  }
+
+  if (actionDef.directApi) {
+    const api = actionDef.directApi;
+    const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
+    const accountId = connection.pipedream_account_id;
+
+    switch (api.method) {
+      case "GET":
+        return {
+          data: await pipedream.proxyGet({
+            externalUserId,
+            accountId,
+            url,
+            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
+          }),
+        };
+      case "DELETE":
+        return {
+          data: await pipedream.proxyDelete({
+            externalUserId,
+            accountId,
+            url,
+            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
+          }),
+        };
+      case "POST":
+        return {
+          data: await pipedream.proxyPost({
+            externalUserId,
+            accountId,
+            url,
+            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
+          }),
+        };
+      case "PUT":
+        return {
+          data: await pipedream.proxyPut({
+            externalUserId,
+            accountId,
+            url,
+            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
+          }),
+        };
+      case "PATCH":
+        return {
+          data: await pipedream.proxyPatch({
+            externalUserId,
+            accountId,
+            url,
+            body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
+          }),
+        };
+      default: {
+        const _exhaustive: never = api.method;
+        throw new Error(`Unsupported directApi method: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  throw new IntegrationActionNotImplementedError(serviceId, actionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +389,19 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     return uid;
   }
 
+  // Pipedream webhooks address users by external_user_id, so once we derive a
+  // fallback external ID from the platform user ID we must persist it before
+  // issuing OAuth/connect or action requests. Otherwise the first webhook for a
+  // brand-new production user arrives with `external_user_id = uid` but the DB
+  // still has NULL in users.pipedream_external_id, and the webhook is rejected
+  // as "Unknown user".
+  async function getOrCreateExternalId(uid: string): Promise<string> {
+    const user = await db.getUserById(uid);
+    if (user?.pipedream_external_id) return user.pipedream_external_id;
+    await db.updatePipedreamExternalId(uid, uid);
+    return uid;
+  }
+
   // -----------------------------------------------------------------------
   // Ownership helper -- returns the service or sends error
   // -----------------------------------------------------------------------
@@ -369,8 +491,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
-    const user = await db.getUserById(uid);
-    const externalId = user?.pipedream_external_id ?? uid;
+    const externalId = await getOrCreateExternalId(uid);
 
     try {
       const pdAccounts = await pipedream.listAccounts(externalId);
@@ -466,8 +587,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
-    const user = await db.getUserById(uid);
-    const externalId = user?.pipedream_external_id ?? uid;
+    const externalId = await getOrCreateExternalId(uid);
 
     let connectLinkUrl: string;
     try {
@@ -568,7 +688,13 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         emit({ type: "integration:connected", service: appName, accountLabel: resolvedLabel });
       }
     } catch (err) {
-      console.error("[integrations] webhook connectService failed:", err instanceof Error ? err.message : err);
+      if (isTimeoutError(err)) {
+        console.error("[integrations] webhook connectService timeout:", err instanceof Error ? err.message : err);
+      } else if (isConnectionError(err)) {
+        console.error("[integrations] webhook connectService connection error:", err instanceof Error ? err.message : err);
+      } else {
+        console.error("[integrations] webhook connectService failed:", err instanceof Error ? err.message : err);
+      }
       return c.json({ error: "Internal error" }, 500);
     }
 
@@ -636,8 +762,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     if (!connection) {
       try {
-        const user = await db.getUserById(uid);
-        const extId = user?.pipedream_external_id ?? uid;
+        const extId = await getOrCreateExternalId(uid);
         const pdAccounts = await pipedream.listAccounts(extId);
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
         const newAccounts = pdAccounts.filter(
@@ -701,114 +826,30 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 404);
     }
 
-    const user = await db.getUserById(uid);
-    const externalId = user?.pipedream_external_id ?? uid;
+    const externalId = await getOrCreateExternalId(uid);
 
     try {
-      let data: unknown;
-      let summary: string | undefined;
-
-      if (actionDef.componentKey) {
-        const safeParams = Object.fromEntries(
-          Object.entries(params ?? {}).filter(([k]) => k !== def.pipedreamApp),
-        );
-        const configuredProps: Record<string, unknown> = {
-          ...safeParams,
-          [def.pipedreamApp]: { authProvisionId: connection.pipedream_account_id },
-        };
-        const result = await pipedream.runAction({
-          externalUserId: externalId,
-          componentKey: actionDef.componentKey,
-          configuredProps,
-        });
-        data = result.ret;
-        const exports = result.exports as Record<string, unknown> | undefined;
-        summary = typeof exports?.$summary === "string" ? exports.$summary : undefined;
-      } else if (actionDef.directApi) {
-        const api = actionDef.directApi;
-        const url = typeof api.url === "function" ? api.url(params ?? {}) : api.url;
-        const accountId = connection.pipedream_account_id;
-        // Dispatch on the verb. GET/DELETE pass params as query string;
-        // POST/PUT/PATCH carry a body. mapParams + mapBody are both optional
-        // -- if absent, the raw params object is forwarded as-is.
-        switch (api.method) {
-          case "GET": {
-            data = await pipedream.proxyGet({
-              externalUserId: externalId,
-              accountId,
-              url,
-              params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-            });
-            break;
-          }
-          case "DELETE": {
-            data = await pipedream.proxyDelete({
-              externalUserId: externalId,
-              accountId,
-              url,
-              params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-            });
-            break;
-          }
-          case "POST": {
-            data = await pipedream.proxyPost({
-              externalUserId: externalId,
-              accountId,
-              url,
-              body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-            });
-            break;
-          }
-          case "PUT": {
-            data = await pipedream.proxyPut({
-              externalUserId: externalId,
-              accountId,
-              url,
-              body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-            });
-            break;
-          }
-          case "PATCH": {
-            data = await pipedream.proxyPatch({
-              externalUserId: externalId,
-              accountId,
-              url,
-              body: api.mapBody ? api.mapBody(params ?? {}) : (params ?? {}),
-            });
-            break;
-          }
-          default: {
-            // Type-narrowed exhaustiveness check -- if a new verb is added to
-            // DirectApi.method, this throws at compile time via _exhaustive.
-            const _exhaustive: never = api.method;
-            throw new Error(`Unsupported directApi method: ${String(_exhaustive)}`);
-          }
-        }
-      } else {
-        // Last resort: no componentKey, no directApi. The previous code
-        // fabricated a `/v1/connect/{app}/{action}` URL that doesn't exist
-        // in Pipedream's API and would 404. We now refuse with a clear error
-        // so the operator knows the action is unwired, instead of a confusing
-        // 502 from a fake URL. R2 added directApi blocks for every existing
-        // action; this branch only fires if a new action is added without
-        // either componentKey discovery or a directApi block.
-        console.error(
-          `[integrations] Action ${service}/${action} has neither componentKey nor directApi -- registry incomplete`,
-        );
-        return c.json(
-          {
-            error: `Action ${service}/${action} is not implemented on this gateway. ` +
-              `It has no componentKey (Pipedream Actions API didn't match it) and no directApi block. ` +
-              `Add one to packages/gateway/src/integrations/registry.ts.`,
-          },
-          501,
-        );
-      }
+      const { data, summary } = await executeIntegrationAction({
+        pipedream,
+        externalUserId: externalId,
+        connection,
+        def,
+        actionDef,
+        serviceId: service,
+        actionId: action,
+        params,
+      });
 
       await db.touchServiceUsage(connection.id);
 
       return c.json({ data, service, action, ...(summary ? { summary } : {}) });
     } catch (err: unknown) {
+      if (err instanceof IntegrationActionNotImplementedError) {
+        console.error(
+          `[integrations] Action ${err.serviceId}/${err.actionId} has neither componentKey nor directApi -- registry incomplete`,
+        );
+        return c.json({ error: err.message }, 501);
+      }
       if (getErrorStatusCode(err) === 429) {
         const retryAfter = getRetryAfterSeconds(err);
         return c.json(

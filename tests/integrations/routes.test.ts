@@ -173,6 +173,44 @@ describe("Integration Routes", () => {
       });
       expect(res.status).toBe(401);
     });
+
+    it("persists fallback pipedream_external_id so the first webhook can resolve the user", async () => {
+      const firstConnectUser = await db.createUser({
+        clerkId: "clerk_route_first_connect",
+        handle: "route-first-connect",
+        displayName: "Route First Connect",
+        email: "first-connect@example.com",
+        containerId: "container_route_first_connect",
+      });
+      userId = firstConnectUser.id;
+
+      const connectRes = await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", label: "First Connect" }),
+      });
+      expect(connectRes.status).toBe(200);
+
+      const persisted = await db.getUserById(userId);
+      expect(persisted?.pipedream_external_id).toBe(userId);
+
+      const payload = JSON.stringify({
+        external_user_id: userId,
+        account_id: "pd_acc_first_connect",
+        app: "gmail",
+        email: "first@example.com",
+      });
+      const signature = signPayload(payload, WEBHOOK_SECRET);
+      const webhookRes = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": signature,
+        },
+        body: payload,
+      });
+      expect(webhookRes.status).toBe(200);
+    });
   });
 
   // -----------------------------------------------------------------------

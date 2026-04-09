@@ -189,5 +189,11 @@ describe("OS Bridge", () => {
       const script = buildBridgeScript("expense-tracker");
       expect(script).toContain("expense-tracker");
     });
+
+    it("includes optional label forwarding in MatrixOS.service", () => {
+      const script = buildBridgeScript("test-app");
+      expect(script).toContain("service: function(service, action, params, label)");
+      expect(script).toContain("label: label");
+    });
   });
 });

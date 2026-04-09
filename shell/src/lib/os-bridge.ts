@@ -190,11 +190,11 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         .then(function(d) { return d.services || []; });
     },
 
-    service: function(service, action, params) {
+    service: function(service, action, params, label) {
       return fetch("/api/bridge/service", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ service: service, action: action, params: params || {} })
+        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label })
       }).then(function(r) { return r.json(); });
     },
 

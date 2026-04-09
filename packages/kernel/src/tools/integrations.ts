@@ -5,7 +5,9 @@ const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = process.env.MATRIX_AUTH_TOKEN;
+  const clerkUserId = process.env.MATRIX_CLERK_USER_ID;
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (clerkUserId) headers["x-platform-user-id"] = clerkUserId;
   return headers;
 }
 
@@ -30,7 +32,7 @@ function textResult(text: string): ToolResult {
 }
 
 function defaultFetcher(): GatewayFetcher {
-  return globalThis.fetch as unknown as GatewayFetcher;
+  return fetch as unknown as GatewayFetcher;
 }
 
 // ---------------------------------------------------------------------------

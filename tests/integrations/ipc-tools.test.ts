@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   connectServiceHandler,
   callServiceHandler,
@@ -21,6 +21,20 @@ function mockFetcher(overrides?: {
     };
   });
 }
+
+const originalClerkUserId = process.env.MATRIX_CLERK_USER_ID;
+
+beforeEach(() => {
+  delete process.env.MATRIX_CLERK_USER_ID;
+});
+
+afterEach(() => {
+  if (originalClerkUserId === undefined) {
+    delete process.env.MATRIX_CLERK_USER_ID;
+  } else {
+    process.env.MATRIX_CLERK_USER_ID = originalClerkUserId;
+  }
+});
 
 describe("connect_service handler", () => {
   it("returns an OAuth URL on success", async () => {
@@ -80,6 +94,21 @@ describe("connect_service handler", () => {
 
     const [, opts] = (fetcher as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(opts.signal).toBeDefined();
+  });
+
+  it("forwards x-platform-user-id when MATRIX_CLERK_USER_ID is set", async () => {
+    process.env.MATRIX_CLERK_USER_ID = "user_clerk_123";
+    const fetcher = mockFetcher({
+      body: { url: "https://example.com", service: "gmail" },
+    });
+
+    await connectServiceHandler({ service: "gmail" }, fetcher);
+
+    const [, opts] = (fetcher as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(opts.headers).toMatchObject({
+      "Content-Type": "application/json",
+      "x-platform-user-id": "user_clerk_123",
+    });
   });
 });
 
