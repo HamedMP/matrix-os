@@ -52,18 +52,14 @@ const WebhookBodySchema = z.object({
 function verifyHmac(payload: string, signature: string, secret: string): boolean {
   if (!secret) return false;
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
-  // timingSafeEqual requires equal-length buffers. Copy the (untrusted)
-  // signature into a zero-filled buffer sized to the expected digest so the
-  // comparison runs in constant time regardless of input length. A shorter
-  // signature leaves trailing zero bytes that won't match the hex digest; a
-  // longer signature is silently truncated and still won't match unless the
-  // first 64 bytes are the correct digest -- in which case the attacker
-  // already knows the answer. The previous explicit length check leaked a
-  // small amount of timing information about the input length.
   const expectedBuf = Buffer.from(expected);
-  const sigBuf = Buffer.alloc(expectedBuf.length);
-  Buffer.from(signature).copy(sigBuf, 0, 0, expectedBuf.length);
-  return timingSafeEqual(sigBuf, expectedBuf);
+  const signatureBuf = Buffer.from(signature);
+  const maxLen = Math.max(expectedBuf.length, signatureBuf.length);
+  const paddedExpected = Buffer.alloc(maxLen);
+  const paddedSignature = Buffer.alloc(maxLen);
+  expectedBuf.copy(paddedExpected);
+  signatureBuf.copy(paddedSignature);
+  return signatureBuf.length === expectedBuf.length && timingSafeEqual(paddedSignature, paddedExpected);
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +296,8 @@ const PROFILE_ENDPOINTS: Record<string, {
   },
   slack: {
     url: "https://slack.com/api/auth.test",
-    extract: (d) => d?.user,
+    // auth.test yields a username/display identifier, not an email address.
+    extract: () => undefined,
   },
   discord: {
     url: "https://discord.com/api/v10/users/@me",
@@ -367,14 +364,74 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const app = new Hono();
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
-  // Keyed by "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
-  const pendingLabels = new Map<string, { label: string; ts: number }>();
+  // Queued per "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
+  const pendingLabels = new Map<string, Array<{ label: string; ts: number }>>();
   const LABEL_TTL_MS = 10 * 60 * 1000;
   const PENDING_MAX = 1000;
+  let pendingLabelCount = 0;
+
+  function cleanupPendingQueue(key: string, now = Date.now()): Array<{ label: string; ts: number }> {
+    const queue = pendingLabels.get(key) ?? [];
+    while (queue.length > 0 && now - queue[0]!.ts > LABEL_TTL_MS) {
+      queue.shift();
+      pendingLabelCount--;
+    }
+    if (queue.length === 0) {
+      pendingLabels.delete(key);
+      return [];
+    }
+    pendingLabels.set(key, queue);
+    return queue;
+  }
+
+  function evictOldestPendingLabel(): void {
+    let oldestKey: string | null = null;
+    let oldestTs = Number.POSITIVE_INFINITY;
+    for (const [key, queue] of pendingLabels) {
+      const head = queue[0];
+      if (head && head.ts < oldestTs) {
+        oldestTs = head.ts;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) return;
+    const queue = pendingLabels.get(oldestKey);
+    if (!queue || queue.length === 0) {
+      pendingLabels.delete(oldestKey);
+      return;
+    }
+    queue.shift();
+    pendingLabelCount--;
+    if (queue.length === 0) pendingLabels.delete(oldestKey);
+  }
+
+  function enqueuePendingLabel(key: string, label: string): void {
+    while (pendingLabelCount >= PENDING_MAX) {
+      evictOldestPendingLabel();
+    }
+    const queue = cleanupPendingQueue(key);
+    queue.push({ label, ts: Date.now() });
+    pendingLabels.set(key, queue);
+    pendingLabelCount++;
+  }
+
+  function consumePendingLabel(key: string): string | undefined {
+    const queue = cleanupPendingQueue(key);
+    const entry = queue.shift();
+    if (!entry) return undefined;
+    pendingLabelCount--;
+    if (queue.length === 0) {
+      pendingLabels.delete(key);
+    } else {
+      pendingLabels.set(key, queue);
+    }
+    return entry.label;
+  }
+
   const pendingLabelCleanup = setInterval(() => {
     const now = Date.now();
-    for (const [k, v] of pendingLabels) {
-      if (now - v.ts > LABEL_TTL_MS) pendingLabels.delete(k);
+    for (const key of pendingLabels.keys()) {
+      cleanupPendingQueue(key, now);
     }
   }, 5 * 60 * 1000);
   pendingLabelCleanup.unref();
@@ -519,11 +576,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const upserted = await Promise.all(
         newAccounts.map(async (acc, i) => {
           const pendingKey = `${externalId}:${acc.app}`;
-          const pending = pendingLabels.get(pendingKey);
-          const label = pending && (Date.now() - pending.ts < LABEL_TTL_MS)
-            ? pending.label
-            : acc.app;
-          if (pending) pendingLabels.delete(pendingKey);
+          const label = consumePendingLabel(pendingKey) ?? acc.app;
           const row = await db.connectService({
             userId: uid,
             service: acc.app,
@@ -599,19 +652,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const url = pipedream.getOAuthUrl(connectLinkUrl, def.pipedreamApp);
 
     if (label) {
-      // JS Map preserves insertion order, so the first key returned by
-      // keys() is always the oldest -- O(1) eviction. The previous
-      // spread + reduce scan copied the full 1000-entry Map on every
-      // /connect call that hit capacity, which is wasted allocation when
-      // the answer is sitting at the head of the map's iteration order.
-      // (The TTL sweeper above also keeps the map trim; this branch only
-      // matters if 1000 distinct (user, app) pairs /connect within the
-      // 5-minute sweep interval.)
-      if (pendingLabels.size >= PENDING_MAX) {
-        const oldestKey = pendingLabels.keys().next().value;
-        if (oldestKey !== undefined) pendingLabels.delete(oldestKey);
-      }
-      pendingLabels.set(`${externalId}:${def.pipedreamApp}`, { label, ts: Date.now() });
+      enqueuePendingLabel(`${externalId}:${def.pipedreamApp}`, label);
     }
 
     return c.json({ url, service });
@@ -656,11 +697,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
     // Recover the user-entered label from /connect (Pipedream doesn't relay it)
     const pendingKey = `${external_user_id}:${appName}`;
-    const pending = pendingLabels.get(pendingKey);
-    const resolvedLabel = pending && (Date.now() - pending.ts < LABEL_TTL_MS)
-      ? pending.label
-      : (label ?? appName);
-    pendingLabels.delete(pendingKey);
+    const resolvedLabel = consumePendingLabel(pendingKey) ?? (label ?? appName);
 
     let resolvedEmail = email;
     if (!resolvedEmail) {
@@ -772,11 +809,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
           await Promise.all(
             newAccounts.map(async (acc) => {
               const pendingKey = `${extId}:${acc.app}`;
-              const pending = pendingLabels.get(pendingKey);
-              const lbl = pending && (Date.now() - pending.ts < LABEL_TTL_MS)
-                ? pending.label
-                : acc.app;
-              if (pending) pendingLabels.delete(pendingKey);
+              const lbl = consumePendingLabel(pendingKey) ?? acc.app;
               const resolvedEmail = acc.email
                 ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
               const row = await db.connectService({
@@ -848,7 +881,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         console.error(
           `[integrations] Action ${err.serviceId}/${err.actionId} has neither componentKey nor directApi -- registry incomplete`,
         );
-        return c.json({ error: err.message }, 501);
+        return c.json({ error: "Action not available" }, 501);
       }
       if (getErrorStatusCode(err) === 429) {
         const retryAfter = getRetryAfterSeconds(err);

@@ -22,18 +22,18 @@ const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal"];
 // attacker varying the submitted token length could time-distinguish the
 // "wrong length" branch from the "right length, wrong content" branch,
 // leaking a 1-bit length oracle that gradually reveals the correct token
-// length over many probes. Mirror the verifyHmac fix: normalize the
-// attacker-supplied bytes into a Buffer sized to the correct token, so
-// timingSafeEqual always does the same amount of work regardless of input
-// length. A shorter input leaves trailing zero bytes that cannot match a
-// real UTF-8 token; a longer input is silently truncated to the first
-// expected.length bytes -- if those happen to equal the expected token,
-// the attacker already had the secret.
+// length over many probes. Pad both sides to the same max length so
+// timingSafeEqual always does the same amount of work, then require the
+// original lengths to match so a correct prefix plus trailing garbage fails.
 function timingSafeCompare(a: string, b: string): boolean {
-  const expectedBuf = Buffer.from(b);
-  const providedBuf = Buffer.alloc(expectedBuf.length);
-  Buffer.from(a).copy(providedBuf, 0, 0, expectedBuf.length);
-  return timingSafeEqual(providedBuf, expectedBuf);
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  const maxLen = Math.max(aBuf.length, bBuf.length);
+  const paddedA = Buffer.alloc(maxLen);
+  const paddedB = Buffer.alloc(maxLen);
+  aBuf.copy(paddedA);
+  bBuf.copy(paddedB);
+  return aBuf.length === bBuf.length && timingSafeEqual(paddedA, paddedB);
 }
 
 const rateLimiter = createRateLimiter({

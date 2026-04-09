@@ -263,6 +263,24 @@ describe("Integration Routes", () => {
       expect(res.status).toBe(401);
     });
 
+    it("rejects signatures with extra trailing bytes", async () => {
+      const payload = JSON.stringify({
+        external_user_id: "pd_ext_route",
+        account_id: "pd_acc_bad_suffix",
+        app: "gmail",
+      });
+
+      const res = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": `${signPayload(payload, WEBHOOK_SECRET)}garbage`,
+        },
+        body: payload,
+      });
+      expect(res.status).toBe(401);
+    });
+
     it("rejects missing signature header", async () => {
       const payload = JSON.stringify({
         external_user_id: "pd_ext_route",
@@ -295,6 +313,86 @@ describe("Integration Routes", () => {
         body: payload,
       });
       expect(res.status).toBe(400);
+    });
+
+    it("assigns distinct pending labels for back-to-back same-service connects", async () => {
+      await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", label: "Work Gmail" }),
+      });
+      await app.request("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", label: "Personal Gmail" }),
+      });
+
+      const workPayload = JSON.stringify({
+        external_user_id: "pd_ext_route",
+        account_id: "pd_acc_work_pending",
+        app: "gmail",
+      });
+      const personalPayload = JSON.stringify({
+        external_user_id: "pd_ext_route",
+        account_id: "pd_acc_personal_pending",
+        app: "gmail",
+      });
+
+      const workRes = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": signPayload(workPayload, WEBHOOK_SECRET),
+        },
+        body: workPayload,
+      });
+      expect(workRes.status).toBe(200);
+
+      const personalRes = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": signPayload(personalPayload, WEBHOOK_SECRET),
+        },
+        body: personalPayload,
+      });
+      expect(personalRes.status).toBe(200);
+
+      const services = await db.listConnectedServices(userId);
+      expect(services).toHaveLength(2);
+      expect(services.map((svc) => svc.account_label).sort()).toEqual([
+        "Personal Gmail",
+        "Work Gmail",
+      ]);
+    });
+
+    it("does not store Slack usernames in account_email", async () => {
+      pipedream.proxyGet = vi.fn().mockImplementation(async (opts: { url: string }) => {
+        if (opts.url === "https://slack.com/api/auth.test") {
+          return { user: "slack-display-name" };
+        }
+        return { ok: true };
+      });
+
+      const payload = JSON.stringify({
+        external_user_id: "pd_ext_route",
+        account_id: "pd_acc_slack_email",
+        app: "slack",
+        label: "Team Slack",
+      });
+      const res = await app.request("/api/integrations/webhook/connected", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pd-signature": signPayload(payload, WEBHOOK_SECRET),
+        },
+        body: payload,
+      });
+      expect(res.status).toBe(200);
+
+      const services = await db.listConnectedServices(userId);
+      expect(services).toHaveLength(1);
+      expect(services[0].account_email).toBeNull();
     });
   });
 
@@ -332,6 +430,30 @@ describe("Integration Routes", () => {
       expect(data.service).toBe("gmail");
       expect(data.action).toBe("list_messages");
       expect(pipedream.proxyGet).toHaveBeenCalled();
+    });
+
+    it("returns a generic 501 when an action is not implemented", async () => {
+      await db.connectService({
+        userId,
+        service: "google_drive",
+        pipedreamAccountId: "pd_acc_drive_unimplemented",
+        accountLabel: "Drive Test",
+        scopes: ["read"],
+      });
+
+      const res = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: "google_drive",
+          action: "upload_file",
+          params: { name: "notes.txt", content: "hello" },
+        }),
+      });
+      expect(res.status).toBe(501);
+      const data = await res.json();
+      expect(data.error).toBe("Action not available");
+      expect(data.error).not.toMatch(/packages\/gateway|registry\.ts|componentKey/);
     });
 
     it("touches last_used_at on successful call", async () => {
