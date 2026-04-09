@@ -46,16 +46,18 @@ export function MissionControl({
   const [visible, setVisible] = useState(false);
   const closingRef = useRef(false);
 
-  // Mount when open, animate in
+  const prevOpenRef = useRef(open);
   useEffect(() => {
-    if (open) {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+
+    if (open && !wasOpen) {
       closingRef.current = false;
       setMounted(true);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setVisible(true));
       });
-    } else if (mounted) {
-      // Animate out, then unmount
+    } else if (!open && wasOpen) {
       closingRef.current = true;
       setVisible(false);
       const timer = setTimeout(() => {

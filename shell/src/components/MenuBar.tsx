@@ -160,10 +160,6 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
     setOpenMenu((prev) => (prev === name ? null : name));
   }, []);
 
-  const execCommand = useCallback((cmd: string) => {
-    document.execCommand(cmd);
-  }, []);
-
   const fileItems: MenuEntry[] = [
     { label: "New Window", shortcut: "⌘N", action: onNewWindow },
     { separator: true },
@@ -172,14 +168,22 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   ];
 
   const editItems: MenuEntry[] = [
-    { label: "Undo", shortcut: "⌘Z", action: () => execCommand("undo") },
-    { label: "Redo", shortcut: "⇧⌘Z", action: () => execCommand("redo") },
+    { label: "Undo", shortcut: "⌘Z", action: () => document.execCommand("undo") },
+    { label: "Redo", shortcut: "⇧⌘Z", action: () => document.execCommand("redo") },
     { separator: true },
-    { label: "Cut", shortcut: "⌘X", action: () => execCommand("cut") },
-    { label: "Copy", shortcut: "⌘C", action: () => execCommand("copy") },
-    { label: "Paste", shortcut: "⌘V", action: () => execCommand("paste") },
+    { label: "Cut", shortcut: "⌘X", action: async () => {
+      const sel = window.getSelection();
+      if (sel?.toString()) { await navigator.clipboard.writeText(sel.toString()); document.execCommand("delete"); }
+    }},
+    { label: "Copy", shortcut: "⌘C", action: async () => {
+      const sel = window.getSelection();
+      if (sel?.toString()) await navigator.clipboard.writeText(sel.toString());
+    }},
+    { label: "Paste", shortcut: "⌘V", action: async () => {
+      try { const text = await navigator.clipboard.readText(); document.execCommand("insertText", false, text); } catch { /* denied */ }
+    }},
     { separator: true },
-    { label: "Select All", shortcut: "⌘A", action: () => execCommand("selectAll") },
+    { label: "Select All", shortcut: "⌘A", action: () => document.execCommand("selectAll") },
   ];
 
   const viewItems: MenuEntry[] = [

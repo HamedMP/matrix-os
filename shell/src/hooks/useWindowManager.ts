@@ -32,6 +32,7 @@ export interface AppEntry {
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
+const MAX_CLOSED_ENTRIES = 50;
 
 interface ClosedLayout {
   x: number;
@@ -214,6 +215,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         if (win) {
           newClosed.add(win.path);
           newLayouts.set(win.path, { x: win.x, y: win.y, width: win.width, height: win.height });
+        }
+        // Evict oldest entries if over cap
+        while (newClosed.size > MAX_CLOSED_ENTRIES) {
+          const oldest = newClosed.values().next().value!;
+          newClosed.delete(oldest);
+          newLayouts.delete(oldest);
         }
         return {
           windows: state.windows.filter((w) => w.id !== id),

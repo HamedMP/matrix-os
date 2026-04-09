@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { saveTheme, useTheme, DEFAULT_THEME, type Theme } from "@/hooks/useTheme";
 import { RETRO_THEME } from "@/lib/theme-presets";
-import { saveDesktopConfig, useDesktopConfig, type DesktopConfig } from "@/hooks/useDesktopConfig";
+import { saveDesktopConfig, useDesktopConfig, buildMeshGradient, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { getGatewayUrl } from "@/lib/gateway";
 import { CheckIcon, UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
@@ -90,6 +90,11 @@ export function AppearanceSection() {
   function updateGradient(key: keyof typeof gradColors, value: string) {
     setGradColors((prev) => ({ ...prev, [key]: value }));
     document.documentElement.style.setProperty(`--gradient-${key}`, value);
+    // Re-apply body background since inline styles bake in CSS var values at parse time
+    if (bgMode === "pattern") {
+      document.body.style.background = buildMeshGradient();
+      document.body.style.backgroundAttachment = "fixed";
+    }
   }
 
   async function saveDock(next: DockConfig) {

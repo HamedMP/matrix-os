@@ -337,7 +337,6 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
   const wmMinimizeWindow = useWindowManager((s) => s.minimizeWindow);
   const wmRestoreAndFocusWindow = useWindowManager((s) => s.restoreAndFocusWindow);
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
-  const wmOpenWindowExclusive = useWindowManager((s) => s.openWindowExclusive);
   const wmFocusWindow = useWindowManager((s) => s.focusWindow);
   const wmMoveWindow = useWindowManager((s) => s.moveWindow);
   const wmResizeWindow = useWindowManager((s) => s.resizeWindow);
@@ -371,16 +370,27 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
   const dockXOffset = dock.position === "left" ? dock.size + 16 : 20;
 
+  const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    return () => {
+      for (const timer of minimizeTimers.current.values()) clearTimeout(timer);
+    };
+  }, []);
+
   const animateMinimize = useCallback((id: string) => {
+    if (minimizeTimers.current.has(id)) return;
     setMinimizingIds((prev) => new Set(prev).add(id));
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       wmMinimizeWindow(id);
+      minimizeTimers.current.delete(id);
       setMinimizingIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
     }, 500);
+    minimizeTimers.current.set(id, timer);
   }, [wmMinimizeWindow]);
 
   const dragRef = useRef<{
@@ -432,7 +442,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
             return r.json().then((data: { iconUrl: string }) => {
               wmSetApps((prev) =>
                 prev.map((a) =>
-                  nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Date.now()}` } : a,
+                  nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Math.random().toString(36).slice(2, 8)}` } : a,
                 ),
               );
             });
@@ -454,7 +464,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
         return r.json().then((data: { iconUrl: string }) => {
           wmSetApps((prev) =>
             prev.map((a) =>
-              nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Date.now()}` } : a,
+              nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Math.random().toString(36).slice(2, 8)}` } : a,
             ),
           );
         });
@@ -489,7 +499,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
                     ...a,
                     name: newName,
                     path: newPath,
-                    iconUrl: `/icons/${ns}.png?v=${Date.now()}`,
+                    iconUrl: `/icons/${ns}.png?v=${Math.random().toString(36).slice(2, 8)}`,
                   };
                 }
                 return a;
@@ -908,7 +918,13 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
         group: "Edit",
         shortcut: "Cmd+X",
         keywords: ["cut", "clipboard"],
-        execute: () => document.execCommand("cut"),
+        execute: async () => {
+          const sel = window.getSelection();
+          if (sel && sel.toString()) {
+            await navigator.clipboard.writeText(sel.toString());
+            document.execCommand("delete");
+          }
+        },
       },
       {
         id: "edit:copy",
@@ -916,7 +932,12 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
         group: "Edit",
         shortcut: "Cmd+C",
         keywords: ["copy", "clipboard"],
-        execute: () => document.execCommand("copy"),
+        execute: async () => {
+          const sel = window.getSelection();
+          if (sel && sel.toString()) {
+            await navigator.clipboard.writeText(sel.toString());
+          }
+        },
       },
       {
         id: "edit:paste",
@@ -924,7 +945,12 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
         group: "Edit",
         shortcut: "Cmd+V",
         keywords: ["paste", "clipboard"],
-        execute: () => document.execCommand("paste"),
+        execute: async () => {
+          try {
+            const text = await navigator.clipboard.readText();
+            document.execCommand("insertText", false, text);
+          } catch { /* clipboard permission denied */ }
+        },
       },
       {
         id: "edit:select-all",
@@ -1334,6 +1360,7 @@ export function Desktop({ storeOpen, onToggleStore, onCloseStore, onOpenCommandP
             return (
               <Card
                 key={win.id}
+                data-window-id={win.id}
                 className="app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl"
                 style={{
                   "--win-x": `${win.x}px`,

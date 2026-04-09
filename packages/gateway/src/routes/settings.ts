@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
@@ -156,7 +158,7 @@ export function createSettingsRoutes(opts: {
     return c.json({ wallpapers: files });
   });
 
-  app.post("/wallpaper", async (c) => {
+  app.post("/wallpaper", bodyLimit({ maxSize: 10 * 1024 * 1024 }), async (c) => {
     let body: { name: string; data: string };
     try {
       body = await c.req.json<{ name: string; data: string }>();
@@ -173,7 +175,7 @@ export function createSettingsRoutes(opts: {
     const filePath = join(wallpapersDir, body.name);
     // Strip data URL prefix (e.g. "data:image/png;base64,") if present
     const raw = body.data.includes(",") ? body.data.split(",")[1] : body.data;
-    writeFileSync(filePath, Buffer.from(raw, "base64"));
+    await writeFile(filePath, Buffer.from(raw, "base64"));
     return c.json({ ok: true });
   });
 
