@@ -8,6 +8,8 @@ import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
+import { ChatApp } from "../ChatApp";
+import { useChatContext } from "@/stores/chat-context";
 import { Minus, Maximize2 } from "lucide-react";
 
 function useThemeStyle() {
@@ -32,6 +34,7 @@ interface CanvasWindowProps {
 }
 
 export function CanvasWindow({ win }: CanvasWindowProps) {
+  const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
   const closeWindow = useWindowManager((s) => s.closeWindow);
@@ -377,7 +380,20 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
         ) : win.path === "__preview-window__" ? (
           <PreviewWindow />
         ) : win.path === "__chat__" ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground text-sm">Chat</div>
+          <div className="h-full overflow-hidden">
+            {chatState && (
+              <ChatApp
+                messages={chatState.messages}
+                sessionId={chatState.sessionId}
+                busy={chatState.busy}
+                connected={chatState.connected}
+                conversations={chatState.conversations}
+                onNewChat={chatState.newChat}
+                onSwitchConversation={chatState.switchConversation}
+                onSubmit={chatState.submitMessage}
+              />
+            )}
+          </div>
         ) : (
           <AppViewer path={win.path} />
         )}

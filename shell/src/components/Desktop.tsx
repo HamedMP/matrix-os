@@ -43,6 +43,7 @@ import { SetupScreen } from "./SetupScreen";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { getGatewayUrl } from "@/lib/gateway";
+import { ChatApp } from "./ChatApp";
 import { nameToSlug } from "@/lib/utils";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -324,10 +325,10 @@ function ModeSwitcher({
 
 interface DesktopProps {
   onOpenCommandPalette?: () => void;
-  chatContent?: React.ReactNode;
+  chat?: import("@/hooks/useChatState").ChatState;
 }
 
-export function Desktop({ onOpenCommandPalette, chatContent }: DesktopProps) {
+export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -1388,7 +1389,20 @@ export function Desktop({ onOpenCommandPalette, chatContent }: DesktopProps) {
                   ) : win.path === "__preview-window__" ? (
                     <PreviewWindow />
                   ) : win.path === "__chat__" ? (
-                    <div className="h-full overflow-hidden">{chatContent}</div>
+                    <div className="h-full overflow-hidden">
+                      {chat && (
+                        <ChatApp
+                          messages={chat.messages}
+                          sessionId={chat.sessionId}
+                          busy={chat.busy}
+                          connected={chat.connected}
+                          conversations={chat.conversations}
+                          onNewChat={chat.newChat}
+                          onSwitchConversation={chat.switchConversation}
+                          onSubmit={chat.submitMessage}
+                        />
+                      )}
+                    </div>
                   ) : (
                     <AppViewer path={win.path} onOpenApp={openWindow} />
                   )}

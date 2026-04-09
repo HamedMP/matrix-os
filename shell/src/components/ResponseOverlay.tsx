@@ -8,6 +8,7 @@ import {
   XIcon,
   WrenchIcon,
   CheckCircleIcon,
+  SendIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -200,6 +201,10 @@ export function ResponseOverlay({
         )}
       </div>
 
+      {onSubmit && (
+        <QuickInput onSubmit={onSubmit} busy={busy} />
+      )}
+
       <div
         className="absolute bottom-0 right-0 size-4 cursor-se-resize touch-none"
         onPointerDown={onResizeStart}
@@ -222,5 +227,41 @@ export function ResponseOverlay({
         </svg>
       </div>
     </div>
+  );
+}
+
+function QuickInput({ onSubmit, busy }: { onSubmit: (text: string) => void; busy: boolean }) {
+  const [value, setValue] = useState("");
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const text = value.trim();
+      if (!text) return;
+      onSubmit(text);
+      setValue("");
+    },
+    [value, onSubmit],
+  );
+
+  return (
+    <form onSubmit={handleSubmit} className="flex items-center gap-1.5 border-t border-border/50 px-2 py-1.5">
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Quick message..."
+        disabled={busy}
+        className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50 text-foreground"
+      />
+      <Button
+        type="submit"
+        size="icon"
+        variant="ghost"
+        className="size-6"
+        disabled={!value.trim() || busy}
+      >
+        <SendIcon className="size-3" />
+      </Button>
+    </form>
   );
 }

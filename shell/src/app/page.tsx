@@ -6,15 +6,13 @@ import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useChatState } from "@/hooks/useChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
+import { ChatProvider } from "@/stores/chat-context";
 
 import { Desktop } from "@/components/Desktop";
-import { ChatPanel } from "@/components/ChatPanel";
 import { CommandPalette } from "@/components/CommandPalette";
-import { InputBar } from "@/components/InputBar";
 import { ThoughtCard } from "@/components/ThoughtCard";
 import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
-import { VoiceMode } from "@/components/VoiceMode";
 
 export default function Home() {
   useTheme();
@@ -23,7 +21,6 @@ export default function Home() {
   const chat = useChatState();
   const [overlayDismissed, setOverlayDismissed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [voiceModeActive, setVoiceModeActive] = useState(false);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
 
@@ -52,42 +49,14 @@ export default function Home() {
     [chat.submitMessage],
   );
 
-  const voiceModeToggle = useCallback(() => setVoiceModeActive((v) => !v), []);
-
-  const embeddedInputBar = (
-    <InputBar
-      sessionId={chat.sessionId}
-      busy={chat.busy}
-      queueLength={chat.queue.length}
-      onSubmit={handleSubmit}
-      onVoiceModeToggle={voiceModeToggle}
-      voiceModeActive={voiceModeActive}
-      embedded
-    />
-  );
-
-  const chatWindowContent = (
-    <ChatPanel
-      messages={chat.messages}
-      sessionId={chat.sessionId}
-      busy={chat.busy}
-      connected={chat.connected}
-      conversations={chat.conversations}
-      onNewChat={chat.newChat}
-      onSwitchConversation={chat.switchConversation}
-      onClose={() => {}}
-      onSubmit={handleSubmit}
-      inputBar={embeddedInputBar}
-    />
-  );
-
   return (
+    <ChatProvider value={chat}>
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
       <div className="flex flex-1 flex-col min-w-0 min-h-0">
         <div className="relative flex flex-col flex-1 min-h-0">
           <Desktop
             onOpenCommandPalette={() => setPaletteOpen(true)}
-            chatContent={chatWindowContent}
+            chat={chat}
           />
 
           <div className="pointer-events-none absolute inset-0 flex flex-col p-2 md:p-4">
@@ -110,12 +79,7 @@ export default function Home() {
         />
       )}
 
-      {voiceModeActive && (
-        <VoiceMode
-          onClose={() => setVoiceModeActive(false)}
-          onSubmit={handleSubmit}
-        />
-      )}
     </div>
+    </ChatProvider>
   );
 }
