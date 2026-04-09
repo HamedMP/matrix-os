@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "@xterm/xterm/css/xterm.css";
 import "./globals.css";
@@ -12,6 +12,12 @@ const inter = Inter({
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains",
   subsets: ["latin"],
+});
+
+const cormorant = Cormorant_Garamond({
+  variable: "--font-serif",
+  subsets: ["latin"],
+  weight: ["300", "400", "500"],
 });
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
@@ -75,7 +81,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={`${inter.variable} ${jetbrainsMono.variable}`}>
+        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable}`}>
           {children}
         </body>
       </html>

@@ -47,6 +47,7 @@ import {
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
+import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { authMiddleware } from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
@@ -1196,6 +1197,40 @@ export async function createGateway(config: GatewayConfig) {
             autoCreateTimer = null;
           }
           cleanupAutoCreatedSession();
+        },
+      };
+    }),
+  );
+
+  // --- Onboarding WebSocket ---
+  const onboardingHandler = createOnboardingHandler({
+    homePath,
+    geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+    geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+  });
+
+  app.get(
+    "/ws/onboarding",
+    upgradeWebSocket(() => {
+      return {
+        onOpen(_evt, ws) {
+          try {
+            onboardingHandler.activate();
+          } catch {
+            ws.send(JSON.stringify({ type: "error", code: "connection_limit", stage: "greeting", message: "Another onboarding session is active", retryable: true }));
+            ws.close();
+            return;
+          }
+          onboardingHandler.onOpen((msg) => {
+            ws.send(JSON.stringify(msg));
+          });
+        },
+        onMessage(evt, _ws) {
+          const data = typeof evt.data === "string" ? evt.data : evt.data.toString();
+          onboardingHandler.onMessage(data);
+        },
+        onClose() {
+          onboardingHandler.onClose();
         },
       };
     }),

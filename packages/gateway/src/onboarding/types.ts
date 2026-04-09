@@ -48,6 +48,8 @@ export const GatewayToShellSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("audio"), data: z.string() }),
   z.object({ type: z.literal("transcript"), text: z.string(), speaker: z.enum(["ai", "user"]) }),
   z.object({ type: z.literal("mode_change"), mode: z.enum(["text", "voice"]) }),
+  z.object({ type: z.literal("interrupted") }),
+  z.object({ type: z.literal("turn_complete") }),
   z.object({ type: z.literal("api_key_result"), valid: z.boolean(), error: z.string().optional() }),
   z.object({ type: z.literal("onboarding_already_complete") }),
   z.object({

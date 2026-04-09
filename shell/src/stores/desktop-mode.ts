@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev" | "conversational";
+export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev";
 
 export interface ModeConfig {
   id: DesktopMode;
@@ -52,20 +52,12 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     chatPosition: "sidebar",
     terminalProminent: true,
   },
-  conversational: {
-    id: "conversational",
-    label: "Conversational",
-    description: "Chat-centered mode for focused conversation",
-    showDock: false,
-    showWindows: false,
-    showBottomPanel: false,
-    chatPosition: "center",
-  },
 };
 
 interface DesktopModeStore {
   mode: DesktopMode;
   previousMode: DesktopMode | null;
+  _hydrated: boolean;
   setMode: (mode: DesktopMode) => void;
   getModeConfig: (mode: DesktopMode) => ModeConfig;
   allModes: () => ModeConfig[];
@@ -76,10 +68,16 @@ export const useDesktopMode = create<DesktopModeStore>()(
     (set, get) => ({
       mode: "desktop" as DesktopMode,
       previousMode: null as DesktopMode | null,
+      _hydrated: false,
       setMode: (mode: DesktopMode) => set({ previousMode: get().mode, mode }),
       getModeConfig: (mode: DesktopMode) => MODE_CONFIGS[mode],
       allModes: () => Object.values(MODE_CONFIGS),
     }),
-    { name: "matrix-os-desktop-mode" },
+    {
+      name: "matrix-os-desktop-mode",
+      onRehydrateStorage: () => () => {
+        useDesktopMode.setState({ _hydrated: true });
+      },
+    },
   ),
 );

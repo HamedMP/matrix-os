@@ -39,7 +39,7 @@ import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon,
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
-import { SetupScreen } from "./SetupScreen";
+import { OnboardingScreen } from "./OnboardingScreen";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -857,7 +857,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const allModes = useDesktopMode((s) => s.allModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const modeConfig = getModeConfig(desktopMode);
+  const hydrated = useDesktopMode((s) => s._hydrated);
+  const modeConfig = getModeConfig(hydrated ? desktopMode : "desktop");
 
   // When switching from canvas to a non-canvas mode, cascade windows to fit
   // the viewport. Canvas positions (from autoArrange) use a wide grid that
@@ -1077,7 +1078,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         </MenuBar>
       )}
       {showSetup && (
-        <SetupScreen
+        <OnboardingScreen
           onComplete={() => setShowSetup(false)}
           onOpenTerminal={() => openWindow("Terminal", "__terminal__")}
         />

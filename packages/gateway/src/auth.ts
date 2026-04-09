@@ -14,7 +14,7 @@ const PUBLIC_PREFIXES = [
 const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
-const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal"];
+const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal", "/ws/onboarding"];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran
 // timingSafeEqual(bufB, bufB) as a dummy call -- but the work done in
