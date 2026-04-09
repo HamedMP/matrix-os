@@ -38,6 +38,7 @@ Key principles:
 
 ## Development Rules
 
+- **No AI attribution**: never add `Co-Authored-By`, author credits, or any AI attribution to commits or PRs
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
 - **Conventional Commits**: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
