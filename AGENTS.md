@@ -155,6 +155,16 @@ Check failure modes, not just happy paths:
 - **API contract**: response field names match frontend, no dead code paths
 - **Type safety**: no unchecked `as` casts, sync/async signature matches
 
+### Review Sweeps
+
+For every PR review, run these targeted sweeps on touched files:
+
+- **Fetch timeout sweep**: inspect every new `fetch(` call in backend, shell, injected bridge scripts, and tests/mocks that mirror production code. Real calls must include `signal: AbortSignal.timeout(...)`.
+- **Empty catch sweep**: grep for `catch {}`, `catch { return ... }`, and `.catch(() => {})`. Every catch must log or explicitly handle the failure mode.
+- **Parity sweep for mirrored routes**: if logic exists in both a public route and a bridge/dev/proxy route, verify they share one helper or match behavior exactly (validation, verb dispatch, fallback behavior, errors, timeouts).
+- **Bridge/API argument sweep**: when shell bridge helpers call backend routes, confirm they expose every backend disambiguator the feature depends on (`label`, IDs, paging, etc.), not just the "happy path" arguments.
+- **Review grep commands**: at minimum run `rg -n 'fetch\\(' packages shell` and `rg -n 'catch\\s*\\{|\\.catch\\(\\(\\) => \\{\\s*\\}\\)' packages shell tests` before finalizing a review.
+
 ## Reference Docs
 
 Read these on demand, not every session:
