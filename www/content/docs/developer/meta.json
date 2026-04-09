@@ -1,7 +1,0 @@
-{
-  "root": true,
-  "title": "Developer",
-  "description": "Build on and contribute to Matrix OS",
-  "icon": "Terminal",
-  "pages": ["index", "architecture", "ipc-tools", "skills", "logging", "testing", "contributing"]
-}
