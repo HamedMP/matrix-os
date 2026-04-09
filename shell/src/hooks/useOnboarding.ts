@@ -24,6 +24,12 @@ interface SuggestedApp {
   description: string;
 }
 
+export type ContentDisplay =
+  | { kind: "app_suggestions"; apps: { name: string; description: string }[] }
+  | { kind: "desktop_mockup"; highlights: string[] }
+  | { kind: "profile_info"; fields: { name?: string; role?: string; interests?: string[] } }
+  | null;
+
 export interface OnboardingHook {
   stage: OnboardingStage;
   voiceState: VoiceState;
@@ -34,6 +40,7 @@ export interface OnboardingHook {
   alreadyComplete: boolean;
   apiKeyResult: { valid: boolean; error?: string } | null;
   currentSubtitle: string;
+  contextualContent: ContentDisplay;
   start: (useVoice: boolean) => void;
   sendText: (text: string) => void;
   sendApiKey: (key: string) => void;
@@ -52,6 +59,7 @@ export function useOnboarding(): OnboardingHook {
   const [alreadyComplete, setAlreadyComplete] = useState(false);
   const [apiKeyResult, setApiKeyResult] = useState<{ valid: boolean; error?: string } | null>(null);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
+  const [contextualContent, setContextualContent] = useState<ContentDisplay>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const micCtxRef = useRef<AudioContext | null>(null);
@@ -249,6 +257,28 @@ export function useOnboarding(): OnboardingHook {
       case "turn_complete":
         // AI finished speaking — keep subtitle visible until next interaction
         break;
+      case "contextual_content": {
+        const content = msg.content as NonNullable<ContentDisplay>;
+        if (content.kind === "profile_info") {
+          // Merge profile fields incrementally
+          setContextualContent((prev) => {
+            if (prev?.kind === "profile_info") {
+              return {
+                kind: "profile_info",
+                fields: {
+                  name: content.fields.name ?? prev.fields.name,
+                  role: content.fields.role ?? prev.fields.role,
+                  interests: [...new Set([...(prev.fields.interests ?? []), ...(content.fields.interests ?? [])])],
+                },
+              };
+            }
+            return content;
+          });
+        } else {
+          setContextualContent(content);
+        }
+        break;
+      }
       case "mode_change":
         setIsVoiceMode(msg.mode === "voice");
         if (msg.mode === "text") setVoiceState("idle");
@@ -346,6 +376,7 @@ export function useOnboarding(): OnboardingHook {
     alreadyComplete,
     apiKeyResult,
     currentSubtitle,
+    contextualContent,
     start,
     sendText,
     sendApiKey,

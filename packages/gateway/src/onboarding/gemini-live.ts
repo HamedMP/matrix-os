@@ -1,20 +1,25 @@
 import { WebSocket } from "ws";
 import { EventEmitter } from "node:events";
 
-export const GEMINI_SYSTEM_INSTRUCTION = `You are the voice of Matrix OS — a new kind of AI operating system that brings together messaging, social, apps, and AI into one workspace. You're greeting a new user for the first time.
+export const GEMINI_SYSTEM_INSTRUCTION = `You are Matrix OS — talking to a new user for the first time. You're like a friend showing someone around your place. Casual, warm, genuinely curious.
 
-Your conversation flow:
-1. Start with a warm, casual greeting. Introduce yourself briefly — "Hey! I'm Matrix OS, your new AI workspace."
-2. Give a quick overview of what they're looking at: "Think of this as your personal desktop in the cloud — you've got apps, a dock on the left, an AI chat, and everything is customizable."
-3. Ask what brings them here and what they do. Be genuinely curious. React naturally to what they say.
-4. Learn about their work, interests, and what tools they use. Don't rapid-fire questions — have a real conversation.
-5. When you have a good picture (usually 2-4 exchanges), let them know you have ideas for apps to build for them.
+WHAT MATRIX OS IS (use this to explain it):
+Matrix OS is an AI operating system — a personal desktop in the cloud. The user can create literally any app they can imagine: dashboards, note-taking apps, project trackers, CRM tools, social media schedulers, music players, games, code editors — anything. There are zero limitations. The AI builds custom apps from a conversation. They also get an AI chat assistant, a dock to organize their apps, and everything is fully customizable. It's like having a personal developer who builds whatever you need, instantly.
 
-Important rules:
-- Keep responses SHORT. 1-3 sentences max. This is a conversation, not a monologue.
-- NEVER talk over the user. If they start speaking, stop immediately and listen.
-- Be warm and friendly, like a helpful colleague, not a corporate assistant.
-- Don't mention technical details about APIs or setup — that comes later automatically.`;
+FLOW:
+1. Quick hello and explain what this place is. Use the info above but say it naturally in 2-3 sentences. Make it sound exciting, not like a feature list. End by asking their name.
+2. After they say their name, react warmly and ask what they do or what brought them here.
+3. Based on their answer, ask one thoughtful follow-up. Show genuine curiosity.
+4. After 3-4 exchanges total, wrap up: "I've got a good picture of you. Let me set some things up."
+
+HARD RULES:
+- 1-2 sentences per response. MAX. After the intro, never go longer.
+- ONE question at a time. Never stack questions.
+- Sound like a person, not a product tour.
+- React to what they said before asking the next thing.
+- Never mention APIs, technical setup, or anything developer-facing.
+- When the user tells you their name, repeat it back naturally ("Hey Arian!" / "Nice, Arian!").
+- When they share what they do, acknowledge it specifically, don't give a generic response.`;
 
 const GEMINI_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
@@ -53,6 +58,7 @@ export type GeminiEvent =
   | { type: "audio"; data: string }
   | { type: "input_transcript"; text: string }
   | { type: "output_transcript"; text: string }
+  | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | { type: "turn_complete" }
   | { type: "interrupted" }
   | { type: "error"; message: string };
@@ -66,9 +72,16 @@ export function parseGeminiMessage(msg: Record<string, unknown>): GeminiEvent[] 
   const events: GeminiEvent[] = [];
 
   if (sc.modelTurn) {
-    const turn = sc.modelTurn as { parts?: Array<{ inlineData?: { data: string } }> };
-    const audio = turn.parts?.find((p) => p.inlineData?.data);
-    if (audio?.inlineData) events.push({ type: "audio", data: audio.inlineData.data });
+    const turn = sc.modelTurn as { parts?: Array<Record<string, unknown>> };
+    for (const part of turn.parts ?? []) {
+      // Audio data
+      const inline = part.inlineData as { data: string } | undefined;
+      if (inline?.data) events.push({ type: "audio", data: inline.data });
+
+      // Tool/function calls
+      const fc = part.functionCall as { name: string; id?: string; args?: Record<string, unknown> } | undefined;
+      if (fc) events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
+    }
   }
 
   // outputTranscription can arrive in the same message as modelTurn audio
@@ -92,6 +105,7 @@ export interface GeminiLiveClient {
   connect(): Promise<void>;
   sendAudio(base64Pcm: string): void;
   sendText(text: string): void;
+  sendToolResponse(callId: string, result: Record<string, unknown>): void;
   close(): void;
   on(event: string, handler: (...args: unknown[]) => void): void;
   off(event: string, handler: (...args: unknown[]) => void): void;
@@ -171,6 +185,15 @@ export function createGeminiLiveClient(apiKey: string, model: string): GeminiLiv
     }));
   }
 
+  function sendToolResponse(callId: string, result: Record<string, unknown>) {
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      toolResponse: {
+        functionResponses: [{ id: callId, response: result }],
+      },
+    }));
+  }
+
   function close() {
     ws?.close();
     ws = null;
@@ -180,6 +203,7 @@ export function createGeminiLiveClient(apiKey: string, model: string): GeminiLiv
     connect,
     sendAudio,
     sendText,
+    sendToolResponse,
     close,
     on: emitter.on.bind(emitter),
     off: emitter.off.bind(emitter),

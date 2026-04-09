@@ -17,6 +17,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const ob = useOnboarding();
   const mic = useMicPermission();
   const [started, setStarted] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
@@ -70,9 +71,19 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   }
 
   function handleStart(useVoice: boolean) {
-    setStarted(true);
-    startAmbientAudio();
-    ob.start(useVoice);
+    // Phase 1: dim into light (text glows and screen fades to white/black)
+    setPhase("dimming");
+    setTimeout(() => {
+      // Phase 2: fully dark
+      setPhase("black");
+      setStarted(true);
+      startAmbientAudio();
+      ob.start(useVoice);
+      setTimeout(() => {
+        // Phase 3: reveal destination
+        setPhase("revealing");
+      }, 400);
+    }, 1200);
   }
 
   const handleTalkToMe = useCallback(async () => {
@@ -93,71 +104,76 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     }
   }, [mic.requestAccess]);
 
-  // ── Landing screen ──────────────────────────────────────────
-  if (!started) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-8 max-w-lg px-6 text-center">
-          <h1
-            className="text-4xl font-light text-foreground tracking-tight"
+  // ── Voice conversation screen (editorial style) ─────────────
+  const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
+
+  return (
+    <>
+    {/* Landing screen — stays mounted as overlay during transition */}
+    {phase !== "revealing" && (
+      <div className="fixed inset-0 z-[60] flex flex-col bg-background">
+        <MicPermissionDialog
+          open={showMicDialog}
+          permissionState={mic.state}
+          onAllow={handleMicAllow}
+          onDismiss={() => setShowMicDialog(false)}
+        />
+
+        <div className="flex-1 flex items-center justify-center">
+          <button
+            onClick={handleTalkToMe}
+            disabled={phase !== "idle"}
+            className="text-4xl font-light tracking-tight text-foreground hover:scale-110 transition-transform duration-700 ease-out"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
-            Welcome to Matrix OS
-          </h1>
-          <p className="text-muted-foreground text-sm leading-relaxed max-w-xs">
-            Let's set up your workspace. You can talk to me or type — either way, I'll help you get started.
-          </p>
-
-          <MicPermissionDialog
-            open={showMicDialog}
-            permissionState={mic.state}
-            onAllow={handleMicAllow}
-            onDismiss={() => setShowMicDialog(false)}
-          />
-
-          <div className="flex gap-4 w-full max-w-sm">
-            <button
-              onClick={handleTalkToMe}
-              className="flex-1 flex flex-col items-center gap-3 p-6 rounded-2xl bg-card border border-border hover:border-primary/40 hover:shadow-lg transition-all group"
+            <span
+              className="bg-clip-text text-transparent"
+              style={{
+                backgroundImage:
+                  phase === "dimming"
+                    ? "linear-gradient(90deg, var(--primary) 0%, var(--primary) 100%)"
+                    : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 35%, var(--primary) 50%, var(--foreground) 65%, var(--foreground) 100%)",
+                backgroundSize: "200% 100%",
+                animation: phase === "idle" ? "shimmer 6s ease-in-out infinite" : "none",
+                transition: "all 1.2s ease-in-out",
+              }}
             >
-              <MicIcon className="size-8 text-primary group-hover:scale-110 transition-transform" />
-              <span className="text-sm font-medium text-foreground">Talk to me</span>
-              <span className="text-xs text-muted-foreground">Voice conversation</span>
-            </button>
+              Enter
+            </span>
+          </button>
+        </div>
 
-            <button
-              onClick={() => handleStart(false)}
-              className="flex-1 flex flex-col items-center gap-3 p-6 rounded-2xl bg-card border border-border hover:border-primary/40 hover:shadow-lg transition-all group"
-            >
-              <KeyboardIcon className="size-8 text-primary group-hover:scale-110 transition-transform" />
-              <span className="text-sm font-medium text-foreground">Type instead</span>
-              <span className="text-xs text-muted-foreground">Text conversation</span>
-            </button>
-          </div>
-
+        <div
+          className="flex justify-center mb-8 transition-opacity duration-500"
+          style={{ opacity: phase !== "idle" ? 0 : 1 }}
+        >
           <button
             onClick={() => {
               onOpenTerminal();
               onComplete();
             }}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors mt-2 uppercase tracking-[0.15em]"
+            className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
           >
-            Skip setup
+            Skip first-time setup
           </button>
         </div>
+
+        {/* Dimming overlay */}
+        <div
+          className="absolute inset-0 bg-background pointer-events-none transition-opacity ease-in-out"
+          style={{
+            opacity: phase === "dimming" || phase === "black" ? 1 : 0,
+            transitionDuration: phase === "dimming" ? "1.2s" : "0s",
+          }}
+        />
       </div>
-    );
-  }
+    )}
 
-  // ── Voice conversation screen (editorial style) ─────────────
-  const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
-
-  return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background overflow-hidden">
       {/* Background — subtle gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-muted/30" />
 
-      {/* Conversing layout: label + transcript centered, wave below, skip at bottom */}
+      {/* Conversing layout: transcript centered, wave below, skip at bottom */}
       {isConversing && (
         <>
           {/* Center block: label + transcript */}
@@ -167,7 +183,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
               className="text-[11px] uppercase tracking-[0.25em] text-muted-foreground/70 mb-4"
               style={{ fontFamily: "var(--font-inter), system-ui, sans-serif" }}
             >
-              Aoede · Matrix OS
+              Aoede
             </p>
 
             {/* Live transcript — serif, editorial */}
@@ -312,5 +328,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
         </div>
       )}
     </div>
+    </>
   );
 }

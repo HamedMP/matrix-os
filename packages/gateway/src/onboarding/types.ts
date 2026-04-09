@@ -37,6 +37,27 @@ export const ShellToGatewaySchema = z.discriminatedUnion("type", [
 ]);
 export type ShellToGateway = z.infer<typeof ShellToGatewaySchema>;
 
+// Contextual content displayed during conversation
+export const ContextualContentSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("app_suggestions"),
+    apps: z.array(z.object({ name: z.string(), description: z.string() })).max(6),
+  }),
+  z.object({
+    kind: z.literal("desktop_mockup"),
+    highlights: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("profile_info"),
+    fields: z.object({
+      name: z.string().optional(),
+      role: z.string().optional(),
+      interests: z.array(z.string()).optional(),
+    }),
+  }),
+]);
+export type ContextualContent = z.infer<typeof ContextualContentSchema>;
+
 // Gateway -> Shell messages
 export const GatewayToShellSchema = z.discriminatedUnion("type", [
   z.object({
@@ -50,6 +71,7 @@ export const GatewayToShellSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("mode_change"), mode: z.enum(["text", "voice"]) }),
   z.object({ type: z.literal("interrupted") }),
   z.object({ type: z.literal("turn_complete") }),
+  z.object({ type: z.literal("contextual_content"), content: ContextualContentSchema }),
   z.object({ type: z.literal("api_key_result"), valid: z.boolean(), error: z.string().optional() }),
   z.object({ type: z.literal("onboarding_already_complete") }),
   z.object({

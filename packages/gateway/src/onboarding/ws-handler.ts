@@ -5,7 +5,8 @@ import { createStateMachine, type StateMachineSnapshot } from "./state-machine.j
 import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "./gemini-live.js";
 import { extractProfile } from "./extract-profile.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey } from "./api-key.js";
-import { ShellToGatewaySchema, type GatewayToShell, type OnboardingState } from "./types.js";
+import { ShellToGatewaySchema, type GatewayToShell, type ContextualContent, type OnboardingState } from "./types.js";
+import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {
   homePath: string;
@@ -24,6 +25,8 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   let sm = createStateMachine();
   let sendToClient: SendFn | null = null;
   let audioMode = false;
+  let toolCallThisTurn = false;
+  const profileBuilder = createProfileBuilder();
 
   async function isOnboardingComplete(): Promise<boolean> {
     return existsSync(join(deps.homePath, ONBOARDING_COMPLETE_FILE));
@@ -73,11 +76,31 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     gemini.on("input_transcript", (evt: unknown) => {
       const e = evt as GeminiEvent & { type: "input_transcript" };
       send({ type: "transcript", text: e.text, speaker: "user" });
+
+      // Extract profile info from what the user says
+      const content = profileBuilder.onUserTranscript(e.text);
+      if (content) send({ type: "contextual_content", content });
     });
 
     gemini.on("output_transcript", (evt: unknown) => {
       const e = evt as GeminiEvent & { type: "output_transcript" };
       send({ type: "transcript", text: e.text, speaker: "ai" });
+
+      // Detect when AI acknowledges user info (e.g., repeating their name)
+      if (!toolCallThisTurn) {
+        const content = profileBuilder.onAiTranscript(e.text);
+        if (content) send({ type: "contextual_content", content });
+      }
+    });
+
+    gemini.on("tool_call", (evt: unknown) => {
+      const e = evt as GeminiEvent & { type: "tool_call" };
+      if (e.name === "show_content") {
+        toolCallThisTurn = true;
+        const content = mapToolArgsToContent(e.args);
+        if (content) send({ type: "contextual_content", content });
+        gemini!.sendToolResponse(e.id, { success: true });
+      }
     });
 
     gemini.on("interrupted", () => {
@@ -86,7 +109,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     });
 
     gemini.on("turn_complete", () => {
-      // Tell client the AI finished this utterance
+      toolCallThisTurn = false;
       send({ type: "turn_complete" });
 
       // AI finished speaking — check if we should transition
@@ -143,7 +166,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         await gemini.connect();
         console.log("[onboarding] Gemini Live connected! Sending greeting prompt...");
         sm.startTimer();
-        gemini.sendText("Hey! Start the conversation now. Greet the user and give a quick intro of what they're looking at.");
+        gemini.sendText("Go ahead, say hi to them. Keep it super short.");
       } catch (err) {
         console.error("[onboarding] Gemini Live connection FAILED:", err instanceof Error ? err.message : String(err));
         send({ type: "mode_change", mode: "text" });
@@ -237,6 +260,33 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         }
         break;
       }
+    }
+  }
+
+  function mapToolArgsToContent(args: Record<string, unknown>): ContextualContent | null {
+    const kind = args.kind as string;
+    switch (kind) {
+      case "app_suggestions": {
+        const apps = (args.apps as Array<{ name: string; description: string }>) ?? [];
+        return { kind: "app_suggestions", apps };
+      }
+      case "desktop_mockup": {
+        const highlights = (args.highlights as string[]) ?? ["dock", "windows", "wallpaper", "chat", "toolbar"];
+        return { kind: "desktop_mockup", highlights };
+      }
+      case "profile_info": {
+        const profile = (args.profile as Record<string, unknown>) ?? {};
+        return {
+          kind: "profile_info",
+          fields: {
+            name: profile.name as string | undefined,
+            role: profile.role as string | undefined,
+            interests: profile.interests as string[] | undefined,
+          },
+        };
+      }
+      default:
+        return null;
     }
   }
 
