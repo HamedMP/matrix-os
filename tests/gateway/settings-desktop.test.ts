@@ -49,7 +49,10 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const res = await app.request("/api/settings/desktop");
       expect(res.status).toBe(200);
       const data = await res.json();
-      expect(data.background).toEqual({ type: "pattern" });
+      expect(data.background).toEqual({
+        type: "wallpaper",
+        name: "moraine-lake.jpg",
+      });
       expect(data.dock).toEqual({
         position: "left",
         size: 56,
@@ -169,7 +172,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const res = await app.request("/api/settings/wallpapers");
       expect(res.status).toBe(200);
       const data = await res.json();
-      expect(data).toEqual([]);
+      expect(data).toEqual({ wallpapers: [] });
     });
 
     it("lists files when wallpapers exist", async () => {
@@ -180,11 +183,9 @@ describe("Settings: desktop + theme + wallpapers", () => {
 
       const res = await app.request("/api/settings/wallpapers");
       expect(res.status).toBe(200);
-      const data = await res.json() as { name: string; url: string }[];
-      expect(data).toHaveLength(2);
-      const names = data.map((w) => w.name).sort();
-      expect(names).toEqual(["forest.jpg", "ocean.png"]);
-      expect(data[0].url).toContain("/files/system/wallpapers/");
+      const data = await res.json() as { wallpapers: string[] };
+      expect(data.wallpapers).toHaveLength(2);
+      expect(data.wallpapers.toSorted()).toEqual(["forest.jpg", "ocean.png"]);
     });
   });
 

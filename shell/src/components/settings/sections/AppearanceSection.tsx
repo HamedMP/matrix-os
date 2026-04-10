@@ -403,15 +403,16 @@ export function AppearanceSection() {
           <span className="text-xs text-muted-foreground font-mono w-10 text-right">{dock.size}px</span>
         </div>
 
-        {/* Show on hover */}
+        {/* Auto-hide stays wired underneath, but the shell is pinned on for now. */}
         <div className="flex items-center justify-between py-1">
           <div>
             <span className="text-sm">Show on hover</span>
-            <p className="text-xs text-muted-foreground">Hide the dock until you hover near the edge</p>
+            <p className="text-xs text-muted-foreground">Coming soon. The dock stays visible in this build.</p>
           </div>
           <Switch
-            checked={dock.autoHide}
-            onCheckedChange={(checked) => saveDock({ ...dock, autoHide: checked })}
+            checked={false}
+            disabled
+            aria-label="Show dock on hover (coming soon)"
           />
         </div>
       </section>

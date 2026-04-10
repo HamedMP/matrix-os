@@ -10,6 +10,7 @@ import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
@@ -184,6 +185,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
+  const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
@@ -795,6 +797,24 @@ export async function createGateway(config: GatewayConfig) {
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
+      let detachConversationRun: (() => void) | null = null;
+
+      const clearConversationRunAttachment = () => {
+        if (detachConversationRun) {
+          detachConversationRun();
+          detachConversationRun = null;
+        }
+      };
+
+      const publishConversationRunMessage = (
+        sessionId: string | undefined,
+        message: ConversationRunMessage,
+      ) => {
+        if (!sessionId) {
+          return;
+        }
+        conversationRuns.publish(sessionId, message);
+      };
 
       return {
         onOpen(_evt, ws) {
@@ -833,6 +853,10 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
+            clearConversationRunAttachment();
+            detachConversationRun = conversationRuns.attach(parsed.sessionId, (message) => {
+              send(ws, message as ServerMessage);
+            });
             send(ws, { type: "session:switched", sessionId: parsed.sessionId });
             return;
           }
@@ -843,6 +867,7 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "message") {
+            clearConversationRunAttachment();
             pendingText = parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
@@ -854,25 +879,38 @@ export async function createGateway(config: GatewayConfig) {
 
                 if (msg.type === "kernel:init") {
                   activeSessionId = msg.sessionId;
+                  conversationRuns.begin(msg.sessionId);
+                  publishConversationRunMessage(msg.sessionId, msg);
                   conversations.begin(msg.sessionId);
                   if (pendingText) {
                     conversations.addUserMessage(msg.sessionId, pendingText);
                     pendingText = undefined;
                   }
                 } else if (msg.type === "kernel:text" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   conversations.appendAssistantText(activeSessionId, msg.text);
                 } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   lastToolName = msg.tool;
                   conversations.addToolStart(activeSessionId, msg.tool);
                 } else if (msg.type === "kernel:tool_end" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
               })
               .catch((err: Error) => {
                 if (activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, {
+                    type: "kernel:error",
+                    message: err.message ?? "Kernel error",
+                    requestId,
+                  });
                   finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
                 send(ws, {
                   type: "kernel:error",
@@ -884,6 +922,7 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
+          clearConversationRunAttachment();
           clients.delete(ws);
           wsConnectionsActive.dec();
         },

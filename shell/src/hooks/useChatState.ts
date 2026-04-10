@@ -33,6 +33,7 @@ export function useChatState(): ChatState {
   const { connected, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
+  const pendingRestoreSessionRef = useRef<string | null>(null);
   sessionRef.current = sessionId;
 
   useEffect(() => {
@@ -46,12 +47,22 @@ export function useChatState(): ChatState {
     if (!sessionId && latest.messageCount > 0) {
       load(latest.id).then((conv) => {
         if (conv) {
+          pendingRestoreSessionRef.current = conv.id;
           setSessionId(conv.id);
           setMessages(hydrateMessages(conv.messages));
         }
       });
     }
   }, [conversations, sessionId, load]);
+
+  useEffect(() => {
+    if (!sessionId || pendingRestoreSessionRef.current !== sessionId) {
+      return;
+    }
+
+    pendingRestoreSessionRef.current = null;
+    send({ type: "switch_session", sessionId });
+  }, [sessionId, send]);
 
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
