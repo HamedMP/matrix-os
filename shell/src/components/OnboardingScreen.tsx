@@ -138,7 +138,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
                 transition: "all 1.2s ease-in-out",
               }}
             >
-              Enter
+              Enter Matrix OS
             </span>
           </button>
         </div>
