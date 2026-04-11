@@ -3,7 +3,7 @@ export type ConversationRunMessage =
   | { type: "kernel:text"; text: string; requestId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string }
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
-  | { type: "kernel:result"; data: Record<string, unknown>; requestId?: string }
+  | { type: "kernel:result"; data: unknown; requestId?: string }
   | { type: "kernel:error"; message: string; requestId?: string };
 
 export interface ConversationRunRegistryOptions {
@@ -13,6 +13,10 @@ export interface ConversationRunRegistryOptions {
 }
 
 type Subscriber = (message: ConversationRunMessage) => void;
+
+interface AttachOptions {
+  replayBuffered?: boolean;
+}
 
 interface RunState {
   readonly sessionId: string;
@@ -50,8 +54,9 @@ export class ConversationRunRegistry {
     }
 
     run.messages.push(message);
-    while (run.messages.length > this.maxEventsPerRun) {
-      run.messages.shift();
+    const overflow = run.messages.length - this.maxEventsPerRun;
+    if (overflow > 0) {
+      run.messages.splice(0, overflow);
     }
 
     for (const subscriber of run.subscribers) {
@@ -59,18 +64,34 @@ export class ConversationRunRegistry {
     }
   }
 
-  attach(sessionId: string, subscriber: Subscriber): (() => void) | null {
+  getBufferedMessages(sessionId: string): ConversationRunMessage[] | null {
+    const run = this.runs.get(sessionId);
+    if (!run) {
+      return null;
+    }
+
+    return [...run.messages];
+  }
+
+  attach(
+    sessionId: string,
+    subscriber: Subscriber,
+    options?: AttachOptions,
+  ): (() => void) | null {
     const run = this.runs.get(sessionId);
     if (!run) {
       return null;
     }
 
     if (run.subscribers.size >= this.maxSubscribersPerRun) {
-      throw new Error("Too many conversation stream subscribers");
+      console.warn(`Conversation run subscriber cap reached for ${sessionId}`);
+      return null;
     }
 
-    for (const message of run.messages) {
-      subscriber(message);
+    if (options?.replayBuffered !== false) {
+      for (const message of run.messages) {
+        subscriber(message);
+      }
     }
 
     run.subscribers.add(subscriber);

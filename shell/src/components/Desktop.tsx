@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useId } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
-import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { AppViewer } from "./AppViewer";
@@ -44,9 +44,11 @@ import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
+import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 
 const GATEWAY_URL = getGatewayUrl();
+const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 
 interface ModuleRegistryEntry {
   name: string;
@@ -142,14 +144,8 @@ function DockIcon({
   onDelete?: () => void;
 }) {
   const initial = name.charAt(0).toUpperCase();
-  const [imgFailed, setImgFailed] = useState(false);
-  const prevIconUrl = useRef(iconUrl);
-  // Reset imgFailed when iconUrl changes (e.g. after regeneration)
-  if (iconUrl !== prevIconUrl.current) {
-    prevIconUrl.current = iconUrl;
-    if (imgFailed) setImgFailed(false);
-  }
-  const showIcon = iconUrl && !imgFailed;
+  const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
+  const showIcon = iconUrl && failedIconUrl !== iconUrl;
 
   const btn = (
     <button
@@ -160,7 +156,14 @@ function DockIcon({
       style={{ width: iconSize, height: iconSize }}
     >
       {showIcon ? (
-        <img src={iconUrl} alt={name} className="size-full object-cover rounded-xl" onError={() => setImgFailed(true)} />
+        // eslint-disable-next-line @next/next/no-img-element -- dock icons are dynamic files served by the gateway
+        <img
+          key={iconUrl}
+          src={iconUrl}
+          alt={name}
+          className="size-full object-cover rounded-xl"
+          onError={() => setFailedIconUrl(iconUrl)}
+        />
       ) : (
         <span className="text-sm font-semibold text-foreground">
           {initial}
@@ -353,12 +356,14 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   useEffect(() => {
     if (setupChecked.current) return;
     setupChecked.current = true;
-    fetch(`${GATEWAY_URL}/api/settings/api-key/status`)
+    fetch(`${GATEWAY_URL}/api/settings/api-key/status`, {
+      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+    })
       .then((r) => r.json())
       .then((data: { hasKey: boolean }) => {
         if (!data.hasKey) setShowSetup(true);
       })
-      .catch(() => {});
+      .catch((err) => console.warn("[desktop] Failed to load API key status:", err));
   }, []);
 
   const dock = useDesktopConfigStore((s) => s.dock);
@@ -369,10 +374,12 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const dockXOffset = dock.position === "left" ? dock.size + 16 : 20;
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const iconVersion = useId().replace(/:/g, "");
 
   useEffect(() => {
+    const timers = minimizeTimers.current;
     return () => {
-      for (const timer of minimizeTimers.current.values()) clearTimeout(timer);
+      for (const timer of timers.values()) clearTimeout(timer);
     };
   }, []);
 
@@ -409,21 +416,23 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   const generatingRef = useRef(new Set<string>());
   const checkedRef = useRef(new Set<string>());
-  const iconVersionRef = useRef(Date.now().toString());
 
   const checkAndGenerateIcon = useCallback((slug: string) => {
     if (checkedRef.current.has(slug) || generatingRef.current.has(slug)) return;
     checkedRef.current.add(slug);
     const iconPath = `/icons/${slug}.png`;
-    fetch(`${GATEWAY_URL}${iconPath}`, { method: "HEAD" }).then((res) => {
+    fetch(`${GATEWAY_URL}${iconPath}`, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+    }).then((res) => {
       if (res.ok) {
         // Icon exists — update with ETag-based version if available
         const etag = res.headers.get("etag");
         if (etag) {
-          const versionedUrl = `/icons/${slug}.png?v=${etag.replace(/"/g, "")}`;
+          const versionedUrl = versionedIconUrl(`/icons/${slug}.png`, etag);
           wmSetApps((prev) =>
             prev.map((a) =>
-              nameToSlug(a.name) === slug && !a.iconUrl?.includes(etag.replace(/"/g, ""))
+              nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
                 ? { ...a, iconUrl: versionedUrl }
                 : a,
             ),
@@ -431,16 +440,23 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         }
       } else {
         generatingRef.current.add(slug);
-        fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, { method: "POST" })
+        fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
+          method: "POST",
+          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+        })
           .then((r) => {
             if (!r.ok) {
-              r.json().then((d: { error?: string }) => console.warn(`Icon gen failed for "${slug}":`, d.error)).catch(() => {});
+              r.json()
+                .then((d: { error?: string }) => console.warn(`Icon gen failed for "${slug}":`, d.error))
+                .catch((err) => console.warn(`[desktop] Failed to parse icon generation error for "${slug}":`, err));
               return;
             }
-            return r.json().then((data: { iconUrl: string }) => {
+            return r.json().then((data: { iconUrl: string; etag?: string }) => {
               wmSetApps((prev) =>
                 prev.map((a) =>
-                  nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Math.random().toString(36).slice(2, 8)}` } : a,
+                  nameToSlug(a.name) === slug
+                    ? { ...a, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
+                    : a,
                 ),
               );
             });
@@ -448,21 +464,28 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           .catch((err) => console.warn(`Icon gen request failed for "${slug}":`, err))
           .finally(() => generatingRef.current.delete(slug));
       }
-    }).catch(() => {});
+    }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
   }, [wmSetApps]);
 
   const regenerateIcon = useCallback((slug: string) => {
     generatingRef.current.add(slug);
-    fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, { method: "POST" })
+    fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
+      method: "POST",
+      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+    })
       .then((r) => {
         if (!r.ok) {
-          r.json().then((d: { error?: string }) => console.warn(`Icon regen failed for "${slug}":`, d.error)).catch(() => {});
+          r.json()
+            .then((d: { error?: string }) => console.warn(`Icon regen failed for "${slug}":`, d.error))
+            .catch((err) => console.warn(`[desktop] Failed to parse icon regeneration error for "${slug}":`, err));
           return;
         }
-        return r.json().then((data: { iconUrl: string }) => {
+        return r.json().then((data: { iconUrl: string; etag?: string }) => {
           wmSetApps((prev) =>
             prev.map((a) =>
-              nameToSlug(a.name) === slug ? { ...a, iconUrl: `${GATEWAY_URL}${data.iconUrl}?v=${Math.random().toString(36).slice(2, 8)}` } : a,
+              nameToSlug(a.name) === slug
+                ? { ...a, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
+                : a,
             ),
           );
         });
@@ -476,10 +499,13 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: newName }),
+      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
     })
       .then((r) => {
         if (!r.ok) {
-          r.json().then((d: { error?: string }) => console.warn(`Rename failed for "${slug}":`, d.error)).catch(() => {});
+          r.json()
+            .then((d: { error?: string }) => console.warn(`Rename failed for "${slug}":`, d.error))
+            .catch((err) => console.warn(`[desktop] Failed to parse rename error for "${slug}":`, err));
           return;
         }
         return r.json().then((data: { newSlug?: string }) => {
@@ -497,7 +523,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                     ...a,
                     name: newName,
                     path: newPath,
-                    iconUrl: `/icons/${ns}.png?v=${Math.random().toString(36).slice(2, 8)}`,
+                    iconUrl: `/icons/${ns}.png`,
                   };
                 }
                 return a;
@@ -523,10 +549,15 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   }, [wmSetApps, wmSetWindows]);
 
   const deleteAppOnServer = useCallback((slug: string) => {
-    fetch(`${GATEWAY_URL}/api/apps/${slug}`, { method: "DELETE" })
+    fetch(`${GATEWAY_URL}/api/apps/${slug}`, {
+      method: "DELETE",
+      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+    })
       .then((r) => {
         if (!r.ok) {
-          r.json().then((d: { error?: string }) => console.warn(`Delete failed for "${slug}":`, d.error)).catch(() => {});
+          r.json()
+            .then((d: { error?: string }) => console.warn(`Delete failed for "${slug}":`, d.error))
+            .catch((err) => console.warn(`[desktop] Failed to parse delete error for "${slug}":`, err));
           return;
         }
         wmSetApps((prev) => prev.filter((a) => nameToSlug(a.name) !== slug));
@@ -538,17 +569,17 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       .catch((err) => console.warn(`Delete request failed for "${slug}":`, err));
   }, [wmSetApps, wmSetWindows]);
 
-  const addApp = useCallback((name: string, path: string, _moduleIconUrl?: string) => {
+  const addApp = useCallback((name: string, path: string) => {
     const slug = nameToSlug(name);
     // Always prefer generated PNG icon over module-provided icon (which can be
     // invalid, e.g. an emoji). checkAndGenerateIcon will generate if missing.
-    const optimisticUrl = `/icons/${slug}.png?v=${iconVersionRef.current}`;
+    const optimisticUrl = `/icons/${slug}.png?v=${iconVersion}`;
     wmSetApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
       return [...prev, { name, path, iconUrl: optimisticUrl }];
     });
     checkAndGenerateIcon(slug);
-  }, [wmSetApps, checkAndGenerateIcon]);
+  }, [iconVersion, wmSetApps, checkAndGenerateIcon]);
 
 
   const openWindow = useCallback((name: string, path: string) => {
@@ -590,9 +621,24 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const loadModules = useCallback(async () => {
     try {
       const [layoutRes, modulesRes, appsRes] = await Promise.all([
-        fetch(`${GATEWAY_URL}/api/layout`).catch(() => null),
-        fetch(`${GATEWAY_URL}/files/system/modules.json`).catch(() => null),
-        fetch(`${GATEWAY_URL}/api/apps`).catch(() => null),
+        fetch(`${GATEWAY_URL}/api/layout`, {
+          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+        }).catch((err) => {
+          console.warn("[desktop] Failed to fetch layout:", err);
+          return null;
+        }),
+        fetch(`${GATEWAY_URL}/files/system/modules.json`, {
+          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+        }).catch((err) => {
+          console.warn("[desktop] Failed to fetch module registry:", err);
+          return null;
+        }),
+        fetch(`${GATEWAY_URL}/api/apps`, {
+          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+        }).catch((err) => {
+          console.warn("[desktop] Failed to fetch app list:", err);
+          return null;
+        }),
       ]);
 
       const savedLayout: { windows?: LayoutWindow[] } =
@@ -653,7 +699,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
             let metaRes: Response | undefined;
             for (const candidate of metaCandidates) {
-              const res = await fetch(candidate);
+              const res = await fetch(candidate, {
+                signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+              });
               if (res.ok) {
                 metaRes = res;
                 break;
@@ -664,7 +712,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               mod.type === "react-app" ? "dist/index.html" : "index.html";
             let path = `${relativeBasePath}/${defaultEntryFile}`;
             let appName = mod.name;
-            let moduleIconUrl: string | undefined;
 
             if (!metaRes?.ok) {
               addApp(appName, path);
@@ -680,10 +727,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             path = `${relativeBasePath}/${entryFile}`;
             appName = meta.name ?? mod.name;
 
-            moduleIconUrl = meta.icon
-              ? `${GATEWAY_URL}/files/${relativeBasePath}/${meta.icon}`
-              : undefined;
-            addApp(appName, path, moduleIconUrl);
+            addApp(appName, path);
 
             const saved = layoutMap.get(path);
             if (saved) {
@@ -691,8 +735,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             } else {
               openWindow(appName, path);
             }
-          } catch {
-            // module.json missing or invalid, skip
+          } catch (err) {
+            console.warn(`[desktop] Failed to load module "${mod.name}":`, err);
           }
         }
       }
@@ -700,8 +744,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       if (layoutToLoad.length > 0) {
         wmLoadLayout(layoutToLoad);
       }
-    } catch {
-      // modules.json or apps not available yet
+    } catch (err) {
+      console.warn("[desktop] Failed to load desktop modules:", err);
     }
   }, [addApp, openWindow, wmLoadLayout]);
 
@@ -735,7 +779,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           }
         }
       },
-      [loadModules, addApp, openWindow, wmSetApps, wmSetWindows],
+      [loadModules, addApp, wmSetApps, wmSetWindows],
     ),
   );
 
@@ -832,7 +876,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
   const openWindowRef = useRef(openWindow);
-  openWindowRef.current = openWindow;
+  useEffect(() => {
+    openWindowRef.current = openWindow;
+  }, [openWindow]);
 
   useEffect(() => {
     const modeCommands = allModes().map((m) => ({
@@ -951,7 +997,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           try {
             const text = await navigator.clipboard.readText();
             document.execCommand("insertText", false, text);
-          } catch { /* clipboard permission denied */ }
+          } catch (err) {
+            console.warn("[desktop] Clipboard read denied:", err);
+          }
         },
       },
       {
@@ -1006,7 +1054,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       "view:fullscreen",
       ...allModes().map((m) => `mode:${m.id}`),
     ]);
-  }, [register, unregister, allModes, setDesktopMode]);
+  }, [register, unregister, allModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow]);
 
   useEffect(() => {
     const appCommands = apps.map((app) => ({

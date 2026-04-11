@@ -1,8 +1,15 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { join, dirname } from "node:path";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
@@ -15,9 +22,49 @@ const DESKTOP_DEFAULTS = {
 };
 
 const THEME_DEFAULTS = {};
+const SETTINGS_BODY_LIMIT = 256 * 1024;
+const CHANNEL_IDS = new Set<ChannelId>([
+  "telegram",
+  "whatsapp",
+  "discord",
+  "slack",
+  "push",
+  "voice",
+]);
 
 function isValidFilename(name: string): boolean {
   return /^[a-zA-Z0-9_.-]+$/.test(name) && !name.includes("..");
+}
+
+function isValidChannelId(channelId: string): channelId is ChannelId {
+  return CHANNEL_IDS.has(channelId as ChannelId);
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readJson<T>(path: string, fallback: T, label: string): Promise<T> {
+  try {
+    return JSON.parse(await readFile(path, "utf-8")) as T;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`[settings] Failed to read ${label}:`, err);
+    }
+    return fallback;
+  }
+}
+
+async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, JSON.stringify(data, null, 2) + "\n");
+  await rename(tempPath, path);
 }
 
 export function createSettingsRoutes(opts: {
@@ -28,21 +75,12 @@ export function createSettingsRoutes(opts: {
   const app = new Hono();
   const configPath = join(homePath, "system/config.json");
 
-  function readConfig(): Record<string, unknown> {
-    try {
-      if (existsSync(configPath)) {
-        return JSON.parse(readFileSync(configPath, "utf-8"));
-      }
-    } catch { /* invalid */ }
-    return {};
+  async function readConfig(): Promise<Record<string, unknown>> {
+    return readJson(configPath, {}, "config");
   }
 
-  function writeConfig(cfg: Record<string, unknown>) {
-    writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
-  }
-
-  app.get("/channels", (c) => {
-    const cfg = readConfig();
+  app.get("/channels", async (c) => {
+    const cfg = await readConfig();
     const channels = (cfg.channels ?? {}) as Record<string, unknown>;
     const status = channelManager.status();
     const merged: Record<string, unknown> = {};
@@ -52,42 +90,50 @@ export function createSettingsRoutes(opts: {
     return c.json(merged);
   });
 
-  app.put("/channels/:id", async (c) => {
-    const channelId = c.req.param("id") as ChannelId;
-    const body = await c.req.json<Record<string, unknown>>();
-    const cfg = readConfig();
+  app.put("/channels/:id", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
+    const channelId = c.req.param("id");
+    if (!isValidChannelId(channelId)) {
+      return c.json({ error: "Invalid channel id" }, 400);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const cfg = await readConfig();
     const channels = (cfg.channels ?? {}) as Record<string, Record<string, unknown>>;
     channels[channelId] = { ...channels[channelId], ...body };
     cfg.channels = channels;
-    writeConfig(cfg);
+    await writeJsonAtomic(configPath, cfg);
 
     const channelCfg = channels[channelId] as unknown as ChannelConfig;
     try {
       await channelManager.restartChannel(channelId, channelCfg);
-    } catch { /* status will show error */ }
+    } catch (err) {
+      console.warn(`[settings] Failed to restart channel ${channelId}:`, err);
+      return c.json({ error: "Failed to restart channel" }, 500);
+    }
 
     const status = channelManager.status();
     return c.json({ ok: true, status: status[channelId] ?? "not configured" });
   });
 
-  app.get("/agent", (c) => {
-    const cfg = readConfig();
+  app.get("/agent", async (c) => {
+    const cfg = await readConfig();
     const handlePath = join(homePath, "system/handle.json");
-    let handle = {};
-    try {
-      if (existsSync(handlePath)) {
-        handle = JSON.parse(readFileSync(handlePath, "utf-8"));
-      }
-    } catch { /* skip */ }
+    const handle = await readJson(handlePath, {}, "handle");
     return c.json({ identity: handle, kernel: cfg.kernel ?? {} });
   });
 
-  app.get("/skills", (c) => {
+  app.get("/skills", async (c) => {
     const skillsDir = join(homePath, "agents/skills");
-    if (!existsSync(skillsDir)) return c.json([]);
-    const files = readdirSync(skillsDir).filter((f: string) => f.endsWith(".md"));
-    const skills = files.map((f: string) => {
-      const content = readFileSync(join(skillsDir, f), "utf-8");
+    if (!(await fileExists(skillsDir))) return c.json([]);
+    const files = (await readdir(skillsDir)).filter((f: string) => f.endsWith(".md"));
+    const skills = await Promise.all(files.map(async (f: string) => {
+      const content = await readFile(join(skillsDir, f), "utf-8");
       const name = f.replace(".md", "");
       const descMatch = content.match(/description:\s*(.+)/);
       return {
@@ -96,7 +142,7 @@ export function createSettingsRoutes(opts: {
         description: descMatch?.[1]?.trim(),
         enabled: true,
       };
-    });
+    }));
     return c.json(skills);
   });
 
@@ -104,23 +150,18 @@ export function createSettingsRoutes(opts: {
 
   const desktopPath = join(homePath, "system/desktop.json");
 
-  app.get("/desktop", (c) => {
-    try {
-      if (existsSync(desktopPath)) {
-        return c.json(JSON.parse(readFileSync(desktopPath, "utf-8")));
-      }
-    } catch { /* fallback to defaults */ }
-    return c.json(DESKTOP_DEFAULTS);
+  app.get("/desktop", async (c) => {
+    return c.json(await readJson(desktopPath, DESKTOP_DEFAULTS, "desktop config"));
   });
 
-  app.put("/desktop", async (c) => {
+  app.put("/desktop", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json<Record<string, unknown>>();
     } catch {
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    writeFileSync(desktopPath, JSON.stringify(body, null, 2) + "\n");
+    await writeJsonAtomic(desktopPath, body);
     return c.json({ ok: true });
   });
 
@@ -128,23 +169,18 @@ export function createSettingsRoutes(opts: {
 
   const themePath = join(homePath, "system/theme.json");
 
-  app.get("/theme", (c) => {
-    try {
-      if (existsSync(themePath)) {
-        return c.json(JSON.parse(readFileSync(themePath, "utf-8")));
-      }
-    } catch { /* fallback to defaults */ }
-    return c.json(THEME_DEFAULTS);
+  app.get("/theme", async (c) => {
+    return c.json(await readJson(themePath, THEME_DEFAULTS, "theme config"));
   });
 
-  app.put("/theme", async (c) => {
+  app.put("/theme", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json<Record<string, unknown>>();
     } catch {
       return c.json({ error: "Invalid JSON" }, 400);
     }
-    writeFileSync(themePath, JSON.stringify(body, null, 2) + "\n");
+    await writeJsonAtomic(themePath, body);
     return c.json({ ok: true });
   });
 
@@ -152,9 +188,9 @@ export function createSettingsRoutes(opts: {
 
   const wallpapersDir = join(homePath, "system/wallpapers");
 
-  app.get("/wallpapers", (c) => {
-    if (!existsSync(wallpapersDir)) return c.json({ wallpapers: [] });
-    const files = readdirSync(wallpapersDir);
+  app.get("/wallpapers", async (c) => {
+    if (!(await fileExists(wallpapersDir))) return c.json({ wallpapers: [] });
+    const files = await readdir(wallpapersDir);
     return c.json({ wallpapers: files });
   });
 
@@ -171,7 +207,7 @@ export function createSettingsRoutes(opts: {
     if (!isValidFilename(body.name)) {
       return c.json({ error: "Invalid filename" }, 400);
     }
-    mkdirSync(wallpapersDir, { recursive: true });
+    await mkdir(wallpapersDir, { recursive: true });
     const filePath = join(wallpapersDir, body.name);
     // Strip data URL prefix (e.g. "data:image/png;base64,") if present
     const raw = body.data.includes(",") ? body.data.split(",")[1] : body.data;
@@ -179,16 +215,16 @@ export function createSettingsRoutes(opts: {
     return c.json({ ok: true });
   });
 
-  app.delete("/wallpaper/:name", (c) => {
+  app.delete("/wallpaper/:name", async (c) => {
     const name = c.req.param("name");
     if (!isValidFilename(name)) {
       return c.json({ error: "Invalid filename" }, 400);
     }
     const filePath = join(wallpapersDir, name);
-    if (!existsSync(filePath)) {
+    if (!(await fileExists(filePath))) {
       return c.json({ error: "Not found" }, 404);
     }
-    unlinkSync(filePath);
+    await unlink(filePath);
     return c.json({ ok: true });
   });
 
@@ -199,7 +235,7 @@ export function createSettingsRoutes(opts: {
     return c.json({ hasKey });
   });
 
-  app.post("/api-key", async (c) => {
+  app.post("/api-key", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: { apiKey: string };
     try {
       body = await c.req.json<{ apiKey: string }>();

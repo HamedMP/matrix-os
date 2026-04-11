@@ -1,14 +1,6 @@
-# Matrix OS Terminal - zsh config with Oh My Zsh + Powerlevel10k
+# Matrix OS Terminal - zsh config with Powerlevel10k
 
-# Absolute path -- PTY sets HOME to MATRIX_HOME, not /home/matrixos
-export ZSH="/home/matrixos/.oh-my-zsh"
-ZSH_THEME="powerlevel10k/powerlevel10k"
-
-plugins=(
-  git
-  zsh-autosuggestions
-  zsh-syntax-highlighting
-)
+export ZSH_PLUGIN_ROOT="/home/matrixos/.zsh"
 
 HISTFILE=~/.zsh_history
 HISTSIZE=5000
@@ -23,9 +15,11 @@ bindkey '^[[F' end-of-line
 bindkey '^[[3~' delete-char
 
 # Set USER from Matrix handle (Alpine doesn't set USER for service accounts)
-export USER="${MATRIX_HANDLE:-matrixos}"
+export USER="${MATRIX_HANDLE//[\$\`]/}"
+export USER="${USER:-matrixos}"
 
-source "$ZSH/oh-my-zsh.sh"
+[[ -f "$ZSH_PLUGIN_ROOT/themes/powerlevel10k/powerlevel10k.zsh-theme" ]] && \
+  source "$ZSH_PLUGIN_ROOT/themes/powerlevel10k/powerlevel10k.zsh-theme"
 
 # p10k config (use absolute path, same reason as ZSH)
 [[ -f /home/matrixos/.p10k.zsh ]] && source /home/matrixos/.p10k.zsh
@@ -35,3 +29,8 @@ alias la='ls -A'
 alias gs='git status'
 alias gd='git diff'
 alias gl='git log --oneline -20'
+
+[[ -f "$ZSH_PLUGIN_ROOT/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ]] && \
+  source "$ZSH_PLUGIN_ROOT/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
+[[ -f "$ZSH_PLUGIN_ROOT/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]] && \
+  source "$ZSH_PLUGIN_ROOT/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"

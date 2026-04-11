@@ -84,6 +84,10 @@ import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
 import {
+  MainWsClientMessageSchema,
+  type MainWsClientMessage,
+} from "./ws-message-schema.js";
+import {
   metricsRegistry,
   httpRequestsTotal,
   httpRequestDuration,
@@ -108,12 +112,6 @@ export interface GatewayConfig {
   maxTurns?: number;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
-
-type ClientMessage =
-  | { type: "message"; text: string; sessionId?: string; requestId?: string }
-  | { type: "switch_session"; sessionId: string }
-  | { type: "approval_response"; id: string; approved: boolean }
-  | { type: "ping" };
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
@@ -154,6 +152,10 @@ function kernelEventToServerMessage(event: KernelEvent, requestId?: string): Ser
 function send(ws: WSContext, msg: ServerMessage) {
   ws.send(JSON.stringify(msg));
 }
+
+const CONVERSATION_REPLAY_BATCH_SIZE = 100;
+const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
+const MAX_MAIN_WS_CLIENTS = 100;
 
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
@@ -435,6 +437,24 @@ export async function createGateway(config: GatewayConfig) {
 
   function broadcastError(message: string) {
     broadcast({ type: "kernel:error", message });
+  }
+
+  function evictOldestMainWsClientIfNeeded() {
+    while (clients.size >= MAX_MAIN_WS_CLIENTS) {
+      const oldestClient = clients.values().next().value as WSContext | undefined;
+      if (!oldestClient) {
+        return;
+      }
+
+      clients.delete(oldestClient);
+      wsConnectionsActive.dec();
+      try {
+        oldestClient.close(1013, "Too many active WebSocket clients");
+      } catch (err) {
+        console.warn("[gateway] Failed to close evicted WebSocket client:", err);
+      }
+      console.warn("[gateway] Evicted oldest main WebSocket client due to client cap");
+    }
   }
 
   function finalizeWithSummary(sid: string) {
@@ -798,8 +818,10 @@ export async function createGateway(config: GatewayConfig) {
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
       let detachConversationRun: (() => void) | null = null;
+      let conversationReplayVersion = 0;
 
       const clearConversationRunAttachment = () => {
+        conversationReplayVersion++;
         if (detachConversationRun) {
           detachConversationRun();
           detachConversationRun = null;
@@ -816,8 +838,36 @@ export async function createGateway(config: GatewayConfig) {
         conversationRuns.publish(sessionId, message);
       };
 
+      const replayConversationRun = (ws: WSContext, sessionId: string) => {
+        const replayVersion = conversationReplayVersion;
+        const bufferedMessages = conversationRuns.getBufferedMessages(sessionId);
+        if (!bufferedMessages || bufferedMessages.length === 0) {
+          return;
+        }
+
+        const flushBatch = (startIndex: number) => {
+          if (replayVersion !== conversationReplayVersion) {
+            return;
+          }
+
+          const endIndex = Math.min(
+            startIndex + CONVERSATION_REPLAY_BATCH_SIZE,
+            bufferedMessages.length,
+          );
+          for (let index = startIndex; index < endIndex; index++) {
+            send(ws, bufferedMessages[index] as ServerMessage);
+          }
+          if (endIndex < bufferedMessages.length) {
+            setTimeout(() => flushBatch(endIndex), 0);
+          }
+        };
+
+        flushBatch(0);
+      };
+
       return {
         onOpen(_evt, ws) {
+          evictOldestMainWsClientIfNeeded();
           clients.add(ws);
           wsConnectionsActive.inc();
           approvalBridge = createApprovalBridge({
@@ -836,15 +886,23 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onMessage(evt, ws) {
-          let parsed: ClientMessage;
+          let rawMessage: unknown;
           try {
-            parsed = JSON.parse(
+            rawMessage = JSON.parse(
               typeof evt.data === "string" ? evt.data : "",
-            ) as ClientMessage;
+            );
           } catch {
             send(ws, { type: "kernel:error", message: "Invalid JSON" });
             return;
           }
+
+          const parsedResult = MainWsClientMessageSchema.safeParse(rawMessage);
+          if (!parsedResult.success) {
+            send(ws, { type: "kernel:error", message: "Invalid message format" });
+            return;
+          }
+
+          const parsed: MainWsClientMessage = parsedResult.data;
 
           if (parsed.type === "ping") {
             send(ws, { type: "pong" } as ServerMessage);
@@ -854,9 +912,14 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
             clearConversationRunAttachment();
-            detachConversationRun = conversationRuns.attach(parsed.sessionId, (message) => {
-              send(ws, message as ServerMessage);
-            });
+            detachConversationRun = conversationRuns.attach(
+              parsed.sessionId,
+              (message) => {
+                send(ws, message as ServerMessage);
+              },
+              { replayBuffered: false },
+            );
+            replayConversationRun(ws, parsed.sessionId);
             send(ws, { type: "session:switched", sessionId: parsed.sessionId });
             return;
           }
@@ -900,13 +963,21 @@ export async function createGateway(config: GatewayConfig) {
                   publishConversationRunMessage(activeSessionId, msg);
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
+                } else if (msg.type === "kernel:error" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, {
+                    ...msg,
+                    message: CLIENT_KERNEL_ERROR_MESSAGE,
+                  });
+                  finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
               })
               .catch((err: Error) => {
+                console.error("[gateway] Conversation dispatch failed:", err);
                 if (activeSessionId) {
                   publishConversationRunMessage(activeSessionId, {
                     type: "kernel:error",
-                    message: err.message ?? "Kernel error",
+                    message: CLIENT_KERNEL_ERROR_MESSAGE,
                     requestId,
                   });
                   finalizeWithSummary(activeSessionId);
@@ -914,7 +985,7 @@ export async function createGateway(config: GatewayConfig) {
                 }
                 send(ws, {
                   type: "kernel:error",
-                  message: err.message ?? "Kernel error",
+                  message: CLIENT_KERNEL_ERROR_MESSAGE,
                   requestId,
                 });
               });
@@ -923,8 +994,9 @@ export async function createGateway(config: GatewayConfig) {
 
         onClose(_evt, ws) {
           clearConversationRunAttachment();
-          clients.delete(ws);
-          wsConnectionsActive.dec();
+          if (clients.delete(ws)) {
+            wsConnectionsActive.dec();
+          }
         },
       };
     }),
@@ -1898,7 +1970,15 @@ export async function createGateway(config: GatewayConfig) {
         imageDir: iconsDir,
         saveAs: `${slug}.png`,
       });
-      return c.json({ iconUrl: `/files/system/icons/${slug}.png`, cost: result.cost });
+      const iconPath = join(iconsDir, `${slug}.png`);
+      const stat = statSync(iconPath);
+      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+      c.header("ETag", etag);
+      return c.json({
+        iconUrl: `/files/system/icons/${slug}.png`,
+        etag,
+        cost: result.cost,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error(`Icon generation failed for "${slug}":`, message);

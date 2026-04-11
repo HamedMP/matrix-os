@@ -72,11 +72,13 @@ for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; 
     cp -f "$skill" "$skills_root/$name/SKILL.md"
     display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
     desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
+    short_desc=$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    prompt_desc=$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')
     cat > "$skills_root/$name/agents/openai.yaml" <<EOYAML
 interface:
   display_name: "Matrix: $display"
-  short_description: "${desc:-$display skill}"
-  default_prompt: "Use \$$name for ${desc:-this task}."
+  short_description: "$short_desc"
+  default_prompt: "Use \$$name for $prompt_desc."
 EOYAML
   done
 done

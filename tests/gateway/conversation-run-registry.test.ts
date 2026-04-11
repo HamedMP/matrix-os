@@ -86,4 +86,37 @@ describe("ConversationRunRegistry", () => {
     expect(registry.attach("sess-1", () => {})).toBeNull();
     expect(registry.attach("sess-2", () => {})).not.toBeNull();
   });
+
+  it("returns null instead of throwing when subscriber cap is reached", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 1,
+      maxEventsPerRun: 10,
+      maxSubscribersPerRun: 1,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+
+    const detach = registry.attach("sess-1", () => {});
+    expect(detach).not.toBeNull();
+    expect(registry.attach("sess-1", () => {})).toBeNull();
+  });
+
+  it("returns a copy of buffered messages for batched replay", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 1,
+      maxEventsPerRun: 10,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+    registry.publish("sess-1", { type: "kernel:text", text: "Hello" });
+
+    const replay = registry.getBufferedMessages("sess-1");
+    expect(replay).toEqual([
+      { type: "kernel:init", sessionId: "sess-1" },
+      { type: "kernel:text", text: "Hello" },
+    ]);
+    expect(replay).not.toBe(registry.getBufferedMessages("sess-1"));
+  });
 });
