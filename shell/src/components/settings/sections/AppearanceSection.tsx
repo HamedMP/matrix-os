@@ -78,8 +78,8 @@ export function AppearanceSection() {
         const data = await res.json();
         setWallpapers(data.wallpapers || []);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn("[appearance] Failed to fetch wallpapers:", err);
     }
   }, []);
 
@@ -156,8 +156,8 @@ export function AppearanceSection() {
           signal: AbortSignal.timeout(30_000),
         });
         await fetchWallpapers();
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn("[appearance] Failed to upload wallpaper:", err);
       }
     };
     reader.readAsDataURL(file);
@@ -175,8 +175,8 @@ export function AppearanceSection() {
         setBgMode("pattern");
         await saveBg({ type: "pattern" });
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn(`[appearance] Failed to delete wallpaper "${name}":`, err);
     }
   }
 

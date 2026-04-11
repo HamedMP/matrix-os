@@ -35,10 +35,7 @@ export function useChatState(): ChatState {
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
   const pendingRestoreSessionRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    sessionRef.current = sessionId;
-  }, [sessionId]);
+  sessionRef.current = sessionId;
 
   useEffect(() => {
     if (conversations.length === 0) return;

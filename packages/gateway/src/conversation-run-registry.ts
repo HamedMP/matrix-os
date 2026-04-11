@@ -18,6 +18,11 @@ interface AttachOptions {
   replayBuffered?: boolean;
 }
 
+export interface ConversationRunAttachment {
+  detach: () => void;
+  bufferedMessages: ConversationRunMessage[];
+}
+
 interface RunState {
   readonly sessionId: string;
   readonly createdAt: number;
@@ -73,11 +78,10 @@ export class ConversationRunRegistry {
     return [...run.messages];
   }
 
-  attach(
+  attachWithBufferedSnapshot(
     sessionId: string,
     subscriber: Subscriber,
-    options?: AttachOptions,
-  ): (() => void) | null {
+  ): ConversationRunAttachment | null {
     const run = this.runs.get(sessionId);
     if (!run) {
       return null;
@@ -88,17 +92,34 @@ export class ConversationRunRegistry {
       return null;
     }
 
+    const bufferedMessages = [...run.messages];
+    run.subscribers.add(subscriber);
+
+    return {
+      bufferedMessages,
+      detach: () => {
+        run.subscribers.delete(subscriber);
+      },
+    };
+  }
+
+  attach(
+    sessionId: string,
+    subscriber: Subscriber,
+    options?: AttachOptions,
+  ): (() => void) | null {
+    const attachment = this.attachWithBufferedSnapshot(sessionId, subscriber);
+    if (!attachment) {
+      return null;
+    }
+
     if (options?.replayBuffered !== false) {
-      for (const message of run.messages) {
+      for (const message of attachment.bufferedMessages) {
         subscriber(message);
       }
     }
 
-    run.subscribers.add(subscriber);
-
-    return () => {
-      run.subscribers.delete(subscriber);
-    };
+    return attachment.detach;
   }
 
   complete(sessionId: string): void {

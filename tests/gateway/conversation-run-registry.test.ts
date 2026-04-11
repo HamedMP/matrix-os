@@ -119,4 +119,34 @@ describe("ConversationRunRegistry", () => {
     ]);
     expect(replay).not.toBe(registry.getBufferedMessages("sess-1"));
   });
+
+  it("captures a buffered snapshot before streaming future messages", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 1,
+      maxEventsPerRun: 10,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+    registry.publish("sess-1", { type: "kernel:text", text: "buffered" });
+
+    const streamed: ConversationRunMessage[] = [];
+    const attachment = registry.attachWithBufferedSnapshot("sess-1", (msg) => {
+      streamed.push(msg);
+    });
+
+    expect(attachment).not.toBeNull();
+    expect(attachment?.bufferedMessages).toEqual([
+      { type: "kernel:init", sessionId: "sess-1" },
+      { type: "kernel:text", text: "buffered" },
+    ]);
+    expect(streamed).toEqual([]);
+
+    registry.publish("sess-1", { type: "kernel:text", text: "live" });
+    expect(streamed).toEqual([{ type: "kernel:text", text: "live" }]);
+
+    attachment?.detach();
+    registry.publish("sess-1", { type: "kernel:text", text: "after-detach" });
+    expect(streamed).toEqual([{ type: "kernel:text", text: "live" }]);
+  });
 });

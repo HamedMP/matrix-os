@@ -838,10 +838,14 @@ export async function createGateway(config: GatewayConfig) {
         conversationRuns.publish(sessionId, message);
       };
 
-      const replayConversationRun = (ws: WSContext, sessionId: string) => {
+      const replayConversationRun = (
+        ws: WSContext,
+        bufferedMessages: ConversationRunMessage[],
+        onComplete?: () => void,
+      ) => {
         const replayVersion = conversationReplayVersion;
-        const bufferedMessages = conversationRuns.getBufferedMessages(sessionId);
-        if (!bufferedMessages || bufferedMessages.length === 0) {
+        if (bufferedMessages.length === 0) {
+          onComplete?.();
           return;
         }
 
@@ -859,7 +863,10 @@ export async function createGateway(config: GatewayConfig) {
           }
           if (endIndex < bufferedMessages.length) {
             setTimeout(() => flushBatch(endIndex), 0);
+            return;
           }
+
+          onComplete?.();
         };
 
         flushBatch(0);
@@ -912,14 +919,34 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
             clearConversationRunAttachment();
-            detachConversationRun = conversationRuns.attach(
+            const pendingLiveMessages: ConversationRunMessage[] = [];
+            let replayComplete = false;
+            const attachment = conversationRuns.attachWithBufferedSnapshot(
               parsed.sessionId,
               (message) => {
+                if (!replayComplete) {
+                  pendingLiveMessages.push(message);
+                  return;
+                }
                 send(ws, message as ServerMessage);
               },
-              { replayBuffered: false },
             );
-            replayConversationRun(ws, parsed.sessionId);
+            if (attachment) {
+              detachConversationRun = attachment.detach;
+              replayConversationRun(ws, attachment.bufferedMessages, () => {
+                replayComplete = true;
+                send(ws, {
+                  type: "session:switched",
+                  sessionId: parsed.sessionId,
+                });
+                for (const message of pendingLiveMessages) {
+                  send(ws, message as ServerMessage);
+                }
+                pendingLiveMessages.length = 0;
+              });
+              return;
+            }
+
             send(ws, { type: "session:switched", sessionId: parsed.sessionId });
             return;
           }
