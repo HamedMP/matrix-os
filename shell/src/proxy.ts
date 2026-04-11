@@ -106,8 +106,10 @@ export default function middleware(
   request: NextRequest,
   event: import("next/server").NextFetchEvent,
 ) {
-  // E2E screenshot tests: skip auth so the shell renders without Clerk
-  if (process.env.E2E_TEST_BYPASS === "1" && process.env.NODE_ENV === "test") {
+  // E2E screenshot tests run against `next start`, which always serves the
+  // built app with production semantics. Use the explicit bypass flag alone so
+  // screenshot runs can skip auth without depending on NODE_ENV.
+  if (process.env.E2E_TEST_BYPASS === "1") {
     return NextResponse.next();
   }
   return withClerk(request, event);

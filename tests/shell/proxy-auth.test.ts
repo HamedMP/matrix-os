@@ -17,6 +17,13 @@ function isGatewayProxy(pathname: string): boolean {
   return GATEWAY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
+function shouldBypassAuth(env: {
+  E2E_TEST_BYPASS?: string;
+  NODE_ENV?: string;
+}): boolean {
+  return env.E2E_TEST_BYPASS === "1";
+}
+
 function resolveGatewayTarget(pathname: string): string {
   return pathname.startsWith("/gateway/")
     ? pathname.replace("/gateway", "")
@@ -68,6 +75,18 @@ describe("proxy auth: route classification", () => {
     expect(isGatewayProxy("/")).toBe(false);
     expect(isGatewayProxy("/settings")).toBe(false);
     expect(isGatewayProxy("/health")).toBe(false);
+  });
+});
+
+describe("proxy auth: screenshot bypass", () => {
+  it("bypasses auth when the explicit E2E flag is set", () => {
+    expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "production" })).toBe(true);
+    expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "test" })).toBe(true);
+  });
+
+  it("does not bypass auth without the explicit E2E flag", () => {
+    expect(shouldBypassAuth({ NODE_ENV: "test" })).toBe(false);
+    expect(shouldBypassAuth({ E2E_TEST_BYPASS: "0", NODE_ENV: "production" })).toBe(false);
   });
 });
 

@@ -44,6 +44,7 @@ Key principles:
 - **Drizzle ORM only**: never raw SQL with better-sqlite3
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
+- **Verify Before Done**: always check for lint errors and build errors after making changes. Run `bun run lint` and `bun run build` (or check the dev server output) before considering a change complete. Never leave broken references, unused imports, or type errors.
 - After major features: run `/update-docs` to sync all documentation
 
 ## Mandatory Code Patterns

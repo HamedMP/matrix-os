@@ -1,13 +1,14 @@
 {
   "background": {
-    "type": "pattern"
+    "type": "wallpaper",
+    "name": "moraine-lake.jpg"
   },
   "dock": {
     "position": "left",
     "size": 56,
     "iconSize": 40,
-    "autoHide": false
+    "autoHide": true
   },
   "pinnedApps": [],
-  "iconStyle": "Digital neo-classic app icon filling the entire frame edge to edge, dark matte background with subtle luminous grid lines, clean geometric 3D forms, soft phosphor glow accents, rounded square shape, premium minimalist design, no margins or padding"
+  "iconStyle": "iOS/macOS-style app icon, filled square with no rounded corners (the container handles rounding), vivid gradient background, single centered symbolic glyph or object rendered in clean flat or subtly 3D style, bold saturated colors, soft inner shadows and highlights for depth, professional Apple-quality design, no text, no transparency, icon fills entire canvas edge to edge"
 }

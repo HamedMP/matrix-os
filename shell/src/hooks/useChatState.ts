@@ -7,6 +7,7 @@ import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
+const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 
 interface QueuedMessage {
   text: string;
@@ -33,10 +34,12 @@ export function useChatState(): ChatState {
   const { connected, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
+  const pendingRestoreSessionRef = useRef<string | null>(null);
   sessionRef.current = sessionId;
 
   useEffect(() => {
     if (conversations.length === 0) return;
+    let aborted = false;
 
     const sorted = [...conversations].sort(
       (a, b) => b.updatedAt - a.updatedAt,
@@ -44,14 +47,34 @@ export function useChatState(): ChatState {
     const latest = sorted[0];
 
     if (!sessionId && latest.messageCount > 0) {
-      load(latest.id).then((conv) => {
-        if (conv) {
-          setSessionId(conv.id);
-          setMessages(hydrateMessages(conv.messages));
-        }
-      });
+      load(latest.id)
+        .then((conv) => {
+          if (!aborted && conv) {
+            pendingRestoreSessionRef.current = conv.id;
+            setSessionId(conv.id);
+            setMessages(hydrateMessages(conv.messages));
+          }
+        })
+        .catch((err) => {
+          if (!aborted) {
+            console.warn(`[chat] Failed to restore conversation "${latest.id}":`, err);
+          }
+        });
     }
+
+    return () => {
+      aborted = true;
+    };
   }, [conversations, sessionId, load]);
+
+  useEffect(() => {
+    if (!sessionId || pendingRestoreSessionRef.current !== sessionId) {
+      return;
+    }
+
+    pendingRestoreSessionRef.current = null;
+    send({ type: "switch_session", sessionId });
+  }, [sessionId, send]);
 
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
@@ -122,6 +145,7 @@ export function useChatState(): ChatState {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
+        signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
       });
       if (res.ok) {
         const { id } = await res.json();
@@ -130,21 +154,26 @@ export function useChatState(): ChatState {
       } else {
         setSessionId(undefined);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[chat] Failed to create conversation:", err);
       setSessionId(undefined);
     }
   }, [send]);
 
   const switchConversation = useCallback(
     (id: string) => {
-      load(id).then((conv) => {
-        if (conv) {
-          setSessionId(conv.id);
-          setMessages(hydrateMessages(conv.messages));
-          setQueue([]);
-          send({ type: "switch_session", sessionId: conv.id });
-        }
-      });
+      load(id)
+        .then((conv) => {
+          if (conv) {
+            setSessionId(conv.id);
+            setMessages(hydrateMessages(conv.messages));
+            setQueue([]);
+            send({ type: "switch_session", sessionId: conv.id });
+          }
+        })
+        .catch((err) => {
+          console.warn(`[chat] Failed to switch to conversation "${id}":`, err);
+        });
     },
     [load, send],
   );

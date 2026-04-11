@@ -19,6 +19,7 @@ function stubChannelManager() {
     stop: async () => {},
     send: () => {},
     replay: async () => {},
+    restartChannel: async () => {},
   };
 }
 
@@ -49,7 +50,10 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const res = await app.request("/api/settings/desktop");
       expect(res.status).toBe(200);
       const data = await res.json();
-      expect(data.background).toEqual({ type: "pattern" });
+      expect(data.background).toEqual({
+        type: "wallpaper",
+        name: "moraine-lake.jpg",
+      });
       expect(data.dock).toEqual({
         position: "left",
         size: 56,
@@ -106,6 +110,16 @@ describe("Settings: desktop + theme + wallpapers", () => {
       });
       expect(res.status).toBe(400);
     });
+
+    it("rejects oversized desktop payloads", async () => {
+      const res = await app.request("/api/settings/desktop", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ giant: "x".repeat(300_000) }),
+      });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).not.toBe(200);
+    });
   });
 
   // --- GET /api/settings/theme ---
@@ -160,6 +174,16 @@ describe("Settings: desktop + theme + wallpapers", () => {
       });
       expect(res.status).toBe(400);
     });
+
+    it("rejects oversized theme payloads", async () => {
+      const res = await app.request("/api/settings/theme", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ giant: "x".repeat(300_000) }),
+      });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).not.toBe(200);
+    });
   });
 
   // --- GET /api/settings/wallpapers ---
@@ -169,7 +193,7 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const res = await app.request("/api/settings/wallpapers");
       expect(res.status).toBe(200);
       const data = await res.json();
-      expect(data).toEqual([]);
+      expect(data).toEqual({ wallpapers: [] });
     });
 
     it("lists files when wallpapers exist", async () => {
@@ -180,11 +204,9 @@ describe("Settings: desktop + theme + wallpapers", () => {
 
       const res = await app.request("/api/settings/wallpapers");
       expect(res.status).toBe(200);
-      const data = await res.json() as { name: string; url: string }[];
-      expect(data).toHaveLength(2);
-      const names = data.map((w) => w.name).sort();
-      expect(names).toEqual(["forest.jpg", "ocean.png"]);
-      expect(data[0].url).toContain("/files/system/wallpapers/");
+      const data = await res.json() as { wallpapers: string[] };
+      expect(data.wallpapers).toHaveLength(2);
+      expect(data.wallpapers.toSorted()).toEqual(["forest.jpg", "ocean.png"]);
     });
   });
 
@@ -259,6 +281,42 @@ describe("Settings: desktop + theme + wallpapers", () => {
         { method: "DELETE" },
       );
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("PUT /channels/:id", () => {
+    it("rejects unknown channel ids", async () => {
+      const res = await app.request("/api/settings/channels/not-a-channel", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Invalid channel id" });
+    });
+
+    it("returns 500 when channel restart fails", async () => {
+      const routes = createSettingsRoutes({
+        homePath,
+        channelManager: {
+          ...stubChannelManager(),
+          restartChannel: async () => {
+            throw new Error("boom");
+          },
+        } as any,
+      });
+      const failingApp = new Hono();
+      failingApp.route("/api/settings", routes);
+
+      const res = await failingApp.request("/api/settings/channels/telegram", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      });
+
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: "Failed to restart channel" });
     });
   });
 });

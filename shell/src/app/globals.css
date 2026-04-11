@@ -9,27 +9,39 @@
   --font-mono: "JetBrains Mono", monospace;
   --radius: 0.75rem;
 
-  /* Warm light palette -- lavender canvas, terracotta accent */
-  --background: #ece5f0;
+  /* Sage-green / teal palette — white app surfaces */
+  --background: #FAFAF9;
   --foreground: #1c1917;
-  --card: #ffffff;
+  --card: #FAFAF9;
   --card-foreground: #1c1917;
-  --popover: #ffffff;
+  --popover: #FAFAF9;
   --popover-foreground: #1c1917;
-  --primary: #c2703a;
-  --primary-foreground: #ffffff;
-  --secondary: #f0eaf4;
-  --secondary-foreground: #44403c;
-  --muted: #f0eaf4;
-  --muted-foreground: #78716c;
-  --accent: #f0eaf4;
-  --accent-foreground: #44403c;
+  --primary: #8CC7BE;
+  --primary-foreground: #1a1f18;
+  --secondary: #f5f5f4;
+  --secondary-foreground: #3c4044;
+  --muted: #f5f5f4;
+  --muted-foreground: #6c7178;
+  --accent: #f5f5f4;
+  --accent-foreground: #3c4044;
   --destructive: #ef4444;
   --success: #22c55e;
   --warning: #eab308;
-  --border: #d8d0de;
-  --input: #d8d0de;
-  --ring: #c2703a;
+  --border: #e5e5e4;
+  --input: #e5e5e4;
+  --ring: #8CC7BE;
+
+  /* Neumorphic tokens — no-op defaults, overridden by retro theme via applyTheme() */
+  --neu-shadow-light: transparent;
+  --neu-shadow-dark: transparent;
+  --neu-distance: 0px;
+  --neu-blur: 0px;
+
+  /* Page background gradient tokens (separate from app --background) */
+  --gradient-deep: #323D2E;
+  --gradient-mid: #9AA48C;
+  --gradient-light: #8CC7BE;
+  --gradient-accent: #6a8a7a;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -133,6 +145,34 @@ pre {
   }
 }
 
+/* Dock icon entrance — minimized window lands in dock */
+@keyframes dock-icon-in {
+  0% {
+    opacity: 0;
+    transform: scale(0) translateY(-8px);
+    filter: blur(4px);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.15) translateY(0);
+    filter: blur(0);
+  }
+  70% {
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* Dock separator fade in */
+@keyframes dock-sep-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* App windows: full-screen on mobile, positioned on desktop */
 .app-window {
   inset: 0;
@@ -187,3 +227,367 @@ pre {
 .md-prose th { font-weight: 600; background: var(--muted); }
 .md-prose img { max-width: 100%; border-radius: 6px; margin: 0.75rem 0; }
 .md-prose input[type="checkbox"] { margin-right: 0.4rem; }
+
+/* ═══════════════════════════════════════════════
+   Neumorphic overrides — active only when
+   data-theme-style="neumorphic" is on :root
+   ═══════════════════════════════════════════════ */
+
+/* --- Cards: raised surface --- */
+[data-theme-style="neumorphic"] [data-slot="card"] {
+  border: none;
+  box-shadow:
+    var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+}
+
+/* --- Buttons: raised default, inset on press --- */
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="default"],
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="secondary"] {
+  border: none;
+  box-shadow:
+    var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+  transition: box-shadow 0.1s ease;
+}
+
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="default"]:active,
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="secondary"]:active {
+  box-shadow:
+    inset var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    inset calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+}
+
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="outline"] {
+  border: 1px solid var(--neu-shadow-dark);
+  box-shadow:
+    var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+}
+
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="ghost"] {
+  border-radius: var(--radius);
+}
+
+[data-theme-style="neumorphic"] [data-slot="button"][data-variant="ghost"]:hover {
+  box-shadow:
+    inset 2px 2px 4px var(--neu-shadow-dark),
+    inset -2px -2px 4px var(--neu-shadow-light);
+}
+
+/* --- Inputs: sunken/inset --- */
+[data-theme-style="neumorphic"] [data-slot="input"],
+[data-theme-style="neumorphic"] [data-slot="textarea"] {
+  border: 1px solid var(--border);
+  box-shadow:
+    inset var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    inset calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+}
+
+/* --- Switch: inset track --- */
+[data-theme-style="neumorphic"] [data-slot="switch"] {
+  box-shadow:
+    inset 3px 3px 6px var(--neu-shadow-dark),
+    inset -3px -3px 6px var(--neu-shadow-light);
+  border: none;
+}
+
+/* --- Select trigger: raised --- */
+[data-theme-style="neumorphic"] [data-slot="select-trigger"] {
+  border: 1px solid var(--border);
+  box-shadow:
+    var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+}
+
+/* --- Select / Context menu content: raised dropdown --- */
+[data-theme-style="neumorphic"] [data-slot="select-content"],
+[data-theme-style="neumorphic"] [data-slot="context-menu-content"] {
+  border: 1px solid var(--border);
+  box-shadow:
+    var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light);
+  backdrop-filter: none;
+}
+
+/* --- Dialog content: raised panel --- */
+[data-theme-style="neumorphic"] [data-slot="dialog-content"] {
+  border: 2px solid var(--border);
+  box-shadow:
+    6px 6px 12px var(--neu-shadow-dark),
+    -6px -6px 12px var(--neu-shadow-light);
+  backdrop-filter: none;
+}
+
+/* --- Window containers (canvas windows): raised --- */
+[data-theme-style="neumorphic"] .rounded-lg.bg-card {
+  box-shadow:
+    var(--neu-distance) var(--neu-distance) var(--neu-blur) var(--neu-shadow-dark),
+    calc(-1 * var(--neu-distance)) calc(-1 * var(--neu-distance)) var(--neu-blur) var(--neu-shadow-light) !important;
+  border: 1px solid var(--border);
+}
+
+/* --- Disable backdrop-blur globally for neumorphic --- */
+[data-theme-style="neumorphic"] .backdrop-blur-xl,
+[data-theme-style="neumorphic"] .backdrop-blur-md,
+[data-theme-style="neumorphic"] .backdrop-blur-sm {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* --- Scrollbars: subtle raised thumb --- */
+[data-theme-style="neumorphic"] ::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border-radius: 3px;
+  box-shadow:
+    1px 1px 2px var(--neu-shadow-dark),
+    -1px -1px 2px var(--neu-shadow-light);
+}
+
+/* --- Skeleton: inset --- */
+[data-theme-style="neumorphic"] [data-slot="skeleton"] {
+  box-shadow:
+    inset 2px 2px 4px var(--neu-shadow-dark),
+    inset -2px -2px 4px var(--neu-shadow-light);
+}
+
+/* --- Mode selector pills (settings, dock position) --- */
+[data-theme-style="neumorphic"] .rounded-lg.bg-muted\/50 {
+  box-shadow:
+    inset 3px 3px 6px var(--neu-shadow-dark),
+    inset -3px -3px 6px var(--neu-shadow-light);
+}
+
+/* --- Active tab inside mode selector --- */
+[data-theme-style="neumorphic"] .rounded-lg.bg-muted\/50 .bg-background.shadow-sm {
+  box-shadow:
+    3px 3px 6px var(--neu-shadow-dark),
+    -3px -3px 6px var(--neu-shadow-light);
+}
+
+/* ═══════════════════════════════════════════════
+   Retro / Old-school overrides — dock, icons,
+   menu bar, app tiles, mission control
+   ═══════════════════════════════════════════════ */
+
+/* --- Dock: raised Win98 taskbar panel --- */
+[data-theme-style="neumorphic"] [data-dock] {
+  background: var(--card) !important;
+  backdrop-filter: none !important;
+  border-radius: 4px !important;
+  border: none !important;
+  border-top: 2px solid var(--neu-shadow-light) !important;
+  border-left: 2px solid var(--neu-shadow-light) !important;
+  border-bottom: 2px solid var(--neu-shadow-dark) !important;
+  border-right: 2px solid var(--neu-shadow-dark) !important;
+  box-shadow: none !important;
+}
+
+/* --- Dock icons: square raised buttons, no rounded-xl --- */
+[data-theme-style="neumorphic"] [data-dock] button {
+  border-radius: 4px !important;
+  border: none !important;
+  border-top: 1.5px solid var(--neu-shadow-light);
+  border-left: 1.5px solid var(--neu-shadow-light);
+  border-bottom: 1.5px solid var(--neu-shadow-dark);
+  border-right: 1.5px solid var(--neu-shadow-dark);
+  box-shadow: none !important;
+  overflow: hidden;
+  transition: all 0.05s ease;
+}
+
+[data-theme-style="neumorphic"] [data-dock] button:active {
+  border-top-color: var(--neu-shadow-dark);
+  border-left-color: var(--neu-shadow-dark);
+  border-bottom-color: var(--neu-shadow-light);
+  border-right-color: var(--neu-shadow-light);
+}
+
+[data-theme-style="neumorphic"] [data-dock] button:hover {
+  transform: none !important;
+}
+
+/* Dock icon images: square with pixelated feel */
+[data-theme-style="neumorphic"] [data-dock] button img {
+  border-radius: 2px !important;
+}
+
+/* Dock active indicator: square, not circle */
+[data-theme-style="neumorphic"] [data-dock] button .rounded-full.bg-foreground {
+  border-radius: 1px !important;
+  width: 4px !important;
+  height: 4px !important;
+}
+
+/* Dock separator: bevel line */
+[data-theme-style="neumorphic"] [data-dock] .border-l,
+[data-theme-style="neumorphic"] [data-dock] .border-t {
+  border-color: var(--neu-shadow-dark) !important;
+  box-shadow: 1px 0 0 var(--neu-shadow-light);
+}
+
+/* --- Menu Bar: Win98 raised taskbar --- */
+[data-theme-style="neumorphic"] [data-menu-bar] {
+  background: var(--card) !important;
+  backdrop-filter: none !important;
+  border: none !important;
+  border-bottom: 2px solid var(--neu-shadow-dark) !important;
+  box-shadow:
+    inset 0 1px 0 var(--neu-shadow-light) !important;
+}
+
+/* Menu bar buttons: Win98 raised feel on hover */
+[data-theme-style="neumorphic"] [data-menu-bar] button:hover {
+  background: var(--muted) !important;
+  border-top: 1px solid var(--neu-shadow-light);
+  border-left: 1px solid var(--neu-shadow-light);
+  border-bottom: 1px solid var(--neu-shadow-dark);
+  border-right: 1px solid var(--neu-shadow-dark);
+}
+
+/* Menu dropdowns: raised panel with bevel */
+[data-theme-style="neumorphic"] [data-menu-dropdown] {
+  background: var(--card) !important;
+  backdrop-filter: none !important;
+  border-radius: 2px !important;
+  border: none !important;
+  border-top: 2px solid var(--neu-shadow-light) !important;
+  border-left: 2px solid var(--neu-shadow-light) !important;
+  border-bottom: 2px solid var(--neu-shadow-dark) !important;
+  border-right: 2px solid var(--neu-shadow-dark) !important;
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Menu items: Win98 highlight style */
+[data-theme-style="neumorphic"] [data-menu-dropdown] button:hover {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border: none;
+}
+
+/* --- App tiles: square raised icons --- */
+[data-theme-style="neumorphic"] [data-app-tile] {
+  border-radius: 4px !important;
+}
+
+[data-theme-style="neumorphic"] [data-app-icon] {
+  border-radius: 6px !important;
+  border: none !important;
+  border-top: 2px solid var(--neu-shadow-light) !important;
+  border-left: 2px solid var(--neu-shadow-light) !important;
+  border-bottom: 2px solid var(--neu-shadow-dark) !important;
+  border-right: 2px solid var(--neu-shadow-dark) !important;
+  box-shadow: none !important;
+}
+
+[data-theme-style="neumorphic"] [data-app-icon] img {
+  border-radius: 4px !important;
+}
+
+/* App tile open indicator: square */
+[data-theme-style="neumorphic"] [data-app-tile] .rounded-full.bg-primary {
+  border-radius: 1px !important;
+  width: 6px !important;
+  height: 3px !important;
+}
+
+/* App tile pin button: square */
+[data-theme-style="neumorphic"] [data-app-tile] .rounded-full[role="button"] {
+  border-radius: 3px !important;
+  border-top: 1.5px solid var(--neu-shadow-light) !important;
+  border-left: 1.5px solid var(--neu-shadow-light) !important;
+  border-bottom: 1.5px solid var(--neu-shadow-dark) !important;
+  border-right: 1.5px solid var(--neu-shadow-dark) !important;
+}
+
+/* App tile name: dark text instead of white for light neumorphic bg */
+[data-theme-style="neumorphic"] [data-app-tile] .text-white {
+  color: var(--foreground) !important;
+}
+
+/* --- Mission Control: solid overlay instead of blur --- */
+[data-theme-style="neumorphic"] [data-mission-backdrop] {
+  background: var(--background) !important;
+  opacity: 0.92 !important;
+  backdrop-filter: none !important;
+}
+
+/* Mission Control header: match text to foreground */
+[data-theme-style="neumorphic"] [data-mission-control] .text-white {
+  color: var(--foreground) !important;
+}
+
+/* --- Tooltip: raised bevel --- */
+[data-theme-style="neumorphic"] [data-slot="tooltip-content"] {
+  border-radius: 3px !important;
+  border: none !important;
+  border-top: 1.5px solid var(--neu-shadow-light);
+  border-left: 1.5px solid var(--neu-shadow-light);
+  border-bottom: 1.5px solid var(--neu-shadow-dark);
+  border-right: 1.5px solid var(--neu-shadow-dark);
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  box-shadow: 2px 2px 3px rgba(0, 0, 0, 0.15);
+}
+
+/* --- Context menu: Win98 raised dropdown --- */
+[data-theme-style="neumorphic"] [data-slot="context-menu-content"] {
+  border-radius: 2px !important;
+  border: none !important;
+  border-top: 2px solid var(--neu-shadow-light) !important;
+  border-left: 2px solid var(--neu-shadow-light) !important;
+  border-bottom: 2px solid var(--neu-shadow-dark) !important;
+  border-right: 2px solid var(--neu-shadow-dark) !important;
+  background: var(--card) !important;
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Context menu items: Win98 selection highlight */
+[data-theme-style="neumorphic"] [data-slot="context-menu-item"]:hover,
+[data-theme-style="neumorphic"] [data-slot="context-menu-item"][data-highlighted] {
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border-radius: 0 !important;
+}
+
+/* Context menu separator: bevel line */
+[data-theme-style="neumorphic"] [data-slot="context-menu-separator"] {
+  border-color: var(--neu-shadow-dark) !important;
+  box-shadow: 0 1px 0 var(--neu-shadow-light);
+}
+
+/* --- Global: reduce all border-radius for retro feel --- */
+[data-theme-style="neumorphic"] .rounded-2xl {
+  border-radius: 4px !important;
+}
+
+[data-theme-style="neumorphic"] .rounded-xl {
+  border-radius: 4px !important;
+}
+
+[data-theme-style="neumorphic"] .rounded-lg {
+  border-radius: 3px !important;
+}
+
+[data-theme-style="neumorphic"] .rounded-md {
+  border-radius: 2px !important;
+}
+
+[data-theme-style="neumorphic"] .rounded-full {
+  border-radius: 2px !important;
+}
+
+/* Except where circular shape is semantic (avatars, indicators) */
+[data-theme-style="neumorphic"] .cl-avatarBox,
+[data-theme-style="neumorphic"] [data-slot="switch"] span {
+  border-radius: 9999px !important;
+}
+
+/* --- Disable hover scale animations for retro feel --- */
+[data-theme-style="neumorphic"] .hover\:scale-105:hover {
+  transform: none !important;
+}
+
+[data-theme-style="neumorphic"] .active\:scale-95:active {
+  transform: none !important;
+}

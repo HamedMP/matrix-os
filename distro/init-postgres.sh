@@ -4,6 +4,8 @@
 set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE matrixos_platform;
+    GRANT ALL PRIVILEGES ON DATABASE matrixos_platform TO matrixos;
     CREATE DATABASE matrixos_alice;
     CREATE DATABASE matrixos_bob;
     GRANT ALL PRIVILEGES ON DATABASE matrixos_alice TO matrixos;

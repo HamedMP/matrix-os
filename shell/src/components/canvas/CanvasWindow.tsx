@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTransform";
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useCanvasSettings } from "@/stores/canvas-settings";
@@ -8,7 +8,23 @@ import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
+import { ChatApp } from "../ChatApp";
+import { useChatContext } from "@/stores/chat-context";
 import { Minus, Maximize2 } from "lucide-react";
+
+function useThemeStyle() {
+  const [style, setStyle] = useState<string>("flat");
+  useEffect(() => {
+    const root = document.documentElement;
+    setStyle(root.getAttribute("data-theme-style") ?? "flat");
+    const observer = new MutationObserver(() => {
+      setStyle(root.getAttribute("data-theme-style") ?? "flat");
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme-style"] });
+    return () => observer.disconnect();
+  }, []);
+  return style;
+}
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
@@ -18,6 +34,7 @@ interface CanvasWindowProps {
 }
 
 export function CanvasWindow({ win }: CanvasWindowProps) {
+  const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
   const closeWindow = useWindowManager((s) => s.closeWindow);
@@ -26,13 +43,13 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const moveWindow = useWindowManager((s) => s.moveWindow);
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
   const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
-  const isFocused = useWindowManager((s) => {
-    const visible = s.windows.filter((w) => !w.minimized);
-    if (visible.length === 0) return false;
-    const maxZ = Math.max(...visible.map((w) => w.zIndex));
-    return win.zIndex === maxZ;
-  });
+  const maxZ = useWindowManager((s) =>
+    s.windows.reduce((m, w) => (!w.minimized && w.zIndex > m ? w.zIndex : m), 0),
+  );
+  const isFocused = win.zIndex === maxZ;
   const showTitles = useCanvasSettings((s) => s.showTitles);
+  const themeStyle = useThemeStyle();
+  const isNeumorphic = themeStyle === "neumorphic";
 
   const fitWindow = useCallback(() => {
     fitAll(
@@ -148,20 +165,23 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
   }, []);
 
-  const titleBarHeight = 32;
-  const titleBar = showTitles ? (
+  const titleBarHeight = 36;
+  const titleBarGap = 8;
+
+  const win98Bevel = {
+    borderTop: "1.5px solid var(--neu-shadow-light)",
+    borderLeft: "1.5px solid var(--neu-shadow-light)",
+    borderBottom: "1.5px solid var(--neu-shadow-dark)",
+    borderRight: "1.5px solid var(--neu-shadow-dark)",
+  };
+
+  const macTitleBar = (
     <div
-      className={`absolute flex items-center gap-1.5 px-2.5 rounded-t-lg border-b cursor-grab active:cursor-grabbing select-none group/titlebar transition-colors duration-150 ${
-        isFocused
-          ? "bg-muted/80 border-border/50"
-          : "bg-muted/40 border-border/20"
-      }`}
+      className="absolute cursor-grab active:cursor-grabbing select-none group/titlebar transition-all duration-200"
       style={{
-        transform: `scale(${inverseScale})`,
-        transformOrigin: "bottom left",
-        width: win.width * zoom,
+        width: win.width,
         height: titleBarHeight,
-        bottom: "100%",
+        bottom: `calc(100% + ${titleBarGap}px)`,
         left: 0,
       }}
       onPointerDown={onDragStart}
@@ -169,51 +189,149 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
       onPointerUp={onDragEnd}
       onPointerCancel={onDragEnd}
     >
-      {/* macOS traffic lights */}
-      <div className="group/traffic flex items-center gap-1.5 shrink-0">
-        <button
-          className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
-          onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
-          aria-label="Close"
-        >
-          <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-            x
+      {/* Glass pill container */}
+      <div
+        className={`relative w-full h-full rounded-2xl flex items-center gap-2 px-3 overflow-hidden transition-all duration-200 backdrop-blur-xl backdrop-saturate-150 ${
+          isFocused
+            ? "bg-muted/80 border border-border/50 shadow-sm"
+            : "bg-muted/40 border border-border/20 opacity-80"
+        }`}
+      >
+        {/* macOS traffic lights */}
+        <div className="group/traffic flex items-center gap-1.5 shrink-0 relative z-10">
+          <button
+            className="size-3 rounded-full bg-[#ff5f57] flex items-center justify-center hover:brightness-90 transition-colors"
+            onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
+            aria-label="Close"
+          >
+            <span className="text-[8px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+              x
+            </span>
+          </button>
+          <button
+            className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
+            onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
+            aria-label="Minimize"
+          >
+            <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
+              -
+            </span>
+          </button>
+          <button
+            className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
+            onClick={(e) => { e.stopPropagation(); fitWindow(); }}
+            aria-label="Maximize"
+          >
+            <Maximize2 className="size-1.5 text-black/0 group-hover/traffic:text-black/60 transition-colors" />
+          </button>
+        </div>
+        {/* Centered title with icon */}
+        <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0 relative z-10">
+          {iconUrl ? (
+            <img src={iconUrl} alt="" className="size-4 rounded-md object-cover shrink-0" draggable={false} />
+          ) : (
+            <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
+              {win.title.charAt(0).toUpperCase()}
+            </span>
+          )}
+          <span className="text-xs font-medium text-foreground/70 truncate">
+            {win.title}
           </span>
-        </button>
-        <button
-          className="size-3 rounded-full bg-[#febc2e] flex items-center justify-center hover:brightness-90 transition-colors"
-          onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
-          aria-label="Minimize"
-        >
-          <span className="text-[9px] leading-none font-bold text-black/0 group-hover/traffic:text-black/60 transition-colors">
-            -
-          </span>
-        </button>
-        <button
-          className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
-          onClick={(e) => { e.stopPropagation(); fitWindow(); }}
-          aria-label="Maximize"
-        >
-          <Maximize2 className="size-1.5 text-black/0 group-hover/traffic:text-black/60 transition-colors" />
-        </button>
+        </div>
+        {/* Spacer to balance the traffic lights */}
+        <div className="w-[42px] shrink-0" />
       </div>
-      {/* Centered title with icon */}
-      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0">
-        {iconUrl ? (
-          <img src={iconUrl} alt="" className="size-4 rounded object-cover shrink-0" draggable={false} />
-        ) : (
-          <span className="size-4 rounded bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
-            {win.title.charAt(0).toUpperCase()}
-          </span>
-        )}
-        <span className="text-xs font-medium text-foreground/70 truncate">
-          {win.title}
-        </span>
-      </div>
-      {/* Spacer to balance the traffic lights */}
-      <div className="w-[42px] shrink-0" />
     </div>
-  ) : null;
+  );
+
+  const win98TitleBar = (
+    <div
+      className="absolute cursor-grab active:cursor-grabbing select-none"
+      style={{
+        width: win.width,
+        height: titleBarHeight,
+        bottom: `calc(100% + ${titleBarGap}px)`,
+        left: 0,
+      }}
+      onPointerDown={onDragStart}
+      onPointerMove={onDragMove}
+      onPointerUp={onDragEnd}
+      onPointerCancel={onDragEnd}
+    >
+      {/* Win98 raised title bar */}
+      <div
+        className={`relative w-full h-full flex items-center px-2 gap-2 ${
+          isFocused
+            ? "bg-primary text-primary-foreground"
+            : "bg-muted text-muted-foreground"
+        }`}
+        style={{
+          ...win98Bevel,
+          borderTopWidth: "2px",
+          borderLeftWidth: "2px",
+          borderBottomWidth: "2px",
+          borderRightWidth: "2px",
+          borderRadius: "2px",
+        }}
+      >
+        {/* Left: icon + title */}
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          {iconUrl ? (
+            <img src={iconUrl} alt="" className="size-4 object-cover shrink-0" style={{ imageRendering: "auto" }} draggable={false} />
+          ) : (
+            <span className="size-4 flex items-center justify-center text-[10px] font-bold shrink-0">
+              {win.title.charAt(0).toUpperCase()}
+            </span>
+          )}
+          <span className="text-xs font-bold truncate">
+            {win.title}
+          </span>
+        </div>
+        {/* Right: Win98 window buttons */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
+            style={{
+              ...win98Bevel,
+              fontSize: "10px",
+              lineHeight: 1,
+            }}
+            onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
+            aria-label="Minimize"
+          >
+            <Minus className="size-2.5" />
+          </button>
+          <button
+            className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
+            style={{
+              ...win98Bevel,
+              fontSize: "10px",
+              lineHeight: 1,
+            }}
+            onClick={(e) => { e.stopPropagation(); fitWindow(); }}
+            aria-label="Maximize"
+          >
+            <Maximize2 className="size-2.5" />
+          </button>
+          <button
+            className="size-5 flex items-center justify-center text-foreground bg-muted hover:bg-muted/80 active:bg-muted/60"
+            style={{
+              ...win98Bevel,
+              fontSize: "12px",
+              fontWeight: 700,
+              lineHeight: 1,
+            }}
+            onClick={(e) => { e.stopPropagation(); closeWindow(win.id); }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const titleBar = showTitles ? (isNeumorphic ? win98TitleBar : macTitleBar) : null;
 
   // Zoomed-out preview: icon card with title bar above
   if (!isInteractive) {
@@ -261,6 +379,21 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
           <FileBrowser windowId={win.id} />
         ) : win.path === "__preview-window__" ? (
           <PreviewWindow />
+        ) : win.path === "__chat__" ? (
+          <div className="h-full overflow-hidden">
+            {chatState && (
+              <ChatApp
+                messages={chatState.messages}
+                sessionId={chatState.sessionId}
+                busy={chatState.busy}
+                connected={chatState.connected}
+                conversations={chatState.conversations}
+                onNewChat={chatState.newChat}
+                onSwitchConversation={chatState.switchConversation}
+                onSubmit={chatState.submitMessage}
+              />
+            )}
+          </div>
         ) : (
           <AppViewer path={win.path} />
         )}

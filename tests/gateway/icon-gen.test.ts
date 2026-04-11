@@ -55,7 +55,12 @@ function createIconApp(homePath: string) {
       saveAs: `${slug}.png`,
       fetchFn: vi.fn().mockResolvedValue(geminiResponse()),
     });
-    return c.json({ iconUrl: `/files/system/icons/${slug}.png`, cost: result.cost, prompt });
+    return c.json({
+      iconUrl: `/files/system/icons/${slug}.png`,
+      etag: '"etag-1"',
+      cost: result.cost,
+      prompt,
+    });
   });
 
   return app;
@@ -81,8 +86,9 @@ describe("POST /api/apps/:slug/icon", () => {
       method: "POST",
     });
     expect(res.status).toBe(200);
-    const body = await res.json() as { iconUrl: string; cost: number };
+    const body = await res.json() as { iconUrl: string; etag: string; cost: number };
     expect(body.iconUrl).toBe("/files/system/icons/calculator.png");
+    expect(body.etag).toBe('"etag-1"');
     expect(typeof body.cost).toBe("number");
     expect(existsSync(join(homePath, "system/icons/calculator.png"))).toBe(true);
   });

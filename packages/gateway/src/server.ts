@@ -10,6 +10,7 @@ import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { resolveWithinHome } from "./path-security.js";
@@ -83,6 +84,10 @@ import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
 import {
+  MainWsClientMessageSchema,
+  type MainWsClientMessage,
+} from "./ws-message-schema.js";
+import {
   metricsRegistry,
   httpRequestsTotal,
   httpRequestDuration,
@@ -107,12 +112,6 @@ export interface GatewayConfig {
   maxTurns?: number;
   syncReport?: { added: string[]; updated: string[]; skipped: string[] };
 }
-
-type ClientMessage =
-  | { type: "message"; text: string; sessionId?: string; requestId?: string }
-  | { type: "switch_session"; sessionId: string }
-  | { type: "approval_response"; id: string; approved: boolean }
-  | { type: "ping" };
 
 export type ServerMessage =
   | { type: "kernel:init"; sessionId: string; requestId?: string }
@@ -154,6 +153,10 @@ function send(ws: WSContext, msg: ServerMessage) {
   ws.send(JSON.stringify(msg));
 }
 
+const CONVERSATION_REPLAY_BATCH_SIZE = 100;
+const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
+const MAX_MAIN_WS_CLIENTS = 100;
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
@@ -184,6 +187,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
+  const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
@@ -433,6 +437,24 @@ export async function createGateway(config: GatewayConfig) {
 
   function broadcastError(message: string) {
     broadcast({ type: "kernel:error", message });
+  }
+
+  function evictOldestMainWsClientIfNeeded() {
+    while (clients.size >= MAX_MAIN_WS_CLIENTS) {
+      const oldestClient = clients.values().next().value as WSContext | undefined;
+      if (!oldestClient) {
+        return;
+      }
+
+      clients.delete(oldestClient);
+      wsConnectionsActive.dec();
+      try {
+        oldestClient.close(1013, "Too many active WebSocket clients");
+      } catch (err) {
+        console.warn("[gateway] Failed to close evicted WebSocket client:", err);
+      }
+      console.warn("[gateway] Evicted oldest main WebSocket client due to client cap");
+    }
   }
 
   function finalizeWithSummary(sid: string) {
@@ -795,9 +817,64 @@ export async function createGateway(config: GatewayConfig) {
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
+      let detachConversationRun: (() => void) | null = null;
+      let conversationReplayVersion = 0;
+
+      const clearConversationRunAttachment = () => {
+        conversationReplayVersion++;
+        if (detachConversationRun) {
+          detachConversationRun();
+          detachConversationRun = null;
+        }
+      };
+
+      const publishConversationRunMessage = (
+        sessionId: string | undefined,
+        message: ConversationRunMessage,
+      ) => {
+        if (!sessionId) {
+          return;
+        }
+        conversationRuns.publish(sessionId, message);
+      };
+
+      const replayConversationRun = (
+        ws: WSContext,
+        bufferedMessages: ConversationRunMessage[],
+        onComplete?: () => void,
+      ) => {
+        const replayVersion = conversationReplayVersion;
+        if (bufferedMessages.length === 0) {
+          onComplete?.();
+          return;
+        }
+
+        const flushBatch = (startIndex: number) => {
+          if (replayVersion !== conversationReplayVersion) {
+            return;
+          }
+
+          const endIndex = Math.min(
+            startIndex + CONVERSATION_REPLAY_BATCH_SIZE,
+            bufferedMessages.length,
+          );
+          for (let index = startIndex; index < endIndex; index++) {
+            send(ws, bufferedMessages[index] as ServerMessage);
+          }
+          if (endIndex < bufferedMessages.length) {
+            setTimeout(() => flushBatch(endIndex), 0);
+            return;
+          }
+
+          onComplete?.();
+        };
+
+        flushBatch(0);
+      };
 
       return {
         onOpen(_evt, ws) {
+          evictOldestMainWsClientIfNeeded();
           clients.add(ws);
           wsConnectionsActive.inc();
           approvalBridge = createApprovalBridge({
@@ -816,15 +893,23 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onMessage(evt, ws) {
-          let parsed: ClientMessage;
+          let rawMessage: unknown;
           try {
-            parsed = JSON.parse(
+            rawMessage = JSON.parse(
               typeof evt.data === "string" ? evt.data : "",
-            ) as ClientMessage;
+            );
           } catch {
             send(ws, { type: "kernel:error", message: "Invalid JSON" });
             return;
           }
+
+          const parsedResult = MainWsClientMessageSchema.safeParse(rawMessage);
+          if (!parsedResult.success) {
+            send(ws, { type: "kernel:error", message: "Invalid message format" });
+            return;
+          }
+
+          const parsed: MainWsClientMessage = parsedResult.data;
 
           if (parsed.type === "ping") {
             send(ws, { type: "pong" } as ServerMessage);
@@ -833,6 +918,35 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
+            clearConversationRunAttachment();
+            const pendingLiveMessages: ConversationRunMessage[] = [];
+            let replayComplete = false;
+            const attachment = conversationRuns.attachWithBufferedSnapshot(
+              parsed.sessionId,
+              (message) => {
+                if (!replayComplete) {
+                  pendingLiveMessages.push(message);
+                  return;
+                }
+                send(ws, message as ServerMessage);
+              },
+            );
+            if (attachment) {
+              detachConversationRun = attachment.detach;
+              replayConversationRun(ws, attachment.bufferedMessages, () => {
+                replayComplete = true;
+                send(ws, {
+                  type: "session:switched",
+                  sessionId: parsed.sessionId,
+                });
+                for (const message of pendingLiveMessages) {
+                  send(ws, message as ServerMessage);
+                }
+                pendingLiveMessages.length = 0;
+              });
+              return;
+            }
+
             send(ws, { type: "session:switched", sessionId: parsed.sessionId });
             return;
           }
@@ -843,6 +957,7 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "message") {
+            clearConversationRunAttachment();
             pendingText = parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
@@ -854,29 +969,50 @@ export async function createGateway(config: GatewayConfig) {
 
                 if (msg.type === "kernel:init") {
                   activeSessionId = msg.sessionId;
+                  conversationRuns.begin(msg.sessionId);
+                  publishConversationRunMessage(msg.sessionId, msg);
                   conversations.begin(msg.sessionId);
                   if (pendingText) {
                     conversations.addUserMessage(msg.sessionId, pendingText);
                     pendingText = undefined;
                   }
                 } else if (msg.type === "kernel:text" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   conversations.appendAssistantText(activeSessionId, msg.text);
                 } else if (msg.type === "kernel:tool_start" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   lastToolName = msg.tool;
                   conversations.addToolStart(activeSessionId, msg.tool);
                 } else if (msg.type === "kernel:tool_end" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   conversations.addToolEnd(activeSessionId, lastToolName ?? "unknown", msg.input);
                 } else if (msg.type === "kernel:result" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
                   finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
+                } else if (msg.type === "kernel:error" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, {
+                    ...msg,
+                    message: CLIENT_KERNEL_ERROR_MESSAGE,
+                  });
+                  finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
               })
               .catch((err: Error) => {
+                console.error("[gateway] Conversation dispatch failed:", err);
                 if (activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, {
+                    type: "kernel:error",
+                    message: CLIENT_KERNEL_ERROR_MESSAGE,
+                    requestId,
+                  });
                   finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
                 send(ws, {
                   type: "kernel:error",
-                  message: err.message ?? "Kernel error",
+                  message: CLIENT_KERNEL_ERROR_MESSAGE,
                   requestId,
                 });
               });
@@ -884,8 +1020,10 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose(_evt, ws) {
-          clients.delete(ws);
-          wsConnectionsActive.dec();
+          clearConversationRunAttachment();
+          if (clients.delete(ws)) {
+            wsConnectionsActive.dec();
+          }
         },
       };
     }),
@@ -1847,7 +1985,7 @@ export async function createGateway(config: GatewayConfig) {
         } catch { /* ignore */ }
       }
       if (!iconStyle) {
-        iconStyle = "Digital neo-classic app icon filling the entire frame edge to edge, dark matte background with subtle luminous grid lines, clean geometric 3D forms, soft phosphor glow accents, rounded square shape, premium minimalist design, no margins or padding";
+        iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
       }
 
       const client = createImageClient(geminiKey);
@@ -1859,7 +1997,15 @@ export async function createGateway(config: GatewayConfig) {
         imageDir: iconsDir,
         saveAs: `${slug}.png`,
       });
-      return c.json({ iconUrl: `/files/system/icons/${slug}.png`, cost: result.cost });
+      const iconPath = join(iconsDir, `${slug}.png`);
+      const stat = statSync(iconPath);
+      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+      c.header("ETag", etag);
+      return c.json({
+        iconUrl: `/files/system/icons/${slug}.png`,
+        etag,
+        cost: result.cost,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error(`Icon generation failed for "${slug}":`, message);
@@ -1879,7 +2025,7 @@ export async function createGateway(config: GatewayConfig) {
       iconStyle = desktop.iconStyle ?? "";
     } catch { /* ignore */ }
     if (!iconStyle) {
-      iconStyle = "Digital neo-classic icon, dark matte background with subtle luminous grid lines, clean geometric forms, soft phosphor glow accents, rounded square shape, premium minimalist design";
+      iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
     }
 
     const iconsDir = join(homePath, "system/icons");

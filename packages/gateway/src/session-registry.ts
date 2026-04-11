@@ -319,8 +319,12 @@ export class SessionRegistry {
         TERM: "xterm-256color",
         LANG: process.env.LANG ?? "en_US.UTF-8",
         SHELL: resolvedShell,
-        USER: process.env.USER ?? "",
-        LOGNAME: process.env.LOGNAME ?? "",
+        ZDOTDIR: "/home/matrixos",
+        USER: process.env.MATRIX_HANDLE || process.env.USER || "matrixos",
+        LOGNAME: process.env.MATRIX_HANDLE || process.env.LOGNAME || "matrixos",
+        ...(process.env.MATRIX_HANDLE ? { MATRIX_HANDLE: process.env.MATRIX_HANDLE } : {}),
+        ...(process.env.MATRIX_DISPLAY_NAME ? { MATRIX_DISPLAY_NAME: process.env.MATRIX_DISPLAY_NAME } : {}),
+        ...(process.env.MATRIX_HOME ? { MATRIX_HOME: process.env.MATRIX_HOME } : {}),
       },
     });
 

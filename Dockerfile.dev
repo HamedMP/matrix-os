@@ -9,7 +9,7 @@ RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake \
     zsh curl shadow
 
 # pnpm via corepack (Agent SDK bundles its own claude runtime)
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
 # AI coding CLIs
 RUN npm install -g \
@@ -23,9 +23,20 @@ RUN npm install -g @tobilu/qmd
 # Non-root user (Agent SDK refuses bypassPermissions as root)
 RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos -s /bin/zsh
 
-# Zsh config for matrixos user
+# Powerlevel10k + pinned zsh plugins
+RUN mkdir -p /home/matrixos/.zsh/themes /home/matrixos/.zsh/plugins && \
+    git clone --branch v1.20.0 --depth=1 https://github.com/romkatv/powerlevel10k.git \
+      /home/matrixos/.zsh/themes/powerlevel10k && \
+    git clone --branch v0.7.1 --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
+      /home/matrixos/.zsh/plugins/zsh-autosuggestions && \
+    git clone --branch 0.8.0 --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting \
+      /home/matrixos/.zsh/plugins/zsh-syntax-highlighting && \
+    chown -R matrixos:matrixos /home/matrixos/.zsh
+
+# Zsh + p10k config for matrixos user
 COPY distro/zshrc /home/matrixos/.zshrc
-RUN chown matrixos:matrixos /home/matrixos/.zshrc
+COPY distro/p10k.zsh /home/matrixos/.p10k.zsh
+RUN chown matrixos:matrixos /home/matrixos/.zshrc /home/matrixos/.p10k.zsh
 
 WORKDIR /app
 

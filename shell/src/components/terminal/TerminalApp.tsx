@@ -88,12 +88,34 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const initializedRef = useRef(false);
   const tabsRef = useRef<Tab[]>(tabs);
   tabsRef.current = tabs;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const sidebarOpenRef = useRef(sidebarOpen);
+  sidebarOpenRef.current = sidebarOpen;
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const persistLayoutNow = useCallback(() => {
+    const layout: TerminalLayout = {
+      tabs: tabsRef.current,
+      activeTabId: activeTabIdRef.current,
+      sidebarOpen: sidebarOpenRef.current,
+    };
+
+    return fetch(`${getGatewayUrl()}/api/terminal/layout`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(layout),
+      keepalive: true,
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
+    });
+  }, []);
 
   const addTab = useCallback((cwd: string, label?: string, claude?: boolean) => {
     const id = genId();
@@ -107,13 +129,12 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   }, []);
 
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
     let cancelled = false;
 
     async function initLayout() {
       if (initialCommand) {
         addTab(DEFAULT_CWD, "Claude Code", true);
+        if (!cancelled) setInitialized(true);
         return;
       }
 
@@ -123,16 +144,14 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
         });
         if (res.ok) {
           const data = await res.json() as TerminalLayout;
-          if (Array.isArray(data.tabs) && data.tabs.length > 0) {
-            if (cancelled) {
-              return;
-            }
+          if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
             const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
             setTabs(data.tabs);
             setActiveTabId(nextActiveTabId);
             setSidebarOpen(data.sidebarOpen ?? true);
             setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
+            setInitialized(true);
             return;
           }
         }
@@ -142,6 +161,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 
       if (!cancelled) {
         addTab(DEFAULT_CWD);
+        setInitialized(true);
       }
     }
 
@@ -150,10 +170,11 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [addTab, initialCommand]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    if (!initializedRef.current) {
+    if (!initialized) {
       return;
     }
 
@@ -163,19 +184,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
-      const layout: TerminalLayout = {
-        tabs: tabsRef.current,
-        activeTabId,
-        sidebarOpen,
-      };
-      fetch(`${getGatewayUrl()}/api/terminal/layout`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(layout),
-        signal: AbortSignal.timeout(10_000),
-      }).catch((err: unknown) => {
-        console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
-      });
+      void persistLayoutNow();
     }, 500);
 
     return () => {
@@ -184,7 +193,27 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
         layoutSaveTimerRef.current = null;
       }
     };
-  }, [activeTabId, sidebarOpen, tabs]);
+  }, [initialized, activeTabId, persistLayoutNow, sidebarOpen, tabs]);
+
+  useEffect(() => {
+    const flushOnPageHide = () => {
+      if (!initialized) {
+        return;
+      }
+
+      if (layoutSaveTimerRef.current) {
+        clearTimeout(layoutSaveTimerRef.current);
+        layoutSaveTimerRef.current = null;
+      }
+
+      void persistLayoutNow();
+    };
+
+    window.addEventListener("pagehide", flushOnPageHide);
+    return () => {
+      window.removeEventListener("pagehide", flushOnPageHide);
+    };
+  }, [initialized, persistLayoutNow]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -247,10 +276,14 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   const getCwd = useCallback(() => sidebarSelectedPath ?? DEFAULT_CWD, [sidebarSelectedPath]);
 
   const handleSessionAttached = useCallback((paneId: string, sessionId: string) => {
-    setTabs((prev) => prev.map((tab) => {
-      const nextTree = setPaneSessionId(tab.paneTree, paneId, sessionId);
-      return nextTree === tab.paneTree ? tab : { ...tab, paneTree: nextTree };
-    }));
+    setTabs((prev) => {
+      const nextTabs = prev.map((tab) => {
+        const nextTree = setPaneSessionId(tab.paneTree, paneId, sessionId);
+        return nextTree === tab.paneTree ? tab : { ...tab, paneTree: nextTree };
+      });
+      tabsRef.current = nextTabs;
+      return nextTabs;
+    });
   }, []);
 
   const shouldCachePane = useCallback((paneId: string) => {
@@ -299,6 +332,8 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
               onSessionAttached={handleSessionAttached}
               shouldCachePane={shouldCachePane}
             />
+          ) : !initialized ? (
+            <div className="flex-1" style={{ background: "var(--background)" }} />
           ) : (
             <div className="flex-1 flex items-center justify-center" style={{ color: "var(--muted-foreground)" }}>
               <div className="text-center">
@@ -308,7 +343,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
                   style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
                   onClick={() => addTab(DEFAULT_CWD)}
                 >
-                  Open Terminal
+                  New Terminal
                 </button>
               </div>
             </div>

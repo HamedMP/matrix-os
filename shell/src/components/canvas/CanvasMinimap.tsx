@@ -5,8 +5,10 @@ import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasGroups } from "@/stores/canvas-groups";
 
-const MINIMAP_W = 200;
-const MINIMAP_H = 140;
+const SM_W = 120;
+const SM_H = 84;
+const LG_W = 280;
+const LG_H = 196;
 const MINIMAP_PADDING = 20;
 
 interface WorldBounds {
@@ -46,22 +48,31 @@ export function CanvasMinimap() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDragging = useRef(false);
 
+  const dprRef = useRef(window.devicePixelRatio || 1);
+
+  // Set canvas dimensions once on mount
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    dprRef.current = dpr;
+    canvas.width = LG_W * dpr;
+    canvas.height = LG_H * dpr;
+  }, []);
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = MINIMAP_W * dpr;
-    canvas.height = MINIMAP_H * dpr;
-    ctx.scale(dpr, dpr);
-
-    ctx.clearRect(0, 0, MINIMAP_W, MINIMAP_H);
+    const dpr = dprRef.current;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, LG_W, LG_H);
 
     // Background
     ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-    ctx.roundRect(0, 0, MINIMAP_W, MINIMAP_H, 8);
+    ctx.roundRect(0, 0, LG_W, LG_H, 8);
     ctx.fill();
 
     const { zoom, panX, panY, screenToCanvas } = useCanvasTransform.getState();
@@ -82,11 +93,11 @@ export function CanvasMinimap() {
     if (world.width === 0 || world.height === 0) return;
 
     const scale = Math.min(
-      (MINIMAP_W - 8) / world.width,
-      (MINIMAP_H - 8) / world.height,
+      (LG_W - 8) / world.width,
+      (LG_H - 8) / world.height,
     );
-    const offsetX = (MINIMAP_W - world.width * scale) / 2;
-    const offsetY = (MINIMAP_H - world.height * scale) / 2;
+    const offsetX = (LG_W - world.width * scale) / 2;
+    const offsetY = (LG_H - world.height * scale) / 2;
 
     const toMinimap = (x: number, y: number) => ({
       x: (x - world.minX) * scale + offsetX,
@@ -117,7 +128,7 @@ export function CanvasMinimap() {
 
     // Draw viewport indicator
     const vpPos = toMinimap(viewportRect.x, viewportRect.y);
-    ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
     ctx.lineWidth = 1.5;
     ctx.strokeRect(vpPos.x, vpPos.y, viewportRect.w * scale, viewportRect.h * scale);
   }, []);
@@ -159,11 +170,11 @@ export function CanvasMinimap() {
       if (world.width === 0 || world.height === 0) return;
 
       const scale = Math.min(
-        (MINIMAP_W - 8) / world.width,
-        (MINIMAP_H - 8) / world.height,
+        (LG_W - 8) / world.width,
+        (LG_H - 8) / world.height,
       );
-      const offsetX = (MINIMAP_W - world.width * scale) / 2;
-      const offsetY = (MINIMAP_H - world.height * scale) / 2;
+      const offsetX = (LG_W - world.width * scale) / 2;
+      const offsetY = (LG_H - world.height * scale) / 2;
 
       // Convert minimap coords to canvas coords
       const canvasX = (mx - offsetX) / scale + world.minX;
@@ -196,20 +207,37 @@ export function CanvasMinimap() {
     [navigateToPoint],
   );
 
-  const onPointerUp = useCallback(() => {
-    isDragging.current = false;
-  }, []);
-
   return (
-    <canvas
-      ref={canvasRef}
-      width={MINIMAP_W}
-      height={MINIMAP_H}
-      className="absolute bottom-3 right-3 z-50 rounded-lg cursor-crosshair"
-      style={{ width: MINIMAP_W, height: MINIMAP_H }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-    />
+    <div
+      className="absolute bottom-3 right-3 z-50 group/minimap"
+      style={{ width: SM_W, height: SM_H }}
+    >
+      <canvas
+        ref={canvasRef}
+        width={LG_W}
+        height={LG_H}
+        className="absolute bottom-0 right-0 rounded-lg cursor-crosshair opacity-60 group-hover/minimap:opacity-100 transition-all duration-300 ease-out"
+        style={{
+          width: SM_W,
+          height: SM_H,
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerEnter={(e) => {
+          const el = e.currentTarget;
+          el.style.width = `${LG_W}px`;
+          el.style.height = `${LG_H}px`;
+        }}
+        onPointerLeave={(e) => {
+          if (isDragging.current) return;
+          const el = e.currentTarget;
+          el.style.width = `${SM_W}px`;
+          el.style.height = `${SM_H}px`;
+        }}
+        onPointerUp={() => {
+          isDragging.current = false;
+        }}
+      />
+    </div>
   );
 }

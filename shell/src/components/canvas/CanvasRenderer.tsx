@@ -11,7 +11,7 @@ import { CanvasWindow } from "./CanvasWindow";
 import { CanvasGroupRect } from "./CanvasGroup";
 import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
-import { CanvasToolbar, autoArrangeWindows } from "./CanvasToolbar";
+import { autoArrangeWindows } from "./CanvasToolbar";
 import { CanvasMinimap } from "./CanvasMinimap";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -216,7 +216,6 @@ export function CanvasRenderer() {
 
   return (
     <div className="relative w-full h-full">
-      <CanvasToolbar />
       <CanvasTransform className="w-full h-full" onDoubleClick={onCanvasDoubleClick}>
         <SelectionRect onSelect={onSelect} />
         {labels.map((label) => (
@@ -226,8 +225,8 @@ export function CanvasRenderer() {
           <CanvasGroupRect key={group.id} group={group} />
         ))}
         {visibleWindows.length === 0 && (
-          <div className="flex h-full items-center justify-center" style={{ minHeight: "100vh" }}>
-            <p className="text-sm text-muted-foreground">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <p className="text-sm text-white/50 drop-shadow-md">
               No apps running. Try &quot;Build me a notes app&quot; in the chat.
             </p>
           </div>

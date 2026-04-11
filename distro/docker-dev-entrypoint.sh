@@ -72,11 +72,13 @@ for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; 
     cp -f "$skill" "$skills_root/$name/SKILL.md"
     display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
     desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
+    short_desc=$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    prompt_desc=$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')
     cat > "$skills_root/$name/agents/openai.yaml" <<EOYAML
 interface:
   display_name: "Matrix: $display"
-  short_description: "${desc:-$display skill}"
-  default_prompt: "Use \$$name for ${desc:-this task}."
+  short_description: "$short_desc"
+  default_prompt: "Use \$$name for $prompt_desc."
 EOYAML
   done
 done
@@ -125,10 +127,15 @@ if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME/system/qmd"
 fi
 
+# Sync shell config from bind mount (so zshrc/p10k changes don't need rebuild)
+cp /app/distro/zshrc /home/matrixos/.zshrc 2>/dev/null || true
+cp /app/distro/p10k.zsh /home/matrixos/.p10k.zsh 2>/dev/null || true
+
 # Fix ownership of everything created as root before dropping to matrixos
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
+chown matrixos:matrixos /home/matrixos/.zshrc /home/matrixos/.p10k.zsh 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
 if command -v zsh >/dev/null 2>&1; then

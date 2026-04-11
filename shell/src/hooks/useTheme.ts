@@ -7,6 +7,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 export interface Theme {
   name: string;
   mode?: "light" | "dark";
+  style?: "flat" | "neumorphic";
   colors: Record<string, string>;
   fonts: Record<string, string>;
   radius: string;
@@ -15,26 +16,26 @@ export interface Theme {
 export const DEFAULT_THEME: Theme = {
   name: "default",
   colors: {
-    background: "#ece5f0",
+    background: "#FAFAF9",
     foreground: "#1c1917",
-    card: "#ffffff",
+    card: "#FAFAF9",
     "card-foreground": "#1c1917",
-    popover: "#ffffff",
+    popover: "#FAFAF9",
     "popover-foreground": "#1c1917",
-    primary: "#c2703a",
-    "primary-foreground": "#ffffff",
-    secondary: "#f0eaf4",
-    "secondary-foreground": "#44403c",
-    muted: "#f0eaf4",
-    "muted-foreground": "#78716c",
-    accent: "#f0eaf4",
-    "accent-foreground": "#44403c",
+    primary: "#8CC7BE",
+    "primary-foreground": "#1a1f18",
+    secondary: "#f5f5f4",
+    "secondary-foreground": "#3c4044",
+    muted: "#f5f5f4",
+    "muted-foreground": "#6c7178",
+    accent: "#f5f5f4",
+    "accent-foreground": "#3c4044",
     destructive: "#ef4444",
     success: "#22c55e",
     warning: "#eab308",
-    border: "#d8d0de",
-    input: "#d8d0de",
-    ring: "#c2703a",
+    border: "#e5e5e4",
+    input: "#e5e5e4",
+    ring: "#8CC7BE",
   },
   fonts: {
     mono: "JetBrains Mono, monospace",
@@ -64,6 +65,9 @@ function applyTheme(theme: Theme) {
   }
 
   root.style.setProperty("--radius", theme.radius);
+
+  // Set theme style attribute for CSS neumorphic overrides
+  root.setAttribute("data-theme-style", theme.style ?? "flat");
 }
 
 /** Infer light/dark mode from the background color luminance */

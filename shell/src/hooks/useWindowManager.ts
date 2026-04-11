@@ -32,6 +32,7 @@ export interface AppEntry {
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
+const MAX_CLOSED_ENTRIES = 50;
 
 interface ClosedLayout {
   x: number;
@@ -50,13 +51,16 @@ interface WindowManagerState {
 
 interface WindowManagerActions {
   openWindow: (name: string, path: string, dockXOffset: number) => void;
+  openWindowExclusive: (name: string, path: string, dockXOffset: number, basePath?: string) => void;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
+  restoreAndFocusWindow: (id: string) => void;
   moveWindow: (id: string, x: number, y: number) => void;
   resizeWindow: (id: string, width: number, height: number) => void;
   focusWindow: (id: string) => void;
   getWindow: (id: string) => AppWindow | undefined;
+  getFocusedWindow: () => AppWindow | undefined;
   loadLayout: (saved: LayoutWindow[]) => void;
   setWindows: (updater: AppWindow[] | ((prev: AppWindow[]) => AppWindow[])) => void;
   setApps: (updater: AppEntry[] | ((prev: AppEntry[]) => AppEntry[])) => void;
@@ -102,6 +106,32 @@ function debouncedSave(state: WindowManagerState) {
   }, 500);
 }
 
+function createWindowRecord(
+  state: WindowManagerState,
+  name: string,
+  path: string,
+  fallbackX: number,
+  fallbackY: number,
+): AppWindow {
+  const saved = state.closedLayouts.get(path);
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const defaultWidth = Math.round(Math.min(1200, Math.max(MIN_WIDTH, vw * 0.6)));
+  const defaultHeight = Math.round(Math.min(900, Math.max(MIN_HEIGHT, vh * 0.7)));
+
+  return {
+    id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    title: name,
+    path,
+    x: saved?.x ?? fallbackX,
+    y: saved?.y ?? fallbackY,
+    width: saved?.width ?? defaultWidth,
+    height: saved?.height ?? defaultHeight,
+    minimized: false,
+    zIndex: state.nextZ,
+  };
+}
+
 export const useWindowManager = create<WindowManagerState & WindowManagerActions>()(
   subscribeWithSelector((set, get) => ({
     windows: [],
@@ -124,49 +154,53 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           };
         }
 
-        const saved = state.closedLayouts.get(path);
-        const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
-        const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-        const defaultWidth = Math.round(Math.min(1200, Math.max(MIN_WIDTH, vw * 0.6)));
-        const defaultHeight = Math.round(Math.min(900, Math.max(MIN_HEIGHT, vh * 0.7)));
-
-        const width = saved?.width ?? defaultWidth;
-        const height = saved?.height ?? defaultHeight;
-
-        let x: number;
-        let y: number;
-        if (saved) {
-          x = saved.x;
-          y = saved.y;
-        } else {
-          // Place to the right of the rightmost visible window
-          const visible = state.windows.filter((w) => !w.minimized);
-          if (visible.length > 0) {
-            const rightmost = visible.reduce((best, w) =>
-              (w.x + w.width) > (best.x + best.width) ? w : best,
-            );
-            x = rightmost.x + rightmost.width + 24;
-            y = rightmost.y;
-          } else {
-            x = dockXOffset + 20;
-            y = 20;
-          }
+        // Compute fallback position to the right of the rightmost visible window
+        let fallbackX = dockXOffset + 20;
+        let fallbackY = 20;
+        const visible = state.windows.filter((w) => !w.minimized);
+        if (visible.length > 0) {
+          const rightmost = visible.reduce((best, w) =>
+            (w.x + w.width) > (best.x + best.width) ? w : best,
+          );
+          fallbackX = rightmost.x + rightmost.width + 24;
+          fallbackY = rightmost.y;
         }
 
         return {
           windows: [
             ...state.windows,
-            {
-              id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              title: name,
-              path,
-              x,
-              y,
-              width,
-              height,
-              minimized: false,
-              zIndex: state.nextZ,
-            },
+            createWindowRecord(state, name, path, fallbackX, fallbackY),
+          ],
+          nextZ: state.nextZ + 1,
+        };
+      });
+    },
+
+    openWindowExclusive: (name, path, dockXOffset, basePath) => {
+      set((state) => {
+        const keepPath = basePath ?? path;
+        const isSameApp = (w: AppWindow) =>
+          w.path === keepPath || w.path.startsWith(keepPath + ":");
+        const withMinimized = state.windows.map((w) =>
+          !isSameApp(w) && !w.minimized ? { ...w, minimized: true } : w,
+        );
+
+        const existing = withMinimized.find((w) => w.path === path);
+        if (existing) {
+          return {
+            windows: withMinimized.map((w) =>
+              w.path === path
+                ? { ...w, minimized: false, zIndex: state.nextZ }
+                : w,
+            ),
+            nextZ: state.nextZ + 1,
+          };
+        }
+
+        return {
+          windows: [
+            ...withMinimized,
+            createWindowRecord(state, name, path, dockXOffset + 20, 48),
           ],
           nextZ: state.nextZ + 1,
         };
@@ -181,6 +215,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         if (win) {
           newClosed.add(win.path);
           newLayouts.set(win.path, { x: win.x, y: win.y, width: win.width, height: win.height });
+        }
+        // Evict oldest entries if over cap
+        while (newClosed.size > MAX_CLOSED_ENTRIES) {
+          const oldest = newClosed.values().next().value!;
+          newClosed.delete(oldest);
+          newLayouts.delete(oldest);
         }
         return {
           windows: state.windows.filter((w) => w.id !== id),
@@ -203,6 +243,15 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, minimized: false } : w,
         ),
+      }));
+    },
+
+    restoreAndFocusWindow: (id) => {
+      set((state) => ({
+        windows: state.windows.map((w) =>
+          w.id === id ? { ...w, minimized: false, zIndex: state.nextZ } : w,
+        ),
+        nextZ: state.nextZ + 1,
       }));
     },
 
@@ -239,6 +288,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
     getWindow: (id) => {
       return get().windows.find((w) => w.id === id);
+    },
+
+    getFocusedWindow: () => {
+      const visible = get().windows.filter((w) => !w.minimized);
+      if (visible.length === 0) return undefined;
+      return visible.reduce((best, w) => (w.zIndex > best.zIndex ? w : best));
     },
 
     loadLayout: (saved) => {
@@ -306,5 +361,5 @@ useWindowManager.subscribe(
   (current) => {
     debouncedSave(current as WindowManagerState);
   },
-  { equalityFn: (a, b) => a.windows === b.windows && a.closedPaths === b.closedPaths },
+  { equalityFn: (a, b) => a.windows === b.windows && a.closedPaths === b.closedPaths && a.apps === b.apps },
 );

@@ -92,7 +92,7 @@ export function CanvasToolbar() {
   );
 
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-card/90 backdrop-blur-sm border border-border shadow-lg">
+    <>
       <button
         onClick={zoomOut}
         className="p-1 rounded hover:bg-muted transition-colors"
@@ -199,6 +199,6 @@ export function CanvasToolbar() {
           <Hand className="size-3.5" />
         </button>
       </div>
-    </div>
+    </>
   );
 }

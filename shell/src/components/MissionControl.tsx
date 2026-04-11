@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
+import { nameToSlug } from "@/lib/utils";
 import { AppTile } from "./AppTile";
 import {
   XIcon,
@@ -16,6 +17,7 @@ interface AppEntry {
 }
 
 interface MissionControlProps {
+  open: boolean;
   apps: AppEntry[];
   openWindows: Set<string>;
   onOpenApp: (name: string, path: string) => void;
@@ -28,6 +30,7 @@ interface MissionControlProps {
 }
 
 export function MissionControl({
+  open,
   apps,
   openWindows,
   onOpenApp,
@@ -39,27 +42,66 @@ export function MissionControl({
   onDeleteApp,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
+  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const closingRef = useRef(false);
+
+  const prevOpenRef = useRef(open);
+  useEffect(() => {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+
+    if (open && !wasOpen) {
+      closingRef.current = false;
+      setMounted(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setVisible(true));
+      });
+    } else if (!open && wasOpen) {
+      closingRef.current = true;
+      setVisible(false);
+      const timer = setTimeout(() => {
+        setMounted(false);
+        closingRef.current = false;
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
 
   useEffect(() => {
+    if (!mounted) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [mounted, onClose]);
+
+  if (!mounted) return null;
 
   return (
-    <div className="fixed inset-0 z-[45]">
+    <div data-mission-control className="fixed inset-0 z-[45]">
       <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-lg"
+        data-mission-backdrop
+        className="absolute inset-0 bg-black/30 transition-all duration-300 ease-out"
+        style={{
+          backdropFilter: visible ? "blur(24px)" : "blur(0px)",
+          opacity: visible ? 1 : 0,
+        }}
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
       />
 
-      <div className="relative flex flex-col h-full z-10 overflow-hidden md:pl-14">
+      <div
+        className="relative flex flex-col h-full z-10 overflow-hidden md:pl-14 pt-16 transition-all duration-300 ease-out"
+        style={{
+          opacity: visible ? 1 : 0,
+          transform: visible ? "scale(1) translateY(0)" : "scale(0.97) translateY(12px)",
+        }}
+      >
         <div className="flex items-center justify-between px-6 py-4">
-          <h2 className="text-lg font-semibold">Launcher</h2>
+          <h2 className="text-lg font-semibold text-white">Launcher</h2>
           <button
             onClick={onClose}
             className="size-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
@@ -86,24 +128,33 @@ export function MissionControl({
 
         <div className="flex-1 overflow-y-auto px-6 pb-6">
           <div className="flex flex-wrap gap-1 justify-start">
-            {apps.map((app) => {
-              const slug = app.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+            {apps.map((app, index) => {
+              const slug = nameToSlug(app.name);
               return (
-                <AppTile
+                <div
                   key={app.path}
-                  name={app.name}
-                  isOpen={openWindows.has(app.path)}
-                  onClick={() => {
-                    onOpenApp(app.name, app.path);
-                    onClose();
+                  className="transition-all duration-300 ease-out"
+                  style={{
+                    opacity: visible ? 1 : 0,
+                    transform: visible ? "translateY(0)" : "translateY(16px)",
+                    transitionDelay: closingRef.current ? "0ms" : `${50 + index * 20}ms`,
                   }}
-                  pinned={pinnedApps.includes(app.path)}
-                  onTogglePin={() => onTogglePin(app.path)}
-                  iconUrl={app.iconUrl}
-                  onRegenerateIcon={() => onRegenerateIcon(slug)}
-                  onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
-                  onDelete={onDeleteApp ? () => onDeleteApp(slug) : undefined}
-                />
+                >
+                  <AppTile
+                    name={app.name}
+                    isOpen={openWindows.has(app.path)}
+                    onClick={() => {
+                      onOpenApp(app.name, app.path);
+                      onClose();
+                    }}
+                    pinned={pinnedApps.includes(app.path)}
+                    onTogglePin={() => onTogglePin(app.path)}
+                    iconUrl={app.iconUrl}
+                    onRegenerateIcon={() => onRegenerateIcon(slug)}
+                    onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
+                    onDelete={onDeleteApp ? () => onDeleteApp(slug) : undefined}
+                  />
+                </div>
               );
             })}
           </div>
