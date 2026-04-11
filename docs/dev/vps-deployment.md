@@ -362,9 +362,62 @@ docker build \
 # To update an existing container, use the upgrade API:
 curl -X POST http://localhost:9000/containers/<handle>/upgrade \
   -H "Authorization: Bearer $PLATFORM_SECRET"
+
+# Or roll every running container at once:
+curl -X POST http://localhost:9000/containers/rolling-restart \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
 ```
 
 The upgrade endpoint stops the old container, pulls the latest image, creates a new container with the same ports and volume mount, and starts it. User data in `/data/users/{handle}/matrixos` is preserved.
+
+#### Deploying a locally-built image (avoiding the pull-revert trap)
+
+**Important:** when `PLATFORM_IMAGE` points at a public registry ref like `ghcr.io/hamedmp/matrix-os:latest`, every call to `/upgrade` and `/containers/rolling-restart` runs `docker pull` on that ref. If the registry still holds an older image than the one you just built locally, **the pull will overwrite your local tag with the stale registry image** and silently deploy old code. The orchestrator guards against this by only pulling when the image ref looks remote (`host.tld/...`), but that only helps if you use a local-only tag.
+
+The durable fix is to use a local-only tag for deploys-without-push:
+
+```bash
+# 1. Build into a local-only tag (no registry host prefix)
+docker build \
+  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
+  -t matrixos-user:local \
+  -f Dockerfile .
+
+# 2. Tell the orchestrator to use it (one-time setup)
+echo 'PLATFORM_IMAGE=matrixos-user:local' >> .env
+
+# 3. Restart platform to pick up the env var
+docker compose -f distro/docker-compose.platform.yml --env-file .env up -d platform
+
+# 4. Roll all containers
+curl -X POST http://localhost:9000/containers/rolling-restart \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+Because `matrixos-user:local` has no registry host, the orchestrator's `pullImageIfRemote()` helper skips the pull entirely. `docker tag <new-sha> matrixos-user:local` after each build to advance the local tag.
+
+#### Known buildx gotcha: new build, stale tag
+
+When `docker build -t ghcr.io/owner/image:tag ...` completes, buildx occasionally writes the manifest list as a dangling `<none>` image instead of advancing the tag. Verify after every build:
+
+```bash
+docker images ghcr.io/hamedmp/matrix-os --format "{{.ID}} {{.CreatedAt}}"
+```
+
+If `CreatedAt` is the old image's timestamp, find the fresh dangling image and re-tag:
+
+```bash
+docker images --all --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}" \
+  | grep -E "(<none>|matrix-os)" | head
+# Then:
+docker tag <new-sha> ghcr.io/hamedmp/matrix-os:latest   # (or matrixos-user:local)
+```
+
+This is most reproducible when running platform and user-image builds in parallel under load.
+
+#### Running parallel builds under load
+
+The platform build and user-image build share 95%+ of their layers (same base image, same `pnpm install`, same Next.js compile). Running both at once on a 16GB / 8-core box with ~20 user containers already running pushes load average above 50 and roughly doubles build time (Next.js compile went from 23s to 112s in one observed case). Build sequentially unless you're on idle hardware.
 
 ### Deploy from Tag
 
@@ -779,6 +832,32 @@ curl -X POST http://localhost:9000/containers/provision \
   -H "Content-Type: application/json" \
   -d '{"handle":"alice","clerkUserId":"user_..."}'
 ```
+
+### Rolling restart "succeeded" but containers still run old code
+
+Symptoms: `/containers/rolling-restart` reports `succeeded: N / failed: 0`, but the UI still shows the pre-deploy version and `docker inspect matrixos-<handle> --format '{{.Image}}'` returns the old image SHA.
+
+Diagnosis, in order:
+
+1. **Local tag reverted by `docker pull`** (most common):
+   ```bash
+   docker images ghcr.io/hamedmp/matrix-os --format "{{.ID}} {{.CreatedAt}}"
+   ```
+   If `CreatedAt` is the old timestamp, the orchestrator's pull overwrote your freshly-built tag with the registry's older image. Fix by switching to `PLATFORM_IMAGE=matrixos-user:local` (see "Deploying a locally-built image" above).
+
+2. **Dangling buildx manifest** (second most common):
+   ```bash
+   docker images --all --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}" \
+     | grep -E "(<none>|matrix-os)" | head
+   ```
+   If there's a `<none>:<none>` entry newer than your tagged image, the build wrote a dangling manifest. Re-tag it manually.
+
+3. **Container has the tag right but is a zombie**:
+   ```bash
+   docker inspect matrixos-<handle> --format '{{.Image}} {{.Created}}'
+   docker inspect <image-ref> --format '{{.Id}} {{.Created}}'
+   ```
+   The two SHAs should match. If the `Created` timestamp on the container is old, the rolling-restart didn't actually touch it -- check that its handle is present in the rolling-restart response's `results` array (not `skipped`).
 
 ### User can't access instance
 

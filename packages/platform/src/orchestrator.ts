@@ -117,6 +117,32 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     }
   }
 
+  // docker.pull() used to be called unconditionally before every upgrade.
+  // That's fine when `image` is a registry ref like `ghcr.io/owner/repo:tag`
+  // and the registry holds the current version -- but in practice we often
+  // need to run a locally-built image (tagged via `docker build -t ...`)
+  // while the registry still holds an older version. In that case, the
+  // unconditional pull *reverts* our local tag to the stale registry image
+  // and every upgrade silently deploys old code.
+  //
+  // The fix: only pull when `image` looks like a remote ref (has a registry
+  // hostname) AND swallow "manifest unknown" / network errors so that a
+  // local-only tag (e.g. `matrixos-user:local`) keeps working. Set
+  // `PLATFORM_IMAGE=matrixos-user:local` in the platform container's env
+  // and `docker tag <new-image> matrixos-user:local` before rolling restart.
+  async function pullImageIfRemote(ref: string): Promise<void> {
+    const looksRemote = /^[^/]+\.[^/]+\//.test(ref); // has a `host.tld/` prefix
+    if (!looksRemote) return;
+    try {
+      await docker.pull(ref);
+    } catch (err) {
+      console.warn(
+        `[orchestrator] docker.pull(${ref}) failed, using local tag:`,
+        (err as Error).message,
+      );
+    }
+  }
+
   function buildEnv(handle: string, displayName?: string): string[] {
     const containerName = `matrixos-${handle}`;
     const env = [
@@ -250,7 +276,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         try { await old.remove({ force: true }); } catch {}
       }
 
-      await docker.pull(image);
+      await pullImageIfRemote(image);
       await ensureNetwork();
       await createUserDatabase(handle);
 
@@ -300,7 +326,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         };
       }
 
-      await docker.pull(image);
+      await pullImageIfRemote(image);
 
       const results: RollingRestartResult['results'] = [];
       for (const record of running) {
