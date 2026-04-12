@@ -284,14 +284,18 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   // ── Spec 062 T048: /ws/groups/:slug/:app WebSocket bridge ────────────────
-  // Build an adapter that matches the GroupWsGroupRegistry structural shape
-  // without modifying GroupRegistry (owned by group-platform) or GroupSync
-  // (owned by crdt-engine). v1 ACL is permissive (spec §C default policy)
-  // and member power level is owner-gets-100-else-0; Wave 4 T056 + T071 will
-  // replace these with real ACL-cache + member-cache lookups from GroupSync.
+  // Adapter bridges to GroupSync (crdt-engine) + GroupRegistry (group-platform)
+  // without modifying either owned file. T048 shipped with permissive v1 stubs;
+  // Wave 4 replaced them with real reads:
+  //   - getAcl -> GroupSync.getAcl(appSlug) (T056 per-app ACL cache)
+  //   - getMemberPowerLevel -> GroupSync.getMembers() role→PL (T071 m.room.member cache)
+  // The role-to-PL mapping matches the create_group setPowerLevels map from
+  // spec §G: owner=100, editor=50, viewer=0 — so the Matrix-level PL that
+  // granted the role is recovered exactly on the application-layer gate.
   const gatewaySelfHandle =
     process.env.MATRIX_SELF_HANDLE ??
     "@user:matrix-os.com"; // fallback so the WS route stays wired when MATRIX_SELF_HANDLE is not set
+  const ROLE_TO_PL = { owner: 100, editor: 50, viewer: 0 } as const;
   const groupWsAdapter: GroupWsGroupRegistry = {
     get(slug) {
       const manifest = groupRegistry.get(slug);
@@ -300,18 +304,32 @@ export async function createGateway(config: GatewayConfig) {
     getSyncHandle(slug): GroupWsGroupSync | null {
       return groupSyncs.get(slug) ?? null;
     },
-    getAcl(_slug, _appSlug) {
-      // Wave 4 T056 replaces this with GroupSync's ACL cache read.
-      // Until then, default to spec §C: read_pl=0, write_pl=0 (open policy).
-      return { read_pl: 0, write_pl: 0 };
+    getAcl(slug, appSlug) {
+      // T056: GroupSync maintains a per-app ACL cache refreshed on every
+      // m.matrix_os.app_acl state event. Null means the app is not yet
+      // hydrated on this side; the WS handler treats that as read_pl=0
+      // by falling through to its own default when we return null.
+      const sync = groupSyncs.get(slug);
+      if (!sync) return null;
+      return sync.getAcl(appSlug);
     },
     getMemberPowerLevel(slug, userHandle) {
-      // Wave 4 T071 replaces this with GroupSync's m.room.member cache.
-      // Until then: owner gets 100 (matches create_group setPowerLevels map),
-      // everyone else gets 0 (passes read_pl=0 check but fails any write_pl≥50).
+      // T071: GroupSync.getMembers() is the m.room.member cache, refreshed
+      // on every membership event. Role is bucketed from the Matrix power
+      // level (≥75→owner, ≥25→editor, else→viewer) per group-platform's
+      // T072 members route. Map it back to a representative PL via
+      // ROLE_TO_PL so the ACL gate sees the same scale create_group set.
+      // Falls back to owner_handle match if the user isn't in the cache
+      // yet (e.g. the gateway just started and hasn't seen the first
+      // /sync batch for this room).
+      const sync = groupSyncs.get(slug);
+      if (sync) {
+        const member = sync.getMembers().find((m) => m.handle === userHandle);
+        if (member) return ROLE_TO_PL[member.role];
+      }
       const manifest = groupRegistry.get(slug);
-      if (!manifest) return 0;
-      return manifest.owner_handle === userHandle ? 100 : 0;
+      if (manifest && manifest.owner_handle === userHandle) return 100;
+      return 0;
     },
   };
   const groupWsHandler = groupsEnabled
