@@ -571,6 +571,63 @@ describe('GroupSync — applyLocalMutation', () => {
   });
 });
 
+describe('GroupSync — registerHandlers + dispose', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('registers op/snapshot/snapshot_lease handlers for each hydrated app and routes inbound events', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+    const { hub, handlers, deliver } = makeFakeSyncHub();
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    sync.registerHandlers(hub);
+
+    // 3 handlers per app: op, snapshot, snapshot_lease.
+    expect(handlers.length).toBe(3);
+    const types = new Set(handlers.map((h) => h.eventType));
+    expect(types.has('m.matrix_os.app.notes.op')).toBe(true);
+    expect(types.has('m.matrix_os.app.notes.snapshot')).toBe(true);
+    expect(types.has('m.matrix_os.app.notes.snapshot_lease')).toBe(true);
+
+    // Route an inbound op — doc should update.
+    const update = encodeYjsUpdateFromDoc((d) => d.getMap('kv').set('k', 'v'));
+    await deliver(manifest.room_id, {
+      type: 'm.matrix_os.app.notes.op',
+      event_id: '$op-1',
+      sender: '@bob:matrix-os.com',
+      origin_server_ts: 1,
+      content: {
+        v: 1,
+        update,
+        lamport: 1,
+        client_id: 'bob',
+        origin: '@bob:matrix-os.com',
+        ts: 1,
+      },
+    });
+    expect(sync.getDoc('notes').getMap('kv').get('k')).toBe('v');
+
+    // Dispose — handlers go away.
+    sync.dispose();
+    expect(handlers.length).toBe(0);
+  });
+});
+
 describe('GroupSync — queue & offline replay', () => {
   let home: string;
 

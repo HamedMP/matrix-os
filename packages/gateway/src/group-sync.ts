@@ -14,6 +14,20 @@ import { resolveWithinHome } from './path-security.js';
 import { SnapshotLeaseManager } from './group-snapshot-lease.js';
 
 /**
+ * Minimal structural type for the SyncHub surface that GroupSync consumes.
+ * We don't import the concrete `MatrixSyncHub` class because the hub uses
+ * the same `MatrixRawEvent` shape we already depend on, and keeping the
+ * surface minimal keeps unit tests independent of the hub implementation.
+ */
+export interface MatrixSyncHubLike {
+  registerEventHandler(
+    roomId: string,
+    eventType: string,
+    handler: (event: MatrixRawEvent, roomId: string) => Promise<void> | void,
+  ): { dispose(): void };
+}
+
+/**
  * GroupSync — Yjs CRDT sync engine for a single Matrix room (spec 062, spec §E.2).
  *
  * Owns the authoritative `Y.Doc` for every shared app installed into this group.
@@ -170,6 +184,7 @@ export class GroupSync {
   private readonly debugOnWrite: ((path: string) => void) | undefined;
   private readonly apps = new Map<string, AppState>();
   private readonly leaseManager: SnapshotLeaseManager;
+  private handlerDisposables: Array<{ dispose(): void }> = [];
   private hydrated = false;
 
   constructor(options: GroupSyncOptions) {
@@ -239,6 +254,71 @@ export class GroupSync {
       throw new Error(`GroupSync: no hydrated app "${appSlug}" in group "${this.manifest.slug}"`);
     }
     return app.doc;
+  }
+
+  /**
+   * Register per-app handlers with the shared MatrixSyncHub so inbound
+   * `m.matrix_os.app.{slug}.op`, `*.snapshot`, and `*.snapshot_lease`
+   * events are routed to the correct app state.
+   *
+   * This must be called after `hydrate()`. Handler disposables are tracked
+   * internally so `dispose()` can tear them all down.
+   */
+  registerHandlers(hub: MatrixSyncHubLike): void {
+    for (const appSlug of this.apps.keys()) {
+      const opType = `m.matrix_os.app.${appSlug}.op`;
+      const snapshotType = `m.matrix_os.app.${appSlug}.snapshot`;
+      const leaseType = `m.matrix_os.app.${appSlug}.snapshot_lease`;
+
+      this.handlerDisposables.push(
+        hub.registerEventHandler(this.manifest.room_id, opType, async (event) => {
+          try {
+            await this.applyRemoteOp(appSlug, event);
+          } catch (err) {
+            this.onError('sync_failed', {
+              reason: 'op_handler_threw',
+              appSlug,
+              error: (err as Error)?.message ?? 'unknown',
+            });
+          }
+        }),
+      );
+
+      this.handlerDisposables.push(
+        hub.registerEventHandler(this.manifest.room_id, snapshotType, async () => {
+          // Snapshot state events are informational — the reader path is
+          // called on demand (cold-start hydrate + explicit reload). We
+          // don't need to re-read state on every snapshot chunk write,
+          // which would amplify cold-start traffic.
+        }),
+      );
+
+      this.handlerDisposables.push(
+        hub.registerEventHandler(this.manifest.room_id, leaseType, (event) => {
+          try {
+            this.observeSnapshotLease(appSlug, event.content);
+          } catch (err) {
+            this.onError('sync_failed', {
+              reason: 'lease_handler_threw',
+              appSlug,
+              error: (err as Error)?.message ?? 'unknown',
+            });
+          }
+        }),
+      );
+    }
+  }
+
+  /** Dispose all hub subscriptions. */
+  dispose(): void {
+    for (const d of this.handlerDisposables) {
+      try {
+        d.dispose();
+      } catch {
+        // ignore
+      }
+    }
+    this.handlerDisposables = [];
   }
 
   onChange(appSlug: string, listener: GroupSyncOnChange): { dispose(): void } {
