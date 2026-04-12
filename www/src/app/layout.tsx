@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Caveat, Source_Serif_4 } from "next/font/google";
+import { Inter, JetBrains_Mono, Caveat, Cormorant_Garamond } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
@@ -19,9 +19,10 @@ const caveat = Caveat({
   subsets: ["latin"],
 });
 
-const sourceSerif = Source_Serif_4({
+const cormorant = Cormorant_Garamond({
   variable: "--font-serif",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
   style: ["normal", "italic"],
 });
 
@@ -68,7 +69,7 @@ export default function RootLayout({
           <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
           <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
         </head>
-        <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${sourceSerif.variable}`}>
+        <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable}`}>
           {children}
           <Analytics />
         </body>

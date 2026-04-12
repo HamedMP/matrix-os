@@ -8,7 +8,7 @@ export default function QRPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white px-6 py-12">
       <img
-        src="/logo.png"
+        src="/rabbit.svg"
         alt="Matrix OS"
         className="size-12 rounded-xl mb-6"
       />

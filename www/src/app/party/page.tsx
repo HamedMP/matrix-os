@@ -39,7 +39,7 @@ export default function PartyPage() {
         <div className="mx-auto max-w-4xl flex items-center justify-between">
           <a href="/" className="flex items-center gap-2.5 group">
             <img
-              src="/logo.png"
+              src="/rabbit.svg"
               alt="Matrix OS"
               className="size-7 rounded-lg shadow-sm"
             />

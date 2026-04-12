@@ -135,7 +135,7 @@ export function FeatureShowcase({
       <div className="mb-8 md:mb-12">
         <div className="mb-4 flex items-center gap-2.5">
           <img
-            src="/logo.png"
+            src="/rabbit.svg"
             alt="Matrix OS"
             className="size-8 rounded-lg shadow-sm"
           />

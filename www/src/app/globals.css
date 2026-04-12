@@ -5,54 +5,54 @@
 
 @source "../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* ── Anthropic warm beige overrides ── */
+/* ── Brand palette overrides (sage/stone) ── */
 @theme {
-  --color-fd-background: hsl(36, 33%, 93%);
-  --color-fd-primary: hsl(24, 9%, 20%);
-  --color-fd-border: hsla(30, 15%, 70%, 0.5);
-  --color-fd-accent: hsl(36, 25%, 88%);
-  --color-fd-accent-foreground: hsl(24, 20%, 15%);
-  --color-fd-muted: hsl(36, 20%, 90%);
-  --color-fd-muted-foreground: hsl(24, 10%, 45%);
-  --color-fd-foreground: hsl(24, 20%, 10%);
-  --color-fd-secondary: hsl(36, 20%, 89%);
-  --color-fd-secondary-foreground: hsl(24, 20%, 10%);
-  --color-fd-card: hsl(36, 25%, 91%);
-  --color-fd-card-foreground: hsl(24, 20%, 10%);
-  --color-fd-popover: hsl(36, 30%, 95%);
-  --color-fd-popover-foreground: hsl(24, 20%, 10%);
-  --color-fd-primary-foreground: hsl(36, 33%, 93%);
-  --color-fd-ring: hsl(24, 9%, 20%);
+  --color-fd-background: #FAFAF9;
+  --color-fd-primary: #323D2E;
+  --color-fd-border: #E5E5E4;
+  --color-fd-accent: #F2F5F3;
+  --color-fd-accent-foreground: #1C1917;
+  --color-fd-muted: #F2F5F3;
+  --color-fd-muted-foreground: #6B7280;
+  --color-fd-foreground: #1C1917;
+  --color-fd-secondary: #F2F5F3;
+  --color-fd-secondary-foreground: #1C1917;
+  --color-fd-card: #FFFFFF;
+  --color-fd-card-foreground: #1C1917;
+  --color-fd-popover: #FFFFFF;
+  --color-fd-popover-foreground: #1C1917;
+  --color-fd-primary-foreground: #FAFAF9;
+  --color-fd-ring: #8CC7BE;
 }
 
 .dark {
-  --color-fd-background: hsl(30, 10%, 8%);
-  --color-fd-primary: hsl(36, 40%, 70%);
-  --color-fd-border: hsla(30, 15%, 40%, 0.15);
-  --color-fd-accent: hsla(30, 15%, 30%, 0.1);
-  --color-fd-accent-foreground: hsl(36, 15%, 85%);
-  --color-fd-muted: hsl(30, 8%, 12%);
-  --color-fd-muted-foreground: hsl(30, 8%, 55%);
-  --color-fd-foreground: hsl(36, 10%, 93%);
-  --color-fd-secondary: hsl(30, 8%, 14%);
-  --color-fd-secondary-foreground: hsl(36, 10%, 90%);
-  --color-fd-card: hsl(30, 8%, 10%);
-  --color-fd-card-foreground: hsl(36, 10%, 93%);
-  --color-fd-popover: hsl(30, 8%, 9%);
-  --color-fd-popover-foreground: hsl(36, 10%, 90%);
-  --color-fd-primary-foreground: hsl(30, 10%, 8%);
-  --color-fd-ring: hsl(36, 40%, 70%);
+  --color-fd-background: #141614;
+  --color-fd-primary: #8CC7BE;
+  --color-fd-border: rgba(140, 199, 190, 0.12);
+  --color-fd-accent: rgba(140, 199, 190, 0.08);
+  --color-fd-accent-foreground: #E8EBE9;
+  --color-fd-muted: #1A1E1A;
+  --color-fd-muted-foreground: #7A8A80;
+  --color-fd-foreground: #EAECEA;
+  --color-fd-secondary: #1E221E;
+  --color-fd-secondary-foreground: #E0E4E0;
+  --color-fd-card: #181C18;
+  --color-fd-card-foreground: #EAECEA;
+  --color-fd-popover: #161A16;
+  --color-fd-popover-foreground: #E0E4E0;
+  --color-fd-primary-foreground: #141614;
+  --color-fd-ring: #8CC7BE;
 }
 
 /* ── Sidebar tab highlight colors ── */
 :root {
-  --guide-color: hsl(24, 9%, 20%);
-  --developer-color: hsl(142, 40%, 35%);
+  --guide-color: #323D2E;
+  --developer-color: #6A8A7A;
 }
 
 .dark {
-  --guide-color: hsl(36, 40%, 70%);
-  --developer-color: hsl(142, 50%, 55%);
+  --guide-color: #8CC7BE;
+  --developer-color: #9AA48C;
 }
 
 /* Reset body background for dark mode (wave pattern is light-only) */
@@ -72,49 +72,58 @@ html, body {
   --font-hand: "Caveat", cursive;
   --radius: 0.75rem;
 
-  --background: #f5f0e8;
-  --foreground: #191919;
-  --card: #ebe6dc;
-  --card-foreground: #191919;
-  --popover: #f5f0e8;
-  --popover-foreground: #191919;
-  --primary: #191919;
-  --primary-foreground: #f5f0e8;
-  --secondary: #ebe6dc;
-  --secondary-foreground: #191919;
-  --muted: #e5dfd5;
-  --muted-foreground: #6b6560;
-  --accent: #d4a043;
-  --accent-foreground: #191919;
-  --destructive: #ef4444;
-  --success: #22c55e;
-  --warning: #eab308;
-  --border: #d5cfc4;
-  --input: #d5cfc4;
-  --ring: #191919;
+  --background: #FAFAF9;
+  --foreground: #1C1917;
+  --card: #FFFFFF;
+  --card-foreground: #1C1917;
+  --popover: #FFFFFF;
+  --popover-foreground: #1C1917;
+  --primary: #1C1917;
+  --primary-foreground: #FAFAF9;
+  --secondary: #F2F5F3;
+  --secondary-foreground: #1C1917;
+  --muted: #F2F5F3;
+  --muted-foreground: #6B7280;
+  --accent: #8CC7BE;
+  --accent-foreground: #1C1917;
+  --destructive: #EF4444;
+  --success: #22C55E;
+  --warning: #EAB308;
+  --border: #E5E5E4;
+  --input: #E5E5E4;
+  --ring: #8CC7BE;
+
+  /* Brand palette */
+  --sage: #8CC7BE;
+  --moss: #6A8A7A;
+  --forest: #323D2E;
+  --stone: #FAFAF9;
+  --ink: #1C1917;
+  --lichen: #9AA48C;
+  --pebble: #E5E5E4;
 }
 
 .dark {
-  --background: #1a1814;
-  --foreground: #f0ece4;
-  --card: #242118;
-  --card-foreground: #f0ece4;
-  --popover: #1e1c16;
-  --popover-foreground: #e8e4dc;
-  --primary: #d4a043;
-  --primary-foreground: #1a1814;
-  --secondary: #282520;
-  --secondary-foreground: #e8e4dc;
-  --muted: #282520;
-  --muted-foreground: #9b9590;
-  --accent: #d4a043;
-  --accent-foreground: #e8e4dc;
-  --destructive: #ef4444;
-  --success: #22c55e;
-  --warning: #eab308;
-  --border: rgba(160, 145, 120, 0.15);
-  --input: rgba(160, 145, 120, 0.2);
-  --ring: #d4a043;
+  --background: #141614;
+  --foreground: #EAECEA;
+  --card: #181C18;
+  --card-foreground: #EAECEA;
+  --popover: #161A16;
+  --popover-foreground: #E0E4E0;
+  --primary: #8CC7BE;
+  --primary-foreground: #141614;
+  --secondary: #1E221E;
+  --secondary-foreground: #E0E4E0;
+  --muted: #1A1E1A;
+  --muted-foreground: #7A8A80;
+  --accent: #8CC7BE;
+  --accent-foreground: #E0E4E0;
+  --destructive: #EF4444;
+  --success: #22C55E;
+  --warning: #EAB308;
+  --border: rgba(140, 199, 190, 0.12);
+  --input: rgba(140, 199, 190, 0.15);
+  --ring: #8CC7BE;
 }
 
 @theme inline {

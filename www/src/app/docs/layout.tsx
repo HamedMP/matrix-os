@@ -23,7 +23,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           title: (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src='/logo.png' alt='Matrix OS' className='size-5 rounded' />
+              <img src='/rabbit.svg' alt='Matrix OS' className='size-5 rounded' />
               <span className='font-medium max-md:hidden'>Matrix OS</span>
             </>
           ),

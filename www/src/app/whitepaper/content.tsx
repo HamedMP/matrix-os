@@ -132,7 +132,7 @@ export function WhitepaperContent() {
           <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 px-5 py-2.5 shadow-sm backdrop-blur-xl">
             <a href="/" className="flex items-center gap-2.5 group">
               <img
-                src="/logo.png"
+                src="/rabbit.svg"
                 alt="Matrix OS"
                 className="size-7 rounded-lg shadow-sm"
               />

@@ -1,7 +1,6 @@
-import { Fragment } from "react";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { ArrowRightIcon, GithubIcon } from "lucide-react";
-// import { MascotGuide } from "@/components/mascot";
+import { UseCasesTabs } from "@/components/landing/UseCasesTabs";
 
 const faqItems = [
   {
@@ -37,7 +36,7 @@ const jsonLd = JSON.stringify({
       "@type": "Organization",
       name: "Matrix OS",
       url: "https://matrix-os.com",
-      logo: "https://matrix-os.com/logo.png",
+      logo: "https://matrix-os.com/rabbit.svg",
       sameAs: [
         "https://github.com/HamedMP/matrix-os",
         "https://x.com/joinmatrixos",
@@ -74,18 +73,18 @@ const jsonLd = JSON.stringify({
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-[#f5f0e8] text-[#191919]">
+    <div className="min-h-screen bg-[var(--stone)] text-[var(--ink)]">
       {/* JSON-LD: static content only, no user input -- safe to inline */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: jsonLd }}
       />
-      {/* <MascotGuide /> */}
       <Nav />
       <Hero />
+      <ProofBar />
       <HowItFeels />
       <ThreeThings />
-      <UseCases />
+      <UseCasesTabs />
       <Channels />
       <WhyDifferent />
       <CTA />
@@ -98,33 +97,33 @@ export default function LandingPage() {
 
 function Nav() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#f5f0e8]/90 backdrop-blur-sm border-b border-[#d5cfc4]/50">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[var(--stone)]/90 backdrop-blur-sm border-b border-[var(--pebble)]/50">
       <div className="mx-auto max-w-[1200px] px-6 h-14 flex items-center justify-between">
         <a href="/" className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="Matrix OS" className="size-6 rounded-md" />
-          <span className="tracking-[0.12em] text-[14px] font-medium text-[#191919] uppercase">
+          <img src="/rabbit.svg" alt="Matrix OS" className="size-5" />
+          <span className="tracking-[0.12em] text-[14px] font-semibold text-[var(--ink)] uppercase">
             Matrix OS
           </span>
         </a>
 
         <div className="hidden md:flex items-center gap-8">
-          <a href="#how" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="#how" className="text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors">
             How it works
           </a>
-          <a href="#use-cases" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="#use-cases" className="text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors">
             Use cases
           </a>
-          <a href="/technical" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="/technical" className="text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors">
             Technical
           </a>
-          <a href="/docs" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="/docs" className="text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors">
             Docs
           </a>
           <a
             href="https://github.com/HamedMP/matrix-os"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors"
+            className="text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors"
           >
             GitHub
           </a>
@@ -134,7 +133,7 @@ function Nav() {
           <SignedOut>
             <a
               href="https://app.matrix-os.com"
-              className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
+              className="inline-flex items-center gap-1.5 bg-[var(--forest)] text-[var(--stone)] text-sm px-4 py-2 rounded-full hover:bg-[var(--ink)] transition-colors"
             >
               Join the waitlist
               <ArrowRightIcon className="size-3.5" />
@@ -145,7 +144,7 @@ function Nav() {
               href="https://app.matrix-os.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
+              className="inline-flex items-center gap-1.5 bg-[var(--forest)] text-[var(--stone)] text-sm px-4 py-2 rounded-full hover:bg-[var(--ink)] transition-colors"
             >
               Open Matrix OS
               <ArrowRightIcon className="size-3.5" />
@@ -159,69 +158,170 @@ function Nav() {
 
 /* ─────────────────────────────── Hero ─────────────────────────────── */
 
+function BotanicalScatter() {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      {/* Bottom-left cluster */}
+      <svg className="absolute -bottom-8 -left-12 w-[500px] h-[400px] opacity-80" viewBox="0 0 500 400" fill="none">
+        <g fill="var(--forest)" opacity="0.7">
+          <circle cx="45" cy="350" r="3" /><circle cx="60" cy="330" r="2" /><circle cx="30" cy="340" r="4" />
+          <circle cx="80" cy="360" r="2.5" /><circle cx="100" cy="345" r="1.5" /><circle cx="55" cy="310" r="2" />
+          <circle cx="120" cy="370" r="3" /><circle cx="140" cy="355" r="2" /><circle cx="90" cy="320" r="1.5" />
+          <circle cx="70" cy="295" r="2.5" /><circle cx="110" cy="305" r="2" /><circle cx="35" cy="280" r="3" />
+          <circle cx="150" cy="340" r="1.5" /><circle cx="170" cy="365" r="2.5" /><circle cx="130" cy="325" r="2" />
+          <circle cx="50" cy="260" r="2" /><circle cx="85" cy="275" r="3" /><circle cx="25" cy="300" r="1.5" />
+          <circle cx="160" cy="310" r="2" /><circle cx="190" cy="350" r="3" /><circle cx="200" cy="370" r="2" />
+          <circle cx="40" cy="370" r="5" /><circle cx="65" cy="380" r="3" /><circle cx="95" cy="385" r="4" />
+          <circle cx="15" cy="360" r="2.5" /><circle cx="125" cy="380" r="3.5" /><circle cx="155" cy="385" r="2" />
+        </g>
+        <g fill="var(--forest)" opacity="0.4">
+          <circle cx="200" cy="330" r="1.5" /><circle cx="220" cy="355" r="2" /><circle cx="180" cy="290" r="1.5" />
+          <circle cx="240" cy="370" r="1" /><circle cx="130" cy="280" r="1.5" /><circle cx="105" cy="260" r="1" />
+          <circle cx="60" cy="245" r="1.5" /><circle cx="160" cy="270" r="1" /><circle cx="210" cy="310" r="1.5" />
+          <circle cx="250" cy="350" r="1" /><circle cx="45" cy="230" r="1" /><circle cx="80" cy="240" r="1.5" />
+        </g>
+        <g fill="var(--forest)" opacity="0.6">
+          <ellipse cx="50" cy="340" rx="8" ry="3" transform="rotate(-30 50 340)" />
+          <ellipse cx="75" cy="365" rx="6" ry="2.5" transform="rotate(15 75 365)" />
+          <ellipse cx="100" cy="375" rx="10" ry="3" transform="rotate(-45 100 375)" />
+          <ellipse cx="30" cy="320" rx="7" ry="2.5" transform="rotate(20 30 320)" />
+          <ellipse cx="120" cy="350" rx="5" ry="2" transform="rotate(-10 120 350)" />
+          <ellipse cx="60" cy="290" rx="6" ry="2" transform="rotate(35 60 290)" />
+          <ellipse cx="140" cy="370" rx="8" ry="2.5" transform="rotate(-25 140 370)" />
+          <ellipse cx="40" cy="355" rx="9" ry="3" transform="rotate(40 40 355)" />
+          <ellipse cx="90" cy="300" rx="5" ry="2" transform="rotate(-15 90 300)" />
+          <ellipse cx="170" cy="360" rx="7" ry="2.5" transform="rotate(10 170 360)" />
+        </g>
+      </svg>
+
+      {/* Right cluster */}
+      <svg className="absolute -right-8 top-1/4 w-[350px] h-[500px] opacity-70" viewBox="0 0 350 500" fill="none">
+        <g fill="var(--forest)" opacity="0.5">
+          <circle cx="300" cy="100" r="2.5" /><circle cx="320" cy="130" r="3" /><circle cx="290" cy="80" r="2" />
+          <circle cx="310" cy="160" r="1.5" /><circle cx="330" cy="110" r="2.5" /><circle cx="280" cy="140" r="2" />
+          <circle cx="340" cy="180" r="3" /><circle cx="300" cy="200" r="2" /><circle cx="325" cy="220" r="2.5" />
+          <circle cx="310" cy="250" r="1.5" /><circle cx="295" cy="170" r="2" /><circle cx="335" cy="150" r="1.5" />
+          <circle cx="315" cy="280" r="2" /><circle cx="340" cy="260" r="3" /><circle cx="290" cy="230" r="1.5" />
+          <circle cx="330" cy="300" r="2.5" /><circle cx="305" cy="320" r="2" /><circle cx="320" cy="340" r="1.5" />
+        </g>
+        <g fill="var(--forest)" opacity="0.3">
+          <circle cx="270" cy="120" r="1.5" /><circle cx="260" cy="160" r="1" /><circle cx="275" cy="200" r="1.5" />
+          <circle cx="250" cy="180" r="1" /><circle cx="285" cy="260" r="1" /><circle cx="265" cy="240" r="1.5" />
+          <circle cx="270" cy="300" r="1" /><circle cx="250" cy="280" r="1" /><circle cx="290" cy="310" r="1.5" />
+        </g>
+        <g fill="var(--forest)" opacity="0.45">
+          <ellipse cx="310" cy="120" rx="7" ry="2.5" transform="rotate(25 310 120)" />
+          <ellipse cx="325" cy="170" rx="6" ry="2" transform="rotate(-20 325 170)" />
+          <ellipse cx="300" cy="210" rx="8" ry="3" transform="rotate(40 300 210)" />
+          <ellipse cx="335" cy="250" rx="5" ry="2" transform="rotate(-35 335 250)" />
+          <ellipse cx="315" cy="290" rx="7" ry="2.5" transform="rotate(15 315 290)" />
+          <ellipse cx="290" cy="150" rx="6" ry="2" transform="rotate(-10 290 150)" />
+        </g>
+      </svg>
+
+      {/* Top-right sparse scatter */}
+      <svg className="absolute -top-4 right-1/4 w-[300px] h-[200px] opacity-40" viewBox="0 0 300 200" fill="none">
+        <g fill="var(--forest)">
+          <circle cx="200" cy="40" r="1.5" /><circle cx="230" cy="60" r="2" /><circle cx="250" cy="30" r="1" />
+          <circle cx="180" cy="70" r="1.5" /><circle cx="260" cy="80" r="2" /><circle cx="210" cy="50" r="1" />
+          <circle cx="240" cy="100" r="1.5" /><circle cx="270" cy="55" r="1" />
+          <ellipse cx="220" cy="45" rx="5" ry="2" transform="rotate(-20 220 45)" />
+          <ellipse cx="255" cy="70" rx="4" ry="1.5" transform="rotate(30 255 70)" />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 function Hero() {
   return (
-    <section id="hero" className="pt-32 md:pt-44 pb-20 px-6">
-      <div className="mx-auto max-w-[900px] text-center">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-6 font-medium">
-          Your home for personal software
-        </p>
-        <h1
-          className="text-4xl sm:text-5xl md:text-[64px] font-bold leading-[1.1] tracking-[-0.02em] mb-8"
-          style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-        >
-          Describe what you need.
-          <br />
-          <span className="italic">Watch it appear.</span>
-        </h1>
-        <p className="text-lg md:text-xl text-[#191919]/60 leading-relaxed max-w-[600px] mx-auto mb-10">
-          Matrix OS is a personal AI that builds software for you, remembers
-          everything about you, and works across all your devices. No coding
-          needed. You own everything. Now in early access.
-        </p>
+    <section className="relative min-h-screen flex flex-col items-center justify-center px-6 overflow-hidden">
+      <BotanicalScatter />
 
-        <div className="flex items-center justify-center gap-4 flex-wrap">
-          <SignedOut>
-            <a
-              href="https://app.matrix-os.com"
-              className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
-            >
-              Join the waitlist
-              <ArrowRightIcon className="size-4" />
-            </a>
-          </SignedOut>
-          <SignedIn>
-            <a
-              href="https://app.matrix-os.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
-            >
-              Go to Dashboard
-              <ArrowRightIcon className="size-4" />
-            </a>
-          </SignedIn>
+      {/* Wordmark */}
+      <p className="tracking-[0.15em] text-[14px] sm:text-[16px] font-semibold text-[var(--ink)] uppercase mb-16 relative z-10">
+        Matrix OS
+      </p>
+
+      {/* Rabbit logo */}
+      <div className="relative z-10 mb-16">
+        <img
+          src="/rabbit.svg"
+          alt="Matrix OS logomark"
+          className="w-24 h-20 sm:w-32 sm:h-[106px]"
+        />
+      </div>
+
+      {/* Tagline */}
+      <h1
+        className="text-3xl sm:text-4xl md:text-5xl font-light leading-[1.15] tracking-[-0.01em] text-center max-w-[700px] relative z-10"
+        style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+      >
+        Your AI operating system
+      </h1>
+
+      <p className="mt-6 text-base md:text-lg text-[var(--ink)]/50 text-center max-w-[500px] leading-relaxed relative z-10">
+        A personal AI that builds software for you, remembers
+        everything, and works across every device you own.
+        Open source. You keep every file.
+      </p>
+
+      <div className="mt-10 flex items-center gap-4 flex-wrap justify-center relative z-10">
+        <SignedOut>
           <a
-            href="https://github.com/HamedMP/matrix-os"
+            href="https://app.matrix-os.com"
+            className="inline-flex items-center gap-2 bg-[var(--forest)] text-[var(--stone)] text-sm px-6 py-2.5 rounded-full hover:bg-[var(--ink)] transition-colors font-medium"
+          >
+            Get early access
+            <ArrowRightIcon className="size-3.5" />
+          </a>
+        </SignedOut>
+        <SignedIn>
+          <a
+            href="https://app.matrix-os.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-base text-[#191919]/60 hover:text-[#191919] transition-colors"
+            className="inline-flex items-center gap-2 bg-[var(--forest)] text-[var(--stone)] text-sm px-6 py-2.5 rounded-full hover:bg-[var(--ink)] transition-colors font-medium"
           >
-            <GithubIcon className="size-4" />
-            Open source
+            Open Matrix OS
+            <ArrowRightIcon className="size-3.5" />
           </a>
-        </div>
+        </SignedIn>
+        <a
+          href="https://github.com/HamedMP/matrix-os"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 text-sm text-[var(--ink)]/50 hover:text-[var(--ink)] transition-colors"
+        >
+          <GithubIcon className="size-4" />
+          Open source
+        </a>
+      </div>
 
-        <div className="mt-16 mx-auto max-w-[1100px]">
-          <div className="rounded-xl overflow-hidden shadow-2xl shadow-[#191919]/15 border border-[#d5cfc4] aspect-video">
-            <iframe
-              src="https://www.youtube.com/embed/CSFIYUeOvlc?rel=0&modestbranding=1"
-              title="Matrix OS Demo"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              className="w-full h-full"
-            />
-          </div>
+      {/* Scroll hint */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-[var(--ink)]/20">
+        <div className="w-px h-8 bg-[var(--ink)]/15" />
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────────── Proof Bar ───────────────────────────── */
+
+function ProofBar() {
+  return (
+    <section className="py-8 px-6">
+      <div className="mx-auto max-w-[900px]">
+        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-sm text-[var(--ink)]/35 font-mono">
+          <span>MIT licensed</span>
+          <span className="text-[var(--pebble)]">/</span>
+          <span>Claude Opus 4.6</span>
+          <span className="text-[var(--pebble)]">/</span>
+          <span>2,800+ tests</span>
+          <span className="text-[var(--pebble)]">/</span>
+          <span>6 channels</span>
+          <span className="text-[var(--pebble)]">/</span>
+          <span>Free to start</span>
         </div>
       </div>
     </section>
@@ -232,11 +332,11 @@ function Hero() {
 
 function HowItFeels() {
   return (
-    <section id="how" className="py-20 px-6">
+    <section id="how" className="py-24 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <div className="rounded-2xl bg-[#e5dfd4] p-8 sm:p-12 md:p-16">
+        <div className="rounded-2xl bg-[var(--forest)] text-[var(--stone)] p-8 sm:p-12 md:p-16">
           <div className="max-w-[700px] mx-auto">
-            <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-6 font-medium">
+            <p className="text-sm tracking-[0.15em] uppercase text-[var(--sage)] mb-6 font-medium">
               How it works
             </p>
             <div className="space-y-12">
@@ -256,28 +356,28 @@ function HowItFeels() {
               ].map((convo, i) => (
                 <div key={i} className="space-y-4">
                   <div className="flex gap-3 items-start">
-                    <span className="shrink-0 text-xs font-mono text-[#191919]/30 pt-1 w-8">you</span>
+                    <span className="shrink-0 text-xs font-mono text-[var(--sage)]/60 pt-1 w-8">you</span>
                     <p
-                      className="text-xl md:text-2xl font-bold tracking-[-0.01em] leading-snug"
+                      className="text-xl md:text-2xl font-light tracking-[-0.01em] leading-snug"
                       style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
                     >
                       {convo.you}
                     </p>
                   </div>
                   <div className="flex gap-3 items-start">
-                    <span className="shrink-0 text-xs font-mono text-[#191919]/30 pt-1 w-8">os</span>
-                    <p className="text-base md:text-lg text-[#191919]/60 leading-relaxed">
+                    <span className="shrink-0 text-xs font-mono text-[var(--sage)]/60 pt-1 w-8">os</span>
+                    <p className="text-base md:text-lg text-[var(--stone)]/60 leading-relaxed">
                       {convo.os}
                     </p>
                   </div>
-                  {i < 2 && <div className="border-b border-[#191919]/8 pt-2" />}
+                  {i < 2 && <div className="border-b border-[var(--stone)]/10 pt-2" />}
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        <div className="mt-12 rounded-xl overflow-hidden shadow-2xl shadow-[#191919]/15 border border-[#d5cfc4]">
+        <div className="mt-12 rounded-xl overflow-hidden shadow-2xl shadow-[var(--ink)]/10 border border-[var(--pebble)]">
           <picture>
             <source srcSet="/images/screenshot-desktop.webp" type="image/webp" />
             <img
@@ -297,120 +397,53 @@ function HowItFeels() {
 
 function ThreeThings() {
   return (
-    <section className="py-20 px-6">
+    <section className="py-24 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
-          What makes it different
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
+          Not another chatbot
         </p>
         <h2
-          className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-16"
+          className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.01em] mb-16"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
-          Three things your current tools{" "}
-          <span className="italic">can&apos;t</span> do
+          ChatGPT gives you answers.{" "}
+          <span className="italic">This gives you software.</span>
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-[#d5cfc4] border border-[#d5cfc4] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-[var(--pebble)] border border-[var(--pebble)] rounded-xl overflow-hidden">
           {[
             {
-              title: "It remembers you",
-              desc: "Your AI has a persistent memory. It knows your projects, your preferences, how you like to work. You never re-explain yourself. It gets better the longer you use it.",
-              detail: "Not a chat history. A real understanding of who you are.",
+              num: "01",
+              title: "Never re-explain yourself",
+              desc: "Matrix OS remembers your projects, your preferences, your people. Ask it something on Monday and reference it on Friday. It knows the context.",
+              detail: "Not a chat history. A growing understanding of who you are.",
             },
             {
-              title: "It builds software",
-              desc: "Say what you need in plain English. A budget tracker, a study timer, a deploy monitor. Real software appears on your desktop in seconds. Not a template. Built for you.",
-              detail: "Every app is a file you own. No app store, no subscription.",
+              num: "02",
+              title: "Software that didn't exist until you asked",
+              desc: "Describe an expense tracker, a CRM, a bedtime story app. Working software appears on your desktop in seconds. Saved as a file you own. No app store. No subscription.",
+              detail: "You asked. It built. You own it.",
             },
             {
-              title: "It works everywhere",
-              desc: "Same AI on your laptop, your phone, Telegram, WhatsApp, Discord, Slack. One conversation that continues across every device. No setup, no syncing, no switching.",
-              detail: "Message it from anywhere. It's always the same AI.",
+              num: "03",
+              title: "One AI across every device",
+              desc: "Start a conversation on your laptop. Continue it from Telegram on the bus. Check in from WhatsApp at dinner. Same AI, same memory, same capabilities.",
+              detail: "Six channels and counting. Your AI goes where you go.",
             },
           ].map((item) => (
-            <div key={item.title} className="bg-[#f5f0e8] p-8 md:p-10">
+            <div key={item.title} className="bg-[var(--stone)] p-8 md:p-10">
+              <span className="text-xs font-mono text-[var(--moss)]/60 mb-3 block">{item.num}</span>
               <h3
-                className="text-xl font-bold mb-4 tracking-[-0.01em]"
+                className="text-xl font-normal mb-4 tracking-[-0.01em]"
                 style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
               >
                 {item.title}
               </h3>
-              <p className="text-[#191919]/60 leading-relaxed mb-4">
+              <p className="text-[var(--ink)]/55 leading-relaxed mb-4">
                 {item.desc}
               </p>
-              <p className="text-sm text-[#191919]/40 italic">
+              <p className="text-sm text-[var(--moss)] italic">
                 {item.detail}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ──────────────────────────── Use Cases ──────────────────────────── */
-
-function UseCases() {
-  const cases = [
-    {
-      ask: "Build me a meal planner that knows my macros",
-      result: "A personalized meal planning app, saved as a file, using your dietary data",
-    },
-    {
-      ask: "Watch my GitHub deploys and text me if anything fails",
-      result: "A monitoring agent that checks every 5 minutes and messages you on Telegram",
-    },
-    {
-      ask: "Make a bedtime story generator for my kids",
-      result: "A story app that knows your children's names, favorite characters, and age level",
-    },
-    {
-      ask: "Track my freelance invoices and remind me about overdue ones",
-      result: "An invoice tracker with automated weekly reminders on WhatsApp",
-    },
-    {
-      ask: "Summarize my emails every morning and put it in Slack",
-      result: "A daily briefing that runs at 8am, reads your inbox, and posts a summary",
-    },
-    {
-      ask: "Build a workout log that learns what I like",
-      result: "A fitness tracker that adapts exercises based on your history and preferences",
-    },
-  ];
-
-  return (
-    <section id="use-cases" className="py-20 px-6">
-      <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
-          Home-cooked software
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr] gap-12 items-start mb-16">
-          <h2
-            className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em]"
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-          >
-            Software made{" "}
-            <span className="italic">just for you</span>
-          </h2>
-          <p className="text-[#191919]/60 leading-relaxed md:pt-2">
-            Like a home-cooked meal instead of takeout. You describe exactly
-            what you want, and your AI builds it. Not a template. Not an app
-            store download. Software that fits your life perfectly.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-px bg-[#d5cfc4] border border-[#d5cfc4] rounded-xl overflow-hidden">
-          {cases.map((c) => (
-            <div key={c.ask} className="bg-[#f5f0e8] p-6">
-              <p
-                className="text-base font-bold mb-3 leading-snug"
-                style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-              >
-                &ldquo;{c.ask}&rdquo;
-              </p>
-              <p className="text-sm text-[#191919]/50 leading-relaxed">
-                {c.result}
               </p>
             </div>
           ))}
@@ -424,29 +457,29 @@ function UseCases() {
 
 function Channels() {
   return (
-    <section className="py-20 px-6">
+    <section className="py-24 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <div className="rounded-2xl bg-[#e5dfd4] p-8 sm:p-12 md:p-16 text-center">
-          <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-6 font-medium">
+        <div className="rounded-2xl bg-gradient-to-br from-[var(--sage)]/10 to-[var(--moss)]/10 border border-[var(--sage)]/20 p-8 sm:p-12 md:p-16 text-center">
+          <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-6 font-medium">
             One AI, everywhere
           </p>
           <h2
-            className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-6"
+            className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.01em] mb-6"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             Message it from <span className="italic">anywhere</span>
           </h2>
-          <p className="text-lg text-[#191919]/60 leading-relaxed max-w-[600px] mx-auto mb-12">
+          <p className="text-lg text-[var(--ink)]/50 leading-relaxed max-w-[600px] mx-auto mb-12">
             Your AI lives on every platform you already use. Same memory,
             same personality, same capabilities. Start a conversation on your
             laptop, continue it from your phone.
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-4">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             {["Web Desktop", "Telegram", "WhatsApp", "Discord", "Slack", "Voice"].map((ch) => (
               <span
                 key={ch}
-                className="text-sm font-medium px-5 py-2.5 rounded-full border border-[#191919]/10 bg-[#f5f0e8]/60 text-[#191919]/70"
+                className="text-sm font-medium px-5 py-2.5 rounded-full border border-[var(--moss)]/20 bg-[var(--stone)]/80 text-[var(--forest)]"
               >
                 {ch}
               </span>
@@ -462,13 +495,13 @@ function Channels() {
 
 function WhyDifferent() {
   return (
-    <section className="py-20 px-6">
+    <section className="py-24 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
           Not another AI chatbot
         </p>
         <h2
-          className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-16"
+          className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.01em] mb-16"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           You own <span className="italic">everything</span>
@@ -479,12 +512,12 @@ function WhyDifferent() {
             {faqItems.slice(0, 3).map((item) => (
               <div key={item.q}>
                 <h3
-                  className="text-lg font-bold mb-2"
+                  className="text-lg font-normal mb-2"
                   style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
                 >
                   {item.q}
                 </h3>
-                <p className="text-[#191919]/60 leading-relaxed">{item.a}</p>
+                <p className="text-[var(--ink)]/55 leading-relaxed">{item.a}</p>
               </div>
             ))}
           </div>
@@ -493,12 +526,12 @@ function WhyDifferent() {
             {faqItems.slice(3).map((item) => (
               <div key={item.q}>
                 <h3
-                  className="text-lg font-bold mb-2"
+                  className="text-lg font-normal mb-2"
                   style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
                 >
                   {item.q}
                 </h3>
-                <p className="text-[#191919]/60 leading-relaxed">{item.a}</p>
+                <p className="text-[var(--ink)]/55 leading-relaxed">{item.a}</p>
               </div>
             ))}
           </div>
@@ -515,7 +548,7 @@ function CTA() {
     <section className="py-24 px-6">
       <div className="mx-auto max-w-[700px] text-center">
         <h2
-          className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-[-0.02em] mb-6 leading-tight"
+          className="text-3xl sm:text-4xl md:text-5xl font-light tracking-[-0.01em] mb-6 leading-tight"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           Your AI.{" "}
@@ -523,19 +556,21 @@ function CTA() {
           <br />
           Your rules.
         </h2>
-        <p className="text-lg text-[#191919]/60 leading-relaxed max-w-[500px] mx-auto mb-10">
-          Join the waitlist from{" "}
-          <span className="font-mono text-[#191919]">app.matrix-os.com</span>.
-          We&apos;re letting people in gradually.
+        <p className="text-lg text-[var(--ink)]/50 leading-relaxed max-w-[520px] mx-auto mb-3">
+          Free to start. Open source. Bring your own AI key or
+          use our hosted instances.
+        </p>
+        <p className="text-sm text-[var(--ink)]/35 mb-10">
+          No credit card. No surprise bills. Cancel anytime.
         </p>
 
         <div className="flex items-center justify-center gap-4 flex-wrap mb-16">
           <SignedOut>
             <a
               href="https://app.matrix-os.com"
-              className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
+              className="inline-flex items-center gap-2 bg-[var(--forest)] text-[var(--stone)] text-base px-7 py-3 rounded-full hover:bg-[var(--ink)] transition-colors font-medium"
             >
-              Join the waitlist
+              Get early access
               <ArrowRightIcon className="size-4" />
             </a>
           </SignedOut>
@@ -544,7 +579,7 @@ function CTA() {
               href="https://app.matrix-os.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-base px-7 py-3 rounded-full hover:bg-[#333] transition-colors font-medium"
+              className="inline-flex items-center gap-2 bg-[var(--forest)] text-[var(--stone)] text-base px-7 py-3 rounded-full hover:bg-[var(--ink)] transition-colors font-medium"
             >
               Go to Dashboard
               <ArrowRightIcon className="size-4" />
@@ -552,16 +587,16 @@ function CTA() {
           </SignedIn>
           <a
             href="/whitepaper"
-            className="inline-flex items-center gap-2 text-base font-medium text-[#191919]/60 hover:text-[#191919] transition-colors border-b border-[#191919]/20 pb-0.5 hover:border-[#191919]/40"
+            className="inline-flex items-center gap-2 text-base font-medium text-[var(--ink)]/50 hover:text-[var(--ink)] transition-colors border-b border-[var(--ink)]/15 pb-0.5 hover:border-[var(--ink)]/30"
           >
             Read the whitepaper
             <ArrowRightIcon className="size-4" />
           </a>
         </div>
 
-        <blockquote className="max-w-[500px] mx-auto border-l-2 border-[#191919]/10 pl-6 text-left">
+        <blockquote className="max-w-[500px] mx-auto border-l-2 border-[var(--sage)] pl-6 text-left">
           <p
-            className="text-base text-[#191919]/50 italic leading-relaxed"
+            className="text-base text-[var(--ink)]/45 italic leading-relaxed"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             &ldquo;Like having a developer, a personal assistant, and a
@@ -578,20 +613,20 @@ function CTA() {
 
 function Footer() {
   return (
-    <footer className="py-16 px-6 border-t border-[#d5cfc4]">
+    <footer className="py-16 px-6 border-t border-[var(--pebble)]">
       <div className="mx-auto max-w-[1200px]">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
           <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="Matrix OS" className="size-5 rounded" />
-            <span className="text-sm text-[#191919]/50 font-mono">matrix-os.com</span>
+            <img src="/rabbit.svg" alt="Matrix OS" className="size-4" />
+            <span className="text-sm text-[var(--ink)]/40 font-mono">matrix-os.com</span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-sm text-[#191919]/50">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-sm text-[var(--ink)]/40">
             <a
               href="https://discord.gg/cSBBQWtPwV"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[#191919] transition-colors"
+              className="hover:text-[var(--ink)] transition-colors"
             >
               Discord
             </a>
@@ -599,7 +634,7 @@ function Footer() {
               href="https://x.com/joinmatrixos"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[#191919] transition-colors"
+              className="hover:text-[var(--ink)] transition-colors"
             >
               X / Twitter
             </a>
@@ -607,14 +642,14 @@ function Footer() {
               href="https://github.com/HamedMP/matrix-os"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[#191919] transition-colors"
+              className="hover:text-[var(--ink)] transition-colors"
             >
               GitHub
             </a>
-            <a href="/docs" className="hover:text-[#191919] transition-colors">
+            <a href="/docs" className="hover:text-[var(--ink)] transition-colors">
               Docs
             </a>
-            <a href="/whitepaper" className="hover:text-[#191919] transition-colors">
+            <a href="/whitepaper" className="hover:text-[var(--ink)] transition-colors">
               Whitepaper
             </a>
           </div>

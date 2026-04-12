@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 
 export default function TechnicalPage() {
   return (
-    <div className="min-h-screen bg-[#f5f0e8] text-[#191919]">
+    <div className="min-h-screen bg-[var(--stone)] text-[var(--ink)]">
       <Nav />
       <TechHero />
       <OSMetaphor />
@@ -36,30 +36,30 @@ export default function TechnicalPage() {
 
 function Nav() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#f5f0e8]/90 backdrop-blur-sm border-b border-[#d5cfc4]/50">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[var(--stone)]/90 backdrop-blur-sm border-b border-[var(--pebble)]/50">
       <div className="mx-auto max-w-[1200px] px-6 h-14 flex items-center justify-between">
         <a href="/" className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="Matrix OS" className="size-6 rounded-md" />
-          <span className="tracking-[0.12em] text-[14px] font-medium text-[#191919] uppercase">
+          <img src="/rabbit.svg" alt="Matrix OS" className="size-6 rounded-md" />
+          <span className="tracking-[0.12em] text-[14px] font-medium text-[var(--ink)] uppercase">
             Matrix OS
           </span>
         </a>
 
         <div className="hidden md:flex items-center gap-8">
-          <a href="/#how" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="/#how" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
             How it works
           </a>
-          <a href="/whitepaper" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="/whitepaper" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
             Whitepaper
           </a>
-          <a href="/docs" className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors">
+          <a href="/docs" className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors">
             Docs
           </a>
           <a
             href="https://github.com/HamedMP/matrix-os"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-[#191919]/70 hover:text-[#191919] transition-colors"
+            className="text-sm text-[var(--ink)]/70 hover:text-[var(--ink)] transition-colors"
           >
             GitHub
           </a>
@@ -67,7 +67,7 @@ function Nav() {
 
         <a
           href="/signup"
-          className="inline-flex items-center gap-1.5 bg-[#191919] text-[#f5f0e8] text-sm px-4 py-2 rounded-full hover:bg-[#333] transition-colors"
+          className="inline-flex items-center gap-1.5 bg-[var(--forest)] text-[var(--stone)] text-sm px-4 py-2 rounded-full hover:bg-[var(--ink)] transition-colors"
         >
           Join the waitlist
         </a>
@@ -84,33 +84,33 @@ function TechHero() {
       <div className="mx-auto max-w-[900px]">
         <a
           href="/"
-          className="inline-flex items-center gap-1.5 text-sm text-[#191919]/40 hover:text-[#191919]/70 transition-colors mb-8"
+          className="inline-flex items-center gap-1.5 text-sm text-[var(--ink)]/40 hover:text-[var(--ink)]/70 transition-colors mb-8"
         >
           <ArrowLeftIcon className="size-3.5" />
           Back to home
         </a>
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-6 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-6 font-medium">
           Technical Details
         </p>
         <h1
-          className="text-4xl sm:text-5xl md:text-[56px] font-bold leading-[1.1] tracking-[-0.02em] mb-8"
+          className="text-4xl sm:text-5xl md:text-[56px] font-light leading-[1.1] tracking-[-0.02em] mb-8"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           Under the hood
         </h1>
-        <p className="text-lg md:text-xl text-[#191919]/60 leading-relaxed max-w-[650px] mb-6">
+        <p className="text-lg md:text-xl text-[var(--ink)]/60 leading-relaxed max-w-[650px] mb-6">
           Matrix OS treats an LLM as a literal operating system kernel. This
           page covers the architecture, design decisions, heritage, and the
           computing paradigm we call Web 4.
         </p>
-        <div className="flex items-center gap-6 text-sm text-[#191919]/40">
+        <div className="flex items-center gap-6 text-sm text-[var(--ink)]/40">
           <span>April 2026</span>
           <span>15 min read</span>
           <a
             href="https://github.com/HamedMP/matrix-os"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 hover:text-[#191919]/70 transition-colors"
+            className="inline-flex items-center gap-1.5 hover:text-[var(--ink)]/70 transition-colors"
           >
             <GithubIcon className="size-3.5" />
             Source
@@ -140,41 +140,41 @@ function OSMetaphor() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
           The core idea
         </p>
         <h2
-          className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-6"
+          className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em] mb-6"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           An LLM as a <span className="italic">literal</span> operating system
         </h2>
-        <p className="text-[#191919]/60 leading-relaxed max-w-[700px] mb-12">
+        <p className="text-[var(--ink)]/60 leading-relaxed max-w-[700px] mb-12">
           This is not a metaphor for marketing. Every concept in traditional OS
           design maps directly to a component in Matrix OS. The LLM is the CPU.
           The context window is RAM. Files are files.
         </p>
 
-        <div className="rounded-xl border border-[#d5cfc4] overflow-hidden">
-          <div className="grid grid-cols-[1fr_1.2fr_1.5fr] bg-[#e5dfd4] text-sm font-medium">
-            <div className="px-5 py-3 border-r border-[#d5cfc4]">Traditional OS</div>
-            <div className="px-5 py-3 border-r border-[#d5cfc4]">Matrix OS</div>
+        <div className="rounded-xl border border-[var(--pebble)] overflow-hidden">
+          <div className="grid grid-cols-[1fr_1.2fr_1.5fr] bg-[var(--pebble)] text-sm font-medium">
+            <div className="px-5 py-3 border-r border-[var(--pebble)]">Traditional OS</div>
+            <div className="px-5 py-3 border-r border-[var(--pebble)]">Matrix OS</div>
             <div className="px-5 py-3">Role</div>
           </div>
           {rows.map((row, i) => (
             <div
               key={row.traditional}
               className={`grid grid-cols-[1fr_1.2fr_1.5fr] text-sm ${
-                i % 2 === 0 ? "bg-[#f5f0e8]" : "bg-[#f0ebe1]"
+                i % 2 === 0 ? "bg-[var(--stone)]" : "bg-[var(--stone)]"
               }`}
             >
-              <div className="px-5 py-3 border-r border-[#d5cfc4] font-mono text-[#191919]/50">
+              <div className="px-5 py-3 border-r border-[var(--pebble)] font-mono text-[var(--ink)]/50">
                 {row.traditional}
               </div>
-              <div className="px-5 py-3 border-r border-[#d5cfc4] font-medium">
+              <div className="px-5 py-3 border-r border-[var(--pebble)] font-medium">
                 {row.matrix}
               </div>
-              <div className="px-5 py-3 text-[#191919]/60">{row.note}</div>
+              <div className="px-5 py-3 text-[var(--ink)]/60">{row.note}</div>
             </div>
           ))}
         </div>
@@ -189,12 +189,12 @@ function Architecture() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <div className="rounded-2xl bg-[#e5dfd4] p-8 sm:p-12 md:p-16">
-          <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <div className="rounded-2xl bg-[var(--forest)] text-[var(--stone)] p-8 sm:p-12 md:p-16">
+          <p className="text-sm tracking-[0.15em] uppercase text-[var(--sage)] mb-4 font-medium">
             Architecture
           </p>
           <h2
-            className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-12"
+            className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em] mb-12"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             Gateway &rarr; Kernel &rarr; Files
@@ -235,15 +235,15 @@ function Architecture() {
             ].map((col) => (
               <div key={col.title}>
                 <h3
-                  className="text-lg font-bold mb-4"
+                  className="text-lg font-light mb-4"
                   style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
                 >
                   {col.title}
                 </h3>
                 <ul className="space-y-2">
                   {col.items.map((item) => (
-                    <li key={item} className="text-sm text-[#191919]/60 leading-relaxed flex gap-2">
-                      <span className="text-[#191919]/20 shrink-0">&mdash;</span>
+                    <li key={item} className="text-sm text-[var(--stone)]/70 leading-relaxed flex gap-2">
+                      <span className="text-[var(--stone)]/30 shrink-0">&mdash;</span>
                       {item}
                     </li>
                   ))}
@@ -252,7 +252,7 @@ function Architecture() {
             ))}
           </div>
 
-          <div className="font-mono text-sm text-[#191919]/50 bg-[#f5f0e8] rounded-lg p-6 overflow-x-auto">
+          <div className="font-mono text-sm text-[var(--forest)] bg-[var(--stone)] rounded-lg p-6 overflow-x-auto">
             <pre>{`Voice    ──┐
 Telegram ──┤
 WhatsApp ──┤
@@ -315,11 +315,11 @@ function Principles() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
           Constitution
         </p>
         <h2
-          className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-16"
+          className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em] mb-16"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           Seven design principles
@@ -329,21 +329,21 @@ function Principles() {
           {principles.map((p) => (
             <div
               key={p.num}
-              className="grid grid-cols-[60px_1fr] md:grid-cols-[60px_200px_1fr] gap-4 p-5 bg-[#f0ebe1]/60 first:rounded-t-xl last:rounded-b-xl"
+              className="grid grid-cols-[60px_1fr] md:grid-cols-[60px_200px_1fr] gap-4 p-5 bg-[var(--stone)]/60 first:rounded-t-xl last:rounded-b-xl"
             >
-              <span className="font-mono text-sm text-[#191919]/30 pt-0.5">
+              <span className="font-mono text-sm text-[var(--ink)]/30 pt-0.5">
                 {p.num}
               </span>
               <div className="md:contents">
-                <h3 className="font-bold text-base flex items-center gap-2">
+                <h3 className="font-light text-base flex items-center gap-2">
                   {p.title}
                   {p.tag && (
-                    <span className="text-[10px] tracking-[0.08em] uppercase font-medium px-2 py-0.5 rounded-full bg-[#191919]/8 text-[#191919]/50">
+                    <span className="text-[10px] tracking-[0.08em] uppercase font-medium px-2 py-0.5 rounded-full bg-[var(--ink)]/8 text-[var(--ink)]/50">
                       {p.tag}
                     </span>
                   )}
                 </h3>
-                <p className="text-sm text-[#191919]/60 leading-relaxed">
+                <p className="text-sm text-[var(--ink)]/60 leading-relaxed">
                   {p.desc}
                 </p>
               </div>
@@ -394,22 +394,22 @@ function Heritage() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
           Heritage
         </p>
         <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr] gap-12 items-start mb-16">
           <h2
-            className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em]"
+            className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em]"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             Built on <span className="italic">OpenClaw&apos;s</span> shoulders
           </h2>
-          <p className="text-[#191919]/60 leading-relaxed md:pt-2">
+          <p className="text-[var(--ink)]/60 leading-relaxed md:pt-2">
             <a
               href="https://github.com/open-claw/openclaw"
               target="_blank"
               rel="noopener noreferrer"
-              className="underline decoration-[#191919]/20 hover:decoration-[#191919]/50 transition-colors"
+              className="underline decoration-[var(--ink)]/20 hover:decoration-[var(--ink)]/50 transition-colors"
             >
               OpenClaw
             </a>{" "}
@@ -421,31 +421,31 @@ function Heritage() {
           </p>
         </div>
 
-        <div className="rounded-xl border border-[#d5cfc4] overflow-hidden">
-          <div className="grid grid-cols-[100px_1fr_1fr] bg-[#e5dfd4] text-sm font-medium">
-            <div className="px-5 py-3 border-r border-[#d5cfc4]">Pattern</div>
-            <div className="px-5 py-3 border-r border-[#d5cfc4]">OpenClaw</div>
+        <div className="rounded-xl border border-[var(--pebble)] overflow-hidden">
+          <div className="grid grid-cols-[100px_1fr_1fr] bg-[var(--pebble)] text-sm font-medium">
+            <div className="px-5 py-3 border-r border-[var(--pebble)]">Pattern</div>
+            <div className="px-5 py-3 border-r border-[var(--pebble)]">OpenClaw</div>
             <div className="px-5 py-3">Matrix OS</div>
           </div>
           {comparisons.map((row, i) => (
             <div
               key={row.pattern}
               className={`grid grid-cols-[100px_1fr_1fr] text-sm ${
-                i % 2 === 0 ? "bg-[#f5f0e8]" : "bg-[#f0ebe1]"
+                i % 2 === 0 ? "bg-[var(--stone)]" : "bg-[var(--stone)]"
               }`}
             >
-              <div className="px-5 py-3 border-r border-[#d5cfc4] font-mono text-[#191919]/50 text-xs">
+              <div className="px-5 py-3 border-r border-[var(--pebble)] font-mono text-[var(--ink)]/50 text-xs">
                 {row.pattern}
               </div>
-              <div className="px-5 py-3 border-r border-[#d5cfc4] text-[#191919]/60">
+              <div className="px-5 py-3 border-r border-[var(--pebble)] text-[var(--ink)]/60">
                 {row.openclaw}
               </div>
-              <div className="px-5 py-3 text-[#191919]/80">{row.matrixos}</div>
+              <div className="px-5 py-3 text-[var(--ink)]/80">{row.matrixos}</div>
             </div>
           ))}
         </div>
 
-        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-px bg-[#d5cfc4] border border-[#d5cfc4] rounded-xl overflow-hidden">
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-px bg-[var(--pebble)] border border-[var(--pebble)] rounded-xl overflow-hidden">
           {[
             {
               title: "What we took",
@@ -460,14 +460,14 @@ function Heritage() {
               desc: "Generative apps (software from conversation), file-as-output, OS metaphor (LLM = CPU), self-healing kernel, peer-to-peer git sync, Web 4.",
             },
           ].map((item) => (
-            <div key={item.title} className="bg-[#f5f0e8] p-8">
+            <div key={item.title} className="bg-[var(--stone)] p-8">
               <h3
-                className="text-lg font-bold mb-3"
+                className="text-lg font-light mb-3"
                 style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
               >
                 {item.title}
               </h3>
-              <p className="text-sm text-[#191919]/60 leading-relaxed">
+              <p className="text-sm text-[var(--ink)]/60 leading-relaxed">
                 {item.desc}
               </p>
             </div>
@@ -484,17 +484,17 @@ function Web4Vision() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <div className="rounded-2xl bg-[#e5dfd4] p-8 sm:p-12 md:p-16">
-          <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <div className="rounded-2xl bg-[var(--forest)] text-[var(--stone)] p-8 sm:p-12 md:p-16">
+          <p className="text-sm tracking-[0.15em] uppercase text-[var(--sage)] mb-4 font-medium">
             The bigger picture
           </p>
           <h2
-            className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-6"
+            className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em] mb-6"
             style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
           >
             Web 4: the <span className="italic">unification</span>
           </h2>
-          <p className="text-[#191919]/60 leading-relaxed max-w-[700px] mb-12">
+          <p className="text-[var(--stone)]/70 leading-relaxed max-w-[700px] mb-12">
             Every era of computing unified previously separate things. Web 4
             unifies your OS, messaging, social media, AI, apps, games, and
             identity into one platform.
@@ -511,14 +511,14 @@ function Web4Vision() {
                 key={w.era}
                 className={`p-5 rounded-lg ${
                   i === 3
-                    ? "bg-[#191919] text-[#f5f0e8]"
-                    : "bg-[#f5f0e8]/60"
+                    ? "bg-[var(--sage)] text-[var(--forest)]"
+                    : "bg-[var(--stone)]/10"
                 }`}
               >
-                <p className={`text-xs font-mono mb-2 ${i === 3 ? "text-[#f5f0e8]/50" : "text-[#191919]/30"}`}>
+                <p className={`text-xs font-mono mb-2 ${i === 3 ? "text-[var(--forest)]/60" : "text-[var(--stone)]/40"}`}>
                   {w.era}
                 </p>
-                <p className={`text-sm leading-relaxed ${i === 3 ? "text-[#f5f0e8]/80" : "text-[#191919]/60"}`}>
+                <p className={`text-sm leading-relaxed ${i === 3 ? "text-[var(--forest)]" : "text-[var(--stone)]/70"}`}>
                   {w.desc}
                 </p>
               </div>
@@ -528,7 +528,7 @@ function Web4Vision() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
               <h3
-                className="text-lg font-bold mb-4"
+                className="text-lg font-light mb-4"
                 style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
               >
                 Matrix Protocol foundation
@@ -541,8 +541,8 @@ function Web4Vision() {
                   "AI-to-AI protocol via custom Matrix event types",
                   "Any Matrix client (Element, FluffyChat) can talk to Matrix OS",
                 ].map((item) => (
-                  <li key={item} className="text-sm text-[#191919]/60 leading-relaxed flex gap-2">
-                    <span className="text-[#191919]/20 shrink-0">&mdash;</span>
+                  <li key={item} className="text-sm text-[var(--stone)]/70 leading-relaxed flex gap-2">
+                    <span className="text-[var(--stone)]/30 shrink-0">&mdash;</span>
                     {item}
                   </li>
                 ))}
@@ -550,7 +550,7 @@ function Web4Vision() {
             </div>
             <div>
               <h3
-                className="text-lg font-bold mb-4"
+                className="text-lg font-light mb-4"
                 style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
               >
                 Peer-to-peer sync
@@ -563,8 +563,8 @@ function Web4Vision() {
                   "Cloud instance is just another peer (always-on)",
                   "Conflict resolution is AI-assisted: kernel reads git markers and merges",
                 ].map((item) => (
-                  <li key={item} className="text-sm text-[#191919]/60 leading-relaxed flex gap-2">
-                    <span className="text-[#191919]/20 shrink-0">&mdash;</span>
+                  <li key={item} className="text-sm text-[var(--stone)]/70 leading-relaxed flex gap-2">
+                    <span className="text-[var(--stone)]/30 shrink-0">&mdash;</span>
                     {item}
                   </li>
                 ))}
@@ -596,23 +596,23 @@ function TechStack() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
           Stack
         </p>
         <h2
-          className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-12"
+          className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em] mb-12"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           What it&apos;s built with
         </h2>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-[#d5cfc4] border border-[#d5cfc4] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-[var(--pebble)] border border-[var(--pebble)] rounded-xl overflow-hidden">
           {stack.map((s) => (
-            <div key={s.category} className="bg-[#f5f0e8] p-5 flex gap-4">
-              <span className="shrink-0 text-xs font-mono text-[#191919]/30 pt-0.5 w-20">
+            <div key={s.category} className="bg-[var(--stone)] p-5 flex gap-4">
+              <span className="shrink-0 text-xs font-mono text-[var(--ink)]/30 pt-0.5 w-20">
                 {s.category}
               </span>
-              <span className="text-sm text-[#191919]/70">{s.items}</span>
+              <span className="text-sm text-[var(--ink)]/70">{s.items}</span>
             </div>
           ))}
         </div>
@@ -636,26 +636,26 @@ function Numbers() {
   return (
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[1200px]">
-        <p className="text-sm tracking-[0.15em] uppercase text-[#191919]/40 mb-4 font-medium">
+        <p className="text-sm tracking-[0.15em] uppercase text-[var(--moss)] mb-4 font-medium">
           By the numbers
         </p>
         <h2
-          className="text-3xl sm:text-4xl font-bold leading-tight tracking-[-0.02em] mb-12"
+          className="text-3xl sm:text-4xl font-light leading-tight tracking-[-0.02em] mb-12"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           Built in public, <span className="italic">tested obsessively</span>
         </h2>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-[#d5cfc4] border border-[#d5cfc4] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-[var(--pebble)] border border-[var(--pebble)] rounded-xl overflow-hidden">
           {stats.map((s) => (
-            <div key={s.label} className="bg-[#f5f0e8] p-6 text-center">
+            <div key={s.label} className="bg-[var(--stone)] p-6 text-center">
               <p
-                className="text-2xl sm:text-3xl font-bold tracking-[-0.02em] mb-1"
+                className="text-2xl sm:text-3xl font-light tracking-[-0.02em] mb-1"
                 style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
               >
                 {s.value}
               </p>
-              <p className="text-xs text-[#191919]/40">{s.label}</p>
+              <p className="text-xs text-[var(--ink)]/40">{s.label}</p>
             </div>
           ))}
         </div>
@@ -671,7 +671,7 @@ function TechFooter() {
     <section className="py-20 px-6">
       <div className="mx-auto max-w-[700px] text-center mb-16">
         <h2
-          className="text-3xl sm:text-4xl font-bold tracking-[-0.02em] mb-6"
+          className="text-3xl sm:text-4xl font-light tracking-[-0.02em] mb-6"
           style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
         >
           Want to go deeper?
@@ -679,7 +679,7 @@ function TechFooter() {
         <div className="flex items-center justify-center gap-4 flex-wrap">
           <a
             href="/whitepaper"
-            className="inline-flex items-center gap-2 bg-[#191919] text-[#f5f0e8] text-sm px-6 py-2.5 rounded-full hover:bg-[#333] transition-colors font-medium"
+            className="inline-flex items-center gap-2 bg-[var(--forest)] text-[var(--stone)] text-sm px-6 py-2.5 rounded-full hover:bg-[var(--ink)] transition-colors font-medium"
           >
             Read the whitepaper
             <ArrowRightIcon className="size-3.5" />
@@ -688,14 +688,14 @@ function TechFooter() {
             href="https://github.com/HamedMP/matrix-os"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-sm text-[#191919]/60 hover:text-[#191919] transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors"
           >
             <GithubIcon className="size-3.5" />
             View source
           </a>
           <a
             href="/docs"
-            className="inline-flex items-center gap-2 text-sm text-[#191919]/60 hover:text-[#191919] transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-[var(--ink)]/60 hover:text-[var(--ink)] transition-colors"
           >
             Documentation
             <ArrowRightIcon className="size-3.5" />
@@ -703,17 +703,17 @@ function TechFooter() {
         </div>
       </div>
 
-      <footer className="py-8 border-t border-[#d5cfc4]">
+      <footer className="py-8 border-t border-[var(--pebble)]">
         <div className="mx-auto max-w-[1200px] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="Matrix OS" className="size-5 rounded" />
-            <span className="text-sm text-[#191919]/50 font-mono">matrix-os.com</span>
+            <img src="/rabbit.svg" alt="Matrix OS" className="size-5 rounded" />
+            <span className="text-sm text-[var(--ink)]/50 font-mono">matrix-os.com</span>
           </div>
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-sm text-[#191919]/50">
-            <a href="https://discord.gg/cSBBQWtPwV" target="_blank" rel="noopener noreferrer" className="hover:text-[#191919] transition-colors">Discord</a>
-            <a href="https://x.com/joinmatrixos" target="_blank" rel="noopener noreferrer" className="hover:text-[#191919] transition-colors">X / Twitter</a>
-            <a href="https://github.com/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" className="hover:text-[#191919] transition-colors">GitHub</a>
-            <a href="/docs" className="hover:text-[#191919] transition-colors">Docs</a>
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-sm text-[var(--ink)]/50">
+            <a href="https://discord.gg/cSBBQWtPwV" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--ink)] transition-colors">Discord</a>
+            <a href="https://x.com/joinmatrixos" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--ink)] transition-colors">X / Twitter</a>
+            <a href="https://github.com/HamedMP/matrix-os" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--ink)] transition-colors">GitHub</a>
+            <a href="/docs" className="hover:text-[var(--ink)] transition-colors">Docs</a>
           </div>
         </div>
       </footer>
