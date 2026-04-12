@@ -570,3 +570,190 @@ describe('GroupSync — applyLocalMutation', () => {
     expect(origins).toContain('local');
   });
 });
+
+describe('GroupSync — queue & offline replay', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('drainQueue() replays queued ops in order, oldest first', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+
+    // Start with network down, make 3 mutations.
+    clientState.sendShouldFail = true;
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k1', 'v1'));
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k2', 'v2'));
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k3', 'v3'));
+
+    expect(clientState.sendCalls.length).toBe(3); // all attempted, all failed
+    const initialFailedCount = clientState.sendCalls.length;
+
+    // Network returns. Drain queue.
+    clientState.sendShouldFail = false;
+    await sync.drainQueue();
+
+    // Queue replayed in order. New send calls appended — 3 replayed events.
+    const replayed = clientState.sendCalls.slice(initialFailedCount);
+    expect(replayed.length).toBe(3);
+    // All replayed events are `m.matrix_os.app.notes.op`.
+    for (const call of replayed) {
+      expect(call.eventType).toBe('m.matrix_os.app.notes.op');
+    }
+
+    // queue.jsonl is empty/absent after drain.
+    const queuePath = join(home, 'groups', manifest.slug, 'data', 'notes', 'queue.jsonl');
+    const queueExists = existsSync(queuePath);
+    if (queueExists) {
+      const text = await readFile(queuePath, 'utf-8');
+      expect(text.trim().length).toBe(0);
+    }
+  });
+
+  it('drainQueue() leaves ops in queue if send fails during replay', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+
+    clientState.sendShouldFail = true;
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k1', 'v1'));
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k2', 'v2'));
+
+    // Still offline — drain should be a no-op.
+    await sync.drainQueue();
+
+    const queuePath = join(home, 'groups', manifest.slug, 'data', 'notes', 'queue.jsonl');
+    expect(existsSync(queuePath)).toBe(true);
+    const text = await readFile(queuePath, 'utf-8');
+    const lines = text.trim().split('\n');
+    expect(lines.length).toBe(2);
+  });
+
+  it('enforces 10000-event queue cap with drop-oldest and logged warning', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+
+    clientState.sendShouldFail = true;
+    const errorCalls: Array<{ code: GroupSyncErrorCode; detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      env: { GROUP_SYNC_QUEUE_MAX: 3 }, // tiny cap so the test is fast
+      onError: (code, detail) => errorCalls.push({ code, detail }),
+    });
+    await sync.hydrate();
+
+    for (let i = 0; i < 5; i++) {
+      await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set(`k${i}`, `v${i}`));
+    }
+
+    const queuePath = join(home, 'groups', manifest.slug, 'data', 'notes', 'queue.jsonl');
+    expect(existsSync(queuePath)).toBe(true);
+    const text = await readFile(queuePath, 'utf-8');
+    const lines = text
+      .trim()
+      .split('\n')
+      .filter((l) => l.length > 0);
+    // Cap is 3, so after 5 mutations only 3 remain (drop-oldest).
+    expect(lines.length).toBe(3);
+
+    // At least one onError was a queue-cap eviction.
+    const evictions = errorCalls.filter(
+      (c) =>
+        typeof c.detail.reason === 'string' &&
+        (c.detail.reason as string).includes('queue_evicted'),
+    );
+    expect(evictions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('exponential backoff schedule drops to a 30 s cap', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    // getNextBackoffMs(attempt) returns 1s/2s/4s/8s/16s/30s/30s/30s...
+    expect(sync.getNextBackoffMs(0)).toBe(1_000);
+    expect(sync.getNextBackoffMs(1)).toBe(2_000);
+    expect(sync.getNextBackoffMs(2)).toBe(4_000);
+    expect(sync.getNextBackoffMs(3)).toBe(8_000);
+    expect(sync.getNextBackoffMs(4)).toBe(16_000);
+    expect(sync.getNextBackoffMs(5)).toBe(30_000);
+    expect(sync.getNextBackoffMs(6)).toBe(30_000);
+    expect(sync.getNextBackoffMs(100)).toBe(30_000);
+  });
+
+  it('escalates via onError after 30 minutes of persistent failures', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    clientState.sendShouldFail = true;
+
+    let now = 1_000_000;
+    const errorCalls: Array<{ code: GroupSyncErrorCode; detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      clockNow: () => now,
+      onError: (code, detail) => errorCalls.push({ code, detail }),
+    });
+    await sync.hydrate();
+
+    // First failure — records start time.
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k1', 'v1'));
+
+    // Advance 29 minutes — still offline escalation only, not sync_failed yet.
+    now += 29 * 60 * 1000;
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k2', 'v2'));
+    let persistentErrors = errorCalls.filter(
+      (c) =>
+        c.code === 'sync_failed' &&
+        typeof c.detail.reason === 'string' &&
+        (c.detail.reason as string).includes('persistent'),
+    );
+    expect(persistentErrors.length).toBe(0);
+
+    // Advance past 30 minutes — escalation should fire.
+    now += 2 * 60 * 1000; // total 31 minutes since first failure
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k3', 'v3'));
+    persistentErrors = errorCalls.filter(
+      (c) =>
+        c.code === 'sync_failed' &&
+        typeof c.detail.reason === 'string' &&
+        (c.detail.reason as string).includes('persistent'),
+    );
+    expect(persistentErrors.length).toBeGreaterThanOrEqual(1);
+  });
+});

@@ -83,6 +83,13 @@ interface AppState {
   lastEventId: string | null;
   lastSnapshotEventId: string | null;
   changeListeners: Set<GroupSyncOnChange>;
+  /** Wall-clock ms of the first failed send since last success. `null` while
+   *  the connection is believed healthy. Used by the 30-minute escalation
+   *  path; cleared when a send succeeds or drainQueue runs clean. */
+  firstFailureAt: number | null;
+  /** True once the 30-minute escalation has been reported for the current
+   *  failure window. Prevents the same event from firing every minute. */
+  persistentEscalated: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +101,11 @@ const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_LOG_RETENTION_DAYS = 30;
 const DEFAULT_QUARANTINE_MAX = 100;
 const DEFAULT_QUEUE_MAX = 10_000;
+
+const BACKOFF_SCHEDULE_MS: readonly number[] = [
+  1_000, 2_000, 4_000, 8_000, 16_000, 30_000,
+];
+const PERSISTENT_FAILURE_MS = 30 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 
@@ -329,6 +341,7 @@ export class GroupSync {
         content as unknown as Record<string, unknown>,
       );
       sendOk = true;
+      this.markSendSuccess(app);
     } catch (err) {
       await this.enqueueForRetry(app, content, err);
     }
@@ -461,6 +474,8 @@ export class GroupSync {
       lastEventId,
       lastSnapshotEventId,
       changeListeners: new Set(),
+      firstFailureAt: null,
+      persistentEscalated: false,
     });
   }
 
@@ -540,6 +555,8 @@ export class GroupSync {
       queued_at: this.clockNow(),
       content,
     };
+
+    // Append first — simple, atomic for single lines on POSIX.
     try {
       await fs.appendFile(queuePath, `${JSON.stringify(entry)}\n`, {
         encoding: 'utf-8',
@@ -553,11 +570,141 @@ export class GroupSync {
       });
       return;
     }
+
+    // Enforce cap with drop-oldest rotation. We read the file back, truncate
+    // the oldest lines, and rewrite atomically. This is O(N) in queue size on
+    // every overrun, but the cap is rare (10 000 events) and the file is tiny.
+    await this.enforceQueueCap(app, queuePath);
+
+    // Track failure window for the 30-minute escalation.
+    const now = this.clockNow();
+    if (app.firstFailureAt === null) {
+      app.firstFailureAt = now;
+    }
+    const failureAge = now - app.firstFailureAt;
+
     this.onError('offline', {
       reason: 'send_failed_queued',
       appSlug: app.appSlug,
       cause: (cause as Error)?.message ?? 'unknown',
+      failureAgeMs: failureAge,
     });
+
+    if (failureAge >= PERSISTENT_FAILURE_MS && !app.persistentEscalated) {
+      app.persistentEscalated = true;
+      this.onError('sync_failed', {
+        reason: 'persistent_send_failures',
+        appSlug: app.appSlug,
+        failureAgeMs: failureAge,
+      });
+    }
+  }
+
+  private async enforceQueueCap(app: AppState, queuePath: string): Promise<void> {
+    const cap = this.env.GROUP_SYNC_QUEUE_MAX;
+    let raw: string;
+    try {
+      raw = await fs.readFile(queuePath, 'utf-8');
+    } catch {
+      return;
+    }
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    if (lines.length <= cap) return;
+
+    const evicted = lines.length - cap;
+    const kept = lines.slice(evicted);
+    const rewritten = kept.join('\n') + (kept.length > 0 ? '\n' : '');
+    await atomicWriteFile(queuePath, rewritten);
+    this.debugOnWrite?.(queuePath);
+
+    this.onError('offline', {
+      reason: 'queue_evicted_oldest',
+      appSlug: app.appSlug,
+      evictedCount: evicted,
+      cap,
+    });
+  }
+
+  private markSendSuccess(app: AppState): void {
+    app.firstFailureAt = null;
+    app.persistentEscalated = false;
+  }
+
+  /**
+   * Drain queue.jsonl for every app in this group. Replays ops in append
+   * order (oldest first). On a send failure the remaining ops stay in the
+   * queue for the next attempt.
+   */
+  async drainQueue(): Promise<void> {
+    for (const app of this.apps.values()) {
+      await this.drainQueueForApp(app);
+    }
+  }
+
+  private async drainQueueForApp(app: AppState): Promise<void> {
+    const queuePath = join(app.dataDir, 'queue.jsonl');
+    let raw: string;
+    try {
+      raw = await fs.readFile(queuePath, 'utf-8');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      throw err;
+    }
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    if (lines.length === 0) {
+      // Empty queue — nothing to do, but truncate to drop stale empty file.
+      await atomicWriteFile(queuePath, '');
+      return;
+    }
+
+    const remaining: string[] = [];
+    let anyReplayed = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      // Lazily parse: if parse fails, drop the line — it's malformed and we
+      // can't recover.
+      let entry: { content?: OpEventContent } | null = null;
+      try {
+        entry = JSON.parse(line) as { content?: OpEventContent };
+      } catch {
+        continue;
+      }
+      if (!entry?.content) continue;
+
+      try {
+        await this.client.sendCustomEvent(
+          this.manifest.room_id,
+          `m.matrix_os.app.${app.appSlug}.op`,
+          entry.content as unknown as Record<string, unknown>,
+        );
+        anyReplayed = true;
+      } catch {
+        // Send failed — keep this op and every op after it in the queue so
+        // order is preserved for the next drain.
+        remaining.push(...lines.slice(i));
+        break;
+      }
+    }
+
+    const rewritten = remaining.length > 0 ? remaining.join('\n') + '\n' : '';
+    await atomicWriteFile(queuePath, rewritten);
+    this.debugOnWrite?.(queuePath);
+
+    if (remaining.length === 0 && anyReplayed) {
+      this.markSendSuccess(app);
+    }
+  }
+
+  /**
+   * Exponential backoff schedule for outbound send failures. Matches spec §F
+   * "Error propagation": `[1s, 2s, 4s, 8s, 16s, 30s]` cap.
+   */
+  getNextBackoffMs(attempt: number): number {
+    if (attempt < 0) return BACKOFF_SCHEDULE_MS[0]!;
+    const capIdx = BACKOFF_SCHEDULE_MS.length - 1;
+    const idx = Math.min(attempt, capIdx);
+    return BACKOFF_SCHEDULE_MS[idx]!;
   }
 }
 
