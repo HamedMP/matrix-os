@@ -958,7 +958,7 @@ export async function createGateway(config: GatewayConfig) {
   // Only wire if matrix credentials are configured — otherwise group features
   // are disabled and the endpoints return 503-style unavailable responses.
   if (matrixClient && groupsEnabled) {
-    const groupRoutes = createGroupRoutes({ matrixClient, groupRegistry });
+    const groupRoutes = createGroupRoutes({ matrixClient, groupRegistry, homePath });
     app.route("/", groupRoutes);
     console.log("[062/group-routes] mounted at /api/groups (after auth)");
   }
