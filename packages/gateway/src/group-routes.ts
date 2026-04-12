@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { cp, writeFile, readFile, mkdir } from "node:fs/promises";
+import { cp, writeFile, readFile, mkdir, readdir, stat } from "node:fs/promises";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
 import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, CreateGroupBodySchema, JoinGroupBodySchema, ShareAppBodySchema, InviteBodySchema } from "./group-types.js";
@@ -268,6 +268,56 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       }
     },
   );
+
+  // ── GET /api/groups/:slug/apps — list shared apps in a group ────────────
+  app.get("/api/groups/:slug/apps", async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const { slug } = c.req.param();
+    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
+    const manifest = groupRegistry.get(slug);
+    if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+    const homePath = opts.homePath;
+    if (!homePath) return c.json({ apps: [] }, 200);
+
+    const appsDir = resolveWithinHome(homePath, `groups/${slug}/apps`);
+    if (!appsDir) return c.json({ apps: [] }, 200);
+
+    let entries: string[];
+    try {
+      entries = await readdir(appsDir);
+    } catch {
+      return c.json({ apps: [] }, 200);
+    }
+
+    const apps: Array<{ slug: string; name: string }> = [];
+    for (const entry of entries) {
+      const entryPath = resolveWithinHome(homePath, `groups/${slug}/apps/${entry}`);
+      if (!entryPath) continue;
+      try {
+        const s = await stat(entryPath);
+        if (!s.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+
+      let name = entry;
+      try {
+        const metaRaw = await readFile(`${entryPath}/meta.json`, "utf8");
+        const meta = JSON.parse(metaRaw);
+        if (typeof meta.name === "string" && meta.name.length > 0) {
+          name = meta.name;
+        }
+      } catch {
+        // no meta.json or invalid — use slug as name
+      }
+
+      apps.push({ slug: entry, name });
+    }
+
+    return c.json({ apps }, 200);
+  });
 
   // ── POST /api/groups/:slug/apps/:app/acl — update per-app ACL ───────────
   app.post(
