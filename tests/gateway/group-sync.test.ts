@@ -603,12 +603,17 @@ describe('GroupSync — registerHandlers + dispose', () => {
     await sync.hydrate();
     sync.registerHandlers(hub);
 
-    // 3 handlers per app: op, snapshot, snapshot_lease.
-    expect(handlers.length).toBe(3);
+    // Per-app: op + snapshot + snapshot_lease (3).
+    // Group-scoped: m.matrix_os.app_acl, m.matrix_os.app_install,
+    // m.room.power_levels (3). Total = 6 for a single-app group.
+    expect(handlers.length).toBe(6);
     const types = new Set(handlers.map((h) => h.eventType));
     expect(types.has('m.matrix_os.app.notes.op')).toBe(true);
     expect(types.has('m.matrix_os.app.notes.snapshot')).toBe(true);
     expect(types.has('m.matrix_os.app.notes.snapshot_lease')).toBe(true);
+    expect(types.has('m.matrix_os.app_acl')).toBe(true);
+    expect(types.has('m.matrix_os.app_install')).toBe(true);
+    expect(types.has('m.room.power_levels')).toBe(true);
 
     // Route an inbound op — doc should update.
     const update = encodeYjsUpdateFromDoc((d) => d.getMap('kv').set('k', 'v'));
@@ -1684,5 +1689,232 @@ describe('GroupSync ACL — refresh on inbound event', () => {
     } as MatrixRawEvent);
 
     expect(sync.getAcl('notes')!.write_pl).toBe(25);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// m.matrix_os.app_install handler (T064)
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — app_install handler', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('clones the bundled files into the group dir, hydrates a fresh GroupSync slot, and notifies the shell hook', async () => {
+    const manifest = makeManifest();
+    await mkdir(join(home, 'groups', manifest.slug, 'apps'), { recursive: true });
+
+    const { client, state } = makeFakeMatrixClient();
+    state.powerLevels = { '@alice:matrix-os.com': 100 };
+
+    const notices: Array<{ kind: string; appSlug: string }> = [];
+    const bundleCalls: Array<{ url: string }> = [];
+    const fetchAppBundle = async (url: string) => {
+      bundleCalls.push({ url });
+      return {
+        files: [
+          { path: 'matrix.json', content: JSON.stringify({ slug: 'todo', name: 'Todo', version: '1.0.0' }) },
+          { path: 'index.html', content: '<!doctype html><html></html>' },
+          { path: 'src/app.js', content: 'console.log("hi");' },
+        ],
+      };
+    };
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      fetchAppBundle,
+      notifyShellHook: async (notice) => {
+        notices.push({ kind: notice.kind, appSlug: notice.appSlug });
+        return true;
+      },
+    });
+    await sync.hydrate();
+
+    await sync.observeAppInstall({
+      type: 'm.matrix_os.app_install',
+      event_id: '$install-1',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 1,
+      content: {
+        v: 1,
+        slug: 'todo',
+        bundle_url: 'https://example.com/todo.json',
+        description: 'A todo app',
+      },
+    } as MatrixRawEvent);
+
+    expect(bundleCalls.length).toBe(1);
+    expect(bundleCalls[0]!.url).toBe('https://example.com/todo.json');
+
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', 'todo', 'matrix.json'))).toBe(true);
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', 'todo', 'index.html'))).toBe(true);
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', 'todo', 'src', 'app.js'))).toBe(true);
+
+    const doc = sync.getDoc('todo');
+    expect(doc).toBeInstanceOf(Y.Doc);
+
+    expect(notices.length).toBe(1);
+    expect(notices[0]!.kind).toBe('app_install_offered');
+    expect(notices[0]!.appSlug).toBe('todo');
+  });
+
+  it('drops the install when user declines — filesystem untouched, no slot created', async () => {
+    const manifest = makeManifest();
+    await mkdir(join(home, 'groups', manifest.slug, 'apps'), { recursive: true });
+
+    const { client, state } = makeFakeMatrixClient();
+    state.powerLevels = { '@alice:matrix-os.com': 100 };
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      fetchAppBundle: async () => ({
+        files: [{ path: 'matrix.json', content: '{"slug":"todo","name":"Todo","version":"1.0.0"}' }],
+      }),
+      notifyShellHook: async () => false,
+    });
+    await sync.hydrate();
+
+    await sync.observeAppInstall({
+      type: 'm.matrix_os.app_install',
+      event_id: '$install-declined',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 1,
+      content: { v: 1, slug: 'todo', bundle_url: 'https://example.com/todo.json' },
+    } as MatrixRawEvent);
+
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', 'todo'))).toBe(false);
+    expect(() => sync.getDoc('todo')).toThrow();
+  });
+
+  it('rejects install from a sender below install_pl — logs warning, filesystem untouched', async () => {
+    const manifest = makeManifest();
+    await mkdir(join(home, 'groups', manifest.slug, 'apps'), { recursive: true });
+
+    const { client, state } = makeFakeMatrixClient();
+    state.powerLevels = {
+      '@alice:matrix-os.com': 100,
+      '@eve:matrix-os.com': 10,
+    };
+
+    const errors: Array<{ detail: Record<string, unknown> }> = [];
+    let bundleCalled = false;
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      fetchAppBundle: async () => {
+        bundleCalled = true;
+        return { files: [] };
+      },
+      notifyShellHook: async () => true,
+      onError: (_code, detail) => errors.push({ detail }),
+    });
+    await sync.hydrate();
+
+    await sync.observeAppInstall({
+      type: 'm.matrix_os.app_install',
+      event_id: '$install-eve',
+      sender: '@eve:matrix-os.com',
+      origin_server_ts: 1,
+      content: { v: 1, slug: 'malware', bundle_url: 'https://evil.example/bundle.json' },
+    } as MatrixRawEvent);
+
+    expect(bundleCalled).toBe(false);
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', 'malware'))).toBe(false);
+
+    const denials = errors.filter(
+      (e) =>
+        typeof e.detail.reason === 'string' &&
+        (e.detail.reason as string).includes('app_install_denied'),
+    );
+    expect(denials.length).toBe(1);
+  });
+
+  it('rejects install when slug is unsafe (path traversal)', async () => {
+    const manifest = makeManifest();
+    await mkdir(join(home, 'groups', manifest.slug, 'apps'), { recursive: true });
+
+    const { client, state } = makeFakeMatrixClient();
+    state.powerLevels = { '@alice:matrix-os.com': 100 };
+
+    const errors: Array<{ detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      fetchAppBundle: async () => ({ files: [] }),
+      onError: (_code, detail) => errors.push({ detail }),
+    });
+    await sync.hydrate();
+
+    await sync.observeAppInstall({
+      type: 'm.matrix_os.app_install',
+      event_id: '$install-bad',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 1,
+      content: { v: 1, slug: '../evil', bundle_url: 'https://example.com/x.json' },
+    } as MatrixRawEvent);
+
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', '../evil'))).toBe(false);
+    const rejections = errors.filter(
+      (e) =>
+        typeof e.detail.reason === 'string' &&
+        (e.detail.reason as string).includes('app_install_invalid_slug'),
+    );
+    expect(rejections.length).toBe(1);
+  });
+
+  it('rejects install when a bundle file path escapes the app dir', async () => {
+    const manifest = makeManifest();
+    await mkdir(join(home, 'groups', manifest.slug, 'apps'), { recursive: true });
+
+    const { client, state } = makeFakeMatrixClient();
+    state.powerLevels = { '@alice:matrix-os.com': 100 };
+
+    const errors: Array<{ detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      fetchAppBundle: async () => ({
+        files: [
+          { path: '../../etc/evil', content: 'pwned' },
+        ],
+      }),
+      onError: (_code, detail) => errors.push({ detail }),
+    });
+    await sync.hydrate();
+
+    await sync.observeAppInstall({
+      type: 'm.matrix_os.app_install',
+      event_id: '$install-pathbad',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 1,
+      content: { v: 1, slug: 'good', bundle_url: 'https://example.com/x.json' },
+    } as MatrixRawEvent);
+
+    expect(existsSync(join(home, 'groups', manifest.slug, 'apps', 'good'))).toBe(false);
+    const pathRejections = errors.filter(
+      (e) =>
+        typeof e.detail.reason === 'string' &&
+        (e.detail.reason as string).includes('app_install_path_escape'),
+    );
+    expect(pathRejections.length).toBe(1);
   });
 });

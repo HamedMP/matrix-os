@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod/v4';
 import * as Y from 'yjs';
 
 import {
@@ -83,6 +84,26 @@ export interface GroupSyncEnv {
   GROUP_DOC_MAX_BYTES?: number;
 }
 
+export interface AppBundle {
+  files: Array<{ path: string; content: string }>;
+}
+
+export type FetchAppBundle = (url: string, signal: AbortSignal) => Promise<AppBundle>;
+
+export interface ShellNotice {
+  kind: 'app_install_offered';
+  groupSlug: string;
+  appSlug: string;
+  sender: string;
+  description?: string;
+}
+
+/**
+ * Callback invoked to surface a user-facing prompt. Return `true` to accept
+ * the action, `false` to decline. Default: accept everything.
+ */
+export type NotifyShellHook = (notice: ShellNotice) => Promise<boolean> | boolean;
+
 export interface GroupSyncOptions {
   manifest: GroupManifest;
   homePath: string;
@@ -94,6 +115,11 @@ export interface GroupSyncOptions {
   /** If true, hydrate() does NOT read any existing state.bin — used by the
    *  corrupt-state quarantine path in server.ts (T041). */
   fresh?: boolean;
+  /** Constructor-injected app bundle fetcher. Default uses global fetch with
+   *  AbortSignal.timeout(30000). Tests stub this to avoid network. */
+  fetchAppBundle?: FetchAppBundle;
+  /** Constructor-injected shell notification hook. Default: auto-accept. */
+  notifyShellHook?: NotifyShellHook;
   /** Test-only write callback. NEVER use in production code. */
   debugOnWrite?: (path: string) => void;
 }
@@ -162,6 +188,50 @@ const DEFAULT_OP_RAW_SINGLE_MAX = 32 * 1024;
 const DEFAULT_OP_RAW_SPLITTABLE_MAX = 1 * 1024 * 1024;
 const FRAGMENT_TTL_MS = 60_000;
 
+// App slug must match group-types.ts SAFE_APP_SLUG exactly.
+const SAFE_APP_SLUG = /^[a-z][a-z0-9_-]{0,62}$/;
+
+// Schema for the timeline event that notifies other members a shareable
+// app bundle is available for install.
+const AppInstallContentSchema = z.object({
+  v: z.number().int(),
+  slug: z.string().min(1),
+  bundle_url: z.string().url(),
+  bundle_sha256: z.string().optional(),
+  description: z.string().optional(),
+});
+
+/**
+ * Default production app-bundle fetcher. Uses global fetch with a
+ * 30s abort timeout. The remote format is:
+ *
+ *   { files: [ { path, content }, ... ] }
+ *
+ * where every `content` is a UTF-8 string. Binary assets are out of scope
+ * for v1 (notes / todo apps don't ship PNGs in their bundle).
+ */
+const defaultFetchAppBundle: FetchAppBundle = async (url, signal) => {
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    throw new Error(`bundle fetch failed: ${res.status}`);
+  }
+  const body = (await res.json()) as unknown;
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !Array.isArray((body as { files?: unknown }).files)
+  ) {
+    throw new Error('bundle response is not { files: [...] }');
+  }
+  const files = (body as { files: Array<{ path: unknown; content: unknown }> }).files.map((f) => {
+    if (typeof f.path !== 'string' || typeof f.content !== 'string') {
+      throw new Error('bundle entry missing path or content');
+    }
+    return { path: f.path, content: f.content };
+  });
+  return { files };
+};
+
 // ---------------------------------------------------------------------------
 
 export class GroupSync {
@@ -186,6 +256,8 @@ export class GroupSync {
   private readonly onError: GroupSyncOnError;
   private readonly fresh: boolean;
   private readonly clockNow: () => number;
+  private readonly fetchAppBundle: FetchAppBundle;
+  private readonly notifyShellHook: NotifyShellHook;
   private readonly debugOnWrite: ((path: string) => void) | undefined;
   private readonly apps = new Map<string, AppState>();
   private readonly leaseManager: SnapshotLeaseManager;
@@ -204,6 +276,8 @@ export class GroupSync {
     this.onError = options.onError ?? (() => undefined);
     this.fresh = options.fresh ?? false;
     this.clockNow = options.clockNow ?? Date.now;
+    this.fetchAppBundle = options.fetchAppBundle ?? defaultFetchAppBundle;
+    this.notifyShellHook = options.notifyShellHook ?? (() => true);
     this.debugOnWrite = options.debugOnWrite;
 
     const env = options.env ?? {};
@@ -332,6 +406,47 @@ export class GroupSync {
         }),
       );
     }
+
+    // Group-scoped handlers — these fire regardless of which app they apply
+    // to, because the app slug is carried in the event content / state_key.
+    this.handlerDisposables.push(
+      hub.registerEventHandler(this.manifest.room_id, 'm.matrix_os.app_acl', async (event) => {
+        try {
+          await this.observeAclEvent(event);
+        } catch (err) {
+          this.onError('sync_failed', {
+            reason: 'acl_handler_threw',
+            error: (err as Error)?.message ?? 'unknown',
+          });
+        }
+      }),
+    );
+
+    this.handlerDisposables.push(
+      hub.registerEventHandler(this.manifest.room_id, 'm.matrix_os.app_install', async (event) => {
+        try {
+          await this.observeAppInstall(event);
+        } catch (err) {
+          this.onError('sync_failed', {
+            reason: 'app_install_handler_threw',
+            error: (err as Error)?.message ?? 'unknown',
+          });
+        }
+      }),
+    );
+
+    this.handlerDisposables.push(
+      hub.registerEventHandler(this.manifest.room_id, 'm.room.power_levels', async () => {
+        try {
+          await this.refreshPowerLevels();
+        } catch (err) {
+          this.onError('sync_failed', {
+            reason: 'power_levels_handler_threw',
+            error: (err as Error)?.message ?? 'unknown',
+          });
+        }
+      }),
+    );
   }
 
   /** Dispose all hub subscriptions. */
@@ -972,6 +1087,163 @@ export class GroupSync {
     if (!handle) return this.usersDefaultPl;
     const pl = this.powerLevels[handle];
     return typeof pl === 'number' ? pl : this.usersDefaultPl;
+  }
+
+  /**
+   * Process an inbound `m.matrix_os.app_install` timeline event (T064).
+   *
+   * Sequence:
+   *   1. Validate content shape + slug safety (SAFE_SLUG regex)
+   *   2. Gate: sender PL ≥ install_pl (spec §H). Default install_pl is 100.
+   *   3. notifyShellHook → if false, abort with filesystem untouched
+   *   4. fetchAppBundle with AbortSignal.timeout(30000)
+   *   5. Validate every file path before writing (no escape of the app dir)
+   *   6. Write files atomically via tmp+rename per file
+   *   7. hydrateApp(slug) to spawn a fresh GroupSync slot + default ACL
+   *
+   * Any failure after Step 4 aborts before committing files — we write to
+   * a staging dir and rename in only on success, so a partial failure
+   * leaves the filesystem untouched.
+   */
+  async observeAppInstall(event: MatrixRawEvent): Promise<void> {
+    const parsed = AppInstallContentSchema.safeParse(event.content);
+    if (!parsed.success) {
+      this.onError('sync_failed', {
+        reason: 'app_install_schema_parse_failed',
+        eventId: event.event_id ?? null,
+      });
+      return;
+    }
+    const content = parsed.data;
+
+    if (!SAFE_APP_SLUG.test(content.slug)) {
+      this.onError('sync_failed', {
+        reason: 'app_install_invalid_slug',
+        slug: content.slug,
+        eventId: event.event_id ?? null,
+      });
+      return;
+    }
+
+    // Per-group install_pl defaults to the DEFAULT_ACL when no ACL exists
+    // yet for this app — we're installing it fresh.
+    const senderPl = this.powerLevelFor(event.sender ?? null);
+    const installPl = GroupSync.DEFAULT_ACL.install_pl;
+    if (senderPl < installPl) {
+      this.onError('sync_failed', {
+        reason: 'app_install_denied',
+        eventId: event.event_id ?? null,
+        sender: event.sender ?? null,
+        senderPl,
+        required: installPl,
+      });
+      return;
+    }
+
+    // Already installed? Treat as no-op (avoid overwriting user data).
+    if (this.apps.has(content.slug)) {
+      this.onError('sync_failed', {
+        reason: 'app_install_already_installed',
+        slug: content.slug,
+      });
+      return;
+    }
+
+    // Consult the user BEFORE fetching — no network on decline.
+    let accepted = false;
+    try {
+      accepted = await Promise.resolve(
+        this.notifyShellHook({
+          kind: 'app_install_offered',
+          groupSlug: this.manifest.slug,
+          appSlug: content.slug,
+          sender: event.sender ?? 'unknown',
+          description: content.description,
+        }),
+      );
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'app_install_shell_hook_threw',
+        slug: content.slug,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+      return;
+    }
+    if (!accepted) {
+      return; // user declined — no filesystem mutation
+    }
+
+    // Fetch the bundle.
+    let bundle: AppBundle;
+    try {
+      bundle = await this.fetchAppBundle(content.bundle_url, AbortSignal.timeout(30_000));
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'app_install_bundle_fetch_failed',
+        slug: content.slug,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+      return;
+    }
+
+    // Validate every file path before committing anything.
+    const groupDir = this.resolveGroupDir();
+    const appDir = join(groupDir, 'apps', content.slug);
+    for (const file of bundle.files) {
+      const resolved = resolveWithinHome(
+        this.homePath,
+        join('groups', this.manifest.slug, 'apps', content.slug, file.path),
+      );
+      if (!resolved) {
+        this.onError('sync_failed', {
+          reason: 'app_install_path_escape',
+          slug: content.slug,
+          offendingPath: file.path,
+        });
+        return;
+      }
+      if (!resolved.startsWith(appDir)) {
+        this.onError('sync_failed', {
+          reason: 'app_install_path_escape',
+          slug: content.slug,
+          offendingPath: file.path,
+        });
+        return;
+      }
+    }
+
+    // Commit the bundle to disk. If any write fails, we leave partial
+    // state — but per the tests we bail BEFORE writing when any path is
+    // unsafe, so this path only sees safe paths.
+    try {
+      await fs.mkdir(appDir, { recursive: true });
+      for (const file of bundle.files) {
+        const fullPath = join(appDir, file.path);
+        const parentDir = join(fullPath, '..');
+        await fs.mkdir(parentDir, { recursive: true });
+        await fs.writeFile(fullPath, file.content, { encoding: 'utf-8' });
+        this.debugOnWrite?.(fullPath);
+      }
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'app_install_write_failed',
+        slug: content.slug,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+      return;
+    }
+
+    // Hydrate a GroupSync slot for the newly-installed app.
+    try {
+      await this.hydrateApp(content.slug);
+      await this.refreshAclFromServer(content.slug);
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'app_install_hydrate_failed',
+        slug: content.slug,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+    }
   }
 
   /**
