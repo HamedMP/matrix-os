@@ -5,6 +5,7 @@
   "icon": "notes",
   "author": "system",
   "version": "2.0.0",
+  "shared": true,
   "storage": {
     "tables": {
       "notes": {

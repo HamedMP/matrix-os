@@ -649,7 +649,30 @@ var newlyCreatedId = null;
 var GATEWAY = location.origin;
 var APP_NAME = 'notes';
 
-var useDb = !!(window.MatrixOS && window.MatrixOS.db);
+var useShared = !!(window.MatrixOS && window.MatrixOS.shared && window.MatrixOS.group);
+var useDb = !useShared && !!(window.MatrixOS && window.MatrixOS.db);
+
+/* --- Shared KV helpers (group mode) ---
+ * Notes stored as JSON blob under key "notes_data" in the group CRDT KV.
+ * All members see the same data; last-write-wins per key.
+ */
+function sharedLoad() {
+  window.MatrixOS.shared.get('notes_data').then(function(val) {
+    if (val) {
+      try { notes = JSON.parse(val); } catch(e) { notes = []; }
+    } else {
+      notes = [];
+    }
+    notes.forEach(function(n) { if (typeof n.pinned === 'undefined') n.pinned = false; });
+    renderList();
+    renderEditor();
+  }).catch(function() { renderList(); renderEditor(); });
+}
+
+function sharedSave() {
+  window.MatrixOS.shared.set('notes_data', JSON.stringify(notes));
+}
+
 
 /* SVG icon factory - all icons are static, no user content */
 function createSvg(paths, w, h, opts) {
@@ -769,6 +792,7 @@ document.addEventListener('keydown', function(e) {
 });
 
 function loadData() {
+  if (useShared) { sharedLoad(); return; }
   if (useDb) {
     window.MatrixOS.db.find('notes', { orderBy: { updated_at: 'desc' } })
       .then(function(rows) {
@@ -801,6 +825,7 @@ function loadData() {
 }
 
 function saveData() {
+  if (useShared) { sharedSave(); return; }
   if (useDb) return;
   fetch(GATEWAY + '/api/bridge/data', {
     method: 'POST',
@@ -811,7 +836,9 @@ function saveData() {
 
 function debounceSave() {
   if (saveTimer) clearTimeout(saveTimer);
-  if (useDb) {
+  if (useShared) {
+    saveTimer = setTimeout(sharedSave, 500);
+  } else if (useDb) {
     saveTimer = setTimeout(function() {
       var note = getActive();
       if (note) {
@@ -830,6 +857,20 @@ function getSortedNotes() {
 }
 
 function newNote() {
+  if (useShared) {
+    var note = {
+      id: 'n' + Date.now(),
+      title: '', content: '', pinned: false,
+      created: new Date().toISOString(), updated: new Date().toISOString()
+    };
+    notes.unshift(note);
+    newlyCreatedId = note.id;
+    activeId = note.id;
+    sharedSave();
+    renderList();
+    renderEditor();
+    return;
+  }
   if (useDb) {
     window.MatrixOS.db.insert('notes', { title: '', content: '', pinned: false }).then(function(result) {
       var note = { id: result.id, title: '', content: '', pinned: false, created: new Date().toISOString(), updated: new Date().toISOString() };
@@ -922,7 +963,9 @@ function deleteNote() {
     setTimeout(function() {
       notes = notes.filter(function(n) { return n.id !== removingId; });
       if (activeId === removingId) activeId = null;
-      if (useDb) {
+      if (useShared) {
+        sharedSave();
+      } else if (useDb) {
         window.MatrixOS.db.delete('notes', removingId);
       } else {
         saveData();
@@ -933,7 +976,9 @@ function deleteNote() {
   } else {
     notes = notes.filter(function(n) { return n.id !== removingId; });
     activeId = null;
-    if (useDb) {
+    if (useShared) {
+      sharedSave();
+    } else if (useDb) {
       window.MatrixOS.db.delete('notes', removingId);
     } else {
       saveData();
@@ -949,7 +994,9 @@ function togglePin(id, e) {
   if (note) {
     note.pinned = !note.pinned;
     note.updated = new Date().toISOString();
-    if (useDb) {
+    if (useShared) {
+      sharedSave();
+    } else if (useDb) {
       window.MatrixOS.db.update('notes', id, { pinned: note.pinned });
     } else {
       debounceSave();
@@ -1154,7 +1201,9 @@ function renderEditor() {
   pinBtn.addEventListener('click', function() {
     note.pinned = !note.pinned;
     note.updated = new Date().toISOString();
-    if (useDb) {
+    if (useShared) {
+      sharedSave();
+    } else if (useDb) {
       window.MatrixOS.db.update('notes', note.id, { pinned: note.pinned });
     } else {
       debounceSave();
@@ -1266,13 +1315,98 @@ function renderEmptyState(container) {
   container.appendChild(wrapper);
 }
 
-if (useDb && window.MatrixOS.db.onChange) {
+if (useShared) {
+  window.MatrixOS.shared.onChange(function() { loadData(); });
+} else if (useDb && window.MatrixOS.db.onChange) {
   window.MatrixOS.db.onChange('notes', function() { loadData(); });
 } else {
   window.addEventListener('message', function(e) {
     if (e.data && e.data.type === 'os:data-change') { loadData(); }
   });
 }
+
+/* ---- Share with group button (T084) ---- */
+
+function openShareDropdown() {
+  var existing = document.getElementById('shareDropdown');
+  if (existing) { existing.remove(); return; }
+
+  var dropdown = document.createElement('div');
+  dropdown.id = 'shareDropdown';
+  dropdown.style.cssText = 'position:absolute;top:52px;right:8px;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:10px;min-width:180px;box-shadow:0 4px 16px rgba(0,0,0,.12);padding:4px 0;';
+
+  var loading = document.createElement('div');
+  loading.style.cssText = 'padding:10px 14px;font-size:13px;color:var(--muted);';
+  loading.textContent = 'Loading groups…';
+  dropdown.appendChild(loading);
+
+  document.querySelector('.sidebar').appendChild(dropdown);
+
+  fetch('/api/groups', { signal: AbortSignal.timeout(10000) })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      dropdown.replaceChildren();
+      var groups = (data && data.groups) || [];
+      if (groups.length === 0) {
+        var empty = document.createElement('div');
+        empty.style.cssText = 'padding:10px 14px;font-size:13px;color:var(--muted);';
+        empty.textContent = 'No groups yet. Create a group first.';
+        dropdown.appendChild(empty);
+        return;
+      }
+      groups.forEach(function(g) {
+        var item = document.createElement('button');
+        item.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 14px;background:transparent;border:none;font-size:13px;color:var(--fg);cursor:pointer;font-family:inherit;';
+        item.textContent = g.name;
+        item.addEventListener('mouseenter', function() { item.style.background = 'var(--hover-bg)'; });
+        item.addEventListener('mouseleave', function() { item.style.background = 'transparent'; });
+        item.addEventListener('click', function() {
+          dropdown.remove();
+          window.MatrixOS.generate('share notes with the ' + g.name + ' group');
+        });
+        dropdown.appendChild(item);
+      });
+    })
+    .catch(function() {
+      dropdown.replaceChildren();
+      var err = document.createElement('div');
+      err.style.cssText = 'padding:10px 14px;font-size:13px;color:var(--muted);';
+      err.textContent = 'Failed to load groups.';
+      dropdown.appendChild(err);
+    });
+
+  // Light dismiss
+  function dismiss(e) {
+    if (!dropdown.contains(e.target) && e.target !== shareBtnEl) {
+      dropdown.remove();
+      document.removeEventListener('click', dismiss, true);
+    }
+  }
+  setTimeout(function() { document.addEventListener('click', dismiss, true); }, 0);
+}
+
+var shareBtnEl = document.createElement('button');
+shareBtnEl.className = 'btn-icon';
+shareBtnEl.id = 'shareBtn';
+shareBtnEl.title = useShared ? 'Shared with: ' + window.MatrixOS.group.name : 'Share with group';
+shareBtnEl.setAttribute('aria-label', 'Share notes with a group');
+shareBtnEl.appendChild((function() {
+  // Share icon: two nodes + arrow
+  return createSvg([
+    {type:'circle',cx:'18',cy:'5',r:'3'},
+    {type:'circle',cx:'6',cy:'12',r:'3'},
+    {type:'circle',cx:'18',cy:'19',r:'3'},
+    {type:'path',d:'M8.59 13.51l6.83 3.98M15.41 6.51L8.59 10.49'}
+  ], 24, 24, {width:'16', height:'16'});
+})());
+
+if (useShared) {
+  shareBtnEl.style.color = 'var(--accent)';
+  shareBtnEl.title = 'Shared with ' + window.MatrixOS.group.name;
+}
+
+shareBtnEl.addEventListener('click', openShareDropdown);
+document.querySelector('.header-actions').insertBefore(shareBtnEl, document.getElementById('newBtn'));
 
 loadData();
 </script>
