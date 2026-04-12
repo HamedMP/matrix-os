@@ -135,7 +135,7 @@ Never assume "the build was already broken" means your changes are clean. Always
 
 ## Audit log (qa-auditor maintains)
 
-_Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps)_
+_Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps + spec review + coverage + T082-T084 testid verification)_
 
 ### CRITICAL
 
@@ -143,19 +143,39 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps)_
 
 ### HIGH
 
-- `packages/gateway/src/group-routes.ts:81` — `member_handles` in `CreateGroupBodySchema` is `z.array(z.string())` with no regex validation. Spec §I requires `/^@[a-z0-9_]{1,32}:[a-z0-9.-]{1,253}$/` for member handles. `MEMBER_HANDLE_REGEX` already exists in `group-types.ts` but is not imported here. A malformed handle can be forwarded to `matrixClient.inviteToRoom()` and could trigger a Matrix 400 whose raw message gets wrapped (but the Matrix call itself wastes a roundtrip). **Owner: group-platform** (DM sent 2026-04-12). Fix: import `MEMBER_HANDLE_REGEX` from `group-types.ts`, add `.regex(MEMBER_HANDLE_REGEX)` inside the array item validator.
+- ~~`packages/gateway/src/group-routes.ts:81` — `member_handles` regex~~  **FIXED** (committed, verified 2026-04-12).
 
-- `packages/gateway/src/group-routes.ts:220,242,295,382,435,456,511` — Path param `:slug` is passed directly to `groupRegistry.get(slug)` without validating against the spec §I group slug regex `/^[a-z0-9][a-z0-9-]{0,62}$/`. `GROUP_SLUG_REGEX` is exported from `group-types.ts` but not used in route param handling. An adversary can probe with slugs containing `..`, null bytes, or path separators. **Owner: group-platform** (DM sent 2026-04-12). Fix: at the top of each route handler that reads `slug`, validate against `GROUP_SLUG_REGEX` and return 400 if it fails (before hitting the registry).
+- `packages/gateway/src/group-routes.ts:439,460,515` — Path param `:slug` still missing `GROUP_SLUG_REGEX.test(slug)` guard in three routes: `GET /presence`, `POST /data`, `POST /leave`. Four of seven routes were fixed; these three remain. **Owner: group-platform** (DM sent 2026-04-12 x2). Fix: add `if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: 'Invalid group slug' }, 400)` immediately after param extraction in each.
 
-- `tests/gateway/group-sync-conflict.property.test.ts:131` — Property test "three peers converge byte-equal after 200 random mutation sequences" **times out at 5000ms** (the default Vitest timeout). The test runs `numRuns: 200` and currently fails every run. The test logic appears correct; this is a performance/timeout budget issue. **Owner: crdt-engine** (DM sent 2026-04-12). Fix: add `{ timeout: 30_000 }` as the third argument to `it(...)` or configure a per-file `testTimeout` in the test file header.
+- ~~`tests/gateway/group-sync-conflict.property.test.ts:131` — property test timeout~~ **FIXED** (commit `f9f0a74`, verified green at 7284ms within 30s budget 2026-04-12).
+
+- **T095 Coverage gaps** — All six 062 gateway files are below the spec-required thresholds. This unblocks a post-merge regression window. **Owners per file** (DM sent 2026-04-12):
+  - `group-sync.ts`: 79.3% stmts / 58.0% branches — target ≥99% stmts / ≥99% branches. **Owner: crdt-engine.** 147 uncovered statements, 112 uncovered branches. Key gaps at lines 243-261, 361, 390, 421, 441-474 (bundle-fetch path, snapshot-policy daemon, ACL-state handler edge cases).
+  - `matrix-sync-hub.ts`: 86.6% stmts / 69.4% branches — target ≥99% / ≥99%. **Owner: matrix-transport.** 240 uncovered statements, 86 branches. Key gaps at lines 103-136, 146-158, 167-210, 217+ (startup cursor path, room state handler registration, gap-fill edge paths).
+  - `group-registry.ts`: 89.6% stmts / 66.7% branches — target ≥99% / ≥99%. **Owner: group-platform.** 64 uncovered statements, 12 branches. Key gaps at lines 17-68, 72, 85, 89, 97+ (slug derivation collision path, corrupt manifest quarantine, archive).
+  - `group-routes.ts`: 90.5% stmts / 79.8% branches — target ≥95% / ≥95%. **Owner: group-platform.** 214 uncovered statements, 61 branches. Key gaps at lines 19-96 (schema-level edge cases, power level checks, error paths for presense/data/leave).
+  - `group-ws.ts`: 80.3% stmts / 66.7% branches — target ≥95% / ≥95%. **Owner: collab-shell.** 129 uncovered statements, 31 branches. Key gaps at lines 95-182 (WebSocket handler construction, upgrade path, error close paths).
+  - `group-tools.ts`: 96.9% stmts / 82.4% branches — target ≥99% / ≥99%. **Owner: kernel-ipc.** 95 uncovered statements, 29 branches. Key gaps at lines 3-28, 44-94 (error translation paths, network timeout handling).
+
+- **T088/spec review finding I1** — In-process two-gateway integration test (`tests/gateway/group-integration.test.ts`) is missing. The 7-scenario Integration Test Checkpoint in spec.md has no test file. All 062 tests use stubbed Matrix clients; the full chain is only exercised via Playwright (which skips steps 4–9 pending T082–T084). **Owner: lead-integrator** (assign to any available agent). Fix: create `tests/gateway/group-integration.test.ts` using two `GroupSync` instances sharing a stubbed `MatrixSyncHub` bus, exercising all 7 checkpoint scenarios.
+
+- **T088/spec review finding W1** — Runtime join wiring gap: spec doesn't describe how a `GroupSync` spawned by `join_group` at runtime registers with the hub after `syncHub.start()`. The current implementation may silently drop events for late-joined groups. **Owner: lead-integrator** (spec amendment needed in §Integration Wiring + implementation verification). DM sent 2026-04-12.
 
 ### MED
 
 - `packages/gateway/src/group-routes.ts:79-92` — `CreateGroupBodySchema`, `JoinGroupBodySchema`, and `ShareAppBodySchema` are defined inline in `group-routes.ts` rather than exported from `group-types.ts`. T094 requires request body schemas to come from `group-types.ts` to prevent drift. **Owner: group-platform** (DM sent 2026-04-12). Fix: move these three schemas into `group-types.ts`, export them, and import in `group-routes.ts`.
 
-- `shell/src/components/GroupSwitcher.tsx` — No `data-testid` attributes on any interactive element (trigger button, group list items, create button). The Playwright e2e scaffold in `tests/e2e/shared-app.spec.ts` falls back to `aria-haspopup="listbox"` for now but proper `data-testid` is required for stable selectors. **Owner: collab-shell** (DM sent 2026-04-12). Fix: add `data-testid="group-switcher-trigger"` to the trigger button, `data-testid="group-switcher-item-{slug}"` to each list item, `data-testid="group-create-button"` to the create action.
+- **T088/spec review S2** — Spec §H does not define mid-connection WS token expiry behavior (what close code, does shell reconnect?). **Owner: lead-integrator** (spec amendment to §H). DM sent 2026-04-12.
 
-- Two-context Clerk auth not wired for e2e: `E2E_TEST_BYPASS=1` is in the shell's `playwright.config.ts` and skips Clerk. For the full two-user shared-app flow (steps 4–9) this means both contexts share the same identity. True two-user e2e needs real Clerk test users or a stub identity fixture injected per context. Filed as a known gap in `tests/e2e/shared-app.spec.ts` header comment. Steps 4–9 are explicitly `test.skip`'d pending collab-shell T082–T084 landing, at which point this auth gap should be resolved. **Owner: lead-integrator** (DM sent 2026-04-12).
+- **T088/spec review F1** — Queue 30-min escalation clock resets on restart: `queue.jsonl` entries lack `first_queued_at` so the escalation timer can't survive a gateway restart. **Owner: crdt-engine** (spec amendment + implementation). DM sent 2026-04-12.
+
+- **T088/spec review C1** — Concurrent local mutations: two rapid writes before first send completes produce deltas against mismatched state vectors. Spec §E.2 point 5 doesn't say mutations are serialized. **Owner: crdt-engine** (verify implementation + spec clarification). DM sent 2026-04-12.
+
+- **T088/spec review S4** — `appSlug` validation in ACL route uses inline `SAFE_APP_SLUG` regex rather than the canonical `SAFE_SLUG` from group-types.ts. Two copies can drift. **Owner: group-platform**. Fix: import and use the project-wide `SAFE_SLUG` constant.
+
+- ~~`shell/src/components/GroupSwitcher.tsx` — No `data-testid` attributes on any interactive element.~~ **FIXED** by collab-shell T082-T084 (commit `11c4883`, 2026-04-12). `data-testid="group-switcher-trigger"` on button, `data-testid="group-switcher-item-{slug}"` on each item, `data-testid="group-switcher-item-personal"` on personal item. `home/apps/notes/index.html` also now has `data-testid="app-notes-share-button"` and `data-testid="share-group-item-{slug}"`. Playwright e2e spec updated to use these testids directly (step 02-03 assertions); steps 4-9 remain skipped pending live backend.
+
+- Two-context Clerk auth not wired for e2e: `E2E_TEST_BYPASS=1` is in the shell's `playwright.config.ts` and skips Clerk. For the full two-user shared-app flow (steps 4–9) this means both contexts share the same identity. True two-user e2e needs real Clerk test users or a stub identity fixture injected per context. Filed as a known gap in `tests/e2e/shared-app.spec.ts` header comment. T082-T084 have now landed; steps 4-9 remain skipped pending live backend. Auth gap still open. **Owner: lead-integrator** (DM sent 2026-04-12).
 
 ### LOW
 
@@ -168,6 +188,14 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps)_
 - T091 sweep: No `appendFileSync` or `writeFileSync` in request handlers or the sync loop. All filesystem I/O uses `fs/promises`. Clean.
 
 - T093 sweep: All mutating routes in `group-routes.ts` have `bodyLimit` middleware with the correct limits (lifecycle routes 256KB, data route 512KB, leave route 1KB). Clean.
+
+### Spec review verdict (T088, 2026-04-12)
+
+`/review-spec specs/062-shared-apps/spec.md` — **WARN** (0 CRITICAL, 6 HIGH, 7 MED, 3 LOW). Full report output in qa-auditor session. HIGH findings filed above. Constitution principle VIII satisfied (auth matrix exists, input validation specified, no wildcard CORS, no internal leaks). Main gaps: runtime join wiring, WS token expiry, queue clock persistence, coverage.
+
+### Pre-existing failures (NOT 062)
+
+8 test failures exist in the full suite that predate this spec: `tests/shell/desktop-config.test.ts` (2), `tests/shell/theme-presets.test.ts` (3), `tests/shell/useTheme.test.ts` (1), `tests/gateway/voice/tts/fallback.test.ts` (2). None are in 062-owned files. The property test timeout (1 failure) was fixed by crdt-engine commit `f9f0a74`.
 
 ### Build baseline delta (2026-04-12)
 
