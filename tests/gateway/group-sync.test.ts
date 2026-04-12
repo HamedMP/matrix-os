@@ -2287,3 +2287,255 @@ describe('GroupSync — presence handler', () => {
     expect(sync.getPresence()['@bob:matrix-os.com']!.status).toBe('online');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage: C1 concurrent mutation serialization
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — C1 concurrent mutation serialization', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('serializes two concurrent applyLocalMutation calls per-app so deltas do not overlap', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    // Fire two mutations concurrently without awaiting the first.
+    const p1 = sync.applyLocalMutation('notes', (doc) => {
+      doc.getMap('kv').set('k1', 'v1');
+    });
+    const p2 = sync.applyLocalMutation('notes', (doc) => {
+      doc.getMap('kv').set('k2', 'v2');
+    });
+    await Promise.all([p1, p2]);
+
+    // Both keys land in the doc.
+    expect(sync.getDoc('notes').getMap('kv').get('k1')).toBe('v1');
+    expect(sync.getDoc('notes').getMap('kv').get('k2')).toBe('v2');
+
+    // Two separate sends (one per mutation, serialized). Each delta encodes
+    // only its own key, so each is independently applicable on a peer.
+    expect(state.sendCalls.length).toBe(2);
+
+    // Simulate a fresh peer receiving both ops in order.
+    await scaffoldApp(home, 'peer', 'notes');
+    const peerSync = new GroupSync({
+      manifest: makeManifest({ slug: 'peer', room_id: '!peer:m' }),
+      homePath: home,
+      matrixClient: makeFakeMatrixClient().client,
+      selfHandle: '@peer:matrix-os.com',
+    });
+    await peerSync.hydrate();
+
+    for (const call of state.sendCalls) {
+      await peerSync.applyRemoteOp('notes', {
+        type: 'm.matrix_os.app.notes.op',
+        event_id: `$${Math.random()}`,
+        sender: '@alice:matrix-os.com',
+        origin_server_ts: 1,
+        content: call.content,
+      });
+    }
+    peerSync.getDoc('notes').getMap('kv'); // materialize
+    expect(peerSync.getDoc('notes').getMap('kv').get('k1')).toBe('v1');
+    expect(peerSync.getDoc('notes').getMap('kv').get('k2')).toBe('v2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: F1 queue.jsonl first_queued_at survives restart
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — F1 escalation clock survives restart', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('recovers firstFailureAt from the oldest queue.jsonl entry on hydrate', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    clientState.sendShouldFail = true;
+
+    let now = 1_000_000;
+    const errors: Array<{ code: GroupSyncErrorCode; detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      clockNow: () => now,
+      onError: (code, detail) => errors.push({ code, detail }),
+    });
+    await sync.hydrate();
+
+    // First failure at now=1_000_000.
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k1', 'v1'));
+
+    // "Restart": new GroupSync instance with the same homePath at a later
+    // time — 31 minutes after the first failure.
+    now += 31 * 60 * 1000;
+    const errors2: Array<{ code: GroupSyncErrorCode; detail: Record<string, unknown> }> = [];
+    const sync2 = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      clockNow: () => now,
+      onError: (code, detail) => errors2.push({ code, detail }),
+    });
+    await sync2.hydrate();
+
+    // Another failed send — now 31 minutes have elapsed since the ORIGINAL
+    // first failure, so the persistent escalation should fire immediately.
+    await sync2.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k2', 'v2'));
+
+    const persistent = errors2.filter(
+      (e) =>
+        e.code === 'sync_failed' &&
+        typeof e.detail.reason === 'string' &&
+        (e.detail.reason as string).includes('persistent'),
+    );
+    expect(persistent.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: handler error-catch branches + edge cases
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — handler error-catch branches', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('double hydrate() is a no-op', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    await sync.hydrate(); // no-op
+    expect(sync.getDoc('notes')).toBeInstanceOf(Y.Doc);
+  });
+
+  it('getAcl returns null for an unknown app', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    expect(sync.getAcl('nonexistent')).toBeNull();
+  });
+
+  it('observePresenceEvent with missing sender is dropped', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+
+    expect(Object.keys(sync.getPresence()).length).toBe(0);
+  });
+
+  it('observePresenceEvent with unknown status string is dropped', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [{ userId: '@bob:matrix-os.com', membership: 'join' }];
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'custom_status_garbage' },
+    } as MatrixRawEvent);
+
+    expect(sync.getPresence()['@bob:matrix-os.com']).toBeUndefined();
+  });
+
+  it('duplicate presence event (identical entry) does not fire listener', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [{ userId: '@bob:matrix-os.com', membership: 'join' }];
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const fires: number[] = [];
+    sync.onPresenceChanged(() => fires.push(1));
+
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+
+    expect(fires.length).toBe(1);
+  });
+});

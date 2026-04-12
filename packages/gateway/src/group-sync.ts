@@ -186,6 +186,10 @@ interface AppState {
   /** Inbound fragment reassembly buffer, keyed by `chunk_seq.group_id`.
    *  Bounded implicitly by the 60s TTL sweep in `tickFragmentGc`. */
   fragmentBuffer: Map<string, FragmentGroup>;
+  /** Serializes applyLocalMutation sends so two concurrent calls don't
+   *  encode overlapping deltas against stale state vectors. Chained via
+   *  a promise tail — each call awaits the prior. */
+  sendTail: Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -813,116 +817,115 @@ export class GroupSync {
       return;
     }
 
-    // Snapshot the state vector BEFORE the local mutation so we can encode
-    // only the delta rather than the full doc state.
-    const prevStateVector = Y.encodeStateVector(app.doc);
-    // Also save the full pre-mutation state for rollback on cap overflow.
-    const priorBytes = Y.encodeStateAsUpdate(app.doc);
+    // C1 fix: serialize against prior in-flight sends so two concurrent
+    // applyLocalMutation calls don't encode overlapping deltas against
+    // stale state vectors. The tail is per-app so different apps are
+    // independent.
+    const prior = app.sendTail;
+    let resolve!: () => void;
+    app.sendTail = new Promise<void>((r) => { resolve = r; });
+    await prior;
 
     try {
-      app.doc.transact(() => {
-        mutator(app.doc);
-      }, 'local');
-    } catch (err) {
-      this.onError('sync_failed', {
-        reason: 'local_mutation_threw',
-        appSlug,
-        error: (err as Error)?.message ?? 'unknown',
-      });
-      return;
-    }
+      // Snapshot the state vector BEFORE the local mutation so we can encode
+      // only the delta rather than the full doc state.
+      const prevStateVector = Y.encodeStateVector(app.doc);
+      // Also save the full pre-mutation state for rollback on cap overflow.
+      const priorBytes = Y.encodeStateAsUpdate(app.doc);
 
-    // Enforce state.bin cap post-mutation. If the new state would exceed the
-    // cap, roll the doc back to its prior bytes and emit state_overflow.
-    const newStateBytes = Y.encodeStateAsUpdate(app.doc);
-    if (newStateBytes.length > this.env.GROUP_STATE_MAX_BYTES) {
-      // Replace in-memory doc with a fresh one loaded from priorBytes. This
-      // preserves changeListeners (stored on `app`, not on the doc).
-      const rolled = new Y.Doc();
-      Y.applyUpdate(rolled, priorBytes);
-      app.doc = rolled;
-      this.onError('state_overflow', {
-        reason: 'local_mutation_would_exceed_state_cap',
-        appSlug,
-        cap: this.env.GROUP_STATE_MAX_BYTES,
-        projectedBytes: newStateBytes.length,
-      });
-      return;
-    }
-
-    const update = Y.encodeStateAsUpdate(app.doc, prevStateVector);
-    // Empty update = no-op mutation; skip the network send.
-    if (update.length === 0) {
-      return;
-    }
-
-    // Size gate: reject updates that exceed the splittable ceiling outright.
-    if (update.length > DEFAULT_OP_RAW_SPLITTABLE_MAX) {
-      // Roll back — the doc already reflects the mutation but we refuse to
-      // emit it.
-      const rolled = new Y.Doc();
-      Y.applyUpdate(rolled, priorBytes);
-      app.doc = rolled;
-      this.onError('op_too_large', {
-        reason: 'local_op_exceeds_splittable_ceiling',
-        appSlug,
-        rawBytes: update.length,
-        cap: DEFAULT_OP_RAW_SPLITTABLE_MAX,
-      });
-      return;
-    }
-
-    const contentsToSend = this.buildOutboundContents(app, update);
-
-    // Send each (single or fragment) via Matrix. On first failure, queue
-    // everything remaining for retry.
-    let sendOk = true;
-    for (let i = 0; i < contentsToSend.length; i++) {
-      const content = contentsToSend[i]!;
       try {
-        await this.client.sendCustomEvent(
-          this.manifest.room_id,
-          `m.matrix_os.app.${appSlug}.op`,
-          content as unknown as Record<string, unknown>,
-        );
+        app.doc.transact(() => {
+          mutator(app.doc);
+        }, 'local');
       } catch (err) {
-        sendOk = false;
-        // Queue this + remaining fragments so ordering is preserved.
-        for (let j = i; j < contentsToSend.length; j++) {
-          await this.enqueueForRetry(app, contentsToSend[j]!, err);
-        }
-        break;
-      }
-    }
-    if (sendOk) {
-      this.markSendSuccess(app);
-    }
-
-    // Persist local state regardless — optimistic: the doc is the source of
-    // truth for this user; queue.jsonl replays the mutation when the network
-    // returns.
-    try {
-      await this.persistState(app);
-      app.opsSinceSnapshot += 1;
-    } catch (err) {
-      this.onError('sync_failed', {
-        reason: 'local_persist_failed',
-        appSlug,
-        error: (err as Error)?.message ?? 'unknown',
-      });
-    }
-
-    for (const listener of Array.from(app.changeListeners)) {
-      try {
-        listener({
+        this.onError('sync_failed', {
+          reason: 'local_mutation_threw',
           appSlug,
-          origin: 'local',
-          eventId: null,
-          sender: this.selfHandle,
+          error: (err as Error)?.message ?? 'unknown',
         });
-      } catch {
-        // listener failures must not break dispatch
+        return;
       }
+
+      const newStateBytes = Y.encodeStateAsUpdate(app.doc);
+      if (newStateBytes.length > this.env.GROUP_STATE_MAX_BYTES) {
+        const rolled = new Y.Doc();
+        Y.applyUpdate(rolled, priorBytes);
+        app.doc = rolled;
+        this.onError('state_overflow', {
+          reason: 'local_mutation_would_exceed_state_cap',
+          appSlug,
+          cap: this.env.GROUP_STATE_MAX_BYTES,
+          projectedBytes: newStateBytes.length,
+        });
+        return;
+      }
+
+      const update = Y.encodeStateAsUpdate(app.doc, prevStateVector);
+      if (update.length === 0) {
+        return;
+      }
+
+      if (update.length > DEFAULT_OP_RAW_SPLITTABLE_MAX) {
+        const rolled = new Y.Doc();
+        Y.applyUpdate(rolled, priorBytes);
+        app.doc = rolled;
+        this.onError('op_too_large', {
+          reason: 'local_op_exceeds_splittable_ceiling',
+          appSlug,
+          rawBytes: update.length,
+          cap: DEFAULT_OP_RAW_SPLITTABLE_MAX,
+        });
+        return;
+      }
+
+      const contentsToSend = this.buildOutboundContents(app, update);
+
+      let sendOk = true;
+      for (let i = 0; i < contentsToSend.length; i++) {
+        const content = contentsToSend[i]!;
+        try {
+          await this.client.sendCustomEvent(
+            this.manifest.room_id,
+            `m.matrix_os.app.${appSlug}.op`,
+            content as unknown as Record<string, unknown>,
+          );
+        } catch (err) {
+          sendOk = false;
+          for (let j = i; j < contentsToSend.length; j++) {
+            await this.enqueueForRetry(app, contentsToSend[j]!, err);
+          }
+          break;
+        }
+      }
+      if (sendOk) {
+        this.markSendSuccess(app);
+      }
+
+      try {
+        await this.persistState(app);
+        app.opsSinceSnapshot += 1;
+      } catch (err) {
+        this.onError('sync_failed', {
+          reason: 'local_persist_failed',
+          appSlug,
+          error: (err as Error)?.message ?? 'unknown',
+        });
+      }
+
+      for (const listener of Array.from(app.changeListeners)) {
+        try {
+          listener({
+            appSlug,
+            origin: 'local',
+            eventId: null,
+            sender: this.selfHandle,
+          });
+        } catch {
+          // listener failures must not break dispatch
+        }
+      }
+    } finally {
+      resolve();
     }
   }
 
@@ -1068,6 +1071,25 @@ export class GroupSync {
       }
     }
 
+    // F1: recover the 30-minute escalation clock from the oldest queued
+    // entry so a gateway restart doesn't reset the persistent-failure window.
+    let firstFailureAt: number | null = null;
+    if (!this.fresh) {
+      const queuePath = join(dataDir, 'queue.jsonl');
+      try {
+        const raw = await fs.readFile(queuePath, 'utf-8');
+        const firstLine = raw.split('\n').find((l) => l.length > 0);
+        if (firstLine) {
+          const parsed = JSON.parse(firstLine) as { queued_at?: unknown };
+          if (typeof parsed.queued_at === 'number') {
+            firstFailureAt = parsed.queued_at;
+          }
+        }
+      } catch {
+        // absent or corrupt — start fresh
+      }
+    }
+
     this.apps.set(appSlug, {
       appSlug,
       doc,
@@ -1076,11 +1098,12 @@ export class GroupSync {
       lastSnapshotEventId,
       changeListeners: new Set(),
       acl: null,
-      firstFailureAt: null,
+      firstFailureAt,
       persistentEscalated: false,
       opsSinceSnapshot: 0,
       lastSnapshotAt: 0,
       fragmentBuffer: new Map(),
+      sendTail: Promise.resolve(),
     });
   }
 
