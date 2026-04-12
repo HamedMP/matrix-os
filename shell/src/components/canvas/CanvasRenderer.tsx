@@ -26,7 +26,11 @@ interface CanvasData {
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
-export function CanvasRenderer() {
+interface CanvasRendererProps {
+  onShare?: (appTitle: string) => void;
+}
+
+export function CanvasRenderer({ onShare }: CanvasRendererProps) {
   const windows = useWindowManager((s) => s.windows);
   const setTransform = useCanvasTransform((s) => s.setTransform);
   const fitAll = useCanvasTransform((s) => s.fitAll);
@@ -232,7 +236,7 @@ export function CanvasRenderer() {
           </div>
         )}
         {visibleWindows.map((win) => (
-          <CanvasWindow key={win.id} win={win} />
+          <CanvasWindow key={win.id} win={win} onShare={onShare} />
         ))}
       </CanvasTransform>
       <CanvasMinimap />

@@ -10,7 +10,7 @@ import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { useChatContext } from "@/stores/chat-context";
-import { Minus, Maximize2 } from "lucide-react";
+import { Minus, Maximize2, Share2 } from "lucide-react";
 
 function useThemeStyle() {
   const [style, setStyle] = useState<string>("flat");
@@ -31,9 +31,10 @@ const MIN_HEIGHT = 200;
 
 interface CanvasWindowProps {
   win: AppWindow;
+  onShare?: (appSlug: string) => void;
 }
 
-export function CanvasWindow({ win }: CanvasWindowProps) {
+export function CanvasWindow({ win, onShare }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
@@ -238,8 +239,18 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
             {win.title}
           </span>
         </div>
-        {/* Spacer to balance the traffic lights */}
-        <div className="w-[42px] shrink-0" />
+        {/* Right: share button (non-system windows only) */}
+        <div className="w-[42px] shrink-0 flex items-center justify-end">
+          {!win.path.startsWith("__") && onShare && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onShare(win.title); }}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-foreground/60 hover:text-foreground hover:bg-foreground/10 transition-colors"
+              title="Share to group"
+            >
+              <Share2 className="size-3" />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

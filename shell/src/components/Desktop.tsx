@@ -35,7 +35,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon, Share2Icon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon, Share2Icon, XIcon } from "lucide-react";
 import { ShareAppDialog } from "./ShareAppDialog";
 import { GroupAppList } from "./GroupAppList";
 import { UserButton } from "./UserButton";
@@ -352,14 +352,19 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareAppSlug, setShareAppSlug] = useState<string | null>(null);
-  const [activeGroupSlug, setActiveGroupSlug] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("group");
-  });
+  const [activeGroupSlug, setActiveGroupSlug] = useState<string | null>(null);
+  const [showGroupApps, setShowGroupApps] = useState(true);
 
   useEffect(() => {
+    const slug = new URLSearchParams(window.location.search).get("group");
+    if (slug) {
+      setActiveGroupSlug(slug);
+      setShowGroupApps(true);
+    }
     const onPopState = () => {
-      setActiveGroupSlug(new URLSearchParams(window.location.search).get("group"));
+      const s = new URLSearchParams(window.location.search).get("group");
+      setActiveGroupSlug(s);
+      if (s) setShowGroupApps(true);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -1338,10 +1343,16 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             onDeleteApp={deleteAppOnServer}
           />
 
-          {activeGroupSlug && (
+          {activeGroupSlug && showGroupApps && (
             <div className="absolute top-2 right-2 w-72 bg-card/90 backdrop-blur-xl rounded-lg border border-border/40 shadow-xl z-[50] overflow-hidden">
-              <div className="px-3 py-2 border-b border-border/30">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
                 <h3 className="text-xs font-semibold text-foreground/70">Shared Apps</h3>
+                <button
+                  onClick={() => setShowGroupApps(false)}
+                  className="p-0.5 rounded text-foreground/40 hover:text-foreground/80 hover:bg-foreground/10"
+                >
+                  <XIcon className="size-3.5" />
+                </button>
               </div>
               <GroupAppList
                 groupSlug={activeGroupSlug}
@@ -1371,7 +1382,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           )}
 
           {modeConfig.showWindows && desktopMode === "canvas" && !showSetup && (
-            <CanvasRenderer />
+            <CanvasRenderer onShare={(title) => setShareAppSlug(nameToSlug(title))} />
           )}
 
           {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
@@ -1448,15 +1459,16 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}
                   </CardTitle>
-                  <div className="w-[72px] flex items-center justify-end gap-1">
+                  <div className="flex items-center justify-end gap-1.5">
                     {!win.path.startsWith("__") && (
                       <button
                         data-testid={`share-app-${win.id}`}
                         onClick={(e) => { e.stopPropagation(); setShareAppSlug(nameToSlug(win.title)); }}
-                        className="p-1 rounded text-foreground/40 hover:text-foreground/80 hover:bg-foreground/10 transition-colors"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs text-foreground/70 hover:text-foreground hover:bg-primary/10 border border-border/40 hover:border-primary/30 transition-colors"
                         title="Share to group"
                       >
-                        <Share2Icon className="size-3" />
+                        <Share2Icon className="size-3.5" />
+                        <span>Share</span>
                       </button>
                     )}
                     <AIButton

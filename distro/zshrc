@@ -14,6 +14,9 @@ bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
 bindkey '^[[3~' delete-char
 
+# ~/.local/bin first so `claude install` (native) takes priority over npm-global
+export PATH="$HOME/.local/bin:$PATH"
+
 # Set USER from Matrix handle (Alpine doesn't set USER for service accounts)
 export USER="${MATRIX_HANDLE//[\$\`]/}"
 export USER="${USER:-matrixos}"
