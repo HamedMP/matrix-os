@@ -116,21 +116,15 @@ describe("group-routes lifecycle", () => {
       expect(matrixClient.createRoom).toHaveBeenCalledTimes(1);
     });
 
-    it("calls matrixClient.setPowerLevels once, after createRoom", async () => {
-      await req(app, "POST", "/api/groups", { name: "Test Group" });
-      expect(matrixClient.setPowerLevels).toHaveBeenCalledTimes(1);
-      // createRoom must be called before setPowerLevels
-      const createOrder = (matrixClient.createRoom as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-      const plOrder = (matrixClient.setPowerLevels as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-      expect(createOrder).toBeLessThan(plOrder);
-    });
-
-    it("setPowerLevels is called with the exact power-level map from spec §G", async () => {
+    it("passes powerLevelContentOverride with spec §G map in createRoom", async () => {
       vi.mocked(matrixClient.whoami).mockResolvedValue({ userId: "@owner:matrix-os.com" });
       await req(app, "POST", "/api/groups", { name: "Test Group" });
 
-      const [roomId, content] = (matrixClient.setPowerLevels as ReturnType<typeof vi.fn>).mock.calls[0] as [string, PowerLevelsContent];
-      expect(roomId).toBe("!newroom:matrix-os.com");
+      expect(matrixClient.createRoom).toHaveBeenCalledTimes(1);
+      const input = (matrixClient.createRoom as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+        powerLevelContentOverride?: PowerLevelsContent;
+      };
+      const content = input.powerLevelContentOverride!;
       expect(content.users_default).toBe(0);
       expect(content.state_default).toBe(50);
       expect(content.events_default).toBe(0);
@@ -138,6 +132,24 @@ describe("group-routes lifecycle", () => {
       expect(content.events?.["m.matrix_os.app_acl"]).toBe(100);
       expect(content.events?.["m.matrix_os.app_install"]).toBe(50);
       expect(content.users?.["@owner:matrix-os.com"]).toBe(100);
+    });
+
+    it("passes m.matrix_os.group in initialState of createRoom", async () => {
+      await req(app, "POST", "/api/groups", { name: "Test Group" });
+      const input = (matrixClient.createRoom as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+        initialState?: Array<{ type: string; state_key: string; content: Record<string, unknown> }>;
+      };
+      const groupEvent = input.initialState?.find((e) => e.type === "m.matrix_os.group");
+      expect(groupEvent).toBeDefined();
+      expect(groupEvent!.content.v).toBe(1);
+      expect(groupEvent!.content.schema_version).toBe(1);
+      expect(groupEvent!.content.default_acl_policy).toBe("open");
+    });
+
+    it("does not call setPowerLevels or setRoomState separately for group creation", async () => {
+      await req(app, "POST", "/api/groups", { name: "Test Group" });
+      expect(matrixClient.setPowerLevels).not.toHaveBeenCalled();
+      expect(matrixClient.setRoomState).not.toHaveBeenCalled();
     });
 
     it("registers the group in groupRegistry after creation", async () => {

@@ -150,7 +150,7 @@ services:
 
   conduit:
     profiles: ["full"]
-    image: matrixconduit/matrix-conduit:latest
+    image: matrixconduit/matrix-conduit:v0.10.12
     environment:
       - CONDUIT_CONFIG=/etc/conduit.toml
     ports:

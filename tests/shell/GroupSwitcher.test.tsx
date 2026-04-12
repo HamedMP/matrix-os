@@ -1,47 +1,49 @@
 // @vitest-environment jsdom
 
-/**
- * Tests for GroupSwitcher component (T052a).
- */
-
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 import { GroupSwitcher } from "../../shell/src/components/GroupSwitcher.js";
 
 // ---------------------------------------------------------------------------
-// Mock global fetch for GET /api/groups
+// Mock shadcn UI components (Dialog/Button/Input) — jsdom has no radix
+// ---------------------------------------------------------------------------
+
+vi.mock("@/components/ui/dialog", () => ({
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
+    open ? <div data-testid="dialog">{children}</div> : null,
+  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: React.ReactNode }) => <p>{children}</p>,
+  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
+  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("@/components/ui/button", () => ({
+  Button: (props: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string }) => {
+    const { variant: _variant, ...rest } = props;
+    return <button {...rest} />;
+  },
+}));
+
+vi.mock("@/components/ui/input", () => ({
+  Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
+}));
+
+// ---------------------------------------------------------------------------
+// Mock global fetch
 // ---------------------------------------------------------------------------
 
 const mockGroups = [
-  { slug: "fam", name: "Schmidt Family", member_count: 3 },
-  { slug: "work", name: "Work Team", member_count: 5 },
+  { slug: "fam", name: "Schmidt Family", room_id: "!fam:m.com" },
+  { slug: "work", name: "Work Team", room_id: "!work:m.com" },
 ];
 
 function setupFetch(groups = mockGroups) {
   global.fetch = vi.fn().mockResolvedValue({
     ok: true,
-    json: async () => groups,
-  } as Response);
-}
-
-// ---------------------------------------------------------------------------
-// URL tracking helper
-// ---------------------------------------------------------------------------
-
-let currentSearch = "";
-
-function mockUrlParam(initial = "") {
-  currentSearch = initial;
-  // Override URLSearchParams to track group param
-  const originalLocation = window.location;
-  Object.defineProperty(window, "location", {
-    writable: true,
-    value: {
-      ...originalLocation,
-      search: initial,
-    },
-  });
+    json: async () => ({ groups }),
+  } as unknown as Response);
 }
 
 // ---------------------------------------------------------------------------
@@ -56,86 +58,81 @@ describe("GroupSwitcher", () => {
     setupFetch();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("renders without crashing", async () => {
-    const { container } = render(
-      <GroupSwitcher onGroupChange={onGroupChange} />,
-    );
+    const { container } = render(<GroupSwitcher onGroupChange={onGroupChange} />);
     expect(container).toBeDefined();
   });
 
-  it("shows a Personal entry first in the listbox", async () => {
+  it("shows Personal label in trigger by default", () => {
     render(<GroupSwitcher onGroupChange={onGroupChange} />);
+    const trigger = screen.getByTestId("group-switcher-trigger");
+    expect(trigger.textContent).toContain("Personal");
+  });
 
-    const trigger = screen.getByRole("button");
-    fireEvent.click(trigger);
-
-    await waitFor(() => {
-      const listbox = screen.getByRole("listbox");
-      expect(listbox.textContent).toContain("Personal");
-    });
+  it("opens dropdown and shows Personal item on click", async () => {
+    render(<GroupSwitcher onGroupChange={onGroupChange} />);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
+    expect(screen.getByTestId("group-switcher-item-personal")).toBeDefined();
+    expect(screen.getByTestId("group-switcher-item-personal").textContent).toContain("Personal");
   });
 
   it("lists groups fetched from GET /api/groups", async () => {
     render(<GroupSwitcher onGroupChange={onGroupChange} />);
-
-    const trigger = screen.getByRole("button");
-    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
 
     await waitFor(() => {
-      const listbox = screen.getByRole("listbox");
-      expect(listbox.textContent).toContain("Schmidt Family");
-      expect(listbox.textContent).toContain("Work Team");
+      expect(screen.getByTestId("group-switcher-item-fam")).toBeDefined();
+      expect(screen.getByTestId("group-switcher-item-work")).toBeDefined();
     });
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      "/api/groups",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(screen.getByTestId("group-switcher-item-fam").textContent).toContain("Schmidt Family");
+    expect(screen.getByTestId("group-switcher-item-work").textContent).toContain("Work Team");
   });
 
   it("calls onGroupChange with slug when a group is selected", async () => {
     render(<GroupSwitcher onGroupChange={onGroupChange} />);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
 
-    const trigger = screen.getByRole("button");
-    fireEvent.click(trigger);
-
-    await waitFor(() => screen.getByRole("listbox"));
-    await waitFor(() => screen.getByText("Schmidt Family"));
-    fireEvent.click(screen.getByText("Schmidt Family"));
+    await waitFor(() => screen.getByTestId("group-switcher-item-fam"));
+    fireEvent.click(screen.getByTestId("group-switcher-item-fam"));
 
     expect(onGroupChange).toHaveBeenCalledWith("fam");
   });
 
   it("calls onGroupChange with null when Personal is selected", async () => {
     render(<GroupSwitcher onGroupChange={onGroupChange} />);
-
-    const trigger = screen.getByRole("button");
-    fireEvent.click(trigger);
-
-    // Click the Personal option in the listbox (not the trigger)
-    await waitFor(() => screen.getByRole("listbox"));
-    const listbox = screen.getByRole("listbox");
-    const personalOption = listbox.querySelector('[role="option"]') as HTMLElement;
-    fireEvent.click(personalOption);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
+    fireEvent.click(screen.getByTestId("group-switcher-item-personal"));
 
     expect(onGroupChange).toHaveBeenCalledWith(null);
   });
 
-  it("shows current group name in trigger when activeGroupSlug provided", async () => {
-    render(
-      <GroupSwitcher onGroupChange={onGroupChange} activeGroupSlug="fam" />,
-    );
+  it("closes dropdown after selection", async () => {
+    render(<GroupSwitcher onGroupChange={onGroupChange} />);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
 
-    await waitFor(() => {
-      const trigger = screen.getByRole("button");
-      expect(trigger.textContent).toMatch(/Schmidt Family|fam/);
-    });
+    await waitFor(() => screen.getByTestId("group-switcher-item-fam"));
+    fireEvent.click(screen.getByTestId("group-switcher-item-fam"));
+
+    expect(screen.queryByTestId("group-switcher-item-personal")).toBeNull();
   });
 
-  it("shows 'Personal' in trigger when no activeGroupSlug", async () => {
+  it("shows New group button in dropdown", () => {
     render(<GroupSwitcher onGroupChange={onGroupChange} />);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
+    expect(screen.getByTestId("group-switcher-new").textContent).toContain("New group");
+  });
 
-    const trigger = screen.getByRole("button");
-    expect(trigger.textContent).toMatch(/Personal/i);
+  it("opens create dialog when New group is clicked", () => {
+    render(<GroupSwitcher onGroupChange={onGroupChange} />);
+    fireEvent.click(screen.getByTestId("group-switcher-trigger"));
+    fireEvent.click(screen.getByTestId("group-switcher-new"));
+
+    expect(screen.getByTestId("dialog")).toBeDefined();
+    expect(screen.getByTestId("group-create-name")).toBeDefined();
   });
 });

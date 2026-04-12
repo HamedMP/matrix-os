@@ -108,16 +108,18 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
           name,
           invite: member_handles,
           preset: "private_chat",
-        });
-
-        // Spec §G: MUST call setPowerLevels with the explicit map after createRoom
-        await matrixClient.setPowerLevels(roomId, buildGroupPowerLevels(ownerHandle));
-
-        // Write m.matrix_os.group state event
-        await matrixClient.setRoomState(roomId, "m.matrix_os.group", "", {
-          v: 1,
-          schema_version: 1,
-          default_acl_policy: "open",
+          powerLevelContentOverride: buildGroupPowerLevels(ownerHandle),
+          initialState: [
+            {
+              type: "m.matrix_os.group",
+              state_key: "",
+              content: {
+                v: 1,
+                schema_version: 1,
+                default_acl_policy: "open",
+              },
+            },
+          ],
         });
 
         const manifest = await groupRegistry.create({
