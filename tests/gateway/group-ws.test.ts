@@ -8,6 +8,8 @@ import {
   type GroupWsHandlerOptions,
   type GroupWsGroupSync,
   type GroupWsGroupRegistry,
+  type GroupWsMemberEntry,
+  type GroupWsPresenceEntry,
 } from "../../packages/gateway/src/group-ws.js";
 
 // ---------------------------------------------------------------------------
@@ -17,6 +19,10 @@ import {
 class FakeGroupSync implements GroupWsGroupSync {
   private doc: Y.Doc;
   private listeners = new Set<(update: Uint8Array, origin: unknown) => void>();
+  private membersListeners = new Set<(members: GroupWsMemberEntry[]) => void>();
+  private presenceListeners = new Set<(handle: string, entry: GroupWsPresenceEntry) => void>();
+  private members: GroupWsMemberEntry[] = [];
+  private presence: Record<string, GroupWsPresenceEntry> = {};
 
   constructor() {
     this.doc = new Y.Doc();
@@ -30,7 +36,6 @@ class FakeGroupSync implements GroupWsGroupSync {
     _appSlug: string,
     listener: (info: { appSlug: string; origin: "local" | "remote"; eventId: string | null; sender: string | null }) => void,
   ): { dispose(): void } {
-    // We need to translate doc updates to the listener signature
     const docObserver = (update: Uint8Array, origin: unknown) => {
       this.listeners.forEach((l) => l(update, origin));
       listener({ appSlug: _appSlug, origin: origin === "local" ? "local" : "remote", eventId: null, sender: null });
@@ -47,9 +52,45 @@ class FakeGroupSync implements GroupWsGroupSync {
     mutator(this.doc);
   }
 
-  // Test helper: apply an external update to simulate remote changes
+  getMembers(): GroupWsMemberEntry[] {
+    return [...this.members];
+  }
+
+  getPresence(): Record<string, GroupWsPresenceEntry> {
+    return { ...this.presence };
+  }
+
+  onMembersChanged(cb: (members: GroupWsMemberEntry[]) => void): { dispose(): void } {
+    this.membersListeners.add(cb);
+    return { dispose: () => this.membersListeners.delete(cb) };
+  }
+
+  onPresenceChanged(cb: (handle: string, entry: GroupWsPresenceEntry) => void): { dispose(): void } {
+    this.presenceListeners.add(cb);
+    return { dispose: () => this.presenceListeners.delete(cb) };
+  }
+
+  // Test helpers
   applyRemoteUpdate(update: Uint8Array): void {
     Y.applyUpdate(this.doc, update, "remote");
+  }
+
+  simulateMembersChanged(members: GroupWsMemberEntry[]): void {
+    this.members = members;
+    for (const cb of this.membersListeners) cb([...members]);
+  }
+
+  simulatePresenceChanged(handle: string, entry: GroupWsPresenceEntry): void {
+    this.presence[handle] = entry;
+    for (const cb of this.presenceListeners) cb(handle, { ...entry });
+  }
+
+  setInitialMembers(members: GroupWsMemberEntry[]): void {
+    this.members = members;
+  }
+
+  setInitialPresence(presence: Record<string, GroupWsPresenceEntry>): void {
+    this.presence = presence;
   }
 }
 
@@ -167,7 +208,7 @@ class FakeWebSocket {
       .map((t) => {
         try { return JSON.parse(t); } catch { return null; }
       })
-      .filter(Boolean) as Array<{ type: string; code: string }>;
+      .filter((m): m is { type: string; code: string } => Boolean(m) && (m as { type?: string }).type === "error");
   }
 }
 
@@ -440,6 +481,99 @@ describe("createGroupWsHandler", () => {
         expect(raw).not.toContain("postgres");
         expect(raw).not.toContain("connection refused");
       }
+    });
+  });
+
+  describe("members/presence WS greeting and fan-out", () => {
+    it("sends members_changed greeting on connect with initial member list", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+      groupSync.setInitialMembers([
+        { handle: "@alice:matrix-os.com", role: "owner", membership: "join" },
+      ]);
+
+      const ws = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      const textMsgs = ws.sentText().map((t) => JSON.parse(t));
+      const greeting = textMsgs.find((m) => m.type === "members_changed");
+      expect(greeting).toBeDefined();
+      expect(greeting.members).toHaveLength(1);
+      expect(greeting.members[0].handle).toBe("@alice:matrix-os.com");
+    });
+
+    it("sends presence_snapshot greeting on connect", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+      groupSync.setInitialPresence({
+        "@alice:matrix-os.com": { handle: "@alice:matrix-os.com", status: "online" },
+      });
+
+      const ws = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      const textMsgs = ws.sentText().map((t) => JSON.parse(t));
+      const snapshot = textMsgs.find((m) => m.type === "presence_snapshot");
+      expect(snapshot).toBeDefined();
+      expect(snapshot.presence["@alice:matrix-os.com"].status).toBe("online");
+    });
+
+    it("fans out members_changed to connected sockets when membership changes", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const ws = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      const before = ws.sentText().length;
+
+      groupSync.simulateMembersChanged([
+        { handle: "@alice:matrix-os.com", role: "owner", membership: "join" },
+        { handle: "@bob:matrix-os.com", role: "editor", membership: "join" },
+      ]);
+
+      const newMsgs = ws.sentText().slice(before).map((t) => JSON.parse(t));
+      const update = newMsgs.find((m) => m.type === "members_changed");
+      expect(update).toBeDefined();
+      expect(update.members).toHaveLength(2);
+    });
+
+    it("fans out presence_changed per-handle when presence updates", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const ws = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      const before = ws.sentText().length;
+
+      groupSync.simulatePresenceChanged("@alice:matrix-os.com", {
+        handle: "@alice:matrix-os.com",
+        status: "offline",
+        last_active_ago: 3000,
+      });
+
+      const newMsgs = ws.sentText().slice(before).map((t) => JSON.parse(t));
+      const update = newMsgs.find((m) => m.type === "presence_changed");
+      expect(update).toBeDefined();
+      expect(update.handle).toBe("@alice:matrix-os.com");
+      expect(update.status).toBe("offline");
+    });
+
+    it("stops fan-out after onClose disposes subscriptions", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const ws = new FakeWebSocket();
+      const conn = await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+      conn!.onClose();
+
+      const before = ws.sentText().length;
+      groupSync.simulateMembersChanged([{ handle: "@alice:matrix-os.com", role: "owner", membership: "join" }]);
+      groupSync.simulatePresenceChanged("@alice:matrix-os.com", { handle: "@alice:matrix-os.com", status: "online" });
+
+      // No new text messages after close
+      expect(ws.sentText().length).toBe(before);
     });
   });
 

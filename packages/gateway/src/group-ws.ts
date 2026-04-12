@@ -14,10 +14,28 @@ type WsErrorCode = "sync_failed" | "acl_denied" | "offline" | "op_too_large" | "
 // Public interface types for constructor injection (testable without real deps)
 // ---------------------------------------------------------------------------
 
+export interface GroupWsMemberEntry {
+  handle: string;
+  role: "owner" | "editor" | "viewer";
+  membership: "join" | "invite" | "leave" | "ban" | "knock";
+  display_name?: string;
+}
+
+export interface GroupWsPresenceEntry {
+  handle: string;
+  status: "online" | "unavailable" | "offline";
+  last_active_ago?: number;
+  currently_active?: boolean;
+}
+
 export interface GroupWsGroupSync {
   getDoc(appSlug: string): Y.Doc;
   onChange(appSlug: string, listener: GroupSyncOnChange): { dispose(): void };
   applyLocalMutation(appSlug: string, mutator: (doc: Y.Doc) => void): Promise<void>;
+  getMembers(): GroupWsMemberEntry[];
+  getPresence(): Record<string, GroupWsPresenceEntry>;
+  onMembersChanged(cb: (members: GroupWsMemberEntry[]) => void): { dispose(): void };
+  onPresenceChanged(cb: (handle: string, entry: GroupWsPresenceEntry) => void): { dispose(): void };
 }
 
 export interface GroupWsGroupRegistry {
@@ -65,6 +83,8 @@ interface ConnState {
   userHandle: string;
   stateVector: Uint8Array;
   changeSub: { dispose(): void } | null;
+  membersSub: { dispose(): void } | null;
+  presenceSub: { dispose(): void } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +232,35 @@ export function createGroupWsHandler(opts: GroupWsHandlerOptions): GroupWsHandle
       userHandle,
       stateVector,
       changeSub: null,
+      membersSub: null,
+      presenceSub: null,
     };
+
+    // Send initial members + presence snapshots as greeting JSON frames
+    try {
+      ws.send(JSON.stringify({ type: "members_changed", members: sync.getMembers() }));
+      ws.send(JSON.stringify({ type: "presence_snapshot", presence: sync.getPresence() }));
+    } catch {
+      // socket may have closed before greeting — non-fatal
+    }
+
+    // Subscribe to live member list changes and fan out
+    conn.membersSub = sync.onMembersChanged((members) => {
+      try {
+        ws.send(JSON.stringify({ type: "members_changed", members }));
+      } catch {
+        // socket closed
+      }
+    });
+
+    // Subscribe to per-handle presence changes and fan out
+    conn.presenceSub = sync.onPresenceChanged((handle, entry) => {
+      try {
+        ws.send(JSON.stringify({ type: "presence_changed", ...entry }));
+      } catch {
+        // socket closed
+      }
+    });
 
     // Subscribe to doc changes and fan out to this socket
     conn.changeSub = sync.onChange(appSlug, (_info) => {
@@ -242,6 +290,8 @@ export function createGroupWsHandler(opts: GroupWsHandlerOptions): GroupWsHandle
       if (userPl < readPl) {
         sendError(ws, "acl_denied");
         conn.changeSub?.dispose();
+        conn.membersSub?.dispose();
+        conn.presenceSub?.dispose();
         removeSubscriber(key, conn);
         try { ws.close(4403, "acl_denied"); } catch { /* already closed */ }
         return;
@@ -296,6 +346,8 @@ export function createGroupWsHandler(opts: GroupWsHandlerOptions): GroupWsHandle
 
     function onClose(): void {
       conn.changeSub?.dispose();
+      conn.membersSub?.dispose();
+      conn.presenceSub?.dispose();
       removeSubscriber(key, conn);
     }
 
