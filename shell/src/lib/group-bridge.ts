@@ -34,6 +34,12 @@ export interface GroupMember {
   online?: boolean;
 }
 
+export interface PresenceInfo {
+  handle: string;
+  status: "online" | "offline";
+  last_active_ago: number;
+}
+
 export interface GroupContext {
   id: string;
   slug: string;
@@ -43,6 +49,7 @@ export interface GroupContext {
 
 export interface GroupContextLive extends GroupContext {
   members: GroupMember[];
+  onPresence(cb: (info: PresenceInfo) => void): () => void;
 }
 
 export interface SharedInterface {
@@ -86,9 +93,13 @@ export function createGroupBridge(opts: GroupBridgeOptions): GroupBridgeInterfac
 
   const onChangeListeners = new Set<() => void>();
   const onErrorListeners = new Set<(code: SharedErrorCode) => void>();
+  const onPresenceListeners = new Set<(info: PresenceInfo) => void>();
 
   let ws: WebSocket | null = null;
   let connected = false;
+
+  // Live member list — mutated in place by members_changed events
+  const liveMembers: GroupMember[] = [];
 
   function emitError(code: SharedErrorCode): void {
     for (const cb of onErrorListeners) {
@@ -99,6 +110,42 @@ export function createGroupBridge(opts: GroupBridgeOptions): GroupBridgeInterfac
   function emitChange(): void {
     for (const cb of onChangeListeners) {
       try { cb(); } catch { /* listener failure must not break dispatch */ }
+    }
+  }
+
+  function handleMembersChanged(members: unknown): void {
+    if (!groupContext || !Array.isArray(members)) return;
+    liveMembers.length = 0;
+    for (const m of members) {
+      if (m && typeof m === "object" && typeof (m as GroupMember).handle === "string") {
+        liveMembers.push(m as GroupMember);
+      }
+    }
+  }
+
+  function handlePresenceChanged(msg: { handle?: string; status?: string; last_active_ago?: number }): void {
+    if (!groupContext) return;
+    const handle = msg.handle;
+    if (!handle || typeof handle !== "string") return;
+
+    // Spec §F invariant: NEVER fire for handles outside the current group
+    const isMember = liveMembers.some((m) => m.handle === handle);
+    if (!isMember) return;
+
+    const status = msg.status === "online" ? "online" : "offline";
+    const last_active_ago = typeof msg.last_active_ago === "number" ? msg.last_active_ago : 0;
+
+    // Update the member's online status in the live list
+    for (const m of liveMembers) {
+      if (m.handle === handle) {
+        m.online = status === "online";
+        break;
+      }
+    }
+
+    const info: PresenceInfo = { handle, status, last_active_ago };
+    for (const cb of onPresenceListeners) {
+      try { cb(info); } catch { /* listener failure must not break dispatch */ }
     }
   }
 
@@ -125,13 +172,19 @@ export function createGroupBridge(opts: GroupBridgeOptions): GroupBridgeInterfac
       } else if (raw instanceof Uint8Array) {
         bytes = raw;
       } else if (typeof raw === "string") {
-        // JSON error message from gateway
+        // JSON message from gateway (error, members_changed, presence_changed)
         try {
-          const msg = JSON.parse(raw) as { type?: string; code?: string };
-          if (msg.type === "error" && msg.code && SHARED_ERROR_CODES.has(msg.code)) {
-            emitError(msg.code as SharedErrorCode);
-          } else if (msg.type === "error") {
-            emitError("sync_failed");
+          const msg = JSON.parse(raw) as { type?: string; code?: string; members?: unknown; handle?: string; status?: string; last_active_ago?: number };
+          if (msg.type === "error") {
+            if (msg.code && SHARED_ERROR_CODES.has(msg.code)) {
+              emitError(msg.code as SharedErrorCode);
+            } else {
+              emitError("sync_failed");
+            }
+          } else if (msg.type === "members_changed") {
+            handleMembersChanged(msg.members);
+          } else if (msg.type === "presence_changed") {
+            handlePresenceChanged(msg);
           }
         } catch {
           emitError("sync_failed");
@@ -141,19 +194,23 @@ export function createGroupBridge(opts: GroupBridgeOptions): GroupBridgeInterfac
         return;
       }
 
-      // Try decoding as JSON error first (text frames sent as binary by some WS impls)
-      // Yjs sync messages start with a varuint (0, 1, or 2) — valid JSON starts with '{' (0x7b, 123)
-      // which is also a valid varuint. Check if it parses as JSON first.
+      // Try decoding as JSON first (text frames sent as binary by some WS impls).
+      // Yjs sync messages start with a varuint (0, 1, or 2) — valid JSON starts with '{' (0x7b, 123).
       const firstByte = bytes[0];
       if (firstByte === 0x7b) {
-        // Could be JSON — try parsing
         try {
           const text = new TextDecoder().decode(bytes);
-          const msg = JSON.parse(text) as { type?: string; code?: string };
-          if (msg.type === "error" && msg.code && SHARED_ERROR_CODES.has(msg.code)) {
-            emitError(msg.code as SharedErrorCode);
-          } else if (msg.type === "error") {
-            emitError("sync_failed");
+          const msg = JSON.parse(text) as { type?: string; code?: string; members?: unknown; handle?: string; status?: string; last_active_ago?: number };
+          if (msg.type === "error") {
+            if (msg.code && SHARED_ERROR_CODES.has(msg.code)) {
+              emitError(msg.code as SharedErrorCode);
+            } else {
+              emitError("sync_failed");
+            }
+          } else if (msg.type === "members_changed") {
+            handleMembersChanged(msg.members);
+          } else if (msg.type === "presence_changed") {
+            handlePresenceChanged(msg);
           }
           return;
         } catch {
@@ -274,7 +331,12 @@ export function createGroupBridge(opts: GroupBridgeOptions): GroupBridgeInterfac
   const group: GroupContextLive | null = groupContext
     ? {
         ...groupContext,
-        members: [], // US6 wires this
+        // liveMembers is the mutable array updated by members_changed events
+        get members() { return liveMembers; },
+        onPresence(cb: (info: PresenceInfo) => void): () => void {
+          onPresenceListeners.add(cb);
+          return () => onPresenceListeners.delete(cb);
+        },
       }
     : null;
 

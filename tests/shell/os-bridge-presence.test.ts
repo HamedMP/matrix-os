@@ -448,4 +448,187 @@ describe("group-bridge", () => {
       expect(bridge.shared.get("pre-existing")).toBe("value");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Wave 4 — members/presence subscriptions (T077a)
+  // ---------------------------------------------------------------------------
+
+  describe("members_changed WS event", () => {
+    it("populates group.members from members_changed payload", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      expect(bridge.group!.members).toEqual([]);
+
+      const payload = JSON.stringify({
+        type: "members_changed",
+        members: [
+          { handle: "@alice:matrix-os.com", role: "owner", online: true },
+          { handle: "@bob:matrix-os.com", role: "editor", online: false },
+        ],
+      });
+      ws.simulateServerMessage(new TextEncoder().encode(payload));
+
+      expect(bridge.group!.members).toHaveLength(2);
+      expect(bridge.group!.members[0]).toMatchObject({ handle: "@alice:matrix-os.com", role: "owner", online: true });
+      expect(bridge.group!.members[1]).toMatchObject({ handle: "@bob:matrix-os.com", role: "editor", online: false });
+    });
+
+    it("replaces prior members list on each members_changed", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [{ handle: "@alice:matrix-os.com", role: "owner", online: true }],
+      })));
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [
+          { handle: "@alice:matrix-os.com", role: "owner", online: true },
+          { handle: "@carol:matrix-os.com", role: "viewer", online: true },
+        ],
+      })));
+
+      expect(bridge.group!.members).toHaveLength(2);
+      expect(bridge.group!.members[1]!.handle).toBe("@carol:matrix-os.com");
+    });
+
+    it("ignores members_changed when bridge has no group context", () => {
+      const bridgeOpts: GroupBridgeOptions = {
+        groupContext: null,
+        gatewayWsUrl: "",
+        appSlug: "notes",
+        wsFactory: () => { throw new Error("should not connect"); },
+      };
+      const bridge = createGroupBridge(bridgeOpts);
+      // No group — members_changed should be silently ignored (no group to update)
+      expect(bridge.group).toBeNull();
+    });
+  });
+
+  describe("presence_changed WS event", () => {
+    it("fires onPresence callback with presence update", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      // Seed group with a member first
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [{ handle: "@alice:matrix-os.com", role: "owner", online: true }],
+      })));
+
+      const onPresence = vi.fn();
+      bridge.group!.onPresence(onPresence);
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "presence_changed",
+        handle: "@alice:matrix-os.com",
+        status: "offline",
+        last_active_ago: 5000,
+      })));
+
+      expect(onPresence).toHaveBeenCalledOnce();
+      expect(onPresence).toHaveBeenCalledWith({
+        handle: "@alice:matrix-os.com",
+        status: "offline",
+        last_active_ago: 5000,
+      });
+    });
+
+    it("fans out presence_changed to multiple subscribers", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [{ handle: "@alice:matrix-os.com", role: "owner", online: true }],
+      })));
+
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      bridge.group!.onPresence(cb1);
+      bridge.group!.onPresence(cb2);
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "presence_changed",
+        handle: "@alice:matrix-os.com",
+        status: "online",
+        last_active_ago: 0,
+      })));
+
+      expect(cb1).toHaveBeenCalledOnce();
+      expect(cb2).toHaveBeenCalledOnce();
+    });
+
+    it("disposer returned by onPresence removes the listener", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [{ handle: "@alice:matrix-os.com", role: "owner", online: true }],
+      })));
+
+      const onPresence = vi.fn();
+      const dispose = bridge.group!.onPresence(onPresence);
+      dispose();
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "presence_changed",
+        handle: "@alice:matrix-os.com",
+        status: "online",
+        last_active_ago: 0,
+      })));
+
+      expect(onPresence).not.toHaveBeenCalled();
+    });
+
+    it("NEVER fires onPresence for handles outside the current group", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      // Only alice is a member of this group
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [{ handle: "@alice:matrix-os.com", role: "owner", online: true }],
+      })));
+
+      const onPresence = vi.fn();
+      bridge.group!.onPresence(onPresence);
+
+      // Presence event for a non-member handle
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "presence_changed",
+        handle: "@stranger:other-server.com",
+        status: "online",
+        last_active_ago: 0,
+      })));
+
+      // Must NOT fire — stranger is not in this group's member list
+      expect(onPresence).not.toHaveBeenCalled();
+    });
+
+    it("updates group.members online status when presence_changed arrives", () => {
+      const { bridge, ws } = makeBridge({ groupSlug: "fam" });
+      ws.simulateOpen();
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "members_changed",
+        members: [{ handle: "@alice:matrix-os.com", role: "owner", online: true }],
+      })));
+
+      expect(bridge.group!.members[0]!.online).toBe(true);
+
+      ws.simulateServerMessage(new TextEncoder().encode(JSON.stringify({
+        type: "presence_changed",
+        handle: "@alice:matrix-os.com",
+        status: "offline",
+        last_active_ago: 12000,
+      })));
+
+      expect(bridge.group!.members[0]!.online).toBe(false);
+    });
+  });
 });
