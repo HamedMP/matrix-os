@@ -404,6 +404,53 @@ Do NOT parallelize inside Phase 4 — `group-sync.ts` is a single-writer file an
 
 ---
 
+## Phase 7b: Shell UI — Group Management (Priority: P2)
+
+**Goal**: Complete the shell-side UI so users can manage groups, members, and shared apps entirely from the browser. The backend routes already exist (group-routes.ts); this phase wires them to visible UI components.
+
+**Depends on**: Phase 3 (group lifecycle routes), Phase 5 (GroupSwitcher done), Phase 6 (ACL for power-level checks in members/share)
+
+**Independent Test**: From the browser at `http://localhost:3001`, alice can: create a group (GroupSwitcher), see members (MembersPanel), invite bob, share the notes app (ShareAppDialog), and see shared apps listed (GroupAppList). Bob at `http://localhost:3002` joins and sees the same shared apps.
+
+### Gateway: Invite + App List routes
+
+- [ ] T101 [US7b] Write failing tests in `tests/gateway/group-routes-invite.test.ts` for `POST /api/groups/:slug/invite` — wraps `matrixClient.inviteToRoom(roomId, userId)`; requires auth + group membership + power level >= invite PL; validates handle format; returns 200 on success, 403 if caller lacks PL, 404 if group unknown, 400 if invalid handle
+- [ ] T102 [US7b] Implement `POST /api/groups/:slug/invite` in `packages/gateway/src/group-routes.ts`; wire `matrixClient.inviteToRoom`; check caller PL >= `invite` PL from room power levels (default 0 for `private_chat`)
+- [ ] T103 [P] [US7b] Write failing tests in `tests/gateway/group-routes-apps.test.ts` for `GET /api/groups/:slug/apps` — returns list of app slugs under `~/groups/:slug/apps/` with each app's name from its manifest; empty array if no apps; 404 if group unknown; 401 without auth
+- [ ] T104 [P] [US7b] Implement `GET /api/groups/:slug/apps` in `packages/gateway/src/group-routes.ts`; reads `{homePath}/groups/{slug}/apps/` directory, returns `{ apps: [{ slug, name }] }`
+
+### Shell: MembersPanel
+
+- [ ] T105 [US7b] Create `shell/src/components/MembersPanel.tsx` — slide-out panel triggered by a "Members" button in the GroupSwitcher dropdown (or a dedicated button when a group is active). Fetches `GET /api/groups/:slug/members` from gateway. Shows each member with role badge (owner/editor/viewer) and membership status (joined/invited). Owner sees "Invite" form at top and "Remove" button per member.
+- [ ] T106 [US7b] Write Vitest + jsdom test in `tests/shell/MembersPanel.test.tsx` — mock fetch, verify renders member list, invite form submits to correct endpoint, remove button calls leave/kick endpoint, empty state shown when no members beyond self
+
+### Shell: ShareAppDialog
+
+- [ ] T107 [US7b] Create `shell/src/components/ShareAppDialog.tsx` — modal dialog triggered from app window header. Lists user's groups from `GET /api/groups`. On select, calls `POST /api/groups/:slug/share-app` with `{ app_slug }`. Shows loading/success/error states. Disabled if app is already shared to that group.
+- [ ] T108 [US7b] Wire ShareAppDialog trigger into app window header in `shell/src/components/AppWindow.tsx` (or equivalent) — "Share" icon button, only visible when viewing a personal app (not already in a group context)
+- [ ] T109 [US7b] Write Vitest + jsdom test in `tests/shell/ShareAppDialog.test.tsx` — mock fetch, verify group list renders, selection triggers POST, success closes dialog, error shown on failure
+
+### Shell: GroupAppList
+
+- [ ] T110 [US7b] Create `shell/src/components/GroupAppList.tsx` — grid/list of shared apps for the active group. Fetches `GET /api/groups/:slug/apps`. Each app tile shows name + icon, clicking opens the app in group context (URL `?group=slug&app=appSlug`). Empty state: "No shared apps yet — share one from your personal workspace."
+- [ ] T111 [US7b] Wire GroupAppList into the Desktop component — when `activeGroupSlug` is set (from GroupSwitcher / URL param), show GroupAppList overlay or panel alongside the personal dock
+- [ ] T112 [US7b] Write Vitest + jsdom test in `tests/shell/GroupAppList.test.tsx` — mock fetch, verify app tiles render, click navigates with correct query params, empty state shown
+
+### Shell: WebSocket Bridge (CRDT live sync)
+
+- [ ] T113 [US7b] Create `shell/src/lib/group-bridge.ts` — WebSocket client connecting to `/ws/groups/:slug/:app` on gateway. Maintains a mirror `Y.Doc` synced via `y-protocols/sync` messages. Exposes `applyLocal(update)` and `onChange(callback)` for the iframe bridge. Reconnects on close with exponential backoff. Closes cleanly on group/app switch.
+- [ ] T114 [US7b] Extend `shell/src/lib/os-bridge.ts` postMessage handler with `shared:get`, `shared:set`, `shared:delete`, `shared:list`, `shared:onChange` action types delegating to `group-bridge.ts`; populate `MatrixOS.group` context from URL `?group=` param
+- [ ] T115 [US7b] Write Vitest test in `tests/shell/group-bridge.test.ts` — mock WebSocket, verify sync handshake, local mutations forwarded, remote updates trigger onChange, reconnect on close
+
+### Integration
+
+- [ ] T116 [US7b] Docker smoke test: start `bun run docker:multi`, alice creates group via GroupSwitcher, opens MembersPanel and invites bob, shares notes app via ShareAppDialog, bob joins and sees shared app in GroupAppList. Capture steps in `specs/062-shared-apps/manual-test.md` sections 1-3.
+- [ ] T117 [US7b] Run `bun run test` — all new tests green, no regressions in existing tests
+
+**Checkpoint**: Full group management UI operational. Users can create groups, invite members, share apps, and see shared apps — all from the browser. Commit: `feat(062): shell UI for group management`
+
+---
+
 ## Format Validation
 
 - Every task starts with `- [ ]`
@@ -413,6 +460,8 @@ Do NOT parallelize inside Phase 4 — `group-sync.ts` is a single-writer file an
 - `[P]` appears only on tasks that target a different file from other same-phase tasks
 - Every task names the exact file path to create or modify
 
-**Total**: 113 tasks across 10 phases (5 spike, 13 foundational, 8 US1, 22 US2, 12 US3, 7 US4, 6 US5, 17 US6, 7 US7, 14 polish). The 12 letter-suffixed IDs (T017a, T032a, T033a, T035a–c, T052a, T058a, T068a, T077a) were inserted post-review to close gaps from the spec audit; they do not break existing T-number references.
+**Total**: 130 tasks across 11 phases (5 spike, 13 foundational, 8 US1, 22 US2, 12 US3, 7 US4, 6 US5, 17 US6, 17 US7b shell UI, 7 US7, 14 polish). The 12 letter-suffixed IDs (T017a, T032a, T033a, T035a–c, T052a, T058a, T068a, T077a) were inserted post-review to close gaps from the spec audit; they do not break existing T-number references. T101–T117 were added for the shell UI phase.
 
 **Suggested MVP**: Phases 1–5 = 59 tasks (T001–T053 plus the 6 inserted sub-tasks T017a, T032a, T033a, T035a, T035b, T035c, T052a). At that point you have working CRDT-over-Matrix for two browsers, with the 32KB op cap, per-app resource caps, and a manual-test scaffold in place for recording Docker verification findings from day one.
+
+**Suggested browser-testable milestone**: Phases 1–5 + Phase 7b (T101–T117) = 76 tasks. This adds the shell UI so users can test the full group flow from the browser without curl commands.

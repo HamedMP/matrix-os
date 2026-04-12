@@ -482,7 +482,29 @@ Build `MatrixSyncHub` (`packages/gateway/src/matrix-sync-hub.ts`) on top, with `
 - `set_app_acl` IPC tool
 - ACL UI in app settings panel
 
-### Phase 7: Demo app + onboarding
+### Phase 7: Shell UI — Group Management
+
+Complete the shell-side UI so users can manage groups, members, and shared apps entirely from the browser without curl/API calls.
+
+**Components:**
+
+1. **GroupSwitcher** (done — `shell/src/components/GroupSwitcher.tsx`): dropdown in MenuBar, create group dialog, URL `?group=` switching.
+
+2. **MembersPanel** (`shell/src/components/MembersPanel.tsx`): slide-out panel showing group members with roles (owner/editor/viewer), online status, and an invite form. Fetches from `GET /api/groups/:slug/members`. Invite calls `POST /api/groups/:slug/invite` (new route — wraps `matrixClient.inviteToRoom`). Shows pending invites vs joined. Owner can kick members.
+
+3. **ShareAppDialog** (`shell/src/components/ShareAppDialog.tsx`): triggered from app window header "Share" button. Lists user's groups, calls `POST /api/groups/:slug/share-app` with the app slug. Shows success/error feedback. Only visible when app is in personal workspace (not already shared).
+
+4. **GroupAppList** (`shell/src/components/GroupAppList.tsx`): when a group is selected in GroupSwitcher, shows the group's shared apps as launchable tiles. Fetches app list from `~/groups/:slug/apps/` via a new `GET /api/groups/:slug/apps` route. Each tile opens the app in group context (`?group=slug`).
+
+5. **WebSocket bridge** (`shell/src/lib/group-bridge.ts`): connects to `/ws/groups/:slug/:app` on app open in group context. Maintains mirror Y.Doc. Routes `shared:*` postMessage actions from iframe to gateway. Already specced in Phase 5 (Section F).
+
+**UX rules** (per `specs/ux-guide.md`):
+- MembersPanel: overlay, no layout shift, Escape to close
+- ShareAppDialog: modal dialog, light dismiss
+- GroupAppList: replaces personal app dock/grid when group is active
+- All panels show empty states with icon + headline + CTA
+
+### Phase 8: Demo app + onboarding
 
 - Migrate one default app (suggested: shared notes or shared todo) to optionally run in group mode
 - Onboarding flow: "Create a family group" → invite member → install shared notes → see live updates
