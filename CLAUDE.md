@@ -154,9 +154,12 @@ Read these on demand, not every session:
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
+- TypeScript 5.5+ strict, ES modules + yjs/lib0/y-protocols (CRDT engine, gateway + shell, exact-version-pinned), Matrix `/sync` long-poll with gap-fill backfill (gateway), Hono WebSocket (group bridge), Zod 4 (validation) (062-shared-apps)
+- Files — `~/groups/{slug}/manifest.json`, `members.cache.json`, `apps/{app}/` (app code), `data/{app}/state.bin`/`log.jsonl`/`queue.jsonl`/`last_sync.json` (Yjs persistence + offline queue), `acl/{app}.json` (ACL cache) (062-shared-apps)
 
 ## Recent Changes
 
+- 062-shared-apps: Added Yjs CRDT-over-Matrix shared apps with gap-fill backfill, lease-gated chunked snapshots, op chunking, per-app resource caps, ACL enforcement, `share_app` + auto-clone, observed members + presence, `group_data` cross-channel tool, WebSocket bridge with mirror Y.Doc in shell, `GroupSwitcher` and `AppAclPanel` UI
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 # SlayZone Environment
