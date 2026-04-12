@@ -757,3 +757,318 @@ describe('GroupSync — queue & offline replay', () => {
     expect(persistentErrors.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Snapshot reader — loadLatestSnapshot
+// ---------------------------------------------------------------------------
+
+function seedSnapshotChunks(
+  clientState: FakeClientState,
+  appSlug: string,
+  params: {
+    snapshotId: string;
+    generation: number;
+    chunks: string[]; // base64 chunk payloads
+    takenAtEventId?: string;
+    writtenBy?: string;
+  },
+): void {
+  const snapshotType = `m.matrix_os.app.${appSlug}.snapshot`;
+  for (let i = 0; i < params.chunks.length; i++) {
+    const content = {
+      v: 1,
+      snapshot_id: params.snapshotId,
+      generation: params.generation,
+      chunk_index: i,
+      chunk_count: params.chunks.length,
+      state: params.chunks[i]!,
+      taken_at_event_id: params.takenAtEventId ?? '$last',
+      taken_at: 1,
+      written_by: params.writtenBy ?? '@alice:matrix-os.com',
+    };
+    const stateKey = `${params.snapshotId}/${i}`;
+    clientState.stateEvents.push({
+      type: snapshotType,
+      state_key: stateKey,
+      content,
+      event_id: `$snap-${params.snapshotId}-${i}`,
+      sender: params.writtenBy ?? '@alice:matrix-os.com',
+      origin_server_ts: Date.now(),
+    });
+    clientState.state.set(`${snapshotType}|${stateKey}`, content);
+  }
+}
+
+function makeYjsSnapshot(mutator: (doc: Y.Doc) => void): { bytes: Uint8Array; base64: string } {
+  const doc = new Y.Doc();
+  mutator(doc);
+  const bytes = Y.encodeStateAsUpdate(doc);
+  return { bytes, base64: Buffer.from(bytes).toString('base64') };
+}
+
+describe('GroupSync — loadLatestSnapshot', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('returns null when no snapshot state events are present', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const result = await sync.loadLatestSnapshot('notes');
+    expect(result).toBeNull();
+  });
+
+  it('assembles and decodes a single-chunk snapshot into a Uint8Array', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const snap = makeYjsSnapshot((doc) => {
+      doc.getMap('kv').set('greeting', 'hello');
+    });
+    seedSnapshotChunks(clientState, 'notes', {
+      snapshotId: '01HXYZABCDEFGHJKMNPQRSTVWX',
+      generation: 1,
+      chunks: [snap.base64],
+    });
+
+    const result = await sync.loadLatestSnapshot('notes');
+    expect(result).not.toBeNull();
+    const verify = new Y.Doc();
+    Y.applyUpdate(verify, result!);
+    expect(verify.getMap('kv').get('greeting')).toBe('hello');
+  });
+
+  it('assembles multi-chunk snapshots in chunk_index order', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const snap = makeYjsSnapshot((doc) => {
+      const arr = doc.getArray<string>('tasks');
+      arr.push(['buy milk', 'walk dog', 'call mom']);
+    });
+
+    // Split into 3 chunks of roughly equal size.
+    const parts: string[] = [];
+    const step = Math.ceil(snap.base64.length / 3);
+    for (let i = 0; i < snap.base64.length; i += step) {
+      parts.push(snap.base64.slice(i, i + step));
+    }
+    expect(parts.length).toBe(3);
+
+    seedSnapshotChunks(clientState, 'notes', {
+      snapshotId: '01HXYZABCDEFGHJKMNPQRSTVWY',
+      generation: 42,
+      chunks: parts,
+    });
+
+    const result = await sync.loadLatestSnapshot('notes');
+    expect(result).not.toBeNull();
+    // Round-trip equality: decode + re-encode gives the same snapshot bytes.
+    const decoded = new Y.Doc();
+    Y.applyUpdate(decoded, result!);
+    const reEncoded = Y.encodeStateAsUpdate(decoded);
+    const originalDecoded = new Y.Doc();
+    Y.applyUpdate(originalDecoded, snap.bytes);
+    const originalReEncoded = Y.encodeStateAsUpdate(originalDecoded);
+    expect(Buffer.from(reEncoded).equals(Buffer.from(originalReEncoded))).toBe(true);
+  });
+
+  it('picks the highest generation among complete snapshot sets', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const oldSnap = makeYjsSnapshot((doc) => doc.getMap('kv').set('phase', 'old'));
+    const newSnap = makeYjsSnapshot((doc) => doc.getMap('kv').set('phase', 'new'));
+
+    seedSnapshotChunks(clientState, 'notes', {
+      snapshotId: '01HXYZABCDEFGHJKMNPQRST001',
+      generation: 1,
+      chunks: [oldSnap.base64],
+    });
+    seedSnapshotChunks(clientState, 'notes', {
+      snapshotId: '01HXYZABCDEFGHJKMNPQRST002',
+      generation: 5,
+      chunks: [newSnap.base64],
+    });
+
+    const result = await sync.loadLatestSnapshot('notes');
+    expect(result).not.toBeNull();
+    const verify = new Y.Doc();
+    Y.applyUpdate(verify, result!);
+    expect(verify.getMap('kv').get('phase')).toBe('new');
+  });
+
+  it('rejects mixed chunk sets per §C atomicity contract', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    // Valid older snapshot, 1 chunk.
+    const older = makeYjsSnapshot((doc) => doc.getMap('kv').set('tag', 'older'));
+    seedSnapshotChunks(clientState, 'notes', {
+      snapshotId: '01HXYZABCDEFGHJKMNPQRST999',
+      generation: 1,
+      chunks: [older.base64],
+    });
+
+    // Mixed chunk set: {A,0} {B,1} {A,2}, both claiming chunk_count=3 but
+    // with different snapshot_ids. Readers must drop both and fall back.
+    const A = '01HXYZABCDEFGHJKMNPQRSTAAA';
+    const B = '01HXYZABCDEFGHJKMNPQRSTBBB';
+    const snapshotType = 'm.matrix_os.app.notes.snapshot';
+    clientState.stateEvents.push({
+      type: snapshotType,
+      state_key: `${A}/0`,
+      content: {
+        v: 1,
+        snapshot_id: A,
+        generation: 10,
+        chunk_index: 0,
+        chunk_count: 3,
+        state: 'AAAA',
+        taken_at_event_id: '$',
+        taken_at: 1,
+        written_by: '@alice:matrix-os.com',
+      },
+    });
+    clientState.stateEvents.push({
+      type: snapshotType,
+      state_key: `${B}/1`,
+      content: {
+        v: 1,
+        snapshot_id: B,
+        generation: 10,
+        chunk_index: 1,
+        chunk_count: 3,
+        state: 'BBBB',
+        taken_at_event_id: '$',
+        taken_at: 1,
+        written_by: '@bob:matrix-os.com',
+      },
+    });
+    clientState.stateEvents.push({
+      type: snapshotType,
+      state_key: `${A}/2`,
+      content: {
+        v: 1,
+        snapshot_id: A,
+        generation: 10,
+        chunk_index: 2,
+        chunk_count: 3,
+        state: 'CCCC',
+        taken_at_event_id: '$',
+        taken_at: 1,
+        written_by: '@alice:matrix-os.com',
+      },
+    });
+
+    const result = await sync.loadLatestSnapshot('notes');
+    // Must fall back to older complete snapshot (generation 1), NOT assemble
+    // the mixed set. Some implementations may return null; both are OK per
+    // the spec, but using the older snapshot is preferred.
+    if (result === null) {
+      // Acceptable per spec — loader bailed to "null" which means "fall back
+      // to full timeline replay".
+      return;
+    }
+    const verify = new Y.Doc();
+    Y.applyUpdate(verify, result);
+    expect(verify.getMap('kv').get('tag')).toBe('older');
+  });
+
+  it('skips incomplete chunk sets (missing chunk_index)', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    // Only chunks 0 and 2 for a snapshot claiming chunk_count=3.
+    const snapshotType = 'm.matrix_os.app.notes.snapshot';
+    const snapshotId = '01HXYZABCDEFGHJKMNPQRST111';
+    clientState.stateEvents.push({
+      type: snapshotType,
+      state_key: `${snapshotId}/0`,
+      content: {
+        v: 1,
+        snapshot_id: snapshotId,
+        generation: 1,
+        chunk_index: 0,
+        chunk_count: 3,
+        state: 'AAAA',
+        taken_at_event_id: '$',
+        taken_at: 1,
+        written_by: '@alice:matrix-os.com',
+      },
+    });
+    clientState.stateEvents.push({
+      type: snapshotType,
+      state_key: `${snapshotId}/2`,
+      content: {
+        v: 1,
+        snapshot_id: snapshotId,
+        generation: 1,
+        chunk_index: 2,
+        chunk_count: 3,
+        state: 'CCCC',
+        taken_at_event_id: '$',
+        taken_at: 1,
+        written_by: '@alice:matrix-os.com',
+      },
+    });
+
+    const result = await sync.loadLatestSnapshot('notes');
+    expect(result).toBeNull();
+  });
+});

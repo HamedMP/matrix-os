@@ -4,7 +4,9 @@ import * as Y from 'yjs';
 
 import {
   OpEventContentSchema,
+  SnapshotEventContentSchema,
   type OpEventContent,
+  type SnapshotEventContent,
   type GroupManifest,
 } from './group-types.js';
 import type { MatrixClient, MatrixRawEvent } from './matrix-client.js';
@@ -694,6 +696,106 @@ export class GroupSync {
     if (remaining.length === 0 && anyReplayed) {
       this.markSendSuccess(app);
     }
+  }
+
+  // --------------------- snapshot reader ---------------------
+
+  /**
+   * Load the highest-generation complete snapshot for an app from Matrix room
+   * state. Returns the decoded Yjs update bytes, or `null` if no complete
+   * snapshot is available (caller must fall back to full timeline replay).
+   *
+   * Atomicity contract (spec §C): chunks are grouped by `snapshot_id`; only
+   * sets where every `chunk_index` in `0..chunk_count-1` is present and the
+   * `snapshot_id` matches are considered complete. Mixed sets from concurrent
+   * writers are dropped — the highest-generation *complete* set wins, NOT the
+   * highest-generation mixed set.
+   */
+  async loadLatestSnapshot(appSlug: string): Promise<Uint8Array | null> {
+    const eventType = `m.matrix_os.app.${appSlug}.snapshot`;
+    let rawEvents;
+    try {
+      rawEvents = await this.client.getAllRoomStateEvents(this.manifest.room_id, eventType);
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'snapshot_fetch_failed',
+        appSlug,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+      return null;
+    }
+    if (!Array.isArray(rawEvents) || rawEvents.length === 0) return null;
+
+    // Group by (generation, snapshot_id). We bucket by the composite key so
+    // that a misbehaving writer publishing two different snapshot_ids at the
+    // same generation doesn't merge their chunks.
+    interface Bucket {
+      snapshotId: string;
+      generation: number;
+      chunkCount: number;
+      chunksByIndex: Map<number, string>;
+    }
+    const buckets = new Map<string, Bucket>();
+    for (const raw of rawEvents) {
+      const parsed = SnapshotEventContentSchema.safeParse(raw.content);
+      if (!parsed.success) continue;
+      const content = parsed.data;
+
+      // Reject mismatched state_key: the canonical state_key is
+      // `${snapshot_id}/${chunk_index}`. Chunks that disagree are corrupt.
+      const expectedKey = `${content.snapshot_id}/${content.chunk_index}`;
+      if (raw.state_key !== undefined && raw.state_key !== expectedKey) {
+        continue;
+      }
+
+      const bucketKey = `${content.generation}::${content.snapshot_id}`;
+      let bucket = buckets.get(bucketKey);
+      if (!bucket) {
+        bucket = {
+          snapshotId: content.snapshot_id,
+          generation: content.generation,
+          chunkCount: content.chunk_count,
+          chunksByIndex: new Map(),
+        };
+        buckets.set(bucketKey, bucket);
+      }
+      // If chunk_count disagrees across chunks within the same snapshot_id,
+      // the set is internally inconsistent; drop the bucket entirely.
+      if (bucket.chunkCount !== content.chunk_count) {
+        buckets.delete(bucketKey);
+        continue;
+      }
+      bucket.chunksByIndex.set(content.chunk_index, content.state);
+    }
+
+    // Filter to complete buckets, sort by generation descending, pick the
+    // highest that decodes successfully.
+    const completeBuckets = Array.from(buckets.values())
+      .filter((b) => b.chunksByIndex.size === b.chunkCount)
+      .filter((b) => {
+        // Ensure every 0..chunk_count-1 index is present (no duplicates and
+        // no gaps hidden by map-key collisions).
+        for (let i = 0; i < b.chunkCount; i++) {
+          if (!b.chunksByIndex.has(i)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.generation - a.generation);
+
+    for (const bucket of completeBuckets) {
+      const orderedParts: string[] = [];
+      for (let i = 0; i < bucket.chunkCount; i++) {
+        orderedParts.push(bucket.chunksByIndex.get(i)!);
+      }
+      const concatenated = orderedParts.join('');
+      try {
+        return decodeBase64Strict(concatenated);
+      } catch {
+        // This bucket is internally corrupt; try the next-highest generation.
+        continue;
+      }
+    }
+    return null;
   }
 
   /**
