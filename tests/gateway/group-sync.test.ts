@@ -39,6 +39,9 @@ interface FakeClientState {
   /** Per-user power level map used by getPowerLevels. Tests mutate this to
    *  simulate the room's current power_levels state. */
   powerLevels: Record<string, number>;
+  /** Room member list used by getRoomMembers. Tests push/pop to simulate
+   *  join/leave. */
+  members: Array<{ userId: string; membership: 'join' | 'invite' | 'leave' | 'ban' | 'knock'; displayName?: string }>;
 }
 
 function makeFakeMatrixClient(): { client: MatrixClient; state: FakeClientState } {
@@ -49,6 +52,7 @@ function makeFakeMatrixClient(): { client: MatrixClient; state: FakeClientState 
     state: new Map(),
     stateEvents: [],
     powerLevels: { '@alice:matrix-os.com': 100 },
+    members: [{ userId: '@alice:matrix-os.com', membership: 'join', displayName: 'Alice' }],
   };
 
   const client: MatrixClient = {
@@ -94,7 +98,9 @@ function makeFakeMatrixClient(): { client: MatrixClient; state: FakeClientState 
       else state.stateEvents.push(entry);
       return { eventId: entry.event_id };
     },
-    getRoomMembers: vi.fn().mockResolvedValue([]),
+    async getRoomMembers(_roomId) {
+      return state.members.slice();
+    },
     async getPowerLevels(_roomId) {
       return { users: { ...state.powerLevels }, users_default: 0 };
     },
@@ -605,8 +611,8 @@ describe('GroupSync — registerHandlers + dispose', () => {
 
     // Per-app: op + snapshot + snapshot_lease (3).
     // Group-scoped: m.matrix_os.app_acl, m.matrix_os.app_install,
-    // m.room.power_levels (3). Total = 6 for a single-app group.
-    expect(handlers.length).toBe(6);
+    // m.room.power_levels, m.room.member (4). Total = 7 for a single-app group.
+    expect(handlers.length).toBe(7);
     const types = new Set(handlers.map((h) => h.eventType));
     expect(types.has('m.matrix_os.app.notes.op')).toBe(true);
     expect(types.has('m.matrix_os.app.notes.snapshot')).toBe(true);
@@ -614,6 +620,7 @@ describe('GroupSync — registerHandlers + dispose', () => {
     expect(types.has('m.matrix_os.app_acl')).toBe(true);
     expect(types.has('m.matrix_os.app_install')).toBe(true);
     expect(types.has('m.room.power_levels')).toBe(true);
+    expect(types.has('m.room.member')).toBe(true);
 
     // Route an inbound op — doc should update.
     const update = encodeYjsUpdateFromDoc((d) => d.getMap('kv').set('k', 'v'));
@@ -1916,5 +1923,148 @@ describe('GroupSync — app_install handler', () => {
         (e.detail.reason as string).includes('app_install_path_escape'),
     );
     expect(pathRejections.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// m.room.member handler + members.cache.json (T071)
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — members handler', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('populates members.cache.json on hydrate from getRoomMembers + getPowerLevels', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.powerLevels = {
+      '@alice:matrix-os.com': 100,
+      '@bob:matrix-os.com': 50,
+      '@carol:matrix-os.com': 0,
+    };
+    state.members = [
+      { userId: '@alice:matrix-os.com', membership: 'join', displayName: 'Alice' },
+      { userId: '@bob:matrix-os.com', membership: 'join', displayName: 'Bob' },
+      { userId: '@carol:matrix-os.com', membership: 'join', displayName: 'Carol' },
+      { userId: '@dan:matrix-os.com', membership: 'leave' },
+    ];
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const members = sync.getMembers();
+    // Left members are still included so the cache reflects full state.
+    expect(members.length).toBe(4);
+    const alice = members.find((m) => m.handle === '@alice:matrix-os.com');
+    expect(alice).toBeDefined();
+    expect(alice!.role).toBe('owner');
+    expect(alice!.membership).toBe('join');
+    const bob = members.find((m) => m.handle === '@bob:matrix-os.com');
+    expect(bob!.role).toBe('editor');
+    const carol = members.find((m) => m.handle === '@carol:matrix-os.com');
+    expect(carol!.role).toBe('viewer');
+    const dan = members.find((m) => m.handle === '@dan:matrix-os.com');
+    expect(dan!.membership).toBe('leave');
+
+    const cachePath = join(home, 'groups', manifest.slug, 'members.cache.json');
+    expect(existsSync(cachePath)).toBe(true);
+    const cached = JSON.parse(await readFile(cachePath, 'utf-8'));
+    expect(Array.isArray(cached)).toBe(true);
+    expect(cached.length).toBe(4);
+  });
+
+  it('emits members_changed when observeMemberEvent refreshes the list', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [
+      { userId: '@alice:matrix-os.com', membership: 'join' },
+    ];
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const changes: Array<{ count: number }> = [];
+    const disposer = sync.onMembersChanged((members) => {
+      changes.push({ count: members.length });
+    });
+
+    // Simulate an inbound m.room.member event (bob joins).
+    state.members.push({ userId: '@bob:matrix-os.com', membership: 'join' });
+    state.powerLevels['@bob:matrix-os.com'] = 50;
+    await sync.observeMemberEvent({
+      type: 'm.room.member',
+      event_id: '$join-bob',
+      sender: '@bob:matrix-os.com',
+      origin_server_ts: 1,
+      state_key: '@bob:matrix-os.com',
+      content: { membership: 'join' },
+    } as MatrixRawEvent);
+
+    expect(changes.length).toBe(1);
+    expect(changes[0]!.count).toBe(2);
+
+    // Dispose: subsequent calls don't fire.
+    disposer.dispose();
+    state.members.push({ userId: '@carol:matrix-os.com', membership: 'join' });
+    await sync.observeMemberEvent({
+      type: 'm.room.member',
+      event_id: '$join-carol',
+      sender: '@carol:matrix-os.com',
+      origin_server_ts: 2,
+      state_key: '@carol:matrix-os.com',
+      content: { membership: 'join' },
+    } as MatrixRawEvent);
+    expect(changes.length).toBe(1);
+  });
+
+  it('caps the in-memory members list at GROUP_MEMBERS_MAX with drop-oldest and logged warning', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+
+    // Seed 1005 members.
+    const members: Array<{ userId: string; membership: 'join' }> = [];
+    for (let i = 0; i < 1005; i++) {
+      members.push({ userId: `@user${i}:matrix-os.com`, membership: 'join' });
+    }
+    state.members = members;
+
+    const errors: Array<{ detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      env: { GROUP_MEMBERS_MAX: 1000 },
+      onError: (_code, detail) => errors.push({ detail }),
+    });
+    await sync.hydrate();
+
+    expect(sync.getMembers().length).toBe(1000);
+    const capWarnings = errors.filter(
+      (e) =>
+        typeof e.detail.reason === 'string' &&
+        (e.detail.reason as string).includes('members_cap'),
+    );
+    expect(capWarnings.length).toBeGreaterThanOrEqual(1);
   });
 });

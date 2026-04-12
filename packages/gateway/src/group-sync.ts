@@ -82,7 +82,20 @@ export interface GroupSyncEnv {
   GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD?: number;
   GROUP_SYNC_SNAPSHOT_INTERVAL_MS?: number;
   GROUP_DOC_MAX_BYTES?: number;
+  GROUP_MEMBERS_MAX?: number;
 }
+
+export type GroupMemberRole = 'owner' | 'editor' | 'viewer';
+export type GroupMemberMembership = 'join' | 'invite' | 'leave' | 'ban' | 'knock';
+
+export interface GroupMemberEntry {
+  handle: string;
+  role: GroupMemberRole;
+  membership: GroupMemberMembership;
+  display_name?: string;
+}
+
+export type MembersChangedListener = (members: GroupMemberEntry[]) => void;
 
 export interface AppBundle {
   files: Array<{ path: string; content: string }>;
@@ -187,6 +200,7 @@ const PERSISTENT_FAILURE_MS = 30 * 60 * 1000;
 const DEFAULT_OP_RAW_SINGLE_MAX = 32 * 1024;
 const DEFAULT_OP_RAW_SPLITTABLE_MAX = 1 * 1024 * 1024;
 const FRAGMENT_TTL_MS = 60_000;
+const DEFAULT_MEMBERS_MAX = 1000;
 
 // App slug must match group-types.ts SAFE_APP_SLUG exactly.
 const SAFE_APP_SLUG = /^[a-z][a-z0-9_-]{0,62}$/;
@@ -251,6 +265,7 @@ export class GroupSync {
       | 'GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64'
       | 'GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD'
       | 'GROUP_SYNC_SNAPSHOT_INTERVAL_MS'
+      | 'GROUP_MEMBERS_MAX'
     >
   >;
   private readonly onError: GroupSyncOnError;
@@ -267,6 +282,10 @@ export class GroupSync {
    *  `m.room.power_levels` state event. Used by the ACL enforcement gate. */
   private powerLevels: Record<string, number> = {};
   private usersDefaultPl = 0;
+  /** Current group member cache. Refreshed on every inbound m.room.member
+   *  state event and persisted to members.cache.json. */
+  private membersCache: GroupMemberEntry[] = [];
+  private readonly membersListeners = new Set<MembersChangedListener>();
 
   constructor(options: GroupSyncOptions) {
     this.manifest = options.manifest;
@@ -295,6 +314,7 @@ export class GroupSync {
         env.GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD ?? DEFAULT_SNAPSHOT_OPS_THRESHOLD,
       GROUP_SYNC_SNAPSHOT_INTERVAL_MS:
         env.GROUP_SYNC_SNAPSHOT_INTERVAL_MS ?? DEFAULT_SNAPSHOT_INTERVAL_MS,
+      GROUP_MEMBERS_MAX: env.GROUP_MEMBERS_MAX ?? DEFAULT_MEMBERS_MAX,
     };
 
     this.leaseManager = new SnapshotLeaseManager({
@@ -335,6 +355,10 @@ export class GroupSync {
     for (const appSlug of appSlugs) {
       await this.refreshAclFromServer(appSlug);
     }
+
+    // T071: pull current member list so routes can return something on
+    // first request without waiting for an m.room.member event.
+    await this.refreshMembersFromServer();
 
     this.hydrated = true;
   }
@@ -438,10 +462,25 @@ export class GroupSync {
     this.handlerDisposables.push(
       hub.registerEventHandler(this.manifest.room_id, 'm.room.power_levels', async () => {
         try {
-          await this.refreshPowerLevels();
+          // Power level changes may re-bucket roles; refresh members so
+          // subscribers see the new role, not just the new PL.
+          await this.refreshMembersFromServer();
         } catch (err) {
           this.onError('sync_failed', {
             reason: 'power_levels_handler_threw',
+            error: (err as Error)?.message ?? 'unknown',
+          });
+        }
+      }),
+    );
+
+    this.handlerDisposables.push(
+      hub.registerEventHandler(this.manifest.room_id, 'm.room.member', async (event) => {
+        try {
+          await this.observeMemberEvent(event);
+        } catch (err) {
+          this.onError('sync_failed', {
+            reason: 'member_handler_threw',
             error: (err as Error)?.message ?? 'unknown',
           });
         }
@@ -1076,8 +1115,11 @@ export class GroupSync {
   private async refreshPowerLevels(): Promise<void> {
     try {
       const pl = await this.client.getPowerLevels(this.manifest.room_id);
-      this.powerLevels = pl.users ?? {};
-      this.usersDefaultPl = typeof pl.users_default === 'number' ? pl.users_default : 0;
+      if (pl && typeof pl === 'object') {
+        this.powerLevels = pl.users ?? {};
+        this.usersDefaultPl =
+          typeof pl.users_default === 'number' ? pl.users_default : 0;
+      }
     } catch {
       // leave whatever we have
     }
@@ -1244,6 +1286,111 @@ export class GroupSync {
         error: (err as Error)?.message ?? 'unknown',
       });
     }
+  }
+
+  // --------------------- members ---------------------
+
+  /** Current group member list (in-memory cache, refreshed on every
+   *  m.room.member event). Returns a defensive copy. */
+  getMembers(): GroupMemberEntry[] {
+    return this.membersCache.slice();
+  }
+
+  /** Subscribe to members_changed events. Listeners receive a snapshot of
+   *  the current member list after every refresh. Returns a disposer. */
+  onMembersChanged(listener: MembersChangedListener): { dispose(): void } {
+    this.membersListeners.add(listener);
+    return {
+      dispose: () => {
+        this.membersListeners.delete(listener);
+      },
+    };
+  }
+
+  /** Fetch the fresh member list from Matrix + power_levels, update the
+   *  in-memory cache, persist members.cache.json, and fire listeners. */
+  private async refreshMembersFromServer(): Promise<void> {
+    // Need both the member list and power_levels to derive roles.
+    await this.refreshPowerLevels();
+    let raw: Awaited<ReturnType<MatrixClient['getRoomMembers']>> = [];
+    try {
+      const result = await this.client.getRoomMembers(this.manifest.room_id);
+      if (Array.isArray(result)) raw = result;
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'members_fetch_failed',
+        error: (err as Error)?.message ?? 'unknown',
+      });
+      return;
+    }
+
+    const nextFull: GroupMemberEntry[] = raw.map((m) => ({
+      handle: m.userId,
+      role: this.rolefromPowerLevel(this.powerLevelFor(m.userId)),
+      membership: m.membership,
+      display_name: m.displayName,
+    }));
+
+    // Enforce cap with drop-oldest (preserving input order → newest
+    // additions at the tail win).
+    const cap = this.env.GROUP_MEMBERS_MAX;
+    let next = nextFull;
+    if (nextFull.length > cap) {
+      const evicted = nextFull.length - cap;
+      next = nextFull.slice(evicted);
+      this.onError('sync_failed', {
+        reason: 'members_cap_exceeded',
+        totalCount: nextFull.length,
+        evictedCount: evicted,
+        cap,
+      });
+    }
+
+    const changed = !membersEqual(this.membersCache, next);
+    this.membersCache = next;
+    await this.persistMembersCache();
+    if (changed) {
+      this.fireMembersChanged();
+    }
+  }
+
+  private rolefromPowerLevel(pl: number): GroupMemberRole {
+    if (pl >= 100) return 'owner';
+    if (pl >= 50) return 'editor';
+    return 'viewer';
+  }
+
+  private async persistMembersCache(): Promise<void> {
+    const groupDir = this.resolveGroupDir();
+    const cachePath = join(groupDir, 'members.cache.json');
+    try {
+      await atomicWriteFile(cachePath, JSON.stringify(this.membersCache, null, 2));
+      this.debugOnWrite?.(cachePath);
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'members_cache_write_failed',
+        error: (err as Error)?.message ?? 'unknown',
+      });
+    }
+  }
+
+  private fireMembersChanged(): void {
+    const snapshot = this.getMembers();
+    for (const listener of Array.from(this.membersListeners)) {
+      try {
+        listener(snapshot);
+      } catch {
+        // listener failures must not break dispatch
+      }
+    }
+  }
+
+  /** Process an inbound `m.room.member` state event. Refreshes the full
+   *  member list (Matrix room state is the source of truth; the cache is
+   *  a mirror). Unknown / malformed events trigger a refresh anyway —
+   *  the refresh logic itself validates the response. */
+  async observeMemberEvent(_event: MatrixRawEvent): Promise<void> {
+    await this.refreshMembersFromServer();
   }
 
   /**
@@ -1882,6 +2029,27 @@ function generateUlid(): string {
   }
   for (let i = 0; i < 16; i++) randChars.push(ULID_ALPHABET[rnd[i]! % 32]!);
   return tsChars.join('') + randChars.join('');
+}
+
+/**
+ * Shallow structural equality for two member lists. Used to decide whether
+ * to fire members_changed — we don't want to broadcast an identical list.
+ */
+function membersEqual(a: GroupMemberEntry[], b: GroupMemberEntry[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (
+      x.handle !== y.handle ||
+      x.role !== y.role ||
+      x.membership !== y.membership ||
+      x.display_name !== y.display_name
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
