@@ -12,6 +12,7 @@ set -euo pipefail
 
 CONDUIT_URL="http://localhost:6167"
 ENV_FILE=".env.docker"
+ENV_ROOT=".env"
 
 echo "Checking Conduit is reachable..."
 if ! curl -sf "$CONDUIT_URL/_matrix/client/versions" > /dev/null 2>&1; then
@@ -64,15 +65,25 @@ else
 fi
 
 echo ""
-echo "=== Updating $ENV_FILE ==="
-if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' "s|^ALICE_TOKEN=.*|ALICE_TOKEN=$ALICE_TOKEN|" "$ENV_FILE"
-  sed -i '' "s|^BOB_TOKEN=.*|BOB_TOKEN=$BOB_TOKEN|" "$ENV_FILE"
-else
-  sed -i "s|^ALICE_TOKEN=.*|ALICE_TOKEN=$ALICE_TOKEN|" "$ENV_FILE"
-  sed -i "s|^BOB_TOKEN=.*|BOB_TOKEN=$BOB_TOKEN|" "$ENV_FILE"
-fi
-echo "Tokens written to $ENV_FILE"
+echo "=== Updating token files ==="
+update_tokens() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "  Skipping $file (not found)"
+    return
+  fi
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' "s|^ALICE_TOKEN=.*|ALICE_TOKEN=$ALICE_TOKEN|" "$file"
+    sed -i '' "s|^BOB_TOKEN=.*|BOB_TOKEN=$BOB_TOKEN|" "$file"
+  else
+    sed -i "s|^ALICE_TOKEN=.*|ALICE_TOKEN=$ALICE_TOKEN|" "$file"
+    sed -i "s|^BOB_TOKEN=.*|BOB_TOKEN=$BOB_TOKEN|" "$file"
+  fi
+  echo "  Updated $file"
+}
+update_tokens "$ENV_FILE"
+update_tokens "$ENV_ROOT"
+echo "Tokens synced"
 
 echo ""
 echo "=== Done ==="

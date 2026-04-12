@@ -225,6 +225,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      conduit:
+        condition: service_healthy
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -251,7 +253,7 @@ services:
       - NODE_ENV=development
       - MATRIX_HOME=/home/matrixos/home
       - MATRIX_HANDLE=alice
-      - MATRIX_ACCESS_TOKEN=B9oqgkrDNxEn1j26DBZqrfu2gqpbqQrU
+      - MATRIX_ACCESS_TOKEN=${ALICE_TOKEN:-}
       - MATRIX_SELF_HANDLE=@alice:matrix-os.com
       - E2E_TEST_BYPASS=1
       - PORT=4000
@@ -268,6 +270,8 @@ services:
     profiles: ["multi"]
     depends_on:
       postgres:
+        condition: service_healthy
+      conduit:
         condition: service_healthy
     build:
       context: .
@@ -295,7 +299,7 @@ services:
       - NODE_ENV=development
       - MATRIX_HOME=/home/matrixos/home
       - MATRIX_HANDLE=bob
-      - MATRIX_ACCESS_TOKEN=cvXgIsVpcmy6GcP4eS33O0Onc6P7pcEW
+      - MATRIX_ACCESS_TOKEN=${BOB_TOKEN:-}
       - MATRIX_SELF_HANDLE=@bob:matrix-os.com
       - E2E_TEST_BYPASS=1
       - PORT=4000
