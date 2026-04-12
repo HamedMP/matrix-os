@@ -412,6 +412,46 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
     }
   });
 
+  // ── GET /api/groups/:slug/presence — observe-only presence ──────────────
+  // No POST route — presence is set by the Matrix protocol, not by clients.
+  app.get("/api/groups/:slug/presence", async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const { slug } = c.req.param();
+    const manifest = groupRegistry.get(slug);
+    if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+    const syncHandle = groupRegistry.getSyncHandle(slug) as GroupSyncHandle | null;
+    if (!syncHandle) {
+      return c.json({ presence: {} }, 200);
+    }
+
+    const allPresence = syncHandle.getPresence();
+
+    // Filter to group members only (best-effort — degrade gracefully on Matrix error)
+    let memberIds: Set<string>;
+    try {
+      const rawMembers = await matrixClient.getRoomMembers(manifest.room_id);
+      memberIds = new Set(
+        rawMembers
+          .filter((m) => m.membership === "join" || m.membership === "invite")
+          .map((m) => m.userId),
+      );
+    } catch {
+      // If we can't fetch members, return all presence (degrade gracefully)
+      memberIds = new Set(allPresence.keys());
+    }
+
+    const presence: Record<string, { status: string; last_active_ago: number }> = {};
+    for (const [userId, data] of allPresence) {
+      if (memberIds.has(userId)) {
+        presence[userId] = data;
+      }
+    }
+
+    return c.json({ presence }, 200);
+  });
+
   // ── POST /api/groups/:slug/data — read/write/list shared KV ─────────────
   app.post(
     "/api/groups/:slug/data",
