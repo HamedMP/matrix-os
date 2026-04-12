@@ -28,6 +28,10 @@ export interface MatrixSyncHubLike {
     eventType: string,
     handler: (event: MatrixRawEvent, roomId: string) => Promise<void> | void,
   ): { dispose(): void };
+  registerGlobalEventHandler(
+    eventType: string,
+    handler: (event: MatrixRawEvent) => Promise<void> | void,
+  ): { dispose(): void };
 }
 
 /**
@@ -96,6 +100,17 @@ export interface GroupMemberEntry {
 }
 
 export type MembersChangedListener = (members: GroupMemberEntry[]) => void;
+
+export type PresenceStatus = 'online' | 'unavailable' | 'offline';
+
+export interface GroupPresenceEntry {
+  handle: string;
+  status: PresenceStatus;
+  last_active_ago?: number;
+  currently_active?: boolean;
+}
+
+export type PresenceChangedListener = (handle: string, entry: GroupPresenceEntry) => void;
 
 export interface AppBundle {
   files: Array<{ path: string; content: string }>;
@@ -286,6 +301,11 @@ export class GroupSync {
    *  state event and persisted to members.cache.json. */
   private membersCache: GroupMemberEntry[] = [];
   private readonly membersListeners = new Set<MembersChangedListener>();
+  /** In-memory presence cache (no disk persistence). Keyed by handle.
+   *  Only members of the current group get entries — all others are
+   *  filtered out at observe time. */
+  private readonly presenceCache = new Map<string, GroupPresenceEntry>();
+  private readonly presenceListeners = new Set<PresenceChangedListener>();
 
   constructor(options: GroupSyncOptions) {
     this.manifest = options.manifest;
@@ -481,6 +501,22 @@ export class GroupSync {
         } catch (err) {
           this.onError('sync_failed', {
             reason: 'member_handler_threw',
+            error: (err as Error)?.message ?? 'unknown',
+          });
+        }
+      }),
+    );
+
+    // m.presence is account-wide — register as a GLOBAL handler, not
+    // room-scoped. The per-GroupSync filter inside observePresenceEvent
+    // discards presence for handles outside this group.
+    this.handlerDisposables.push(
+      hub.registerGlobalEventHandler('m.presence', async (event) => {
+        try {
+          await this.observePresenceEvent(event);
+        } catch (err) {
+          this.onError('sync_failed', {
+            reason: 'presence_handler_threw',
             error: (err as Error)?.message ?? 'unknown',
           });
         }
@@ -1393,6 +1429,73 @@ export class GroupSync {
     await this.refreshMembersFromServer();
   }
 
+  // --------------------- presence ---------------------
+
+  /** Current presence map. Returns a defensive copy keyed by handle. */
+  getPresence(): Record<string, GroupPresenceEntry> {
+    const out: Record<string, GroupPresenceEntry> = {};
+    for (const [handle, entry] of this.presenceCache) {
+      out[handle] = { ...entry };
+    }
+    return out;
+  }
+
+  onPresenceChanged(listener: PresenceChangedListener): { dispose(): void } {
+    this.presenceListeners.add(listener);
+    return {
+      dispose: () => {
+        this.presenceListeners.delete(listener);
+      },
+    };
+  }
+
+  /**
+   * Process an inbound `m.presence` event. Filter to current group members
+   * (the sync hub dispatches account-wide, but each GroupSync scopes to
+   * its own member list). Malformed events are dropped.
+   *
+   * NB: v1 is observe-only — no publish path. The spec §"Non-Goals" locks
+   * this in; the presence-only-no-publish test asserts we don't add one.
+   */
+  async observePresenceEvent(event: MatrixRawEvent): Promise<void> {
+    const sender = event.sender;
+    if (typeof sender !== 'string' || sender.length === 0) return;
+
+    // Membership filter — presence only tracked for current members.
+    const isMember = this.membersCache.some(
+      (m) => m.handle === sender && m.membership === 'join',
+    );
+    if (!isMember) return;
+
+    const content = event.content as
+      | { presence?: unknown; last_active_ago?: unknown; currently_active?: unknown }
+      | undefined;
+    if (!content || typeof content.presence !== 'string') return;
+
+    const status = normalizePresenceStatus(content.presence);
+    if (!status) return;
+
+    const entry: GroupPresenceEntry = { handle: sender, status };
+    if (typeof content.last_active_ago === 'number') {
+      entry.last_active_ago = content.last_active_ago;
+    }
+    if (typeof content.currently_active === 'boolean') {
+      entry.currently_active = content.currently_active;
+    }
+
+    const prior = this.presenceCache.get(sender);
+    if (prior && presenceEqual(prior, entry)) return;
+    this.presenceCache.set(sender, entry);
+
+    for (const listener of Array.from(this.presenceListeners)) {
+      try {
+        listener(sender, { ...entry });
+      } catch {
+        // listener failures must not break dispatch
+      }
+    }
+  }
+
   /**
    * Process an inbound `m.matrix_os.app_acl` state event. Matched against a
    * hydrated app by its state_key (== appSlug per spec §C typo fix).
@@ -2029,6 +2132,23 @@ function generateUlid(): string {
   }
   for (let i = 0; i < 16; i++) randChars.push(ULID_ALPHABET[rnd[i]! % 32]!);
   return tsChars.join('') + randChars.join('');
+}
+
+/** Map a raw Matrix presence value to our strict enum. Returns null on
+ *  unknown / garbage. */
+function normalizePresenceStatus(raw: string): PresenceStatus | null {
+  if (raw === 'online' || raw === 'unavailable' || raw === 'offline') return raw;
+  return null;
+}
+
+/** Structural equality for two presence entries. */
+function presenceEqual(a: GroupPresenceEntry, b: GroupPresenceEntry): boolean {
+  return (
+    a.handle === b.handle &&
+    a.status === b.status &&
+    a.last_active_ago === b.last_active_ago &&
+    a.currently_active === b.currently_active
+  );
 }
 
 /**

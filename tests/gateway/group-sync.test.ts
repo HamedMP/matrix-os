@@ -116,6 +116,11 @@ interface RegisteredHandler {
   handler: (event: MatrixRawEvent, roomId: string) => Promise<void> | void;
 }
 
+interface RegisteredGlobalHandler {
+  eventType: string;
+  handler: (event: MatrixRawEvent) => Promise<void> | void;
+}
+
 function makeFakeSyncHub(): {
   hub: {
     registerEventHandler: (
@@ -123,11 +128,18 @@ function makeFakeSyncHub(): {
       eventType: string,
       handler: (event: MatrixRawEvent, roomId: string) => Promise<void> | void,
     ) => { dispose(): void };
+    registerGlobalEventHandler: (
+      eventType: string,
+      handler: (event: MatrixRawEvent) => Promise<void> | void,
+    ) => { dispose(): void };
   };
   handlers: RegisteredHandler[];
+  globalHandlers: RegisteredGlobalHandler[];
   deliver(roomId: string, event: MatrixRawEvent): Promise<void>;
+  deliverGlobal(event: MatrixRawEvent): Promise<void>;
 } {
   const handlers: RegisteredHandler[] = [];
+  const globalHandlers: RegisteredGlobalHandler[] = [];
   const hub = {
     registerEventHandler(
       roomId: string,
@@ -143,14 +155,31 @@ function makeFakeSyncHub(): {
         },
       };
     },
+    registerGlobalEventHandler(
+      eventType: string,
+      handler: (event: MatrixRawEvent) => Promise<void> | void,
+    ) {
+      const entry: RegisteredGlobalHandler = { eventType, handler };
+      globalHandlers.push(entry);
+      return {
+        dispose() {
+          const i = globalHandlers.indexOf(entry);
+          if (i >= 0) globalHandlers.splice(i, 1);
+        },
+      };
+    },
   };
   async function deliver(roomId: string, event: MatrixRawEvent): Promise<void> {
-    // Match the hub's per-room serial dispatch contract.
     for (const h of handlers.filter((x) => x.roomId === roomId && x.eventType === event.type)) {
       await h.handler(event, roomId);
     }
   }
-  return { hub, handlers, deliver };
+  async function deliverGlobal(event: MatrixRawEvent): Promise<void> {
+    for (const h of globalHandlers.filter((x) => x.eventType === event.type)) {
+      await h.handler(event);
+    }
+  }
+  return { hub, handlers, globalHandlers, deliver, deliverGlobal };
 }
 
 async function makeTmpHome(): Promise<string> {
@@ -2066,5 +2095,195 @@ describe('GroupSync — members handler', () => {
         (e.detail.reason as string).includes('members_cap'),
     );
     expect(capWarnings.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// m.presence global handler (T074)
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — presence handler', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('caches presence only for handles in the current member list', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [
+      { userId: '@alice:matrix-os.com', membership: 'join' },
+      { userId: '@bob:matrix-os.com', membership: 'join' },
+    ];
+    state.powerLevels = {
+      '@alice:matrix-os.com': 100,
+      '@bob:matrix-os.com': 50,
+    };
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    // Bob is a member — presence should land.
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'online', last_active_ago: 1000, currently_active: true },
+    } as MatrixRawEvent);
+
+    // Carol is NOT a member — presence should be filtered out.
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@carol:matrix-os.com',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+
+    const byHandle = sync.getPresence();
+    expect(byHandle['@bob:matrix-os.com']).toBeDefined();
+    expect(byHandle['@bob:matrix-os.com']!.status).toBe('online');
+    expect(byHandle['@bob:matrix-os.com']!.last_active_ago).toBe(1000);
+    expect(byHandle['@carol:matrix-os.com']).toBeUndefined();
+  });
+
+  it('fires presence_changed listeners for members only', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [
+      { userId: '@alice:matrix-os.com', membership: 'join' },
+      { userId: '@bob:matrix-os.com', membership: 'join' },
+    ];
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const changes: Array<{ handle: string; status: string }> = [];
+    const disposer = sync.onPresenceChanged((handle, entry) => {
+      changes.push({ handle, status: entry.status });
+    });
+
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'unavailable' },
+    } as MatrixRawEvent);
+
+    expect(changes.length).toBe(1);
+    expect(changes[0]!.handle).toBe('@bob:matrix-os.com');
+    expect(changes[0]!.status).toBe('unavailable');
+
+    // Non-member — listener must not fire.
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@eve:matrix-os.com',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+    expect(changes.length).toBe(1);
+
+    disposer.dispose();
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'offline' },
+    } as MatrixRawEvent);
+    expect(changes.length).toBe(1);
+  });
+
+  it('is observe-only — no publish path exists', () => {
+    // Spec §"Non-Goals" / §F: v1 NEVER publishes m.presence. Guard via the
+    // class surface — the test fails if someone adds a publishPresence method.
+    const manifest = makeManifest();
+    const { client } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+
+    // Surface check: no publishPresence, no setPresence, no postPresence.
+    // These are string-keyed lookups on the instance, so a compile-time
+    // method addition would fail this runtime assertion.
+    const s = sync as unknown as Record<string, unknown>;
+    expect(typeof s.publishPresence).not.toBe('function');
+    expect(typeof s.setPresence).not.toBe('function');
+    expect(typeof s.postPresence).not.toBe('function');
+  });
+
+  it('does not persist presence to disk', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [
+      { userId: '@alice:matrix-os.com', membership: 'join' },
+      { userId: '@bob:matrix-os.com', membership: 'join' },
+    ];
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    await sync.observePresenceEvent({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+
+    // No presence.cache.json file should exist under ~/groups/{slug}/.
+    expect(existsSync(join(home, 'groups', manifest.slug, 'presence.cache.json'))).toBe(false);
+    // Nor under data/ or acl/.
+    expect(existsSync(join(home, 'groups', manifest.slug, 'presence.json'))).toBe(false);
+  });
+
+  it('registerHandlers wires m.presence as a GLOBAL handler, not a room-scoped one', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    state.members = [
+      { userId: '@alice:matrix-os.com', membership: 'join' },
+      { userId: '@bob:matrix-os.com', membership: 'join' },
+    ];
+    const { hub, globalHandlers, deliverGlobal } = makeFakeSyncHub();
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    sync.registerHandlers(hub);
+
+    // m.presence is registered as a global handler, NOT per-room — Matrix
+    // presence is account-wide.
+    const types = globalHandlers.map((h) => h.eventType);
+    expect(types).toContain('m.presence');
+
+    await deliverGlobal({
+      type: 'm.presence',
+      sender: '@bob:matrix-os.com',
+      content: { presence: 'online' },
+    } as MatrixRawEvent);
+
+    expect(sync.getPresence()['@bob:matrix-os.com']!.status).toBe('online');
   });
 });
