@@ -127,7 +127,8 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
         });
 
         return c.json({ slug: manifest.slug, room_id: manifest.room_id }, 201);
-      } catch {
+      } catch (err) {
+        console.error("[062/group-routes] create group failed:", err);
         return c.json({ error: "Failed to create group" }, 500);
       }
     },

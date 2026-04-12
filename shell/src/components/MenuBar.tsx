@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { SearchIcon, UserIcon } from "lucide-react";
+import { GroupSwitcher } from "./GroupSwitcher";
 
 function formatMenuBarClock(date: Date): string {
   const day = date.toLocaleDateString("en-US", { weekday: "short" });
@@ -217,6 +218,9 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
         <span className="px-1.5 py-0.5 font-semibold text-foreground/90 truncate max-w-[200px]">
           {activeAppName}
         </span>
+        <div className="w-px h-3 bg-foreground/10 mx-0.5" />
+        <GroupSwitcher />
+        <div className="w-px h-3 bg-foreground/10 mx-0.5" />
         <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
         <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
         <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
