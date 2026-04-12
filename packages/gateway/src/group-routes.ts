@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
-import { GroupDataRequestSchema } from "./group-types.js";
+import { GroupDataRequestSchema, GroupAclSchema } from "./group-types.js";
 
 export interface GroupRoutesOptions {
   matrixClient: MatrixClient;
@@ -206,6 +206,59 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       joined_at: manifest.joined_at,
     }, 200);
   });
+
+  // ── POST /api/groups/:slug/apps/:app/acl — update per-app ACL ───────────
+  app.post(
+    "/api/groups/:slug/apps/:app/acl",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug, app: appSlug } = c.req.param();
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = GroupAclSchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid ACL" }, 400);
+      }
+
+      // Check caller power level ≥ install_pl (spec §H — requires install_pl = 100)
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+
+        if (callerPl < parsed.data.install_pl) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+
+        // state_key = appSlug (spec §C / spike §10 typo fix — NOT "")
+        await matrixClient.setRoomState(manifest.room_id, "m.matrix_os.app_acl", appSlug, {
+          v: 1,
+          ...parsed.data,
+        });
+
+        return c.json({ ok: true }, 200);
+      } catch (err) {
+        // Don't expose internal error details
+        if ((err as { status?: number }).status === 403) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+        return c.json({ error: "Failed to update ACL" }, 500);
+      }
+    },
+  );
 
   // ── POST /api/groups/:slug/data — read/write/list shared KV ─────────────
   app.post(
