@@ -80,6 +80,10 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { createMatrixClient } from "./matrix-client.js";
+import { MatrixSyncHub } from "./matrix-sync-hub.js";
+import { GroupRegistry } from "./group-registry.js";
+import { createGroupRoutes } from "./group-routes.js";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -189,6 +193,39 @@ export async function createGateway(config: GatewayConfig) {
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
   const clients = new Set<WSContext>();
+
+  // ── Spec 062: Matrix sync hub + group registry ──────────────────────────
+  // One account-wide MatrixClient + one /sync long-poll owner (MatrixSyncHub)
+  // per gateway process. GroupRegistry scans ~/groups/ on startup. GroupSync
+  // instances (crdt-engine) attach handlers to the hub in a later wave.
+  const matrixHomeserverUrl = process.env.MATRIX_HOMESERVER_URL;
+  const matrixAccessToken = process.env.MATRIX_ACCESS_TOKEN;
+  const groupsEnabled = Boolean(matrixHomeserverUrl && matrixAccessToken);
+  const matrixClient = groupsEnabled
+    ? createMatrixClient({
+        homeserverUrl: matrixHomeserverUrl!,
+        accessToken: matrixAccessToken!,
+      })
+    : null;
+  const syncHubAbortController = new AbortController();
+  const syncHub = matrixClient
+    ? new MatrixSyncHub({
+        client: matrixClient,
+        homePath,
+        onError: (code, detail) => {
+          console.error(`[062/sync-hub] ${code}`, detail);
+        },
+      })
+    : null;
+  const groupRegistry = new GroupRegistry(homePath);
+  try {
+    await groupRegistry.scan();
+    console.log(`[062/group-registry] scanned ${groupRegistry.list().length} group(s)`);
+  } catch (err) {
+    console.error("[062/group-registry] scan failed:", err instanceof Error ? err.message : err);
+  }
+  // GroupSync instances for each scanned group are wired by crdt-engine (T040)
+  // once group-sync.ts exposes the per-group hydrate + registerHandlers surface.
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -791,6 +828,16 @@ export async function createGateway(config: GatewayConfig) {
   if (integrationRoutes) {
     app.route("/api/integrations", integrationRoutes);
     console.log("[platform-db] Integration routes mounted (after auth)");
+  }
+
+  // Spec 062: mount group lifecycle routes (POST/GET /api/groups/*).
+  // Routes register their own paths starting with /api/groups, so mount at root.
+  // Only wire if matrix credentials are configured — otherwise group features
+  // are disabled and the endpoints return 503-style unavailable responses.
+  if (matrixClient && groupsEnabled) {
+    const groupRoutes = createGroupRoutes({ matrixClient, groupRegistry });
+    app.route("/", groupRoutes);
+    console.log("[062/group-routes] mounted at /api/groups (after auth)");
   }
 
   app.use("*", async (c, next) => {
@@ -2300,6 +2347,20 @@ export async function createGateway(config: GatewayConfig) {
     console.error("[plugins] Plugin init error:", err);
   });
 
+  // Spec 062: kick off the single account-wide /sync long-poll loop.
+  // Fire-and-forget — the loop runs for the gateway's lifetime and is
+  // cancelled via syncHubAbortController on close(). Startup MUST NOT block
+  // on this; failures log and keep the gateway serving everything else.
+  if (syncHub) {
+    void syncHub
+      .start(syncHubAbortController.signal)
+      .catch((err) => {
+        if ((err as { name?: string } | null)?.name === "AbortError") return;
+        console.error("[062/sync-hub] loop exited:", err instanceof Error ? err.message : err);
+      });
+    console.log("[062/sync-hub] started");
+  }
+
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
 
@@ -2329,6 +2390,8 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      // Spec 062: abort the /sync long-poll loop before tearing down HTTP.
+      syncHubAbortController.abort();
       await channelManager.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
