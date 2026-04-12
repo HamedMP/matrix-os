@@ -35,7 +35,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon, Share2Icon } from "lucide-react";
+import { ShareAppDialog } from "./ShareAppDialog";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -349,6 +350,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareAppSlug, setShareAppSlug] = useState<string | null>(null);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [showSetup, setShowSetup] = useState(false);
   const setupChecked = useRef(false);
@@ -1421,7 +1423,17 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}
                   </CardTitle>
-                  <div className="w-[54px] flex items-center justify-end">
+                  <div className="w-[72px] flex items-center justify-end gap-1">
+                    {!win.path.startsWith("__") && (
+                      <button
+                        data-testid={`share-app-${win.id}`}
+                        onClick={(e) => { e.stopPropagation(); setShareAppSlug(nameToSlug(win.title)); }}
+                        className="p-1 rounded text-foreground/40 hover:text-foreground/80 hover:bg-foreground/10 transition-colors"
+                        title="Share to group"
+                      >
+                        <Share2Icon className="size-3" />
+                      </button>
+                    )}
                     <AIButton
                       appName={win.title}
                       appPath={win.path}
@@ -1490,6 +1502,13 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       </div>
 
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {shareAppSlug && (
+        <ShareAppDialog
+          appSlug={shareAppSlug}
+          open={true}
+          onOpenChange={(open) => { if (!open) setShareAppSlug(null); }}
+        />
+      )}
     </TooltipProvider>
   );
 }
