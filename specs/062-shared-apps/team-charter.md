@@ -135,7 +135,43 @@ Never assume "the build was already broken" means your changes are clean. Always
 
 ## Audit log (qa-auditor maintains)
 
-- _empty_
+_Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps)_
+
+### CRITICAL
+
+- _none_
+
+### HIGH
+
+- `packages/gateway/src/group-routes.ts:81` — `member_handles` in `CreateGroupBodySchema` is `z.array(z.string())` with no regex validation. Spec §I requires `/^@[a-z0-9_]{1,32}:[a-z0-9.-]{1,253}$/` for member handles. `MEMBER_HANDLE_REGEX` already exists in `group-types.ts` but is not imported here. A malformed handle can be forwarded to `matrixClient.inviteToRoom()` and could trigger a Matrix 400 whose raw message gets wrapped (but the Matrix call itself wastes a roundtrip). **Owner: group-platform** (DM sent 2026-04-12). Fix: import `MEMBER_HANDLE_REGEX` from `group-types.ts`, add `.regex(MEMBER_HANDLE_REGEX)` inside the array item validator.
+
+- `packages/gateway/src/group-routes.ts:220,242,295,382,435,456,511` — Path param `:slug` is passed directly to `groupRegistry.get(slug)` without validating against the spec §I group slug regex `/^[a-z0-9][a-z0-9-]{0,62}$/`. `GROUP_SLUG_REGEX` is exported from `group-types.ts` but not used in route param handling. An adversary can probe with slugs containing `..`, null bytes, or path separators. **Owner: group-platform** (DM sent 2026-04-12). Fix: at the top of each route handler that reads `slug`, validate against `GROUP_SLUG_REGEX` and return 400 if it fails (before hitting the registry).
+
+- `tests/gateway/group-sync-conflict.property.test.ts:131` — Property test "three peers converge byte-equal after 200 random mutation sequences" **times out at 5000ms** (the default Vitest timeout). The test runs `numRuns: 200` and currently fails every run. The test logic appears correct; this is a performance/timeout budget issue. **Owner: crdt-engine** (DM sent 2026-04-12). Fix: add `{ timeout: 30_000 }` as the third argument to `it(...)` or configure a per-file `testTimeout` in the test file header.
+
+### MED
+
+- `packages/gateway/src/group-routes.ts:79-92` — `CreateGroupBodySchema`, `JoinGroupBodySchema`, and `ShareAppBodySchema` are defined inline in `group-routes.ts` rather than exported from `group-types.ts`. T094 requires request body schemas to come from `group-types.ts` to prevent drift. **Owner: group-platform** (DM sent 2026-04-12). Fix: move these three schemas into `group-types.ts`, export them, and import in `group-routes.ts`.
+
+- `shell/src/components/GroupSwitcher.tsx` — No `data-testid` attributes on any interactive element (trigger button, group list items, create button). The Playwright e2e scaffold in `tests/e2e/shared-app.spec.ts` falls back to `aria-haspopup="listbox"` for now but proper `data-testid` is required for stable selectors. **Owner: collab-shell** (DM sent 2026-04-12). Fix: add `data-testid="group-switcher-trigger"` to the trigger button, `data-testid="group-switcher-item-{slug}"` to each list item, `data-testid="group-create-button"` to the create action.
+
+- Two-context Clerk auth not wired for e2e: `E2E_TEST_BYPASS=1` is in the shell's `playwright.config.ts` and skips Clerk. For the full two-user shared-app flow (steps 4–9) this means both contexts share the same identity. True two-user e2e needs real Clerk test users or a stub identity fixture injected per context. Filed as a known gap in `tests/e2e/shared-app.spec.ts` header comment. Steps 4–9 are explicitly `test.skip`'d pending collab-shell T082–T084 landing, at which point this auth gap should be resolved. **Owner: lead-integrator** (DM sent 2026-04-12).
+
+### LOW
+
+- `packages/gateway/src/group-ws.ts:123` — `subscriberSets` (outer `Map<string, Set<ConnState>>`) grows without a cap on the number of distinct `(group:app)` keys. Each unique `slug:app` creates a permanent entry even after all subscribers disconnect. For a single-user deployment this is negligible, but for a multi-tenant deployment it is an unbounded map. The inner `Set` per key is capped via `maxSockets`. **Owner: collab-shell** (DM sent 2026-04-12). Fix: sweep entries with empty sets on subscriber removal; or periodically evict empty keys.
+
+- T090 sweep: Two `globalThis` usages found in `group-snapshot-lease.ts:73` and `group-sync.ts:2127`. Both are a crypto polyfill (`globalThis.crypto?.getRandomValues`) for ULID generation in environments that lack `crypto` (tests). This pattern reads `globalThis` for a platform API, not for cross-package communication — this is acceptable per the mandatory rule spirit. `matrix-client.ts:6` uses `globalThis.fetch` only as a type reference in a config interface. None of these are violations. Documented for completeness.
+
+- T092 sweep: All `fetch()` calls in the 062 surface have `AbortSignal.timeout(...)` either directly or via the `MatrixClient` wrapper (which applies a configurable timeout to every method). No bare un-timed external fetches found.
+
+- T091 sweep: No `appendFileSync` or `writeFileSync` in request handlers or the sync loop. All filesystem I/O uses `fs/promises`. Clean.
+
+- T093 sweep: All mutating routes in `group-routes.ts` have `bodyLimit` middleware with the correct limits (lifecycle routes 256KB, data route 512KB, leave route 1KB). Clean.
+
+### Build baseline delta (2026-04-12)
+
+Pre-sweep: 39 TS errors (recorded in charter §Build baseline). Post-sweep: qa-auditor made no implementation changes — error count unchanged. New files added: `tests/e2e/shared-app.spec.ts` (Playwright, no gateway TypeScript compilation), `tests/e2e/screenshots/shared-app/` (empty directory). Zero new TS errors introduced.
 
 ---
 
