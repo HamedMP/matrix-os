@@ -33,6 +33,12 @@ import {
   listConnectedServicesHandler,
   syncServicesHandler,
 } from "./tools/integrations.js";
+import {
+  createGroupHandler,
+  joinGroupHandler,
+  listGroupsHandler,
+  leaveGroupHandler,
+} from "./group-tools.js";
 const execAsync = promisify(execFile);
 
 export function createIpcServer(db: MatrixDB, homePath?: string) {
@@ -1075,6 +1081,49 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
         {},
         async () => {
           return syncServicesHandler();
+        },
+      ),
+
+      tool(
+        "create_group",
+        "Create a new shared group backed by a Matrix room. Invites the listed member handles to the room. Returns the group slug and room_id.",
+        {
+          name: z.string().min(1).max(128).describe("Display name for the group"),
+          member_handles: z.array(z.string()).max(256).describe("Matrix handles to invite, e.g. ['@bob:matrix-os.com']"),
+        },
+        async ({ name, member_handles }) => {
+          return createGroupHandler({ name, member_handles });
+        },
+      ),
+
+      tool(
+        "join_group",
+        "Accept a pending Matrix room invite and join the group. Scaffolds ~/groups/{slug}/ on the filesystem. Use the room_id from the invite notification.",
+        {
+          room_id: z.string().describe("Matrix room ID, e.g. !abc123:matrix-os.com"),
+        },
+        async ({ room_id }) => {
+          return joinGroupHandler({ room_id });
+        },
+      ),
+
+      tool(
+        "list_groups",
+        "List all groups this user is a member of. Returns slug, name, room_id, owner handle, and join date for each.",
+        {},
+        async () => {
+          return listGroupsHandler();
+        },
+      ),
+
+      tool(
+        "leave_group",
+        "Leave a group and archive its local directory to ~/groups/_archive/{slug}-{timestamp}/.",
+        {
+          slug: z.string().describe("Group slug, e.g. 'test-fam'"),
+        },
+        async ({ slug }) => {
+          return leaveGroupHandler({ slug });
         },
       ),
     ],

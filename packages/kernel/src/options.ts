@@ -37,6 +37,10 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__call_service",
   "mcp__matrix-os-ipc__list_connected_services",
   "mcp__matrix-os-ipc__sync_services",
+  "mcp__matrix-os-ipc__create_group",
+  "mcp__matrix-os-ipc__join_group",
+  "mcp__matrix-os-ipc__list_groups",
+  "mcp__matrix-os-ipc__leave_group",
 ];
 
 const BROWSER_TOOL_NAMES = [
