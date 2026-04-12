@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cp, writeFile, readFile, mkdir } from "node:fs/promises";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
-import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, CreateGroupBodySchema, JoinGroupBodySchema, ShareAppBodySchema } from "./group-types.js";
+import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, CreateGroupBodySchema, JoinGroupBodySchema, ShareAppBodySchema, InviteBodySchema } from "./group-types.js";
 import { resolveWithinHome } from "./path-security.js";
 
 export interface GroupRoutesOptions {
@@ -221,6 +221,53 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       joined_at: manifest.joined_at,
     }, 200);
   });
+
+  // ── POST /api/groups/:slug/invite — invite a user to the group ──────────
+  app.post(
+    "/api/groups/:slug/invite",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug } = c.req.param();
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = InviteBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const { user_id } = parsed.data;
+
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+        const invitePl = powerLevels.invite ?? 0;
+
+        if (callerPl < invitePl) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+
+        await matrixClient.inviteToRoom(manifest.room_id, user_id);
+        return c.json({ ok: true }, 200);
+      } catch {
+        return c.json({ error: "Failed to invite user" }, 500);
+      }
+    },
+  );
 
   // ── POST /api/groups/:slug/apps/:app/acl — update per-app ACL ───────────
   app.post(

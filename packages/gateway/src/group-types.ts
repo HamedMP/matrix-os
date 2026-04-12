@@ -149,3 +149,7 @@ export const JoinGroupBodySchema = z.object({
 export const ShareAppBodySchema = z.object({
   app_slug: z.string().regex(GROUP_SLUG_REGEX),
 });
+
+export const InviteBodySchema = z.object({
+  user_id: z.string().regex(MEMBER_HANDLE_REGEX),
+});
