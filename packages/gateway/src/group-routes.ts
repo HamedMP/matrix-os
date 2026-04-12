@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
+import { GroupDataRequestSchema } from "./group-types.js";
 
 export interface GroupRoutesOptions {
   matrixClient: MatrixClient;
@@ -12,6 +13,17 @@ export interface GroupRoutesOptions {
 }
 
 const BODY_LIMIT = 256 * 1024;
+const DATA_BODY_LIMIT = 512 * 1024;
+
+// Minimal sync-handle surface consumed by routes. GroupSync satisfies this
+// structurally; defined here so routes compile even before crdt-engine lands
+// the full class.
+interface GroupSyncHandle {
+  applyLocalMutation(appSlug: string, mutator: (doc: { getMap(name: string): Map<string, unknown> }) => void): Promise<void>;
+  readKv(appSlug: string, key: string): unknown;
+  listKv(appSlug: string): Record<string, unknown>;
+  getPresence(): Map<string, { status: "online" | "unavailable" | "offline"; last_active_ago: number }>;
+}
 const BEARER_PREFIX = "Bearer ";
 
 // ── Spec §G explicit power-level map for create_group ────────────────────────
@@ -194,6 +206,56 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       joined_at: manifest.joined_at,
     }, 200);
   });
+
+  // ── POST /api/groups/:slug/data — read/write/list shared KV ─────────────
+  app.post(
+    "/api/groups/:slug/data",
+    bodyLimit({ maxSize: DATA_BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug } = c.req.param();
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      const syncHandle = groupRegistry.getSyncHandle(slug) as GroupSyncHandle | null;
+      if (!syncHandle) return c.json({ error: "Group sync not available" }, 503);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = GroupDataRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request" }, 400);
+      }
+
+      const { action, app_slug, key, value } = parsed.data;
+
+      try {
+        if (action === "write") {
+          await syncHandle.applyLocalMutation(app_slug, (doc) => {
+            doc.getMap("kv").set(key!, value);
+          });
+          return c.json({ ok: true }, 200);
+        }
+
+        if (action === "read") {
+          const val = syncHandle.readKv(app_slug, key!);
+          return c.json({ value: val !== undefined ? val : null }, 200);
+        }
+
+        // action === "list"
+        const entries = syncHandle.listKv(app_slug);
+        return c.json({ entries }, 200);
+      } catch {
+        return c.json({ error: "Data operation failed" }, 500);
+      }
+    },
+  );
 
   // ── POST /api/groups/:slug/leave — leave and archive a group ─────────────
   app.post("/api/groups/:slug/leave", bodyLimit({ maxSize: 1024 }), async (c) => {
