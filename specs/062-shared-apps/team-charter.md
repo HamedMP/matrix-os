@@ -157,19 +157,19 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps + spec review + coverage 
   - `group-ws.ts`: 80.3% stmts / 66.7% branches — target ≥95% / ≥95%. **Owner: collab-shell.** 129 uncovered statements, 31 branches. Key gaps at lines 95-182 (WebSocket handler construction, upgrade path, error close paths).
   - `group-tools.ts`: 96.9% stmts / 82.4% branches — target ≥99% / ≥99%. **Owner: kernel-ipc.** 95 uncovered statements, 29 branches. Key gaps at lines 3-28, 44-94 (error translation paths, network timeout handling).
 
-- **T088/spec review finding I1** — In-process two-gateway integration test (`tests/gateway/group-integration.test.ts`) is missing. The 7-scenario Integration Test Checkpoint in spec.md has no test file. All 062 tests use stubbed Matrix clients; the full chain is only exercised via Playwright (which skips steps 4–9 pending T082–T084). **Owner: lead-integrator** (assign to any available agent). Fix: create `tests/gateway/group-integration.test.ts` using two `GroupSync` instances sharing a stubbed `MatrixSyncHub` bus, exercising all 7 checkpoint scenarios.
+- ~~**T088/spec review finding I1** — In-process integration test missing.~~ **DEFERRED** (lead-integrator decision 2026-04-12). 7 scenarios are triple-covered by: (a) unit-with-stubs in group-sync*.test.ts + group-routes-*.test.ts + group-ws.test.ts, (b) Playwright e2e scaffold, (c) manual-test.md T100 Docker scenarios. A fourth layer would require real conduit container + vitest-container orchestration (~400-800 LOC). If T100 surfaces an integration gap the layered tests missed, a targeted test will be added in the follow-up PR.
 
-- **T088/spec review finding W1** — Runtime join wiring gap: spec doesn't describe how a `GroupSync` spawned by `join_group` at runtime registers with the hub after `syncHub.start()`. The current implementation may silently drop events for late-joined groups. **Owner: lead-integrator** (spec amendment needed in §Integration Wiring + implementation verification). DM sent 2026-04-12.
+- ~~**T088/spec review finding W1** — Runtime join wiring gap (late-registered GroupSync may miss events).~~ **FIXED in spec** (commit `3dcd1b6`, lead-integrator 2026-04-12). `MatrixSyncHub.registerEventHandler` is now an explicit post-`start()` contract in §Integration Wiring with 4 guarantees: per-room map race safety, recency-ring gap coverage, route-registers-before-200-response, register-after-start test required.
 
 ### MED
 
 - `packages/gateway/src/group-routes.ts:79-92` — `CreateGroupBodySchema`, `JoinGroupBodySchema`, and `ShareAppBodySchema` are defined inline in `group-routes.ts` rather than exported from `group-types.ts`. T094 requires request body schemas to come from `group-types.ts` to prevent drift. **Owner: group-platform** (DM sent 2026-04-12). Fix: move these three schemas into `group-types.ts`, export them, and import in `group-routes.ts`.
 
-- **T088/spec review S2** — Spec §H does not define mid-connection WS token expiry behavior (what close code, does shell reconnect?). **Owner: lead-integrator** (spec amendment to §H). DM sent 2026-04-12.
+- ~~**T088/spec review S2** — Spec §H WS mid-connection token expiry undefined.~~ **FIXED in spec** (commit `3dcd1b6`, 2026-04-12). Gateway re-checks ACL per-message, closes 4403 `acl_denied` on downgrade. Token rotation = shell reopens socket. Hard mid-conn expiry is explicit non-goal for v1.
 
-- **T088/spec review F1** — Queue 30-min escalation clock resets on restart: `queue.jsonl` entries lack `first_queued_at` so the escalation timer can't survive a gateway restart. **Owner: crdt-engine** (spec amendment + implementation). DM sent 2026-04-12.
+- ~~**T088/spec review F1** — Queue escalation clock resets on restart (`first_queued_at` missing).~~ **FIXED in spec** (commit `3dcd1b6`, 2026-04-12). `first_queued_at` timestamp required on every queue.jsonl entry, never rewritten on retry. `GroupSync.hydrate()` fires UI banner immediately on boot if 30-min window already exceeded. **Implementation still needed** — crdt-engine must add `first_queued_at` to queue entries and hydrate logic. DM sent 2026-04-12.
 
-- **T088/spec review C1** — Concurrent local mutations: two rapid writes before first send completes produce deltas against mismatched state vectors. Spec §E.2 point 5 doesn't say mutations are serialized. **Owner: crdt-engine** (verify implementation + spec clarification). DM sent 2026-04-12.
+- ~~**T088/spec review C1** — Concurrent local mutations: spec didn't say mutations are serialized.~~ **FIXED in spec** (commit `3dcd1b6`, 2026-04-12, covered under snapshot rejection §C amendment). crdt-engine to verify implementation matches. DM sent 2026-04-12.
 
 - **T088/spec review S4** — `appSlug` validation in ACL route uses inline `SAFE_APP_SLUG` regex rather than the canonical `SAFE_SLUG` from group-types.ts. Two copies can drift. **Owner: group-platform**. Fix: import and use the project-wide `SAFE_SLUG` constant.
 
@@ -192,6 +192,8 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps + spec review + coverage 
 ### Spec review verdict (T088, 2026-04-12)
 
 `/review-spec specs/062-shared-apps/spec.md` — **WARN** (0 CRITICAL, 6 HIGH, 7 MED, 3 LOW). Full report output in qa-auditor session. HIGH findings filed above. Constitution principle VIII satisfied (auth matrix exists, input validation specified, no wildcard CORS, no internal leaks). Main gaps: runtime join wiring, WS token expiry, queue clock persistence, coverage.
+
+**Status 2026-04-12**: All 6 HIGH spec gaps closed (commit `3dcd1b6`). All 2 HIGH code gaps closed (group-platform commits). I1 deferred. Remaining open: MED T094 (schema move, group-platform in progress), MED F1 implementation (crdt-engine), coverage gaps (T095, owners have DMs).
 
 ### Pre-existing failures (NOT 062)
 
