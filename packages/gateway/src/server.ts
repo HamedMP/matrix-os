@@ -84,6 +84,7 @@ import { createMatrixClient } from "./matrix-client.js";
 import { MatrixSyncHub } from "./matrix-sync-hub.js";
 import { GroupRegistry } from "./group-registry.js";
 import { createGroupRoutes } from "./group-routes.js";
+import { GroupSync, quarantineCorruptState } from "./group-sync.js";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -224,8 +225,57 @@ export async function createGateway(config: GatewayConfig) {
   } catch (err) {
     console.error("[062/group-registry] scan failed:", err instanceof Error ? err.message : err);
   }
-  // GroupSync instances for each scanned group are wired by crdt-engine (T040)
-  // once group-sync.ts exposes the per-group hydrate + registerHandlers surface.
+  // ── Spec 062 T040/T041: hydrate GroupSync per group, quarantine on corrupt state.bin ──
+  const groupSyncs = new Map<string, GroupSync>();
+  if (syncHub && matrixClient) {
+    for (const manifest of groupRegistry.list()) {
+      const selfHandle = process.env.MATRIX_SELF_HANDLE ?? manifest.owner_handle;
+      try {
+        const sync = new GroupSync({
+          manifest,
+          homePath,
+          matrixClient,
+          selfHandle,
+          onError: (code, detail) => {
+            console.error(`[062/group-sync] ${manifest.slug} ${code}`, detail);
+          },
+        });
+        await sync.hydrate();
+        sync.registerHandlers(syncHub);
+        groupRegistry.attachSync(manifest.slug, sync);
+        groupSyncs.set(manifest.slug, sync);
+      } catch (err) {
+        // T041: corrupt state.bin — quarantine every app's state and retry fresh.
+        console.error(
+          `[062/group-sync] ${manifest.slug} hydrate failed, quarantining:`,
+          err instanceof Error ? err.message : err,
+        );
+        await quarantineCorruptState({ manifest, homePath }, err);
+        try {
+          const fresh = new GroupSync({
+            manifest,
+            homePath,
+            matrixClient,
+            selfHandle,
+            fresh: true,
+            onError: (code, detail) => {
+              console.error(`[062/group-sync] ${manifest.slug} ${code}`, detail);
+            },
+          });
+          await fresh.hydrate();
+          fresh.registerHandlers(syncHub);
+          groupRegistry.attachSync(manifest.slug, fresh);
+          groupSyncs.set(manifest.slug, fresh);
+        } catch (secondErr) {
+          console.error(
+            `[062/group-sync] ${manifest.slug} fresh hydrate failed after quarantine:`,
+            secondErr instanceof Error ? secondErr.message : secondErr,
+          );
+        }
+      }
+    }
+    console.log(`[062/group-sync] hydrated ${groupSyncs.size} group(s)`);
+  }
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -2390,7 +2440,13 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
-      // Spec 062: abort the /sync long-poll loop before tearing down HTTP.
+      // Spec 062: dispose GroupSync instances + abort /sync long-poll loop
+      // before tearing down HTTP. dispose() is synchronous and detaches handlers.
+      for (const sync of groupSyncs.values()) {
+        try { sync.dispose(); } catch (err) {
+          console.error("[062/group-sync] dispose error:", err instanceof Error ? err.message : err);
+        }
+      }
       syncHubAbortController.abort();
       await channelManager.stop();
       await sessionRegistry.shutdown();
