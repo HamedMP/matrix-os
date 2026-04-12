@@ -108,6 +108,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
           name,
           invite: member_handles,
           preset: "private_chat",
+          roomVersion: "10",
           powerLevelContentOverride: buildGroupPowerLevels(ownerHandle),
           initialState: [
             {

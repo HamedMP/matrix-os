@@ -111,6 +111,7 @@ export interface CreateRoomInput {
   name?: string;
   invite?: string[];
   preset?: 'private_chat' | 'trusted_private_chat' | 'public_chat';
+  roomVersion?: string;
   powerLevelContentOverride?: PowerLevelsContent;
   initialState?: Array<{
     type: string;
@@ -399,6 +400,7 @@ export function createMatrixClient(config: MatrixClientConfig): MatrixClient {
       if (input.name !== undefined) body.name = input.name;
       if (input.invite !== undefined) body.invite = input.invite;
       if (input.preset !== undefined) body.preset = input.preset;
+      if (input.roomVersion !== undefined) body.room_version = input.roomVersion;
       if (input.powerLevelContentOverride !== undefined) {
         body.power_level_content_override = input.powerLevelContentOverride;
       }

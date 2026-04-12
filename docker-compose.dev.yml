@@ -159,9 +159,7 @@ services:
       - ./distro/conduit.toml:/etc/conduit.toml:ro
       - conduit-data:/var/lib/matrix-conduit
     healthcheck:
-      test: ["CMD-SHELL", "exit 0"]
-      interval: 30s
-      timeout: 3s
+      disable: true
     restart: unless-stopped
 
   # --- Observability profile ---
@@ -226,7 +224,7 @@ services:
       postgres:
         condition: service_healthy
       conduit:
-        condition: service_healthy
+        condition: service_started
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -272,7 +270,7 @@ services:
       postgres:
         condition: service_healthy
       conduit:
-        condition: service_healthy
+        condition: service_started
     build:
       context: .
       dockerfile: Dockerfile.dev
