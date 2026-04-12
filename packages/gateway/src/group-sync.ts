@@ -1366,6 +1366,53 @@ export class GroupSyncHydrateError extends Error {
 }
 
 /**
+ * Quarantine helper used by `server.ts` startup loop (T041). Walks every
+ * app directory under `~/groups/{slug}/apps/` and renames any existing
+ * `state.bin` to `state.bin.corrupt-{ts}` so the next `hydrate({ fresh:
+ * true })` starts from an empty Y.Doc. Safe to call multiple times; misses
+ * are ignored.
+ */
+export async function quarantineCorruptState(
+  options: { manifest: GroupManifest; homePath: string },
+  err: unknown,
+): Promise<void> {
+  const ts = Date.now();
+  const groupDir = resolveWithinHome(options.homePath, join('groups', options.manifest.slug));
+  if (!groupDir) return;
+  const appsDir = join(groupDir, 'apps');
+  let entries: string[] = [];
+  try {
+    const dirents = await fs.readdir(appsDir, { withFileTypes: true });
+    entries = dirents.filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return;
+  }
+  for (const appSlug of entries) {
+    const dataDir = resolveWithinHome(
+      options.homePath,
+      join('groups', options.manifest.slug, 'data', appSlug),
+    );
+    if (!dataDir) continue;
+    const stateBinPath = join(dataDir, 'state.bin');
+    const quarantinePath = join(dataDir, `state.bin.corrupt-${ts}`);
+    try {
+      await fs.rename(stateBinPath, quarantinePath);
+    } catch {
+      // ENOENT / already gone — ignore
+    }
+  }
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      event: 'group_sync_corrupt_state_quarantined',
+      group_slug: options.manifest.slug,
+      error: err instanceof Error ? err.message : String(err),
+      ts,
+    }),
+  );
+}
+
+/**
  * Atomic file write: write to a tmp file, then rename.
  * Matches the CLAUDE.md atomicity rule for 2+ related writes and provides
  * crash-safety for `state.bin` / `last_sync.json` updates.
