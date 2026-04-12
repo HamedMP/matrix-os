@@ -1,0 +1,218 @@
+import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
+import type { MatrixClient } from "./matrix-client.js";
+import type { GroupRegistry } from "./group-registry.js";
+
+export interface GroupRoutesOptions {
+  matrixClient: MatrixClient;
+  groupRegistry: GroupRegistry;
+  /** Bearer token expected in Authorization header. If omitted, any non-empty token passes. */
+  authToken?: string;
+}
+
+const BODY_LIMIT = 256 * 1024;
+const BEARER_PREFIX = "Bearer ";
+
+// ── Spec §G explicit power-level map for create_group ────────────────────────
+function buildGroupPowerLevels(ownerHandle: string) {
+  return {
+    users: { [ownerHandle]: 100 },
+    users_default: 0,
+    state_default: 50,
+    events_default: 0,
+    events: {
+      "m.room.power_levels": 100,
+      "m.matrix_os.app_acl": 100,
+      "m.matrix_os.app_install": 50,
+    },
+  };
+}
+
+function extractBearer(header: string | undefined): string | null {
+  if (!header || !header.startsWith(BEARER_PREFIX)) return null;
+  return header.slice(BEARER_PREFIX.length);
+}
+
+function makeRequireAuth(expectedToken: string | undefined) {
+  return function requireAuth(c: { req: { header: (name: string) => string | undefined } }): boolean {
+    const token = extractBearer(c.req.header("Authorization"));
+    if (token === null || token.length === 0) return false;
+    // If a specific token is configured, validate it; otherwise any non-empty token passes
+    // (production uses the gateway's global auth middleware which validates Clerk JWTs)
+    if (expectedToken === undefined) return true;
+    return token === expectedToken;
+  };
+}
+
+const CreateGroupBodySchema = z.object({
+  name: z.string().min(1),
+  member_handles: z.array(z.string()).optional(),
+});
+
+const JoinGroupBodySchema = z.object({
+  room_id: z.string().min(1),
+});
+
+export function createGroupRoutes(opts: GroupRoutesOptions) {
+  const { matrixClient, groupRegistry } = opts;
+  const requireAuth = makeRequireAuth(opts.authToken);
+  const app = new Hono();
+
+  // ── POST /api/groups — create a new group ─────────────────────────────────
+  app.post(
+    "/api/groups",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = CreateGroupBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const { name, member_handles = [] } = parsed.data;
+
+      try {
+        const { userId: ownerHandle } = await matrixClient.whoami();
+        const { roomId } = await matrixClient.createRoom({
+          name,
+          invite: member_handles,
+          preset: "private_chat",
+        });
+
+        // Spec §G: MUST call setPowerLevels with the explicit map after createRoom
+        await matrixClient.setPowerLevels(roomId, buildGroupPowerLevels(ownerHandle));
+
+        // Write m.matrix_os.group state event
+        await matrixClient.setRoomState(roomId, "m.matrix_os.group", "", {
+          v: 1,
+          schema_version: 1,
+          default_acl_policy: "open",
+        });
+
+        const manifest = await groupRegistry.create({
+          roomId,
+          name,
+          ownerHandle,
+        });
+
+        return c.json({ slug: manifest.slug, room_id: manifest.room_id }, 201);
+      } catch {
+        return c.json({ error: "Failed to create group" }, 500);
+      }
+    },
+  );
+
+  // ── POST /api/groups/join — accept an invite / join by room_id ────────────
+  app.post(
+    "/api/groups/join",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = JoinGroupBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const { room_id } = parsed.data;
+
+      try {
+        const { roomId } = await matrixClient.joinRoom(room_id);
+        const { userId: ownerHandle } = await matrixClient.whoami();
+
+        // Fetch room name from state
+        let name = roomId;
+        try {
+          const nameState = await matrixClient.getRoomState(roomId, "m.room.name", "");
+          if (nameState && typeof nameState.name === "string") {
+            name = nameState.name;
+          }
+        } catch {
+          // best-effort
+        }
+
+        const manifest = await groupRegistry.create({
+          roomId,
+          name,
+          ownerHandle,
+        });
+
+        return c.json({ slug: manifest.slug, room_id: manifest.room_id }, 200);
+      } catch {
+        return c.json({ error: "Failed to join group" }, 500);
+      }
+    },
+  );
+
+  // ── GET /api/groups — list all joined groups ──────────────────────────────
+  app.get("/api/groups", async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const manifests = groupRegistry.list();
+    const groups = manifests.map((m) => ({
+      slug: m.slug,
+      name: m.name,
+      room_id: m.room_id,
+      owner_handle: m.owner_handle,
+      joined_at: m.joined_at,
+    }));
+
+    return c.json({ groups }, 200);
+  });
+
+  // ── GET /api/groups/:slug — get one group ─────────────────────────────────
+  app.get("/api/groups/:slug", async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const { slug } = c.req.param();
+    const manifest = groupRegistry.get(slug);
+    if (!manifest) {
+      return c.json({ error: "Group not found" }, 404);
+    }
+
+    return c.json({
+      slug: manifest.slug,
+      name: manifest.name,
+      room_id: manifest.room_id,
+      owner_handle: manifest.owner_handle,
+      joined_at: manifest.joined_at,
+    }, 200);
+  });
+
+  // ── POST /api/groups/:slug/leave — leave and archive a group ─────────────
+  app.post("/api/groups/:slug/leave", bodyLimit({ maxSize: 1024 }), async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const { slug } = c.req.param();
+    const manifest = groupRegistry.get(slug);
+    if (!manifest) {
+      return c.json({ error: "Group not found" }, 404);
+    }
+
+    try {
+      await matrixClient.leaveRoom(manifest.room_id);
+      await groupRegistry.archive(slug);
+      return c.json({ ok: true }, 200);
+    } catch {
+      return c.json({ error: "Failed to leave group" }, 500);
+    }
+  });
+
+  return app;
+}
