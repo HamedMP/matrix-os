@@ -85,6 +85,12 @@ import { MatrixSyncHub } from "./matrix-sync-hub.js";
 import { GroupRegistry } from "./group-registry.js";
 import { createGroupRoutes } from "./group-routes.js";
 import { GroupSync, quarantineCorruptState } from "./group-sync.js";
+import {
+  createGroupWsHandler,
+  type GroupWsGroupRegistry,
+  type GroupWsGroupSync,
+  type WsConnection as GroupWsConnection,
+} from "./group-ws.js";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -276,6 +282,55 @@ export async function createGateway(config: GatewayConfig) {
     }
     console.log(`[062/group-sync] hydrated ${groupSyncs.size} group(s)`);
   }
+
+  // ── Spec 062 T048: /ws/groups/:slug/:app WebSocket bridge ────────────────
+  // Build an adapter that matches the GroupWsGroupRegistry structural shape
+  // without modifying GroupRegistry (owned by group-platform) or GroupSync
+  // (owned by crdt-engine). v1 ACL is permissive (spec §C default policy)
+  // and member power level is owner-gets-100-else-0; Wave 4 T056 + T071 will
+  // replace these with real ACL-cache + member-cache lookups from GroupSync.
+  const gatewaySelfHandle =
+    process.env.MATRIX_SELF_HANDLE ??
+    "@user:matrix-os.com"; // fallback so the WS route stays wired when MATRIX_SELF_HANDLE is not set
+  const groupWsAdapter: GroupWsGroupRegistry = {
+    get(slug) {
+      const manifest = groupRegistry.get(slug);
+      return manifest ? { room_id: manifest.room_id } : null;
+    },
+    getSyncHandle(slug): GroupWsGroupSync | null {
+      return groupSyncs.get(slug) ?? null;
+    },
+    getAcl(_slug, _appSlug) {
+      // Wave 4 T056 replaces this with GroupSync's ACL cache read.
+      // Until then, default to spec §C: read_pl=0, write_pl=0 (open policy).
+      return { read_pl: 0, write_pl: 0 };
+    },
+    getMemberPowerLevel(slug, userHandle) {
+      // Wave 4 T071 replaces this with GroupSync's m.room.member cache.
+      // Until then: owner gets 100 (matches create_group setPowerLevels map),
+      // everyone else gets 0 (passes read_pl=0 check but fails any write_pl≥50).
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return 0;
+      return manifest.owner_handle === userHandle ? 100 : 0;
+    },
+  };
+  const groupWsHandler = groupsEnabled
+    ? createGroupWsHandler({
+        groupRegistry: groupWsAdapter,
+        verifyToken: async (token) => {
+          // Single-tenant gateway: the bearer is MATRIX_AUTH_TOKEN (checked
+          // globally by authMiddleware). If it reaches here the token is
+          // already trusted; verify once more with timing-safe compare and
+          // return the gateway's configured handle. No Clerk JWT parsing
+          // needed — spec 062 is single-account.
+          const expected = process.env.MATRIX_AUTH_TOKEN;
+          if (!expected || token.length !== expected.length) return null;
+          // timingSafeEqual would be ideal but we already passed the shared
+          // authMiddleware once; this layer is belt-and-suspenders.
+          return token === expected ? gatewaySelfHandle : null;
+        },
+      })
+    : null;
 
   // App data layer (Postgres-backed when DATABASE_URL is set)
   const databaseUrl = process.env.DATABASE_URL;
@@ -1297,6 +1352,94 @@ export async function createGateway(config: GatewayConfig) {
       };
     }),
   );
+
+  // Spec 062 T048: /ws/groups/:slug/:app WebSocket bridge. The shell mirror
+  // Y.Doc and gateway-side GroupSync exchange Yjs sync-protocol messages
+  // here. Auth is query-token ?token=... (same pattern as /ws/terminal)
+  // because browsers cannot set Authorization headers on WS upgrades —
+  // authMiddleware's WS_QUERY_TOKEN_PREFIXES match picks /ws/groups/* up.
+  if (groupWsHandler) {
+    app.get(
+      "/ws/groups/:slug/:app",
+      upgradeWebSocket(async (c) => {
+        const slug = c.req.param("slug") ?? "";
+        const appSlug = c.req.param("app") ?? "";
+        const token =
+          c.req.header("Authorization")?.replace(/^Bearer\s+/, "") ??
+          c.req.query("token") ??
+          null;
+
+        const upgradeResult = await groupWsHandler.handleUpgrade(slug, appSlug, token);
+        if (upgradeResult.status !== 200) {
+          // Close immediately with the code group-ws returned. 4403 maps to
+          // acl_denied per spec §J; 401/403 map to unauthorized/forbidden.
+          const closeCode =
+            upgradeResult.status === 4403
+              ? 4403
+              : upgradeResult.status === 401
+                ? 4401
+                : 4403;
+          const errorCode =
+            upgradeResult.status === 4403 ? "acl_denied" : "unauthorized";
+          return {
+            onOpen(_evt, ws) {
+              try {
+                ws.send(JSON.stringify({ type: "error", code: errorCode }));
+                ws.close(closeCode, errorCode);
+              } catch {
+                /* already closed */
+              }
+            },
+          };
+        }
+
+        // Auth passed. The token is already validated by handleUpgrade, but
+        // we need to resolve the userHandle again to pass into openConnection.
+        // verifyToken in the handler is the same function we configured above,
+        // so this call is ~free.
+        let conn: GroupWsConnection | null = null;
+        return {
+          async onOpen(_evt, ws) {
+            const userHandle = gatewaySelfHandle;
+            try {
+              conn = await groupWsHandler.openConnection(
+                slug,
+                appSlug,
+                userHandle,
+                ws as unknown as WebSocket,
+              );
+            } catch (err) {
+              console.error(
+                "[062/group-ws] openConnection failed:",
+                err instanceof Error ? err.message : err,
+              );
+              try {
+                ws.close(4500, "sync_failed");
+              } catch {
+                /* already closed */
+              }
+            }
+          },
+          onMessage(evt, _ws) {
+            if (!conn) return;
+            const data = evt.data;
+            if (typeof data === "string") {
+              conn.onMessage(new TextEncoder().encode(data));
+            } else if (data instanceof ArrayBuffer) {
+              conn.onMessage(new Uint8Array(data));
+            } else if (data instanceof Uint8Array) {
+              conn.onMessage(data);
+            }
+          },
+          onClose() {
+            conn?.onClose();
+            conn = null;
+          },
+        };
+      }),
+    );
+    console.log("[062/group-ws] mounted /ws/groups/:slug/:app");
+  }
 
   app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";

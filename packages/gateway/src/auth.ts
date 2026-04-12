@@ -15,6 +15,10 @@ const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
 const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal"];
+// Spec 062: /ws/groups/{slug}/{app} is a dynamic path that also needs
+// query-token auth because browsers cannot set Authorization headers on
+// WebSocket upgrades. Prefix-match rather than list each concrete path.
+const WS_QUERY_TOKEN_PREFIXES = ["/ws/groups/"];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran
 // timingSafeEqual(bufB, bufB) as a dummy call -- but the work done in
@@ -109,7 +113,9 @@ export function authMiddleware(
     }
 
     const authHeader = c.req.header("Authorization");
-    const isWsUpgrade = WS_QUERY_TOKEN_PATHS.some((p) => c.req.path === p);
+    const isWsUpgrade =
+      WS_QUERY_TOKEN_PATHS.some((p) => c.req.path === p) ||
+      WS_QUERY_TOKEN_PREFIXES.some((p) => c.req.path.startsWith(p));
 
     // Only accept query param token for WebSocket upgrades (browsers can't set
     // Authorization headers on WS connections). REST endpoints must use headers.
