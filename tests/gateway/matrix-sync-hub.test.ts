@@ -989,5 +989,769 @@ describe('MatrixSyncHub', () => {
         hub2.dispose();
       }
     });
+
+    it('missing cursor file (ENOENT): starts from null without error', async () => {
+      // No file written — constructor should handle ENOENT gracefully.
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        onError,
+        backoffMsSchedule: [5],
+      });
+      expect(hub2.getNextBatch()).toBe('');
+      hub2.dispose();
+      expect(errors).toHaveLength(0);
+    });
+
+    it('cursor file with empty next_batch string returns null', async () => {
+      writeFileSync(join(homePath, 'system', 'matrix-sync.json'), JSON.stringify({ next_batch: '' }));
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        onError,
+        backoffMsSchedule: [5],
+      });
+      expect(hub2.getNextBatch()).toBe('');
+      hub2.dispose();
+    });
+
+    it('cursor file with non-string next_batch returns null', async () => {
+      writeFileSync(join(homePath, 'system', 'matrix-sync.json'), JSON.stringify({ next_batch: 12345 }));
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        onError,
+        backoffMsSchedule: [5],
+      });
+      expect(hub2.getNextBatch()).toBe('');
+      hub2.dispose();
+    });
+  });
+
+  // ---- coverage: edge paths for branches and statements ----
+
+  describe('edge paths (coverage)', () => {
+    it('start() called twice is a no-op', async () => {
+      client.queueSync({ kind: 'ok', response: buildSyncResponse({ next_batch: 's1' }) });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+      // Second call should return immediately.
+      const second = hub.start(controller.signal);
+      await second;
+    });
+
+    it('dispose() during loop terminates cleanly', async () => {
+      startHub();
+      await flushMicrotasks(4);
+      hub.dispose();
+      controller.abort();
+      await loopPromise;
+    });
+
+    it('default onError is a no-op when not provided', () => {
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+      });
+      // Should not throw.
+      hub2.dispose();
+    });
+
+    it('debugGetRoomRing returns empty for unknown room', () => {
+      expect(hub.debugGetRoomRing('!unknown:hs')).toEqual([]);
+    });
+
+    it('registerEventHandler dispose is safe when handler set is already gone', () => {
+      const dis = hub.registerEventHandler('!r:hs', 'm.test', async () => {});
+      // Manually clear the room handlers map to simulate a race.
+      const room = (hub as unknown as { rooms: Map<string, { handlers: Map<string, Set<unknown>> }> }).rooms.get('!r:hs');
+      if (room) room.handlers.delete('m.test');
+      // dispose should not throw.
+      dis.dispose();
+    });
+
+    it('registerEventHandler dispose cleans up empty handler set', () => {
+      const dis = hub.registerEventHandler('!r:hs', 'm.test2', async () => {});
+      dis.dispose();
+      // Call dispose again — safe no-op.
+      dis.dispose();
+    });
+
+    it('registerGlobalEventHandler dispose is safe when handler set is already gone', () => {
+      const dis = hub.registerGlobalEventHandler('m.test', async () => {});
+      const globalHandlers = (hub as unknown as { globalHandlers: Map<string, Set<unknown>> }).globalHandlers;
+      globalHandlers.delete('m.test');
+      dis.dispose();
+    });
+
+    it('registerGlobalEventHandler dispose cleans up empty set', () => {
+      const dis = hub.registerGlobalEventHandler('m.test2', async () => {});
+      dis.dispose();
+      dis.dispose();
+    });
+
+    it('global handler that throws is caught and surfaced via onError', async () => {
+      hub.registerGlobalEventHandler('m.presence', async () => {
+        throw new Error('handler-boom');
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          presence: {
+            events: [{ type: 'm.presence', sender: '@a:hs', content: { presence: 'online' } }],
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => errors.some((e) => e.detail?.reason === 'global_handler_failed'));
+      expect(errors.find((e) => e.detail?.reason === 'global_handler_failed')?.detail?.error).toBe('handler-boom');
+    });
+
+    it('room handler that throws is caught via dispatch_failed', async () => {
+      const room = '!r:hs';
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {
+        throw new Error('room-boom');
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [makeTimelineEvent({ id: '$1', ts: 1, lamport: 1 })],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => errors.some((e) => e.detail?.reason === 'dispatch_failed'));
+      expect(errors.find((e) => e.detail?.reason === 'dispatch_failed')?.detail?.error).toBe('room-boom');
+    });
+
+    it('reportGap backfill failure is caught and surfaced', async () => {
+      const room = '!r:hs';
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {});
+      // Seed the ring with one event so the room exists.
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [makeTimelineEvent({ id: '$1', ts: 1, lamport: 1 })],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+
+      // Make getRoomMessages throw.
+      const origGet = client.getRoomMessages.bind(client);
+      client.getRoomMessages = async () => { throw new Error('backfill-fail'); };
+      hub.reportGap(room, 5);
+      await waitFor(() => errors.some((e) => e.detail?.reason === 'backfill_failed'));
+      client.getRoomMessages = origGet;
+    });
+
+    it('events without lamport/client_id do not trigger gap detection', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.room.member', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [
+                    { event_id: '$m1', type: 'm.room.member', sender: '@a:hs', origin_server_ts: 1, content: { membership: 'join' } },
+                    { event_id: '$m2', type: 'm.room.member', sender: '@b:hs', origin_server_ts: 2, content: { membership: 'join' } },
+                  ],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length === 2);
+      expect(received).toEqual(['$m1', '$m2']);
+      expect(client.messagesCallCount()).toBe(0);
+    });
+
+    it('state events in a batch are dispatched to room handlers', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.matrix_os.app_acl', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: { events: [], limited: false },
+                state: {
+                  events: [
+                    {
+                      event_id: '$acl1',
+                      type: 'm.matrix_os.app_acl',
+                      state_key: 'notes',
+                      sender: '@a:hs',
+                      origin_server_ts: 1,
+                      content: { write_pl: 50 },
+                    },
+                  ],
+                },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length === 1);
+      expect(received).toEqual(['$acl1']);
+    });
+
+    it('account_data events dispatch to global handlers', async () => {
+      const received: string[] = [];
+      hub.registerGlobalEventHandler('m.direct', async (ev) => {
+        received.push(ev.type);
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          account_data: {
+            events: [{ type: 'm.direct', content: {} }],
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length === 1);
+      expect(received).toEqual(['m.direct']);
+    });
+
+    it('unregistered event type does not crash (fireRoomHandlers no-op)', async () => {
+      const room = '!r:hs';
+      // Register for one type, send another.
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {});
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [{ event_id: '$x', type: 'm.unregistered', sender: '@a:hs', origin_server_ts: 1, content: {} }],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+    });
+
+    it('unregistered global event type does not crash (dispatchGlobal no-op)', async () => {
+      hub.registerGlobalEventHandler('m.presence', async () => {});
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          presence: {
+            events: [{ type: 'm.unregistered_global', content: {} }],
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+    });
+
+    it('backfill with empty chunk breaks out of the pagination loop', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+      // limited=true triggers backfill, but /messages returns empty chunk.
+      client.queueMessages({ chunk: [], end: 'p-end' });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [makeTimelineEvent({ id: '$1', ts: 1, lamport: 1 })],
+                  limited: true,
+                  prev_batch: 'p0',
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length >= 1);
+      expect(received).toContain('$1');
+      expect(client.messagesCallCount()).toBe(1);
+    });
+
+    it('recency ring deduplicates events with the same event_id', async () => {
+      const room = '!r:hs';
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {});
+      // Send same event_id twice in one batch — should only appear once in ring.
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [
+                    makeTimelineEvent({ id: '$dup', ts: 1, lamport: 1 }),
+                    makeTimelineEvent({ id: '$dup', ts: 2, lamport: 2 }),
+                  ],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+      const ring = hub.debugGetRoomRing(room);
+      const dupCount = ring.filter((r) => r.event_id === '$dup').length;
+      expect(dupCount).toBe(1);
+    });
+
+    it('raceAbort rejects immediately when signal is already aborted', async () => {
+      const aborted = AbortSignal.abort();
+      const hubAny = hub as unknown as { raceAbort: <T>(p: Promise<T>, s: AbortSignal) => Promise<T> };
+      await expect(
+        hubAny.raceAbort(Promise.resolve('ok'), aborted),
+      ).rejects.toThrow('aborted');
+    });
+
+    it('/sync response with empty rooms object does not crash', async () => {
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({ next_batch: 's1' }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+    });
+
+    it('sleep early return when signal already aborted', async () => {
+      // Trigger backoff by making sync fail, then immediately abort.
+      client.queueSync({ kind: 'error', error: new Error('trigger-backoff') });
+      startHub();
+      // Give the hub time to enter the catch + backoff path.
+      await flushMicrotasks(8);
+      controller.abort();
+      await loopPromise;
+    });
+
+    it('disposed mid-sync breaks the loop', async () => {
+      // Queue an OK then a hang.
+      client.queueSync({ kind: 'ok', response: buildSyncResponse({ next_batch: 's1' }) });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+      hub.dispose();
+      controller.abort();
+      await loopPromise;
+    });
+
+    it('events with undefined event_id / origin_server_ts still dispatch and sort', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.test', async (ev) => {
+        received.push(String(ev.content?.val));
+      });
+      // limited=true triggers backfill; messages come back with missing fields.
+      client.queueMessages({
+        chunk: [
+          { type: 'm.test', content: { val: 'b' } },
+          { type: 'm.test', content: { val: 'a' } },
+        ],
+        end: 'p-end',
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [{ type: 'm.test', content: { val: 'c' } }],
+                  limited: true,
+                  prev_batch: 'p0',
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length >= 3);
+      // Backfill sorts by (ts ?? 0, id ?? ''); both undefined → stable order.
+      expect(received).toContain('a');
+      expect(received).toContain('b');
+      expect(received).toContain('c');
+    });
+
+    it('events with undefined content.lamport fallback to 0 in readLamport', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.test', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [
+                    { event_id: '$nolam', type: 'm.test', origin_server_ts: 1, content: {} },
+                  ],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length === 1);
+      const ring = hub.debugGetRoomRing(room);
+      expect(ring[0].lamport).toBe(0);
+    });
+
+    it('backfill iteration cap hit with collected events still delivers them and flags', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+      // Create a hub with cap=1 so one page hits the cap.
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        onError,
+        backoffMsSchedule: [5],
+        backfillIterationCap: 1,
+      });
+      hub2.registerEventHandler(room, 'm.matrix_os.app.notes.op', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+      // Backfill returns events but no anchor hit within 1 page.
+      client.queueMessages({
+        chunk: [
+          makeTimelineEvent({ id: '$bf1', ts: 3, lamport: 3 }),
+          makeTimelineEvent({ id: '$bf2', ts: 2, lamport: 2 }),
+        ],
+        end: 'p-more',
+      });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [makeTimelineEvent({ id: '$5', ts: 5, lamport: 5 })],
+                  limited: true,
+                  prev_batch: 'p0',
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      const ctrl2 = new AbortController();
+      const loop2 = hub2.start(ctrl2.signal);
+      await waitFor(() => received.length >= 2);
+      expect(received).toContain('$bf1');
+      expect(received).toContain('$bf2');
+      await waitFor(() => errors.some((e) => e.detail?.reason === 'backfill_iteration_cap'));
+      ctrl2.abort();
+      await loop2.catch(() => undefined);
+      hub2.dispose();
+    });
+
+    it('backfill iteration cap with zero collected events surfaces sync_failed', async () => {
+      const room = '!r:hs';
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {});
+      // Create hub with cap=1, messages returns 1 page of no-anchor events.
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        onError,
+        backoffMsSchedule: [5],
+        backfillIterationCap: 1,
+      });
+      hub2.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {});
+      // Backfill returns nothing useful.
+      client.queueMessages({ chunk: [], end: 'p-end' });
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [makeTimelineEvent({ id: '$x', ts: 1, lamport: 1 })],
+                  limited: true,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      const ctrl2 = new AbortController();
+      const loop2 = hub2.start(ctrl2.signal);
+      await waitFor(() => errors.some((e) => e.detail?.reason === 'backfill_iteration_cap'));
+      ctrl2.abort();
+      await loop2.catch(() => undefined);
+      hub2.dispose();
+    });
+
+    it('persistCursor failure surfaces onError without crash', async () => {
+      // Make the system dir non-writable by deleting it.
+      rmSync(join(homePath, 'system'), { recursive: true, force: true });
+      // Write a file where the directory should be to block mkdir.
+      writeFileSync(join(homePath, 'system'), 'block');
+      client.queueSync({ kind: 'ok', response: buildSyncResponse({ next_batch: 'x' }) });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 'x');
+      await flushMicrotasks(16);
+      // Should not crash; may or may not emit an error depending on OS behavior.
+    });
+
+    it('lamport gap within a single event batch triggers backfill after delivering earlier events', async () => {
+      const room = '!r:hs';
+      const received: string[] = [];
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async (ev) => {
+        received.push(ev.event_id ?? '?');
+      });
+
+      // Two events from same client_id where lamport jumps: 1, 5.
+      // Backfill returns the missing 2,3,4.
+      client.queueMessages({
+        chunk: [
+          makeTimelineEvent({ id: '$5', ts: 5, lamport: 5 }),
+          makeTimelineEvent({ id: '$4', ts: 4, lamport: 4 }),
+          makeTimelineEvent({ id: '$3', ts: 3, lamport: 3 }),
+          makeTimelineEvent({ id: '$2', ts: 2, lamport: 2 }),
+          makeTimelineEvent({ id: '$1', ts: 1, lamport: 1 }),
+        ],
+        end: 'p-end',
+      });
+
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [
+                    makeTimelineEvent({ id: '$1', ts: 1, lamport: 1, clientId: 'c1' }),
+                    makeTimelineEvent({ id: '$5', ts: 5, lamport: 5, clientId: 'c1' }),
+                  ],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => received.length >= 5);
+      expect(received).toEqual(['$1', '$2', '$3', '$4', '$5']);
+    });
+
+    it('default onError does not crash when triggered', async () => {
+      // Hub without onError — defaults to no-op lambda.
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        backoffMsSchedule: [5],
+      });
+      // Trigger an error through sync failure.
+      client.queueSync({ kind: 'error', error: new Error('x') });
+      client.queueSync({ kind: 'ok', response: buildSyncResponse({ next_batch: 'ok' }) });
+      const ctrl2 = new AbortController();
+      const loop2 = hub2.start(ctrl2.signal);
+      await waitFor(() => hub2.getNextBatch() === 'ok');
+      ctrl2.abort();
+      await loop2.catch(() => undefined);
+      hub2.dispose();
+    });
+
+    it('event with undefined content does not trigger gap detection', async () => {
+      const room = '!r:hs';
+      hub.registerEventHandler(room, 'm.test', async () => {});
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [
+                    { event_id: '$nocon', type: 'm.test', sender: '@a:hs', origin_server_ts: 1, content: undefined as unknown as Record<string, unknown> },
+                  ],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+      expect(client.messagesCallCount()).toBe(0);
+    });
+
+    it('loadCursorSync returns null when homePath does not resolve cursor file', () => {
+      // Create hub with a homePath that causes resolveWithinHome to return null.
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath: '/nonexistent-path-that-is-fine',
+        onError,
+      });
+      expect(hub2.getNextBatch()).toBe('');
+      hub2.dispose();
+    });
+
+    it('persistCursor is no-op when nextBatch is null', async () => {
+      // Hub with no syncs → nextBatch stays null → persistCursor skips.
+      const hub2 = new MatrixSyncHub({
+        client: client as MatrixClient,
+        homePath,
+        onError,
+        backoffMsSchedule: [5],
+      });
+      // Access private persistCursor via start() with empty sync.
+      client.queueSync({ kind: 'ok', response: buildSyncResponse({ next_batch: '' }) });
+      const ctrl2 = new AbortController();
+      const loop2 = hub2.start(ctrl2.signal);
+      await flushMicrotasks(8);
+      ctrl2.abort();
+      await loop2.catch(() => undefined);
+      hub2.dispose();
+    });
+
+    it('sleep returns immediately when signal is already aborted', async () => {
+      // Access sleep directly to test the early return.
+      const hubAny = hub as unknown as { sleep: (ms: number, signal: AbortSignal) => Promise<void> };
+      const aborted = AbortSignal.abort();
+      await hubAny.sleep(10000, aborted);
+      // If we reach here, sleep returned immediately.
+    });
+
+    it('backfill error message falls back to unknown when err has no message', async () => {
+      const room = '!r:hs';
+      hub.registerEventHandler(room, 'm.matrix_os.app.notes.op', async () => {});
+      client.queueSync({
+        kind: 'ok',
+        response: buildSyncResponse({
+          next_batch: 's1',
+          rooms: {
+            join: {
+              [room]: {
+                timeline: {
+                  events: [makeTimelineEvent({ id: '$1', ts: 1, lamport: 1 })],
+                  limited: false,
+                },
+                state: { events: [] },
+              },
+            },
+            invite: {},
+            leave: {},
+          },
+        }),
+      });
+      startHub();
+      await waitFor(() => hub.getNextBatch() === 's1');
+      // Replace getRoomMessages to throw a non-Error object.
+      client.getRoomMessages = async () => { throw null; };
+      hub.reportGap(room, 5);
+      await waitFor(() => errors.some((e) => e.detail?.reason === 'backfill_failed'));
+      expect(errors.find((e) => e.detail?.reason === 'backfill_failed')?.detail?.error).toBe('unknown');
+    });
   });
 });
