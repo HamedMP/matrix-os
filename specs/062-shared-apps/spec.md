@@ -99,6 +99,14 @@ content: {
 
 **Snapshot atomicity contract:** Readers MUST select the highest-generation `snapshot_id` for which all `chunk_count` chunks are present and share the same `snapshot_id`. Mixed chunk sets from concurrent writers MUST be rejected — fall back to the previous complete snapshot or full timeline replay. The `state_key` includes the `snapshot_id` so concurrent writers cannot interleave chunks under the same key.
 
+**Snapshot rejection — application state contract (spec amendment, qa-auditor review):** When the reader rejects a snapshot (mixed chunk set, missing chunks, failed base64 decode, or failed Yjs apply), the currently-loaded `Y.Doc` in memory MUST remain untouched. Rejection is a READ-path signal only — it never mutates application state. The caller (`GroupSync.hydrate()` or the `snapshot` event handler) decides the fallback based on context:
+
+- **Cold start (first hydrate):** try previous-generation snapshot via the same atomicity check. If none exists, start from an empty `Y.Doc` and replay `log.jsonl` + Matrix backfill per the crash-recovery path above.
+- **Runtime snapshot arrival:** log `sync_failed` via `onError`, increment `group_sync.snapshot_reject` metric, keep the existing in-memory doc. Do NOT attempt to roll the in-memory doc back to the previous snapshot — the timeline ops that have arrived since the last good snapshot are still valid and must not be discarded.
+- **Partial apply (Yjs threw mid-`applyUpdate`):** this is worse than rejection because the doc may be in an undefined state. Quarantine the snapshot bytes to `~/groups/{slug}/data/{app}/snapshot-reject-{ts}.bin` for forensics, reload `state.bin` from disk (which is guaranteed atomic), and continue. If disk reload also fails, surface `sync_failed` and mark the app as "needs manual recovery" — do NOT silently keep a corrupt doc in memory.
+
+This contract matters because the spec's "Mixed chunk sets MUST be rejected" wording (above) doesn't by itself say what to do with the running Y.Doc. A naive implementation might clear the doc on reject, which would lose minutes or hours of timeline ops. The intent is: rejection is a passive fallback signal, not an active rollback.
+
 **Snapshot writer lease:**
 
 ```
@@ -277,6 +285,8 @@ New tools in `packages/kernel/src/ipc-server.ts`:
 
 **Power level enforcement is doubled:** Matrix homeserver enforces `m.room.power_levels` for state events (snapshot, ACL). The sync engine *also* re-checks the sender's power level for timeline ops before applying — defense in depth, in case a misconfigured homeserver lets through events.
 
+**WS mid-connection token expiry:** The `/ws/groups/:slug/:app` WebSocket is authenticated once on upgrade via the query-token path (`?token=...`) because browsers cannot set `Authorization` headers on WS upgrades. The gateway does NOT re-verify the bearer on every inbound message — there is no "token expired" close-code on a live socket. What the gateway DOES re-check on every inbound message is the user's ACL `read_pl` / `write_pl` against the latest cached ACL state event; if the user has been removed from the room or dropped below the ACL threshold, the socket closes with code 4403 and the coarse error `acl_denied` per §J. Token rotation (credential refresh in the shell) is handled by the shell reopening the WebSocket with the new token — the old socket's `onclose` handler triggers `group-bridge.ts` reconnect. Forced global logout is handled at the layer above: the shell drops all WS connections when Clerk session ends. If a future version of the gateway needs hard mid-connection token expiry (e.g. short-lived JWTs with a 5-minute TTL), it will need a periodic server-side re-verification task and a new close-code `4401 token_expired` — this is an explicit non-goal for v1.
+
 ### I: Input Validation
 
 - **Group slug**: `/^[a-z0-9][a-z0-9-]{0,62}$/` (64 chars max, conservative)
@@ -312,11 +322,20 @@ New tools in `packages/kernel/src/ipc-server.ts`:
 3. New: `const syncHub = new MatrixSyncHub(matrixClient)` — single account-wide /sync loop owner
 4. New: `const groupRegistry = new GroupRegistry(homePath)` → `await groupRegistry.scan()` — loads all `manifest.json` files
 5. New: for each group → `const sync = new GroupSync({ roomId, matrixClient, syncHub, groupDir })` → `await sync.hydrate()` (loads all `state.bin` files) → `sync.registerHandlers(syncHub)` (handlers fan in from the hub, no per-group long-poll)
-6. New: `await syncHub.start(shutdownSignal)` — single long-poll begins after all handlers are registered
+6. New: `void syncHub.start(shutdownSignal).catch(logAndSurfaceFatal)` — **fire-and-forget**. The /sync loop is an infinite long-poll that returns only on `shutdownSignal.abort()`. Startup MUST NOT `await` it — doing so would block Hono from calling `serve()` and the gateway would never bind its HTTP port. The caller captures the returned promise in a `void` expression with a `.catch` handler so an unhandled rejection on the loop surfaces as a structured error; `AbortError` is silently swallowed because that's the expected shutdown path.
 7. New: register HTTP routes `/api/groups/*` and WebSocket route `/ws/groups/*` against the existing Hono app, with `groupRegistry` and `matrixClient` injected at construction
 8. The kernel subprocess (existing) reaches new functionality via HTTP loopback — it does NOT receive direct references to `groupRegistry` or `MatrixSyncHub`
 
 Crash on hydrate if a `state.bin` file is corrupt: log + quarantine to `state.bin.corrupt-{ts}` + start fresh from snapshot replay. Do NOT silently overwrite.
+
+**Runtime handler registration (post-`syncHub.start()`):** Groups created or joined at runtime — via `POST /api/groups` or `POST /api/groups/join` while the gateway is already serving — MUST be able to register their `GroupSync` handlers with the hub without restarting the /sync loop. `MatrixSyncHub.registerEventHandler(roomId, eventType, handler)` is designed to be callable at any point after `start()` has been entered. Concretely:
+
+1. The hub's per-room dispatch map is a `Map<string, Map<string, Set<EventHandler>>>` mutated under the per-room async queue, so concurrent `registerEventHandler` calls race cleanly against the dispatch loop without dropping events.
+2. Any `/sync` batch for a room that has no registered handlers at batch-parse time is still recorded in the recency ring (256 events/room LRU) for gap-fill purposes, so late-registering handlers do not miss events that arrived during the registration window — they catch them on the next batch via the backfill path.
+3. A newly-joined room may produce events on the very first `/sync` tick after join, before the kernel's `join_group` tool returns. The route handler MUST register GroupSync handlers BEFORE responding 200 to the kernel, so the gateway→kernel response race cannot leak an event to a handler-less room state.
+4. Tests in `tests/gateway/matrix-sync-hub.test.ts` MUST include a "register-after-start" regression: start the hub with one room, kick dispatch, then `registerEventHandler` for a second room mid-flight and assert both rooms see events without cross-contamination.
+
+This property is what lets `join_group` work at runtime without a gateway restart. The spec treats it as an explicit contract of `MatrixSyncHub`, not an emergent side effect.
 
 ### Cross-package communication
 
@@ -363,11 +382,11 @@ No `globalThis`. All gateway-side dependencies (`matrixClient`, `syncHub`, `grou
 
 Recovery contract: after crash + restart, the local state must equal `apply(snapshot, all_events_since_snapshot)` for every app in every group. Concretely:
 
-1. On startup, `GroupSync.hydrate()` loads `state.bin` (or starts from empty doc if missing)
+1. On startup, `GroupSync.hydrate()` loads `state.bin` (or starts from empty doc if missing). If the latest snapshot in room state has a higher `generation` than the locally-persisted state.bin, `hydrate()` applies the snapshot first (via the atomicity-contract reader) and then replays forward from `taken_at_event_id`.
 2. Reads `last_sync.json.last_event_id`
-3. Replays `log.jsonl` from that event onward
+3. Replays `log.jsonl` from that event onward. **Snapshot→log gap fallback (spec amendment, qa-auditor review):** if the snapshot's `taken_at_event_id` is newer than the oldest entry in `log.jsonl` (i.e., the log doesn't reach back to cover the snapshot cutover), OR `log.jsonl` is empty after snapshot apply, the hydrate path MUST NOT silently continue — that would leave a hole between `last_sync.json.last_event_id` and the next `/sync` batch. Instead: call `matrixClient.getRoomMessages(roomId, { from: last_sync.next_batch, dir: 'f', filter: opEventType })` to fetch the missing range from the homeserver, apply those events in `(origin_server_ts, event_id)` order, and then resume normal `/sync` from the resulting cursor. If the Matrix backfill fetch fails (timeout, 5xx, or the range is too large for a single page), surface `sync_failed` via `onError` and keep the state.bin / snapshot but flag the group as "cold-start recovery pending" so the operator can manually trigger a full replay. This fallback path is tested via `tests/gateway/group-sync.test.ts` with a fixture that has a snapshot at event N and a log.jsonl that starts at event N+50.
 4. Connects `/sync` from `last_sync.json.next_batch` token
-5. Drains `queue.jsonl` (offline outbound) — Yjs deduplication makes resends safe
+5. Drains `queue.jsonl` (offline outbound) — Yjs deduplication makes resends safe. `queue.jsonl` entries carry a persistent `first_queued_at` timestamp that the 30-minute escalation clock in §Failure Modes reads on boot, so outage windows survive restart.
 
 ### Conflict resolution
 
@@ -382,6 +401,8 @@ Yjs handles automatic merge for all standard operations. Three edge cases need e
 - Inbound event apply failure (corrupt update, schema mismatch) → log structured error, increment `group_sync.errors` metric, do NOT crash the sync loop, do NOT silently drop — write the bad event to `~/groups/{slug}/data/{app}/quarantine.jsonl` for inspection
 - Outbound send failure → queue + retry with exponential backoff (1s, 2s, 4s, 8s, 16s, 30s cap)
 - After 30 minutes of failed sends → surface persistent UI banner ("Group out of sync"), continue retrying
+
+**Queue escalation clock persistence (spec amendment, qa-auditor review):** The 30-minute escalation clock MUST survive gateway restart. Concretely, each entry in `queue.jsonl` is appended with a `first_queued_at` timestamp set to `Date.now()` on initial queue entry, and is NOT rewritten on retry. On startup, `GroupSync.hydrate()` reads `queue.jsonl` and computes `oldestFirstQueuedAt = min(entry.first_queued_at for entry in queue)`; if `now - oldestFirstQueuedAt > 30 * 60 * 1000`, the persistent UI banner is fired immediately on boot without waiting 30 more minutes. The in-memory `first_failure_at` state used by Wave 2's existing escalation path is hydrated from this file-backed value, not reset to `null`. Without this fix a gateway that crashes after 29 minutes of failure resets the clock on restart and silently extends the total outage window indefinitely.
 
 No bare `catch { return null }`. No empty catch blocks. Webhook-style status codes for HTTP routes only (200/4xx/5xx).
 
