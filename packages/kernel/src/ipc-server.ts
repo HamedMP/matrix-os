@@ -38,6 +38,9 @@ import {
   joinGroupHandler,
   listGroupsHandler,
   leaveGroupHandler,
+  setAppAclHandler,
+  shareAppHandler,
+  groupDataHandler,
 } from "./group-tools.js";
 const execAsync = promisify(execFile);
 
@@ -1124,6 +1127,49 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
         },
         async ({ slug }) => {
           return leaveGroupHandler({ slug });
+        },
+      ),
+
+      tool(
+        "set_app_acl",
+        "Update the ACL policy for a shared app in a group. Requires install_pl power level. Controls who can read, write, or install the app.",
+        {
+          group_slug: z.string().describe("Group slug, e.g. 'test-fam'"),
+          app_slug: z.string().describe("App slug, e.g. 'notes'"),
+          read_pl: z.number().int().optional().describe("Minimum power level to read shared state"),
+          write_pl: z.number().int().optional().describe("Minimum power level to write shared state"),
+          install_pl: z.number().int().optional().describe("Minimum power level to install/share the app"),
+          policy: z.enum(["open", "moderated", "owner_only"]).optional().describe("Named ACL policy preset"),
+        },
+        async ({ group_slug, app_slug, read_pl, write_pl, install_pl, policy }) => {
+          return setAppAclHandler({ group_slug, app_slug, read_pl, write_pl, install_pl, policy });
+        },
+      ),
+
+      tool(
+        "share_app",
+        "Share an app with a group. Copies ~/apps/{app_slug} into the group, writes a default ACL, and notifies group members to auto-clone.",
+        {
+          app_slug: z.string().describe("Slug of the app to share, e.g. 'notes'"),
+          group_slug: z.string().describe("Target group slug, e.g. 'test-fam'"),
+        },
+        async ({ app_slug, group_slug }) => {
+          return shareAppHandler({ app_slug, group_slug });
+        },
+      ),
+
+      tool(
+        "group_data",
+        "Read, write, or list shared key-value data for an app within a group. Data is synchronized across all group members via the Yjs CRDT engine.",
+        {
+          action: z.enum(["read", "write", "list"]).describe("read: get a value, write: set a value, list: list all keys"),
+          group_slug: z.string().describe("Group slug, e.g. 'test-fam'"),
+          app_slug: z.string().describe("App slug, e.g. 'notes'"),
+          key: z.string().optional().describe("Key (required for read/write)"),
+          value: z.unknown().optional().describe("JSON value to write (required for write)"),
+        },
+        async ({ action, group_slug, app_slug, key, value }) => {
+          return groupDataHandler({ action, group_slug, app_slug, key, value });
         },
       ),
     ],

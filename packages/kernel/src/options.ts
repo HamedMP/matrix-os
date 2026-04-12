@@ -41,6 +41,9 @@ const IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__join_group",
   "mcp__matrix-os-ipc__list_groups",
   "mcp__matrix-os-ipc__leave_group",
+  "mcp__matrix-os-ipc__set_app_acl",
+  "mcp__matrix-os-ipc__share_app",
+  "mcp__matrix-os-ipc__group_data",
 ];
 
 const BROWSER_TOOL_NAMES = [

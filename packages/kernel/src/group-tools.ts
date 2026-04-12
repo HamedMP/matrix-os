@@ -123,6 +123,150 @@ export async function listGroupsHandler(
 }
 
 // ---------------------------------------------------------------------------
+// set_app_acl
+// ---------------------------------------------------------------------------
+
+export interface SetAppAclInput {
+  group_slug: string;
+  app_slug: string;
+  read_pl?: number;
+  write_pl?: number;
+  install_pl?: number;
+  policy?: "open" | "moderated" | "owner_only";
+}
+
+export async function setAppAclHandler(
+  input: SetAppAclInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const { group_slug, app_slug, ...aclFields } = input;
+    const encodedSlug = encodeURIComponent(group_slug);
+    const encodedApp = encodeURIComponent(app_slug);
+    const res = await fetcher(
+      `${gatewayBase()}/api/groups/${encodedSlug}/apps/${encodedApp}/acl`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(aclFields),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+
+    if (res.status === 403) {
+      console.error("[group-tools] set_app_acl: 403 forbidden");
+      return textResult("Permission denied.");
+    }
+    if (!res.ok) {
+      console.error("[group-tools] set_app_acl: HTTP", res.status);
+      return textResult("Could not update ACL. Please try again later.");
+    }
+
+    const data = (await res.json()) as unknown;
+    return textResult(JSON.stringify(data, null, 2));
+  } catch (err: unknown) {
+    console.error("[group-tools] set_app_acl:", err instanceof Error ? err.message : err);
+    return textResult("Could not update ACL. Please try again later.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// share_app
+// ---------------------------------------------------------------------------
+
+export interface ShareAppInput {
+  app_slug: string;
+  group_slug: string;
+}
+
+export async function shareAppHandler(
+  input: ShareAppInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const encodedSlug = encodeURIComponent(input.group_slug);
+    const res = await fetcher(
+      `${gatewayBase()}/api/groups/${encodedSlug}/share-app`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ app_slug: input.app_slug }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+
+    if (res.status === 403) {
+      console.error("[group-tools] share_app: 403 forbidden");
+      return textResult("Permission denied.");
+    }
+    if (!res.ok) {
+      console.error("[group-tools] share_app: HTTP", res.status);
+      return textResult("Could not share app. Please try again later.");
+    }
+
+    const data = (await res.json()) as unknown;
+    return textResult(JSON.stringify(data, null, 2));
+  } catch (err: unknown) {
+    console.error("[group-tools] share_app:", err instanceof Error ? err.message : err);
+    return textResult("Could not share app. Please try again later.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// group_data
+// ---------------------------------------------------------------------------
+
+export interface GroupDataInput {
+  action: "read" | "write" | "list";
+  group_slug: string;
+  app_slug: string;
+  key?: string;
+  value?: unknown;
+}
+
+export async function groupDataHandler(
+  input: GroupDataInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const { group_slug, ...requestBody } = input;
+    const encodedSlug = encodeURIComponent(group_slug);
+    const res = await fetcher(
+      `${gatewayBase()}/api/groups/${encodedSlug}/data`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+
+    if (res.status === 400) {
+      console.error("[group-tools] group_data: 400 bad request");
+      return textResult("Invalid request.");
+    }
+    if (res.status === 413) {
+      console.error("[group-tools] group_data: 413 payload too large");
+      return textResult("Payload too large.");
+    }
+    if (res.status === 403) {
+      console.error("[group-tools] group_data: 403 forbidden");
+      return textResult("Permission denied.");
+    }
+    if (!res.ok) {
+      console.error("[group-tools] group_data: HTTP", res.status);
+      return textResult("Could not access group data. Please try again later.");
+    }
+
+    const data = (await res.json()) as unknown;
+    return textResult(JSON.stringify(data, null, 2));
+  } catch (err: unknown) {
+    console.error("[group-tools] group_data:", err instanceof Error ? err.message : err);
+    return textResult("Could not access group data. Please try again later.");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // leave_group
 // ---------------------------------------------------------------------------
 
