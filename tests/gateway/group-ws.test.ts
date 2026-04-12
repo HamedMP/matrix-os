@@ -599,5 +599,133 @@ describe("createGroupWsHandler", () => {
       // The oldest socket should have been closed
       expect(sockets[0]!.closed).toBe(true);
     });
+
+    it("evicted connection does not receive further doc updates (changeSub disposed)", async () => {
+      const handler = createGroupWsHandler({
+        ...options,
+        maxSocketsPerApp: 1,
+      });
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const oldWs = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", oldWs as unknown as WebSocket);
+
+      // Evict by opening a second connection beyond cap=1
+      const newWs = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", newWs as unknown as WebSocket);
+
+      expect(oldWs.closed).toBe(true);
+
+      const oldBinaryCount = oldWs.sentBinary().length;
+
+      // Remote update should NOT reach the evicted socket
+      const remoteDoc = new Y.Doc();
+      remoteDoc.getMap("kv").set("post-evict", "val");
+      groupSync.applyRemoteUpdate(Y.encodeStateAsUpdate(remoteDoc));
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(oldWs.sentBinary().length).toBe(oldBinaryCount);
+    });
+
+    it("evicted connection receives 1008 capacity close code", async () => {
+      const handler = createGroupWsHandler({
+        ...options,
+        maxSocketsPerApp: 1,
+      });
+      registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const oldWs = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", oldWs as unknown as WebSocket);
+
+      const newWs = new FakeWebSocket();
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", newWs as unknown as WebSocket);
+
+      expect(oldWs.closedCode).toBe(1008);
+      expect(oldWs.closedReason).toBe("capacity");
+    });
+  });
+
+  describe("removeSubscriber cleans up empty sets", () => {
+    it("deletes the key from subscriberSets when the last connection closes", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const ws = new FakeWebSocket();
+      const conn = await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+      conn!.onClose();
+
+      // After close, doc updates must not reach the closed socket (set was deleted)
+      const countAfterClose = ws.sentBinary().length;
+      const remoteDoc = new Y.Doc();
+      remoteDoc.getMap("kv").set("late", "update");
+      groupSync.applyRemoteUpdate(Y.encodeStateAsUpdate(remoteDoc));
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(ws.sentBinary().length).toBe(countAfterClose);
+    });
+  });
+
+  describe("sendBinary and sendError swallow closed-socket throws", () => {
+    it("does not throw when ws.send throws on a closed socket during fan-out", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      const ws = new FakeWebSocket();
+      // Make send throw to simulate a closed socket that didn't call onClose yet
+      ws.send = () => { throw new Error("WebSocket is already in CLOSING or CLOSED state"); };
+
+      await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      // Remote update triggers fan-out — should not throw
+      const remoteDoc = new Y.Doc();
+      remoteDoc.getMap("kv").set("k", "v");
+      expect(() => groupSync.applyRemoteUpdate(Y.encodeStateAsUpdate(remoteDoc))).not.toThrow();
+    });
+
+    it("does not throw when ws.send throws during error delivery", async () => {
+      const handler = createGroupWsHandler(options);
+      const groupSync = registry.addGroup("fam", { roomId: "!abc:matrix-os.com" });
+
+      vi.spyOn(groupSync as unknown as FakeGroupSync, "applyLocalMutation").mockRejectedValue(
+        new Error("too_large op"),
+      );
+
+      const ws = new FakeWebSocket();
+      const conn = await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      // Make send throw after connection is open
+      ws.send = () => { throw new Error("already closed"); };
+
+      const clientDoc = new Y.Doc();
+      // Should not throw despite ws.send failing
+      await expect(
+        new Promise<void>((resolve) => {
+          conn!.onMessage(buildUpdate(Y.encodeStateAsUpdate(clientDoc)));
+          setTimeout(resolve, 30);
+        })
+      ).resolves.not.toThrow();
+    });
+  });
+
+  describe("openConnection returns null when sync handle unavailable", () => {
+    it("returns null and sends sync_failed when getSyncHandle returns null", async () => {
+      const noSyncRegistry: GroupWsGroupRegistry = {
+        get: () => ({ room_id: "!abc:matrix-os.com" }),
+        getSyncHandle: () => null,
+        getAcl: () => ({ read_pl: 0, write_pl: 0 }),
+        getMemberPowerLevel: () => 100,
+      };
+      const handler = createGroupWsHandler({
+        groupRegistry: noSyncRegistry,
+        verifyToken: makeAuthVerifier("valid-token", "@alice:matrix-os.com"),
+      });
+
+      const ws = new FakeWebSocket();
+      const conn = await handler.openConnection("fam", "notes", "@alice:matrix-os.com", ws as unknown as WebSocket);
+
+      expect(conn).toBeNull();
+      const errors = ws.parseSentErrors();
+      expect(errors.some((e) => e.code === "sync_failed")).toBe(true);
+    });
   });
 });

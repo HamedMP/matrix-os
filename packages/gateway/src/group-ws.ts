@@ -147,7 +147,10 @@ export function createGroupWsHandler(opts: GroupWsHandlerOptions): GroupWsHandle
   }
 
   function removeSubscriber(key: string, conn: ConnState): void {
-    subscriberSets.get(key)?.delete(conn);
+    const set = subscriberSets.get(key);
+    if (!set) return;
+    set.delete(conn);
+    if (set.size === 0) subscriberSets.delete(key);
   }
 
   function fanOutUpdate(key: string, update: Uint8Array, excludeConn?: ConnState): void {
