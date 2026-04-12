@@ -44,6 +44,7 @@ export function GroupSwitcher({ onGroupChange, activeGroupSlug }: GroupSwitcherP
     <div style={{ position: "relative", display: "inline-block" }}>
       <button
         type="button"
+        data-testid="group-switcher-trigger"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -56,6 +57,7 @@ export function GroupSwitcher({ onGroupChange, activeGroupSlug }: GroupSwitcherP
           <li
             role="option"
             aria-selected={!activeGroupSlug}
+            data-testid="group-switcher-item-personal"
             onClick={() => select(null)}
             style={{ padding: "8px 12px", cursor: "pointer" }}
           >
@@ -66,6 +68,7 @@ export function GroupSwitcher({ onGroupChange, activeGroupSlug }: GroupSwitcherP
               key={g.slug}
               role="option"
               aria-selected={g.slug === activeGroupSlug}
+              data-testid={`group-switcher-item-${g.slug}`}
               onClick={() => select(g.slug)}
               style={{ padding: "8px 12px", cursor: "pointer" }}
             >

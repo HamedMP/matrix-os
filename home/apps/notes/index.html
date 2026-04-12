@@ -1357,6 +1357,7 @@ function openShareDropdown() {
       groups.forEach(function(g) {
         var item = document.createElement('button');
         item.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 14px;background:transparent;border:none;font-size:13px;color:var(--fg);cursor:pointer;font-family:inherit;';
+        item.setAttribute('data-testid', 'share-group-item-' + g.slug);
         item.textContent = g.name;
         item.addEventListener('mouseenter', function() { item.style.background = 'var(--hover-bg)'; });
         item.addEventListener('mouseleave', function() { item.style.background = 'transparent'; });
@@ -1388,6 +1389,7 @@ function openShareDropdown() {
 var shareBtnEl = document.createElement('button');
 shareBtnEl.className = 'btn-icon';
 shareBtnEl.id = 'shareBtn';
+shareBtnEl.setAttribute('data-testid', 'app-notes-share-button');
 shareBtnEl.title = useShared ? 'Shared with: ' + window.MatrixOS.group.name : 'Share with group';
 shareBtnEl.setAttribute('aria-label', 'Share notes with a group');
 shareBtnEl.appendChild((function() {
