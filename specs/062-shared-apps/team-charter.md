@@ -145,7 +145,7 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps + spec review + coverage 
 
 - ~~`packages/gateway/src/group-routes.ts:81` — `member_handles` regex~~  **FIXED** (committed, verified 2026-04-12).
 
-- `packages/gateway/src/group-routes.ts:439,460,515` — Path param `:slug` still missing `GROUP_SLUG_REGEX.test(slug)` guard in three routes: `GET /presence`, `POST /data`, `POST /leave`. Four of seven routes were fixed; these three remain. **Owner: group-platform** (DM sent 2026-04-12 x2). Fix: add `if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: 'Invalid group slug' }, 400)` immediately after param extraction in each.
+- ~~`packages/gateway/src/group-routes.ts:439,460,515` — PATH param `:slug` missing GROUP_SLUG_REGEX guard in 3 routes~~ **FIXED** (commit `7b9e366`, all 7 slug-bearing routes verified at lines 221/244/298/386/440/462/518, 2026-04-12).
 
 - ~~`tests/gateway/group-sync-conflict.property.test.ts:131` — property test timeout~~ **FIXED** (commit `f9f0a74`, verified green at 7284ms within 30s budget 2026-04-12).
 
