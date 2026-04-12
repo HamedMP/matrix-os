@@ -73,15 +73,33 @@ function reducer(state: Item[], action: Action): Item[] {
 
 ## Bridge API for Persistent Data
 
-Read: `fetch('/api/bridge/data?app=<name>&key=<key>').then(r => r.json())`
-Write: `fetch('/api/bridge/data', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({app:'<name>',key:'<key>',value: data}) })`
+`/api/bridge/data` stores string values. Always `JSON.stringify` on write and `JSON.parse` on read. Every POST must include `action: 'write'` (or `'read'`).
+
+Read: `fetch('/api/bridge/data?app=<name>&key=<key>').then(r => r.json())` returns `{ value: string | null }`.
+
+Write:
+```ts
+fetch('/api/bridge/data', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    action: 'write',
+    app: APP_NAME,
+    key: 'items',
+    value: JSON.stringify(data),
+  }),
+});
+```
 
 Always wrap in useEffect for initial load:
 ```tsx
 useEffect(() => {
   fetch(`/api/bridge/data?app=${APP_NAME}&key=items`)
-    .then(r => r.ok ? r.json() : { value: [] })
-    .then(d => setItems(d.value ?? []));
+    .then(r => r.ok ? r.json() : { value: null })
+    .then(d => {
+      if (!d.value) return setItems([]);
+      try { setItems(JSON.parse(d.value)); } catch { setItems([]); }
+    });
 }, []);
 ```
 

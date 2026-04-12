@@ -4,6 +4,7 @@ import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
 import { getCoreAgents, loadCustomAgents } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
+import { ensureSdkSkillsMirror } from "./skills.js";
 import {
   safetyGuardHook,
   updateStateHook,
@@ -80,6 +81,11 @@ export interface KernelConfig {
 export function kernelOptions(config: KernelConfig) {
   const { db, homePath, sessionId } = config;
 
+  // Mirror canonical .agents/skills/ entries into .claude/skills/ so the SDK's
+  // native Skill tool can discover them via settingSources: ['project'].
+  // One source of truth (.agents/skills), two discovery paths (SDK + IPC).
+  ensureSdkSkillsMirror(homePath);
+
   const ipcServer = createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
@@ -105,6 +111,8 @@ export function kernelOptions(config: KernelConfig) {
   return {
     model: config.model ?? "claude-opus-4-6",
     systemPrompt,
+    cwd: homePath,
+    settingSources: ["project"] as ("user" | "project" | "local")[],
     permissionMode: "bypassPermissions" as const,
     allowDangerouslySkipPermissions: true,
     mcpServers,
@@ -120,6 +128,7 @@ export function kernelOptions(config: KernelConfig) {
       "TaskOutput",
       "WebSearch",
       "WebFetch",
+      "Skill",
       ...IPC_TOOL_NAMES,
       ...browserToolNames,
     ],

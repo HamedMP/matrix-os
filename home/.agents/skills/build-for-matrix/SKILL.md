@@ -97,11 +97,16 @@ const res = await fetch(BRIDGE_URL, {
 });
 const data = await res.json();
 
-// Write
+// Write -- value must be a string; stringify objects/arrays first
 await fetch(BRIDGE_URL, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ action: 'write', app: 'my-app', key: 'settings', value: myData }),
+  body: JSON.stringify({
+    action: 'write',
+    app: 'my-app',
+    key: 'settings',
+    value: JSON.stringify(myData),
+  }),
 });
 ```
 

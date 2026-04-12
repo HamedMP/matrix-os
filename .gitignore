@@ -52,6 +52,11 @@ shell/e2e/playwright-report/
 .zencoder/
 skills/
 skills-lock.json
+# Matrix OS seeds its own skills under home/ -- track them explicitly
+!home/agents/skills/
+!home/agents/skills/**
+!home/.agents/skills/
+!home/.agents/skills/**
 
 # LaTeX build artifacts
 paper/*.aux

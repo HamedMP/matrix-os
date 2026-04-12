@@ -44,6 +44,8 @@ Generate IDs with: `crypto.randomUUID()` or `Date.now().toString(36)`
 
 ## Bridge API CRUD Operations
 
+The `/api/bridge/data` endpoint stores values as strings. Always `JSON.stringify` on write and `JSON.parse` on read. Every POST must include `action: 'write'` (or `'read'`).
+
 ```tsx
 const APP = "my-app";
 const KEY = "items";
@@ -51,15 +53,21 @@ const KEY = "items";
 async function loadItems(): Promise<Item[]> {
   const r = await fetch(`/api/bridge/data?app=${APP}&key=${KEY}`);
   if (!r.ok) return [];
-  const d = await r.json();
-  return d.value ?? [];
+  const { value } = await r.json();
+  if (!value) return [];
+  try { return JSON.parse(value); } catch { return []; }
 }
 
 async function saveItems(items: Item[]): Promise<void> {
   await fetch('/api/bridge/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app: APP, key: KEY, value: items }),
+    body: JSON.stringify({
+      action: 'write',
+      app: APP,
+      key: KEY,
+      value: JSON.stringify(items),
+    }),
   });
 }
 ```

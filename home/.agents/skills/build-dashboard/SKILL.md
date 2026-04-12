@@ -97,12 +97,21 @@ function KpiCard({ label, value, change }: { label: string; value: string; chang
 ```
 
 ## Data Refresh Pattern
+
+`/api/bridge/data` stores string values -- always `JSON.parse(d.value)` on read.
+
 ```tsx
 const [data, setData] = useState<DataPoint[]>([]);
 const [refreshInterval] = useState(30000);
 
 useEffect(() => {
-  const load = () => fetch(`/api/bridge/data?app=${APP}&key=metrics`).then(r => r.json()).then(d => setData(d.value ?? []));
+  const load = () =>
+    fetch(`/api/bridge/data?app=${APP}&key=metrics`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.value) return setData([]);
+        try { setData(JSON.parse(d.value)); } catch { setData([]); }
+      });
   load();
   const id = setInterval(load, refreshInterval);
   return () => clearInterval(id);
