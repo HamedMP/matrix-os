@@ -46,6 +46,17 @@ All persistent state resides under `~/matrixos/` (configurable via `MATRIX_HOME`
   |
   +-- modules/           # Deployed module services (React apps on ports 3100-3999)
   +-- logs/              # Activity and interaction logs (JSONL daily rotation)
+  +-- groups/            # Shared group state (spec 062)
+  |     +-- {slug}/
+  |           +-- manifest.json       # Group metadata and room_id
+  |           +-- members.cache.json  # Observed members + power levels
+  |           +-- apps/{app}/         # Shared app code
+  |           +-- data/{app}/
+  |           |     +-- state.bin     # Yjs CRDT snapshot
+  |           |     +-- log.jsonl     # Op log
+  |           |     +-- queue.jsonl   # Offline queue
+  |           |     +-- last_sync.json
+  |           +-- acl/{app}.json      # Per-app ACL cache
   +-- .backup/           # Git-managed snapshots
 ```
 

@@ -63,6 +63,18 @@ Each tool is defined with:
 
 See the [Integrations guide](/docs/guide/integrations) for the full action reference.
 
+### Shared Groups (spec 062)
+
+| Tool | Description |
+|------|-------------|
+| `create_group` | Create a shared group backed by a Matrix room, invite members |
+| `join_group` | Accept a Matrix room invite and scaffold `~/groups/{slug}/` |
+| `list_groups` | List all groups the user is a member of |
+| `leave_group` | Leave a group and archive its local directory |
+| `set_app_acl` | Update read/write/install power-level policy for a shared app |
+| `share_app` | Share an app with a group, auto-notifies members to clone |
+| `group_data` | Read, write, or list Yjs CRDT-synced shared data for an app |
+
 ### Onboarding
 
 | Tool | Description |

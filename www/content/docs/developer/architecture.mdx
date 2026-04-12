@@ -36,7 +36,7 @@ graph TD
         Spawn["spawnKernel()"]
         Prompt["buildSystemPrompt()"]
         Agents["5 Agents"]
-        IPC["26 IPC Tools\n(createSdkMcpServer)"]
+        IPC["42 IPC Tools\n(createSdkMcpServer)"]
         Hooks["8 Hooks\n(PreToolUse, PostToolUse, Stop)"]
     end
 
@@ -83,6 +83,8 @@ graph TD
 | `/api/theme` | Current theme JSON |
 | `/api/cron` | Cron job list |
 | `/api/tasks` | Task list + creation |
+| `/api/groups/*` | Group lifecycle, membership, ACL, data, presence |
+| `/ws/groups/:slug/:app` | Yjs CRDT WebSocket bridge (per group:app) |
 | `/health` | Health check |
 
 ## Packages

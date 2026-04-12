@@ -18,7 +18,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Built_with-Claude_Opus_4.6-cc785c?style=for-the-badge" alt="Built with Claude Opus 4.6">
-  <img src="https://img.shields.io/badge/Tests-2,807_passing-brightgreen?style=for-the-badge" alt="2,807 Tests">
+  <img src="https://img.shields.io/badge/Tests-3,658_passing-brightgreen?style=for-the-badge" alt="3,658 Tests">
   <img src="https://img.shields.io/badge/TypeScript-100K+_lines-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
 </p>
 
@@ -166,7 +166,7 @@ Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, m
 | Voice | Edge TTS, ElevenLabs, OpenAI TTS/Whisper, Twilio |
 | Validation | Zod 4 |
 | Observability | Prometheus metrics (prom-client) |
-| Testing | Vitest (2,807 tests, TDD, 214 test files) |
+| Testing | Vitest (3,658 tests, TDD, 266 test files) |
 | Package mgr | pnpm (install), bun (scripts) |
 
 ---
@@ -206,7 +206,7 @@ pnpm install
 ### Run Tests
 
 ```bash
-bun run test              # 2,807 tests (~35s)
+bun run test              # 3,658 tests (~52s)
 bun run test:watch        # Watch mode
 bun run test:integration  # Integration tests (needs API key, uses haiku)
 bun run test:coverage     # Coverage report
@@ -254,11 +254,11 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 
 ## Current Status
 
-**2,807 tests passing across 214 test files. 100K+ lines of TypeScript. Platform is live at [matrix-os.com](https://matrix-os.com).**
+**3,658 tests passing across 266 test files. 100K+ lines of TypeScript. Platform is live at [matrix-os.com](https://matrix-os.com).**
 
 ### Completed
 
-- **Phases 1-6**: Core OS -- monorepo, kernel (Agent SDK V1 query+resume), IPC MCP server (26 tools), 8 hooks, Hono gateway, Next.js desktop shell, self-healing, self-evolution
+- **Phases 1-6**: Core OS -- monorepo, kernel (Agent SDK V1 query+resume), IPC MCP server (42 tools), 8 hooks, Hono gateway, Next.js desktop shell, self-healing, self-evolution
 - **Phase 7**: Concurrent kernel dispatch -- serial queue, maxConcurrency, process registration
 - **Phase 8**: Cloud deployment -- single-user Docker + multi-tenant platform (dockerode, Clerk auth, Cloudflare Tunnels, admin dashboard)
 - **Phase 9**: SOUL identity + skills + observability -- 20 skills, handle registry (`@user:matrix-os.com`), interaction logger, safe mode, git sync, mobile responsive, PWA
@@ -275,6 +275,7 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 - **Phase 48**: File browser -- Finder-class with column view, preview, trash, search
 - **Phase 50**: Postgres app data layer -- Kysely, per-app schemas, bridge API
 - **Social**: Social network -- profiles, posts, comments, likes, follows, activity feeds, messages
+- **Spec 062**: Shared Apps -- Yjs CRDT-over-Matrix, group filesystem layout, gap-fill backfill, lease-gated snapshots, per-app ACL, offline queue, `GroupSwitcher` + `AppAclPanel`, 7 kernel group tools
 
 ### In Progress
 
@@ -289,7 +290,7 @@ The gateway boots the home directory at `~/matrixos/` on first run.
 3. **Headless Core, Multi-Shell** -- the core is a gateway + kernel. Web shell, mobile app, Telegram bot, voice interface -- all shells.
 4. **Self-Healing and Self-Expanding** -- the OS fixes itself and grows new capabilities on demand.
 5. **Simplicity Over Sophistication** -- the simplest implementation that works.
-6. **TDD** -- tests first, 2,807 passing, targeting 99-100% coverage.
+6. **TDD** -- tests first, 3,658 passing, targeting 99-100% coverage.
 
 ---
 
