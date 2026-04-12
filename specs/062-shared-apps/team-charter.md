@@ -117,6 +117,22 @@ These come from `CLAUDE.md` Mandatory Code Patterns and the project memory. Viol
 - DM the relevant owner directly if you need their help — don't go through Lead unless it's coordination across two owners.
 - Idle is normal. Ignore your own idle notifications. The controller (or Lead) will wake you for the next assignment.
 
+## Build baseline (recorded 2026-04-12 by lead-integrator)
+
+`bun run build` (run from `packages/gateway/`) reports **39 pre-existing TypeScript errors** as of commit `ede8a27`, in files unrelated to spec 062 (`social.ts`, `telegram.ts`, `files-tree.ts`, `platform-db.ts`, `voice/stt/whisper.ts`, and a handful of legacy `server.ts` lines that predate this branch). These are NOT yours to fix. They are also NOT a free pass to ignore build output.
+
+**No `lint` script** is defined at the repo root or in any package — `bun run lint` fails with "script not found". There is no ESLint runner wired up. Verification reduces to `bun run build` plus targeted `bun run test` vitest runs.
+
+**How to verify your slice doesn't introduce new errors:**
+
+1. **Count before editing.** `cd packages/gateway && bun run build 2>&1 | grep -c "error TS"` — capture the baseline count.
+2. **Count after editing.** Same command — the count must match exactly. Any delta is yours to explain or fix.
+3. **Stash+compare (lead's technique).** If you want to be certain, `git stash push -- <your-files>`, re-run the build, compare, then `git stash pop`. This isolates your delta even if someone else's commit lands while you're editing.
+4. **Diff-aware filter.** `cd packages/gateway && bun run build 2>&1 | grep "error TS" | grep -E "(your-file-1|your-file-2)"` — should return zero lines.
+5. **Per-slice files.** Zero errors are acceptable in any of these files (the active 062 surface): `matrix-client.ts`, `matrix-sync-hub.ts`, `group-types.ts`, `group-registry.ts`, `group-routes.ts`, `group-sync.ts`, `group-ws.ts` (future), `group-tools.ts` (kernel). If any of these lights up, fix before committing.
+
+Never assume "the build was already broken" means your changes are clean. Always compare counts or filter by file. A commit that takes the baseline from 39 to 40 errors is a regression even if the build was already red — and the next agent will have a harder time spotting it than you do.
+
 ## Audit log (qa-auditor maintains)
 
 - _empty_
