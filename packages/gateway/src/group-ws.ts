@@ -153,18 +153,6 @@ export function createGroupWsHandler(opts: GroupWsHandlerOptions): GroupWsHandle
     if (set.size === 0) subscriberSets.delete(key);
   }
 
-  function fanOutUpdate(key: string, update: Uint8Array, excludeConn?: ConnState): void {
-    const set = subscriberSets.get(key);
-    if (!set) return;
-    const encoder = encoding.createEncoder();
-    syncProtocol.writeUpdate(encoder, update);
-    const msg = encoding.toUint8Array(encoder);
-    for (const conn of set) {
-      if (conn === excludeConn) continue;
-      sendBinary(conn.ws, msg);
-    }
-  }
-
   async function handleUpgrade(
     groupSlug: string,
     appSlug: string,
