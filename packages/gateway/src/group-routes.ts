@@ -1,15 +1,19 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { cp } from "node:fs/promises";
 import { z } from "zod/v4";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
 import { GroupDataRequestSchema, GroupAclSchema } from "./group-types.js";
+import { resolveWithinHome } from "./path-security.js";
 
 export interface GroupRoutesOptions {
   matrixClient: MatrixClient;
   groupRegistry: GroupRegistry;
   /** Bearer token expected in Authorization header. If omitted, any non-empty token passes. */
   authToken?: string;
+  /** Absolute path to the user's home directory. Required for share-app route. */
+  homePath?: string;
 }
 
 const BODY_LIMIT = 256 * 1024;
@@ -64,6 +68,12 @@ const CreateGroupBodySchema = z.object({
 
 const JoinGroupBodySchema = z.object({
   room_id: z.string().min(1),
+});
+
+const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+const ShareAppBodySchema = z.object({
+  app_slug: z.string().regex(SAFE_APP_SLUG),
 });
 
 export function createGroupRoutes(opts: GroupRoutesOptions) {
@@ -257,6 +267,96 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
         }
         return c.json({ error: "Failed to update ACL" }, 500);
       }
+    },
+  );
+
+  // ── POST /api/groups/:slug/share-app — copy app into group ──────────────
+  app.post(
+    "/api/groups/:slug/share-app",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug } = c.req.param();
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = ShareAppBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const { app_slug } = parsed.data;
+
+      // Check caller power level ≥ install_pl (100 by default)
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+
+        // install_pl is always 100 for share-app
+        if (callerPl < 100) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+      } catch {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+
+      const homePath = opts.homePath;
+      if (!homePath) {
+        return c.json({ error: "Server misconfigured" }, 500);
+      }
+
+      const srcPath = resolveWithinHome(homePath, `apps/${app_slug}`);
+      if (!srcPath) {
+        return c.json({ error: "Invalid app slug" }, 400);
+      }
+
+      const destPath = resolveWithinHome(homePath, `groups/${slug}/apps/${app_slug}`);
+      if (!destPath) {
+        return c.json({ error: "Invalid path" }, 400);
+      }
+
+      // Copy app files
+      try {
+        await cp(srcPath, destPath, { recursive: true });
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          return c.json({ error: "App not found" }, 404);
+        }
+        return c.json({ error: "Failed to copy app" }, 500);
+      }
+
+      // Write default ACL state event (state_key = app_slug per spike §10)
+      try {
+        await matrixClient.setRoomState(manifest.room_id, "m.matrix_os.app_acl", app_slug, {
+          v: 1,
+          read_pl: 0,
+          write_pl: 0,
+          install_pl: 100,
+          policy: "open",
+        });
+
+        // Timeline event so members can see a new app was shared
+        await matrixClient.sendCustomEvent(manifest.room_id, "m.matrix_os.app_install", {
+          app_slug,
+        });
+      } catch {
+        return c.json({ error: "Failed to register app" }, 500);
+      }
+
+      return c.json({ slug, app_slug }, 201);
     },
   );
 
