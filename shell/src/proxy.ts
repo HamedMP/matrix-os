@@ -106,10 +106,18 @@ export default function middleware(
   request: NextRequest,
   event: import("next/server").NextFetchEvent,
 ) {
-  // E2E screenshot tests run against `next start`, which always serves the
-  // built app with production semantics. Use the explicit bypass flag alone so
-  // screenshot runs can skip auth without depending on NODE_ENV.
+  // E2E / Docker bypass: skip Clerk auth but still proxy API calls to gateway
   if (process.env.E2E_TEST_BYPASS === "1") {
+    if (isGatewayProxy(request)) {
+      const bypassPath = request.nextUrl.pathname;
+      const target = bypassPath.startsWith("/gateway/")
+        ? bypassPath.replace("/gateway", "")
+        : bypassPath;
+      const url = new URL(target + request.nextUrl.search, gatewayUrl);
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${authToken || "e2e-bypass"}`);
+      return NextResponse.rewrite(url, { request: { headers } });
+    }
     return NextResponse.next();
   }
   return withClerk(request, event);

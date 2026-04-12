@@ -243,6 +243,7 @@ services:
       - ./distro:/app/distro
       - dev-node-modules:/app/node_modules
       - alice-home:/home/matrixos/home
+      - alice-next:/app/shell/.next
       - qmd-models:/data/qmd-models
     env_file:
       - .env.docker
@@ -250,6 +251,9 @@ services:
       - NODE_ENV=development
       - MATRIX_HOME=/home/matrixos/home
       - MATRIX_HANDLE=alice
+      - MATRIX_ACCESS_TOKEN=B9oqgkrDNxEn1j26DBZqrfu2gqpbqQrU
+      - MATRIX_SELF_HANDLE=@alice:matrix-os.com
+      - E2E_TEST_BYPASS=1
       - PORT=4000
       - ANTHROPIC_BASE_URL=http://proxy:8080
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_alice
@@ -283,6 +287,7 @@ services:
       - ./distro:/app/distro
       - dev-node-modules:/app/node_modules
       - bob-home:/home/matrixos/home
+      - bob-next:/app/shell/.next
       - qmd-models:/data/qmd-models
     env_file:
       - .env.docker
@@ -290,6 +295,9 @@ services:
       - NODE_ENV=development
       - MATRIX_HOME=/home/matrixos/home
       - MATRIX_HANDLE=bob
+      - MATRIX_ACCESS_TOKEN=cvXgIsVpcmy6GcP4eS33O0Onc6P7pcEW
+      - MATRIX_SELF_HANDLE=@bob:matrix-os.com
+      - E2E_TEST_BYPASS=1
       - PORT=4000
       - ANTHROPIC_BASE_URL=http://proxy:8080
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_bob
@@ -315,4 +323,7 @@ volumes:
   grafana-data:
   loki-data:
   alice-home:
+  alice-next:
   bob-home:
+  bob-next:
+  qmd-models:
