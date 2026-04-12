@@ -82,6 +82,14 @@ export interface GroupSyncOptions {
   debugOnWrite?: (path: string) => void;
 }
 
+interface FragmentGroup {
+  groupId: string;
+  count: number;
+  firstSeenAt: number;
+  // chunks[i] = undefined until chunk_seq.index=i arrives
+  chunks: Array<string | undefined>;
+}
+
 interface AppState {
   appSlug: string;
   doc: Y.Doc;
@@ -102,6 +110,9 @@ interface AppState {
   /** Wall-clock ms of the last successful snapshot write. Drives the 5-min
    *  trigger. */
   lastSnapshotAt: number;
+  /** Inbound fragment reassembly buffer, keyed by `chunk_seq.group_id`.
+   *  Bounded implicitly by the 60s TTL sweep in `tickFragmentGc`. */
+  fragmentBuffer: Map<string, FragmentGroup>;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +133,15 @@ const BACKOFF_SCHEDULE_MS: readonly number[] = [
   1_000, 2_000, 4_000, 8_000, 16_000, 30_000,
 ];
 const PERSISTENT_FAILURE_MS = 30 * 60 * 1000;
+
+// Op chunking constants (spec §I + spike §9):
+//   - single events top out at 32 KB raw (per `OpEventContent.update` field)
+//   - fragments split at the same cap for uniformity
+//   - oversize hard ceiling (1 MB raw) rejects with op_too_large
+//   - inbound fragment buffer TTL is 60 s
+const DEFAULT_OP_RAW_SINGLE_MAX = 32 * 1024;
+const DEFAULT_OP_RAW_SPLITTABLE_MAX = 1 * 1024 * 1024;
+const FRAGMENT_TTL_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 
@@ -259,10 +279,23 @@ export class GroupSync {
     }
     const content = parseResult.data;
 
+    // Fragment reassembly: if chunk_seq is present, buffer and either return
+    // early or assemble the full update. Only when we have every fragment in
+    // the group do we continue to the decode/apply path.
+    let mergedUpdateBase64 = content.update;
+    if (content.chunk_seq) {
+      const assembled = this.bufferFragment(app, content, event);
+      if (assembled === null) {
+        // Still waiting for more fragments — nothing to apply yet.
+        return;
+      }
+      mergedUpdateBase64 = assembled;
+    }
+
     // Decode base64 update bytes.
     let updateBytes: Uint8Array;
     try {
-      updateBytes = decodeBase64Strict(content.update);
+      updateBytes = decodeBase64Strict(mergedUpdateBase64);
     } catch (err) {
       await this.quarantine(app, event, 'base64_decode_failed');
       this.onError('sync_failed', {
@@ -274,7 +307,37 @@ export class GroupSync {
       return;
     }
 
-    // Apply to Y.Doc inside a transaction so we can distinguish local/remote.
+    // State cap: sandbox-apply to a clone and measure. If over cap, drop
+    // the op and emit state_overflow. This keeps the real doc pristine.
+    const priorBytes = Y.encodeStateAsUpdate(app.doc);
+    const cloneDoc = new Y.Doc();
+    Y.applyUpdate(cloneDoc, priorBytes);
+    try {
+      Y.applyUpdate(cloneDoc, updateBytes, 'remote');
+    } catch (err) {
+      await this.quarantine(app, event, 'yjs_apply_failed');
+      this.onError('sync_failed', {
+        reason: 'op_yjs_apply_failed',
+        appSlug,
+        eventId: event.event_id ?? null,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+      return;
+    }
+    const cloneBytes = Y.encodeStateAsUpdate(cloneDoc);
+    if (cloneBytes.length > this.env.GROUP_STATE_MAX_BYTES) {
+      this.onError('state_overflow', {
+        reason: 'remote_op_would_exceed_state_cap',
+        appSlug,
+        eventId: event.event_id ?? null,
+        cap: this.env.GROUP_STATE_MAX_BYTES,
+        projectedBytes: cloneBytes.length,
+      });
+      return;
+    }
+
+    // Apply to the real Y.Doc inside a transaction so we can distinguish
+    // local/remote in the observer.
     try {
       app.doc.transact(() => {
         Y.applyUpdate(app.doc, updateBytes, 'remote');
@@ -327,6 +390,87 @@ export class GroupSync {
     }
   }
 
+  /**
+   * Buffer an inbound fragment. Returns the merged base64 update string once
+   * the group is complete, or `null` while still assembling.
+   */
+  private bufferFragment(
+    app: AppState,
+    content: OpEventContent,
+    event: MatrixRawEvent,
+  ): string | null {
+    const seq = content.chunk_seq!;
+    let group = app.fragmentBuffer.get(seq.group_id);
+    if (!group) {
+      group = {
+        groupId: seq.group_id,
+        count: seq.count,
+        firstSeenAt: this.clockNow(),
+        chunks: new Array(seq.count).fill(undefined),
+      };
+      app.fragmentBuffer.set(seq.group_id, group);
+    }
+    if (group.count !== seq.count) {
+      // Inconsistent chunk_count within the same group — drop the old group
+      // and start fresh with the new fragment's view.
+      app.fragmentBuffer.delete(seq.group_id);
+      group = {
+        groupId: seq.group_id,
+        count: seq.count,
+        firstSeenAt: this.clockNow(),
+        chunks: new Array(seq.count).fill(undefined),
+      };
+      app.fragmentBuffer.set(seq.group_id, group);
+    }
+    if (seq.index < 0 || seq.index >= seq.count) {
+      // Malformed index — drop the whole group to avoid memory leaks.
+      app.fragmentBuffer.delete(seq.group_id);
+      this.onError('sync_failed', {
+        reason: 'fragment_index_out_of_range',
+        appSlug: app.appSlug,
+        groupId: seq.group_id,
+        index: seq.index,
+        count: seq.count,
+      });
+      return null;
+    }
+    group.chunks[seq.index] = content.update;
+
+    // Complete?
+    for (const chunk of group.chunks) {
+      if (chunk === undefined) return null;
+    }
+    // Assemble and drop the group from the buffer.
+    const merged = (group.chunks as string[]).join('');
+    app.fragmentBuffer.delete(seq.group_id);
+    return merged;
+  }
+
+  /**
+   * Sweep fragment buffers for any group whose `firstSeenAt` is older than
+   * the TTL. Drops partial groups and emits a logged warning. Callers
+   * invoke this on a timer (`setInterval(() => sync.tickFragmentGc(), ...)`)
+   * — the class does not own the timer so tests can step the clock.
+   */
+  tickFragmentGc(): void {
+    const now = this.clockNow();
+    for (const app of this.apps.values()) {
+      for (const [groupId, group] of Array.from(app.fragmentBuffer.entries())) {
+        if (now - group.firstSeenAt >= FRAGMENT_TTL_MS) {
+          app.fragmentBuffer.delete(groupId);
+          const received = group.chunks.filter((c) => c !== undefined).length;
+          this.onError('sync_failed', {
+            reason: 'fragment_timeout',
+            appSlug: app.appSlug,
+            groupId,
+            receivedCount: received,
+            expectedCount: group.count,
+          });
+        }
+      }
+    }
+  }
+
   // --------------------- local mutation path ---------------------
 
   /**
@@ -344,6 +488,8 @@ export class GroupSync {
     // Snapshot the state vector BEFORE the local mutation so we can encode
     // only the delta rather than the full doc state.
     const prevStateVector = Y.encodeStateVector(app.doc);
+    // Also save the full pre-mutation state for rollback on cap overflow.
+    const priorBytes = Y.encodeStateAsUpdate(app.doc);
 
     try {
       app.doc.transact(() => {
@@ -358,33 +504,70 @@ export class GroupSync {
       return;
     }
 
+    // Enforce state.bin cap post-mutation. If the new state would exceed the
+    // cap, roll the doc back to its prior bytes and emit state_overflow.
+    const newStateBytes = Y.encodeStateAsUpdate(app.doc);
+    if (newStateBytes.length > this.env.GROUP_STATE_MAX_BYTES) {
+      // Replace in-memory doc with a fresh one loaded from priorBytes. This
+      // preserves changeListeners (stored on `app`, not on the doc).
+      const rolled = new Y.Doc();
+      Y.applyUpdate(rolled, priorBytes);
+      app.doc = rolled;
+      this.onError('state_overflow', {
+        reason: 'local_mutation_would_exceed_state_cap',
+        appSlug,
+        cap: this.env.GROUP_STATE_MAX_BYTES,
+        projectedBytes: newStateBytes.length,
+      });
+      return;
+    }
+
     const update = Y.encodeStateAsUpdate(app.doc, prevStateVector);
     // Empty update = no-op mutation; skip the network send.
     if (update.length === 0) {
       return;
     }
 
-    const content: OpEventContent = {
-      v: 1,
-      update: Buffer.from(update).toString('base64'),
-      lamport: this.clockNow(),
-      client_id: `kernel-${this.manifest.slug}`,
-      origin: this.selfHandle,
-      ts: this.clockNow(),
-    };
+    // Size gate: reject updates that exceed the splittable ceiling outright.
+    if (update.length > DEFAULT_OP_RAW_SPLITTABLE_MAX) {
+      // Roll back — the doc already reflects the mutation but we refuse to
+      // emit it.
+      const rolled = new Y.Doc();
+      Y.applyUpdate(rolled, priorBytes);
+      app.doc = rolled;
+      this.onError('op_too_large', {
+        reason: 'local_op_exceeds_splittable_ceiling',
+        appSlug,
+        rawBytes: update.length,
+        cap: DEFAULT_OP_RAW_SPLITTABLE_MAX,
+      });
+      return;
+    }
 
-    // Send via Matrix. On failure, fall through to the queue path.
-    let sendOk = false;
-    try {
-      await this.client.sendCustomEvent(
-        this.manifest.room_id,
-        `m.matrix_os.app.${appSlug}.op`,
-        content as unknown as Record<string, unknown>,
-      );
-      sendOk = true;
+    const contentsToSend = this.buildOutboundContents(app, update);
+
+    // Send each (single or fragment) via Matrix. On first failure, queue
+    // everything remaining for retry.
+    let sendOk = true;
+    for (let i = 0; i < contentsToSend.length; i++) {
+      const content = contentsToSend[i]!;
+      try {
+        await this.client.sendCustomEvent(
+          this.manifest.room_id,
+          `m.matrix_os.app.${appSlug}.op`,
+          content as unknown as Record<string, unknown>,
+        );
+      } catch (err) {
+        sendOk = false;
+        // Queue this + remaining fragments so ordering is preserved.
+        for (let j = i; j < contentsToSend.length; j++) {
+          await this.enqueueForRetry(app, contentsToSend[j]!, err);
+        }
+        break;
+      }
+    }
+    if (sendOk) {
       this.markSendSuccess(app);
-    } catch (err) {
-      await this.enqueueForRetry(app, content, err);
     }
 
     // Persist local state regardless — optimistic: the doc is the source of
@@ -406,13 +589,61 @@ export class GroupSync {
         listener({
           appSlug,
           origin: 'local',
-          eventId: sendOk ? null : null,
+          eventId: null,
           sender: this.selfHandle,
         });
       } catch {
         // listener failures must not break dispatch
       }
     }
+  }
+
+  /**
+   * Build the outbound `OpEventContent` values for a Yjs update. Single
+   * events if the raw update is ≤ DEFAULT_OP_RAW_SINGLE_MAX, otherwise split
+   * into fragments with a shared `chunk_seq.group_id`.
+   */
+  private buildOutboundContents(app: AppState, update: Uint8Array): OpEventContent[] {
+    const lamport = this.clockNow();
+    const clientId = `kernel-${this.manifest.slug}`;
+    const origin = this.selfHandle;
+    const ts = this.clockNow();
+
+    if (update.length <= DEFAULT_OP_RAW_SINGLE_MAX) {
+      return [
+        {
+          v: 1,
+          update: Buffer.from(update).toString('base64'),
+          lamport,
+          client_id: clientId,
+          origin,
+          ts,
+        },
+      ];
+    }
+
+    // Split the base64-encoded update into fragments. We split on base64
+    // char boundaries so the reassembler can just string-concat.
+    const fullBase64 = Buffer.from(update).toString('base64');
+    // Base64 char count that corresponds to DEFAULT_OP_RAW_SINGLE_MAX raw
+    // bytes: ceil(raw * 4/3). We stay conservative: use 32KB as the base64
+    // char budget too (that's ~24KB raw per fragment, which is well within
+    // the 32KB raw cap).
+    const fragChars = DEFAULT_OP_RAW_SINGLE_MAX;
+    const parts: string[] = [];
+    for (let i = 0; i < fullBase64.length; i += fragChars) {
+      parts.push(fullBase64.slice(i, i + fragChars));
+    }
+    const groupId = generateUlid();
+    return parts.map((part, idx) => ({
+      v: 1,
+      update: part,
+      lamport,
+      client_id: clientId,
+      origin,
+      ts,
+      chunk_seq: { index: idx, count: parts.length, group_id: groupId },
+    }));
   }
 
   // --------------------- private helpers ---------------------
@@ -520,6 +751,7 @@ export class GroupSync {
       persistentEscalated: false,
       opsSinceSnapshot: 0,
       lastSnapshotAt: 0,
+      fragmentBuffer: new Map(),
     });
   }
 
@@ -543,6 +775,57 @@ export class GroupSync {
     const logPath = join(app.dataDir, 'log.jsonl');
     const line = `${JSON.stringify(entry)}\n`;
     await fs.appendFile(logPath, line, { encoding: 'utf-8' });
+    this.debugOnWrite?.(logPath);
+    await this.rotateLogIfNeeded(app, logPath);
+  }
+
+  /**
+   * Rotate log.jsonl if it exceeds GROUP_LOG_MAX_BYTES. Rotation keeps the
+   * newest half (approximately) and writes atomically. The 30-day retention
+   * is enforced lazily here: entries whose `ts` is older than N days are
+   * dropped during rotation.
+   */
+  private async rotateLogIfNeeded(app: AppState, logPath: string): Promise<void> {
+    let st;
+    try {
+      st = await fs.stat(logPath);
+    } catch {
+      return;
+    }
+    if (st.size <= this.env.GROUP_LOG_MAX_BYTES) return;
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(logPath, 'utf-8');
+    } catch {
+      return;
+    }
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    const cutoffMs =
+      this.clockNow() - this.env.GROUP_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const kept: string[] = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as { ts?: number };
+        if (typeof parsed.ts === 'number' && parsed.ts < cutoffMs) continue;
+      } catch {
+        continue;
+      }
+      kept.push(line);
+    }
+    // Drop the oldest half until we're under cap.
+    let targetBytes = Math.floor(this.env.GROUP_LOG_MAX_BYTES / 2);
+    let acc = 0;
+    const tail: string[] = [];
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const l = kept[i]!;
+      const bytes = Buffer.byteLength(l, 'utf-8') + 1;
+      if (acc + bytes > targetBytes && tail.length > 0) break;
+      acc += bytes;
+      tail.unshift(l);
+    }
+    const rewritten = tail.join('\n') + (tail.length > 0 ? '\n' : '');
+    await atomicWriteFile(logPath, rewritten);
     this.debugOnWrite?.(logPath);
   }
 
@@ -586,7 +869,36 @@ export class GroupSync {
         appSlug: app.appSlug,
         error: (err as Error)?.message ?? 'unknown',
       });
+      return;
     }
+    // Enforce cap with drop-oldest.
+    await this.enforceQuarantineCap(app, quarantinePath);
+  }
+
+  private async enforceQuarantineCap(
+    app: AppState,
+    quarantinePath: string,
+  ): Promise<void> {
+    const cap = this.env.GROUP_QUARANTINE_MAX;
+    let raw: string;
+    try {
+      raw = await fs.readFile(quarantinePath, 'utf-8');
+    } catch {
+      return;
+    }
+    const lines = raw.split('\n').filter((l) => l.length > 0);
+    if (lines.length <= cap) return;
+    const evicted = lines.length - cap;
+    const kept = lines.slice(evicted);
+    const rewritten = kept.join('\n') + (kept.length > 0 ? '\n' : '');
+    await atomicWriteFile(quarantinePath, rewritten);
+    this.debugOnWrite?.(quarantinePath);
+    this.onError('sync_failed', {
+      reason: 'quarantine_evicted_oldest',
+      appSlug: app.appSlug,
+      evictedCount: evicted,
+      cap,
+    });
   }
 
   private async enqueueForRetry(
@@ -982,6 +1294,33 @@ async function atomicWriteFile(path: string, data: string | Buffer): Promise<voi
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await fs.writeFile(tmp, data, { flag: 'w' });
   await fs.rename(tmp, path);
+}
+
+/**
+ * Generate a ULID-shaped identifier for fragment `group_id` / snapshot
+ * `lease_id`. 26 chars, Crockford Base32. Matches the `ULID_REGEX` in
+ * `group-types.ts` so the envelope schema parses cleanly.
+ */
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+function generateUlid(): string {
+  const now = Date.now();
+  const tsChars: string[] = [];
+  let t = now;
+  for (let i = 0; i < 10; i++) {
+    tsChars.push(ULID_ALPHABET[t % 32]!);
+    t = Math.floor(t / 32);
+  }
+  tsChars.reverse();
+  const randChars: string[] = [];
+  const rnd = new Uint8Array(16);
+  const g = (globalThis as { crypto?: Crypto }).crypto;
+  if (g && typeof g.getRandomValues === 'function') {
+    g.getRandomValues(rnd);
+  } else {
+    for (let i = 0; i < 16; i++) rnd[i] = Math.floor(Math.random() * 256);
+  }
+  for (let i = 0; i < 16; i++) randChars.push(ULID_ALPHABET[rnd[i]! % 32]!);
+  return tsChars.join('') + randChars.join('');
 }
 
 /**
