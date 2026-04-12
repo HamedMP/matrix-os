@@ -163,15 +163,15 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps + spec review + coverage 
 
 ### MED
 
-- `packages/gateway/src/group-routes.ts:79-92` — `CreateGroupBodySchema`, `JoinGroupBodySchema`, and `ShareAppBodySchema` are defined inline in `group-routes.ts` rather than exported from `group-types.ts`. T094 requires request body schemas to come from `group-types.ts` to prevent drift. **Owner: group-platform** (DM sent 2026-04-12). Fix: move these three schemas into `group-types.ts`, export them, and import in `group-routes.ts`.
+- ~~`packages/gateway/src/group-routes.ts:79-92` — inline body schemas~~ **FIXED** (commit `e3f4726`, group-platform, 2026-04-12). `CreateGroupBodySchema`/`JoinGroupBodySchema`/`ShareAppBodySchema` exported from `group-types.ts:140/145/149`, imported in `group-routes.ts:6`. `SAFE_APP_SLUG` duplicate removed in favour of `GROUP_SLUG_REGEX`. 214 tests green.
 
 - ~~**T088/spec review S2** — Spec §H WS mid-connection token expiry undefined.~~ **FIXED in spec** (commit `3dcd1b6`, 2026-04-12). Gateway re-checks ACL per-message, closes 4403 `acl_denied` on downgrade. Token rotation = shell reopens socket. Hard mid-conn expiry is explicit non-goal for v1.
 
-- ~~**T088/spec review F1** — Queue escalation clock resets on restart (`first_queued_at` missing).~~ **FIXED in spec** (commit `3dcd1b6`, 2026-04-12). `first_queued_at` timestamp required on every queue.jsonl entry, never rewritten on retry. `GroupSync.hydrate()` fires UI banner immediately on boot if 30-min window already exceeded. **Implementation still needed** — crdt-engine must add `first_queued_at` to queue entries and hydrate logic. DM sent 2026-04-12.
+- ~~**T088/spec review F1** — Queue escalation clock resets on restart (`first_queued_at` missing).~~ **FIXED** in spec (`3dcd1b6`) and implementation (`a3efcb2`, crdt-engine, 2026-04-12). `hydrateApp` reads oldest `queue.jsonl` entry's `queued_at` and restores `firstFailureAt` on boot. Restart-after-31min test verifies escalation fires immediately.
 
 - ~~**T088/spec review C1** — Concurrent local mutations: spec didn't say mutations are serialized.~~ **FIXED in spec** (commit `3dcd1b6`, 2026-04-12, covered under snapshot rejection §C amendment). crdt-engine to verify implementation matches. DM sent 2026-04-12.
 
-- **T088/spec review S4** — `appSlug` validation in ACL route uses inline `SAFE_APP_SLUG` regex rather than the canonical `SAFE_SLUG` from group-types.ts. Two copies can drift. **Owner: group-platform**. Fix: import and use the project-wide `SAFE_SLUG` constant.
+- ~~**T088/spec review S4** — inline `SAFE_APP_SLUG` duplicate of canonical regex~~ **FIXED** (commit `e3f4726`, group-platform, 2026-04-12). Removed `SAFE_APP_SLUG`, now uses `GROUP_SLUG_REGEX` throughout.
 
 - ~~`shell/src/components/GroupSwitcher.tsx` — No `data-testid` attributes on any interactive element.~~ **FIXED** by collab-shell (commit `8dfae42`, 2026-04-12). `data-testid="group-switcher-trigger"` (line 47), `data-testid="group-switcher-item-personal"` (line 60), `data-testid="group-switcher-item-{slug}"` (line 71). `home/apps/notes/index.html`: `data-testid="share-group-item-{slug}"` (line 1360), `data-testid="app-notes-share-button"` (line 1392). Playwright e2e spec updated to use these testids directly (step 02-03 assertions); steps 4-9 remain skipped pending live backend.
 
