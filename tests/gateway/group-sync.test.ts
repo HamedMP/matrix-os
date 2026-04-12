@@ -1072,3 +1072,177 @@ describe('GroupSync — loadLatestSnapshot', () => {
     expect(result).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Snapshot writer — maybeWriteSnapshot (lease-gated)
+// ---------------------------------------------------------------------------
+
+describe('GroupSync — maybeWriteSnapshot', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('writes a single-chunk snapshot when the doc is small and lease acquired', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    // Make a few local mutations so the doc has content.
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k1', 'v1'));
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k2', 'v2'));
+
+    const writeResult = await sync.maybeWriteSnapshot('notes', { force: true });
+    expect(writeResult).not.toBeNull();
+
+    // The snapshot state events were written. state_key uses the snapshot_id.
+    const snapshotCalls = Array.from(clientState.state.keys()).filter((k) =>
+      k.startsWith('m.matrix_os.app.notes.snapshot|'),
+    );
+    expect(snapshotCalls.length).toBeGreaterThanOrEqual(1);
+    const leaseCall = Array.from(clientState.state.keys()).find((k) =>
+      k.startsWith('m.matrix_os.app.notes.snapshot_lease|'),
+    );
+    expect(leaseCall).toBeDefined();
+    // Lease state_key is the app slug (spec §C fix).
+    expect(leaseCall).toBe('m.matrix_os.app.notes.snapshot_lease|notes');
+
+    // The snapshot state_key format is "{snapshot_id}/{chunk_index}".
+    for (const key of snapshotCalls) {
+      const stateKey = key.slice('m.matrix_os.app.notes.snapshot|'.length);
+      expect(stateKey).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}\/\d+$/);
+    }
+  });
+
+  it('splits oversize state into ≤30KB-base64 chunks with stable state_key prefix', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      env: { GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64: 200 }, // tiny cap so the test splits
+    });
+    await sync.hydrate();
+
+    // Push a lot of data so the encoded snapshot is big relative to the cap.
+    await sync.applyLocalMutation('notes', (doc) => {
+      const arr = doc.getArray<string>('tasks');
+      const items: string[] = [];
+      for (let i = 0; i < 200; i++) items.push(`task-${i}-lorem-ipsum-dolor-sit-amet`);
+      arr.push(items);
+    });
+
+    const result = await sync.maybeWriteSnapshot('notes', { force: true });
+    expect(result).not.toBeNull();
+
+    const snapshotKeys = Array.from(clientState.state.keys()).filter((k) =>
+      k.startsWith('m.matrix_os.app.notes.snapshot|'),
+    );
+    expect(snapshotKeys.length).toBeGreaterThan(1);
+
+    // All chunks share the same snapshot_id prefix.
+    const prefixes = new Set<string>();
+    for (const key of snapshotKeys) {
+      const stateKey = key.slice('m.matrix_os.app.notes.snapshot|'.length);
+      const [snapshotId] = stateKey.split('/');
+      prefixes.add(snapshotId!);
+    }
+    expect(prefixes.size).toBe(1);
+
+    // Each chunk's `state` field (base64) is ≤ 200 chars.
+    for (const key of snapshotKeys) {
+      const content = clientState.state.get(key) as { state: string };
+      expect(content.state.length).toBeLessThanOrEqual(200);
+    }
+  });
+
+  it('returns null and skips when another writer holds a valid lease', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+
+    // Foreign lease that expires well in the future.
+    clientState.state.set('m.matrix_os.app.notes.snapshot_lease|notes', {
+      v: 1,
+      writer: '@bob:matrix-os.com',
+      lease_id: '01HBBBBBBBBBBBBBBBBBBBBBBB',
+      acquired_at: 1,
+      expires_at: 9_999_999_999_999,
+    });
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    await sync.applyLocalMutation('notes', (doc) => doc.getMap('kv').set('k', 'v'));
+
+    const result = await sync.maybeWriteSnapshot('notes', { force: true });
+    expect(result).toBeNull();
+
+    // No snapshot chunks written.
+    const snapshotCalls = Array.from(clientState.state.keys()).filter((k) =>
+      k.startsWith('m.matrix_os.app.notes.snapshot|'),
+    );
+    expect(snapshotCalls.length).toBe(0);
+  });
+
+  it('rejects the write (logs + skips) when total snapshot size exceeds 256KB base64', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state: clientState } = makeFakeMatrixClient();
+    const errorCalls: Array<{ code: GroupSyncErrorCode; detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      env: { GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64: 100, GROUP_STATE_MAX_BYTES: 10 * 1024 * 1024 },
+      onError: (code, detail) => errorCalls.push({ code, detail }),
+    });
+    await sync.hydrate();
+
+    // Build a doc big enough that Y.encodeStateAsUpdate base64 length is
+    // > 256KB, so the writer should refuse.
+    await sync.applyLocalMutation('notes', (doc) => {
+      const arr = doc.getArray<string>('tasks');
+      const payload = 'x'.repeat(200);
+      const items: string[] = [];
+      for (let i = 0; i < 2000; i++) items.push(`${i}:${payload}`);
+      arr.push(items);
+    });
+
+    const result = await sync.maybeWriteSnapshot('notes', { force: true });
+    // No snapshot written.
+    expect(result).toBeNull();
+    const snapshotCalls = Array.from(clientState.state.keys()).filter((k) =>
+      k.startsWith('m.matrix_os.app.notes.snapshot|'),
+    );
+    expect(snapshotCalls.length).toBe(0);
+
+    // A warning was logged via onError with reason=snapshot_oversize.
+    const oversize = errorCalls.find(
+      (c) =>
+        typeof c.detail.reason === 'string' &&
+        (c.detail.reason as string).includes('snapshot_oversize'),
+    );
+    expect(oversize).toBeDefined();
+  });
+});

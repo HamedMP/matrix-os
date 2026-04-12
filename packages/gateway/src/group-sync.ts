@@ -11,6 +11,7 @@ import {
 } from './group-types.js';
 import type { MatrixClient, MatrixRawEvent } from './matrix-client.js';
 import { resolveWithinHome } from './path-security.js';
+import { SnapshotLeaseManager } from './group-snapshot-lease.js';
 
 /**
  * GroupSync — Yjs CRDT sync engine for a single Matrix room (spec 062, spec §E.2).
@@ -60,6 +61,9 @@ export interface GroupSyncEnv {
   GROUP_SYNC_SNAPSHOT_LEASE_MS?: number;
   GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS?: number;
   GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64?: number;
+  GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64?: number;
+  GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD?: number;
+  GROUP_SYNC_SNAPSHOT_INTERVAL_MS?: number;
   GROUP_DOC_MAX_BYTES?: number;
 }
 
@@ -92,6 +96,12 @@ interface AppState {
   /** True once the 30-minute escalation has been reported for the current
    *  failure window. Prevents the same event from firing every minute. */
   persistentEscalated: boolean;
+  /** Number of inbound/outbound ops applied since the last successful
+   *  snapshot write. Drives the 50-ops trigger. */
+  opsSinceSnapshot: number;
+  /** Wall-clock ms of the last successful snapshot write. Drives the 5-min
+   *  trigger. */
+  lastSnapshotAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +113,10 @@ const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_LOG_RETENTION_DAYS = 30;
 const DEFAULT_QUARANTINE_MAX = 100;
 const DEFAULT_QUEUE_MAX = 10_000;
+const DEFAULT_SNAPSHOT_CHUNK_MAX_B64 = 30_000;
+const DEFAULT_SNAPSHOT_TOTAL_MAX_B64 = 256 * 1024;
+const DEFAULT_SNAPSHOT_OPS_THRESHOLD = 50;
+const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
 const BACKOFF_SCHEDULE_MS: readonly number[] = [
   1_000, 2_000, 4_000, 8_000, 16_000, 30_000,
@@ -124,6 +138,10 @@ export class GroupSync {
       | 'GROUP_LOG_RETENTION_DAYS'
       | 'GROUP_QUARANTINE_MAX'
       | 'GROUP_SYNC_QUEUE_MAX'
+      | 'GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64'
+      | 'GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64'
+      | 'GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD'
+      | 'GROUP_SYNC_SNAPSHOT_INTERVAL_MS'
     >
   >;
   private readonly onError: GroupSyncOnError;
@@ -131,6 +149,7 @@ export class GroupSync {
   private readonly clockNow: () => number;
   private readonly debugOnWrite: ((path: string) => void) | undefined;
   private readonly apps = new Map<string, AppState>();
+  private readonly leaseManager: SnapshotLeaseManager;
   private hydrated = false;
 
   constructor(options: GroupSyncOptions) {
@@ -150,7 +169,26 @@ export class GroupSync {
       GROUP_LOG_RETENTION_DAYS: env.GROUP_LOG_RETENTION_DAYS ?? DEFAULT_LOG_RETENTION_DAYS,
       GROUP_QUARANTINE_MAX: env.GROUP_QUARANTINE_MAX ?? DEFAULT_QUARANTINE_MAX,
       GROUP_SYNC_QUEUE_MAX: env.GROUP_SYNC_QUEUE_MAX ?? DEFAULT_QUEUE_MAX,
+      GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64:
+        env.GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64 ?? DEFAULT_SNAPSHOT_CHUNK_MAX_B64,
+      GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64:
+        env.GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64 ?? DEFAULT_SNAPSHOT_TOTAL_MAX_B64,
+      GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD:
+        env.GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD ?? DEFAULT_SNAPSHOT_OPS_THRESHOLD,
+      GROUP_SYNC_SNAPSHOT_INTERVAL_MS:
+        env.GROUP_SYNC_SNAPSHOT_INTERVAL_MS ?? DEFAULT_SNAPSHOT_INTERVAL_MS,
     };
+
+    this.leaseManager = new SnapshotLeaseManager({
+      matrixClient: this.client,
+      roomId: this.manifest.room_id,
+      selfHandle: this.selfHandle,
+      env: {
+        GROUP_SYNC_SNAPSHOT_LEASE_MS: env.GROUP_SYNC_SNAPSHOT_LEASE_MS,
+        GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS: env.GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS,
+      },
+      clockNow: this.clockNow,
+    });
   }
 
   // --------------------- public lifecycle ---------------------
@@ -263,6 +301,7 @@ export class GroupSync {
         client_id: content.client_id,
       });
       await this.writeLastSync(app, event.event_id ?? null);
+      app.opsSinceSnapshot += 1;
     } catch (err) {
       this.onError('sync_failed', {
         reason: 'op_persist_failed',
@@ -353,6 +392,7 @@ export class GroupSync {
     // returns.
     try {
       await this.persistState(app);
+      app.opsSinceSnapshot += 1;
     } catch (err) {
       this.onError('sync_failed', {
         reason: 'local_persist_failed',
@@ -478,6 +518,8 @@ export class GroupSync {
       changeListeners: new Set(),
       firstFailureAt: null,
       persistentEscalated: false,
+      opsSinceSnapshot: 0,
+      lastSnapshotAt: 0,
     });
   }
 
@@ -696,6 +738,116 @@ export class GroupSync {
     if (remaining.length === 0 && anyReplayed) {
       this.markSendSuccess(app);
     }
+  }
+
+  // --------------------- snapshot writer ---------------------
+
+  /**
+   * Attempt to write a fresh snapshot of the app's Y.Doc to Matrix room
+   * state. Returns the `snapshot_id` on success, or `null` on any skip path:
+   *   - lease held by another writer
+   *   - no lease acquired (e.g. setRoomState failed)
+   *   - total snapshot size exceeds GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64
+   *   - chunk upload fails partway (partial writes DO land but subsequent
+   *     readers reject mixed sets; the next writer starts a fresh snapshot_id)
+   *
+   * The trigger policy (op count, interval) is checked unless `force: true`.
+   */
+  async maybeWriteSnapshot(
+    appSlug: string,
+    options: { force?: boolean } = {},
+  ): Promise<string | null> {
+    const app = this.requireApp(appSlug);
+    const now = this.clockNow();
+
+    if (!options.force) {
+      const shouldTrigger =
+        app.opsSinceSnapshot >= this.env.GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD ||
+        now - app.lastSnapshotAt >= this.env.GROUP_SYNC_SNAPSHOT_INTERVAL_MS;
+      if (!shouldTrigger) return null;
+    }
+
+    // Lease gate.
+    const acquired = await this.leaseManager.tryAcquire(appSlug);
+    if (!acquired) {
+      return null;
+    }
+
+    // Encode current Y.Doc state.
+    const stateBytes = Y.encodeStateAsUpdate(app.doc);
+    const base64 = Buffer.from(stateBytes).toString('base64');
+
+    const totalCap = this.env.GROUP_SYNC_SNAPSHOT_TOTAL_MAX_B64;
+    if (base64.length > totalCap) {
+      this.onError('sync_failed', {
+        reason: 'snapshot_oversize',
+        appSlug,
+        base64Bytes: base64.length,
+        cap: totalCap,
+      });
+      return null;
+    }
+
+    const chunkCap = this.env.GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64;
+    const chunks: string[] = [];
+    for (let i = 0; i < base64.length; i += chunkCap) {
+      chunks.push(base64.slice(i, i + chunkCap));
+    }
+    if (chunks.length === 0) {
+      return null;
+    }
+
+    const snapshotId = acquired.leaseId; // lease_id == snapshot_id per spec §C
+    const eventType = `m.matrix_os.app.${appSlug}.snapshot`;
+    const takenAtEventId = app.lastEventId ?? '$genesis';
+    let written = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const content: SnapshotEventContent = {
+        v: 1,
+        snapshot_id: snapshotId,
+        generation: now,
+        chunk_index: i,
+        chunk_count: chunks.length,
+        state: chunks[i]!,
+        taken_at_event_id: takenAtEventId,
+        taken_at: now,
+        written_by: this.selfHandle,
+      };
+      try {
+        await this.client.setRoomState(
+          this.manifest.room_id,
+          eventType,
+          `${snapshotId}/${i}`,
+          content as unknown as Record<string, unknown>,
+        );
+        written += 1;
+      } catch (err) {
+        this.onError('sync_failed', {
+          reason: 'snapshot_chunk_write_failed',
+          appSlug,
+          snapshotId,
+          chunkIndex: i,
+          written,
+          total: chunks.length,
+          error: (err as Error)?.message ?? 'unknown',
+        });
+        return null;
+      }
+    }
+
+    app.lastSnapshotAt = now;
+    app.opsSinceSnapshot = 0;
+    app.lastSnapshotEventId = snapshotId;
+    return snapshotId;
+  }
+
+  /**
+   * Observe an inbound snapshot_lease event and forward to the lease
+   * manager. Called by the /sync event handler once it is registered.
+   */
+  observeSnapshotLease(appSlug: string, content: Record<string, unknown>): void {
+    this.leaseManager.observeLease(appSlug, content);
   }
 
   // --------------------- snapshot reader ---------------------
