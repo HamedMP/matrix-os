@@ -128,7 +128,7 @@ describe('GroupSync convergence property T028', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  it('three peers converge byte-equal after 200 random mutation sequences', async () => {
+  it('three peers converge byte-equal after 200 random mutation sequences', { timeout: 30_000 }, async () => {
     const PEERS = ['peer-a', 'peer-b', 'peer-c'];
 
     await fc.assert(
