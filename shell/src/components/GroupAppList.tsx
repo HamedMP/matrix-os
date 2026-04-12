@@ -10,11 +10,12 @@ const FETCH_TIMEOUT_MS = 10_000;
 interface AppEntry {
   slug: string;
   name: string;
+  entry: string;
 }
 
 interface GroupAppListProps {
   groupSlug: string;
-  onOpenApp: (appSlug: string, appName: string) => void;
+  onOpenApp: (appPath: string, appName: string) => void;
 }
 
 export function GroupAppList({ groupSlug, onOpenApp }: GroupAppListProps) {
@@ -63,7 +64,7 @@ export function GroupAppList({ groupSlug, onOpenApp }: GroupAppListProps) {
         <button
           key={app.slug}
           data-testid={`group-app-${app.slug}`}
-          onClick={() => onOpenApp(app.slug, app.name)}
+          onClick={() => onOpenApp(`${app.slug}/${app.entry}`, app.name)}
           className="flex flex-col items-center gap-2 p-3 rounded-lg border border-border/30 bg-card/50 hover:bg-card/80 hover:border-border/60 transition-colors"
         >
           <div className="size-10 rounded-lg bg-foreground/5 flex items-center justify-center">

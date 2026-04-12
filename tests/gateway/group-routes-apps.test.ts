@@ -134,7 +134,18 @@ describe("group-routes apps list", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.apps).toHaveLength(1);
-    expect(data.apps[0]).toEqual({ slug: "notes", name: "My Notes" });
+    expect(data.apps[0]).toEqual({ slug: "notes", name: "My Notes", entry: "index.html" });
+  });
+
+  it("reads entry from matrix.json when present", async () => {
+    const appsDir = join(tmpHome, "groups", "family", "apps");
+    await mkdir(join(appsDir, "vite-app"), { recursive: true });
+    await writeFile(join(appsDir, "vite-app", "matrix.json"), JSON.stringify({ name: "Vite App", entry: "dist/index.html" }));
+
+    const res = await req(app, "GET", "/api/groups/family/apps");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.apps[0]).toEqual({ slug: "vite-app", name: "Vite App", entry: "dist/index.html" });
   });
 
   it("falls back to slug as name when meta.json is missing", async () => {
@@ -144,7 +155,7 @@ describe("group-routes apps list", () => {
     const res = await req(app, "GET", "/api/groups/family/apps");
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.apps[0]).toEqual({ slug: "todo", name: "todo" });
+    expect(data.apps[0]).toEqual({ slug: "todo", name: "todo", entry: "index.html" });
   });
 
   it("falls back to slug when meta.json is invalid JSON", async () => {
@@ -157,6 +168,7 @@ describe("group-routes apps list", () => {
     const data = await res.json();
     expect(data.apps[0].slug).toBe("broken-app");
     expect(data.apps[0].name).toBe("broken-app");
+    expect(data.apps[0].entry).toBe("index.html");
   });
 
   it("skips non-directory entries in apps folder", async () => {

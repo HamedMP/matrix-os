@@ -291,7 +291,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       return c.json({ apps: [] }, 200);
     }
 
-    const apps: Array<{ slug: string; name: string }> = [];
+    const apps: Array<{ slug: string; name: string; entry: string }> = [];
     for (const entry of entries) {
       const entryPath = resolveWithinHome(homePath, `groups/${slug}/apps/${entry}`);
       if (!entryPath) continue;
@@ -303,17 +303,26 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       }
 
       let name = entry;
-      try {
-        const metaRaw = await readFile(`${entryPath}/meta.json`, "utf8");
-        const meta = JSON.parse(metaRaw);
-        if (typeof meta.name === "string" && meta.name.length > 0) {
-          name = meta.name;
+      let entryFile = "index.html";
+      for (const metaName of ["matrix.json", "meta.json"]) {
+        try {
+          const metaRaw = await readFile(`${entryPath}/${metaName}`, "utf8");
+          const meta = JSON.parse(metaRaw);
+          if (typeof meta.name === "string" && meta.name.length > 0) {
+            name = meta.name;
+          }
+          if (typeof meta.entry === "string" && meta.entry.length > 0) {
+            entryFile = meta.entry;
+          } else if (typeof meta.entryPoint === "string" && meta.entryPoint.length > 0) {
+            entryFile = meta.entryPoint;
+          }
+          break;
+        } catch {
+          // try next meta file
         }
-      } catch {
-        // no meta.json or invalid — use slug as name
       }
 
-      apps.push({ slug: entry, name });
+      apps.push({ slug: entry, name, entry: entryFile });
     }
 
     return c.json({ apps }, 200);

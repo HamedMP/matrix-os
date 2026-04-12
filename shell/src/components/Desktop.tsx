@@ -1356,7 +1356,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               </div>
               <GroupAppList
                 groupSlug={activeGroupSlug}
-                onOpenApp={(slug, name) => openWindow(name, `groups/${activeGroupSlug}/apps/${slug}`)}
+                onOpenApp={(appPath, name) => openWindow(name, `groups/${activeGroupSlug}/apps/${appPath}`)}
               />
             </div>
           )}

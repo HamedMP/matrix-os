@@ -32,8 +32,8 @@ vi.mock("@/lib/gateway", () => ({
 // ---------------------------------------------------------------------------
 
 const mockApps = [
-  { slug: "notes", name: "My Notes" },
-  { slug: "todo", name: "Todo List" },
+  { slug: "notes", name: "My Notes", entry: "index.html" },
+  { slug: "todo", name: "Todo List", entry: "dist/index.html" },
 ];
 
 function setupFetch(apps = mockApps) {
@@ -92,7 +92,7 @@ describe("GroupAppList", () => {
     });
 
     fireEvent.click(screen.getByTestId("group-app-notes"));
-    expect(onOpenApp).toHaveBeenCalledWith("notes", "My Notes");
+    expect(onOpenApp).toHaveBeenCalledWith("notes/index.html", "My Notes");
   });
 
   it("shows empty state when no apps", async () => {
