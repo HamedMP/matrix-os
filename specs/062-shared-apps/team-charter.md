@@ -155,7 +155,7 @@ _Last updated: 2026-04-12 by qa-auditor (Wave 5 sweeps + spec review + coverage 
   - `group-registry.ts`: 89.6% stmts / 66.7% branches — target ≥99% / ≥99%. **Owner: group-platform.** 64 uncovered statements, 12 branches. Key gaps at lines 17-68, 72, 85, 89, 97+ (slug derivation collision path, corrupt manifest quarantine, archive).
   - `group-routes.ts`: 90.5% stmts / 79.8% branches — target ≥95% / ≥95%. **Owner: group-platform.** 214 uncovered statements, 61 branches. Key gaps at lines 19-96 (schema-level edge cases, power level checks, error paths for presense/data/leave).
   - `group-ws.ts`: 80.3% stmts / 66.7% branches — target ≥95% / ≥95%. **Owner: collab-shell.** 129 uncovered statements, 31 branches. Key gaps at lines 95-182 (WebSocket handler construction, upgrade path, error close paths).
-  - `group-tools.ts`: 96.9% stmts / 82.4% branches — target ≥99% / ≥99%. **Owner: kernel-ipc.** 95 uncovered statements, 29 branches. Key gaps at lines 3-28, 44-94 (error translation paths, network timeout handling).
+  - ~~`group-tools.ts`: 96.9% stmts / 82.4% branches~~ **100% stmts / 100% branches / 100% funcs / 100% lines** (commit `a9bf882`, kernel-ipc, verified 2026-04-12, 62 tests).
 
 - ~~**T088/spec review finding I1** — In-process integration test missing.~~ **DEFERRED** (lead-integrator decision 2026-04-12). 7 scenarios are triple-covered by: (a) unit-with-stubs in group-sync*.test.ts + group-routes-*.test.ts + group-ws.test.ts, (b) Playwright e2e scaffold, (c) manual-test.md T100 Docker scenarios. A fourth layer would require real conduit container + vitest-container orchestration (~400-800 LOC). If T100 surfaces an integration gap the layered tests missed, a targeted test will be added in the follow-up PR.
 
