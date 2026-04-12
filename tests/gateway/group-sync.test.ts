@@ -36,6 +36,9 @@ interface FakeClientState {
   sendFailError: Error | null;
   state: Map<string, Record<string, unknown>>; // `${eventType}|${stateKey}` → content
   stateEvents: Array<{ type: string; state_key: string; content: Record<string, unknown>; event_id?: string; sender?: string; origin_server_ts?: number }>;
+  /** Per-user power level map used by getPowerLevels. Tests mutate this to
+   *  simulate the room's current power_levels state. */
+  powerLevels: Record<string, number>;
 }
 
 function makeFakeMatrixClient(): { client: MatrixClient; state: FakeClientState } {
@@ -45,6 +48,7 @@ function makeFakeMatrixClient(): { client: MatrixClient; state: FakeClientState 
     sendFailError: null,
     state: new Map(),
     stateEvents: [],
+    powerLevels: { '@alice:matrix-os.com': 100 },
   };
 
   const client: MatrixClient = {
@@ -91,7 +95,9 @@ function makeFakeMatrixClient(): { client: MatrixClient; state: FakeClientState 
       return { eventId: entry.event_id };
     },
     getRoomMembers: vi.fn().mockResolvedValue([]),
-    getPowerLevels: vi.fn().mockResolvedValue({ users: { '@alice:matrix-os.com': 100 }, users_default: 0 }),
+    async getPowerLevels(_roomId) {
+      return { users: { ...state.powerLevels }, users_default: 0 };
+    },
     setPowerLevels: vi.fn(),
   };
 
@@ -1301,5 +1307,382 @@ describe('GroupSync — maybeWriteSnapshot', () => {
         (c.detail.reason as string).includes('snapshot_oversize'),
     );
     expect(oversize).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ACL enforcement (T056) — hydrate, cache, inbound gate, outbound gate, refresh
+// ---------------------------------------------------------------------------
+
+function seedAcl(
+  clientState: FakeClientState,
+  appSlug: string,
+  acl: { read_pl: number; write_pl: number; install_pl: number; policy?: 'open' | 'moderated' | 'owner_only' },
+): void {
+  const content = {
+    v: 1,
+    read_pl: acl.read_pl,
+    write_pl: acl.write_pl,
+    install_pl: acl.install_pl,
+    policy: acl.policy ?? 'open',
+  };
+  clientState.state.set(`m.matrix_os.app_acl|${appSlug}`, content);
+  clientState.stateEvents.push({
+    type: 'm.matrix_os.app_acl',
+    state_key: appSlug,
+    content,
+    event_id: `$acl-${appSlug}`,
+    sender: '@alice:matrix-os.com',
+    origin_server_ts: 1,
+  });
+}
+
+describe('GroupSync ACL — hydrate and cache', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('fetches m.matrix_os.app_acl per installed app at hydrate and caches to acl/{app}.json', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 50, install_pl: 100 });
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const cachePath = join(home, 'groups', manifest.slug, 'acl', 'notes.json');
+    expect(existsSync(cachePath)).toBe(true);
+    const cached = JSON.parse(await readFile(cachePath, 'utf-8'));
+    expect(cached.read_pl).toBe(0);
+    expect(cached.write_pl).toBe(50);
+    expect(cached.install_pl).toBe(100);
+    expect(cached.policy).toBe('open');
+
+    const acl = sync.getAcl('notes');
+    expect(acl).not.toBeNull();
+    expect(acl!.write_pl).toBe(50);
+  });
+
+  it('falls back to default ACL when no state event exists', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client } = makeFakeMatrixClient();
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const acl = sync.getAcl('notes');
+    expect(acl).not.toBeNull();
+    expect(acl!.read_pl).toBe(0);
+    expect(acl!.write_pl).toBe(0);
+    expect(acl!.install_pl).toBe(100);
+  });
+
+  it('reads state_key=appSlug (not empty string) per spec §C typo fix', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+
+    // Bogus entry at state_key=""; must be ignored.
+    state.state.set('m.matrix_os.app_acl|', {
+      v: 1,
+      read_pl: 0,
+      write_pl: 999,
+      install_pl: 999,
+      policy: 'owner_only',
+    });
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 25, install_pl: 100 });
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    expect(sync.getAcl('notes')!.write_pl).toBe(25);
+  });
+});
+
+describe('GroupSync ACL — inbound enforcement', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('drops inbound op whose sender PL is below write_pl', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 50, install_pl: 100 });
+    state.powerLevels = {
+      '@alice:matrix-os.com': 100,
+      '@bob:matrix-os.com': 10,
+    };
+
+    const errors: Array<{ detail: Record<string, unknown> }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      onError: (_code, detail) => errors.push({ detail }),
+    });
+    await sync.hydrate();
+
+    const updateB64 = encodeYjsUpdateFromDoc((d) => d.getMap('kv').set('k', 'v'));
+    await sync.applyRemoteOp('notes', {
+      type: 'm.matrix_os.app.notes.op',
+      event_id: '$denied',
+      sender: '@bob:matrix-os.com',
+      origin_server_ts: 1,
+      content: {
+        v: 1,
+        update: updateB64,
+        lamport: 1,
+        client_id: 'bob',
+        origin: '@bob:matrix-os.com',
+        ts: 1,
+      },
+    });
+
+    expect(Array.from(sync.getDoc('notes').getMap('kv').keys())).toEqual([]);
+    const denials = errors.filter(
+      (e) =>
+        typeof e.detail.reason === 'string' &&
+        (e.detail.reason as string).includes('acl_denied_inbound'),
+    );
+    expect(denials.length).toBe(1);
+  });
+
+  it('allows inbound op when sender PL meets write_pl exactly', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 50, install_pl: 100 });
+    state.powerLevels = {
+      '@alice:matrix-os.com': 100,
+      '@bob:matrix-os.com': 50,
+    };
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    const updateB64 = encodeYjsUpdateFromDoc((d) => d.getMap('kv').set('k', 'v'));
+    await sync.applyRemoteOp('notes', {
+      type: 'm.matrix_os.app.notes.op',
+      event_id: '$ok',
+      sender: '@bob:matrix-os.com',
+      origin_server_ts: 1,
+      content: {
+        v: 1,
+        update: updateB64,
+        lamport: 1,
+        client_id: 'bob',
+        origin: '@bob:matrix-os.com',
+        ts: 1,
+      },
+    });
+
+    expect(sync.getDoc('notes').getMap('kv').get('k')).toBe('v');
+  });
+});
+
+describe('GroupSync ACL — outbound enforcement', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('rejects local mutation when own PL is below write_pl — drops, emits acl_denied', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 50, install_pl: 100 });
+    state.powerLevels = { '@alice:matrix-os.com': 0 };
+
+    const errors: Array<{ code: GroupSyncErrorCode }> = [];
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+      onError: (code) => errors.push({ code }),
+    });
+    await sync.hydrate();
+
+    await sync.applyLocalMutation('notes', (doc) => {
+      doc.getMap('kv').set('k', 'v');
+    });
+
+    expect(state.sendCalls.length).toBe(0);
+    const queuePath = join(home, 'groups', manifest.slug, 'data', 'notes', 'queue.jsonl');
+    expect(existsSync(queuePath)).toBe(false);
+    expect(Array.from(sync.getDoc('notes').getMap('kv').keys())).toEqual([]);
+    expect(errors.filter((e) => e.code === 'acl_denied').length).toBe(1);
+  });
+
+  it('allows local mutation when own PL ≥ write_pl', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 50, install_pl: 100 });
+    state.powerLevels = { '@alice:matrix-os.com': 100 };
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    await sync.applyLocalMutation('notes', (doc) => {
+      doc.getMap('kv').set('k', 'v');
+    });
+
+    expect(state.sendCalls.length).toBe(1);
+    expect(sync.getDoc('notes').getMap('kv').get('k')).toBe('v');
+  });
+});
+
+describe('GroupSync ACL — refresh on inbound event', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await makeTmpHome();
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('refreshes cache + in-memory ACL when an m.matrix_os.app_acl event arrives', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 0, install_pl: 100 });
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+    expect(sync.getAcl('notes')!.write_pl).toBe(0);
+
+    await sync.observeAclEvent({
+      type: 'm.matrix_os.app_acl',
+      event_id: '$acl-update',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 2,
+      state_key: 'notes',
+      content: {
+        v: 1,
+        read_pl: 0,
+        write_pl: 50,
+        install_pl: 100,
+        policy: 'moderated',
+      },
+    } as MatrixRawEvent);
+
+    expect(sync.getAcl('notes')!.write_pl).toBe(50);
+    expect(sync.getAcl('notes')!.policy).toBe('moderated');
+
+    const cachePath = join(home, 'groups', manifest.slug, 'acl', 'notes.json');
+    const cached = JSON.parse(await readFile(cachePath, 'utf-8'));
+    expect(cached.write_pl).toBe(50);
+  });
+
+  it('drops inbound ACL event whose state_key does not match any hydrated app', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 0, install_pl: 100 });
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    await sync.observeAclEvent({
+      type: 'm.matrix_os.app_acl',
+      event_id: '$acl-stray',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 2,
+      state_key: 'unknown-app',
+      content: {
+        v: 1,
+        read_pl: 0,
+        write_pl: 999,
+        install_pl: 999,
+        policy: 'owner_only',
+      },
+    } as MatrixRawEvent);
+
+    expect(sync.getAcl('notes')!.write_pl).toBe(0);
+  });
+
+  it('malformed ACL content is ignored (schema reject)', async () => {
+    const manifest = makeManifest();
+    await scaffoldApp(home, manifest.slug, 'notes');
+    const { client, state } = makeFakeMatrixClient();
+    seedAcl(state, 'notes', { read_pl: 0, write_pl: 25, install_pl: 100 });
+
+    const sync = new GroupSync({
+      manifest,
+      homePath: home,
+      matrixClient: client,
+      selfHandle: '@alice:matrix-os.com',
+    });
+    await sync.hydrate();
+
+    await sync.observeAclEvent({
+      type: 'm.matrix_os.app_acl',
+      event_id: '$acl-bad',
+      sender: '@alice:matrix-os.com',
+      origin_server_ts: 2,
+      state_key: 'notes',
+      content: { v: 1, garbage: true },
+    } as MatrixRawEvent);
+
+    expect(sync.getAcl('notes')!.write_pl).toBe(25);
   });
 });

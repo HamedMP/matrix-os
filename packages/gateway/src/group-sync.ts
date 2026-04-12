@@ -5,8 +5,10 @@ import * as Y from 'yjs';
 import {
   OpEventContentSchema,
   SnapshotEventContentSchema,
+  GroupAclSchema,
   type OpEventContent,
   type SnapshotEventContent,
+  type GroupAcl,
   type GroupManifest,
 } from './group-types.js';
 import type { MatrixClient, MatrixRawEvent } from './matrix-client.js';
@@ -111,6 +113,9 @@ interface AppState {
   lastEventId: string | null;
   lastSnapshotEventId: string | null;
   changeListeners: Set<GroupSyncOnChange>;
+  /** Current per-app ACL. `null` until hydrate() fetches / defaults. Updated
+   *  in-place on every inbound `m.matrix_os.app_acl` state event. */
+  acl: GroupAcl | null;
   /** Wall-clock ms of the first failed send since last success. `null` while
    *  the connection is believed healthy. Used by the 30-minute escalation
    *  path; cleared when a send succeeds or drainQueue runs clean. */
@@ -186,6 +191,10 @@ export class GroupSync {
   private readonly leaseManager: SnapshotLeaseManager;
   private handlerDisposables: Array<{ dispose(): void }> = [];
   private hydrated = false;
+  /** Current room-level power levels (user → PL), refreshed on every inbound
+   *  `m.room.power_levels` state event. Used by the ACL enforcement gate. */
+  private powerLevels: Record<string, number> = {};
+  private usersDefaultPl = 0;
 
   constructor(options: GroupSyncOptions) {
     this.manifest = options.manifest;
@@ -245,7 +254,23 @@ export class GroupSync {
       await this.hydrateApp(appSlug);
     }
 
+    // T056: best-effort fetch of current room power_levels + per-app ACLs.
+    // Failures during hydrate are non-fatal — we fall back to defaults and
+    // refresh on the first inbound event.
+    await this.refreshPowerLevels();
+    for (const appSlug of appSlugs) {
+      await this.refreshAclFromServer(appSlug);
+    }
+
     this.hydrated = true;
+  }
+
+  /** Return the current ACL for `appSlug`, or `null` if the app is not
+   *  hydrated. Used by tests and by group-platform's T058 route. */
+  getAcl(appSlug: string): GroupAcl | null {
+    const app = this.apps.get(appSlug);
+    if (!app) return null;
+    return app.acl;
   }
 
   getDoc(appSlug: string): Y.Doc {
@@ -358,6 +383,24 @@ export class GroupSync {
       return;
     }
     const content = parseResult.data;
+
+    // T056 ACL gate — check sender power level against current write_pl.
+    // Denied ops are dropped with a logged warning. We do NOT crash the sync
+    // loop. Brief in-flight ops with the old ACL (Matrix §Failure Modes
+    // "Conflict resolution") are dropped on receipt here.
+    const acl = app.acl ?? GroupSync.DEFAULT_ACL;
+    const senderPl = this.powerLevelFor(event.sender ?? null);
+    if (senderPl < acl.write_pl) {
+      this.onError('sync_failed', {
+        reason: 'acl_denied_inbound',
+        appSlug,
+        eventId: event.event_id ?? null,
+        sender: event.sender ?? null,
+        senderPl,
+        required: acl.write_pl,
+      });
+      return;
+    }
 
     // Fragment reassembly: if chunk_seq is present, buffer and either return
     // early or assemble the full update. Only when we have every fragment in
@@ -564,6 +607,21 @@ export class GroupSync {
     mutator: (doc: Y.Doc) => void,
   ): Promise<void> {
     const app = this.requireApp(appSlug);
+
+    // T056 ACL gate — refuse if own power level is below write_pl. The
+    // mutation is DROPPED, not queued: a user without permission shouldn't
+    // see their edit accumulate locally and then vanish on reconnect.
+    const acl = app.acl ?? GroupSync.DEFAULT_ACL;
+    const ownPl = this.powerLevelFor(this.selfHandle);
+    if (ownPl < acl.write_pl) {
+      this.onError('acl_denied', {
+        reason: 'acl_denied_outbound',
+        appSlug,
+        ownPl,
+        required: acl.write_pl,
+      });
+      return;
+    }
 
     // Snapshot the state vector BEFORE the local mutation so we can encode
     // only the delta rather than the full doc state.
@@ -827,12 +885,116 @@ export class GroupSync {
       lastEventId,
       lastSnapshotEventId,
       changeListeners: new Set(),
+      acl: null,
       firstFailureAt: null,
       persistentEscalated: false,
       opsSinceSnapshot: 0,
       lastSnapshotAt: 0,
       fragmentBuffer: new Map(),
     });
+  }
+
+  // --------------------- ACL ---------------------
+
+  private static readonly DEFAULT_ACL: GroupAcl = {
+    read_pl: 0,
+    write_pl: 0,
+    install_pl: 100,
+    policy: 'open',
+  };
+
+  /**
+   * Fetch the current ACL state event for an app and update the in-memory
+   * cache + disk cache. Safe to call from both hydrate() and the inbound
+   * handler. On any failure, fall back to the default policy.
+   */
+  private async refreshAclFromServer(appSlug: string): Promise<void> {
+    const app = this.apps.get(appSlug);
+    if (!app) return;
+    let raw: Record<string, unknown> | null = null;
+    try {
+      raw = await this.client.getRoomState(
+        this.manifest.room_id,
+        'm.matrix_os.app_acl',
+        appSlug,
+      );
+    } catch {
+      // Network failure — fall back to default.
+    }
+    const acl = this.parseOrDefaultAcl(raw);
+    app.acl = acl;
+    await this.writeAclCache(app, acl);
+  }
+
+  private parseOrDefaultAcl(raw: Record<string, unknown> | null): GroupAcl {
+    if (raw === null) return { ...GroupSync.DEFAULT_ACL };
+    const parsed = GroupAclSchema.safeParse(raw);
+    if (!parsed.success) return { ...GroupSync.DEFAULT_ACL };
+    return parsed.data;
+  }
+
+  private async writeAclCache(app: AppState, acl: GroupAcl): Promise<void> {
+    const aclDir = resolveWithinHome(
+      this.homePath,
+      join('groups', this.manifest.slug, 'acl'),
+    );
+    if (!aclDir) return;
+    try {
+      await fs.mkdir(aclDir, { recursive: true });
+      const cachePath = join(aclDir, `${app.appSlug}.json`);
+      await atomicWriteFile(cachePath, JSON.stringify(acl, null, 2));
+      this.debugOnWrite?.(cachePath);
+    } catch (err) {
+      this.onError('sync_failed', {
+        reason: 'acl_cache_write_failed',
+        appSlug: app.appSlug,
+        error: (err as Error)?.message ?? 'unknown',
+      });
+    }
+  }
+
+  /**
+   * Fetch the current room power levels and cache in-memory. Used by the
+   * ACL gate on inbound and outbound ops. Failures fall back to keeping
+   * whatever cache we already have.
+   */
+  private async refreshPowerLevels(): Promise<void> {
+    try {
+      const pl = await this.client.getPowerLevels(this.manifest.room_id);
+      this.powerLevels = pl.users ?? {};
+      this.usersDefaultPl = typeof pl.users_default === 'number' ? pl.users_default : 0;
+    } catch {
+      // leave whatever we have
+    }
+  }
+
+  private powerLevelFor(handle: string | null | undefined): number {
+    if (!handle) return this.usersDefaultPl;
+    const pl = this.powerLevels[handle];
+    return typeof pl === 'number' ? pl : this.usersDefaultPl;
+  }
+
+  /**
+   * Process an inbound `m.matrix_os.app_acl` state event. Matched against a
+   * hydrated app by its state_key (== appSlug per spec §C typo fix).
+   * Malformed / unknown-app events are dropped silently.
+   */
+  async observeAclEvent(event: MatrixRawEvent): Promise<void> {
+    const stateKey = event.state_key;
+    if (typeof stateKey !== 'string' || stateKey.length === 0) return;
+    const app = this.apps.get(stateKey);
+    if (!app) return; // event for a different/unknown app
+    const parsed = GroupAclSchema.safeParse(event.content);
+    if (!parsed.success) {
+      this.onError('sync_failed', {
+        reason: 'acl_schema_parse_failed',
+        appSlug: stateKey,
+        eventId: event.event_id ?? null,
+      });
+      return;
+    }
+    app.acl = parsed.data;
+    await this.writeAclCache(app, parsed.data);
   }
 
   private async persistState(app: AppState): Promise<void> {
