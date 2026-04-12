@@ -218,7 +218,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
     if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
     const { slug } = c.req.param();
-    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
     const manifest = groupRegistry.get(slug);
     if (!manifest) {
       return c.json({ error: "Group not found" }, 404);
@@ -241,7 +241,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
       const { slug, app: appSlug } = c.req.param();
-      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
       const manifest = groupRegistry.get(slug);
       if (!manifest) return c.json({ error: "Group not found" }, 404);
 
@@ -295,7 +295,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
       const { slug } = c.req.param();
-      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
       const manifest = groupRegistry.get(slug);
       if (!manifest) return c.json({ error: "Group not found" }, 404);
 
@@ -383,7 +383,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
     if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
     const { slug } = c.req.param();
-    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
     const manifest = groupRegistry.get(slug);
     if (!manifest) return c.json({ error: "Group not found" }, 404);
 
@@ -437,7 +437,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
     if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
     const { slug } = c.req.param();
-    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
     const manifest = groupRegistry.get(slug);
     if (!manifest) return c.json({ error: "Group not found" }, 404);
 
@@ -459,7 +459,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
       const { slug } = c.req.param();
-      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
       const manifest = groupRegistry.get(slug);
       if (!manifest) return c.json({ error: "Group not found" }, 404);
 
@@ -515,7 +515,7 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
     if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
 
     const { slug } = c.req.param();
-    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Invalid group slug" }, 400);
+    if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
     const manifest = groupRegistry.get(slug);
     if (!manifest) {
       return c.json({ error: "Group not found" }, 404);

@@ -333,6 +333,75 @@ describe("group-routes lifecycle", () => {
     });
   });
 
+  // ── Slug validation (HIGH#2) ─────────────────────────────────────────────
+
+  describe("slug path validation", () => {
+    const invalidSlugs = [
+      ["empty string", ""],
+      ["uppercase", "UPPER"],
+      ["path traversal", "../../etc/passwd"],
+      ["unicode", "grüppe"],
+      ["starts with dash", "-bad"],
+      ["spaces", "my group"],
+    ];
+
+    for (const [label, badSlug] of invalidSlugs) {
+      it(`GET /api/groups/:slug returns 404 for ${label}`, async () => {
+        const res = await req(app, "GET", `/api/groups/${encodeURIComponent(badSlug)}`);
+        expect(res.status).toBe(404);
+      });
+
+      it(`POST /api/groups/:slug/leave returns 404 for ${label}`, async () => {
+        const res = await req(app, "POST", `/api/groups/${encodeURIComponent(badSlug)}/leave`);
+        expect(res.status).toBe(404);
+      });
+    }
+
+    it("slug validation returns generic error — no internal details", async () => {
+      const res = await req(app, "GET", `/api/groups/${encodeURIComponent("../../etc/passwd")}`);
+      const body = await res.json();
+      expect(body.error).toBeDefined();
+      expect(JSON.stringify(body)).not.toContain("passwd");
+      expect(JSON.stringify(body)).not.toContain("traversal");
+    });
+  });
+
+  // ── member_handles validation (HIGH#1) ───────────────────────────────────
+
+  describe("member_handles validation", () => {
+    it("rejects invalid handle format (no @)", async () => {
+      const res = await req(app, "POST", "/api/groups", {
+        name: "Test",
+        member_handles: ["notahandle"],
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects empty string handle", async () => {
+      const res = await req(app, "POST", "/api/groups", {
+        name: "Test",
+        member_handles: [""],
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects handle with invalid server part", async () => {
+      const res = await req(app, "POST", "/api/groups", {
+        name: "Test",
+        member_handles: ["@user:"],
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("accepts valid handle format", async () => {
+      const res = await req(app, "POST", "/api/groups", {
+        name: "Test",
+        member_handles: ["@alice:matrix-os.com"],
+      });
+      expect(res.status).toBe(201);
+    });
+  });
+
   // ── Constructor injection ──────────────────────────────────────────────────
 
   describe("constructor injection", () => {
