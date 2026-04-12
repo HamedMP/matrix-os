@@ -1,10 +1,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cp, writeFile, readFile, mkdir } from "node:fs/promises";
-import { z } from "zod/v4";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
-import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, MEMBER_HANDLE_REGEX } from "./group-types.js";
+import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, CreateGroupBodySchema, JoinGroupBodySchema, ShareAppBodySchema } from "./group-types.js";
 import { resolveWithinHome } from "./path-security.js";
 
 export interface GroupRoutesOptions {
@@ -76,20 +75,6 @@ function makeRequireAuth(expectedToken: string | undefined) {
   };
 }
 
-const CreateGroupBodySchema = z.object({
-  name: z.string().min(1),
-  member_handles: z.array(z.string().regex(MEMBER_HANDLE_REGEX)).optional(),
-});
-
-const JoinGroupBodySchema = z.object({
-  room_id: z.string().min(1),
-});
-
-const SAFE_APP_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-const ShareAppBodySchema = z.object({
-  app_slug: z.string().regex(SAFE_APP_SLUG),
-});
 
 export function createGroupRoutes(opts: GroupRoutesOptions) {
   const { matrixClient, groupRegistry } = opts;

@@ -136,3 +136,16 @@ export const GroupDataRequestSchema = z
     }
   });
 export type GroupDataRequest = z.infer<typeof GroupDataRequestSchema>;
+
+export const CreateGroupBodySchema = z.object({
+  name: z.string().min(1),
+  member_handles: z.array(z.string().regex(MEMBER_HANDLE_REGEX)).optional(),
+});
+
+export const JoinGroupBodySchema = z.object({
+  room_id: z.string().min(1),
+});
+
+export const ShareAppBodySchema = z.object({
+  app_slug: z.string().regex(GROUP_SLUG_REGEX),
+});
