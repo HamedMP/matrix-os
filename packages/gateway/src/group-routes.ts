@@ -22,11 +22,26 @@ const DATA_BODY_LIMIT = 512 * 1024;
 // Minimal sync-handle surface consumed by routes. GroupSync satisfies this
 // structurally; defined here so routes compile even before crdt-engine lands
 // the full class.
+interface GroupPresenceEntry {
+  status: "online" | "unavailable" | "offline";
+  last_active_ago?: number;
+  currently_active?: boolean;
+}
+
+interface YMap {
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
+  forEach(cb: (value: unknown, key: string) => void): void;
+}
+
+interface YDoc {
+  getMap(name: string): YMap;
+}
+
 interface GroupSyncHandle {
-  applyLocalMutation(appSlug: string, mutator: (doc: { getMap(name: string): Map<string, unknown> }) => void): Promise<void>;
-  readKv(appSlug: string, key: string): unknown;
-  listKv(appSlug: string): Record<string, unknown>;
-  getPresence(): Map<string, { status: "online" | "unavailable" | "offline"; last_active_ago: number }>;
+  applyLocalMutation(appSlug: string, mutator: (doc: YDoc) => void): Promise<void>;
+  getDoc(appSlug: string): YDoc;
+  getPresence(): Record<string, GroupPresenceEntry>;
 }
 const BEARER_PREFIX = "Bearer ";
 
@@ -426,29 +441,8 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       return c.json({ presence: {} }, 200);
     }
 
-    const allPresence = syncHandle.getPresence();
-
-    // Filter to group members only (best-effort — degrade gracefully on Matrix error)
-    let memberIds: Set<string>;
-    try {
-      const rawMembers = await matrixClient.getRoomMembers(manifest.room_id);
-      memberIds = new Set(
-        rawMembers
-          .filter((m) => m.membership === "join" || m.membership === "invite")
-          .map((m) => m.userId),
-      );
-    } catch {
-      // If we can't fetch members, return all presence (degrade gracefully)
-      memberIds = new Set(allPresence.keys());
-    }
-
-    const presence: Record<string, { status: string; last_active_ago: number }> = {};
-    for (const [userId, data] of allPresence) {
-      if (memberIds.has(userId)) {
-        presence[userId] = data;
-      }
-    }
-
+    // crdt-engine already filters to joined members at observe time
+    const presence = syncHandle.getPresence();
     return c.json({ presence }, 200);
   });
 
@@ -488,15 +482,23 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
           return c.json({ ok: true }, 200);
         }
 
+        const doc = syncHandle.getDoc(app_slug);
+        const kv = doc.getMap("kv");
+
         if (action === "read") {
-          const val = syncHandle.readKv(app_slug, key!);
+          const val = kv.get(key!);
           return c.json({ value: val !== undefined ? val : null }, 200);
         }
 
         // action === "list"
-        const entries = syncHandle.listKv(app_slug);
+        const entries: Record<string, unknown> = {};
+        kv.forEach((v, k) => { entries[k] = v; });
         return c.json({ entries }, 200);
-      } catch {
+      } catch (err) {
+        const msg = (err as Error).message ?? "";
+        if (msg.includes("acl_denied")) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
         return c.json({ error: "Data operation failed" }, 500);
       }
     },

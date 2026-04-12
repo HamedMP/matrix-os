@@ -37,18 +37,22 @@ function makeMatrixClient(overrides: Partial<MatrixClient> = {}): MatrixClient {
 
 // Minimal GroupSync stub that satisfies the data route interface
 function makeGroupSync(kvStore: Record<string, unknown> = {}) {
+  const makeYMap = () => ({
+    get: (key: string) => kvStore[key],
+    set: (key: string, value: unknown) => { kvStore[key] = value; },
+    forEach: (cb: (value: unknown, key: string) => void) => {
+      for (const [k, v] of Object.entries(kvStore)) cb(v, k);
+    },
+  });
+  const fakeDoc = { getMap: (name: string) => name === "kv" ? makeYMap() : makeYMap() };
   return {
     applyLocalMutation: vi.fn().mockImplementation(
-      async (_appSlug: string, mutator: (doc: { getMap: (name: string) => Map<string, unknown> }) => void) => {
-        const map = new Map(Object.entries(kvStore));
-        const fakeDoc = { getMap: (name: string) => name === "kv" ? map : new Map() };
+      async (_appSlug: string, mutator: (doc: typeof fakeDoc) => void) => {
         mutator(fakeDoc);
-        // Apply map changes back to kvStore for test inspection
-        for (const [k, v] of map) kvStore[k] = v;
       },
     ),
-    readKv: vi.fn().mockImplementation((_appSlug: string, key: string) => kvStore[key]),
-    listKv: vi.fn().mockImplementation((_appSlug: string) => ({ ...kvStore })),
+    getDoc: vi.fn().mockReturnValue(fakeDoc),
+    getPresence: vi.fn().mockReturnValue({}),
   };
 }
 
@@ -200,8 +204,9 @@ describe("group-routes data (T078)", () => {
 
   // ── read action ──────────────────────────────────────────────────────────────
 
-  it("read calls readKv and returns the value", async () => {
-    groupSync.readKv.mockReturnValue("stored-value");
+  it("read calls getDoc and returns the value", async () => {
+    // Seed the kvStore via a write first
+    await reqData(app, groupSlug, { action: "write", app_slug: "my-app", key: "note1", value: "stored-value" });
     const res = await reqData(app, groupSlug, {
       action: "read",
       app_slug: "my-app",
@@ -210,11 +215,10 @@ describe("group-routes data (T078)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.value).toBe("stored-value");
-    expect(groupSync.readKv).toHaveBeenCalledWith("my-app", "note1");
+    expect(groupSync.getDoc).toHaveBeenCalledWith("my-app");
   });
 
   it("read returns { value: null } when key not found", async () => {
-    groupSync.readKv.mockReturnValue(undefined);
     const res = await reqData(app, groupSlug, {
       action: "read",
       app_slug: "my-app",
@@ -227,8 +231,10 @@ describe("group-routes data (T078)", () => {
 
   // ── list action ──────────────────────────────────────────────────────────────
 
-  it("list calls listKv and returns all entries", async () => {
-    groupSync.listKv.mockReturnValue({ a: 1, b: "two" });
+  it("list calls getDoc and returns all entries", async () => {
+    // Seed via write
+    await reqData(app, groupSlug, { action: "write", app_slug: "my-app", key: "a", value: 1 });
+    await reqData(app, groupSlug, { action: "write", app_slug: "my-app", key: "b", value: "two" });
     const res = await reqData(app, groupSlug, {
       action: "list",
       app_slug: "my-app",
@@ -236,7 +242,7 @@ describe("group-routes data (T078)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.entries).toEqual({ a: 1, b: "two" });
-    expect(groupSync.listKv).toHaveBeenCalledWith("my-app");
+    expect(groupSync.getDoc).toHaveBeenCalledWith("my-app");
   });
 
   // ── no sync handle ───────────────────────────────────────────────────────────

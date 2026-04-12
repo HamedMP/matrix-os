@@ -37,12 +37,11 @@ function makeMatrixClient(overrides: Partial<MatrixClient> = {}): MatrixClient {
   } as MatrixClient;
 }
 
-function makeGroupSync(presenceMap: Map<string, { status: "online" | "unavailable" | "offline"; last_active_ago: number }> = new Map()) {
+function makeGroupSync(presence: Record<string, { status: "online" | "unavailable" | "offline"; last_active_ago?: number; currently_active?: boolean }> = {}) {
   return {
     applyLocalMutation: vi.fn(),
-    readKv: vi.fn(),
-    listKv: vi.fn().mockReturnValue({}),
-    getPresence: vi.fn().mockReturnValue(presenceMap),
+    getDoc: vi.fn().mockReturnValue({ getMap: () => ({ get: vi.fn(), set: vi.fn(), forEach: vi.fn() }) }),
+    getPresence: vi.fn().mockReturnValue(presence),
   };
 }
 
@@ -106,15 +105,10 @@ describe("group-routes presence (T075)", () => {
   // ── Happy path ───────────────────────────────────────────────────────────────
 
   it("returns 200 with presence map from GroupSync", async () => {
-    vi.mocked(matrixClient.getRoomMembers).mockResolvedValue([
-      { userId: "@alice:m.com", membership: "join" },
-      { userId: "@bob:m.com", membership: "join" },
-    ]);
-    const presenceMap = new Map([
-      ["@alice:m.com", { status: "online" as const, last_active_ago: 0 }],
-      ["@bob:m.com", { status: "offline" as const, last_active_ago: 60000 }],
-    ]);
-    const groupSync = makeGroupSync(presenceMap);
+    const groupSync = makeGroupSync({
+      "@alice:m.com": { status: "online", last_active_ago: 0 },
+      "@bob:m.com": { status: "offline", last_active_ago: 60000 },
+    });
     registry.attachSync(groupSlug, groupSync as unknown as Parameters<typeof registry.attachSync>[1]);
 
     const res = await app.request(`/api/groups/${groupSlug}/presence`, {
@@ -138,16 +132,11 @@ describe("group-routes presence (T075)", () => {
     expect(body.presence).toEqual({});
   });
 
-  it("filters presence to group members only", async () => {
-    vi.mocked(matrixClient.getRoomMembers).mockResolvedValue([
-      { userId: "@alice:m.com", membership: "join" },
-    ]);
-
-    const presenceMap = new Map([
-      ["@alice:m.com", { status: "online" as const, last_active_ago: 0 }],
-      ["@outsider:m.com", { status: "online" as const, last_active_ago: 0 }],
-    ]);
-    const groupSync = makeGroupSync(presenceMap);
+  it("crdt-engine filters to joined members — outsiders absent from getPresence result", async () => {
+    // crdt-engine filters at observe time; stub only returns alice (not the outsider)
+    const groupSync = makeGroupSync({
+      "@alice:m.com": { status: "online" },
+    });
     registry.attachSync(groupSlug, groupSync as unknown as Parameters<typeof registry.attachSync>[1]);
 
     const res = await app.request(`/api/groups/${groupSlug}/presence`, {
