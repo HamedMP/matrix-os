@@ -485,5 +485,132 @@ describe("group lifecycle IPC tools", () => {
       const [url] = (fetcher as MockFetcher).mock.calls[0] as [string];
       expect(url).toContain("my%20group");
     });
+
+    it("returns generic error on 404 without leaking details", async () => {
+      const fetcher = makeFetcher(makeErrorResponse(404, { error: "Group not found" }));
+      const result = await groupDataHandler({ action: "read", group_slug: "gone", app_slug: "notes", key: "k" }, fetcher);
+      expect(result.content[0].text).not.toContain("Group not found");
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("returns generic error on 503 without leaking details", async () => {
+      const fetcher = makeFetcher(makeErrorResponse(503, { error: "Group sync not available" }));
+      const result = await groupDataHandler({ action: "read", group_slug: "g", app_slug: "notes", key: "k" }, fetcher);
+      expect(result.content[0].text).not.toContain("Group sync not available");
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // non-Error throw coverage (err instanceof Error ternary false branch)
+  // ---------------------------------------------------------------------------
+  describe("non-Error throw handling", () => {
+    it("create_group handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue("string error");
+      const result = await createGroupHandler({ name: "G", member_handles: [] }, fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("join_group handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue(42);
+      const result = await joinGroupHandler({ room_id: "!r:m" }, fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("list_groups handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue(null);
+      const result = await listGroupsHandler(fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("set_app_acl handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue("network fail");
+      const result = await setAppAclHandler({ group_slug: "g", app_slug: "notes" }, fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("share_app handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue({ code: "ERR" });
+      const result = await shareAppHandler({ app_slug: "notes", group_slug: "g" }, fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("group_data handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue("bad");
+      const result = await groupDataHandler({ action: "read", group_slug: "g", app_slug: "notes" }, fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+
+    it("leave_group handles non-Error throw safely", async () => {
+      const fetcher: GatewayFetcher = vi.fn().mockRejectedValue(undefined);
+      const result = await leaveGroupHandler({ slug: "g" }, fetcher);
+      expect(result.content[0].text.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // defaultFetcher coverage (no injected fetcher)
+  // ---------------------------------------------------------------------------
+  describe("defaultFetcher", () => {
+    it("uses global fetch when no fetcher is injected", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(makeOkResponse({ groups: [] }));
+      vi.stubGlobal("fetch", mockFetch);
+      try {
+        const result = await listGroupsHandler();
+        expect(mockFetch).toHaveBeenCalledOnce();
+        expect(result.content[0].type).toBe("text");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // authHeaders branch coverage
+  // ---------------------------------------------------------------------------
+  describe("authHeaders env branches", () => {
+    it("includes Authorization header when MATRIX_AUTH_TOKEN is set", async () => {
+      const orig = process.env.MATRIX_AUTH_TOKEN;
+      process.env.MATRIX_AUTH_TOKEN = "test-token-abc";
+      try {
+        const fetcher = makeFetcher(makeOkResponse({ slug: "g", room_id: "!r:m" }, 201));
+        await createGroupHandler({ name: "G", member_handles: [] }, fetcher);
+        const [, init] = (fetcher as MockFetcher).mock.calls[0] as [string, RequestInit];
+        const headers = (init as { headers: Record<string, string> }).headers;
+        expect(headers["Authorization"]).toBe("Bearer test-token-abc");
+      } finally {
+        if (orig === undefined) delete process.env.MATRIX_AUTH_TOKEN;
+        else process.env.MATRIX_AUTH_TOKEN = orig;
+      }
+    });
+
+    it("includes x-platform-user-id header when MATRIX_CLERK_USER_ID is set", async () => {
+      const orig = process.env.MATRIX_CLERK_USER_ID;
+      process.env.MATRIX_CLERK_USER_ID = "user_clerk_123";
+      try {
+        const fetcher = makeFetcher(makeOkResponse({ groups: [] }));
+        await listGroupsHandler(fetcher);
+        const [, init] = (fetcher as MockFetcher).mock.calls[0] as [string, RequestInit];
+        const headers = (init as { headers: Record<string, string> }).headers;
+        expect(headers["x-platform-user-id"]).toBe("user_clerk_123");
+      } finally {
+        if (orig === undefined) delete process.env.MATRIX_CLERK_USER_ID;
+        else process.env.MATRIX_CLERK_USER_ID = orig;
+      }
+    });
+
+    it("omits Authorization header when MATRIX_AUTH_TOKEN is unset", async () => {
+      const orig = process.env.MATRIX_AUTH_TOKEN;
+      delete process.env.MATRIX_AUTH_TOKEN;
+      try {
+        const fetcher = makeFetcher(makeOkResponse({ groups: [] }));
+        await listGroupsHandler(fetcher);
+        const [, init] = (fetcher as MockFetcher).mock.calls[0] as [string, RequestInit];
+        const headers = (init as { headers: Record<string, string> }).headers;
+        expect(headers["Authorization"]).toBeUndefined();
+      } finally {
+        if (orig !== undefined) process.env.MATRIX_AUTH_TOKEN = orig;
+      }
+    });
   });
 });
