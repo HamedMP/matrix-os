@@ -436,7 +436,7 @@ The reader-side atomicity contract is mandatory regardless of writer model. Buil
 
 - [ ] **Step 1: Write failing tests** for `SnapshotLeaseManager`:
   - `tryAcquire(roomId, appSlug)` reads current `m.matrix_os.app.{appSlug}.snapshot_lease` state event
-  - If no lease, or `expires_at < now`: writes a new lease with `writer = self.handle`, `lease_id = ulid()`, `expires_at = now + leaseDurationMs` (default 600000); returns the new `lease_id`
+  - If no lease, or `expires_at + GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS < now`: writes a new lease with `writer = self.handle`, `lease_id = ulid()`, `expires_at = now + GROUP_SYNC_SNAPSHOT_LEASE_MS` (default 60000 per spike §9.4, was 600000); returns the new `lease_id`. Grace-period gating absorbs p99 production jitter before another writer claims an observed-expired lease.
   - If valid lease held by self: returns existing `lease_id` (renew not strictly required mid-window)
   - If valid lease held by other: returns `null` (caller skips this snapshot opportunity)
   - On inbound `snapshot_lease` event from another writer with later timestamp: local lease is invalidated, in-flight snapshot writes are cancelled
@@ -453,9 +453,9 @@ The reader-side atomicity contract is mandatory regardless of writer model. Buil
 - [ ] **Step 1: Write failing tests:**
   - Snapshot trigger: 50 ops or 5 minutes since last snapshot (whichever first), AND own power level ≥ ACL `install_pl`, AND `tryAcquire()` returned a `lease_id`
   - Writer encodes Yjs state via `Y.encodeStateAsUpdate(doc)`
-  - Splits into chunks ≤ 56KB content size each (leaving headroom for JSON envelope)
+  - Splits into chunks ≤ 30 000 B **base64** per chunk (≈22 500 B raw binary before inflation; spike §9.2 / §I), leaving ≥2× headroom under the measured Matrix state-event ceiling after JSON envelope overhead
   - Each chunk written as `state_key = "{lease_id}/{chunk_index}"` with full content per Section C
-  - Total chunks must be ≤ ⌈256KB / 56KB⌉ = 5; oversize → log warning, increment `snapshot.oversize` metric, **do not** attempt partial write
+  - Total chunks must be ≤ ⌈256 KB base64 / 30 KB base64⌉ = 9 chunks; oversize → log warning, increment `snapshot.oversize` metric, **do not** attempt partial write
   - On any chunk write failure: stop, log, surface error — do NOT leave partial chunks (the lease + monotonic generation will let the next writer reclaim)
   - Snapshot includes `taken_at_event_id` of the latest applied op at the moment encoding started
   - **Concurrency property test**: two writers racing produce snapshots with different `lease_id`s; the reader from Task 4.1 selects exactly one of them (highest generation) and never returns mixed chunks
@@ -781,7 +781,7 @@ The kernel-side `group_data` tool gives agents from any channel (Telegram, Disco
 | Matrix `/sync` rate-limited at production scale | Medium | High | Phase 0 spike measures it; the single account-wide `MatrixSyncHub` minimizes cursor count to one. If still bad, fall back to SSE bridge from gateway. |
 | Yjs binary update format changes between versions | Low | High | Pin exact version on **both** gateway and shell — they MUST match. Document migration path; never auto-upgrade. |
 | Two writers race for snapshot lease at the same instant | Medium | Low | Matrix room state LWW resolves the lease event race deterministically. Worst case is one duplicate snapshot under a different `snapshot_id`; the reader's atomicity contract (highest generation, complete chunk set) selects exactly one. |
-| Stuck snapshot lease (writer crashes mid-snapshot) | Low | Medium | Leases expire after 10 minutes (default). Any `install_pl` member can take over after expiry. Spike measures the right default. |
+| Stuck snapshot lease (writer crashes mid-snapshot) | Low | Medium | Leases expire after 60 seconds by default (`GROUP_SYNC_SNAPSHOT_LEASE_MS`, spike §9.4, was 10 min). Any `install_pl` member takes over after `expires_at + GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS` (default 10 s). Production measurement in Wave 5 may retune. |
 | Synapse rejects `m.matrix_os.*` event types via federation rules | Low | Medium | Spike verifies; fall back to `m.room.message` with a `matrix_os.op_type` field in content. |
 | Iframe ↔ shell ↔ gateway round-trip latency > Matrix latency | Medium | Medium | Profile in spike. **Mitigation MUST preserve the gateway-as-source-of-truth invariant.** Acceptable mitigations: (a) batch local mutations with a 16ms debounce in `group-bridge.ts` before shipping over WS; (b) skip the postMessage round-trip for read-only `get`/`list` by caching in the iframe's mirror Y.Doc (already the design); (c) raise WS message frequency. **Not acceptable**: moving the authoritative Y.Doc into the iframe — that reopens the multi-tab divergence problem the spec just closed. |
 | App authors make incompatible schema changes | High | Medium | Out of scope; document Yjs schema-evolution patterns in app dev guide. |

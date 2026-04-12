@@ -103,18 +103,18 @@ content: {
 
 ```
 event_type: m.matrix_os.app.{app_slug}.snapshot_lease
-state_key: ""                       -- single lease per app
+state_key: "{app_slug}"             -- one lease per app (fixed by spike, was "")
 content: {
   v: 1,
   writer: "@hamed:matrix-os.com",
   lease_id: "01HXY...",             -- ULID, must match the snapshot_id the writer publishes
   acquired_at: 1712780000000,
-  expires_at: 1712780600000         -- acquired_at + lease_duration_ms (default 10 minutes)
+  expires_at: 1712780060000         -- acquired_at + GROUP_SYNC_SNAPSHOT_LEASE_MS (default 60s per spike §9.4)
 }
 ```
 
 A would-be snapshot writer first reads the current lease state event:
-1. **No lease, or `expires_at < now`** → write a new lease event with `writer = self`, `lease_id = new ULID`, `expires_at = now + 10min`. Then write snapshot chunks using `lease_id` as `snapshot_id`.
+1. **No lease, or `expires_at + GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS < now`** → write a new lease event with `writer = self`, `lease_id = new ULID`, `expires_at = now + GROUP_SYNC_SNAPSHOT_LEASE_MS`. Then write snapshot chunks using `lease_id` as `snapshot_id`. The grace period absorbs production jitter before another writer claims an observed-expired lease.
 2. **Valid lease held by self** → reuse `lease_id`, write new snapshot generation.
 3. **Valid lease held by another member** → skip; that member is the active writer for this window.
 
@@ -164,11 +164,26 @@ class MatrixSyncHub {
   start(signal: AbortSignal): Promise<void>          // begins long-poll loop
   registerRoomHandler(roomId, handler): Disposable   // fan-out by room
   registerEventHandler(roomId, eventType, handler): Disposable  // fan-out by (room, type)
+  reportGap(roomId: string, expectedLamport: number): void      // app-layer gap signal (Yjs/CRDT)
   getNextBatch(): string                             // current cursor
 }
 ```
 
 The hub does the long-poll, parses each `/sync` response, and dispatches each event to registered handlers. Handlers run sequentially per-room (no concurrent dispatch within a room) so a single `GroupSync` never sees out-of-order events. Different rooms dispatch in parallel.
+
+**Gap-fill contract (NON-NEGOTIABLE, spike §4 / §9.1):**
+
+Conduit (and, by extension, any Matrix homeserver under bursty-write load) can return a `/sync` batch that silently omits events which were committed to the room between the previous `next_batch` token and the current one, **without** setting `timeline.limited: true`. The hub MUST detect this and backfill before delivering subsequent events to `GroupSync` handlers. Yjs CRDT semantics tolerate late/out-of-order delivery but do NOT tolerate permanent loss — at-least-once delivery is the transport guarantee the sync engine relies on, and it is the hub's responsibility to uphold it.
+
+Concretely:
+
+1. **Recency ring (per room).** On every inbound room-scoped event, the hub records `(roomId, event_id, origin_server_ts, lamport_from_content)` in a small in-memory recency ring. Cap: 256 events per room, LRU eviction on overflow, single ring per room — the cap is NON-NEGOTIABLE per CLAUDE.md mandatory resource caps.
+2. **Detection.** A gap is declared when either (a) the `/sync` batch has `timeline.limited: true`, OR (b) the application layer calls `reportGap(roomId, expectedLamport)` because an inbound `OpEventContent.lamport` skipped forward within a single `client_id`. Either signal pauses room-scoped dispatch for that room while backfill runs.
+3. **Backfill.** Fetch `/_matrix/client/v3/rooms/{roomId}/messages?dir=b&from=<pre-gap-batch>&limit=500` in a loop until an event whose `event_id` matches the last-seen anchor in the ring is observed, or a hard iteration cap of 8 pages is reached. Sort resulting events by `(origin_server_ts, event_id)` tiebreaker, deliver them to all registered handlers in order, then resume normal /sync dispatch for that room.
+4. **Failure path.** On backfill failure (timeout, 5xx, iteration cap reached), the hub surfaces `sync_failed` to the app via the `MatrixOS.shared.onError` channel (spec §J), **does not** advance the stored `next_batch` past the gap, and retries backfill on the next /sync iteration. Room-scoped dispatch stays paused until a backfill succeeds or the operator manually clears the error.
+5. **Test requirement.** `tests/gateway/matrix-sync-hub.test.ts` MUST include a "mid-burst-gap" regression: seed a fake `/sync` response missing event N, seed a fake `/messages` response containing event N, and assert that registered handlers see event N in order with no drops and no reordering. A second test exercises the `reportGap(roomId, expectedLamport)` callback path with no `limited: true` flag, to guarantee we exercise both detection modes.
+
+This contract lives in `matrix-sync-hub.ts` and is entirely invisible to `GroupSync` — the hub just looks like a reliable at-least-once event stream, which is what the sync engine assumes.
 
 **Ordering contract:**
 
@@ -226,7 +241,16 @@ For advanced cases (`MatrixOS.shared.doc()` returning a `Y.Doc`), the bridge ins
 
 New tools in `packages/kernel/src/ipc-server.ts`:
 
-- `create_group(name, member_handles[])` — creates a Matrix room, sets power levels, invites members, scaffolds `~/groups/{slug}/`
+- `create_group(name, member_handles[])` — creates a Matrix room, sets power levels, invites members, scaffolds `~/groups/{slug}/`. **MUST call `matrixClient.setPowerLevels(roomId, ...)` during room setup** with the explicit map below (spike §9.3, resolves the Matrix-enforcement half of §H):
+  - `users: { [ownerHandle]: 100 }`
+  - `users_default: 0`
+  - `state_default: 50`
+  - `events_default: 0`
+  - `events["m.room.power_levels"]: 100`
+  - `events["m.matrix_os.app_acl"]: 100`
+  - `events["m.matrix_os.app_install"]: 50`
+
+  Matrix `power_levels.events` does not support wildcards, so per-app `snapshot`/`snapshot_lease` event PLs cannot be pre-registered at room creation (the app slug is unknown at that point). The sync engine's runtime `install_pl` check against the ACL state event (spec §H "power level enforcement is doubled") is therefore the **authoritative** enforcement path for snapshot writes, not redundant belt-and-suspenders. Matrix will accept snapshot/lease/op events from any member by default; the application-layer ACL check decides whether they apply. Groups that want harder Matrix-level gating can set a per-slug `events` override manually, but that is not wired in v1.
 - `join_group(invite | room_id)` — accepts a Matrix invite, syncs current room state, downloads app code
 - `list_groups()` — reads `~/groups/` and returns slug + name + member count + last activity
 - `leave_group(slug)` — leaves Matrix room, archives `~/groups/{slug}/` to `~/groups/_archive/{slug}-{ts}/`
@@ -258,8 +282,9 @@ New tools in `packages/kernel/src/ipc-server.ts`:
 - **Group slug**: `/^[a-z0-9][a-z0-9-]{0,62}$/` (64 chars max, conservative)
 - **App slug**: existing `SAFE_SLUG` regex from CLAUDE.md mandatory patterns
 - **Member handle**: `/^@[a-z0-9_]{1,32}:[a-z0-9.-]{1,253}$/`
-- **Yjs update size**: ≤32KB raw binary per event. Larger updates split via Yjs sub-document or chunked across multiple events with a `chunk_seq` field.
-- **Snapshot total size**: ≤256KB across all chunks per app. Apps that exceed this MUST use a sub-document strategy and the kernel logs a warning.
+- **Yjs op update size (per `m.matrix_os.app.{slug}.op` event)**: ≤32 KB **raw binary** per event (≈43 KB base64-encoded). Matrix's hard content ceiling measured on Conduit 0.10.12 is ~64 500 B (spike §3), so the 32 KB raw cap has >1.5× headroom after base64 inflation. Larger updates split via Yjs sub-document or chunked across multiple events with a `chunk_seq` envelope field (see T012/T013 schema, T035a reassembly). A single Yjs update that exceeds the 1 MB raw splittable ceiling is rejected with `op_too_large` via `MatrixOS.shared.onError` (§J).
+- **Snapshot chunk size (per `m.matrix_os.app.{slug}.snapshot` state event)**: ≤30 000 B **base64-encoded** per chunk (≈22 500 B raw binary before base64 inflation). This value, measured by the spike (§9.2), leaves ≥2× safety margin under the observed ~64 500 B Matrix state-event cap after JSON envelope overhead. The raw-binary inner cap is therefore ~22 KB per chunk.
+- **Snapshot total size (all chunks per app)**: ≤256 KB **base64-encoded** across all chunks, which corresponds to ~180 KB raw binary of Yjs doc state. Apps that exceed this MUST use a sub-document strategy and the kernel logs a warning. The reader's atomicity contract (§C) is unchanged.
 - **All filesystem writes** under `~/groups/` go through `resolveWithinHome` (existing helper) — no escape via `..`
 - **Inbound event content**: parsed with Zod 4 schema before any decode/apply
 - **Base64 decode**: `Buffer.from(s, "base64")` with explicit length check before passing to Yjs
@@ -269,7 +294,14 @@ New tools in `packages/kernel/src/ipc-server.ts`:
 - HTTP errors return generic messages (`"Group not found"`, `"Forbidden"`) — never Matrix homeserver errors, never internal stack traces
 - Matrix `errcode` values are logged server-side and translated to generic client messages
 - Sync engine errors are logged with structured fields (`group_slug`, `app_slug`, `event_id`, `error_class`) but never bubbled to the iframe app
-- App-visible errors via `MatrixOS.shared.onError()` are coarse-grained: `"sync_failed"`, `"acl_denied"`, `"offline"`. The app cannot distinguish "Matrix 401" from "Matrix 503".
+- App-visible errors via `MatrixOS.shared.onError()` are coarse-grained and enumerable:
+  - `"sync_failed"` — anything in the replication path that isn't one of the specific codes below (Matrix 5xx, network hiccup, unexpected protocol error). The app cannot distinguish "Matrix 401" from "Matrix 503" — both surface as `sync_failed` and are logged server-side with full detail.
+  - `"acl_denied"` — local power level is below the app's `write_pl` at send time, or an inbound ack reports `M_FORBIDDEN`. Apps should treat this as "read-only mode" and stop accepting local edits until the next ACL refresh.
+  - `"offline"` — the gateway's Matrix `/sync` loop or the iframe↔gateway WebSocket is disconnected. Queued mutations will drain automatically on reconnect.
+  - `"op_too_large"` — a single outbound Yjs update exceeded the hard 1 MB raw splittable ceiling (Section I). The app must break the edit into smaller mutations; the offending mutation is dropped, not queued.
+  - `"state_overflow"` — the local `state.bin` for this app has hit the 5 MB per-app hard cap (Section "Resource Management"). New mutations are rejected until the user archives the app. Upstream remote ops continue to apply — this is a local persistence ceiling, not a protocol state.
+
+  The list is closed: `MatrixOS.shared.onError()` NEVER emits any other string, and the gateway MUST map every internal failure to exactly one of these five. Extending the set is a spec change, not a code change.
 
 ## Integration Wiring
 
@@ -304,6 +336,9 @@ No `globalThis`. All gateway-side dependencies (`matrixClient`, `syncHub`, `grou
 - `MATRIX_ACCESS_TOKEN` — existing
 - `GROUP_SYNC_SNAPSHOT_INTERVAL_MS` — defaults to 300000 (5 min)
 - `GROUP_SYNC_SNAPSHOT_OPS_THRESHOLD` — defaults to 50
+- `GROUP_SYNC_SNAPSHOT_LEASE_MS` — defaults to 60000 (60 s; spike §9.4 replaces the original 10-minute default, conservative production latency model in spike §5)
+- `GROUP_SYNC_SNAPSHOT_LEASE_GRACE_MS` — defaults to 10000 (10 s stand-down grace period before another writer can claim an observed-expired lease; absorbs ±p99 jitter)
+- `GROUP_SYNC_SNAPSHOT_CHUNK_MAX_B64` — defaults to 30000 (base64 byte cap per snapshot chunk; spec §I)
 - `GROUP_SYNC_QUEUE_MAX` — defaults to 10000
 - `GROUP_SYNC_LOG_RETENTION_DAYS` — defaults to 30
 
