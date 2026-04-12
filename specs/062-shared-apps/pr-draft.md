@@ -15,11 +15,15 @@
 
 - Implements spec 062 (Shared Apps via CRDT over Matrix): groups-as-Matrix-rooms, Yjs CRDT sync engine, per-app ACL, offline queue with gap-fill backfill, shell WebSocket bridge, GroupSwitcher UI, and kernel IPC tools.
 - Spec: [`specs/062-shared-apps/spec.md`](specs/062-shared-apps/spec.md) | Plan: [`specs/062-shared-apps/plan.md`](specs/062-shared-apps/plan.md) | Spike: [`specs/062-shared-apps/spike.md`](specs/062-shared-apps/spike.md)
-- User stories delivered: **US1** (group lifecycle), **US2** (Yjs sync engine), **US3** (collaboration shell), **US4** (ACL enforcement), **US5** (share app / app install), **US6** (members + presence). US7 (notes app shared demo) pending Wave 5 collab-shell T082–T084.
+- User stories delivered: **US1** (group lifecycle), **US2** (Yjs sync engine), **US3** (collaboration shell), **US4** (ACL enforcement), **US5** (share app / app install), **US6** (members + presence), **US7** (notes app shared demo — T082–T084 landed 2026-04-12).
 
-### Commits (42 commits since `32b77b5`)
+### Commits (46 commits since `32b77b5`)
 
 ```
+6f00678 docs(062): sync test counts, IPC tool count, group filesystem + endpoints
+6b3bb2b test(062): update e2e assertions after T082-T084 testids land
+11c4883 feat(062): notes app shared mode + GroupSwitcher + AppAclPanel testids (T082-T084)
+(spec amendments commit from task #21)
 9e94261 feat(062): replace T048 adapter stubs with Wave 4 real GroupSync reads
 dd0c7c9 feat(062): wire members/presence fan-out in group-ws.ts
 4dab048 fix(062): align GroupSyncHandle interface to crdt-engine getters
@@ -73,15 +77,19 @@ bfe48fb feat(062): scaffold manual-test.md skeleton
 
 **CRITICAL**: none
 
-**HIGH** (3 open — fixes pending before merge):
-1. `group-routes.ts:81` — `member_handles` missing handle regex validation (spec §I). Owner: group-platform.
-2. `group-routes.ts:220+` — path param `:slug` not validated against GROUP_SLUG_REGEX before registry lookup. Owner: group-platform.
-3. `tests/gateway/group-sync-conflict.property.test.ts:131` — property test times out at 5000ms default. Owner: crdt-engine.
+**HIGH** (1 resolved, 2 resolved, 1 still open):
+1. ~~`group-routes.ts:81` — `member_handles` missing handle regex~~ **FIXED** (group-platform, 2026-04-12).
+2. ~~`group-routes.ts:220+` — `:slug` missing GROUP_SLUG_REGEX guard~~ **FIXED** for 4/7 routes (group-platform, 2026-04-12). **3 routes still unguarded** (`GET /presence`, `POST /data`, `POST /leave` at lines 439/460/515). Owner: group-platform.
+3. ~~`group-sync-conflict.property.test.ts:131` — property test timeout~~ **FIXED** (crdt-engine commit `f9f0a74`, 30s timeout added, 2026-04-12).
+
+**HIGH** (open — must fix before merge):
+- `group-routes.ts:439,460,515` — `:slug` still missing GROUP_SLUG_REGEX guard in 3 routes. Owner: group-platform.
+- Integration test file `tests/gateway/group-integration.test.ts` missing (7 spec checkpoint scenarios). Owner: lead-integrator.
 
 **MED** (3 open):
-1. `CreateGroupBodySchema`, `JoinGroupBodySchema`, `ShareAppBodySchema` are inline in routes rather than group-types.ts (T094).
-2. `GroupSwitcher.tsx` missing `data-testid` attrs — blocks e2e step assertions.
-3. Two-context Clerk auth not wired for full two-user Playwright flow.
+1. `CreateGroupBodySchema`, `JoinGroupBodySchema`, `ShareAppBodySchema` are inline in routes rather than group-types.ts (T094). Owner: group-platform.
+2. ~~`GroupSwitcher.tsx` missing `data-testid` attrs~~ **FIXED** by T082–T084 (collab-shell, 2026-04-12).
+3. Two-context Clerk auth not wired for full two-user Playwright flow. (Steps 4-9 remain skipped.)
 
 Full audit log: [`specs/062-shared-apps/team-charter.md §Audit log`](specs/062-shared-apps/team-charter.md)
 
@@ -100,5 +108,6 @@ Full audit log: [`specs/062-shared-apps/team-charter.md §Audit log`](specs/062-
 
 ### Notes
 
-- Wave 5 T082–T084 (notes app shared mode) is in-progress by collab-shell in parallel. Those commits will land before T100.
-- Playwright e2e (`tests/e2e/shared-app.spec.ts`) steps 4–9 are `test.skip`'d pending collab-shell T084; API smoke tests (auth gates) run immediately.
+- Wave 5 T082–T084 (notes app shared mode + GroupSwitcher + AppAclPanel testids) landed 2026-04-12 by collab-shell.
+- Playwright e2e (`tests/e2e/shared-app.spec.ts`) steps 1–3 have real assertions via data-testid; steps 4–9 are `test.skip`'d pending live backend. API smoke tests (auth gates) run immediately.
+- Test count: 3,658 passing / 8 pre-existing failures (shell + voice, not 062-owned). See audit log for pre-existing failures list.
