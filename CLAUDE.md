@@ -137,6 +137,7 @@ Read these on demand, not every session:
 
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
+- `docs/dev/worktree-turbopack.md` -- when module resolution fails in git worktrees (Turbopack + pnpm)
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
 - `docs/dev/releases.md` -- when tagging a release or managing versions
 - `specs/quality-gates.md` -- when writing a new spec or reviewing a PR

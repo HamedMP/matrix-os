@@ -11,6 +11,9 @@ importers:
       '@types/pg':
         specifier: ^8.18.0
         version: 8.20.0
+      lodash:
+        specifier: ^4.17.23
+        version: 4.17.23
       pg:
         specifier: ^8.20.0
         version: 8.20.0
@@ -506,6 +509,9 @@ importers:
       lib0:
         specifier: 0.2.117
         version: 0.2.117
+      lodash:
+        specifier: ^4.17.23
+        version: 4.17.23
       lucide-react:
         specifier: ^0.563.0
         version: 0.563.0(react@19.2.3)
@@ -17445,7 +17451,7 @@ snapshots:
       debug: 4.4.3(supports-color@8.1.1)
       invariant: 2.2.4
       metro: 0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      metro-config: 0.83.5(bufferutil@4.1.0)
+      metro-config: 0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       metro-core: 0.83.5
       semver: 7.7.4
     transitivePeerDependencies:
@@ -24075,6 +24081,21 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  metro-config@0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6):
+    dependencies:
+      connect: 3.7.0
+      flow-enums-runtime: 0.0.6
+      jest-validate: 29.7.0
+      metro: 0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      metro-cache: 0.83.5
+      metro-core: 0.83.5
+      metro-runtime: 0.83.5
+      yaml: 2.8.2
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
   metro-core@0.83.3:
     dependencies:
       flow-enums-runtime: 0.0.6
@@ -24463,7 +24484,7 @@ snapshots:
       metro-babel-transformer: 0.83.5
       metro-cache: 0.83.5
       metro-cache-key: 0.83.5
-      metro-config: 0.83.5(bufferutil@4.1.0)
+      metro-config: 0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       metro-core: 0.83.5
       metro-file-map: 0.83.5
       metro-resolver: 0.83.5
