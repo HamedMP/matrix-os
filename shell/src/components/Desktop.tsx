@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/context-menu";
 import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon, Share2Icon } from "lucide-react";
 import { ShareAppDialog } from "./ShareAppDialog";
+import { GroupAppList } from "./GroupAppList";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -351,6 +352,18 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareAppSlug, setShareAppSlug] = useState<string | null>(null);
+  const [activeGroupSlug, setActiveGroupSlug] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("group");
+  });
+
+  useEffect(() => {
+    const onPopState = () => {
+      setActiveGroupSlug(new URLSearchParams(window.location.search).get("group"));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [showSetup, setShowSetup] = useState(false);
   const setupChecked = useRef(false);
@@ -1324,6 +1337,18 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             onRenameApp={renameAppOnServer}
             onDeleteApp={deleteAppOnServer}
           />
+
+          {activeGroupSlug && (
+            <div className="absolute top-2 right-2 w-72 bg-card/90 backdrop-blur-xl rounded-lg border border-border/40 shadow-xl z-[50] overflow-hidden">
+              <div className="px-3 py-2 border-b border-border/30">
+                <h3 className="text-xs font-semibold text-foreground/70">Shared Apps</h3>
+              </div>
+              <GroupAppList
+                groupSlug={activeGroupSlug}
+                onOpenApp={(slug, name) => openWindow(name, `groups/${activeGroupSlug}/apps/${slug}`)}
+              />
+            </div>
+          )}
 
           {!modeConfig.showWindows && modeConfig.id === "ambient" && (
             <AmbientClock onSwitchMode={cycleMode} />
