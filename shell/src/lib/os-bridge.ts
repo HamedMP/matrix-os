@@ -3,7 +3,22 @@ export type BridgeMessage =
   | { type: "os:navigate"; app: string; payload: { route: string; context?: string } }
   | { type: "os:read-data"; app: string; payload: { key: string } }
   | { type: "os:write-data"; app: string; payload: { key: string; value: string } }
-  | { type: "os:open-app"; app: string; payload: { name: string; path: string } };
+  | { type: "os:open-app"; app: string; payload: { name: string; path: string } }
+  // shared:* — group CRDT KV operations (spec §F bridge client surface)
+  | { type: "shared:get"; app: string; payload: { key: string } }
+  | { type: "shared:set"; app: string; payload: { key: string; value: unknown } }
+  | { type: "shared:delete"; app: string; payload: { key: string } }
+  | { type: "shared:list"; app: string; payload: Record<string, never> }
+  // group:* — group introspection
+  | { type: "group:get"; app: string; payload: Record<string, never> };
+
+export interface SharedBridgeHandler {
+  sharedGet(key: string): unknown;
+  sharedSet(key: string, value: unknown): void;
+  sharedDelete(key: string): void;
+  sharedList(): string[];
+  groupGet(): unknown;
+}
 
 export interface BridgeHandler {
   sendToKernel: (text: string) => void;
@@ -14,6 +29,7 @@ export interface BridgeHandler {
     value: string | undefined,
   ) => void;
   openApp?: (name: string, path: string) => void;
+  shared?: SharedBridgeHandler;
 }
 
 export const THEME_VAR_MAP: Record<string, string> = {
@@ -45,7 +61,7 @@ export function handleBridgeMessage(
 ) {
   const data = event.data;
   if (!data || typeof data !== "object" || typeof data.type !== "string") return;
-  if (!data.type.startsWith("os:")) return;
+  if (!data.type.startsWith("os:") && !data.type.startsWith("shared:") && !data.type.startsWith("group:")) return;
 
   const msg = data as BridgeMessage;
 
@@ -77,6 +93,38 @@ export function handleBridgeMessage(
         handler.openApp(msg.payload.name, msg.payload.path);
       }
       break;
+
+    // --- shared:* actions — delegate to group-bridge (spec §F) ---
+    case "shared:get":
+      if (handler.shared) {
+        handler.shared.sharedGet(msg.payload.key);
+      }
+      break;
+
+    case "shared:set":
+      if (handler.shared) {
+        handler.shared.sharedSet(msg.payload.key, msg.payload.value);
+      }
+      break;
+
+    case "shared:delete":
+      if (handler.shared) {
+        handler.shared.sharedDelete(msg.payload.key);
+      }
+      break;
+
+    case "shared:list":
+      if (handler.shared) {
+        handler.shared.sharedList();
+      }
+      break;
+
+    // --- group:* actions ---
+    case "group:get":
+      if (handler.shared) {
+        handler.shared.groupGet();
+      }
+      break;
   }
 }
 
@@ -89,9 +137,17 @@ function buildThemeStyleBlock(themeVars: ThemeVars): string {
   return `:root {\n${entries}\n  }`;
 }
 
-export function buildBridgeScript(appName: string, themeVars?: ThemeVars): string {
+export interface GroupBridgeContext {
+  id: string;
+  slug: string;
+  name: string;
+  me: { handle: string; role: string };
+}
+
+export function buildBridgeScript(appName: string, themeVars?: ThemeVars, groupContext?: GroupBridgeContext | null): string {
   const themeJson = JSON.stringify(themeVars ?? {});
   const initialCss = themeVars ? buildThemeStyleBlock(themeVars) : "";
+  const groupJson = groupContext ? JSON.stringify(groupContext) : "null";
 
   return `
 (function() {
@@ -198,6 +254,80 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         signal: AbortSignal.timeout(35000)
       }).then(function(r) { return r.json(); });
     },
+
+    // --- shared:* (group CRDT KV, spec §F) ---
+    shared: (function() {
+      var groupCtx = ${groupJson};
+      if (!groupCtx) return null;
+      var errorCallbacks = [];
+      var changeCallbacks = [];
+
+      // Listen for shared:* responses pushed from parent shell
+      window.addEventListener("message", function(e) {
+        if (!e.data || !e.data.type) return;
+        if (e.data.type === "shared:change") {
+          for (var i = 0; i < changeCallbacks.length; i++) {
+            try { changeCallbacks[i](); } catch(err) {}
+          }
+        }
+        if (e.data.type === "shared:error" && e.data.code) {
+          for (var i = 0; i < errorCallbacks.length; i++) {
+            try { errorCallbacks[i](e.data.code); } catch(err) {}
+          }
+        }
+      });
+
+      return {
+        get: function(key) {
+          return new Promise(function(resolve) {
+            var ch = new MessageChannel();
+            ch.port1.onmessage = function(e) { resolve(e.data); };
+            window.parent.postMessage({ type: "shared:get", app: app, payload: { key: key } }, "*", [ch.port2]);
+          });
+        },
+        set: function(key, value) {
+          window.parent.postMessage({ type: "shared:set", app: app, payload: { key: key, value: value } }, "*");
+        },
+        delete: function(key) {
+          window.parent.postMessage({ type: "shared:delete", app: app, payload: { key: key } }, "*");
+        },
+        list: function() {
+          return new Promise(function(resolve) {
+            var ch = new MessageChannel();
+            ch.port1.onmessage = function(e) { resolve(e.data); };
+            window.parent.postMessage({ type: "shared:list", app: app, payload: {} }, "*", [ch.port2]);
+          });
+        },
+        onChange: function(cb) {
+          changeCallbacks.push(cb);
+          return function() {
+            var idx = changeCallbacks.indexOf(cb);
+            if (idx >= 0) changeCallbacks.splice(idx, 1);
+          };
+        },
+        onError: function(cb) {
+          errorCallbacks.push(cb);
+          return function() {
+            var idx = errorCallbacks.indexOf(cb);
+            if (idx >= 0) errorCallbacks.splice(idx, 1);
+          };
+        }
+      };
+    })(),
+
+    // --- group:* (group introspection, spec §F) ---
+    group: (function() {
+      var groupCtx = ${groupJson};
+      if (!groupCtx) return null;
+      return {
+        id: groupCtx.id,
+        slug: groupCtx.slug,
+        name: groupCtx.name,
+        me: groupCtx.me,
+        members: [], // US6 wires this
+        onPresence: function(cb) { return function() {}; } // Wave 4
+      };
+    })(),
 
     db: {
       find: function(table, opts) {
