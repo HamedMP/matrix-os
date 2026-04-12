@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { cp } from "node:fs/promises";
+import { cp, writeFile, readFile, mkdir } from "node:fs/promises";
 import { z } from "zod/v4";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
@@ -359,6 +359,58 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       return c.json({ slug, app_slug }, 201);
     },
   );
+
+  // ── GET /api/groups/:slug/members — derive members + roles from Matrix ──
+  app.get("/api/groups/:slug/members", async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const { slug } = c.req.param();
+    const manifest = groupRegistry.get(slug);
+    if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+    const homePath = opts.homePath;
+    const cacheFile = homePath
+      ? resolveWithinHome(homePath, `groups/${slug}/members.cache.json`)
+      : null;
+
+    try {
+      const [rawMembers, powerLevels] = await Promise.all([
+        matrixClient.getRoomMembers(manifest.room_id),
+        matrixClient.getPowerLevels(manifest.room_id),
+      ]);
+
+      const members = rawMembers
+        .filter((m) => m.membership === "join" || m.membership === "invite")
+        .map((m) => {
+          const pl = powerLevels.users?.[m.userId] ?? powerLevels.users_default ?? 0;
+          const role = pl >= 75 ? "owner" : pl >= 25 ? "editor" : "viewer";
+          return { user_id: m.userId, role, membership: m.membership };
+        });
+
+      // Persist cache for offline fallback (best-effort)
+      if (cacheFile) {
+        const groupDir = resolveWithinHome(homePath!, `groups/${slug}`);
+        if (groupDir) {
+          await mkdir(groupDir, { recursive: true }).catch(() => {});
+          await writeFile(cacheFile, JSON.stringify({ members })).catch(() => {});
+        }
+      }
+
+      return c.json({ members }, 200);
+    } catch {
+      // Offline fallback: read members.cache.json
+      if (cacheFile) {
+        try {
+          const raw = await readFile(cacheFile, "utf8");
+          const cached = JSON.parse(raw) as { members: unknown[] };
+          return c.json({ members: cached.members, from_cache: true }, 200);
+        } catch {
+          // cache not available
+        }
+      }
+      return c.json({ error: "Members unavailable" }, 503);
+    }
+  });
 
   // ── POST /api/groups/:slug/data — read/write/list shared KV ─────────────
   app.post(
