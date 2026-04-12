@@ -19,9 +19,11 @@ TODO — enumerate the exact environment state required before running the check
 - DevTools open on both tabs with Console and Network visible.
 - `docker compose logs -f gateway` tailing in a terminal so we can capture sync-loop warnings.
 
-**Screenshots:** `preconditions-alice.png`, `preconditions-bob.png` (fresh shell on each side showing empty group switcher).
+**Screenshots (from Playwright e2e 6b3bb2b):**
+- `tests/e2e/screenshots/shared-app/01-setup-user-a.png` — User A shell loads at `http://localhost:3000`. Dock renders with `data-testid="dock-settings"` visible (gear icon). Default desktop shown.
+- `tests/e2e/screenshots/shared-app/01-setup-user-b.png` — Same for User B (`@b:matrix-os.com`). Both pages show the default desktop with no groups.
 
-**Expected state:** TODO fill in (group switcher shows no groups, no errors in console, no 4xx/5xx in network tab, gateway log shows `MatrixSyncHub` started and idle).
+**Expected state:** Group switcher shows no groups (or "Personal" only), no errors in console, no 4xx/5xx in network tab, gateway log shows `[062/sync-hub] started` and `[062/group-registry] scanned 0 group(s)`.
 
 ---
 
@@ -34,9 +36,10 @@ TODO — walk through Alice creating a new group via the shell group switcher (e
 - Group appears in the switcher and is selected.
 - `~/groups/<slug>/meta.json`, `members.json`, `acl.json` exist on Alice's side via `ls` in terminal app.
 
-**Screenshots:** `01-create-group-form.png`, `01-create-group-success.png`, `01-create-group-fs.png`.
+**Screenshots (from Playwright e2e 6b3bb2b):**
+- `tests/e2e/screenshots/shared-app/02-group-switcher-open.png` — User A's GroupSwitcher trigger button opens a dropdown showing "Personal" + the "Test Fam" group item. If GroupSwitcher is not mounted in the current shell layout, the fallback screenshot `02-group-switcher-not-mounted.png` shows the shell without the switcher (annotated as MED gap — see audit log).
 
-**Expected state:** TODO fill in (room created on Matrix homeserver, Alice shown as sole admin, group meta persisted, gateway log shows `group.created slug=<slug>`, no errors).
+**Expected state:** Room created on Matrix homeserver, Alice shown as sole admin, `~/groups/<slug>/manifest.json` persisted, gateway log shows `[062/group-registry] scanned 1 group(s)` after refresh, no errors.
 
 ---
 
@@ -51,9 +54,10 @@ TODO — Alice invites Bob; Bob accepts and syncs the group. Cover:
 - Both sides' `members.json` contains both users after sync.
 - Presence: each side shows the other as `online`.
 
-**Screenshots:** `02-join-invite-alice-sends.png`, `02-join-invite-bob-accepts.png`, `02-join-members-both.png`.
+**Screenshots (from Playwright e2e 6b3bb2b):**
+- `tests/e2e/screenshots/shared-app/03-user-b-joined.png` — User B's GroupSwitcher shows the "Test Fam" group after the mock API returns it. The item contains text "Test Fam".
 
-**Expected state:** TODO fill in (both `members.json` equal, ACL still admin-only on Alice, Bob is `member`, no errors in either shell, gateway log shows `group.join slug=<slug> user=@bob:matrix-os.com`).
+**Expected state:** Both `members.cache.json` contain both users after sync, ACL still default open policy on Alice (spec §C: `read_pl=0, write_pl=0`), Bob is `member` (power level 0), no errors in either shell, gateway log shows `[062/group-sync] hydrated` for the new group.
 
 ---
 
@@ -67,9 +71,9 @@ TODO — Alice shares the notes app into the group. Cover:
 - `~/groups/<slug>/apps/notes/meta.json` exists on both sides.
 - ACL panel shows `admin` can read+write, `member` can read+write by default (confirm against spec default).
 
-**Screenshots:** `03-share-app-alice-modal.png`, `03-share-app-bob-notification.png`, `03-share-app-acl-panel.png`.
+**Screenshots:** Pending live-backend Playwright (steps 04+ are `test.skip`'d in e2e spec — see `tests/e2e/shared-app.spec.ts`). Manual verification: User A opens notes app, clicks `data-testid="app-notes-share-button"`, selects `data-testid="share-group-item-test-fam"`, verifies `POST /api/groups/test-fam/share-app` returns 201.
 
-**Expected state:** TODO fill in (app meta on both sides, ACL matches default, sync hub reports install event applied, no retries logged).
+**Expected state:** App meta on both sides (`~/groups/<slug>/apps/notes/`), ACL matches spec §C default (`read_pl=0, write_pl=0`), sync hub reports install event applied, no retries logged.
 
 ---
 
