@@ -278,14 +278,14 @@ test.describe("Group API auth gates", () => {
     expect(resp.status()).toBe(401);
   });
 
-  test("GET /api/groups/:slug with invalid slug returns 400", async ({ request }) => {
+  test("GET /api/groups/:slug with invalid slug returns non-2xx non-5xx", async ({ request }) => {
     const resp = await request.get(`${GATEWAY_URL_A}/api/groups/../etc/passwd`).catch(() => null);
     if (!resp) {
       test.skip(true, `Gateway not reachable at ${GATEWAY_URL_A}`);
       return;
     }
-    // Should be 401 (no auth) or 400 (invalid slug) — either is acceptable,
-    // but must NOT be 200 or 500
-    expect([400, 401]).toContain(resp.status());
+    // 401 (no auth), 404 (invalid slug — gateway uses 404 to avoid existence signal),
+    // or 400 are all acceptable. Must NOT be 200 or 500.
+    expect([400, 401, 404]).toContain(resp.status());
   });
 });
