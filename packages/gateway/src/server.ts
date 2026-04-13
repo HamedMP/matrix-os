@@ -133,7 +133,13 @@ export type ServerMessage =
   | { type: "integration:connected"; service: string; accountLabel: string }
   | { type: "integration:disconnected"; service: string; id: string }
   | { type: "integration:expired"; service: string; id: string; accountLabel: string }
-  | { type: "pong" };
+  | { type: "pong" }
+  | { type: "sync:change"; files: Array<{ path: string; hash: string; size: number; action: string }>; peerId: string; manifestVersion: number }
+  | { type: "sync:conflict"; path: string; localHash: string; remoteHash: string; remotePeerId: string; conflictPath: string }
+  | { type: "sync:peer-join"; peerId: string; hostname: string; platform: string }
+  | { type: "sync:peer-leave"; peerId: string }
+  | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
+  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
