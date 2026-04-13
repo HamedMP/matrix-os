@@ -61,11 +61,12 @@ Single file manifest. Default `.syncignore` excludes large/generated folders to 
 
 1. Local daemon detects file change (chokidar)
 2. Compute SHA-256 of changed file
-3. Fetch current manifest from R2 (with ETag caching)
+3. Fetch current manifest from gateway (with ETag caching)
 4. Compare: if file's manifest hash differs from both local-before and local-after, it's a conflict. If manifest matches local-before, it's a clean local change.
-5. Upload file to R2, update manifest entry with new hash + peer ID + timestamp
-6. Gateway broadcasts `sync:change` via WebSocket to connected peers
-7. Other peers receive notification, download file, update their local copy
+5. Request presigned upload URL from gateway (`POST /api/sync/presign`)
+6. Upload file directly to R2 via presigned URL (gateway never touches file content)
+7. Confirm upload to gateway (`POST /api/sync/commit`), which updates manifest + broadcasts `sync:change` via WebSocket
+8. Other peers receive notification, request presigned download URL, download directly from R2
 
 ### Change Detection & Notification
 
@@ -161,15 +162,28 @@ New endpoints added to the existing gateway alongside current `/api/files/*` rou
 
 ### Sync Endpoints
 
+The gateway never proxies file content. Clients upload/download directly to R2 via presigned URLs. The gateway handles only metadata, auth, and notifications.
+
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/sync/manifest` | Fetch current manifest (with ETag for caching) |
 | `PUT` | `/api/sync/manifest` | Update manifest (optimistic concurrency via ETag) |
-| `POST` | `/api/sync/upload/:path` | Upload a file to R2 + update manifest atomically |
-| `GET` | `/api/sync/download/:path` | Download a file from R2 |
-| `POST` | `/api/sync/batch` | Upload/download multiple files in one request |
+| `POST` | `/api/sync/presign` | Get presigned R2 URLs for direct upload/download. Body: `{files: [{path, action: "put"\|"get", hash?}]}`. Returns `{urls: [{path, url, expiresIn}]}` |
+| `POST` | `/api/sync/commit` | After direct upload completes, update manifest + notify peers. Body: `{files: [{path, hash, size}]}` |
 | `GET` | `/api/sync/status` | Sync health: connected peers, last sync, pending conflicts |
 | `POST` | `/api/sync/resolve-conflict` | Mark a conflict as resolved |
+
+### Presigned URL Flow
+
+1. Client detects local file changes, computes hashes
+2. Client calls `POST /api/sync/presign` with list of changed files
+3. Gateway validates auth + permissions, returns presigned R2 URLs (valid ~15 min)
+4. Client uploads files directly to R2 in parallel (no gateway bottleneck)
+5. Client calls `POST /api/sync/commit` to confirm uploads
+6. Gateway updates manifest (ETag concurrency) and broadcasts `sync:change` to peers
+7. Peers receive notification, call `POST /api/sync/presign` with `action: "get"`, download directly from R2
+
+For batch operations: gateway returns up to 100 presigned URLs in one request, client processes them in parallel. R2 multipart upload is available for files over 100 MB.
 
 ### WebSocket Events
 
@@ -225,9 +239,9 @@ R2 Token: share-xyz        -> scoped to matrixos-sync/hamed/files/projects/start
 - Starts automatically after `matrixos sync <path>`
 - Runs as a background process: launchd on macOS, systemd on Linux
 - Watches local folder with chokidar
-- On local file change: hash -> compare with cached manifest -> upload via REST (`POST /api/sync/upload/:path`) -> gateway writes to R2 + updates manifest + broadcasts to peers via WebSocket
-- On WebSocket notification from gateway: download via REST (`GET /api/sync/download/:path`) -> write locally -> update cached manifest
-- REST is the transport for file data. WebSocket is for real-time notifications only (lightweight event payloads, not file content).
+- On local file change: hash -> compare with cached manifest -> request presigned URL from gateway (`POST /api/sync/presign`) -> upload directly to R2 -> confirm via `POST /api/sync/commit` -> gateway updates manifest + broadcasts to peers
+- On WebSocket notification from gateway: request presigned download URL (`POST /api/sync/presign` with `action: "get"`) -> download directly from R2 -> write locally -> update cached manifest
+- Gateway never touches file content. REST handles metadata (presign, commit, manifest). WebSocket handles real-time notifications (lightweight event payloads only).
 - On reconnect after offline: fetch manifest from R2, compare all local hashes, reconcile
 
 ### Local Directory Structure
