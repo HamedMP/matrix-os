@@ -1,0 +1,13 @@
+{
+  "name": "Hello Vite",
+  "slug": "hello-vite",
+  "version": "1.0.0",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "build": {
+    "install": "pnpm install --frozen-lockfile",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 120
+  }
+}
