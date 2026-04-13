@@ -1,0 +1,324 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.MatrixSync-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/sources",
+      "importPath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/DaemonClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MatrixSyncApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MenuBarView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/NotificationManager.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "MatrixSync",
+      "moduleOutputPath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/Modules/MatrixSync.swiftmodule",
+      "objects" : [
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/DaemonClient.swift.o",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/MatrixSyncApp.swift.o",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/MenuBarView.swift.o",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/NotificationManager.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j12",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "MatrixSync_main",
+        "-swift-version",
+        "6",
+        "-enable-upcoming-feature",
+        "StrictConcurrency",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "menu_bar"
+      ],
+      "outputFileMapPath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/DaemonClient.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/MatrixSyncApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/MenuBarView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/NotificationManager.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/Modules/MatrixSync.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/DaemonClient.swift",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MatrixSyncApp.swift",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MenuBarView.swift",
+        "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/NotificationManager.swift"
+      ],
+      "tempsPath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "MatrixSync" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "MatrixSync",
+      "-package-name",
+      "menu_bar",
+      "-c",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/DaemonClient.swift",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MatrixSyncApp.swift",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MenuBarView.swift",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/NotificationManager.swift",
+      "-I",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j12",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "MatrixSync_main",
+      "-swift-version",
+      "6",
+      "-enable-upcoming-feature",
+      "StrictConcurrency",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "menu_bar",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "MatrixSync" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync-entitlement.plist"
+    },
+    "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/DaemonClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MatrixSyncApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/MenuBarView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/Sources/NotificationManager.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/sources"
+    },
+    "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/DaemonClient.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/MatrixSyncApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/MenuBarView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.build/NotificationManager.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/MatrixSync.product/Objects.LinkFileList"
+    },
+    "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/hamed/dev/claude-tools/066-file-sync/apps/menu-bar/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}
