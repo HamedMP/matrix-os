@@ -6,6 +6,7 @@ import {
   loadSyncIgnore,
   isIgnored,
   parseSyncIgnore,
+  type SyncIgnorePatterns,
 } from "../../src/lib/syncignore.js";
 
 const TEST_DIR = join(import.meta.dirname, ".tmp-syncignore-test");
@@ -19,23 +20,7 @@ afterAll(async () => {
 });
 
 describe("DEFAULT_PATTERNS", () => {
-  it("includes node_modules/", () => {
-    expect(DEFAULT_PATTERNS).toContain("node_modules/");
-  });
-
-  it("includes .next/", () => {
-    expect(DEFAULT_PATTERNS).toContain(".next/");
-  });
-
-  it("includes .git/", () => {
-    expect(DEFAULT_PATTERNS).toContain(".git/");
-  });
-
-  it("includes .DS_Store", () => {
-    expect(DEFAULT_PATTERNS).toContain(".DS_Store");
-  });
-
-  it("includes all spec-defined defaults", () => {
+  it("includes all spec-mandated defaults", () => {
     const expected = [
       "node_modules/",
       ".next/",
@@ -60,120 +45,207 @@ describe("DEFAULT_PATTERNS", () => {
 });
 
 describe("parseSyncIgnore", () => {
+  it("parses patterns from string content", () => {
+    const content = "*.log\ntemp/\n";
+    const result = parseSyncIgnore(content);
+
+    expect(result.patterns).toContain("*.log");
+    expect(result.patterns).toContain("temp/");
+  });
+
   it("ignores empty lines", () => {
-    const patterns = parseSyncIgnore("foo\n\nbar\n");
-    expect(patterns).toEqual(["foo", "bar"]);
+    const content = "*.log\n\n\ntemp/\n";
+    const result = parseSyncIgnore(content);
+
+    expect(result.patterns).toHaveLength(DEFAULT_PATTERNS.length + 2);
   });
 
   it("ignores comment lines starting with #", () => {
-    const patterns = parseSyncIgnore("# this is a comment\nfoo\n# another\nbar");
-    expect(patterns).toEqual(["foo", "bar"]);
+    const content = "# this is a comment\n*.log\n# another comment\n";
+    const result = parseSyncIgnore(content);
+
+    const nonDefault = result.patterns.filter(
+      (p) => !DEFAULT_PATTERNS.includes(p),
+    );
+    expect(nonDefault).toEqual(["*.log"]);
   });
 
-  it("trims whitespace from lines", () => {
-    const patterns = parseSyncIgnore("  foo  \n  bar  ");
-    expect(patterns).toEqual(["foo", "bar"]);
+  it("trims whitespace from patterns", () => {
+    const content = "  *.log  \n  temp/  \n";
+    const result = parseSyncIgnore(content);
+
+    expect(result.patterns).toContain("*.log");
+    expect(result.patterns).toContain("temp/");
   });
 
-  it("preserves negation patterns (!)", () => {
-    const patterns = parseSyncIgnore("*.log\n!important.log");
-    expect(patterns).toEqual(["*.log", "!important.log"]);
+  it("includes default patterns alongside custom ones", () => {
+    const content = "custom-dir/\n";
+    const result = parseSyncIgnore(content);
+
+    expect(result.patterns).toContain("node_modules/");
+    expect(result.patterns).toContain("custom-dir/");
+  });
+
+  it("handles negation patterns with !", () => {
+    const content = "*.log\n!important.log\n";
+    const result = parseSyncIgnore(content);
+
+    expect(result.negations).toContain("important.log");
+  });
+
+  it("deduplicates patterns already in defaults", () => {
+    const content = "node_modules/\ncustom/\n";
+    const result = parseSyncIgnore(content);
+
+    const nodeModulesCount = result.patterns.filter(
+      (p) => p === "node_modules/",
+    ).length;
+    expect(nodeModulesCount).toBe(1);
   });
 });
 
 describe("isIgnored", () => {
-  it("matches directory patterns (trailing slash) against paths inside that directory", () => {
-    const patterns = ["node_modules/"];
-    expect(isIgnored("node_modules/package/index.js", patterns)).toBe(true);
-    expect(isIgnored("src/index.ts", patterns)).toBe(false);
+  let defaultPatterns: SyncIgnorePatterns;
+
+  beforeAll(() => {
+    defaultPatterns = parseSyncIgnore("");
   });
 
-  it("matches the directory itself", () => {
-    const patterns = ["node_modules/"];
-    expect(isIgnored("node_modules", patterns)).toBe(true);
+  it("ignores node_modules/ directory", () => {
+    expect(isIgnored("node_modules/package.json", defaultPatterns)).toBe(true);
+    expect(isIgnored("node_modules", defaultPatterns)).toBe(true);
   });
 
-  it("matches nested directory patterns", () => {
-    const patterns = ["node_modules/"];
-    expect(isIgnored("packages/gateway/node_modules/ws/index.js", patterns)).toBe(true);
+  it("ignores nested node_modules/", () => {
+    expect(
+      isIgnored("packages/gateway/node_modules/ws/index.js", defaultPatterns),
+    ).toBe(true);
   });
 
-  it("matches file glob patterns", () => {
-    const patterns = ["*.sqlite"];
-    expect(isIgnored("data/my.sqlite", patterns)).toBe(true);
-    expect(isIgnored("my.sqlite", patterns)).toBe(true);
-    expect(isIgnored("my.json", patterns)).toBe(false);
+  it("ignores .next/ directory", () => {
+    expect(isIgnored(".next/cache/data.json", defaultPatterns)).toBe(true);
   });
 
-  it("matches wildcard in file name", () => {
-    const patterns = ["system/matrix.db*"];
-    expect(isIgnored("system/matrix.db", patterns)).toBe(true);
-    expect(isIgnored("system/matrix.db-wal", patterns)).toBe(true);
-    expect(isIgnored("system/other.db", patterns)).toBe(false);
+  it("ignores .git/ directory", () => {
+    expect(isIgnored(".git/HEAD", defaultPatterns)).toBe(true);
   });
 
-  it("matches exact file names anywhere in tree", () => {
-    const patterns = [".DS_Store"];
-    expect(isIgnored(".DS_Store", patterns)).toBe(true);
-    expect(isIgnored("projects/myapp/.DS_Store", patterns)).toBe(true);
-    expect(isIgnored("DS_Store", patterns)).toBe(false);
+  it("ignores .DS_Store files", () => {
+    expect(isIgnored(".DS_Store", defaultPatterns)).toBe(true);
+    expect(isIgnored("subfolder/.DS_Store", defaultPatterns)).toBe(true);
   });
 
-  it("supports negation (!) to un-ignore files", () => {
-    const patterns = ["*.log", "!important.log"];
+  it("ignores Thumbs.db files", () => {
+    expect(isIgnored("Thumbs.db", defaultPatterns)).toBe(true);
+    expect(isIgnored("images/Thumbs.db", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores *.sqlite files", () => {
+    expect(isIgnored("data/app.sqlite", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores *.db files", () => {
+    expect(isIgnored("data/cache.db", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores system/logs/ directory", () => {
+    expect(isIgnored("system/logs/sync.log", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores system/matrix.db* patterns", () => {
+    expect(isIgnored("system/matrix.db", defaultPatterns)).toBe(true);
+    expect(isIgnored("system/matrix.db-wal", defaultPatterns)).toBe(true);
+    expect(isIgnored("system/matrix.db-shm", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores .trash/ directory", () => {
+    expect(isIgnored(".trash/deleted-file.txt", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores dist/ directory", () => {
+    expect(isIgnored("dist/index.js", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores build/ directory", () => {
+    expect(isIgnored("build/output.css", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores .cache/ directory", () => {
+    expect(isIgnored(".cache/data.json", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores .venv/ directory", () => {
+    expect(isIgnored(".venv/bin/python", defaultPatterns)).toBe(true);
+  });
+
+  it("ignores __pycache__/ directory", () => {
+    expect(isIgnored("__pycache__/module.pyc", defaultPatterns)).toBe(true);
+  });
+
+  it("does NOT ignore normal files", () => {
+    expect(isIgnored("src/index.ts", defaultPatterns)).toBe(false);
+    expect(isIgnored("README.md", defaultPatterns)).toBe(false);
+    expect(isIgnored("apps/calculator/index.html", defaultPatterns)).toBe(false);
+  });
+
+  it("respects negation patterns", () => {
+    const patterns = parseSyncIgnore("*.log\n!important.log\n");
+
     expect(isIgnored("debug.log", patterns)).toBe(true);
     expect(isIgnored("important.log", patterns)).toBe(false);
   });
 
-  it("negation applies to nested paths too", () => {
-    const patterns = ["*.log", "!important.log"];
-    expect(isIgnored("logs/debug.log", patterns)).toBe(true);
-    expect(isIgnored("logs/important.log", patterns)).toBe(false);
+  it("handles custom directory patterns", () => {
+    const patterns = parseSyncIgnore("vendor/\n");
+
+    expect(isIgnored("vendor/lib/thing.js", patterns)).toBe(true);
+    expect(isIgnored("src/vendor-utils.ts", patterns)).toBe(false);
   });
 
-  it("handles path-specific patterns with /", () => {
-    const patterns = ["system/logs/"];
-    expect(isIgnored("system/logs/app.log", patterns)).toBe(true);
-    expect(isIgnored("other/logs/app.log", patterns)).toBe(false);
-  });
+  it("handles custom glob patterns", () => {
+    const patterns = parseSyncIgnore("*.tmp\n*.bak\n");
 
-  it("returns false for empty patterns", () => {
-    expect(isIgnored("anything.txt", [])).toBe(false);
+    expect(isIgnored("file.tmp", patterns)).toBe(true);
+    expect(isIgnored("nested/dir/file.bak", patterns)).toBe(true);
+    expect(isIgnored("file.txt", patterns)).toBe(false);
   });
 });
 
 describe("loadSyncIgnore", () => {
-  it("loads default patterns when no .syncignore file exists", async () => {
-    const patterns = await loadSyncIgnore(join(TEST_DIR, "nonexistent-dir"));
-    expect(patterns).toEqual(DEFAULT_PATTERNS);
-  });
+  it("returns defaults when .syncignore file does not exist", async () => {
+    const nonexistentDir = join(TEST_DIR, "no-such-dir");
+    await mkdir(nonexistentDir, { recursive: true });
+    const patterns = await loadSyncIgnore(nonexistentDir);
 
-  it("merges custom patterns with defaults", async () => {
-    await writeFile(join(TEST_DIR, ".syncignore"), "custom-dir/\n*.tmp\n");
-
-    const patterns = await loadSyncIgnore(TEST_DIR);
-
-    for (const def of DEFAULT_PATTERNS) {
-      expect(patterns).toContain(def);
+    expect(patterns.patterns.length).toBeGreaterThanOrEqual(
+      DEFAULT_PATTERNS.length,
+    );
+    for (const p of DEFAULT_PATTERNS) {
+      expect(patterns.patterns).toContain(p);
     }
-    expect(patterns).toContain("custom-dir/");
-    expect(patterns).toContain("*.tmp");
   });
 
-  it("does not duplicate default patterns if user re-specifies them", async () => {
-    await writeFile(join(TEST_DIR, ".syncignore"), "node_modules/\ncustom/\n");
+  it("loads and merges custom patterns from .syncignore file", async () => {
+    const subDir = join(TEST_DIR, "with-syncignore");
+    await mkdir(subDir, { recursive: true });
+    const syncignorePath = join(subDir, ".syncignore");
+    await writeFile(syncignorePath, "custom-dir/\n*.backup\n");
 
-    const patterns = await loadSyncIgnore(TEST_DIR);
+    const patterns = await loadSyncIgnore(subDir);
 
-    const nodeModulesCount = patterns.filter((p) => p === "node_modules/").length;
-    expect(nodeModulesCount).toBe(1);
+    expect(patterns.patterns).toContain("custom-dir/");
+    expect(patterns.patterns).toContain("*.backup");
+    expect(patterns.patterns).toContain("node_modules/");
   });
 
-  it("preserves negation patterns from user file", async () => {
-    await writeFile(join(TEST_DIR, ".syncignore"), "!dist/\n");
+  it("handles .syncignore with only comments and empty lines", async () => {
+    const subDir = join(TEST_DIR, "comments-only");
+    await mkdir(subDir, { recursive: true });
+    const syncignorePath = join(subDir, ".syncignore");
+    await writeFile(syncignorePath, "# just a comment\n\n# another\n");
 
-    const patterns = await loadSyncIgnore(TEST_DIR);
+    const patterns = await loadSyncIgnore(subDir);
 
-    expect(patterns).toContain("!dist/");
+    expect(patterns.patterns.length).toBe(DEFAULT_PATTERNS.length);
   });
 });

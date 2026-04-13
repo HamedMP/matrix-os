@@ -20,81 +20,143 @@ export const DEFAULT_PATTERNS: readonly string[] = [
   "Thumbs.db",
 ];
 
-export function parseSyncIgnore(content: string): string[] {
-  return content
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
+export interface SyncIgnorePatterns {
+  /** Positive match patterns (file/dir globs) */
+  patterns: string[];
+  /** Negation patterns (without the leading !) */
+  negations: string[];
 }
 
-export async function loadSyncIgnore(syncRoot: string): Promise<string[]> {
-  let userPatterns: string[] = [];
-  try {
-    const content = await readFile(join(syncRoot, ".syncignore"), "utf-8");
-    userPatterns = parseSyncIgnore(content);
-  } catch (err: unknown) {
-    if (
-      !(err instanceof Error) ||
-      (err as NodeJS.ErrnoException).code !== "ENOENT"
-    ) {
-      throw err;
+/**
+ * Parse a .syncignore file content string into structured patterns.
+ * Always includes DEFAULT_PATTERNS. Custom patterns are merged on top.
+ */
+export function parseSyncIgnore(content: string): SyncIgnorePatterns {
+  const patterns = [...DEFAULT_PATTERNS];
+  const negations: string[] = [];
+
+  const lines = content.split("\n");
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+
+    if (line.startsWith("!")) {
+      const negated = line.slice(1).trim();
+      if (negated) {
+        negations.push(negated);
+      }
+      continue;
+    }
+
+    if (!patterns.includes(line)) {
+      patterns.push(line);
     }
   }
 
-  const merged = [...DEFAULT_PATTERNS];
-  for (const pattern of userPatterns) {
-    if (!merged.includes(pattern)) {
-      merged.push(pattern);
-    }
-  }
-  return merged;
+  return { patterns, negations };
 }
 
-export function isIgnored(filePath: string, patterns: string[]): boolean {
+/**
+ * Check whether a relative file path should be ignored based on parsed patterns.
+ *
+ * Follows .gitignore semantics:
+ * - Patterns ending with / match directories (and anything inside them)
+ * - Patterns without / are matched against the basename at any depth
+ * - Patterns with / (not trailing) are matched against the full path
+ * - Negation patterns (!) un-ignore a previously ignored file
+ */
+export function isIgnored(
+  filePath: string,
+  { patterns, negations }: SyncIgnorePatterns,
+): boolean {
+  const segments = filePath.split("/");
+  const basename = segments[segments.length - 1] ?? "";
+
   let ignored = false;
 
   for (const pattern of patterns) {
-    const negated = pattern.startsWith("!");
-    const raw = negated ? pattern.slice(1) : pattern;
+    if (matchesPattern(filePath, segments, basename, pattern)) {
+      ignored = true;
+      break;
+    }
+  }
 
-    if (matchesPattern(filePath, raw)) {
-      ignored = !negated;
+  if (ignored && negations.length > 0) {
+    for (const negation of negations) {
+      if (matchesPattern(filePath, segments, basename, negation)) {
+        return false;
+      }
     }
   }
 
   return ignored;
 }
 
-function matchesPattern(filePath: string, pattern: string): boolean {
-  const isDir = pattern.endsWith("/");
-  const cleanPattern = isDir ? pattern.slice(0, -1) : pattern;
+function matchesPattern(
+  filePath: string,
+  segments: string[],
+  basename: string,
+  pattern: string,
+): boolean {
+  // Directory pattern (trailing /)
+  if (pattern.endsWith("/")) {
+    const dirName = pattern.slice(0, -1);
 
-  if (isDir) {
-    // Directory pattern: match the dir itself or anything under it
-    // If pattern has a slash (path-specific), match from start
-    if (cleanPattern.includes("/")) {
-      return (
-        filePath === cleanPattern ||
-        filePath.startsWith(cleanPattern + "/")
-      );
+    // Check if the pattern contains a path separator (like "system/logs")
+    if (dirName.includes("/")) {
+      // Match as a path prefix
+      if (
+        filePath.startsWith(dirName + "/") ||
+        filePath === dirName
+      ) {
+        return true;
+      }
+      return false;
     }
-    // Otherwise match the directory name anywhere in the path
-    const segments = filePath.split("/");
-    for (let i = 0; i < segments.length; i++) {
-      if (segments[i] === cleanPattern) {
+
+    // Simple directory name: match any segment in the path
+    for (const segment of segments) {
+      if (segment === dirName) {
         return true;
       }
     }
     return false;
   }
 
-  // File/glob pattern
+  // Pattern with path components (like "system/matrix.db*")
   if (pattern.includes("/")) {
-    // Path-specific: match from the start using glob
-    return picomatch.isMatch(filePath, pattern);
+    return picomatch.isMatch(filePath, pattern, { dot: true });
   }
 
-  // Basename match: check against every segment and the full path
-  const basename = filePath.split("/").pop() ?? filePath;
-  return picomatch.isMatch(basename, cleanPattern);
+  // Simple filename/glob pattern: match against basename at any depth
+  return picomatch.isMatch(basename, pattern, { dot: true });
+}
+
+/**
+ * Load and parse the .syncignore file from the given sync root directory.
+ * Returns default patterns if no .syncignore file exists.
+ */
+export async function loadSyncIgnore(
+  syncRoot: string,
+): Promise<SyncIgnorePatterns> {
+  const syncignorePath = join(syncRoot, ".syncignore");
+
+  let content: string;
+  try {
+    content = await readFile(syncignorePath, "utf-8");
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return parseSyncIgnore("");
+    }
+    throw err;
+  }
+
+  return parseSyncIgnore(content);
 }
