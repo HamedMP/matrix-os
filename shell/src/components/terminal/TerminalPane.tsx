@@ -5,13 +5,18 @@ import { getGatewayWs } from "@/lib/gateway";
 import type { Theme } from "@/hooks/useTheme";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
-import { getAnsiPalette } from "./terminal-themes";
+import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { createSocketHealth } from "@/lib/socket-health";
+import { useTerminalSettings } from "@/stores/terminal-settings";
 
-function buildXtermTheme(theme: Theme) {
+function buildXtermTheme(theme: Theme, terminalThemeId: import("@/stores/terminal-settings").TerminalThemeId) {
+  if (terminalThemeId !== "system") {
+    return getTerminalThemePreset(terminalThemeId);
+  }
+
   const bg = theme.colors.background || "#1a1a2e";
   const fg = theme.colors.foreground || "#e0e0e0";
   const slug = (theme as { slug?: string }).slug ?? "";
@@ -153,6 +158,9 @@ export function TerminalPane({
   isClosing,
   shouldCacheOnUnmount,
 }: TerminalPaneProps) {
+  const terminalThemeId = useTerminalSettings((s) => s.themeId);
+  const terminalFontSize = useTerminalSettings((s) => s.fontSize);
+  const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<unknown>(null);
@@ -301,12 +309,12 @@ export function TerminalPane({
 
         if (disposed) return;
 
-        const xtermTheme = buildXtermTheme(theme);
+        const xtermTheme = buildXtermTheme(theme, terminalThemeId);
 
         const xterm = new XTerm({
-          cursorBlink: true,
+          cursorBlink,
           allowProposedApi: true,
-          fontSize: 13,
+          fontSize: terminalFontSize,
           fontFamily: theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
           theme: xtermTheme,
         });
@@ -654,16 +662,19 @@ export function TerminalPane({
       disposed = true;
       cleanup.then((fn) => fn?.());
     };
-  }, [cwd, claudeMode, paneId]);
+  }, [claudeMode, cursorBlink, cwd, paneId, terminalFontSize, terminalThemeId, theme]);
 
   useEffect(() => {
     if (termRef.current && fitAddonRef.current) {
-      const term = termRef.current as { options: { theme: unknown } };
+      const term = termRef.current as { options: { theme: unknown; fontFamily: string; fontSize: number; cursorBlink: boolean } };
       const fitAddon = fitAddonRef.current as { fit: () => void };
-      term.options.theme = buildXtermTheme(theme);
+      term.options.theme = buildXtermTheme(theme, terminalThemeId);
+      term.options.fontFamily = theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace";
+      term.options.fontSize = terminalFontSize;
+      term.options.cursorBlink = cursorBlink;
       fitAddon.fit();
     }
-  }, [theme]);
+  }, [cursorBlink, terminalFontSize, terminalThemeId, theme]);
 
   useEffect(() => {
     if (isFocused && termRef.current) {

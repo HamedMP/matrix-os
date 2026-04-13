@@ -308,18 +308,19 @@ export class SessionRegistry {
     const buffer = new RingBuffer(this.bufferSize);
     const validatedCwd = resolveWithinHome(this.homePath, cwd);
     const initialCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
+    const userLocalBin = join(this.homePath, ".local", "bin");
     const spawnOptions = (targetCwd: string) => ({
       name: "xterm-256color",
       cols: 80,
       rows: 24,
       cwd: targetCwd,
       env: {
-        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        PATH: `${userLocalBin}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
         HOME: this.homePath,
         TERM: "xterm-256color",
         LANG: process.env.LANG ?? "en_US.UTF-8",
         SHELL: resolvedShell,
-        ZDOTDIR: "/home/matrixos",
+        ZDOTDIR: this.homePath,
         USER: process.env.MATRIX_HANDLE || process.env.USER || "matrixos",
         LOGNAME: process.env.MATRIX_HANDLE || process.env.LOGNAME || "matrixos",
         ...(process.env.MATRIX_HANDLE ? { MATRIX_HANDLE: process.env.MATRIX_HANDLE } : {}),
