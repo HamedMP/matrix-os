@@ -6,6 +6,13 @@ const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
   "/files/system/icons/",
 ];
+// Paths that are authenticated by app-session cookie (HMAC-signed per-slug
+// cookie) rather than bearer token. authMiddleware exempts these by calling
+// next() without setting a principal. The app-session middleware (mounted
+// separately on this prefix) is the single verifier for these requests.
+// Single prefix -- no /files/apps/ entry because iframe navigation uses
+// /apps/:slug/* after spec 063.
+const APP_IFRAME_PREFIXES = ["/apps/"];
 // Paths that authenticate by HMAC signature rather than bearer token.
 // They bypass bearer auth but MUST still pass through a rate limiter --
 // HMAC verification is not cheap enough to absorb a flood, and invalid
@@ -77,6 +84,13 @@ export function authMiddleware(
     const normalizedPath = new URL(decodedPath, "http://localhost").pathname;
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return next();
+    }
+
+    // App iframe paths are authenticated by app-session cookie middleware,
+    // not by bearer token. Exempt them here so the session middleware
+    // (mounted separately) is the single verifier.
+    if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return next();
     }
 

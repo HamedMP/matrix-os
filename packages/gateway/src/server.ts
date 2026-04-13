@@ -54,6 +54,19 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import {
+  createAppDispatcher,
+  appSessionMiddleware,
+  loadManifest,
+  computeDistributionStatus,
+  sandboxCapabilities,
+  computeRuntimeState,
+  deriveAppSessionKey,
+  signAppSession,
+  buildSetCookie,
+  AckStore,
+  SAFE_SLUG,
+} from "./app-runtime/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
@@ -792,6 +805,133 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/integrations", integrationRoutes);
     console.log("[platform-db] Integration routes mounted (after auth)");
   }
+
+  // --- App Runtime (spec 063) ---
+  // Ack-token store: bounded LRU (cap 32, 5min TTL)
+  const ackStore = new AckStore();
+
+  // GET /api/apps/:slug/manifest — bearer-authed manifest + runtime state + distribution status
+  app.get("/api/apps/:slug/manifest", async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const appDir = join(appsDir, slug);
+    const runtimeState = await computeRuntimeState(result.manifest, appDir);
+    const distributionStatus = computeDistributionStatus(
+      result.manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
+  });
+
+  // POST /api/apps/:slug/ack — bearer-authed, issues ack token for gated installs
+  app.post("/api/apps/:slug/ack", async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const manifest = result.manifest;
+    if (manifest.scope !== "personal") {
+      return c.json({ error: "scope_mismatch" }, 409);
+    }
+    const distributionStatus = computeDistributionStatus(
+      manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    if (distributionStatus === "blocked") {
+      return c.json({ error: "install_blocked_by_policy" }, 403);
+    }
+    if (distributionStatus === "installable") {
+      return c.json({ error: "ack_not_applicable" }, 400);
+    }
+    // gated: mint ack token
+    const { ack, expiresAt } = ackStore.mint(slug, "gateway-owner");
+    return c.json({ ack, expiresAt });
+  });
+
+  // POST /api/apps/:slug/session — bearer-authed, issues signed session cookie
+  app.post("/api/apps/:slug/session", async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const manifest = result.manifest;
+    if (manifest.scope !== "personal") {
+      return c.json({ error: "scope_mismatch" }, 409);
+    }
+    // Re-compute distributionStatus server-side (ignore any client hint)
+    const distributionStatus = computeDistributionStatus(
+      manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    if (distributionStatus === "blocked") {
+      return c.json({ error: "install_blocked_by_policy" }, 403);
+    }
+    if (distributionStatus === "gated") {
+      // Require valid ack token
+      let body: { ack?: string } = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        // No body or invalid JSON
+      }
+      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
+        return c.json({ error: "install_gated" }, 409);
+      }
+    }
+    // Sign session cookie
+    const gatewayToken = process.env.MATRIX_AUTH_TOKEN ?? "";
+    const key = deriveAppSessionKey(gatewayToken, slug);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const maxAge = 600; // 10 minutes
+    const payload = {
+      v: 1 as const,
+      slug,
+      principal: "gateway-owner" as const,
+      scope: "personal" as const,
+      iat: nowSec,
+      exp: nowSec + maxAge,
+    };
+    const token = signAppSession(key, payload);
+    const cookie = buildSetCookie(slug, token, {
+      maxAge,
+      secure: c.req.url.startsWith("https"),
+    });
+    return c.json({ expiresAt: payload.exp * 1000 }, 200, {
+      "Set-Cookie": cookie,
+    });
+  });
+
+  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie)
+  app.use(
+    "/apps/:slug/*",
+    appSessionMiddleware((slug) =>
+      deriveAppSessionKey(process.env.MATRIX_AUTH_TOKEN ?? "", slug),
+    ),
+  );
+
+  // Mount app dispatcher on /apps/:slug (static + vite + node branches)
+  const appDispatcher = createAppDispatcher(homePath);
+  app.route("/apps/:slug", appDispatcher);
 
   app.use("*", async (c, next) => {
     const start = performance.now();
