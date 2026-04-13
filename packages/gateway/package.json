@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./app-publish": "./src/app-publish.ts",
     "./app-fork": "./src/app-fork.ts",
-    "./app-manifest": "./src/app-manifest.ts"
+    "./app-manifest": "./src/app-manifest.ts",
+    "./sync/types": "./src/sync/types.ts"
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",

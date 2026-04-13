@@ -1,0 +1,170 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Manifest } from "../../../packages/gateway/src/sync/types.js";
+
+const HASH_A = "sha256:" + "a".repeat(64);
+const HASH_B = "sha256:" + "b".repeat(64);
+
+function makeManifest(files: Record<string, { hash: string; size: number }>): Manifest {
+  const entries: Manifest["files"] = {};
+  for (const [path, { hash, size }] of Object.entries(files)) {
+    entries[path] = {
+      hash,
+      size,
+      mtime: Date.now(),
+      peerId: "test-peer",
+      version: 1,
+    };
+  }
+  return { version: 2, files: entries };
+}
+
+const mockR2 = {
+  getObject: vi.fn(),
+  putObject: vi.fn(),
+  deleteObject: vi.fn(),
+  getPresignedGetUrl: vi.fn(),
+  getPresignedPutUrl: vi.fn(),
+  destroy: vi.fn(),
+};
+
+const mockDb = {
+  getManifestMeta: vi.fn(),
+  upsertManifestMeta: vi.fn(),
+  withAdvisoryLock: vi.fn(),
+};
+
+const mockBroadcast = vi.fn();
+
+import {
+  handleCommit,
+  type CommitDeps,
+} from "../../../packages/gateway/src/sync/commit.js";
+
+describe("handleCommit", () => {
+  let deps: CommitDeps;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: () => Promise<unknown>) => fn());
+    deps = {
+      r2: mockR2,
+      db: mockDb as any,
+      broadcast: mockBroadcast,
+    };
+  });
+
+  it("commits new files and returns updated version", async () => {
+    const manifest = makeManifest({});
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e1"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 0, etag: '"e1"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "new.txt", hash: HASH_A, size: 100 }],
+      expectedVersion: 0,
+    });
+
+    expect(result.manifestVersion).toBe(1);
+    expect(result.committed).toBe(1);
+  });
+
+  it("returns version_conflict when expectedVersion does not match", async () => {
+    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"e"' });
+
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "test.txt", hash: HASH_A, size: 100 }],
+      expectedVersion: 3,
+    });
+
+    expect(result).toEqual({
+      error: "version_conflict",
+      currentVersion: 5,
+      expectedVersion: 3,
+    });
+  });
+
+  it("broadcasts sync:change to peers after successful commit", async () => {
+    const manifest = makeManifest({});
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 0, etag: '"e"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "changed.txt", hash: HASH_A, size: 50 }],
+      expectedVersion: 0,
+    });
+
+    expect(mockBroadcast).toHaveBeenCalledWith("user1", "peer1", {
+      type: "sync:change",
+      files: [expect.objectContaining({ path: "changed.txt", hash: HASH_A })],
+      peerId: "peer1",
+      manifestVersion: 1,
+    });
+  });
+
+  it("handles delete action with tombstone", async () => {
+    const manifest = makeManifest({ "deleted.txt": { hash: HASH_A, size: 100 } });
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 2, etag: '"e"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "deleted.txt", hash: HASH_A, size: 0, action: "delete" }],
+      expectedVersion: 2,
+    });
+
+    expect(result.committed).toBe(1);
+    // Verify the R2 delete was called for the file content
+    expect(mockR2.deleteObject).toHaveBeenCalledWith(
+      "matrixos-sync/user1/files/deleted.txt",
+    );
+  });
+
+  it("rejects commit when file count would exceed 50K", async () => {
+    // Create manifest near the 50K limit
+    const files: Record<string, any> = {};
+    for (let i = 0; i < 50_000; i++) {
+      files[`file-${i}.txt`] = {
+        hash: HASH_A,
+        size: 1,
+        mtime: Date.now(),
+        peerId: "peer",
+        version: 1,
+      };
+    }
+    const manifest: Manifest = { version: 2, files };
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 10, etag: '"e"' });
+
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "overflow.txt", hash: HASH_B, size: 1 }],
+      expectedVersion: 10,
+    });
+
+    expect(result).toHaveProperty("error");
+    expect((result as any).error).toMatch(/cap|limit|50/i);
+  });
+
+  it("acquires advisory lock for the commit", async () => {
+    const manifest = makeManifest({});
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 0, etag: '"e"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "test.txt", hash: HASH_A, size: 100 }],
+      expectedVersion: 0,
+    });
+
+    expect(mockDb.withAdvisoryLock).toHaveBeenCalledWith("user1", expect.any(Function));
+  });
+});
