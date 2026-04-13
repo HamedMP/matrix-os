@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
+import {
+  ShareNotFoundError,
+  ShareSelfError,
+  ShareDuplicateError,
+  ShareForbiddenError,
+  GranteeNotFoundError,
+} from "../../../packages/gateway/src/sync/sharing.js";
 
 const HASH_A = "sha256:" + "a".repeat(64);
 const HASH_B = "sha256:" + "b".repeat(64);
@@ -343,6 +350,45 @@ describe("sharing routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST /share returns 404 when grantee not found", async () => {
+    mockSharing.createShare.mockRejectedValue(new GranteeNotFoundError("@nobody:matrix-os.com"));
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share", {
+      path: "projects/",
+      granteeHandle: "@nobody:matrix-os.com",
+      role: "viewer",
+    }));
+
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /share returns 400 on self-share", async () => {
+    mockSharing.createShare.mockRejectedValue(new ShareSelfError());
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share", {
+      path: "projects/",
+      granteeHandle: "@me:matrix-os.com",
+      role: "editor",
+    }));
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /share returns 409 on duplicate", async () => {
+    mockSharing.createShare.mockRejectedValue(new ShareDuplicateError());
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share", {
+      path: "projects/startup/",
+      granteeHandle: "@colleague:matrix-os.com",
+      role: "editor",
+    }));
+
+    expect(res.status).toBe(409);
+  });
+
   it("DELETE /share revokes and returns 200", async () => {
     mockSharing.revokeShare.mockResolvedValue(undefined);
 
@@ -369,6 +415,32 @@ describe("sharing routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("DELETE /share returns 404 when share not found", async () => {
+    mockSharing.revokeShare.mockRejectedValue(new ShareNotFoundError("nonexistent"));
+
+    const app = createTestApp();
+    const res = await app.request(new Request("http://localhost/api/sync/share", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shareId: "nonexistent" }),
+    }));
+
+    expect(res.status).toBe(404);
+  });
+
+  it("DELETE /share returns 403 when caller is not owner", async () => {
+    mockSharing.revokeShare.mockRejectedValue(new ShareForbiddenError("Not the owner"));
+
+    const app = createTestApp();
+    const res = await app.request(new Request("http://localhost/api/sync/share", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shareId: "uuid-1" }),
+    }));
+
+    expect(res.status).toBe(403);
+  });
+
   it("POST /share/accept returns 400 for invalid body", async () => {
     const app = createTestApp();
     const res = await app.request(jsonRequest("/api/sync/share/accept", {}));
@@ -390,6 +462,30 @@ describe("sharing routes", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.accepted).toBe(true);
+    expect(json.path).toBe("projects/");
+    expect(json.ownerHandle).toBe("@owner:matrix-os.com");
+  });
+
+  it("POST /share/accept returns 404 when share not found", async () => {
+    mockSharing.acceptShare.mockRejectedValue(new ShareNotFoundError("nonexistent"));
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share/accept", {
+      shareId: "550e8400-e29b-41d4-a716-446655440000",
+    }));
+
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /share/accept returns 403 when caller is not grantee", async () => {
+    mockSharing.acceptShare.mockRejectedValue(new ShareForbiddenError("Not the grantee"));
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share/accept", {
+      shareId: "550e8400-e29b-41d4-a716-446655440000",
+    }));
+
+    expect(res.status).toBe(403);
   });
 
   it("GET /shares returns owned and received", async () => {
