@@ -3,5 +3,6 @@
   "slug": "calculator-static",
   "version": "1.0.0",
   "runtime": "static",
-  "runtimeVersion": "^1.0.0"
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }
