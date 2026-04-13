@@ -5,7 +5,7 @@
   "runtime": "vite",
   "runtimeVersion": "^1.0.0",
   "build": {
-    "install": "pnpm install --frozen-lockfile",
+    "install": "pnpm install",
     "command": "pnpm build",
     "output": "dist",
     "timeout": 120
