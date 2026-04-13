@@ -5,6 +5,11 @@ export interface AnsiPalette {
   brightBlue: string; brightMagenta: string; brightCyan: string; brightWhite: string;
 }
 
+export interface TerminalThemeOption {
+  id: import("@/stores/terminal-settings").TerminalThemeId;
+  label: string;
+}
+
 const palettes: Record<string, AnsiPalette> = {
   "one-dark": {
     black: "#282c34",
@@ -182,6 +187,89 @@ const themeMapping: Record<string, string> = {
   "github-light": "github-light",
 };
 
+const terminalThemePresets = {
+  "one-dark": {
+    label: "One Dark",
+    background: "#1e2127",
+    foreground: "#abb2bf",
+    cursor: "#61afef",
+    selectionBackground: "#61afef33",
+  },
+  "one-light": {
+    label: "One Light",
+    background: "#fafafa",
+    foreground: "#383a42",
+    cursor: "#4078f2",
+    selectionBackground: "#4078f233",
+  },
+  "catppuccin-mocha": {
+    label: "Catppuccin Mocha",
+    background: "#1e1e2e",
+    foreground: "#cdd6f4",
+    cursor: "#89b4fa",
+    selectionBackground: "#89b4fa33",
+  },
+  "dracula": {
+    label: "Dracula",
+    background: "#282a36",
+    foreground: "#f8f8f2",
+    cursor: "#ff79c6",
+    selectionBackground: "#ff79c633",
+  },
+  "nord": {
+    label: "Nord",
+    background: "#2e3440",
+    foreground: "#e5e9f0",
+    cursor: "#88c0d0",
+    selectionBackground: "#88c0d033",
+  },
+  "solarized-dark": {
+    label: "Solarized Dark",
+    background: "#002b36",
+    foreground: "#93a1a1",
+    cursor: "#268bd2",
+    selectionBackground: "#268bd233",
+  },
+  "solarized-light": {
+    label: "Solarized Light",
+    background: "#fdf6e3",
+    foreground: "#657b83",
+    cursor: "#268bd2",
+    selectionBackground: "#268bd233",
+  },
+  "github-dark": {
+    label: "GitHub Dark",
+    background: "#0d1117",
+    foreground: "#c9d1d9",
+    cursor: "#58a6ff",
+    selectionBackground: "#58a6ff33",
+  },
+  "github-light": {
+    label: "GitHub Light",
+    background: "#ffffff",
+    foreground: "#24292f",
+    cursor: "#0969da",
+    selectionBackground: "#0969da33",
+  },
+} satisfies Record<
+  Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
+  {
+    label: string;
+    background: string;
+    foreground: string;
+    cursor: string;
+    selectionBackground: string;
+  }
+>;
+
+export const TERMINAL_THEME_OPTIONS: TerminalThemeOption[] = [
+  { id: "system", label: "Match OS" },
+  ...Object.entries(terminalThemePresets).map(([id, preset]) => ({
+    id: id as Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
+    label: preset.label,
+  })),
+];
+
 function inferMode(bg: string): "light" | "dark" {
   const hex = bg.replace("#", "");
   if (hex.length < 6) return "dark";
@@ -199,4 +287,13 @@ export function getAnsiPalette(themeSlug: string, backgroundHex: string): AnsiPa
   }
   const mode = inferMode(backgroundHex);
   return mode === "dark" ? palettes["one-dark"]! : palettes["one-light"]!;
+}
+
+export function getTerminalThemePreset(
+  themeId: Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
+) {
+  return {
+    ...terminalThemePresets[themeId],
+    ...palettes[themeId],
+  };
 }
