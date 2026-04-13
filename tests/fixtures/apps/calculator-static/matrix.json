@@ -1,0 +1,7 @@
+{
+  "name": "Calculator",
+  "slug": "calculator-static",
+  "version": "1.0.0",
+  "runtime": "static",
+  "runtimeVersion": "^1.0.0"
+}
