@@ -114,9 +114,28 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 
 ```bash
 bun run test              # unit tests
-bun run dev               # gateway (:4000) + shell (:3000)
+bun run test:watch        # Vitest watch mode
+bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
+bun run test:coverage     # coverage report
+bun run test:e2e          # end-to-end tests
+
+bun run dev               # local dev: gateway + proxy + shell
+bun run dev:gateway       # gateway only
+bun run dev:shell         # shell only
+bun run dev:proxy         # proxy only
+bun run dev:platform      # platform only
+bun run dev:www           # matrix-os.com website only
+bun run dev:kernel        # kernel package only
+
 bun run docker            # Docker dev (primary, requires OrbStack on macOS)
 bun run docker:full       # + proxy, platform, conduit
+bun run docker:all        # + observability stack
+bun run docker:multi      # + alice & bob multi-user
+bun run docker:stop       # stop containers, preserve volumes
+bun run docker:restart    # restart dev container
+bun run docker:logs       # tail dev container logs
+bun run docker:shell      # shell into container as matrixos user
+bun run docker:build      # full rebuild (no cache)
 ```
 
 **IMPORTANT**: Never `docker compose down -v` unless explicitly resetting. Volumes hold OS state, node_modules, and .next cache.

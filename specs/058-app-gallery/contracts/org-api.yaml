@@ -1,0 +1,140 @@
+# Organizations API
+# Mount: /api/store/orgs (platform)
+# Auth: All endpoints require authentication
+
+endpoints:
+  POST /api/store/orgs:
+    description: Create a new organization
+    auth: authenticated
+    body:
+      name: string (required)
+      slug: string (optional -- auto-generated from name if omitted)
+      description: string (optional)
+    response:
+      201:
+        id: uuid
+        slug: string
+        name: string
+      400: error (validation failure)
+      409: error (slug taken)
+    notes: Creator becomes owner automatically
+
+  GET /api/store/orgs:
+    description: List orgs the authenticated user belongs to
+    auth: authenticated
+    response:
+      200:
+        orgs: OrgSummary[]
+
+  GET /api/store/orgs/:orgSlug:
+    description: Get org details
+    auth: authenticated (must be member)
+    response:
+      200: OrgDetail
+      403: error (not a member)
+      404: error (not found)
+
+  PUT /api/store/orgs/:orgSlug:
+    description: Update org details
+    auth: authenticated (must be owner or admin)
+    body:
+      name: string (optional)
+      description: string (optional)
+    response:
+      200: OrgDetail
+      403: error (insufficient role)
+
+  DELETE /api/store/orgs/:orgSlug:
+    description: Delete an organization
+    auth: authenticated (must be owner)
+    response:
+      200: { deleted: true }
+      403: error (not owner)
+    notes: Notifies members. Org-private listings become inaccessible. Data frozen 30 days.
+
+  # --- Membership Management ---
+
+  POST /api/store/orgs/:orgSlug/members:
+    description: Invite a user to the org
+    auth: authenticated (must be admin+)
+    body:
+      handle: string (optional -- Matrix handle)
+      email: string (optional -- Clerk email lookup)
+      role: "admin" | "publisher" | "member" (default "member")
+    response:
+      201:
+        membershipId: uuid
+        status: "pending"
+      400: error (must provide handle or email)
+      403: error (insufficient role)
+      409: error (already a member)
+
+  GET /api/store/orgs/:orgSlug/members:
+    description: List org members
+    auth: authenticated (must be member)
+    response:
+      200:
+        members: OrgMember[]
+
+  PUT /api/store/orgs/:orgSlug/members/:userId:
+    description: Update member role
+    auth: authenticated (must be admin+, cannot change owner)
+    body:
+      role: "admin" | "publisher" | "member"
+    response:
+      200: OrgMember
+      403: error (insufficient role or target is owner)
+
+  DELETE /api/store/orgs/:orgSlug/members/:userId:
+    description: Remove member or leave org
+    auth: authenticated (admin+ to remove others, any member to leave)
+    response:
+      200: { removed: true }
+      403: error (cannot remove owner)
+
+  POST /api/store/orgs/:orgSlug/members/accept:
+    description: Accept a pending invitation
+    auth: authenticated (must be the invitee)
+    response:
+      200: OrgMember
+      404: error (no pending invitation)
+
+  POST /api/store/orgs/:orgSlug/members/decline:
+    description: Decline a pending invitation
+    auth: authenticated (must be the invitee)
+    response:
+      200: { declined: true }
+
+  # --- Org Apps ---
+
+  GET /api/store/orgs/:orgSlug/apps:
+    description: List apps visible to this org (org-private + public installed)
+    auth: authenticated (must be member)
+    response:
+      200:
+        apps: AppListingCard[]
+
+types:
+  OrgSummary:
+    id: uuid
+    slug: string
+    name: string
+    memberCount: integer
+    role: string (current user's role)
+
+  OrgDetail:
+    id: uuid
+    slug: string
+    name: string
+    description: string | null
+    owner: { id: uuid, handle: string, displayName: string }
+    memberCount: integer
+    appCount: integer
+    createdAt: string
+
+  OrgMember:
+    id: uuid
+    user: { id: uuid, handle: string, displayName: string }
+    role: string
+    status: string
+    joinedAt: string | null
