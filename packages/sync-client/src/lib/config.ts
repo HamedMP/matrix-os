@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { z } from "zod/v4";
 
 export const SyncConfigSchema = z.object({
@@ -58,7 +58,6 @@ export function defaultSyncPath(): string {
 }
 
 export function generatePeerId(): string {
-  const { hostname } = require("node:os") as typeof import("node:os");
   const host = hostname().toLowerCase().replace(/\.local$/, "");
   return host;
 }
