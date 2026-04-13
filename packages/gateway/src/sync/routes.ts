@@ -4,6 +4,8 @@ import {
   PresignRequestSchema,
   CommitRequestSchema,
   ResolveConflictSchema,
+  CreateShareSchema,
+  AcceptShareSchema,
 } from "./types.js";
 import { readManifest, type ManifestStore } from "./manifest.js";
 import { generatePresignedUrls } from "./presign.js";
@@ -14,11 +16,18 @@ import {
   syncCommitDuration,
   syncFilesSyncedTotal,
   syncManifestEntries,
-  syncManifestBytes,
 } from "./metrics.js";
 import type { PeerRegistry } from "./ws-events.js";
 import type { R2Client } from "./r2-client.js";
 import type { ManifestDb } from "./manifest.js";
+import {
+  type SharingService,
+  ShareNotFoundError,
+  ShareSelfError,
+  ShareDuplicateError,
+  ShareForbiddenError,
+  GranteeNotFoundError,
+} from "./sharing.js";
 
 const SYNC_BODY_LIMIT = 65536;
 
@@ -26,6 +35,7 @@ export interface SyncRouteDeps {
   r2: R2Client;
   db: ManifestDb;
   peerRegistry: PeerRegistry;
+  sharing: SharingService;
   getUserId: (c: any) => string;
   getPeerId: (c: any) => string;
 }
@@ -152,6 +162,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
+    const userId = deps.getUserId(c);
     const body = await c.req.json();
     const parsed = ResolveConflictSchema.safeParse(body);
 
@@ -159,16 +170,112 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
     }
 
-    // Conflict resolution is recorded and the conflict copy can be deleted
-    // Full implementation requires manifest update (Phase 3 sharing scope)
+    if (parsed.data.conflictPath) {
+      const key = `matrixos-sync/${userId}/files/${parsed.data.conflictPath}`;
+      try {
+        await deps.r2.deleteObject(key);
+      } catch (err: unknown) {
+        console.error("[sync/resolve-conflict] Failed to delete conflict copy:", err instanceof Error ? err.message : String(err));
+      }
+    }
+
     return c.json({ resolved: true });
   });
 
-  // Share endpoints remain stubs until Phase 3 (sharing scope)
-  app.post("/share", mutatingBodyLimit, (c) => c.json({ error: "Not implemented" }, 501));
-  app.delete("/share", (c) => c.json({ error: "Not implemented" }, 501));
-  app.post("/share/accept", mutatingBodyLimit, (c) => c.json({ error: "Not implemented" }, 501));
-  app.get("/shares", (c) => c.json({ error: "Not implemented" }, 501));
+  // -----------------------------------------------------------------------
+  // Sharing endpoints
+  // -----------------------------------------------------------------------
+
+  // POST /share -- create sharing grant
+  app.post("/share", mutatingBodyLimit, async (c) => {
+    const userId = deps.getUserId(c);
+    const body = await c.req.json();
+    const parsed = CreateShareSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+    }
+
+    try {
+      const result = await deps.sharing.createShare(userId, parsed.data);
+      return c.json(result, 201);
+    } catch (err: unknown) {
+      if (err instanceof GranteeNotFoundError) {
+        return c.json({ error: err.message }, 404);
+      }
+      if (err instanceof ShareSelfError) {
+        return c.json({ error: err.message }, 400);
+      }
+      if (err instanceof ShareDuplicateError) {
+        return c.json({ error: err.message }, 409);
+      }
+      console.error("[sync/share] Create share failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Share creation failed" }, 500);
+    }
+  });
+
+  // DELETE /share -- revoke sharing grant
+  app.delete("/share", async (c) => {
+    const userId = deps.getUserId(c);
+    const body = await c.req.json();
+    const shareId = body?.shareId;
+
+    if (!shareId || typeof shareId !== "string") {
+      return c.json({ error: "shareId is required" }, 400);
+    }
+
+    try {
+      await deps.sharing.revokeShare(userId, shareId);
+      return c.json({ revoked: true });
+    } catch (err: unknown) {
+      if (err instanceof ShareNotFoundError) {
+        return c.json({ error: err.message }, 404);
+      }
+      if (err instanceof ShareForbiddenError) {
+        return c.json({ error: err.message }, 403);
+      }
+      console.error("[sync/share] Revoke share failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Share revocation failed" }, 500);
+    }
+  });
+
+  // POST /share/accept -- accept share invitation
+  app.post("/share/accept", mutatingBodyLimit, async (c) => {
+    const userId = deps.getUserId(c);
+    const body = await c.req.json();
+    const parsed = AcceptShareSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+    }
+
+    try {
+      const result = await deps.sharing.acceptShare(userId, parsed.data.shareId);
+      return c.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ShareNotFoundError) {
+        return c.json({ error: err.message }, 404);
+      }
+      if (err instanceof ShareForbiddenError) {
+        return c.json({ error: err.message }, 403);
+      }
+      console.error("[sync/share] Accept share failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Share acceptance failed" }, 500);
+    }
+  });
+
+  // GET /shares -- list active shares
+  app.get("/shares", async (c) => {
+    const userId = deps.getUserId(c);
+
+    try {
+      const result = await deps.sharing.listShares(userId);
+      return c.json(result);
+    } catch (err: unknown) {
+      console.error("[sync/shares] List shares failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Failed to list shares" }, 500);
+    }
+  });
 
   return app;
 }
