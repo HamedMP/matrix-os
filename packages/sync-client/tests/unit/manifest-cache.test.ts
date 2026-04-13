@@ -313,13 +313,12 @@ describe("compareSyncState", () => {
     );
   });
 
-  it("tracks manifest version in results", () => {
+  it("returns empty actions when both sides have no files", () => {
     const localState: SyncState = { manifestVersion: 1, lastSyncAt: 1000, files: {} };
-    const remoteManifest: Manifest = { version: 5, files: {} };
+    const remoteManifest: Manifest = { version: 2, files: {} };
 
     const actions = compareSyncState(localState, remoteManifest);
 
-    // compareSyncState should expose or handle the version gap
-    expect(actions).toBeDefined();
+    expect(actions).toHaveLength(0);
   });
 });
