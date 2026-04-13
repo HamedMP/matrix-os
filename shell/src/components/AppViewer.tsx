@@ -13,6 +13,7 @@ import {
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
+const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 
 interface AppViewerProps {
   path: string;
@@ -25,6 +26,12 @@ function appNameFromPath(path: string): string {
     return path.split("/")[1];
   }
   return path.replace("apps/", "").replace(/\/index\.html$/, "").replace(".html", "");
+}
+
+function extractSlug(path: string): string | null {
+  // Extract slug from "apps/{slug}" or "apps/{slug}/index.html" paths
+  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/|$)/);
+  return match ? match[1] : null;
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -146,11 +153,54 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     });
   }, [subscribe, appName]);
 
+  // Session refresh handler: listen for matrix-os:session-expired from the
+  // gateway's 401 interstitial HTML. This is the only recovery signal for
+  // expired app-session cookies. Do NOT use iframe.onload as a failure probe.
+  const lastRefreshAtRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
+  const slug = extractSlug(path);
+
+  useEffect(() => {
+    if (!slug) return;
+
+    const handler = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type !== "matrix-os:session-expired") return;
+      if (event.data?.slug !== slug) return;
+      if (refreshInFlightRef.current) return;
+      if (Date.now() - lastRefreshAtRef.current < SESSION_REFRESH_DEBOUNCE_MS) return;
+
+      refreshInFlightRef.current = true;
+      try {
+        await fetch(`${GATEWAY_URL}/api/apps/${slug}/session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        lastRefreshAtRef.current = Date.now();
+        // Reassign src to trigger browser reload with new cookie
+        if (iframeRef.current) {
+          iframeRef.current.src = `/apps/${slug}/`;
+        }
+      } finally {
+        refreshInFlightRef.current = false;
+      }
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [slug]);
+
+  // Determine iframe src: use /apps/:slug/ for apps with runtime manifest,
+  // fall back to /files/ for legacy paths (modules, etc.)
+  const iframeSrc = slug ? `/apps/${slug}/` : `/files/${path}`;
+
   return (
     <iframe
       ref={iframeRef}
       key={refreshKey}
-      src={`/files/${path}`}
+      src={iframeSrc}
       className="h-full w-full border-0"
       sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
       title={path}
