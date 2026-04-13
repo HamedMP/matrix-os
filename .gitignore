@@ -17,9 +17,13 @@ logs/
 # Local platform data
 packages/platform/data/
 
-# Playwright
+# Test artifacts
+shell/test-results/
 shell/e2e/test-results/
 shell/e2e/playwright-report/
+
+# Next.js auto-generated
+**/next-env.d.ts
 
 # AI tool configs (various agents/IDEs)
 .adal/
