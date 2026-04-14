@@ -43,6 +43,7 @@ import { AmbientClock } from "./AmbientClock";
 import { OnboardingScreen } from "./OnboardingScreen";
 import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
+import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
 import { versionedIconUrl } from "@/lib/icon-url";
@@ -50,6 +51,47 @@ import { nameToSlug } from "@/lib/utils";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+
+// Forgiving app-name lookup used by vocal mode's `open_app` tool and the
+// auto-open after a build finishes. Handles exact, substring, reverse
+// substring, and word-level matches so "notes", "the notes", "notes app",
+// and "my notes" all resolve to the same installed app.
+function findAppByName<T extends { name: string }>(apps: T[], query: string): T | null {
+  const q = query.toLowerCase().trim().replace(/[^\w\s]+/g, "").replace(/\s+/g, " ");
+  if (!q) return null;
+
+  const exact = apps.find((a) => a.name.toLowerCase() === q);
+  if (exact) return exact;
+
+  // Query ⊂ app name — prefer shortest match (most specific).
+  const contains = apps.filter((a) => a.name.toLowerCase().includes(q));
+  if (contains.length > 0) {
+    return [...contains].sort((a, b) => a.name.length - b.name.length)[0];
+  }
+
+  // App name ⊂ query ("open the notes app" contains "Notes") — prefer longest.
+  const reverse = apps.filter((a) => q.includes(a.name.toLowerCase()));
+  if (reverse.length > 0) {
+    return [...reverse].sort((a, b) => b.name.length - a.name.length)[0];
+  }
+
+  // Word-level: at least half the query's meaningful words appear in
+  // the app name. Stopwords (single chars) are filtered out.
+  const words = q.split(/\s+/).filter((w) => w.length > 1);
+  if (words.length > 0) {
+    const scored = apps
+      .map((a) => {
+        const nameLower = a.name.toLowerCase();
+        const hits = words.filter((w) => nameLower.includes(w)).length;
+        return { app: a, score: hits / words.length };
+      })
+      .filter((x) => x.score >= 0.5)
+      .sort((a, b) => b.score - a.score || a.app.name.length - b.app.name.length);
+    if (scored.length > 0) return scored[0].app;
+  }
+
+  return null;
+}
 
 interface ModuleRegistryEntry {
   name: string;
@@ -253,10 +295,10 @@ function ModeSwitcher({
   const [open, setOpen] = useState(false);
   const mode = useDesktopMode((s) => s.mode);
   const setMode = useDesktopMode((s) => s.setMode);
-  const allModes = useDesktopMode((s) => s.allModes);
+  const visibleModes = useDesktopMode((s) => s.visibleModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(mode);
-  const modes = allModes();
+  const modes = visibleModes();
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on click outside
@@ -619,6 +661,23 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     }
   }, [openWindow, wmRestoreAndFocusWindow]);
 
+  // Vocal mode's open_app tool and auto-open-after-build both go through
+  // this. Fuzzy-matches `query` against the current apps list and focuses
+  // (or opens) the best match. Returns the result so the caller can
+  // report success/failure back to Gemini for accurate narration.
+  const openAppByName = useCallback(
+    (query: string): { success: boolean; resolvedName?: string } => {
+      const currentApps = useWindowManager.getState().apps;
+      const match = findAppByName(currentApps, query);
+      if (match) {
+        focusOrOpen(match.name, match.path);
+        return { success: true, resolvedName: match.name };
+      }
+      return { success: false };
+    },
+    [focusOrOpen],
+  );
+
   const loadModules = useCallback(async () => {
     try {
       const [layoutRes, modulesRes, appsRes] = await Promise.all([
@@ -856,24 +915,30 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const desktopMode = useDesktopMode((s) => s.mode);
   const previousMode = useDesktopMode((s) => s.previousMode);
   const setDesktopMode = useDesktopMode((s) => s.setMode);
-  const allModes = useDesktopMode((s) => s.allModes);
+  const visibleModes = useDesktopMode((s) => s.visibleModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const hydrated = useDesktopMode((s) => s._hydrated);
-  const modeConfig = getModeConfig(hydrated ? desktopMode : "desktop");
+  const modeConfig = getModeConfig(hydrated ? desktopMode : "canvas");
 
-  // When switching from canvas to a non-canvas mode, cascade windows to fit
-  // the viewport. Canvas positions (from autoArrange) use a wide grid that
-  // extends off-screen in desktop mode where there's no zoom/pan transform.
+  // When switching from a canvas-rendering mode to a non-canvas one,
+  // cascade windows to fit the viewport. Canvas positions use a wide
+  // grid that extends off-screen in modes without zoom/pan. Vocal mode
+  // ALSO renders the CanvasRenderer (as an overlay), so canvas↔vocal
+  // transitions must NOT trigger cascading — that would reorder every
+  // window in place every time the user enters voice mode.
   useEffect(() => {
-    if (desktopMode !== "canvas" && previousMode === "canvas") {
+    const rendersCanvas = (m: typeof desktopMode) => m === "canvas" || m === "vocal";
+    if (!rendersCanvas(desktopMode) && previousMode && rendersCanvas(previousMode)) {
       wmCascadeWindows(dockXOffset, 20, 30);
     }
   }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
 
-  const modes = allModes();
+  const modes = visibleModes();
   const cycleMode = useCallback(() => {
     const idx = modes.findIndex((m) => m.id === desktopMode);
-    setDesktopMode(modes[(idx + 1) % modes.length].id);
+    // If current mode is hidden or not found, jump to the first visible mode.
+    const nextIdx = idx < 0 ? 0 : (idx + 1) % modes.length;
+    setDesktopMode(modes[nextIdx].id);
   }, [modes, desktopMode, setDesktopMode]);
 
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
@@ -883,7 +948,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   }, [openWindow]);
 
   useEffect(() => {
-    const modeCommands = allModes().map((m) => ({
+    const modeCommands = visibleModes().map((m) => ({
       id: `mode:${m.id}`,
       label: `Mode: ${m.label}`,
       group: "Actions" as const,
@@ -1054,9 +1119,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       "edit:select-all",
       "view:reload-app",
       "view:fullscreen",
-      ...allModes().map((m) => `mode:${m.id}`),
+      ...visibleModes().map((m) => `mode:${m.id}`),
     ]);
-  }, [register, unregister, allModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow]);
+  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow]);
 
   useEffect(() => {
     const appCommands = apps.map((app) => ({
@@ -1267,6 +1332,14 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                 Settings
               </TooltipContent>
             </Tooltip>
+          </div>
+          <div
+            className={
+              isHorizontal
+                ? "absolute left-full top-1/2 -translate-y-1/2 ml-2 pointer-events-auto"
+                : "absolute top-full left-1/2 -translate-x-1/2 mt-2 pointer-events-auto"
+            }
+          >
             <ConnectionIndicator />
           </div>
         </aside>
@@ -1356,11 +1429,15 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             </div>
           )}
 
-          {modeConfig.showWindows && desktopMode === "canvas" && !showSetup && (
-            <CanvasRenderer />
+          {modeConfig.showWindows &&
+            (desktopMode === "canvas" || desktopMode === "vocal") &&
+            !showSetup && <CanvasRenderer />}
+
+          {desktopMode === "vocal" && !showSetup && (
+            <VocalPanel chat={chat} onOpenApp={openAppByName} />
           )}
 
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
+          {modeConfig.showWindows && desktopMode !== "canvas" && desktopMode !== "vocal" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <p className="text-sm text-white/50 drop-shadow-md">
@@ -1371,7 +1448,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             )}
 
           {/* Desktop: positioned windows; Mobile: full-screen cards */}
-          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => {
+          {modeConfig.showWindows && desktopMode !== "canvas" && desktopMode !== "vocal" && windows.map((win) => {
             const isMinimizing = minimizingIds.has(win.id);
             if (win.minimized && !isMinimizing) return null;
 

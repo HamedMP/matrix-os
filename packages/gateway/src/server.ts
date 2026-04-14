@@ -48,6 +48,7 @@ import {
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { createVocalHandler } from "./vocal/ws-handler.js";
 import { authMiddleware } from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
@@ -1231,6 +1232,34 @@ export async function createGateway(config: GatewayConfig) {
         },
         onClose() {
           onboardingHandler.onClose();
+        },
+      };
+    }),
+  );
+
+  // --- Vocal mode WebSocket ---
+  // Each connection gets its own isolated handler so multiple users (or
+  // reconnecting tabs) don't share a Gemini Live session.
+  app.get(
+    "/ws/vocal",
+    upgradeWebSocket(() => {
+      const vocalHandler = createVocalHandler({
+        homePath,
+        geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+        geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+      });
+      return {
+        onOpen(_evt, ws) {
+          vocalHandler.onOpen((msg) => {
+            ws.send(JSON.stringify(msg));
+          });
+        },
+        onMessage(evt, _ws) {
+          const data = typeof evt.data === "string" ? evt.data : evt.data.toString();
+          vocalHandler.onMessage(data);
+        },
+        onClose() {
+          vocalHandler.onClose();
         },
       };
     }),

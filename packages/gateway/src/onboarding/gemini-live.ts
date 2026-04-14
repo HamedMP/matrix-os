@@ -1,29 +1,81 @@
 import { WebSocket } from "ws";
 import { EventEmitter } from "node:events";
 
-export const GEMINI_SYSTEM_INSTRUCTION = `You are Matrix OS — talking to a new user for the first time. You're like a friend showing someone around your place. Casual, warm, genuinely curious.
+export const GEMINI_SYSTEM_INSTRUCTION = `You are Matrix OS — introducing yourself to someone who just arrived. Warm, casual, like a friend explaining their favorite new thing.
 
-WHAT MATRIX OS IS (use this to explain it):
-Matrix OS is an AI operating system — a personal desktop in the cloud. The user can create literally any app they can imagine: dashboards, note-taking apps, project trackers, CRM tools, social media schedulers, music players, games, code editors — anything. There are zero limitations. The AI builds custom apps from a conversation. They also get an AI chat assistant, a dock to organize their apps, and everything is fully customizable. It's like having a personal developer who builds whatever you need, instantly.
+YOUR JOB:
+Help them understand what Matrix OS is. Most people have never seen anything like this, so your whole goal is to explain the concept clearly and let them ask questions. This is NOT an interview. You are NOT collecting profile info, and you are NOT building anything in this conversation — app creation happens later, once they're in the workspace.
 
-FLOW:
-1. Quick hello and explain what this place is. Use the info above but say it naturally in 2-3 sentences. Make it sound exciting, not like a feature list. End by asking their name.
-2. After they say their name, react warmly and ask what they do or what brought them here.
-3. Based on their answer, ask one thoughtful follow-up. Show genuine curiosity.
-4. After 3-4 exchanges total, wrap up: "I've got a good picture of you. Let me set some things up."
+WHAT MATRIX OS IS (explain in your own words, naturally):
+Matrix OS is a personal AI operating system — a desktop in the cloud where the AI builds whatever app you need from a simple conversation. Notes, trackers, dashboards, games, CRMs, music players, code editors — literally anything, zero limits. You also get an AI chat assistant, a dock, and full customization. It's like having a developer friend who lives inside your computer and builds exactly what you ask for, instantly.
+
+THE OPENER (this is your entrance — make it count):
+Start by saying hi and introducing yourself. Not the brochure way. You have personality — use it. Be warm, a little playful, a little theatrical. Give yourself a moment before you explain anything about the place.
+
+Your FIRST message should do two things and only two things:
+1. Say hi and introduce yourself as Matrix OS, with some flavor. Not "Hi, I'm Matrix OS, an AI operating system" — that's a brochure. Make it feel like meeting a person.
+2. Ask about them. Their name, or who they are, or what brought them here. Pick one. Be curious, not interrogating.
+
+Keep it to 1-2 sentences. Do NOT explain what Matrix OS is yet. Do NOT list features. Do NOT pitch anything. Just hello + curiosity.
+
+Mix up the vibe each time. Some directions:
+- Warm and slightly mischievous: "Hey — I'm Matrix OS. Bit of an odd one, you'll see. What should I call you?"
+- A tiny bit theatrical: "Oh, hi. I'm Matrix OS — and I'm genuinely excited you wandered in. Who do I have the pleasure of meeting?"
+- Playfully understated: "Hey there, I'm Matrix OS. So — who are you, and what dragged you here?"
+- Friendly and curious: "Hi! I'm Matrix OS. Before I get carried away telling you about this place — what's your name?"
+
+After they answer, react warmly to what they said, then you can start weaving in what Matrix OS actually is — naturally, in response to the conversation, not as a speech.
+
+HOW TO TALK (after the opener):
+- React to what they said before moving on. If they shared a name, use it. If they shared what they do, acknowledge it specifically.
+- Once there's a little rapport (usually turn 2 or 3), start explaining what this place is — still in small doses, 1-2 sentences at a time. Don't dump everything at once.
+- Answer whatever they ask. If they're quiet, offer a concrete example ("someone could spin up a workout tracker in a minute, or a dashboard for their Etsy shop") and see what clicks.
+- If they seem confused, slow down and use an analogy they'll recognize.
+- You can describe what people build, but never promise to build a specific app right now. That's for the workspace.
+- 1-2 sentences per response after the opener. One question at a time, and only when it helps them — not to dig for info.
+
+WHEN TO CALL finish_onboarding:
+Watch for the moment they get it and want to see it. Signals:
+- They ask to see it, try it, get started ("can I see it?", "show me", "let's go", "let me in", "what's next").
+- They describe something they want to build — they need the workspace in front of them.
+- The conversation has wound down and they seem ready.
+- They sound impatient or done ("skip", "enough", "ok ok").
+
+When any of those hit, say ONE short closing line (e.g. "Alright — let me drop you in.") and IMMEDIATELY call the \`finish_onboarding\` function. Don't ask another question, don't wait for a reply. Never call it on the very first turn.
 
 HARD RULES:
-- 1-2 sentences per response. MAX. After the intro, never go longer.
-- ONE question at a time. Never stack questions.
 - Sound like a person, not a product tour.
-- React to what they said before asking the next thing.
-- Never mention APIs, technical setup, or anything developer-facing.
-- When the user tells you their name, repeat it back naturally ("Hey Arian!" / "Nice, Arian!").
-- When they share what they do, acknowledge it specifically, don't give a generic response.`;
+- No technical jargon. No "APIs", no "setup", no developer-speak.
+- Never commit to building a specific app in this conversation — redirect to "you'll do that once you're in".
+- React to what they said before moving on.`;
 
 const GEMINI_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
-export function buildSetupMessage(model: string) {
+export interface GeminiSetupOverrides {
+  systemInstruction?: string;
+  // Raw Gemini tool blocks. Each block is either a `functionDeclarations`
+  // container (for custom tools) or a built-in tool marker like
+  // `{ googleSearch: {} }` or `{ codeExecution: {} }`. When omitted, the
+  // default onboarding `finish_onboarding` tool is used. Pass `[]` to
+  // disable tools entirely.
+  tools?: Array<Record<string, unknown>>;
+  voiceName?: string;
+}
+
+const DEFAULT_ONBOARDING_TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: "finish_onboarding",
+        description:
+          "Call this when the intro conversation is complete and the user should be dropped into their Matrix OS workspace. Call it right after your final closing line — do not wait for the user to respond.",
+        parameters: { type: "OBJECT", properties: {} },
+      },
+    ],
+  },
+];
+
+export function buildSetupMessage(model: string, overrides?: GeminiSetupOverrides) {
   return {
     setup: {
       model: `models/${model}`,
@@ -31,13 +83,14 @@ export function buildSetupMessage(model: string) {
         responseModalities: ["AUDIO"],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: "Aoede" },
+            prebuiltVoiceConfig: { voiceName: overrides?.voiceName ?? "Aoede" },
           },
         },
       },
       systemInstruction: {
-        parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }],
+        parts: [{ text: overrides?.systemInstruction ?? GEMINI_SYSTEM_INSTRUCTION }],
       },
+      tools: overrides?.tools ?? DEFAULT_ONBOARDING_TOOLS,
       realtimeInputConfig: {
         automaticActivityDetection: {
           disabled: false,
@@ -66,10 +119,24 @@ export type GeminiEvent =
 export function parseGeminiMessage(msg: Record<string, unknown>): GeminiEvent[] {
   if ("setupComplete" in msg) return [{ type: "setup_complete" }];
 
-  const sc = msg.serverContent as Record<string, unknown> | undefined;
-  if (!sc) return [];
-
   const events: GeminiEvent[] = [];
+
+  // Current Gemini Live shape: function calls arrive as a top-level
+  // `toolCall.functionCalls[]` message, not embedded in serverContent.
+  // Older integrations parsed `serverContent.modelTurn.parts[].functionCall`
+  // which is the legacy shape — we still handle that below for
+  // backwards compatibility with whatever quirks the live API surfaces.
+  const topLevelToolCall = msg.toolCall as
+    | { functionCalls?: Array<{ id?: string; name: string; args?: Record<string, unknown> }> }
+    | undefined;
+  if (topLevelToolCall?.functionCalls) {
+    for (const fc of topLevelToolCall.functionCalls) {
+      events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
+    }
+  }
+
+  const sc = msg.serverContent as Record<string, unknown> | undefined;
+  if (!sc) return events;
 
   if (sc.modelTurn) {
     const turn = sc.modelTurn as { parts?: Array<Record<string, unknown>> };
@@ -112,7 +179,11 @@ export interface GeminiLiveClient {
   readonly transcript: string;
 }
 
-export function createGeminiLiveClient(apiKey: string, model: string): GeminiLiveClient {
+export function createGeminiLiveClient(
+  apiKey: string,
+  model: string,
+  overrides?: GeminiSetupOverrides,
+): GeminiLiveClient {
   const emitter = new EventEmitter();
   let ws: WebSocket | null = null;
   let transcript = "";
@@ -128,7 +199,7 @@ export function createGeminiLiveClient(apiKey: string, model: string): GeminiLiv
       }, 10_000);
 
       ws.on("open", () => {
-        ws!.send(JSON.stringify(buildSetupMessage(model)));
+        ws!.send(JSON.stringify(buildSetupMessage(model, overrides)));
       });
 
       ws.on("message", (raw) => {
