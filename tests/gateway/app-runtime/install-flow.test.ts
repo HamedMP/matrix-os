@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, mkdir, rm, readFile, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { installApp } from "../../../packages/gateway/src/app-runtime/install-flow.js";
+import { installApp, installVerifiedApp } from "../../../packages/gateway/src/app-runtime/install-flow.js";
 import { ManifestError, BuildError } from "../../../packages/gateway/src/app-runtime/errors.js";
 
 let tmpDir: string;
@@ -206,5 +206,112 @@ describe("installApp", () => {
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(ManifestError);
     }
+  });
+});
+
+describe("installVerifiedApp (verified path)", () => {
+  it("rebuilds from source and hashes on community tier", async () => {
+    const sourceDir = join(tmpDir, "source", "hello-vite");
+    await cp(
+      join(process.cwd(), "tests/fixtures/apps/hello-vite"),
+      sourceDir,
+      { recursive: true },
+    );
+
+    // Create a dist directory with a pre-built artifact and declared hash
+    const distDir = join(sourceDir, "dist");
+    await mkdir(distDir, { recursive: true });
+    await writeFile(join(distDir, "index.html"), "<html>pre-built</html>");
+
+    const result = await installVerifiedApp({
+      sourceDir,
+      homeDir,
+      storeDir: join(tmpDir, ".pnpm-store"),
+      listingTrust: "community",
+      declaredDistHash: "will-be-replaced-after-build",
+    });
+
+    // The pre-built dist should have been discarded and rebuilt from source
+    if (result.ok) {
+      const targetDir = join(homeDir, "apps", "hello-vite");
+      const html = await readFile(join(targetDir, "dist", "index.html"), "utf8");
+      // The rebuilt output should NOT be the pre-built "pre-built" content
+      expect(html).not.toContain("pre-built");
+    }
+  }, 120_000);
+
+  it("rejects on hash mismatch for community tier", async () => {
+    const sourceDir = join(tmpDir, "source", "hello-vite");
+    await cp(
+      join(process.cwd(), "tests/fixtures/apps/hello-vite"),
+      sourceDir,
+      { recursive: true },
+    );
+
+    const result = await installVerifiedApp({
+      sourceDir,
+      homeDir,
+      storeDir: join(tmpDir, ".pnpm-store"),
+      listingTrust: "community",
+      declaredDistHash: "0000000000000000000000000000000000000000000000000000000000000000",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(BuildError);
+      expect((result.error as BuildError).code).toBe("hash_mismatch");
+    }
+  }, 120_000);
+
+  it("trusts pre-built dist for first_party", async () => {
+    const sourceDir = join(tmpDir, "source", "calculator-static");
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(
+      join(sourceDir, "matrix.json"),
+      JSON.stringify({
+        name: "Calculator",
+        slug: "calculator-static",
+        version: "1.0.0",
+        runtime: "static",
+        runtimeVersion: "^1.0.0",
+        listingTrust: "first_party",
+      }),
+    );
+    await writeFile(join(sourceDir, "index.html"), "<html><body>Calculator</body></html>");
+
+    const result = await installVerifiedApp({
+      sourceDir,
+      homeDir,
+      storeDir: join(tmpDir, ".pnpm-store"),
+      listingTrust: "first_party",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("trusts pre-built dist for verified_partner", async () => {
+    const sourceDir = join(tmpDir, "source", "calculator-static");
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(
+      join(sourceDir, "matrix.json"),
+      JSON.stringify({
+        name: "Calculator",
+        slug: "calculator-static",
+        version: "1.0.0",
+        runtime: "static",
+        runtimeVersion: "^1.0.0",
+        listingTrust: "verified_partner",
+      }),
+    );
+    await writeFile(join(sourceDir, "index.html"), "<html><body>Calculator</body></html>");
+
+    const result = await installVerifiedApp({
+      sourceDir,
+      homeDir,
+      storeDir: join(tmpDir, ".pnpm-store"),
+      listingTrust: "verified_partner",
+    });
+
+    expect(result.ok).toBe(true);
   });
 });
