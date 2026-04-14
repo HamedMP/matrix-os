@@ -50,11 +50,16 @@ function deriveCurrentAction(
 }
 
 interface VocalPanelProps {
+  // False during the exit animation. Controls (a) the enter/exit visual
+  // transitions and (b) whether the WS/mic session is live — the session
+  // disconnects immediately when active flips false, even though the
+  // DOM lingers for the fade-out.
+  active: boolean;
   chat?: ChatState;
   onOpenApp?: (query: string) => { success: boolean; resolvedName?: string };
 }
 
-export function VocalPanel({ chat, onOpenApp }: VocalPanelProps) {
+export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
   // Delay WS/mic mount by one tick so React strict-mode's double-mount
   // doesn't open two sessions back-to-back.
   const [enabled, setEnabled] = useState(false);
@@ -62,6 +67,17 @@ export function VocalPanel({ chat, onOpenApp }: VocalPanelProps) {
     const t = setTimeout(() => setEnabled(true), 0);
     return () => clearTimeout(t);
   }, []);
+
+  // `hasEntered` flips true one frame after mount so CSS transitions have
+  // a distinct "from" state to animate out of. Without this, the initial
+  // render paints the final state and no enter animation plays.
+  const [hasEntered, setHasEntered] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setHasEntered(true), 20);
+    return () => clearTimeout(t);
+  }, []);
+
+  const visible = active && hasEntered;
 
   const chatRef = useRef(chat);
   useEffect(() => {
@@ -134,7 +150,7 @@ export function VocalPanel({ chat, onOpenApp }: VocalPanelProps) {
     notifyDelegationComplete,
     notifyExecuteResult,
     pushDelegationStatus,
-  } = useVocalSession(enabled, {
+  } = useVocalSession(enabled && active, {
     onExecute: handleExecute,
     onFactSaved: handleFactSaved,
   });
@@ -244,15 +260,28 @@ export function VocalPanel({ chat, onOpenApp }: VocalPanelProps) {
   const glowOpacity = GLOW_OPACITY[voiceState] ?? 0;
   const speaking = voiceState === "speaking";
 
+  // Enter/exit is a pure opacity bloom — the edge gradient fades in
+  // from transparent to full, fades back out on exit. Opacity on the
+  // outer wrapper cascades through the whole subtree (halo, transcript,
+  // banner, pill) so everything breathes together. Safe on `fixed`
+  // children because opacity doesn't affect containing blocks.
+  const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
+
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+    <div
+      className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+      style={{
+        opacity: visible ? 1 : 0,
+        transition: `opacity 900ms ${transitionEase}`,
+      }}
+    >
       {/* Primary edge halo */}
       <div
         className="absolute inset-0 transition-opacity duration-700 ease-out"
         style={{
           opacity: glowOpacity,
           background:
-            "radial-gradient(ellipse 87% 87% at 50% 50%, transparent 37%, color-mix(in srgb, var(--primary) 25%, transparent) 68%, color-mix(in srgb, var(--primary) 66%, transparent) 100%)",
+            "radial-gradient(ellipse 95% 95% at 50% 50%, transparent 60%, color-mix(in srgb, var(--primary) 38%, transparent) 80%, color-mix(in srgb, var(--primary) 95%, transparent) 100%)",
           animation: speaking ? "vocal-breathe 3.2s ease-in-out infinite" : "none",
         }}
       />
@@ -264,8 +293,22 @@ export function VocalPanel({ chat, onOpenApp }: VocalPanelProps) {
           opacity: glowOpacity * 0.85,
           mixBlendMode: "screen",
           boxShadow:
-            "inset 0 0 290px 95px color-mix(in srgb, var(--primary) 34%, transparent)",
+            "inset 0 0 200px 28px color-mix(in srgb, var(--primary) 55%, transparent)",
           animation: speaking ? "vocal-breathe 3.2s ease-in-out infinite 0.4s" : "none",
+        }}
+      />
+
+      {/* Film grain overlay — subtle noise texture keyed to the halo opacity
+          so it appears with the gradient and fades out on exit. */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity: glowOpacity * 0.22,
+          mixBlendMode: "overlay",
+          backgroundImage:
+            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.9'/></svg>\")",
+          backgroundSize: "220px 220px",
+          transition: "opacity 700ms ease-out",
         }}
       />
 

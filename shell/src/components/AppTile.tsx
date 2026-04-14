@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { PinIcon, RefreshCwIcon, PencilIcon, TrashIcon } from "lucide-react";
+import { PinIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -19,10 +19,10 @@ interface AppTileProps {
   iconUrl?: string;
   onRegenerateIcon?: () => void;
   onRename?: (newName: string) => void;
-  onDelete?: () => void;
+  onRemoveFromCanvas?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onDelete }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const [imgFailed, setImgFailed] = useState(false);
   const prevIconUrl = useRef(iconUrl);
@@ -82,7 +82,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
     </button>
   );
 
-  const hasContextMenu = onTogglePin || onRegenerateIcon || onRename || onDelete;
+  const hasContextMenu = onTogglePin || onRegenerateIcon || onRename || onRemoveFromCanvas;
   if (!hasContextMenu) return tile;
 
   return (
@@ -103,7 +103,7 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
             Regenerate Icon
           </ContextMenuItem>
         )}
-        {(onRename || onDelete) && (onTogglePin || onRegenerateIcon) && (
+        {(onRename || onRemoveFromCanvas) && (onTogglePin || onRegenerateIcon) && (
           <ContextMenuSeparator />
         )}
         {onRename && (
@@ -119,17 +119,10 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
             Rename
           </ContextMenuItem>
         )}
-        {onDelete && (
-          <ContextMenuItem
-            className="text-destructive focus:text-destructive"
-            onSelect={() => {
-              if (window.confirm(`Delete "${name}"? This cannot be undone.`)) {
-                onDelete();
-              }
-            }}
-          >
-            <TrashIcon className="size-3.5 mr-2" />
-            Delete
+        {onRemoveFromCanvas && (
+          <ContextMenuItem onSelect={onRemoveFromCanvas}>
+            <EyeOffIcon className="size-3.5 mr-2" />
+            Remove from canvas
           </ContextMenuItem>
         )}
       </ContextMenuContent>

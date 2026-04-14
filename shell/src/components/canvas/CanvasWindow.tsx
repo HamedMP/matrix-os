@@ -331,7 +331,19 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     </div>
   );
 
-  const titleBar = showTitles ? (isNeumorphic ? win98TitleBar : macTitleBar) : null;
+  const titleBarInner = isNeumorphic ? win98TitleBar : macTitleBar;
+  const titleBar = (
+    <div
+      style={{
+        opacity: showTitles ? 1 : 0,
+        transform: showTitles ? "translateY(0)" : "translateY(4px)",
+        transition: "opacity 260ms cubic-bezier(0.22, 1, 0.36, 1), transform 260ms cubic-bezier(0.22, 1, 0.36, 1)",
+        pointerEvents: showTitles ? undefined : "none",
+      }}
+    >
+      {titleBarInner}
+    </div>
+  );
 
   // Zoomed-out preview: icon card with title bar above
   if (!isInteractive) {

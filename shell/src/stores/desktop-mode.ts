@@ -29,8 +29,8 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
   },
   vocal: {
     id: "vocal",
-    label: "Vocal",
-    description: "Canvas with a voice conversation overlay",
+    label: "Aoede",
+    description: "Converse with Aoede",
     showDock: true,
     showWindows: true,
     showBottomPanel: false,

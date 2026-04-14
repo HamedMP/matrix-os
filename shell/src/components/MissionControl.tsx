@@ -26,7 +26,7 @@ interface MissionControlProps {
   onTogglePin: (path: string) => void;
   onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
-  onDeleteApp?: (slug: string) => void;
+  onRemoveFromCanvas?: (path: string) => void;
 }
 
 export function MissionControl({
@@ -39,7 +39,7 @@ export function MissionControl({
   onTogglePin,
   onRegenerateIcon,
   onRenameApp,
-  onDeleteApp,
+  onRemoveFromCanvas,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
   const [mounted, setMounted] = useState(false);
@@ -152,7 +152,7 @@ export function MissionControl({
                     iconUrl={app.iconUrl}
                     onRegenerateIcon={() => onRegenerateIcon(slug)}
                     onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
-                    onDelete={onDeleteApp ? () => onDeleteApp(slug) : undefined}
+                    onRemoveFromCanvas={onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
                   />
                 </div>
               );

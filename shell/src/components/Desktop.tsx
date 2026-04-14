@@ -36,7 +36,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -173,7 +173,6 @@ function DockIcon({
   onUnpin,
   onRegenerateIcon,
   onRename,
-  onDelete,
 }: {
   name: string;
   active: boolean;
@@ -184,7 +183,6 @@ function DockIcon({
   onUnpin?: () => void;
   onRegenerateIcon?: () => void;
   onRename?: (newName: string) => void;
-  onDelete?: () => void;
 }) {
   const initial = name.charAt(0).toUpperCase();
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
@@ -218,7 +216,7 @@ function DockIcon({
     </button>
   );
 
-  const hasContextMenu = onUnpin || onRegenerateIcon || onRename || onDelete;
+  const hasContextMenu = onUnpin || onRegenerateIcon || onRename;
   if (!hasContextMenu) {
     return (
       <Tooltip>
@@ -251,7 +249,7 @@ function DockIcon({
             Regenerate Icon
           </ContextMenuItem>
         )}
-        {(onRename || onDelete) && (onUnpin || onRegenerateIcon) && (
+        {onRename && (onUnpin || onRegenerateIcon) && (
           <ContextMenuSeparator />
         )}
         {onRename && (
@@ -265,19 +263,6 @@ function DockIcon({
           >
             <PencilIcon className="size-3.5 mr-2" />
             Rename
-          </ContextMenuItem>
-        )}
-        {onDelete && (
-          <ContextMenuItem
-            className="text-destructive focus:text-destructive"
-            onSelect={() => {
-              if (window.confirm(`Delete "${name}"? This cannot be undone.`)) {
-                onDelete();
-              }
-            }}
-          >
-            <TrashIcon className="size-3.5 mr-2" />
-            Delete
           </ContextMenuItem>
         )}
       </ContextMenuContent>
@@ -591,26 +576,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       .catch((err) => console.warn(`Rename request failed for "${slug}":`, err));
   }, [wmSetApps, wmSetWindows]);
 
-  const deleteAppOnServer = useCallback((slug: string) => {
-    fetch(`${GATEWAY_URL}/api/apps/${slug}`, {
-      method: "DELETE",
-      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => {
-        if (!r.ok) {
-          r.json()
-            .then((d: { error?: string }) => console.warn(`Delete failed for "${slug}":`, d.error))
-            .catch((err) => console.warn(`[desktop] Failed to parse delete error for "${slug}":`, err));
-          return;
-        }
-        wmSetApps((prev) => prev.filter((a) => nameToSlug(a.name) !== slug));
-        wmSetWindows((prev) => prev.filter((w) => {
-          const wSlug = w.path.replace("apps/", "").replace(/\/index\.html$/, "").replace(/\.html$/, "");
-          return wSlug !== slug;
-        }));
-      })
-      .catch((err) => console.warn(`Delete request failed for "${slug}":`, err));
-  }, [wmSetApps, wmSetWindows]);
+  const removeFromCanvas = useCallback((appPath: string) => {
+    wmSetWindows((prev) => prev.filter((w) => w.path !== appPath && !w.path.startsWith(appPath + ":")));
+  }, [wmSetWindows]);
 
   const addApp = useCallback((name: string, path: string) => {
     const slug = nameToSlug(name);
@@ -933,6 +901,24 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     }
   }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
 
+  // Delayed unmount for the vocal overlay so the exit animation has time
+  // to play. `active` flips the instant desktopMode leaves "vocal" (so
+  // the mic/WS shut down immediately), but the DOM lingers for ~700ms
+  // after to let the fade-out finish. The setState-in-effect lint rule
+  // warns about cascading renders but this is a legitimate delayed-
+  // unmount primitive — effect depends on desktopMode, not on
+  // vocalMounted, so there's no cascade loop.
+  const [vocalMounted, setVocalMounted] = useState(desktopMode === "vocal");
+  useEffect(() => {
+    if (desktopMode === "vocal") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setVocalMounted(true);
+      return;
+    }
+    const t = setTimeout(() => setVocalMounted(false), 950);
+    return () => clearTimeout(t);
+  }, [desktopMode]);
+
   const modes = visibleModes();
   const cycleMode = useCallback(() => {
     const idx = modes.findIndex((m) => m.id === desktopMode);
@@ -1192,27 +1178,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           ].filter(Boolean).join(" ")}
           style={{ padding: 6 }}
         >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                data-testid="dock-tasks"
-                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
-                className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                  taskBoardOpen
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card border-border/60"
-                }`}
-                style={{ width: dock.iconSize, height: dock.iconSize }}
-              >
-                <KanbanSquareIcon className="size-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side={tooltipSide} sideOffset={8}>
-              Launcher
-            </TooltipContent>
-          </Tooltip>
-
-
           {/* Center section: app icons */}
           <div className={isHorizontal
             ? "flex flex-row items-center justify-center gap-1"
@@ -1243,7 +1208,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                         onUnpin={() => togglePin(app.path)}
                         onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
                         onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
-                        onDelete={() => deleteAppOnServer(nameToSlug(app.name))}
                       />
                     );
                   })}
@@ -1261,7 +1225,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                       iconUrl={app.iconUrl}
                       onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
                       onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
-                      onDelete={() => deleteAppOnServer(nameToSlug(app.name))}
                     />
                   ))}
                 </>
@@ -1307,11 +1270,31 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             })()}
           </div>
 
-          {/* Bottom section: mode switcher, settings, user */}
+          {/* Bottom cluster: launcher + mode switcher + settings, grouped
+              together so all system controls sit below the app icons. */}
           <div className={isHorizontal
             ? "flex flex-row items-center gap-1"
             : "flex flex-col items-center gap-1"
           }>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  data-testid="dock-tasks"
+                  onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
+                  className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                    taskBoardOpen
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card border-border/60"
+                  }`}
+                  style={{ width: dock.iconSize, height: dock.iconSize }}
+                >
+                  <KanbanSquareIcon className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side={tooltipSide} sideOffset={8}>
+                Launcher
+              </TooltipContent>
+            </Tooltip>
             <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1406,7 +1389,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             onTogglePin={togglePin}
             onRegenerateIcon={regenerateIcon}
             onRenameApp={renameAppOnServer}
-            onDeleteApp={deleteAppOnServer}
+            onRemoveFromCanvas={removeFromCanvas}
           />
 
           {!modeConfig.showWindows && modeConfig.id === "ambient" && (
@@ -1433,8 +1416,12 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             (desktopMode === "canvas" || desktopMode === "vocal") &&
             !showSetup && <CanvasRenderer />}
 
-          {desktopMode === "vocal" && !showSetup && (
-            <VocalPanel chat={chat} onOpenApp={openAppByName} />
+          {vocalMounted && !showSetup && (
+            <VocalPanel
+              active={desktopMode === "vocal"}
+              chat={chat}
+              onOpenApp={openAppByName}
+            />
           )}
 
           {modeConfig.showWindows && desktopMode !== "canvas" && desktopMode !== "vocal" && windows.filter((w) => !w.minimized).length === 0 &&
