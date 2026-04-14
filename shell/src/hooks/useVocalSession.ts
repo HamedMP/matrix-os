@@ -72,6 +72,13 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
   const playGainRef = useRef<GainNode | null>(null);
   const isPlayingRef = useRef(false);
 
+  // Tracks whether the current session is still mounted. `startMic` awaits
+  // `getUserMedia` and `audioWorklet.addModule`, which can resolve AFTER the
+  // user exits vocal mode — without this flag the stream + worklet would
+  // get wired up post-unmount and the mic tracks would stay live with no
+  // teardown (privacy-adjacent leak).
+  const mountedRef = useRef(false);
+
   const wordQueueRef = useRef<string[]>([]);
   const revealIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const WORD_REVEAL_MS = 300;
@@ -157,16 +164,31 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
   }, []);
 
   const startMic = useCallback(async () => {
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      // Bail if the session was torn down while the permission prompt was
+      // open — don't leak the freshly-granted MediaStream.
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
 
-      const ctx = new AudioContext({ sampleRate: 16000 });
+      ctx = new AudioContext({ sampleRate: 16000 });
       micCtxRef.current = ctx;
 
       await ctx.audioWorklet.addModule("/audio-worklet-processor.js");
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        ctx.close().catch(() => {});
+        streamRef.current = null;
+        micCtxRef.current = null;
+        return;
+      }
       const worklet = new AudioWorkletNode(ctx, "pcm16-processor");
       workletNodeRef.current = worklet;
 
@@ -182,8 +204,16 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       const source = ctx.createMediaStreamSource(stream);
       source.connect(worklet);
       setVoiceState("listening");
-    } catch {
-      setError("Microphone access denied");
+    } catch (err) {
+      // Stop any stream/context we partially acquired before the error.
+      stream?.getTracks().forEach((t) => t.stop());
+      ctx?.close().catch(() => {});
+      streamRef.current = null;
+      micCtxRef.current = null;
+      if (mountedRef.current) {
+        console.warn("[vocal] mic init failed:", err instanceof Error ? err.message : String(err));
+        setError("Microphone access denied");
+      }
     }
   }, [send]);
 
@@ -200,7 +230,8 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     let msg: VocalWireMessage;
     try {
       msg = JSON.parse(typeof evt.data === "string" ? evt.data : "") as VocalWireMessage;
-    } catch {
+    } catch (err) {
+      console.warn("[vocal] inbound JSON parse failed:", err instanceof Error ? err.message : String(err));
       return;
     }
     switch (msg.type) {
@@ -245,12 +276,14 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
   useEffect(() => {
     if (!enabled) return;
 
+    mountedRef.current = true;
     const isLocalDev = typeof window !== "undefined" && window.location.hostname === "localhost";
     const wsBase = isLocalDev ? `ws://localhost:4000` : window.location.origin.replace(/^http/, "ws");
     const ws = new WebSocket(`${wsBase}/ws/vocal`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (!mountedRef.current) return;
       setConnected(true);
       send({ type: "start", audioFormat: "pcm16" });
       startMic();
@@ -263,6 +296,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     };
 
     return () => {
+      mountedRef.current = false;
       ws.close();
       stopMic();
       playCtxRef.current?.close().catch(() => {});

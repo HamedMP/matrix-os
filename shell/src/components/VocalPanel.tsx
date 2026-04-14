@@ -167,19 +167,33 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
     delegationRef.current = delegation;
   }, [delegation]);
 
+  // Timers from a completed running→done branch must survive the effect
+  // re-run caused by chatBusy flipping — but if the user starts a SECOND
+  // delegation before they fire, the old timers can call
+  // notifyDelegationComplete with the stale description and narrate the
+  // wrong build. Track them in a ref and clear them on every new entry
+  // so a new delegation always supersedes the previous one's tail.
+  const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const clearPendingTimers = useCallback(() => {
+    for (const t of pendingTimersRef.current) clearTimeout(t);
+    pendingTimersRef.current = [];
+  }, []);
+  useEffect(() => clearPendingTimers, [clearPendingTimers]);
+
   useEffect(() => {
     const current = delegationRef.current;
     if (!current) return;
 
     if (current.stage === "pending" && chatBusy) {
+      clearPendingTimers();
       setDelegation({ ...current, stage: "running" });
       return;
     }
 
     if (current.stage === "running" && !chatBusy) {
+      clearPendingTimers();
       setDelegation({ ...current, stage: "done" });
 
-      const timers: ReturnType<typeof setTimeout>[] = [];
       let reported = false;
 
       const reportCompletion = (newAppName?: string) => {
@@ -188,7 +202,11 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
         notifyDelegationComplete({
           kind: "create_app",
           description: current.description,
-          success: true,
+          // Success is inferred from whether a new app actually landed in
+          // the apps list. No new app after the retry window means the
+          // kernel failed or the build was a no-op — let Aoede apologize
+          // instead of narrating a phantom "it's ready".
+          success: newAppName !== undefined,
           newAppName,
         });
       };
@@ -205,23 +223,20 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
           return;
         }
         if (attempt < 3) {
-          timers.push(setTimeout(() => tryFindNewApp(attempt + 1), 500));
+          pendingTimersRef.current.push(setTimeout(() => tryFindNewApp(attempt + 1), 500));
           return;
         }
         reportCompletion();
       };
       tryFindNewApp(0);
 
-      timers.push(
+      pendingTimersRef.current.push(
         setTimeout(() => {
           setDelegation((prev) => (prev && prev.stage === "done" ? null : prev));
         }, 3200),
       );
-      return () => {
-        for (const t of timers) clearTimeout(t);
-      };
     }
-  }, [chatBusy, notifyDelegationComplete]);
+  }, [chatBusy, notifyDelegationComplete, clearPendingTimers]);
 
   // Throttled status push: every 1.5s while running, compute a snapshot
   // and ship it to the gateway for `check_build_status`. Skipped when the

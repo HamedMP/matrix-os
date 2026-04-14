@@ -332,7 +332,8 @@ export function createVocalHandler(deps: VocalDeps) {
     let data: VocalInbound;
     try {
       data = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as VocalInbound;
-    } catch {
+    } catch (err) {
+      console.warn("[vocal] inbound JSON parse failed:", err instanceof Error ? err.message : String(err));
       return;
     }
 
