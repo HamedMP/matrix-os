@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { createAppDispatcher } from "../../../packages/gateway/src/app-runtime/dispatcher.js";
 import { invalidateManifestCache } from "../../../packages/gateway/src/app-runtime/manifest-loader.js";
+import { ProcessManager } from "../../../packages/gateway/src/app-runtime/process-manager.js";
+import { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
 
 let tmpDir: string;
 let homeDir: string;
@@ -152,6 +154,123 @@ describe("App Runtime Dispatcher", () => {
       expect(res.status).toBe(200);
       const html = await res.text();
       expect(html).toContain("SPA Fallback");
+    });
+  });
+
+  // T055: Node mode HTTP forwarding tests (added by node-proc agent)
+  describe("node mode", () => {
+    let pm: ProcessManager;
+    let portPool: PortPool;
+    let nodeApp: Hono;
+
+    beforeEach(async () => {
+      portPool = new PortPool({ min: 44000, max: 44100 });
+      pm = new ProcessManager({
+        homeDir,
+        portPool,
+        maxProcesses: 10,
+        reaperIntervalMs: 0, // disable reaper in tests
+      });
+      nodeApp = new Hono();
+      const dispatcher = createAppDispatcher(homeDir, {
+        processManager: pm,
+        publicHost: "matrix-os.test",
+      });
+      nodeApp.route("/apps/:slug", dispatcher);
+    });
+
+    afterEach(async () => {
+      await pm.shutdownAll();
+    });
+
+    async function installNodeApp(slug: string) {
+      const src = join(process.cwd(), "tests/fixtures/apps", slug);
+      const dst = join(homeDir, "apps", slug);
+      await cp(src, dst, { recursive: true });
+      await mkdir(join(homeDir, "data", slug), { recursive: true });
+    }
+
+    it("forwards GET to child process and returns response", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ message: "hello from next" });
+    }, 15_000);
+
+    it("forwards POST with body to child process", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello", {
+        method: "POST",
+        body: JSON.stringify({ data: "test" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(200);
+    }, 15_000);
+
+    it("strips Server header from upstream response", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello");
+      expect(res.headers.get("server")).toBeNull();
+    }, 15_000);
+
+    it("strips X-Powered-By header from upstream response", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello");
+      expect(res.headers.get("x-powered-by")).toBeNull();
+    }, 15_000);
+
+    it("returns 502 or 503 on backend error", async () => {
+      const badDir = join(homeDir, "apps", "dead-app");
+      await mkdir(badDir, { recursive: true });
+      await writeFile(
+        join(badDir, "matrix.json"),
+        JSON.stringify({
+          name: "Dead App",
+          slug: "dead-app",
+          version: "1.0.0",
+          runtime: "node",
+          runtimeVersion: "^1.0.0",
+          build: { command: "echo ok", output: "dist" },
+          serve: {
+            start: "node -e \"process.exit(1)\"",
+            healthCheck: "/",
+            startTimeout: 3,
+            idleShutdown: 300,
+          },
+        }),
+      );
+      await writeFile(join(badDir, "package.json"), JSON.stringify({ type: "module" }));
+      await mkdir(join(homeDir, "data", "dead-app"), { recursive: true });
+
+      const res = await nodeApp.request("/apps/dead-app/api/test");
+      expect([502, 503]).toContain(res.status);
+    }, 15_000);
+
+    it("awaits startupPromise when process is starting (concurrent dispatch)", async () => {
+      await installNodeApp("hello-next");
+      const [r1, r2] = await Promise.all([
+        nodeApp.request("/apps/hello-next/api/hello"),
+        nodeApp.request("/apps/hello-next/"),
+      ]);
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+    }, 15_000);
+  });
+
+  // T056: WebSocket tests for node mode
+  describe("WebSocket (node mode)", () => {
+    it("returns 400 ws_not_supported for static mode WebSocket upgrade", async () => {
+      await installStaticApp("calculator", "<html></html>");
+      const res = await app.request("/apps/calculator/ws", {
+        headers: {
+          Upgrade: "websocket",
+          Connection: "Upgrade",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("ws_not_supported");
     });
   });
 });
