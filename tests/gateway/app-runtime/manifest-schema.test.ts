@@ -160,6 +160,20 @@ describe("AppManifestSchema", () => {
     expect(() => AppManifestSchema.parse(input)).toThrow();
   });
 
+  it("accepts optional dev flag as advisory boolean", () => {
+    const input = {
+      name: "DevApp",
+      slug: "dev-app",
+      version: "0.1.0",
+      runtime: "vite",
+      runtimeVersion: "^1.0.0",
+      build: { command: "pnpm build", output: "dist" },
+      dev: true,
+    };
+    const result = AppManifestSchema.parse(input);
+    expect(result.dev).toBe(true);
+  });
+
   it("parseManifest wraps Zod errors in typed ManifestError", async () => {
     const result = await parseManifest({ name: "X" });
     expect(result.ok).toBe(false);

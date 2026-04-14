@@ -44,6 +44,8 @@ const BaseManifestSchema = z.object({
   permissions: z.array(z.string()).default([]),
   storage: z.unknown().optional(),
   listingTrust: z.string().optional(),
+  /** Advisory flag: marks this manifest as a dev-mode project. No enforcement -- tooling may use it to skip caching or enable HMR. */
+  dev: z.boolean().optional(),
 });
 
 function rejectDistributionStatus(input: unknown): unknown {
