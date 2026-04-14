@@ -75,20 +75,28 @@ export async function downloadFile(
 export async function commitFiles(
   client: GatewayClient,
   files: { path: string; hash: string; size: number; action?: "delete" }[],
-): Promise<void> {
+  expectedVersion: number,
+): Promise<{ manifestVersion: number; committed: number }> {
   const res = await fetch(`${client.gatewayUrl}/api/sync/commit`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
-    body: JSON.stringify({ files }),
+    body: JSON.stringify({ files, expectedVersion }),
     signal: AbortSignal.timeout(10_000),
   });
+
+  if (res.status === 409) {
+    const data = (await res.json()) as { error: string; currentVersion: number };
+    throw new Error(`Version conflict: expected ${expectedVersion}, server at ${data.currentVersion}`);
+  }
 
   if (!res.ok) {
     throw new Error(`Commit failed: ${res.status}`);
   }
+
+  return (await res.json()) as { manifestVersion: number; committed: number };
 }
 
 export async function fetchManifest(client: GatewayClient): Promise<{

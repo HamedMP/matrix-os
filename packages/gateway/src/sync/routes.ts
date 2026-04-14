@@ -10,6 +10,7 @@ import {
 import { readManifest, type ManifestStore } from "./manifest.js";
 import { generatePresignedUrls } from "./presign.js";
 import { handleCommit, type CommitDeps } from "./commit.js";
+import { resolveWithinPrefix } from "./path-validation.js";
 import {
   syncPresignRequestsTotal,
   syncPresignDuration,
@@ -86,11 +87,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ urls });
     } catch (err: unknown) {
       timer({ action: "batch" });
-      if (err instanceof Error && (err.message.includes("path") || err.message.includes("size"))) {
-        return c.json({ error: err.message }, 400);
-      }
+      const isValidationErr = err instanceof Error && (err.message.includes("path") || err.message.includes("size"));
       console.error("[sync/presign] Presign generation failed:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Presign generation failed" }, 500);
+      return c.json({ error: isValidationErr ? "Invalid request" : "Presign generation failed" }, isValidationErr ? 400 : 500);
     }
   });
 
@@ -171,9 +170,12 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     }
 
     if (parsed.data.conflictPath) {
-      const key = `matrixos-sync/${userId}/files/${parsed.data.conflictPath}`;
+      const pathCheck = resolveWithinPrefix(userId, parsed.data.conflictPath);
+      if (!pathCheck.valid) {
+        return c.json({ error: "Invalid conflict path" }, 400);
+      }
       try {
-        await deps.r2.deleteObject(key);
+        await deps.r2.deleteObject(pathCheck.key);
       } catch (err: unknown) {
         console.error("[sync/resolve-conflict] Failed to delete conflict copy:", err instanceof Error ? err.message : String(err));
       }

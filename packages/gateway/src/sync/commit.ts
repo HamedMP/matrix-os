@@ -6,6 +6,7 @@ import {
   applyCommitToManifest,
   type ManifestDb,
 } from "./manifest.js";
+import { resolveWithinPrefix } from "./path-validation.js";
 import type { CommitRequest } from "./types.js";
 
 export interface CommitDeps {
@@ -24,6 +25,18 @@ export async function handleCommit(
   peerId: string,
   request: CommitRequest,
 ): Promise<CommitResult> {
+  // Step 0: Validate all paths before acquiring lock
+  for (const file of request.files) {
+    const pathCheck = resolveWithinPrefix(userId, file.path);
+    if (!pathCheck.valid) {
+      return {
+        error: `Invalid path: ${file.path}`,
+        currentVersion: 0,
+        expectedVersion: request.expectedVersion,
+      };
+    }
+  }
+
   return deps.db.withAdvisoryLock(userId, async () => {
     // Step 1: Check version
     const meta = await deps.db.getManifestMeta(userId);
