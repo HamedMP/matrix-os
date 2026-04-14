@@ -195,9 +195,11 @@ Read these on demand, not every session:
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
+- App runtime — Vite + React SPA (static/vite), Next.js node runtime (node), process manager, reverse proxy, HMAC-signed per-app cookies; gateway deps: semver, glob (063-react-app-runtime)
 
 ## Recent Changes
 
+- 063-react-app-runtime: React app runtime with three modes (static, vite, node), build orchestrator with source-hash caching, process manager with idle shutdown, pnpm install flow, distribution policy (owner-only/installable/featured), HMAC-signed per-app auth cookies, CLI publish command
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 # SlayZone Environment
