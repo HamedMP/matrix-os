@@ -89,12 +89,17 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   const handleTalkToMe = useCallback(async () => {
     if (mic.state === "granted") {
       handleStart(true);
-    } else if (mic.state === "denied") {
-      setShowMicDialog(true);
-    } else {
-      setShowMicDialog(true);
+      return;
     }
-  }, [mic.state]);
+    if (mic.state === "denied") {
+      setShowMicDialog(true);
+      return;
+    }
+    // "prompt" or "checking": trigger the native browser prompt directly.
+    const granted = await mic.requestAccess();
+    if (granted) handleStart(true);
+    else setShowMicDialog(true);
+  }, [mic.state, mic.requestAccess]);
 
   const handleMicAllow = useCallback(async () => {
     const granted = await mic.requestAccess();

@@ -363,7 +363,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       .then((data: { hasKey: boolean }) => {
         if (!data.hasKey) setShowSetup(true);
       })
-      .catch((err) => console.warn("[desktop] Failed to load API key status:", err));
+      .catch(() => setShowSetup(true));
   }, []);
 
   const dock = useDesktopConfigStore((s) => s.dock);
