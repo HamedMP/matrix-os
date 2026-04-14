@@ -1,0 +1,23 @@
+{
+  "name": "My Next App",
+  "slug": "my-next-app",
+  "description": "A Next.js app built on Matrix OS",
+  "version": "1.0.0",
+  "runtime": "node",
+  "runtimeVersion": "^1.0.0",
+  "build": {
+    "command": "next build",
+    "output": ".next"
+  },
+  "serve": {
+    "start": "next start -p $PORT",
+    "healthCheck": "/api/health",
+    "startTimeout": 15,
+    "idleShutdown": 300
+  },
+  "resources": {
+    "memoryMb": 256,
+    "cpuShares": 512,
+    "maxFileHandles": 128
+  }
+}
