@@ -25,6 +25,7 @@ export {
   buildPresignBatch,
   type ChangeSet,
   type PresignRequest,
+  type SyncWarning,
 } from "./daemon/sync-engine.js";
 export type {
   Manifest,

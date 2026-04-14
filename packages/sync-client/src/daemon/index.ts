@@ -77,10 +77,11 @@ export async function startDaemon(): Promise<void> {
               urls[0].url,
               join(config.syncPath, event.path),
             );
-            await commitFiles(gatewayClient, [
+            const result = await commitFiles(gatewayClient, [
               { path: event.path, hash: event.hash, size: event.size },
-            ]);
+            ], syncState.manifestVersion);
             syncState.files[event.path]!.lastSyncedHash = event.hash;
+            syncState.manifestVersion = result.manifestVersion;
             await saveSyncState(stateFile, syncState);
           }
         } catch (err) {
@@ -90,15 +91,16 @@ export async function startDaemon(): Promise<void> {
         const entry = syncState.files[event.path];
         if (entry?.lastSyncedHash) {
           try {
-            await commitFiles(gatewayClient, [
+            const deleteResult = await commitFiles(gatewayClient, [
               {
                 path: event.path,
                 hash: entry.hash,
                 size: 0,
                 action: "delete",
               },
-            ]);
+            ], syncState.manifestVersion);
             delete syncState.files[event.path];
+            syncState.manifestVersion = deleteResult.manifestVersion;
             await saveSyncState(stateFile, syncState);
           } catch (err) {
             logger.error({ err, path: event.path }, "Delete commit failed");

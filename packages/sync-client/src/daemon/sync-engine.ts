@@ -19,11 +19,18 @@ export interface DeletionEntry {
   path: string;
 }
 
+export interface SyncWarning {
+  code: "manifest_entry_soft_limit" | "manifest_entry_hard_limit";
+  message: string;
+  entryCount: number;
+}
+
 export interface ChangeSet {
   uploads: FileChange[];
   downloads: FileChange[];
   conflicts: ConflictEntry[];
   deletions: DeletionEntry[];
+  warnings: SyncWarning[];
 }
 
 export interface PresignRequest {
@@ -33,6 +40,8 @@ export interface PresignRequest {
 }
 
 const MAX_PRESIGN_BATCH = 100;
+const MANIFEST_SOFT_LIMIT = 8_000;
+const MANIFEST_HARD_LIMIT = 50_000;
 
 export function detectChanges(
   localState: SyncState,
@@ -43,6 +52,7 @@ export function detectChanges(
   const downloads: FileChange[] = [];
   const conflicts: ConflictEntry[] = [];
   const deletions: DeletionEntry[] = [];
+  const warnings: SyncWarning[] = [];
 
   const allPaths = new Set([
     ...Object.keys(localState.files),
@@ -105,7 +115,26 @@ export function detectChanges(
     }
   }
 
-  return { uploads, downloads, conflicts, deletions };
+  const activeRemoteEntries = Object.values(remoteManifest.files).filter(
+    (e) => !e.deleted,
+  ).length;
+  const projectedCount = activeRemoteEntries + uploads.length;
+
+  if (projectedCount >= MANIFEST_HARD_LIMIT) {
+    warnings.push({
+      code: "manifest_entry_hard_limit",
+      message: `Manifest has ${projectedCount} entries (hard limit: ${MANIFEST_HARD_LIMIT}). New file additions will be rejected. Update .syncignore to reduce entry count.`,
+      entryCount: projectedCount,
+    });
+  } else if (projectedCount >= MANIFEST_SOFT_LIMIT) {
+    warnings.push({
+      code: "manifest_entry_soft_limit",
+      message: `Manifest has ${projectedCount} entries (soft limit: ${MANIFEST_SOFT_LIMIT}). Consider updating .syncignore to reduce entry count.`,
+      entryCount: projectedCount,
+    });
+  }
+
+  return { uploads, downloads, conflicts, deletions, warnings };
 }
 
 export function buildPresignBatch(changes: ChangeSet): PresignRequest[] {

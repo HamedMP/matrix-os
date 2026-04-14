@@ -6,6 +6,7 @@ import {
   buildPresignBatch,
   type ChangeSet,
   type PresignRequest,
+  type SyncWarning,
 } from "../../src/daemon/sync-engine.js";
 import type { SyncState } from "../../src/daemon/manifest-cache.js";
 import type { Manifest } from "../../src/daemon/types.js";
@@ -199,6 +200,92 @@ describe("detectChanges", () => {
       expect.objectContaining({ path: "old.ts" }),
     );
   });
+
+  it("returns no warnings when manifest is below soft limit", () => {
+    const localState: SyncState = { manifestVersion: 1, lastSyncAt: 1000, files: {} };
+    const remoteManifest: Manifest = { version: 2, files: {} };
+
+    const changes = detectChanges(localState, remoteManifest, emptyIgnore);
+
+    expect(changes.warnings).toHaveLength(0);
+  });
+
+  it("emits soft limit warning at 8K manifest entries", () => {
+    const files: Record<string, { hash: string; size: number; mtime: number; peerId: string; version: number }> = {};
+    for (let i = 0; i < 8000; i++) {
+      files[`file-${i}.ts`] = {
+        hash: HASH_A,
+        size: 100,
+        mtime: 1000,
+        peerId: "peer-1",
+        version: 1,
+      };
+    }
+
+    const localState: SyncState = { manifestVersion: 1, lastSyncAt: 1000, files: {} };
+    const remoteManifest: Manifest = { version: 2, files };
+
+    const changes = detectChanges(localState, remoteManifest, emptyIgnore);
+
+    expect(changes.warnings).toContainEqual(
+      expect.objectContaining({ code: "manifest_entry_soft_limit" }),
+    );
+  });
+
+  it("emits hard limit warning at 50K manifest entries", () => {
+    const files: Record<string, { hash: string; size: number; mtime: number; peerId: string; version: number }> = {};
+    for (let i = 0; i < 50000; i++) {
+      files[`file-${i}.ts`] = {
+        hash: HASH_A,
+        size: 100,
+        mtime: 1000,
+        peerId: "peer-1",
+        version: 1,
+      };
+    }
+
+    const localState: SyncState = { manifestVersion: 1, lastSyncAt: 1000, files: {} };
+    const remoteManifest: Manifest = { version: 2, files };
+
+    const changes = detectChanges(localState, remoteManifest, emptyIgnore);
+
+    expect(changes.warnings).toContainEqual(
+      expect.objectContaining({ code: "manifest_entry_hard_limit" }),
+    );
+    expect(changes.warnings).not.toContainEqual(
+      expect.objectContaining({ code: "manifest_entry_soft_limit" }),
+    );
+  });
+
+  it("excludes deleted entries from entry count", () => {
+    const files: Record<string, { hash: string; size: number; mtime: number; peerId: string; version: number; deleted?: boolean; deletedAt?: number }> = {};
+    for (let i = 0; i < 7999; i++) {
+      files[`file-${i}.ts`] = {
+        hash: HASH_A,
+        size: 100,
+        mtime: 1000,
+        peerId: "peer-1",
+        version: 1,
+      };
+    }
+    // Add a deleted entry -- should not count toward limit
+    files["deleted.ts"] = {
+      hash: HASH_A,
+      size: 0,
+      mtime: 2000,
+      peerId: "peer-2",
+      version: 2,
+      deleted: true,
+      deletedAt: 2000,
+    };
+
+    const localState: SyncState = { manifestVersion: 1, lastSyncAt: 1000, files: {} };
+    const remoteManifest: Manifest = { version: 2, files };
+
+    const changes = detectChanges(localState, remoteManifest, emptyIgnore);
+
+    expect(changes.warnings).toHaveLength(0);
+  });
 });
 
 describe("buildPresignBatch", () => {
@@ -211,6 +298,7 @@ describe("buildPresignBatch", () => {
       downloads: [],
       conflicts: [],
       deletions: [],
+      warnings: [],
     };
 
     const requests = buildPresignBatch(changes);
@@ -231,6 +319,7 @@ describe("buildPresignBatch", () => {
       ],
       conflicts: [],
       deletions: [],
+      warnings: [],
     };
 
     const requests = buildPresignBatch(changes);
@@ -251,6 +340,7 @@ describe("buildPresignBatch", () => {
       downloads: [],
       conflicts: [],
       deletions: [],
+      warnings: [],
     };
 
     const requests = buildPresignBatch(changes);
@@ -264,6 +354,7 @@ describe("buildPresignBatch", () => {
       downloads: [],
       conflicts: [],
       deletions: [],
+      warnings: [],
     };
 
     const requests = buildPresignBatch(changes);
@@ -277,6 +368,7 @@ describe("buildPresignBatch", () => {
       downloads: [{ path: "down.ts", hash: HASH_B, size: 200 }],
       conflicts: [],
       deletions: [],
+      warnings: [],
     };
 
     const requests = buildPresignBatch(changes);
