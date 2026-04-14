@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Matrix OS — Brand Guidelines</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #FAFAF9; color: #1c1917; font-family: 'Inter', sans-serif; }
+
+  /* ─── PAGE 1: Brand Guidelines L000 ─── */
+  .page { width: 1440px; margin: 0 auto 80px; display: flex; background: #fff; }
+  .sidebar { width: 300px; padding: 48px; border-right: 1px solid #e5e5e4; }
+  .sidebar .dot { width: 10px; height: 10px; border-radius: 50%; background: #8CC7BE; display: inline-block; margin-right: 8px; vertical-align: middle; }
+  .sidebar .code { font-size: 11px; letter-spacing: 0.1em; color: #6c7178; display: inline-block; vertical-align: middle; }
+  .sidebar .desc { font-size: 11px; color: #6c7178; line-height: 1.5; margin-top: 14px; }
+  .content { flex: 1; padding: 0 48px; }
+  .section { border-top: 1px solid #e5e5e4; padding: 28px 0; display: flex; gap: 0; }
+  .section .num { width: 40px; font-size: 11px; color: #6c7178; letter-spacing: 0.05em; flex-shrink: 0; }
+  .section .center { flex: 1; display: flex; align-items: center; min-height: 160px; }
+  .section .description { width: 260px; flex-shrink: 0; }
+  .section .description h3 { font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+  .section .description p { font-size: 11px; color: #6c7178; line-height: 1.6; }
+
+  .wordmark-display { font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; }
+  .wordmark-lg {
+    font-size: 52px;
+    background: linear-gradient(90deg, #1c1917 0%, #1c1917 35%, #8CC7BE 50%, #1c1917 65%, #1c1917 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 6s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .wordmark-serif { font-family: 'Cormorant Garamond', serif; font-weight: 300; font-size: 48px; letter-spacing: 0.02em; }
+  .lockup-text { font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; font-size: 42px; }
+  .lockup-sub { font-family: 'Inter', sans-serif; font-weight: 300; letter-spacing: 0.3em; text-transform: uppercase; font-size: 14px; color: #6c7178; margin-top: 8px; }
+
+  /* Logo mark */
+  .logomark { width: 160px; height: 160px; display: flex; align-items: center; justify-content: center; }
+  .logomark img { width: 100%; height: 100%; object-fit: contain; }
+
+  /* ─── PAGE 2: Wordmark Spacing ─── */
+  .page-narrow { width: 1080px; margin: 0 auto 80px; background: #fff; padding: 40px 60px; }
+  .page-header { display: flex; border-top: 1px solid #e5e5e4; padding: 16px 0; margin-bottom: 0; }
+  .page-header span { flex: 1; font-size: 11px; color: #6c7178; }
+  .spacing-row { border-top: 1px solid #f0f0ef; padding: 16px 0; display: flex; align-items: baseline; }
+  .spacing-row .label { width: 240px; font-size: 11px; color: #6c7178; flex-shrink: 0; }
+  .spacing-row .sample { flex: 1; padding-left: 40px; }
+  .spacing-row .sample span { font-family: 'Inter', sans-serif; font-weight: 500; }
+
+  /* ─── PAGE 3: Color Palette ─── */
+  .color-header { display: flex; align-items: center; border-top: 1px solid #e5e5e4; padding: 16px 0; }
+  .color-header .brand { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .color-header .spacer { flex: 1; height: 1px; background: #e5e5e4; margin: 0 16px; }
+  .color-header .label { font-size: 11px; color: #6c7178; }
+  .color-grid { display: flex; border-top: 1px solid #e5e5e4; padding: 20px 0; }
+  .color-swatch { flex: 1; text-align: center; padding: 20px 0; }
+  .color-swatch .num { font-size: 10px; color: #9a9a9a; letter-spacing: 0.1em; margin-bottom: 12px; }
+  .color-swatch .circle { width: 120px; height: 120px; border-radius: 50%; margin: 0 auto 20px; }
+  .color-swatch .name { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+  .color-swatch .role { font-size: 10px; color: #6c7178; margin-bottom: 8px; }
+  .color-swatch .hex { font-size: 10px; color: #9a9a9a; font-family: 'JetBrains Mono', monospace; }
+  .color-footer { display: flex; border-top: 1px solid #e5e5e4; padding: 14px 0; }
+  .color-footer .brand { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .color-footer .spacer { flex: 1; height: 1px; background: #e5e5e4; margin: 0 12px; align-self: center; }
+  .color-footer .label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #6c7178; }
+
+  /* ─── PAGE 4: Typography ─── */
+  .type-row { border-top: 1px solid #e5e5e4; padding: 32px 0; display: flex; }
+  .type-row .num { width: 40px; font-size: 11px; color: #6c7178; flex-shrink: 0; }
+  .type-row .sample { flex: 1; }
+  .type-row .sample .font-name { font-size: 10px; color: #9a9a9a; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px; }
+  .type-row .sample .preview { margin-bottom: 8px; }
+  .type-row .meta { width: 260px; flex-shrink: 0; }
+  .type-row .meta h3 { font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+  .type-row .meta p { font-size: 11px; color: #6c7178; line-height: 1.6; }
+  .type-row .meta .weights { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .type-row .meta .weights span { font-size: 10px; color: #9a9a9a; border: 1px solid #e5e5e4; border-radius: 4px; padding: 2px 8px; }
+
+  /* ─── Scroll reveal animations ─── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Stagger children inside color grids */
+  .color-swatch.reveal { transition-delay: var(--delay, 0ms); }
+
+  /* Highlight flash on reveal */
+  .section.reveal.visible, .spacing-row.reveal.visible, .type-row.reveal.visible {
+    animation: highlightFade 1.2s ease-out;
+  }
+  @keyframes highlightFade {
+    0% { background: rgba(140, 199, 190, 0.08); }
+    100% { background: transparent; }
+  }
+</style>
+<script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- PAGE 1: BRAND GUIDELINES L000                          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="sidebar">
+    <div><span class="dot"></span><span class="code">L000</span></div>
+    <p class="desc">Matrix OS is an AI operating system — a personal desktop in the cloud where you can create any app you imagine.</p>
+  </div>
+  <div class="content">
+    <!-- Section 01: Logomark -->
+    <div class="section reveal">
+      <div class="num">01</div>
+      <div class="center">
+        <div class="logomark"><img src="/logo-rabbit.png" alt="Matrix OS Logo" /></div>
+      </div>
+      <div class="description">
+        <h3>Logomark</h3>
+        <p>The Matrix OS mark is a leaping rabbit rendered in diagonal stripes. It represents speed, agility, and forward momentum — the feeling of entering a new dimension of computing.</p>
+      </div>
+    </div>
+
+    <!-- Section 02: Wordmark -->
+    <div class="section reveal">
+      <div class="num">02</div>
+      <div class="center">
+        <span class="wordmark-display wordmark-lg">MATRIX OS</span>
+      </div>
+      <div class="description">
+        <h3>Wordmark</h3>
+        <p>The primary wordmark uses Inter in semibold weight with generous letter-spacing. Clean, geometric, and modern — reflecting the system's precision.</p>
+      </div>
+    </div>
+
+    <!-- Section 03: Lockup -->
+    <div class="section reveal">
+      <div class="num">03</div>
+      <div class="center">
+        <div>
+          <div class="lockup-text">MATRIX OS</div>
+          <div class="lockup-sub">Your AI Operating System</div>
+        </div>
+      </div>
+      <div class="description">
+        <h3>Lockup</h3>
+        <p>The full lockup pairs the wordmark with the tagline "Your AI Operating System." Used when introducing the brand to new audiences or in marketing contexts.</p>
+      </div>
+    </div>
+
+    <!-- Section 04: Serif Mark -->
+    <div class="section reveal">
+      <div class="num">04</div>
+      <div class="center">
+        <span class="wordmark-serif">Matrix OS</span>
+      </div>
+      <div class="description">
+        <h3>Editorial Mark</h3>
+        <p>The editorial variant uses Cormorant Garamond Light for premium, editorial contexts — the onboarding screen, marketing pages, and display typography. Evokes warmth and sophistication.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- PAGE 2: WORDMARK SPACING                               -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="page-narrow">
+  <div class="page-header">
+    <span>Matrix OS</span>
+    <span>Wordmark Spacing</span>
+    <span>Positive</span>
+    <span>2026-04-10</span>
+  </div>
+
+  <div class="spacing-row reveal">
+    <div class="label">48px (Spacing 0.15em)</div>
+    <div class="sample"><span style="font-size:96px;font-weight:600;letter-spacing:0.15em;">MATRIX OS</span></div>
+  </div>
+  <div class="spacing-row reveal">
+    <div class="label">36px (Spacing 0.15em)</div>
+    <div class="sample"><span style="font-size:72px;font-weight:600;letter-spacing:0.15em;">MATRIX OS</span></div>
+  </div>
+  <div class="spacing-row reveal">
+    <div class="label">24px (Spacing 0.12em)</div>
+    <div class="sample"><span style="font-size:48px;font-weight:600;letter-spacing:0.12em;">MATRIX OS</span></div>
+  </div>
+  <div class="spacing-row reveal">
+    <div class="label">18px (Spacing 0.10em)</div>
+    <div class="sample"><span style="font-size:36px;font-weight:600;letter-spacing:0.10em;">MATRIX OS</span></div>
+  </div>
+  <div class="spacing-row reveal">
+    <div class="label">14px (Spacing 0.08em)</div>
+    <div class="sample"><span style="font-size:28px;font-weight:600;letter-spacing:0.08em;">MATRIX OS</span></div>
+  </div>
+  <div class="spacing-row reveal">
+    <div class="label">11px (Spacing 0.06em)</div>
+    <div class="sample"><span style="font-size:22px;font-weight:600;letter-spacing:0.06em;">MATRIX OS</span></div>
+  </div>
+  <div class="spacing-row reveal">
+    <div class="label">9px (Spacing 0.04em)</div>
+    <div class="sample"><span style="font-size:18px;font-weight:500;letter-spacing:0.04em;">MATRIX OS</span></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- PAGE 3: COLOR PALETTE                                  -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="page-narrow">
+  <div class="color-header">
+    <span class="brand">MATRIX OS</span>
+    <span class="spacer"></span>
+    <span class="label">Color System</span>
+    <span class="spacer"></span>
+    <span class="label">2026</span>
+  </div>
+
+  <div class="color-grid">
+    <div class="color-swatch reveal">
+      <div class="num">01</div>
+      <div class="circle" style="background: #8CC7BE;"></div>
+      <div class="name">Sage</div>
+      <div class="role">Primary / Brand</div>
+      <div class="hex">#8CC7BE</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">02</div>
+      <div class="circle" style="background: #6A8A7A;"></div>
+      <div class="name">Moss</div>
+      <div class="role">Gradient Accent</div>
+      <div class="hex">#6A8A7A</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">03</div>
+      <div class="circle" style="background: #323D2E;"></div>
+      <div class="name">Forest</div>
+      <div class="role">Gradient Deep</div>
+      <div class="hex">#323D2E</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">04</div>
+      <div class="circle" style="background: #FAFAF9; border: 1px solid #e5e5e4;"></div>
+      <div class="name">Stone</div>
+      <div class="role">Background</div>
+      <div class="hex">#FAFAF9</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">05</div>
+      <div class="circle" style="background: #1C1917;"></div>
+      <div class="name">Ink</div>
+      <div class="role">Foreground</div>
+      <div class="hex">#1C1917</div>
+    </div>
+  </div>
+
+  <!-- Secondary colors -->
+  <div class="color-grid" style="padding-top: 0;">
+    <div class="color-swatch reveal">
+      <div class="num">06</div>
+      <div class="circle" style="background: #9AA48C;"></div>
+      <div class="name">Lichen</div>
+      <div class="role">Gradient Mid</div>
+      <div class="hex">#9AA48C</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">07</div>
+      <div class="circle" style="background: #E5E5E4; border: 1px solid #d4d4d3;"></div>
+      <div class="name">Pebble</div>
+      <div class="role">Border / Input</div>
+      <div class="hex">#E5E5E4</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">08</div>
+      <div class="circle" style="background: #EF4444;"></div>
+      <div class="name">Ember</div>
+      <div class="role">Destructive</div>
+      <div class="hex">#EF4444</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">09</div>
+      <div class="circle" style="background: #22C55E;"></div>
+      <div class="name">Fern</div>
+      <div class="role">Success</div>
+      <div class="hex">#22C55E</div>
+    </div>
+    <div class="color-swatch reveal">
+      <div class="num">10</div>
+      <div class="circle" style="background: #EAB308;"></div>
+      <div class="name">Amber</div>
+      <div class="role">Warning</div>
+      <div class="hex">#EAB308</div>
+    </div>
+  </div>
+
+  <div class="color-footer">
+    <span class="brand">MATRIX OS</span>
+    <span class="spacer"></span>
+    <span class="label">COLORS</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- PAGE 4: TYPOGRAPHY                                     -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="page-narrow">
+  <div class="color-header">
+    <span class="brand">MATRIX OS</span>
+    <span class="spacer"></span>
+    <span class="label">Typography</span>
+    <span class="spacer"></span>
+    <span class="label">2026</span>
+  </div>
+
+  <div class="type-row reveal">
+    <div class="num">01</div>
+    <div class="sample">
+      <div class="font-name">Cormorant Garamond</div>
+      <div class="preview" style="font-family: 'Cormorant Garamond', serif; font-weight: 300; font-size: 64px; line-height: 1.1;">Aa</div>
+      <div style="font-family: 'Cormorant Garamond', serif; font-weight: 300; font-size: 24px; color: #6c7178; line-height: 1.4;">The quick brown fox jumps over the lazy dog</div>
+    </div>
+    <div class="meta">
+      <h3>Display / Headline</h3>
+      <p>Used for editorial headings, the onboarding screen, marketing display text, and premium UI moments. Evokes warmth and sophistication.</p>
+      <div class="weights">
+        <span>Light 300</span>
+        <span>Regular 400</span>
+        <span>Medium 500</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="type-row reveal">
+    <div class="num">02</div>
+    <div class="sample">
+      <div class="font-name">Inter</div>
+      <div class="preview" style="font-family: 'Inter', sans-serif; font-weight: 400; font-size: 64px; line-height: 1.1;">Aa</div>
+      <div style="font-family: 'Inter', sans-serif; font-weight: 400; font-size: 16px; color: #6c7178; line-height: 1.5;">The quick brown fox jumps over the lazy dog</div>
+    </div>
+    <div class="meta">
+      <h3>Body / UI</h3>
+      <p>The primary interface font. Used for all body text, buttons, labels, navigation, and form elements. Clean, geometric, highly legible at all sizes.</p>
+      <div class="weights">
+        <span>Regular 400</span>
+        <span>Medium 500</span>
+        <span>Semibold 600</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="type-row reveal">
+    <div class="num">03</div>
+    <div class="sample">
+      <div class="font-name">JetBrains Mono</div>
+      <div class="preview" style="font-family: 'JetBrains Mono', monospace; font-weight: 400; font-size: 64px; line-height: 1.1;">Aa</div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-weight: 400; font-size: 14px; color: #6c7178; line-height: 1.5;">const matrix = new MatrixOS();</div>
+    </div>
+    <div class="meta">
+      <h3>Code / Monospace</h3>
+      <p>Used in the terminal, code blocks, and technical UI elements. Optimized for code readability with distinct character shapes and ligatures.</p>
+      <div class="weights">
+        <span>Regular 400</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="color-footer">
+    <span class="brand">MATRIX OS</span>
+    <span class="spacer"></span>
+    <span class="label">TYPE</span>
+  </div>
+</div>
+
+<script>
+  // Scroll-triggered reveal with staggered delays for color swatches
+  document.querySelectorAll('.color-grid').forEach(grid => {
+    grid.querySelectorAll('.color-swatch.reveal').forEach((swatch, i) => {
+      swatch.style.setProperty('--delay', `${i * 120}ms`);
+    });
+  });
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.15, rootMargin: '0px 0px -60px 0px' });
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

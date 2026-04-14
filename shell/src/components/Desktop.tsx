@@ -7,6 +7,7 @@ import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
@@ -1079,7 +1080,18 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       )}
       {showSetup && (
         <OnboardingScreen
-          onComplete={() => setShowSetup(false)}
+          onComplete={() => {
+            // Whether the user finished onboarding or skipped it, land them
+            // on the moraine-lake wallpaper. Best-effort persist to the
+            // gateway; the local default already matches so the visual is
+            // correct even if the gateway is unreachable.
+            saveDesktopConfig({
+              background: { type: "wallpaper", name: "moraine-lake.jpg" },
+              dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+              pinnedApps: [],
+            }).catch(() => {});
+            setShowSetup(false);
+          }}
           onOpenTerminal={() => openWindow("Terminal", "__terminal__")}
         />
       )}

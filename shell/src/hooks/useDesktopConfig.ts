@@ -18,8 +18,10 @@ export interface DesktopConfig {
   iconStyle?: string;
 }
 
+const BUNDLED_WALLPAPERS = new Set(["moraine-lake.jpg"]);
+
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
-  background: { type: "pattern" },
+  background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
   pinnedApps: [],
 };
@@ -59,12 +61,19 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
     case "gradient":
       body.style.background = `linear-gradient(${config.angle ?? 135}deg, ${config.from}, ${config.to})`;
       break;
-    case "wallpaper":
-      body.style.backgroundImage = `url(${gatewayUrl}/files/system/wallpapers/${config.name})`;
+    case "wallpaper": {
+      // Bundled defaults live in shell/public/wallpapers and work even when
+      // the gateway is unreachable. User-uploaded wallpapers are served by
+      // the gateway under /files/system/wallpapers.
+      const url = BUNDLED_WALLPAPERS.has(config.name)
+        ? `/wallpapers/${config.name}`
+        : `${gatewayUrl}/files/system/wallpapers/${config.name}`;
+      body.style.backgroundImage = `url(${url})`;
       body.style.backgroundSize = "cover";
       body.style.backgroundPosition = "center";
       body.style.backgroundRepeat = "no-repeat";
       break;
+    }
     case "image":
       body.style.backgroundImage = `url(${config.url})`;
       body.style.backgroundSize = config.fit ?? "cover";
