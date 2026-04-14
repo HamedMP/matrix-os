@@ -11,3 +11,7 @@ export { RUNTIME_VERSION, assertRuntimeCompatible } from "./runtime-version.js";
 export { BuildOrchestrator, type BuildResult } from "./build-orchestrator.js";
 export { hashSources, hashLockfile, readBuildStamp, writeBuildStamp, isBuildStale, type BuildStamp } from "./build-cache.js";
 export { ManifestError, BuildError, SpawnError, HealthCheckError, ProxyError } from "./errors.js";
+export { ProcessManager, type ProcessRecord, type ProcessState, type ProcessManagerOptions } from "./process-manager.js";
+export { PortPool, type PortPoolOptions } from "./port-pool.js";
+export { safeEnv, type SafeEnvOptions } from "./safe-env.js";
+export type { DispatcherConfig } from "./dispatcher.js";

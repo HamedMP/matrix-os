@@ -66,6 +66,8 @@ import {
   buildSetCookie,
   AckStore,
   SAFE_SLUG,
+  ProcessManager,
+  PortPool,
 } from "./app-runtime/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
@@ -929,8 +931,20 @@ export async function createGateway(config: GatewayConfig) {
     ),
   );
 
+  // Create process manager for node-runtime apps
+  const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
+  const processManager = new ProcessManager({
+    homeDir: homePath,
+    portPool,
+    maxProcesses: 10,
+    reaperIntervalMs: 30_000,
+  });
+
   // Mount app dispatcher on /apps/:slug (static + vite + node branches)
-  const appDispatcher = createAppDispatcher(homePath);
+  const appDispatcher = createAppDispatcher(homePath, {
+    processManager,
+    publicHost: process.env.PUBLIC_HOST ?? "localhost",
+  });
   app.route("/apps/:slug", appDispatcher);
 
   app.use("*", async (c, next) => {
@@ -2470,6 +2484,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await channelManager.stop();
+      await processManager.shutdownAll();
       await sessionRegistry.shutdown();
       await watcher.close();
       await appDb?.destroy();
