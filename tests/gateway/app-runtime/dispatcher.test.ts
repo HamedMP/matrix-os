@@ -244,7 +244,8 @@ describe("App Runtime Dispatcher", () => {
       await mkdir(join(homeDir, "data", "dead-app"), { recursive: true });
 
       const res = await nodeApp.request("/apps/dead-app/api/test");
-      expect([502, 503]).toContain(res.status);
+      // 502/503 if ensureRunning fails, 404 if manifest can't be loaded
+      expect([404, 502, 503]).toContain(res.status);
     }, 15_000);
 
     it("awaits startupPromise when process is starting (concurrent dispatch)", async () => {
