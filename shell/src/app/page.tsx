@@ -59,7 +59,7 @@ export default function Home() {
             chat={chat}
           />
 
-          <div className="pointer-events-none absolute inset-0 flex flex-col p-2 md:p-4">
+          <div className="pointer-events-none absolute inset-0 flex flex-col px-2 md:px-4 pb-2 md:pb-4 pt-10 md:pt-12">
             <div className="flex justify-end">
               <ThoughtCard />
             </div>

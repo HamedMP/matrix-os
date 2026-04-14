@@ -36,7 +36,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -173,6 +173,8 @@ function DockIcon({
   onUnpin,
   onRegenerateIcon,
   onRename,
+  onQuit,
+  canQuit,
 }: {
   name: string;
   active: boolean;
@@ -183,6 +185,8 @@ function DockIcon({
   onUnpin?: () => void;
   onRegenerateIcon?: () => void;
   onRename?: (newName: string) => void;
+  onQuit?: () => void;
+  canQuit?: boolean;
 }) {
   const initial = name.charAt(0).toUpperCase();
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
@@ -216,7 +220,7 @@ function DockIcon({
     </button>
   );
 
-  const hasContextMenu = onUnpin || onRegenerateIcon || onRename;
+  const hasContextMenu = onUnpin || onRegenerateIcon || onRename || onQuit;
   if (!hasContextMenu) {
     return (
       <Tooltip>
@@ -264,6 +268,20 @@ function DockIcon({
             <PencilIcon className="size-3.5 mr-2" />
             Rename
           </ContextMenuItem>
+        )}
+        {onQuit && (
+          <>
+            {(onUnpin || onRegenerateIcon || onRename) && <ContextMenuSeparator />}
+            <ContextMenuItem
+              disabled={!canQuit}
+              onSelect={() => {
+                if (canQuit) onQuit();
+              }}
+            >
+              <XCircleIcon className="size-3.5 mr-2" />
+              Quit
+            </ContextMenuItem>
+          </>
         )}
       </ContextMenuContent>
     </ContextMenu>
@@ -1208,6 +1226,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                         onUnpin={() => togglePin(app.path)}
                         onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
                         onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
+                        onQuit={() => removeFromCanvas(app.path)}
+                        canQuit={hasAny}
                       />
                     );
                   })}
@@ -1225,6 +1245,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                       iconUrl={app.iconUrl}
                       onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
                       onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
+                      onQuit={() => removeFromCanvas(app.path)}
+                      canQuit
                     />
                   ))}
                 </>
