@@ -94,20 +94,55 @@ describe("Phase 2 integration: node runtime", () => {
   }, 15_000);
 
   it("idle shutdown releases the port back to the pool", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Create a short-lived idle app for fast testing
+    const { writeFile: wf, mkdir: mk, cp: cpFn } = await import("node:fs/promises");
+    const shortDir = join(tmpHome, "apps", "short-idle-int");
+    await mk(shortDir, { recursive: true });
+    await wf(
+      join(shortDir, "matrix.json"),
+      JSON.stringify({
+        name: "Short Idle Int",
+        slug: "short-idle-int",
+        version: "1.0.0",
+        runtime: "node",
+        runtimeVersion: "^1.0.0",
+        build: { command: "echo ok", output: "dist" },
+        serve: {
+          start: "node server.js",
+          healthCheck: "/api/health",
+          startTimeout: 10,
+          idleShutdown: 2,
+        },
+      }),
+    );
+    await cpFn(
+      join(process.cwd(), "tests/fixtures/apps/hello-next/server.js"),
+      join(shortDir, "server.js"),
+    );
+    await wf(join(shortDir, "package.json"), JSON.stringify({ type: "module" }));
+    await mk(join(tmpHome, "data", "short-idle-int"), { recursive: true });
 
-    const record = await pm.ensureRunning("hello-next");
-    const allocatedPort = record.port!;
-    expect(portPool.inUse()).toContain(allocatedPort);
+    // Create a PM with a fast reaper
+    const idlePool = new PortPoolCtor({ min: 43200, max: 43210 });
+    const idlePm = new ProcessManagerCtor({
+      homeDir: tmpHome,
+      portPool: idlePool,
+      maxProcesses: 10,
+      reaperIntervalMs: 1_000,
+    });
 
-    // Advance past idle timeout
-    vi.advanceTimersByTime(300_000 + 31_000);
-    await vi.runAllTimersAsync();
+    try {
+      const record = await idlePm.ensureRunning("short-idle-int");
+      const allocatedPort = record.port!;
+      expect(idlePool.inUse()).toContain(allocatedPort);
 
-    // Port should be released
-    expect(portPool.inUse()).not.toContain(allocatedPort);
+      // Wait for idle timeout (2s) + reaper (1s) + buffer
+      await new Promise((r) => setTimeout(r, 5000));
 
-    vi.useRealTimers();
+      expect(idlePool.inUse()).not.toContain(allocatedPort);
+    } finally {
+      await idlePm.shutdownAll();
+    }
   }, 15_000);
 
   it("shutdownAll SIGTERMs all running children", async () => {
