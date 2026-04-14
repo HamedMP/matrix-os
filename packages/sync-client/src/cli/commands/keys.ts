@@ -1,5 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { defineCommand } from "citty";
 
 const SUPPORTED_KEY_TYPES = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"] as const;
 type KeyType = (typeof SUPPORTED_KEY_TYPES)[number];
@@ -87,3 +89,41 @@ export async function addKeyToAuthorizedKeys(
   lines.push(entry);
   await writeFile(filePath, lines.join("\n") + "\n", { mode: 0o600 });
 }
+
+const addKeyCommand = defineCommand({
+  meta: { name: "add", description: "Add an SSH public key" },
+  args: {
+    pubkeyFile: {
+      type: "positional",
+      description: "Path to the public key file",
+      required: true,
+    },
+  },
+  run: async ({ args }) => {
+    const raw = await readFile(args.pubkeyFile, "utf-8");
+    const key = parsePublicKey(raw);
+    if (!key) {
+      console.error("Invalid public key format. Supported types: ed25519, RSA, ECDSA");
+      process.exitCode = 1;
+      return;
+    }
+
+    const validation = validatePublicKey(key);
+    if (!validation.valid) {
+      console.error(`Invalid key: ${validation.reason}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const authorizedKeysPath = resolve(homedir(), "matrixos", "system", "authorized_keys");
+    await addKeyToAuthorizedKeys(authorizedKeysPath, key);
+    console.log(`Added ${key.type} key${key.comment ? ` (${key.comment})` : ""}`);
+  },
+});
+
+export const keysCommand = defineCommand({
+  meta: { name: "keys", description: "Manage SSH keys" },
+  subCommands: {
+    add: addKeyCommand,
+  },
+});

@@ -19,11 +19,15 @@ actor DaemonClient {
     func getStatus() async throws -> DaemonState {
         let response = try await sendRequest(["command": "status"])
 
-        let status = parseStatus(response["status"] as? String)
-        let peers = parsePeers(response["peers"] as? [[String: Any]])
-        let activity = parseActivity(response["activity"] as? [[String: Any]])
-        let conflicts = parseConflicts(response["conflicts"] as? [[String: Any]])
-        let invites = parseInvites(response["invites"] as? [[String: Any]])
+        guard let result = response["result"] as? [String: Any] else {
+            throw DaemonError.invalidResponse
+        }
+
+        let status = parseStatus(result["status"] as? String)
+        let peers = parsePeers(result["peers"] as? [[String: Any]])
+        let activity = parseActivity(result["activity"] as? [[String: Any]])
+        let conflicts = parseConflicts(result["conflicts"] as? [[String: Any]])
+        let invites = parseInvites(result["invites"] as? [[String: Any]])
 
         return DaemonState(
             status: status,
