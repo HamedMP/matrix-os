@@ -56,11 +56,10 @@ describe("publishApp", () => {
         },
       }),
     );
+    await mkdir(join(appDir, "dist/assets"), { recursive: true });
     await writeFile(join(appDir, "package.json"), JSON.stringify({ name: slug, version: "1.0.0" }));
     await writeFile(join(appDir, "src/main.tsx"), "export default function App() { return <div>Hello</div>; }");
     await writeFile(join(appDir, "dist/index.html"), "<html><body>Built</body></html>");
-    await writeFile(join(appDir, "dist/assets/main.js"), "console.log('hello');");
-    await mkdir(join(appDir, "dist/assets"), { recursive: true });
     await writeFile(join(appDir, "dist/assets/main.js"), "console.log('hello');");
     return appDir;
   }
