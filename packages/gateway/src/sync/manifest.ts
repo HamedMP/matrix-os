@@ -130,3 +130,27 @@ export function applyCommitToManifest(
 
   return updated;
 }
+
+const DEFAULT_TOMBSTONE_MAX_AGE_DAYS = 30;
+
+export function garbageCollectTombstones(
+  manifest: Manifest,
+  maxAgeDays = DEFAULT_TOMBSTONE_MAX_AGE_DAYS,
+): Manifest & { collected: number } {
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  const files: Manifest["files"] = {};
+  let collected = 0;
+
+  for (const [path, entry] of Object.entries(manifest.files)) {
+    if (entry.deleted) {
+      const deletedAt = entry.deletedAt ?? 0;
+      if (deletedAt < cutoff) {
+        collected++;
+        continue;
+      }
+    }
+    files[path] = entry;
+  }
+
+  return { version: 2, files, collected };
+}

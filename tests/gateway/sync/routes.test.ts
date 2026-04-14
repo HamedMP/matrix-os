@@ -170,6 +170,27 @@ describe("POST /api/sync/presign", () => {
     const json = await res.json();
     expect(json.urls).toHaveLength(2);
   });
+
+  it("returns 429 when rate limit exceeded", async () => {
+    // Each createTestApp creates its own rate limiter instance (100 req/min)
+    const app = createTestApp();
+
+    // Send 100 requests (at limit)
+    for (let i = 0; i < 100; i++) {
+      const res = await app.request(jsonRequest("/api/sync/presign", {
+        files: [{ path: `file-${i}.txt`, action: "get" }],
+      }));
+      expect(res.status).toBe(200);
+    }
+
+    // 101st should be rate limited
+    const res = await app.request(jsonRequest("/api/sync/presign", {
+      files: [{ path: "one-too-many.txt", action: "get" }],
+    }));
+    expect(res.status).toBe(429);
+    const json = await res.json();
+    expect(json.error).toMatch(/rate limit/i);
+  });
 });
 
 describe("POST /api/sync/commit", () => {

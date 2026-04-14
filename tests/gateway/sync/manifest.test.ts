@@ -40,6 +40,7 @@ import {
   readManifest,
   writeManifest,
   applyCommitToManifest,
+  garbageCollectTombstones,
   type ManifestStore,
 } from "../../../packages/gateway/src/sync/manifest.js";
 
@@ -199,5 +200,110 @@ describe("applyCommitToManifest", () => {
       .filter((e) => !e.deleted)
       .reduce((sum, e) => sum + e.size, 0);
     expect(totalSize).toBe(300);
+  });
+});
+
+describe("garbageCollectTombstones", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it("removes tombstones older than maxAgeDays", () => {
+    const manifest = makeManifest({ "live.txt": { hash: HASH_A, size: 100 } });
+    manifest.files["old-dead.txt"] = {
+      hash: HASH_B,
+      size: 0,
+      mtime: Date.now(),
+      peerId: "peer",
+      version: 2,
+      deleted: true,
+      deletedAt: Date.now() - 31 * DAY_MS,
+    };
+
+    const result = garbageCollectTombstones(manifest);
+
+    expect(result.files["live.txt"]).toBeDefined();
+    expect(result.files["old-dead.txt"]).toBeUndefined();
+  });
+
+  it("keeps tombstones younger than maxAgeDays", () => {
+    const manifest = makeManifest({});
+    manifest.files["recent-dead.txt"] = {
+      hash: HASH_A,
+      size: 0,
+      mtime: Date.now(),
+      peerId: "peer",
+      version: 1,
+      deleted: true,
+      deletedAt: Date.now() - 5 * DAY_MS,
+    };
+
+    const result = garbageCollectTombstones(manifest);
+
+    expect(result.files["recent-dead.txt"]).toBeDefined();
+    expect(result.files["recent-dead.txt"]!.deleted).toBe(true);
+  });
+
+  it("does not touch live files", () => {
+    const manifest = makeManifest({
+      "file1.txt": { hash: HASH_A, size: 100 },
+      "file2.txt": { hash: HASH_B, size: 200 },
+    });
+
+    const result = garbageCollectTombstones(manifest);
+
+    expect(Object.keys(result.files)).toHaveLength(2);
+  });
+
+  it("respects custom maxAgeDays", () => {
+    const manifest = makeManifest({});
+    manifest.files["dead.txt"] = {
+      hash: HASH_A,
+      size: 0,
+      mtime: Date.now(),
+      peerId: "peer",
+      version: 1,
+      deleted: true,
+      deletedAt: Date.now() - 8 * DAY_MS,
+    };
+
+    // 7 days -- should be collected
+    const result7 = garbageCollectTombstones(manifest, 7);
+    expect(result7.files["dead.txt"]).toBeUndefined();
+
+    // 10 days -- should be kept
+    const result10 = garbageCollectTombstones(manifest, 10);
+    expect(result10.files["dead.txt"]).toBeDefined();
+  });
+
+  it("handles tombstones with missing deletedAt (treats as ancient)", () => {
+    const manifest = makeManifest({});
+    manifest.files["no-timestamp.txt"] = {
+      hash: HASH_A,
+      size: 0,
+      mtime: Date.now(),
+      peerId: "peer",
+      version: 1,
+      deleted: true,
+    };
+
+    const result = garbageCollectTombstones(manifest);
+
+    expect(result.files["no-timestamp.txt"]).toBeUndefined();
+  });
+
+  it("returns count of collected tombstones", () => {
+    const manifest = makeManifest({ "live.txt": { hash: HASH_A, size: 100 } });
+    manifest.files["dead1.txt"] = {
+      hash: HASH_A, size: 0, mtime: Date.now(), peerId: "p", version: 1,
+      deleted: true, deletedAt: Date.now() - 31 * DAY_MS,
+    };
+    manifest.files["dead2.txt"] = {
+      hash: HASH_B, size: 0, mtime: Date.now(), peerId: "p", version: 1,
+      deleted: true, deletedAt: Date.now() - 45 * DAY_MS,
+    };
+
+    const result = garbageCollectTombstones(manifest);
+
+    expect(result.collected).toBe(2);
+    expect(Object.keys(result.files)).toHaveLength(1);
   });
 });

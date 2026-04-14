@@ -4,16 +4,25 @@ import { resolveWithinPrefix } from "./path-validation.js";
 import type { PresignFile } from "./types.js";
 
 const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
-const MAX_PUT_SIZE = 100 * 1024 * 1024; // 100MB
+const SINGLE_PUT_MAX = 100 * 1024 * 1024; // 100MB -- above this, use multipart
+const MAX_PUT_SIZE = 1024 * 1024 * 1024; // 1GB hard cap
+const MULTIPART_PART_SIZE = 64 * 1024 * 1024; // 64MB per part
 
 export interface PresignDeps {
   r2: R2Client;
+}
+
+export interface MultipartInfo {
+  uploadId: string;
+  partUrls: string[];
+  partSize: number;
 }
 
 export interface PresignResult {
   path: string;
   url: string;
   expiresIn: number;
+  multipart?: MultipartInfo;
 }
 
 export async function generatePresignedUrls(
@@ -33,7 +42,7 @@ export async function generatePresignedUrls(
   for (const file of files) {
     if (file.action === "put" && file.size != null && file.size > MAX_PUT_SIZE) {
       throw new Error(
-        `File "${file.path}" exceeds maximum size of 100MB (${file.size} bytes)`,
+        `File "${file.path}" exceeds maximum size of 1GB (${file.size} bytes)`,
       );
     }
   }
@@ -42,19 +51,33 @@ export async function generatePresignedUrls(
 
   for (const file of files) {
     const key = buildFileKey(userId, file.path);
-    let url: string;
 
     if (file.action === "get") {
-      url = await deps.r2.getPresignedGetUrl(key, PRESIGN_EXPIRY_SECONDS);
-    } else {
-      url = await deps.r2.getPresignedPutUrl(key, PRESIGN_EXPIRY_SECONDS);
-    }
+      const url = await deps.r2.getPresignedGetUrl(key, PRESIGN_EXPIRY_SECONDS);
+      results.push({ path: file.path, url, expiresIn: PRESIGN_EXPIRY_SECONDS });
+    } else if (file.size != null && file.size > SINGLE_PUT_MAX) {
+      // Multipart upload for files >100MB
+      const uploadId = await deps.r2.createMultipartUpload(key);
+      const partCount = Math.ceil(file.size / MULTIPART_PART_SIZE);
+      const partUrls: string[] = [];
 
-    results.push({
-      path: file.path,
-      url,
-      expiresIn: PRESIGN_EXPIRY_SECONDS,
-    });
+      for (let i = 1; i <= partCount; i++) {
+        const partUrl = await deps.r2.getPresignedPartUrl(
+          key, uploadId, i, PRESIGN_EXPIRY_SECONDS,
+        );
+        partUrls.push(partUrl);
+      }
+
+      results.push({
+        path: file.path,
+        url: "", // no single PUT URL for multipart
+        expiresIn: PRESIGN_EXPIRY_SECONDS,
+        multipart: { uploadId, partUrls, partSize: MULTIPART_PART_SIZE },
+      });
+    } else {
+      const url = await deps.r2.getPresignedPutUrl(key, PRESIGN_EXPIRY_SECONDS);
+      results.push({ path: file.path, url, expiresIn: PRESIGN_EXPIRY_SECONDS });
+    }
   }
 
   return results;

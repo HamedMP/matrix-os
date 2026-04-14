@@ -29,6 +29,7 @@ import {
   ShareForbiddenError,
   GranteeNotFoundError,
 } from "./sharing.js";
+import { createSyncRateLimiter } from "./rate-limiter.js";
 
 const SYNC_BODY_LIMIT = 65536;
 
@@ -45,6 +46,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const app = new Hono();
   const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
   const store: ManifestStore = { r2: deps.r2, db: deps.db };
+  const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
 
   // GET /manifest
   app.get("/manifest", async (c) => {
@@ -68,6 +70,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /presign
   app.post("/presign", mutatingBodyLimit, async (c) => {
     const userId = deps.getUserId(c);
+
+    if (!presignLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
+
     const body = await c.req.json();
     const parsed = PresignRequestSchema.safeParse(body);
 

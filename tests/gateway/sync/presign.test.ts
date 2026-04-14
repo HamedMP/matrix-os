@@ -5,6 +5,8 @@ const HASH_A = "sha256:" + "a".repeat(64);
 const mockR2 = {
   getPresignedGetUrl: vi.fn(),
   getPresignedPutUrl: vi.fn(),
+  createMultipartUpload: vi.fn(),
+  getPresignedPartUrl: vi.fn(),
   getObject: vi.fn(),
   putObject: vi.fn(),
   deleteObject: vi.fn(),
@@ -78,20 +80,20 @@ describe("generatePresignedUrls", () => {
     );
   });
 
-  it("rejects files exceeding 100MB for PUT", async () => {
+  it("rejects files exceeding 1GB for PUT", async () => {
     await expect(
       generatePresignedUrls(deps, "user1", [
         {
-          path: "big-file.bin",
+          path: "huge-file.bin",
           action: "put" as const,
           hash: HASH_A,
-          size: 101 * 1024 * 1024,
+          size: 1025 * 1024 * 1024,
         },
       ]),
-    ).rejects.toThrow(/100.*MB|size/i);
+    ).rejects.toThrow(/1.*GB|size/i);
   });
 
-  it("accepts files at exactly 100MB for PUT", async () => {
+  it("accepts files at exactly 100MB for PUT (single presign)", async () => {
     const result = await generatePresignedUrls(deps, "user1", [
       {
         path: "exact.bin",
@@ -102,6 +104,8 @@ describe("generatePresignedUrls", () => {
     ]);
 
     expect(result).toHaveLength(1);
+    expect(result[0]!.url).toBe("https://r2.example.com/put");
+    expect(result[0]!.multipart).toBeUndefined();
   });
 
   it("generates mixed GET and PUT in one batch", async () => {
@@ -113,5 +117,52 @@ describe("generatePresignedUrls", () => {
     expect(result).toHaveLength(2);
     expect(mockR2.getPresignedGetUrl).toHaveBeenCalledOnce();
     expect(mockR2.getPresignedPutUrl).toHaveBeenCalledOnce();
+  });
+
+  it("returns multipart URLs for files >100MB", async () => {
+    mockR2.createMultipartUpload.mockResolvedValue("upload-id-123");
+    mockR2.getPresignedPartUrl.mockImplementation(
+      async (_key: string, _uploadId: string, partNum: number) =>
+        `https://r2.example.com/part-${partNum}`,
+    );
+
+    const size = 200 * 1024 * 1024; // 200MB
+    const result = await generatePresignedUrls(deps, "user1", [
+      { path: "large.bin", action: "put" as const, hash: HASH_A, size },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.multipart).toBeDefined();
+    expect(result[0]!.multipart!.uploadId).toBe("upload-id-123");
+    // 200MB / 64MB part size = 4 parts (ceil)
+    expect(result[0]!.multipart!.partUrls.length).toBeGreaterThanOrEqual(2);
+    expect(result[0]!.multipart!.partSize).toBeGreaterThan(0);
+  });
+
+  it("returns single PUT URL for files at exactly 100MB", async () => {
+    const result = await generatePresignedUrls(deps, "user1", [
+      {
+        path: "boundary.bin",
+        action: "put" as const,
+        hash: HASH_A,
+        size: 100 * 1024 * 1024,
+      },
+    ]);
+
+    expect(result[0]!.multipart).toBeUndefined();
+    expect(mockR2.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it("accepts files up to 1GB for multipart PUT", async () => {
+    mockR2.createMultipartUpload.mockResolvedValue("upload-id-1gb");
+    mockR2.getPresignedPartUrl.mockResolvedValue("https://r2.example.com/part");
+
+    const size = 1024 * 1024 * 1024; // exactly 1GB
+    const result = await generatePresignedUrls(deps, "user1", [
+      { path: "one-gb.bin", action: "put" as const, hash: HASH_A, size },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.multipart).toBeDefined();
   });
 });

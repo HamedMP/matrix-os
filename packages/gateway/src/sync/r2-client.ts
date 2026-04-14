@@ -3,6 +3,8 @@ import {
   GetObjectCommand,
   PutObjectCommand,
   DeleteObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -19,6 +21,8 @@ export interface R2ClientConfig {
 export interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getPresignedPutUrl(key: string, expiresIn?: number): Promise<string>;
+  createMultipartUpload(key: string): Promise<string>;
+  getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
   getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
   putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
@@ -55,6 +59,36 @@ export function createR2Client(config: R2ClientConfig): R2Client {
       expiresIn = DEFAULT_PRESIGN_EXPIRY,
     ): Promise<string> {
       const command = new PutObjectCommand({ Bucket: bucket, Key: key });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AWS SDK cross-package type mismatch
+      return getSignedUrl(s3 as any, command as any, {
+        expiresIn,
+        signingDate: new Date(),
+      });
+    },
+
+    async createMultipartUpload(key: string): Promise<string> {
+      const command = new CreateMultipartUploadCommand({ Bucket: bucket, Key: key });
+      const response = await s3.send(command, {
+        abortSignal: AbortSignal.timeout(R2_OPERATION_TIMEOUT_MS),
+      });
+      if (!response.UploadId) {
+        throw new Error("Failed to create multipart upload: no UploadId returned");
+      }
+      return response.UploadId;
+    },
+
+    async getPresignedPartUrl(
+      key: string,
+      uploadId: string,
+      partNumber: number,
+      expiresIn = DEFAULT_PRESIGN_EXPIRY,
+    ): Promise<string> {
+      const command = new UploadPartCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+      });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AWS SDK cross-package type mismatch
       return getSignedUrl(s3 as any, command as any, {
         expiresIn,
