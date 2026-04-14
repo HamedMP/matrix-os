@@ -6,7 +6,8 @@ export { computeDistributionStatus, sandboxCapabilities, type DistributionStatus
 export { computeRuntimeState, type RuntimeState } from "./runtime-state.js";
 export { deriveAppSessionKey, signAppSession, verifyAppSession, buildSetCookie, AppSessionPayload, type AppSessionPayloadType } from "./app-session.js";
 export { AckStore } from "./ack-store.js";
-export { installApp, type InstallResult, type InstallOptions } from "./install-flow.js";
+export { installApp, installVerifiedApp, assertInstallAllowed, type InstallResult, type InstallOptions, type VerifiedInstallOptions, type TrustGateInput } from "./install-flow.js";
+export { RUNTIME_VERSION, assertRuntimeCompatible } from "./runtime-version.js";
 export { BuildOrchestrator, type BuildResult } from "./build-orchestrator.js";
 export { hashSources, hashLockfile, readBuildStamp, writeBuildStamp, isBuildStale, type BuildStamp } from "./build-cache.js";
 export { ManifestError, BuildError, SpawnError, HealthCheckError, ProxyError } from "./errors.js";
