@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { SpawnError, type SpawnErrorCode } from "./errors.js";
 import { safeEnv } from "./safe-env.js";
-import { loadManifest, type AppManifest } from "./manifest-loader.js";
+import { loadManifest } from "./manifest-loader.js";
+import type { AppManifest } from "./manifest-schema.js";
 import type { PortPool } from "./port-pool.js";
 
 export type ProcessState =
