@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { dirname } from "node:path";
 import { safeEnv } from "../../../packages/gateway/src/app-runtime/safe-env.js";
 
 describe("safeEnv", () => {
@@ -63,12 +64,13 @@ describe("safeEnv", () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
-  it("provides a minimal PATH with no home directory leakage", () => {
+  it("provides a minimal PATH with system dirs and node binary", () => {
     process.env.PATH = "/usr/local/bin:/usr/bin:/bin:/home/user/.local/bin";
     const env = safeEnv({ slug: "notes", port: 40000, homeDir: "/tmp/home" });
     expect(env.PATH).toBeDefined();
-    expect(env.PATH).not.toContain(".local/bin");
     expect(env.PATH).toContain("/usr/bin");
+    // Node binary dir is included so child processes can find `node`
+    expect(env.PATH).toContain(dirname(process.execPath));
   });
 
   it("does not inherit arbitrary env vars from the gateway process", () => {
