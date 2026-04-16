@@ -17,6 +17,7 @@ export type VocalOutbound =
   | { type: "turn_complete" }
   | VocalExecute
   | { type: "fact_saved"; fact: string }
+  | { type: "show_build_progress"; description: string; elapsedSec: number; estimatedTotalSec: number; currentAction: string; stage: string }
   | { type: "error"; message: string; retryable: boolean };
 
 export type VocalInbound =
@@ -24,7 +25,7 @@ export type VocalInbound =
   | { type: "audio"; data: string }
   | { type: "text_input"; text: string }
   | { type: "delegation_status"; description: string; stage: "pending" | "running" | "done"; elapsedSec: number; currentAction: string }
-  | { type: "delegation_complete"; kind: "create_app"; description: string; success: boolean; newAppName?: string }
+  | { type: "delegation_complete"; kind: "create_app"; description: string; success: boolean; newAppName?: string; errorMessage?: string }
   | { type: "execute_result"; kind: "open_app"; name: string; success: boolean; resolvedName?: string };
 
 // Snapshot the shell pushes during an active delegation so
@@ -120,9 +121,27 @@ export function createVocalHandler(deps: VocalDeps) {
   // result messages hanging the model indefinitely.
   let pendingOpenApp: { toolCallId: string; name: string; timeout: NodeJS.Timeout } | null = null;
   const OPEN_APP_TIMEOUT_MS = 2500;
+  let refinementTimer: NodeJS.Timeout | null = null;
+  const REFINEMENT_DELAY_MS = 5000;
+  const DEFAULT_BUILD_ESTIMATE_SEC = 45;
 
   function send(msg: VocalOutbound) {
     sendToClient?.(msg);
+  }
+
+  function deriveBuildStage(currentAction: string): string {
+    const lower = currentAction.toLowerCase();
+    if (lower.includes("getting started") || lower.includes("working on it")) return "Planning";
+    if (lower.includes("test")) return "Testing";
+    if (lower.includes("running")) return "Writing code";
+    return currentAction.slice(0, 40);
+  }
+
+  function clearRefinementTimer() {
+    if (refinementTimer) {
+      clearTimeout(refinementTimer);
+      refinementTimer = null;
+    }
   }
 
   function setupGeminiHandlers() {
@@ -188,8 +207,19 @@ export function createVocalHandler(deps: VocalDeps) {
           gemini.sendToolResponse(evt.id, {
             status: "dispatched",
             message:
-              "The workspace is building it now. The user can watch it stream in their chat sidebar. Don't narrate the build — move on or stay quiet.",
+              "The workspace is building it now. The user can watch it stream in their chat sidebar. Don't narrate the build — start asking refinement questions per your DURING-BUILD REFINEMENT rules.",
           });
+
+          // Nudge Aoede to ask a refinement question after a short delay.
+          // Cleared if the build finishes before the timer fires.
+          if (refinementTimer) clearTimeout(refinementTimer);
+          refinementTimer = setTimeout(() => {
+            refinementTimer = null;
+            if (!gemini || !lastDelegation) return;
+            gemini.sendText(
+              `System note: The build for "${description.slice(0, 100)}" is still running. Ask ONE simple "this or that" refinement question about the app — something you didn't cover during shaping. Read the room: if they're talking about something else, skip it. Follow your DURING-BUILD REFINEMENT rules.`,
+            );
+          }, REFINEMENT_DELAY_MS);
           return;
         }
 
@@ -242,12 +272,30 @@ export function createVocalHandler(deps: VocalDeps) {
           }
           // Hand Aoede a compact structured snapshot. She'll translate it
           // into one short conversational sentence per the prompt.
+          const stage = deriveBuildStage(lastDelegation.currentAction);
+          // If elapsed exceeds the default estimate, extend the estimate
+          // so the progress bar stays meaningful and remaining time doesn't
+          // show "~0s". Adds a 15s buffer beyond the current elapsed.
+          const estimatedTotalSec = lastDelegation.elapsedSec >= DEFAULT_BUILD_ESTIMATE_SEC
+            ? lastDelegation.elapsedSec + 15
+            : DEFAULT_BUILD_ESTIMATE_SEC;
+          const remainingSec = estimatedTotalSec - lastDelegation.elapsedSec;
           gemini.sendToolResponse(evt.id, {
             status: lastDelegation.stage,
             description: lastDelegation.description,
             elapsedSec: lastDelegation.elapsedSec,
+            estimatedRemainingSec: remainingSec,
             currentAction: lastDelegation.currentAction,
-            summary: `The app "${lastDelegation.description.slice(0, 80)}" has been building for about ${lastDelegation.elapsedSec} seconds. Currently: ${lastDelegation.currentAction}`,
+            summary: `The app "${lastDelegation.description.slice(0, 80)}" has been building for about ${lastDelegation.elapsedSec} seconds. Currently: ${lastDelegation.currentAction}. Estimated ~${remainingSec}s remaining.`,
+          });
+          // Also push a visual progress notification to the shell
+          send({
+            type: "show_build_progress",
+            description: lastDelegation.description,
+            elapsedSec: lastDelegation.elapsedSec,
+            estimatedTotalSec,
+            currentAction: lastDelegation.currentAction,
+            stage,
           });
           return;
         }
@@ -387,11 +435,15 @@ export function createVocalHandler(deps: VocalDeps) {
         if (!gemini) break;
         const truncated = data.description.slice(0, 200);
         const nameRef = data.newAppName ? ` It's called "${data.newAppName}" and has been opened on their canvas so they can see it.` : "";
+        const errorCtx = !data.success && data.errorMessage
+          ? ` The error was: "${data.errorMessage.slice(0, 300)}".`
+          : "";
         const nudge = data.success
-          ? `System note (not from the user): the workspace just finished building the app you delegated ("${truncated}").${nameRef} In ONE short, warm sentence, let the user know it's ready — if you have the name, use it. Don't describe what it does, don't list features. Just a brief "alright, the X is ready" style acknowledgment. Then stop.`
-          : `System note (not from the user): the workspace hit an error trying to build the app you delegated ("${truncated}"). In ONE short sentence, let the user know gently and offer to try again differently. Then stop.`;
+          ? `System note (not from the user): the workspace just finished building the app you delegated ("${truncated}").${nameRef} IMPORTANT: If you are currently speaking, finish your current sentence or thought first — don't cut yourself off. Then, in ONE short warm sentence, let the user know it's ready. Use the app name if you have it. Don't describe what it does. Just a brief "alright, the X is ready" style acknowledgment. Then stop.`
+          : `System note (not from the user): the workspace hit an error trying to build the app you delegated ("${truncated}").${errorCtx} IMPORTANT: If you are currently speaking, finish your current thought first. Then in ONE short sentence, let the user know what went wrong in plain language — no technical jargon, no error codes. If they ask for details, you can explain further. Offer to try again differently. Then stop.`;
         gemini.sendText(nudge);
-        // Clear the snapshot — the build is over.
+        // Clear the snapshot and refinement timer — the build is over.
+        clearRefinementTimer();
         lastDelegation = null;
         break;
       }
@@ -406,6 +458,7 @@ export function createVocalHandler(deps: VocalDeps) {
       await handleMessage(data);
     },
     onClose() {
+      clearRefinementTimer();
       if (pendingOpenApp) {
         clearTimeout(pendingOpenApp.timeout);
         pendingOpenApp = null;

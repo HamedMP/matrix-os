@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useVocalSession, type VocalIntent } from "@/hooks/useVocalSession";
+import { useVocalSession, type VocalIntent, type BuildProgressSnapshot } from "@/hooks/useVocalSession";
 import type { ChatState } from "@/hooks/useChatState";
 import { useWindowManager } from "@/hooks/useWindowManager";
 
@@ -107,6 +107,22 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
     };
   }, []);
 
+  const [buildProgress, setBuildProgress] = useState<BuildProgressSnapshot | null>(null);
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleShowBuildProgress = useCallback((snapshot: BuildProgressSnapshot) => {
+    setBuildProgress(snapshot);
+    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    progressTimerRef.current = setTimeout(() => {
+      setBuildProgress(null);
+      progressTimerRef.current = null;
+    }, 5000);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    };
+  }, []);
+
   // `handleExecute` has to close over `notifyExecuteResult` from the hook,
   // but the hook's return is destructured after the call — so we can't
   // reference it directly in the options object. Route it through a ref
@@ -153,6 +169,7 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
   } = useVocalSession(enabled && active, {
     onExecute: handleExecute,
     onFactSaved: handleFactSaved,
+    onShowBuildProgress: handleShowBuildProgress,
   });
 
   useEffect(() => {
@@ -199,6 +216,18 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
       const reportCompletion = (newAppName?: string) => {
         if (reported) return;
         reported = true;
+        // Extract the last error from chat messages so Aoede can explain
+        // what went wrong when the build fails.
+        let errorMessage: string | undefined;
+        if (newAppName === undefined) {
+          const msgs = chatMessagesRef.current;
+          for (let i = msgs.length - 1; i >= current.messageStartIdx; i--) {
+            if (msgs[i].role === "system") {
+              errorMessage = msgs[i].content.slice(0, 500);
+              break;
+            }
+          }
+        }
         notifyDelegationComplete({
           kind: "create_app",
           description: current.description,
@@ -208,11 +237,13 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
           // instead of narrating a phantom "it's ready".
           success: newAppName !== undefined,
           newAppName,
+          errorMessage,
         });
       };
 
-      // Apps list may lag the kernel write by a beat (filesystem watcher
-      // debounce). Retry up to 3×500ms for the diff before giving up.
+      // Apps list may lag the kernel write by a beat — Chokidar polls
+      // every 1000ms, so worst-case detection is ~1s after write.
+      // Retry 6×400ms (2.4s) to comfortably clear the poll cycle.
       const tryFindNewApp = (attempt: number) => {
         if (reported) return;
         const appsNow = useWindowManager.getState().apps;
@@ -222,8 +253,8 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
           reportCompletion(opened?.resolvedName ?? newApp.name);
           return;
         }
-        if (attempt < 3) {
-          pendingTimersRef.current.push(setTimeout(() => tryFindNewApp(attempt + 1), 500));
+        if (attempt < 6) {
+          pendingTimersRef.current.push(setTimeout(() => tryFindNewApp(attempt + 1), 400));
           return;
         }
         reportCompletion();
@@ -460,6 +491,68 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
             {rememberedFlash}
           </span>
         </div>
+      </div>
+
+      {/* Build progress card — appears when user asks about build status */}
+      <div
+        className="fixed inset-x-0 flex justify-center transition-all duration-500 pointer-events-none z-40"
+        style={{
+          top: delegation ? (rememberedFlash ? "8.5rem" : "5.5rem") : (rememberedFlash ? "5.5rem" : "2.5rem"),
+          opacity: buildProgress ? 1 : 0,
+          transform: `translateY(${buildProgress ? 0 : -6}px)`,
+        }}
+      >
+        {buildProgress && (() => {
+          const progress = Math.min(buildProgress.elapsedSec / buildProgress.estimatedTotalSec, 0.95);
+          const remainingSec = Math.max(0, buildProgress.estimatedTotalSec - buildProgress.elapsedSec);
+          return (
+            <div
+              className="flex flex-col gap-2.5 px-5 py-3.5 rounded-2xl backdrop-blur-md min-w-[280px] max-w-[380px]"
+              style={{
+                background: "color-mix(in srgb, var(--primary) 18%, rgba(0,0,0,0.55))",
+                border: "1px solid color-mix(in srgb, var(--primary) 45%, transparent)",
+                boxShadow: "0 4px 24px rgba(0,0,0,0.4), 0 0 40px color-mix(in srgb, var(--primary) 20%, transparent)",
+              }}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span
+                  className="text-[10px] uppercase tracking-[0.25em]"
+                  style={{ color: "#ffffff", fontFamily: "var(--font-inter), system-ui, sans-serif" }}
+                >
+                  {buildProgress.stage}
+                </span>
+                <span
+                  className="text-[10px] tabular-nums"
+                  style={{ color: "rgba(255,255,255,0.65)", fontFamily: "var(--font-inter), system-ui, sans-serif" }}
+                >
+                  ~{remainingSec}s remaining
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div
+                className="w-full h-1.5 rounded-full overflow-hidden"
+                style={{ background: "rgba(255,255,255,0.12)" }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-700 ease-out"
+                  style={{
+                    width: `${progress * 100}%`,
+                    background: "linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 70%, white))",
+                    boxShadow: "0 0 8px color-mix(in srgb, var(--primary) 60%, transparent)",
+                  }}
+                />
+              </div>
+
+              <span
+                className="text-xs truncate"
+                style={{ color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-inter), system-ui, sans-serif" }}
+              >
+                {buildProgress.description}
+              </span>
+            </div>
+          );
+        })()}
       </div>
 
       {error && (

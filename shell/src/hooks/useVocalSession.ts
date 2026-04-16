@@ -7,9 +7,18 @@ export type VocalIntent =
   | { kind: "create_app"; description: string }
   | { kind: "open_app"; name: string };
 
+export interface BuildProgressSnapshot {
+  description: string;
+  elapsedSec: number;
+  estimatedTotalSec: number;
+  currentAction: string;
+  stage: string;
+}
+
 export interface VocalSessionOptions {
   onExecute?: (intent: VocalIntent) => void;
   onFactSaved?: (fact: string) => void;
+  onShowBuildProgress?: (snapshot: BuildProgressSnapshot) => void;
 }
 
 export interface VocalSession {
@@ -22,6 +31,7 @@ export interface VocalSession {
     description: string;
     success: boolean;
     newAppName?: string;
+    errorMessage?: string;
   }) => void;
   notifyExecuteResult: (result: {
     kind: "open_app";
@@ -49,6 +59,7 @@ type VocalWireMessage =
   | { type: "execute"; kind: "create_app"; description: string }
   | { type: "execute"; kind: "open_app"; name: string }
   | { type: "fact_saved"; fact: string }
+  | { type: "show_build_progress"; description: string; elapsedSec: number; estimatedTotalSec: number; currentAction: string; stage: string }
   | { type: "error"; message: string; retryable: boolean };
 
 export function useVocalSession(enabled: boolean, options: VocalSessionOptions = {}): VocalSession {
@@ -267,6 +278,15 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       case "fact_saved":
         if (msg.fact) optionsRef.current.onFactSaved?.(msg.fact);
         break;
+      case "show_build_progress":
+        optionsRef.current.onShowBuildProgress?.({
+          description: msg.description,
+          elapsedSec: msg.elapsedSec,
+          estimatedTotalSec: msg.estimatedTotalSec,
+          currentAction: msg.currentAction,
+          stage: msg.stage,
+        });
+        break;
       case "error":
         setError(msg.message);
         break;
@@ -314,7 +334,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
   }, [enabled, handleMessage, send, startMic, stopMic]);
 
   const notifyDelegationComplete = useCallback(
-    (info: { kind: "create_app"; description: string; success: boolean; newAppName?: string }) => {
+    (info: { kind: "create_app"; description: string; success: boolean; newAppName?: string; errorMessage?: string }) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) return;
       wsRef.current.send(
         JSON.stringify({
@@ -323,6 +343,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
           description: info.description,
           success: info.success,
           newAppName: info.newAppName,
+          errorMessage: info.errorMessage,
         }),
       );
     },
