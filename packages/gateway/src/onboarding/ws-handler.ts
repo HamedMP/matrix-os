@@ -3,9 +3,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createStateMachine, type StateMachineSnapshot } from "./state-machine.js";
 import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "./gemini-live.js";
-import { extractProfile } from "./extract-profile.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey } from "./api-key.js";
-import { ShellToGatewaySchema, type GatewayToShell, type ContextualContent, type OnboardingState } from "./types.js";
+import { ShellToGatewaySchema, type GatewayToShell, type ContextualContent, type OnboardingStage, type OnboardingState } from "./types.js";
 import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {
@@ -18,6 +17,15 @@ type SendFn = (msg: GatewayToShell) => void;
 
 const ONBOARDING_COMPLETE_FILE = "system/onboarding-complete.json";
 const ONBOARDING_STATE_FILE = "system/onboarding-state.json";
+
+const TAIL_TO_DONE: Record<OnboardingStage, OnboardingStage[]> = {
+  greeting: ["interview", "extract_profile", "suggest_apps", "done"],
+  interview: ["extract_profile", "suggest_apps", "done"],
+  extract_profile: ["suggest_apps", "done"],
+  suggest_apps: ["done"],
+  api_key: ["done"],
+  done: [],
+};
 
 export function createOnboardingHandler(deps: OnboardingDeps) {
   let active = false;
@@ -54,7 +62,12 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     try {
       const raw = await readFile(join(deps.homePath, ONBOARDING_STATE_FILE), "utf-8");
       const state = JSON.parse(raw) as Partial<OnboardingState>;
-      if (state.currentStage) {
+      // Never resume from a terminal "done" snapshot: if the completion
+      // marker is gone (manual reset, fresh install, key rotation) but the
+      // state file still says "done", resuming would fast-forward straight
+      // through every stage and the user would never see onboarding.
+      // Treat "done" as no snapshot so a fresh run starts at greeting.
+      if (state.currentStage && state.currentStage !== "done") {
         return { current: state.currentStage, completed: state.completedStages ?? [] };
       }
     } catch { /* no state file */ }
@@ -63,6 +76,17 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
 
   function send(msg: GatewayToShell) {
     sendToClient?.(msg);
+  }
+
+  // Walk to "done" silently, without surfacing intermediate stages to
+  // the shell. Intermediate transitions exist so the state machine stays
+  // consistent if a resume lands mid-flow.
+  async function finishOnboarding() {
+    for (const next of TAIL_TO_DONE[sm.current]) sm.transition(next);
+    sm.clearTimer();
+    await writeComplete();
+    await saveState();
+    send({ type: "stage", stage: "done" });
   }
 
   function setupGeminiHandlers() {
@@ -100,6 +124,11 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         const content = mapToolArgsToContent(e.args);
         if (content) send({ type: "contextual_content", content });
         gemini!.sendToolResponse(e.id, { success: true });
+        return;
+      }
+      if (e.name === "finish_onboarding") {
+        gemini!.sendToolResponse(e.id, { success: true });
+        void finishOnboarding();
       }
     });
 
@@ -240,26 +269,11 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         break;
       }
 
-      case "confirm_apps": {
-        // Interview done — extract profile and suggest apps
-        if (sm.current === "interview") {
-          sm.transition("extract_profile");
-          send({ type: "stage", stage: "extract_profile" });
-
-          const transcript = gemini?.transcript ?? "";
-          const profile = await extractProfile(transcript, deps.geminiApiKey);
-
-          sm.transition("suggest_apps");
-          const apps = profile?.apps ?? [
-            { name: "Notes", description: "Quick notes and ideas" },
-            { name: "Task Board", description: "Kanban task management" },
-            { name: "Calculator", description: "Quick calculations" },
-          ];
-          send({ type: "stage", stage: "suggest_apps", apps });
-          await saveState();
-        }
+      case "confirm_apps":
+        // No-op: app suggestions were removed from onboarding. App
+        // creation happens in the workspace, not here. The shell may
+        // still send this during resume from an older state file.
         break;
-      }
     }
   }
 

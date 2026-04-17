@@ -63,6 +63,16 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const isInteractive = zoom >= INTERACTION_THRESHOLD;
   const inverseScale = 1 / zoom;
 
+  // Iframe windows get a "click-to-interact" overlay so wheel events reach
+  // the canvas instead of being swallowed by the iframe's browsing context.
+  const isIframeWindow = !win.path.startsWith("__");
+  const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
+  const [contentFocused, setContentFocused] = useState(false);
+
+  useEffect(() => {
+    if (isCanvasScrolling || !isFocused) setContentFocused(false);
+  }, [isCanvasScrolling, isFocused]);
+
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -410,6 +420,18 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
           <AppViewer path={win.path} />
         )}
         {interacting && <div className="absolute inset-0 z-10" />}
+        {/* Click-to-interact overlay for iframe windows: captures wheel events
+            so the canvas can pan/zoom. Hides on click so the iframe is interactive. */}
+        {isIframeWindow && !contentFocused && !interacting && (
+          <div
+            className="absolute inset-0 z-10"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              setContentFocused(true);
+              focusWindow(win.id);
+            }}
+          />
+        )}
       </div>
       {/* Resize handle */}
       <div

@@ -10,10 +10,10 @@ import { getGatewayUrl } from "@/lib/gateway";
 type BgType = "pattern" | "solid" | "gradient" | "wallpaper" | "image";
 
 const BG_TYPES: { id: BgType; label: string }[] = [
-  { id: "pattern", label: "Pattern" },
-  { id: "solid", label: "Solid" },
+  { id: "wallpaper", label: "Image" },
   { id: "gradient", label: "Gradient" },
-  { id: "wallpaper", label: "Wallpaper" },
+  { id: "solid", label: "Solid" },
+  { id: "pattern", label: "Mesh" },
 ];
 
 export function BackgroundEditor() {
@@ -69,6 +69,10 @@ export function BackgroundEditor() {
       await save({ type: "solid", color: solidColor });
     } else if (type === "gradient") {
       await save({ type: "gradient", from: gradFrom, to: gradTo, angle: gradAngle });
+    } else if (type === "wallpaper") {
+      const name = selectedWallpaper || "moraine-lake.jpg";
+      setSelectedWallpaper(name);
+      await save({ type: "wallpaper", name });
     }
   }
 
@@ -116,8 +120,10 @@ export function BackgroundEditor() {
       });
       await fetchWallpapers();
       if (selectedWallpaper === name) {
-        setBgType("pattern");
-        await save({ type: "pattern" });
+        const fallback = "moraine-lake.jpg";
+        setSelectedWallpaper(fallback);
+        setBgType("wallpaper");
+        await save({ type: "wallpaper", name: fallback });
       }
     } catch {
       // ignore
@@ -153,7 +159,7 @@ export function BackgroundEditor() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">
-              Using default wave pattern
+              Matrix OS mesh gradient — adapts to your theme tokens
             </p>
           </CardContent>
         </Card>
@@ -219,7 +225,7 @@ export function BackgroundEditor() {
       {bgType === "wallpaper" && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Wallpaper</CardTitle>
+            <CardTitle className="text-sm">Image</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">

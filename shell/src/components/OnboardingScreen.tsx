@@ -26,13 +26,18 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
   // Live subtitle — accumulated AI transcript fragments, synced with voice
   const subtitle = ob.currentSubtitle;
 
-  if (ob.alreadyComplete) {
-    onComplete();
-    return null;
-  }
+  // If onboarding is already complete, tell the parent to unmount us.
+  // This must run as an effect -- calling onComplete() during render
+  // triggers a parent setState mid-child-render, which React rejects.
+  useEffect(() => {
+    if (ob.alreadyComplete) {
+      onComplete();
+    }
+  }, [ob.alreadyComplete, onComplete]);
 
   // Fade out ambient audio when done
   useEffect(() => {
+    if (ob.alreadyComplete) return;
     if (ob.stage === "done" && gainNodeRef.current && audioCtxRef.current) {
       const gain = gainNodeRef.current;
       const ctx = audioCtxRef.current;
@@ -42,7 +47,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     } else if (ob.stage === "done") {
       setTimeout(onComplete, 800);
     }
-  }, [ob.stage, onComplete]);
+  }, [ob.stage, ob.alreadyComplete, onComplete]);
 
   useEffect(() => {
     return () => {
@@ -111,6 +116,13 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
   // ── Voice conversation screen (editorial style) ─────────────
   const isConversing = ob.stage === "greeting" || ob.stage === "interview" || ob.stage === "connecting";
+
+  // Render nothing for the one frame between "alreadyComplete" becoming
+  // true and the parent unmounting us via the effect above. Placing this
+  // return AFTER all hooks keeps hook ordering stable.
+  if (ob.alreadyComplete) {
+    return null;
+  }
 
   return (
     <>
@@ -250,53 +262,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             <span className="text-base leading-none">›</span> Skip Intro
           </button>
         </>
-      )}
-
-      {/* Stage: extracting profile */}
-      {ob.stage === "extract_profile" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-          <div className="size-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <p
-            className="text-lg font-light text-foreground/70"
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-          >
-            Preparing your workspace...
-          </p>
-        </div>
-      )}
-
-      {/* Stage: suggest apps */}
-      {ob.stage === "suggest_apps" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center px-6">
-          <p
-            className="text-[11px] uppercase tracking-[0.25em] text-muted-foreground/70 mb-4"
-          >
-            Suggested for you
-          </p>
-          <h2
-            className="text-2xl font-light text-foreground mb-8"
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
-          >
-            Here's what I'd build for you
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg w-full mb-8">
-            {ob.suggestedApps.map((app) => (
-              <div
-                key={app.name}
-                className="p-4 rounded-xl bg-card/50 border border-border/50 hover:border-primary/30 transition-colors"
-              >
-                <h3 className="text-sm font-medium text-foreground">{app.name}</h3>
-                <p className="text-xs text-muted-foreground mt-1">{app.description}</p>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={() => ob.confirmApps(ob.suggestedApps.map((a) => a.name))}
-            className="px-8 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-          >
-            Continue
-          </button>
-        </div>
       )}
 
       {/* Stage: API key */}

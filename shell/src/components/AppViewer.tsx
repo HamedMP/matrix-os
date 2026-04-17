@@ -63,7 +63,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         const doc = iframe.contentDocument;
         if (doc) {
           const el = doc.createElement("script");
-          el.textContent = script + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`;
+          // Bridge + zoom forwarding in a single script injection.
+          // Pinch-to-zoom (ctrl+wheel) is forwarded to the parent canvas
+          // because iframes capture it in their own browsing context.
+          el.textContent = script
+            + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`
+            + `\n;window.addEventListener('wheel',function(e){if(e.ctrlKey||e.metaKey){e.preventDefault();parent.postMessage({type:'os:wheel-zoom',deltaX:e.deltaX,deltaY:e.deltaY,clientX:e.clientX,clientY:e.clientY},'*')}},{passive:false});`;
           doc.head.appendChild(el);
         }
       } catch {

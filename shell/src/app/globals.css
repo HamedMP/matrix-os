@@ -110,6 +110,7 @@ body {
   margin: 0;
   font-family: var(--font-sans);
   overflow: hidden;
+  overscroll-behavior: none;
   height: 100vh;
 }
 
