@@ -123,7 +123,11 @@ export function createVocalHandler(deps: VocalDeps) {
   const OPEN_APP_TIMEOUT_MS = 2500;
   let refinementTimer: NodeJS.Timeout | null = null;
   const REFINEMENT_DELAY_MS = 5000;
-  const DEFAULT_BUILD_ESTIMATE_SEC = 45;
+  // App builds typically take 3-4 minutes (Opus generation + pnpm install +
+  // vite build). 210s = 3.5 min midpoint. The buffer-extension below covers
+  // the long tail. The voice agent translates the resulting snapshot into a
+  // casual sentence, so an honest estimate is more useful than a hopeful one.
+  const DEFAULT_BUILD_ESTIMATE_SEC = 210;
 
   function send(msg: VocalOutbound) {
     sendToClient?.(msg);
@@ -275,9 +279,10 @@ export function createVocalHandler(deps: VocalDeps) {
           const stage = deriveBuildStage(lastDelegation.currentAction);
           // If elapsed exceeds the default estimate, extend the estimate
           // so the progress bar stays meaningful and remaining time doesn't
-          // show "~0s". Adds a 15s buffer beyond the current elapsed.
+          // show "~0s". Adds a 30s buffer beyond the current elapsed (was 15s
+          // when the default estimate was 45s -- scaled with the new 210s base).
           const estimatedTotalSec = lastDelegation.elapsedSec >= DEFAULT_BUILD_ESTIMATE_SEC
-            ? lastDelegation.elapsedSec + 15
+            ? lastDelegation.elapsedSec + 30
             : DEFAULT_BUILD_ESTIMATE_SEC;
           const remainingSec = estimatedTotalSec - lastDelegation.elapsedSec;
           gemini.sendToolResponse(evt.id, {
