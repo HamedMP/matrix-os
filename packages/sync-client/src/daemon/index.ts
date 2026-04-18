@@ -66,10 +66,21 @@ export async function startDaemon(): Promise<void> {
     token: auth.accessToken,
   };
 
+  // Serial commit queue -- the gateway uses optimistic concurrency on
+  // manifest writes, so 13 parallel onEvent calls all racing with the same
+  // expectedVersion produce 12 conflicts and a 10s timeout per loser.
+  // Serializing makes each commit pick up the prior commit's new version.
+  let commitChain: Promise<unknown> = Promise.resolve();
+  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = commitChain.then(fn, fn);
+    commitChain = next.catch(() => undefined);
+    return next;
+  };
+
   const watcher = new FileWatcher({
     syncRoot: config.syncPath,
     ignorePatterns,
-    onEvent: async (event) => {
+    onEvent: async (event) => enqueue(async () => {
       if (config.pauseSync) return;
 
       // Stored under remote-prefixed keys so syncState matches what the
@@ -139,14 +150,14 @@ export async function startDaemon(): Promise<void> {
           }
         }
       }
-    },
+    }),
   });
 
   const wsClient = new SyncWsClient({
     gatewayUrl: config.gatewayUrl,
     token: auth.accessToken,
     peerId: config.peerId,
-    onEvent: async (event) => {
+    onEvent: async (event) => enqueue(async () => {
       if (config.pauseSync) return;
 
       // Only react to events for files inside our prefix. A daemon syncing
@@ -193,7 +204,7 @@ export async function startDaemon(): Promise<void> {
           );
         }
       }
-    },
+    }),
     onConnect: () => logger.info("Connected to gateway"),
     onDisconnect: () => logger.info("Disconnected from gateway"),
     onError: (err) => logger.error({ err }, "WebSocket error"),
