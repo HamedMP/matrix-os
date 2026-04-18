@@ -30,6 +30,23 @@ const CLIENT_CONTROLLED_FORWARDED = new Set([
   "x-matrix-app-slug",
 ]);
 
+// Credentials scoped to the shell/gateway origin MUST NOT be forwarded to
+// node-runtime child processes. The Authorization header carries
+// MATRIX_AUTH_TOKEN — the HKDF master secret for per-app session cookies
+// (server.ts::deriveAppSessionKey). A malicious app reading it could mint
+// cookies for any slug. Shell-origin cookies (Clerk session, other apps'
+// matrix_app_session__*) are scoped to the shell and not meant for the app.
+const SENSITIVE_FORWARDED = new Set(["authorization"]);
+
+export function sanitizeCookieHeader(value: string): string | null {
+  const kept = value
+    .split(";")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .filter((p) => !p.startsWith("matrix_app_session__") && !p.startsWith("__session"));
+  return kept.length > 0 ? kept.join("; ") : null;
+}
+
 const STRIPPED_RESPONSE = new Set(["server", "x-powered-by"]);
 
 export interface DispatcherConfig {
@@ -92,7 +109,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
         if (!appDir) {
           return c.json({ error: "invalid path" }, 400);
         }
-        return serveStaticFileWithin(appDir, subPath, c);
+        return await serveStaticFileWithin(appDir, subPath, c);
       }
 
       case "vite": {
@@ -104,7 +121,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
         if (!existsSync(distDir)) {
           return c.json({ error: "needs_build", status: "needs_build" }, 503);
         }
-        return serveStaticFileWithin(distDir, subPath, c);
+        return await serveStaticFileWithin(distDir, subPath, c);
       }
 
       case "node": {
@@ -155,6 +172,17 @@ async function dispatchNode(
   const reqHeaders = new Headers(c.req.raw.headers);
   for (const h of HOP_BY_HOP) reqHeaders.delete(h);
   for (const h of CLIENT_CONTROLLED_FORWARDED) reqHeaders.delete(h);
+  for (const h of SENSITIVE_FORWARDED) reqHeaders.delete(h);
+
+  // Rewrite cookie header to drop shell-origin credentials (see comment on
+  // SENSITIVE_FORWARDED). We still forward app-owned cookies so node apps
+  // can use their own set-cookie state.
+  const rawCookie = reqHeaders.get("cookie");
+  if (rawCookie) {
+    const cleaned = sanitizeCookieHeader(rawCookie);
+    if (cleaned === null) reqHeaders.delete("cookie");
+    else reqHeaders.set("cookie", cleaned);
+  }
 
   // Set canonical forwarded headers
   reqHeaders.set("X-Forwarded-Host", publicHost);

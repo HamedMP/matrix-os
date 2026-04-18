@@ -15,13 +15,22 @@ const isPublicRoute = createRouteMatcher([
   "/favicon.ico",
 ]);
 
-const isGatewayProxy = createRouteMatcher([
-  "/gateway/:path*",
-  "/api/:path*",
-  "/files/:path*",
-  "/modules/:path*",
-  "/ws/:path*",
-]);
+// Direct path check instead of Clerk's createRouteMatcher -- in Next 16's
+// proxy.ts runtime, createRouteMatcher has been observed to return false
+// for paths it should match, causing gateway-bound requests to fall through
+// to the 404 page instead of being rewritten to the gateway.
+function isGatewayProxy(request: NextRequest): boolean {
+  const p = request.nextUrl.pathname;
+  return (
+    p.startsWith("/gateway/") ||
+    p.startsWith("/api/") ||
+    p.startsWith("/files/") ||
+    p.startsWith("/modules/") ||
+    p.startsWith("/apps/") ||
+    p === "/ws" ||
+    p.startsWith("/ws/")
+  );
+}
 
 function getPublicOrigin(request: NextRequest) {
   const host =
@@ -102,7 +111,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   return NextResponse.next();
 });
 
-export default function middleware(
+export function proxy(
   request: NextRequest,
   event: import("next/server").NextFetchEvent,
 ) {
@@ -112,6 +121,11 @@ export default function middleware(
   if (process.env.E2E_TEST_BYPASS === "1") {
     return NextResponse.next();
   }
+  // All requests — including gateway-proxy paths — flow through Clerk so the
+  // admin bearer token is never injected onto an unauthenticated request. The
+  // platform-verified fast-path inside withClerk covers the pre-authenticated
+  // backend-to-backend case; unauthenticated XHRs get redirected to /sign-in,
+  // which is the correct outcome (client must reauthenticate).
   return withClerk(request, event);
 }
 
@@ -120,6 +134,7 @@ export const config = {
     "/gateway/:path*",
     "/files/:path*",
     "/modules/:path*",
+    "/apps/:path*",
     "/ws/:path*",
     "/(api|trpc)(.*)",
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
