@@ -31,9 +31,42 @@ services:
       timeout: 5s
       start_period: 10s
 
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: matrixos
+      MINIO_ROOT_PASSWORD: matrixos123
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 matrixos matrixos123 &&
+      mc mb local/matrixos-sync --ignore-existing &&
+      echo 'Bucket matrixos-sync created'
+      "
+    restart: "no"
+
   dev:
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     build:
       context: .
@@ -78,6 +111,18 @@ services:
       - GATEWAY_URL=http://localhost:4000
       - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
       - PLATFORM_DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_platform
+      # S3-compatible storage (MinIO).
+      # S3_ENDPOINT is what the gateway uses for its own operations (manifest reads/writes).
+      # S3_PUBLIC_ENDPOINT is what presigned URLs include; clients (CLI, macOS app)
+      # must be able to reach it. In Docker dev, that's localhost:9100 from the host.
+      - S3_ENDPOINT=http://minio:9000
+      - S3_PUBLIC_ENDPOINT=http://localhost:9100
+      - S3_ACCESS_KEY_ID=matrixos
+      - S3_SECRET_ACCESS_KEY=matrixos123
+      - S3_BUCKET=matrixos-sync
+      - S3_FORCE_PATH_STYLE=true
+      # Sync JWT verification -- must match the platform's PLATFORM_JWT_SECRET.
+      - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET:-dev-platform-jwt-secret-please-change-32}
       # Pipedream vars loaded from .env.docker via env_file
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1
@@ -141,6 +186,12 @@ services:
       - PLATFORM_PORT=9000
       - PLATFORM_DB_PATH=/data/platform.db
       - PLATFORM_SECRET=${PLATFORM_SECRET:-dev-secret}
+      # Sync JWT signing -- must match the gateway's PLATFORM_JWT_SECRET so
+      # tokens issued here validate against the gateway. Min 32 chars.
+      - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET:-dev-platform-jwt-secret-please-change-32}
+      - PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL:-http://localhost:9000}
+      # Single-tenant dev: every issued JWT points at the local gateway.
+      - GATEWAY_URL_TEMPLATE=${GATEWAY_URL_TEMPLATE:-http://localhost:4000}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     healthcheck:
       test: wget -qO- http://localhost:9000/health || exit 1
@@ -302,6 +353,7 @@ services:
 
 volumes:
   pgdata:
+  minio-data:
   dev-node-modules:
   dev-home:
   ai-auth:

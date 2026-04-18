@@ -1,6 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
+import {
+  looksLikeJwt,
+  readJwtKeyConfig,
+  validateSyncJwt,
+} from "./auth-jwt.js";
 
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
@@ -66,7 +71,14 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
-    if (!token) return next();
+    // Read JWT config and handle on every call so env-var changes during
+    // tests are picked up without recreating the middleware.
+    const jwtKey = readJwtKeyConfig();
+    const expectedHandle = process.env.MATRIX_HANDLE;
+
+    // No legacy token AND no JWT key means the gateway is open (dev mode
+    // before any auth wiring). Preserve existing behavior.
+    if (!token && !jwtKey) return next();
 
     let decodedPath: string;
     try {
@@ -122,11 +134,34 @@ export function authMiddleware(
       }
     }
 
-    const authenticated =
-      (authHeader && timingSafeCompare(authHeader, `Bearer ${token}`)) ||
-      (isWsUpgrade && queryToken && timingSafeCompare(queryToken, token));
+    const presentedToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : isWsUpgrade && queryToken
+        ? queryToken
+        : null;
 
-    if (authenticated) {
+    // JWT path: if the bearer looks like a JWT and we have a JWT key, try
+    // validating it. Falls through to the legacy shared-secret check on
+    // failure so a misformatted JWT doesn't lock out service-to-service
+    // callers.
+    if (presentedToken && jwtKey && looksLikeJwt(presentedToken)) {
+      try {
+        await validateSyncJwt(presentedToken, {
+          ...jwtKey,
+          expectedHandle,
+        });
+        return next();
+      } catch {
+        // Fall through. We don't expose JWT failure reasons to the client.
+      }
+    }
+
+    const legacyHeaderOk =
+      token && authHeader && timingSafeCompare(authHeader, `Bearer ${token}`);
+    const legacyQueryOk =
+      token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
+
+    if (legacyHeaderOk || legacyQueryOk) {
       return next();
     }
 
