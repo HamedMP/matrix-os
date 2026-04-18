@@ -79,6 +79,23 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
     )
   `).run();
 
+  sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS device_codes (
+      device_code TEXT PRIMARY KEY,
+      user_code TEXT NOT NULL UNIQUE,
+      clerk_user_id TEXT,
+      expires_at INTEGER NOT NULL,
+      last_polled_at INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  `).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_device_codes_user_code ON device_codes(user_code)'
+  ).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at ON device_codes(expires_at)'
+  ).run();
+
   runAppRegistryMigrations(sqlite);
   runMatrixUserMigrations(sqlite);
   runSocialFeedMigrations(sqlite);
