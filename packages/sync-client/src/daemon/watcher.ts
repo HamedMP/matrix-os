@@ -26,9 +26,13 @@ export class FileWatcher {
   }
 
   start(): void {
+    // ignoreInitial: false so chokidar fires `add` for files that already
+    // exist when watching starts. Otherwise a fresh daemon never uploads
+    // the contents of a pre-existing sync folder -- the user has to touch
+    // every file manually for the watcher to notice it.
     this.watcher = watch(this.options.syncRoot, {
       persistent: true,
-      ignoreInitial: true,
+      ignoreInitial: false,
       awaitWriteFinish: {
         stabilityThreshold: 200,
         pollInterval: 100,

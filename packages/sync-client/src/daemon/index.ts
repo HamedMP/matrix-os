@@ -60,11 +60,26 @@ export async function startDaemon(): Promise<void> {
       if (config.pauseSync) return;
 
       if (event.type === "change") {
+        // Skip if the on-disk hash already matches what we previously
+        // synced AND it's already in the remote manifest. This makes
+        // ignoreInitial=false safe on restart -- existing files don't get
+        // re-uploaded.
+        const existing = syncState.files[event.path];
+        if (existing?.lastSyncedHash === event.hash) {
+          if (existing.mtime !== event.mtime || existing.size !== event.size) {
+            // Stat metadata drifted but content is identical; refresh cache.
+            existing.mtime = event.mtime;
+            existing.size = event.size;
+            await saveSyncState(stateFile, syncState);
+          }
+          return;
+        }
+
         syncState.files[event.path] = {
           hash: event.hash,
           mtime: event.mtime,
           size: event.size,
-          lastSyncedHash: syncState.files[event.path]?.lastSyncedHash,
+          lastSyncedHash: existing?.lastSyncedHash,
         };
         await saveSyncState(stateFile, syncState);
 
