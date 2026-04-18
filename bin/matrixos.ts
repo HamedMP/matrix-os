@@ -189,7 +189,25 @@ async function runDoctor(args: { gateway: string; token?: string }) {
   process.exit(failed > 0 ? 1 : 0);
 }
 
+function runSyncCli(subArgs: string[]): Promise<void> {
+  const cliPath = join(import.meta.dirname, "..", "packages", "sync-client", "src", "cli", "index.ts");
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", ["--import", "tsx", cliPath, ...subArgs], {
+      cwd: join(import.meta.dirname, ".."),
+      stdio: "inherit",
+      env: process.env,
+    });
+    child.on("exit", (code) => {
+      if (code === 0 || code === null) resolve();
+      else reject(new Error(`Sync CLI exited with code ${code}`));
+    });
+    child.on("error", reject);
+  });
+}
+
 async function main() {
+  const rawArgs = process.argv.slice(2);
+
   switch (args.command) {
     case "start":
       await runStart(args);
@@ -202,6 +220,21 @@ async function main() {
       break;
     case "doctor":
       await runDoctor(args);
+      break;
+    case "sync": {
+      const syncArgs = rawArgs.slice(1).filter((a) => !a.startsWith("--gateway") && !a.startsWith("--token"));
+      await runSyncCli(["sync", ...syncArgs]);
+      break;
+    }
+    case "login":
+      // Forward all extra args (e.g. --dev, --platform <url>) to the sync CLI.
+      await runSyncCli(["login", ...rawArgs.slice(1)]);
+      break;
+    case "logout":
+      await runSyncCli(["logout", ...rawArgs.slice(1)]);
+      break;
+    case "peers":
+      await runSyncCli(["peers", ...rawArgs.slice(1)]);
       break;
     case "version":
       console.log(`matrixos ${getVersion()}`);

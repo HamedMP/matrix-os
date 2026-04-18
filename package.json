@@ -5,8 +5,9 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "bin": {
-    "matrixos": "./bin/matrixos.ts",
-    "mos": "./bin/matrixos.ts"
+    "matrixos": "./bin/matrixos.mjs",
+    "matrix": "./bin/matrixos.mjs",
+    "mos": "./bin/matrixos.mjs"
   },
   "engines": {
     "node": ">=24"
