@@ -21,6 +21,7 @@ import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provisioning.js';
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
+import { createAuthRoutes } from './auth-routes.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -154,6 +155,32 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       'Content-Type': metricsRegistry.contentType,
     });
   });
+
+  // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing
+  // so the CLI's poll/code endpoints work regardless of which subdomain hits
+  // the platform. Public endpoints; admin Bearer middleware below skips them.
+  const platformJwtSecret = process.env.PLATFORM_JWT_SECRET ?? '';
+  if (platformJwtSecret) {
+    const platformPublicUrl =
+      process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${process.env.PLATFORM_PORT ?? 9000}`;
+    app.route(
+      '/',
+      createAuthRoutes({
+        db,
+        clerkAuth,
+        jwtSecret: platformJwtSecret,
+        platformUrl: platformPublicUrl,
+        gatewayUrlForHandle: (handle) => {
+          // Production: each handle gets a subdomain on matrix-os.com.
+          // Dev override via GATEWAY_URL_TEMPLATE='http://localhost:4000' (single-tenant)
+          // or 'http://matrixos-{handle}:4000' for in-cluster Docker routing.
+          const tmpl = process.env.GATEWAY_URL_TEMPLATE;
+          if (tmpl) return tmpl.replace('{handle}', handle);
+          return `https://${handle}.matrix-os.com`;
+        },
+      }),
+    );
+  }
 
   // Session-based routing: app.matrix-os.com -> Clerk session -> container
   app.use('*', async (c, next) => {

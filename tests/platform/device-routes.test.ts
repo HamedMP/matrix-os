@@ -90,10 +90,16 @@ describe("device routes", () => {
 
     it("rejects oversized body with 413", async () => {
       const huge = "x".repeat(8192);
+      const body = JSON.stringify({ clientId: huge });
       const res = await app.request("/api/auth/device/code", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ clientId: huge }),
+        headers: {
+          "content-type": "application/json",
+          // Force the bodyLimit middleware's Content-Length short-circuit;
+          // app.request() doesn't set this automatically.
+          "content-length": String(Buffer.byteLength(body)),
+        },
+        body,
       });
 
       expect(res.status).toBe(413);
