@@ -35,6 +35,7 @@ function createFakeR2(): R2Client & { store: Map<string, Buffer> } {
     },
     async putObject(key: string, body: Buffer) {
       store.set(key, body);
+      return { etag: `"etag-${key}-${store.size}"` };
     },
     async deleteObject(key: string) {
       store.delete(key);
@@ -174,6 +175,46 @@ describe("createHomeMirror", () => {
       // and no attempt to fetch.
       await expect(stat(join(tmpRoot, "node_modules/evil.js"))).rejects.toThrow(/ENOENT/);
       expect(putObject).not.toHaveBeenCalled();
+      await mirror.stop();
+    });
+
+    it("broadcasts sync:change to other peers when a local file is pushed", async () => {
+      // Register a second peer so broadcastChange actually has someone to
+      // deliver to. Peer messages are fire-and-forget strings on a shared
+      // SyncPeerConnection.send mock.
+      const laptopSends: string[] = [];
+      registry.registerPeer(
+        "alice",
+        { peerId: "laptop-1", hostname: "mbp", platform: "darwin", clientVersion: "0.1.0" },
+        {
+          readyState: 1,
+          send(data: string) {
+            laptopSends.push(data);
+          },
+        },
+      );
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      // Drop a file in the container's home -- mirror should upload AND
+      // broadcast. Chokidar + awaitWriteFinish (250ms) + macOS fsevents
+      // startup latency needs ~1.5s in CI.
+      await writeFile(join(tmpRoot, "new.md"), "container wrote this");
+      await settle(1500);
+
+      const syncChanges = laptopSends.filter((s) => s.includes('"sync:change"'));
+      expect(syncChanges.length).toBeGreaterThan(0);
+      expect(syncChanges.some((s) => s.includes("new.md"))).toBe(true);
+
       await mirror.stop();
     });
 

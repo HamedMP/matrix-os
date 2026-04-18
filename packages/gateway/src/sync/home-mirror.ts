@@ -157,6 +157,24 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   const store = { r2: config.r2, db: config.manifestDb };
 
+  // Broadcast a sync:change to every registered peer EXCEPT this mirror so
+  // the laptop daemon sees container edits in real-time. Without this the
+  // laptop only learns about them on its own next commit (via the new
+  // manifestVersion) or a full reconnect -- which breaks the "edit in
+  // container, see it on laptop ~5s later" UX.
+  function broadcastChange(
+    file: { path: string; hash: string; size: number; action: "add" | "update" | "delete" },
+    manifestVersion: number,
+  ): void {
+    if (!config.peerRegistry) return;
+    config.peerRegistry.broadcastChange(config.userId, config.peerId, {
+      type: "sync:change",
+      files: [file],
+      peerId: config.peerId,
+      manifestVersion,
+    });
+  }
+
   async function pushFile(relPath: string): Promise<void> {
     const absPath = join(config.homeRoot, relPath);
     let fileStat;
@@ -190,7 +208,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         config.peerId,
       );
 
-      await writeManifest(store, config.userId, next, existing.manifestVersion + 1);
+      const newVersion = existing.manifestVersion + 1;
+      await writeManifest(store, config.userId, next, newVersion);
+      broadcastChange({ path: relPath, hash, size: fileStat.size, action }, newVersion);
       log.info(`pushed ${relPath} (${fileStat.size}B)`);
     });
   }
@@ -207,10 +227,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         config.peerId,
       );
 
-      await writeManifest(store, config.userId, next, existing.manifestVersion + 1);
+      const newVersion = existing.manifestVersion + 1;
+      await writeManifest(store, config.userId, next, newVersion);
 
       const key = buildFileKey(config.userId, relPath);
       await config.r2.deleteObject(key).catch(() => undefined);
+      broadcastChange(
+        { path: relPath, hash: entry.hash, size: 0, action: "delete" },
+        newVersion,
+      );
       log.info(`deleted ${relPath}`);
     });
   }
@@ -357,17 +382,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       watcher.on("add", (absPath) => {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err) => log.error(`push failed for ${rel}:`, err.message));
+        pushFile(rel).catch((err) => log.error(`push failed for ${rel}: ${err.message}`));
       });
       watcher.on("change", (absPath) => {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err) => log.error(`push failed for ${rel}:`, err.message));
+        pushFile(rel).catch((err) => log.error(`push failed for ${rel}: ${err.message}`));
       });
       watcher.on("unlink", (absPath) => {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
-        pushDelete(rel).catch((err) => log.error(`delete failed for ${rel}:`, err.message));
+        pushDelete(rel).catch((err) => log.error(`delete failed for ${rel}: ${err.message}`));
       });
 
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
