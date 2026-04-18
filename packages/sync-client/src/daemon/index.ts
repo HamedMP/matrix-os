@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { writeFile, unlink } from "node:fs/promises";
 import pino from "pino";
 import { loadConfig, getConfigDir } from "../lib/config.js";
@@ -9,6 +9,7 @@ import { detectChanges, buildPresignBatch } from "./sync-engine.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
+import { createRemotePrefixMapper } from "./remote-prefix.js";
 import {
   requestPresignedUrls,
   uploadFile,
@@ -48,18 +49,12 @@ export async function startDaemon(): Promise<void> {
   const ignorePatterns = await loadSyncIgnore(config.syncPath);
   let syncState = await loadSyncState(stateFile);
 
-  // The basename of the synced folder becomes the prefix on the gateway,
-  // so syncing `~/audit` ends up at `audit/<file>` instead of dumping
-  // contents into the user's gateway sync root. This means a daemon for
-  // `~/foo` and another for `~/bar` don't collide on identical filenames,
-  // and incoming WS events for other folders are ignored.
-  const remotePrefix = basename(config.syncPath);
-  const toRemote = (localRel: string): string => `${remotePrefix}/${localRel}`;
-  const toLocal = (remote: string): string | null => {
-    const prefix = `${remotePrefix}/`;
-    if (!remote.startsWith(prefix)) return null;
-    return remote.slice(prefix.length);
-  };
+  // `gatewayFolder` scopes this daemon to a subtree of the gateway. An empty
+  // string (the default) = full mirror: local syncPath maps 1:1 to the
+  // user's sync root. A value like "audit" = scoped mode, where local paths
+  // get prefixed with `audit/` on the remote and incoming events outside
+  // that subtree are ignored. See specs/066-file-sync/follow-ups.md F1.
+  const { toRemote, toLocal } = createRemotePrefixMapper(config.gatewayFolder ?? "");
 
   const gatewayClient = {
     gatewayUrl: config.gatewayUrl,

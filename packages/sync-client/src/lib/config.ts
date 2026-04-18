@@ -14,9 +14,8 @@ export const SyncConfigSchema = z.object({
   // gatewayFolder = subtree on the gateway to mirror. Default "" means
   // "the entire user sync root" (Dropbox-style). Set to e.g. "audit" to
   // scope to a single subfolder; the local syncPath then maps 1:1 to
-  // `audit/...` on the gateway. No prefix at all = full mirror of the
-  // container's home. NOTE: not yet wired into the daemon (still uses
-  // basename-as-prefix). See specs/066-file-sync/follow-ups.md.
+  // `audit/...` on the gateway. See `daemon/remote-prefix.ts` for the
+  // mapping logic.
   gatewayFolder: z.string().default(""),
   peerId: z.string().min(1).max(128),
   folders: z.array(z.string()).optional(),

@@ -23,29 +23,37 @@ async function runStatus(): Promise<void> {
   }
 }
 
-async function runStart(rawPath: string | undefined): Promise<void> {
+async function runStart(
+  rawPath: string | undefined,
+  folder: string | undefined,
+): Promise<void> {
   const syncPath = rawPath ? resolve(rawPath) : defaultSyncPath();
   await mkdir(syncPath, { recursive: true });
 
   const previous = await loadConfig();
+  const gatewayFolder = folder ?? previous?.gatewayFolder ?? "";
   const config = previous
-    ? { ...previous, syncPath }
+    ? { ...previous, syncPath, gatewayFolder }
     : {
         gatewayUrl: "https://matrix-os.com",
         syncPath,
+        gatewayFolder,
         peerId: generatePeerId(),
         pauseSync: false,
       };
   await saveConfig(config);
 
   // Skip the launchctl unload/load bounce if the daemon is already running
-  // and the sync path didn't change. Bouncing for no reason creates a race
-  // where `matrix sync status` immediately after returns "not running"
-  // while the socket is being recreated.
-  const sameTarget = previous?.syncPath === syncPath;
+  // and neither the sync path nor the gateway folder changed. Bouncing for
+  // no reason creates a race where `matrix sync status` immediately after
+  // returns "not running" while the socket is being recreated.
+  const sameTarget =
+    previous?.syncPath === syncPath &&
+    (previous?.gatewayFolder ?? "") === gatewayFolder;
   if (sameTarget && (await isDaemonRunning())) {
     console.log(`Sync already running for: ${syncPath}`);
     console.log(`Peer ID: ${config.peerId}`);
+    if (gatewayFolder) console.log(`Gateway folder: ${gatewayFolder}`);
     return;
   }
 
@@ -58,6 +66,11 @@ async function runStart(rawPath: string | undefined): Promise<void> {
 
   console.log(`Sync started for: ${syncPath}`);
   console.log(`Peer ID: ${config.peerId}`);
+  if (gatewayFolder) {
+    console.log(`Gateway folder: ${gatewayFolder}`);
+  } else {
+    console.log(`Gateway folder: <full mirror>`);
+  }
 }
 
 // Citty's subCommands feature rejects unknown first-positional args before
@@ -74,6 +87,13 @@ export const syncCommand = defineCommand({
       type: "string",
       alias: "p",
       description: "Local folder to sync (default: ~/matrixos/)",
+      required: false,
+    },
+    folder: {
+      type: "string",
+      alias: "f",
+      description:
+        "Gateway subtree to scope sync to. Default: \"\" (full mirror of the user's sync root).",
       required: false,
     },
   },
@@ -97,6 +117,7 @@ export const syncCommand = defineCommand({
 
     // Positional path: prefer rawArgs[0] if not a flag, else --path.
     const path = first ?? (typeof args.path === "string" ? args.path : undefined);
-    await runStart(path);
+    const folder = typeof args.folder === "string" ? args.folder : undefined;
+    await runStart(path, folder);
   },
 });

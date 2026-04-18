@@ -44,6 +44,9 @@ export const loginCommand = defineCommand({
         platformUrl: process.env.MATRIXOS_PLATFORM_URL ?? "http://localhost:9000",
         gatewayUrl: process.env.MATRIXOS_GATEWAY_URL ?? "http://localhost:4000",
         syncPath: existingDev?.syncPath ?? defaultSyncPath(),
+        // Empty = full-mirror of the container's home. First-run should see
+        // every file the container has, not a basename-filtered slice.
+        gatewayFolder: existingDev?.gatewayFolder ?? "",
         peerId: existingDev?.peerId ?? generatePeerId(),
         folders: existingDev?.folders,
         exclude: existingDev?.exclude,
@@ -97,6 +100,7 @@ export const loginCommand = defineCommand({
       platformUrl,
       gatewayUrl: gatewayUrl ?? existing?.gatewayUrl ?? platformUrl,
       syncPath: existing?.syncPath ?? defaultSyncPath(),
+      gatewayFolder: existing?.gatewayFolder ?? "",
       peerId: existing?.peerId ?? generatePeerId(),
       folders: existing?.folders,
       exclude: existing?.exclude,
