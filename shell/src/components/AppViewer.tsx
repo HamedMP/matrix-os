@@ -11,6 +11,7 @@ import {
   type ThemeVars,
 } from "@/lib/os-bridge";
 import { getGatewayUrl } from "@/lib/gateway";
+import { openAppSession } from "@/lib/app-session";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
@@ -28,9 +29,14 @@ function appNameFromPath(path: string): string {
   return path.replace("apps/", "").replace(/\/index\.html$/, "").replace(".html", "");
 }
 
-function extractSlug(path: string): string | null {
-  // Extract slug from "apps/{slug}" or "apps/{slug}/index.html" paths
-  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/|$)/);
+export function extractSlug(path: string): string | null {
+  // Only treat a path as a slug-route when it targets the top-level app
+  // directory: "apps/{slug}", "apps/{slug}/", or "apps/{slug}/index.html".
+  // Nested paths like "apps/games/2048/index.html" must fall back to the
+  // legacy /files/ route -- they share a parent slug but are not runtime-
+  // managed apps, so routing them through /apps/:slug/ would serve the
+  // parent app's index.html instead of the requested file.
+  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
   return match ? match[1] : null;
 }
 
@@ -153,13 +159,38 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     });
   }, [subscribe, appName]);
 
-  // Session refresh handler: listen for matrix-os:session-expired from the
-  // gateway's 401 interstitial HTML. This is the only recovery signal for
-  // expired app-session cookies. Do NOT use iframe.onload as a failure probe.
+  const slug = extractSlug(path);
+  const [sessionReady, setSessionReady] = useState(!slug);
   const lastRefreshAtRef = useRef(0);
   const refreshInFlightRef = useRef(false);
-  const slug = extractSlug(path);
 
+  // Spec 063 session bootstrap: set the matrix_app_session__{slug} cookie
+  // before the iframe ever navigates to /apps/{slug}/. Skipping this step
+  // forces the browser to load the 401 interstitial first and recover via
+  // postMessage, which races React's useEffect listener registration and
+  // leaves the iframe stuck on "Refreshing session..." when the race loses.
+  useEffect(() => {
+    if (!slug) return;
+    setSessionReady(false);
+    let cancelled = false;
+    openAppSession(slug, { gatewayUrl: GATEWAY_URL })
+      .catch((err: unknown) => {
+        // Log so failures are visible; the interstitial fallback path will
+        // still retry via the session-expired postMessage handler below.
+        console.warn("[AppViewer] session bootstrap failed", slug, err);
+      })
+      .finally(() => {
+        if (!cancelled) setSessionReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  // Cookie-expiry recovery: listen for matrix-os:session-expired from the
+  // gateway's 401 interstitial HTML. Bumping refreshKey remounts the iframe
+  // with a fresh DOM element so the browser issues a clean navigation that
+  // picks up the new cookie (reassigning .src to the same URL is not reliable).
   useEffect(() => {
     if (!slug) return;
 
@@ -172,17 +203,15 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       if (Date.now() - lastRefreshAtRef.current < SESSION_REFRESH_DEBOUNCE_MS) return;
 
       refreshInFlightRef.current = true;
+      // Stamp the debounce BEFORE awaiting — otherwise a persistently failing
+      // refresh (gateway down) would let every incoming session-expired event
+      // through and flood the gateway with retries.
+      lastRefreshAtRef.current = Date.now();
       try {
-        await fetch(`${GATEWAY_URL}/api/apps/${slug}/session`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(10_000),
-        });
-        lastRefreshAtRef.current = Date.now();
-        // Reassign src to trigger browser reload with new cookie
-        if (iframeRef.current) {
-          iframeRef.current.src = `/apps/${slug}/`;
-        }
+        await openAppSession(slug, { gatewayUrl: GATEWAY_URL });
+        setRefreshKey((k) => k + 1);
+      } catch (err: unknown) {
+        console.warn("[AppViewer] session refresh failed", slug, err);
       } finally {
         refreshInFlightRef.current = false;
       }
@@ -192,9 +221,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     return () => window.removeEventListener("message", handler);
   }, [slug]);
 
-  // Determine iframe src: use /apps/:slug/ for apps with runtime manifest,
-  // fall back to /files/ for legacy paths (modules, etc.)
-  const iframeSrc = slug ? `/apps/${slug}/` : `/files/${path}`;
+  // Hold the iframe on about:blank until the session cookie is minted.
+  const iframeSrc = !slug
+    ? `/files/${path}`
+    : sessionReady
+      ? `/apps/${slug}/`
+      : "about:blank";
 
   return (
     <iframe
