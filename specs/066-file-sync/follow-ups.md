@@ -25,6 +25,24 @@ Extracted `packages/sync-client/src/daemon/remote-prefix.ts` (`createRemotePrefi
 
 Daemon IPC `status` response gained `syncPath` / `gatewayFolder` / `gatewayUrl` / `peerId`. Swift `DaemonStatus` struct adds those (optional for backwards compat with older daemons). `MenuBarView` displays the local folder, "Full mirror" vs "Folder: <name>", peer id, and an Open-in-Finder button.
 
+## P1 — Finder UX polish (Option A shipped; Option B open)
+
+### F17. File Provider Extension for true "Locations" placement
+
+Option A (FIFinderSync) gives badges + a Favorites sidebar pin. It does NOT put the folder in the "Locations" section of Finder's sidebar like Google Drive/Dropbox — that section is owned by the File Provider system and only populated by registered providers.
+
+To match Drive/Dropbox UX exactly:
+- New `.appex` target using `NSFileProviderReplicatedExtension`
+- Sync folder relocates to `~/Library/CloudStorage/MatrixSync/` (system-managed)
+- Daemon becomes the provider's data source (replaces chokidar watcher + direct writes)
+- Full on-demand materialization and built-in system badges
+
+Multi-day refactor. Write a dedicated spec before starting so we don't collide with the daemon's current architecture.
+
+### F18. Auto-enable Finder Sync extension on first launch
+
+macOS requires the user to turn on the Finder extension manually in System Settings → Extensions → Added Extensions (or via `pluginkit -e use`). On first launch, show a one-time prompt with a "Open Extensions Preferences" button that calls `NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preferences.extensions?FinderExtensions")!)`. Currently the user has to find it themselves.
+
 ## P0 — Things still blocking everyday usage
 
 ### F16. Coalesce commits instead of one-per-file

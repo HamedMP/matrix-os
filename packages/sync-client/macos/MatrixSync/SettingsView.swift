@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import CoreServices
 
 struct SettingsView: View {
     @ObservedObject var status: SyncStatusModel
@@ -46,14 +45,18 @@ struct SettingsView: View {
                         Button("Browse…") { pickFolder() }
                         Spacer()
                         if let path = status.syncPath {
-                            Button("Pin to Finder Sidebar") {
-                                pinToSidebar(path: path)
+                            Button("Add to Finder Sidebar") {
+                                revealAndPromptSidebar(path: path)
                             }
                             Button("Reveal in Finder") {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
                             }
                         }
                     }
+                    Text("macOS 14+ no longer exposes a public API for adding items to the Finder sidebar. Click \"Add to Finder Sidebar\" and drag the highlighted folder into the Favorites section.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -111,34 +114,33 @@ struct SettingsView: View {
     // and works on macOS 14/15; Apple just doesn't add new features to it.
     // If a future release breaks this, fall back to a "drag this to your
     // sidebar" NSAlert.
-    @available(macOS, deprecated: 10.11, message: "Apple has no public replacement; still works on macOS 14/15.")
-    private func pinToSidebar(path: String) {
-        guard let list = LSSharedFileListCreate(
-            nil,
-            kLSSharedFileListFavoriteItems.takeUnretainedValue(),
-            nil,
-        )?.takeRetainedValue() else {
-            showError("Could not open Finder favorites list.")
-            return
-        }
-        let url = URL(fileURLWithPath: path) as CFURL
-        // Insert at the end. Passing kLSSharedFileListItemLast lets Finder
-        // decide ordering; duplicates are harmless (Finder dedupes by URL).
-        let item = LSSharedFileListInsertItemURL(
-            list,
-            kLSSharedFileListItemLast.takeUnretainedValue(),
-            nil,
-            nil,
-            url,
-            nil,
-            nil,
-        )
-        if item != nil {
-            message = "Pinned to Finder sidebar."
-            isError = false
-        } else {
-            showError("Adding to sidebar failed. Drag the folder in manually.")
-        }
+    // Previously called LSSharedFileListInsertItemURL. That API is
+    // deprecated AND broken on macOS 14+ (the kLSSharedFileListItemLast
+    // constant points at freed memory, dereferencing crashes with
+    // EXC_BAD_ACCESS at address 0x2). There is no supported public
+    // replacement short of a File Provider Extension, so we fall back to
+    // opening Finder with the folder selected + an NSAlert that walks the
+    // user through dragging it in once.
+    private func revealAndPromptSidebar(path: String) {
+        let url = URL(fileURLWithPath: path)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        let alert = NSAlert()
+        alert.messageText = "Add MatrixSync to Finder Sidebar"
+        alert.informativeText = """
+            Finder should now be focused on the MatrixSync folder. To keep \
+            it pinned:
+
+            1. Drag the folder into the Favorites section of Finder's sidebar.
+            2. Once pinned, you'll see badges (green / blue / red) on files \
+            as they sync.
+
+            You only need to do this once per machine.
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        message = "Drag the highlighted folder into Finder's sidebar."
+        isError = false
     }
 
     private func showError(_ text: String) {
