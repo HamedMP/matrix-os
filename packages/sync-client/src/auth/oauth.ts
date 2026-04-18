@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { platform } from "node:os";
 import { saveAuth, type AuthData } from "./token-store.js";
 
@@ -34,32 +34,39 @@ export async function requestDeviceCode(
 }
 
 export function openBrowser(url: string): void {
+  // execFile (not exec) so the URL is passed as argv -- no shell, no command
+  // injection. The URL comes from the platform but treat it as untrusted.
   const os = platform();
-  const cmd =
-    os === "darwin"
-      ? `open "${url}"`
-      : os === "win32"
-        ? `start "${url}"`
-        : `xdg-open "${url}"`;
+  const cmd = os === "darwin" ? "open" : os === "win32" ? "cmd" : "xdg-open";
+  const args = os === "win32" ? ["/c", "start", "", url] : [url];
 
-  exec(cmd, (err) => {
+  execFile(cmd, args, (err) => {
     if (err) {
       console.error(`Could not open browser. Visit: ${url}`);
     }
   });
 }
 
+/**
+ * Poll the platform for a device-code grant. Implements RFC 8628 §3.5
+ * polling rules: respect the server's interval, extend on `slow_down`,
+ * give up on `expired_token`. Persists the resulting AuthData via
+ * `saveAuth`; pass `tokenStorePath` to override the default
+ * `~/.matrixos/auth.json` location (used by tests).
+ */
 export async function pollForToken(
   config: OAuthConfig,
   deviceCode: string,
-  interval: number,
-  expiresIn: number,
+  intervalSec: number,
+  expiresInSec: number,
+  tokenStorePath?: string,
 ): Promise<AuthData> {
-  const deadline = Date.now() + expiresIn * 1000;
+  const deadline = Date.now() + expiresInSec * 1000;
   const pollUrl = `${config.platformUrl}/api/auth/device/token`;
+  let interval = intervalSec;
 
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+    await sleep(interval * 1000);
 
     const res = await fetch(pollUrl, {
       method: "POST",
@@ -70,12 +77,23 @@ export async function pollForToken(
 
     if (res.ok) {
       const data = (await res.json()) as AuthData;
-      await saveAuth(data);
+      await saveAuth(data, tokenStorePath);
       return data;
     }
 
     if (res.status === 428) {
+      // authorization_pending -- keep polling.
       continue;
+    }
+
+    if (res.status === 429) {
+      // slow_down -- per RFC 8628 §3.5, MUST increase the polling interval.
+      interval = interval + 5;
+      continue;
+    }
+
+    if (res.status === 410) {
+      throw new Error("Device code expired before authorization completed");
     }
 
     const body = await res.text().catch(() => "");
@@ -85,8 +103,16 @@ export async function pollForToken(
   throw new Error("Device authorization timed out");
 }
 
-export async function login(config: OAuthConfig): Promise<AuthData> {
-  const deviceCode = await requestDeviceCode(config);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export interface LoginOptions extends OAuthConfig {
+  tokenStorePath?: string;
+}
+
+export async function login(options: LoginOptions): Promise<AuthData> {
+  const deviceCode = await requestDeviceCode(options);
 
   console.log(`\nVisit: ${deviceCode.verificationUri}`);
   console.log(`Enter code: ${deviceCode.userCode}\n`);
@@ -94,9 +120,10 @@ export async function login(config: OAuthConfig): Promise<AuthData> {
   openBrowser(deviceCode.verificationUri);
 
   return pollForToken(
-    config,
+    options,
     deviceCode.deviceCode,
     deviceCode.interval,
     deviceCode.expiresIn,
+    options.tokenStorePath,
   );
 }

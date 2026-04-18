@@ -4,6 +4,11 @@ import { homedir, hostname } from "node:os";
 import { z } from "zod/v4";
 
 export const SyncConfigSchema = z.object({
+  // platformUrl owns identity: device-flow login, JWT issuance, /api/me.
+  // gatewayUrl is the per-user data plane (sync API + WS). They differ in
+  // production (https://platform.matrix-os.com vs https://alice.matrix-os.com)
+  // and may be the same host in single-tenant dev.
+  platformUrl: z.url().optional(),
   gatewayUrl: z.url(),
   syncPath: z.string().min(1),
   peerId: z.string().min(1).max(128),
@@ -13,6 +18,10 @@ export const SyncConfigSchema = z.object({
 });
 
 export type SyncConfig = z.infer<typeof SyncConfigSchema>;
+
+export function defaultPlatformUrl(): string {
+  return process.env.MATRIXOS_PLATFORM_URL ?? "https://platform.matrix-os.com";
+}
 
 function configDir(): string {
   return join(homedir(), ".matrixos");
