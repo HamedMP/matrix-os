@@ -22,6 +22,13 @@ private struct SyncState: Decodable {
     let files: [String: FileEntry]
 }
 
+// @objc(FinderSync) forces Swift to emit Obj-C class metadata AND exports
+// the class under the literal name "FinderSync" (no module prefix). Without
+// this, the binary's __objc_classlist section is empty, and macOS can't
+// instantiate the principal class from Info.plist -- pluginkit silently
+// drops the extension. Info.plist's NSExtensionPrincipalClass must match
+// this exact name.
+@objc(FinderSync)
 class FinderSync: FIFinderSync {
     // Path we watch. Read once from the user's config so multiple daemons
     // (different syncPath values) each get their own badges when their
