@@ -197,6 +197,31 @@ export async function startDaemon(): Promise<void> {
   process.on("SIGINT", shutdown);
 
   await ipcServer.start();
+
+  // Fetch the remote manifest version BEFORE starting the watcher. Without
+  // this, a daemon started against a non-empty bucket commits with
+  // expectedVersion=0 and the gateway returns 409 (version conflict).
+  try {
+    const remote = await fetchManifest(gatewayClient);
+    const remoteVersion =
+      typeof (remote.manifest as { manifestVersion?: number })?.manifestVersion === "number"
+        ? (remote.manifest as { manifestVersion: number }).manifestVersion
+        : 0;
+    if (remoteVersion > syncState.manifestVersion) {
+      syncState.manifestVersion = remoteVersion;
+      await saveSyncState(stateFile, syncState);
+      logger.info(
+        { manifestVersion: remoteVersion },
+        "Synced remote manifest version on startup",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err },
+      "Could not fetch remote manifest on startup -- continuing with cached version",
+    );
+  }
+
   watcher.start();
   wsClient.connect();
 
