@@ -354,6 +354,11 @@ export async function createGateway(config: GatewayConfig) {
         homeRoot: rawHomePath,
         userId,
         peerId: `gateway-${userId}`,
+        // Subscribe to sync:change broadcasts from other peers so the
+        // container's /home/matrixos/home/ stays in sync with what laptops
+        // commit. Without this the mirror is push-only (container -> R2)
+        // and the three-way loop is broken.
+        peerRegistry: syncPeerRegistry ?? undefined,
         logger: {
           info: (msg, ...rest) => console.log(`[home-mirror] ${msg}`, ...rest),
           error: (msg, ...rest) => console.error(`[home-mirror] ${msg}`, ...rest),

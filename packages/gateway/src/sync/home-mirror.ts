@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import {
@@ -14,6 +14,7 @@ import {
   type R2Client,
 } from "./r2-client.js";
 import type { Manifest, ManifestEntry } from "./types.js";
+import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 
 // Folders we never push -- big build outputs, transient state, secrets,
 // or things that would loop on themselves (the home dir itself when run
@@ -47,6 +48,13 @@ export interface HomeMirrorConfig {
   homeRoot: string; // /home/matrixos/home
   userId: string; // handle, e.g. "alice"
   peerId: string; // gateway-internal peer id, e.g. `gateway-${handle}`
+  /**
+   * Peer registry to subscribe to `sync:change` broadcasts from other peers.
+   * When set, the mirror registers itself as a virtual peer whose "send()"
+   * handler pulls files from R2 into the container home. Omit to disable
+   * the subscribe side (startup-pull-only mode).
+   */
+  peerRegistry?: PeerRegistry;
   logger?: { info: (msg: string, ...args: unknown[]) => void; error: (msg: string, ...args: unknown[]) => void };
   /** Override the path-segment match list. Used by tests. */
   extraIgnoreDirs?: Iterable<string>;
@@ -246,10 +254,95 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }
 
+  async function pullDelete(relPath: string): Promise<void> {
+    const absPath = join(config.homeRoot, relPath);
+    try {
+      await stat(absPath); // throws ENOENT if already gone
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    markWritten(relPath);
+    await unlink(absPath).catch(() => undefined);
+    log.info(`pulled delete ${relPath}`);
+  }
+
+  // Handle a `sync:change` broadcast from another peer. Applies to each file
+  // in the message: downloads the new content (or deletes locally). The
+  // recentlyWritten guard suppresses the chokidar echo so we don't push it
+  // back up to R2. Errors are logged per-file; one bad file doesn't stop
+  // the rest. Returns after all files have been processed.
+  async function handleRemoteChange(msg: {
+    files?: Array<{ path: string; hash: string; size: number; action?: string }>;
+    peerId?: string;
+  }): Promise<void> {
+    const files = msg.files ?? [];
+    for (const f of files) {
+      if (!f.path || isIgnored(f.path, extraIgnore)) continue;
+      try {
+        if (f.action === "delete") {
+          await pullDelete(f.path);
+        } else {
+          await pullFile(f.path, {
+            hash: f.hash,
+            size: f.size,
+            mtime: Date.now(),
+            peerId: msg.peerId ?? "remote",
+            version: 0,
+          } as ManifestEntry);
+        }
+      } catch (err) {
+        log.error(`remote-change failed for ${f.path}:`, (err as Error).message);
+      }
+    }
+  }
+
+  // A fake WS connection the peer registry can "send" broadcasts through.
+  // readyState=1 so the registry doesn't skip us; each send() is parsed as
+  // a sync event and dispatched to handleRemoteChange. Ignoring non-change
+  // messages keeps us compatible with future broadcast types (peer-join etc.)
+  // without blowing up on unknown `type`.
+  function createSubscriberConnection(): SyncPeerConnection {
+    return {
+      readyState: 1,
+      send(data: string) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          return;
+        }
+        const msg = parsed as { type?: string };
+        if (msg?.type !== "sync:change") return;
+        // Fire-and-forget; the registry's send is synchronous so we can't
+        // await here. Errors are logged inside handleRemoteChange.
+        enqueue(() => handleRemoteChange(msg as Parameters<typeof handleRemoteChange>[0]))
+          .catch((err) => log.error("remote-change enqueue failed:", (err as Error).message));
+      },
+    };
+  }
+
   return {
     async start(): Promise<void> {
       await mkdir(config.homeRoot, { recursive: true });
       await initialPull();
+
+      // Register with the peer registry BEFORE starting the watcher. Any
+      // commits that land while we're catching up will queue through
+      // handleRemoteChange and run serially via `enqueue`.
+      if (config.peerRegistry) {
+        config.peerRegistry.registerPeer(
+          config.userId,
+          {
+            peerId: config.peerId,
+            hostname: "gateway",
+            platform: "linux",
+            clientVersion: "home-mirror",
+          },
+          createSubscriberConnection(),
+        );
+        log.info(`home mirror subscribed to broadcasts as ${config.peerId}`);
+      }
 
       watcher = watch(config.homeRoot, {
         persistent: true,
@@ -284,6 +377,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if (watcher) {
         await watcher.close();
         watcher = null;
+      }
+      if (config.peerRegistry) {
+        config.peerRegistry.removePeer(config.userId, config.peerId);
       }
     },
   };
