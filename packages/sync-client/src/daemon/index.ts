@@ -215,6 +215,10 @@ export async function startDaemon(): Promise<void> {
             manifestVersion: syncState.manifestVersion,
             lastSyncAt: syncState.lastSyncAt,
             fileCount: Object.keys(syncState.files).length,
+            syncPath: config.syncPath,
+            gatewayFolder: config.gatewayFolder ?? "",
+            gatewayUrl: config.gatewayUrl,
+            peerId: config.peerId,
           };
         case "pause":
           config.pauseSync = true;

@@ -14,6 +14,12 @@ struct DaemonStatus: Codable {
     let manifestVersion: Int
     let lastSyncAt: Int?
     let fileCount: Int
+    // Optional so older daemons (pre-F1) still decode cleanly; the UI
+    // renders "<full mirror>" when gatewayFolder is nil or "".
+    let syncPath: String?
+    let gatewayFolder: String?
+    let gatewayUrl: String?
+    let peerId: String?
 }
 
 // IPC server wraps every response as `{id?, result | error}`. Decoding the
@@ -33,6 +39,10 @@ class SyncStatusModel: ObservableObject {
     @Published var fileCount = 0
     @Published var lastSyncAt: Date?
     @Published var error: String?
+    @Published var syncPath: String?
+    @Published var gatewayFolder: String?
+    @Published var gatewayUrl: String?
+    @Published var peerId: String?
 
     private var timer: Timer?
     private let socketPath: String
@@ -79,6 +89,10 @@ class SyncStatusModel: ObservableObject {
                 if let ts = status.lastSyncAt, ts > 0 {
                     self.lastSyncAt = Date(timeIntervalSince1970: Double(ts) / 1000.0)
                 }
+                self.syncPath = status.syncPath
+                self.gatewayFolder = status.gatewayFolder
+                self.gatewayUrl = status.gatewayUrl
+                self.peerId = status.peerId
                 self.error = nil
             } catch {
                 self.isRunning = false
