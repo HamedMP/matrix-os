@@ -299,6 +299,45 @@ Before starting T076, decide:
 
 ---
 
+## Phase 10: Three-Way Sync (Container ↔ R2 ↔ Peer) (in flight)
+
+**Status**: Implementation landed 2026-04-18; rough edges and missing pieces tracked in `specs/066-file-sync/follow-ups.md`. The container-side `home-mirror` watches `/home/matrixos/home/` and pushes to R2; the local daemon now does an initial pull. End-to-end "I see my container files locally" is one fix away (F1 below).
+
+**Architecture**: gateway (in container) runs `createHomeMirror()` from `packages/gateway/src/sync/home-mirror.ts` behind `MATRIX_HOME_MIRROR=true` (default on in dev). It uses the same R2 + Postgres manifest store the existing `/api/sync/*` routes use, so two storage layers are no longer separate.
+
+### Done in Phase 10
+
+- [x] T093 Container home mirror service in `packages/gateway/src/sync/home-mirror.ts` (chokidar watcher, internal manifest+R2 writes, serial commit chain, `recentlyWritten` suppression for round-trip avoidance, default ignore list for node_modules/.git/.next/.env*)
+- [x] T094 Wire home mirror into `packages/gateway/src/server.ts` startup behind `MATRIX_HOME_MIRROR` env flag
+- [x] T095 Add initial-pull pass to local daemon in `packages/sync-client/src/daemon/index.ts` (walk remote manifest → presign GET → write each file, skip files with matching local hash)
+- [x] T096 Serialize daemon onEvent + WS handler via promise chain to avoid optimistic-concurrency races
+- [x] T097 Daemon launcher `packages/sync-client/src/daemon/launcher.mjs` so launchd/systemd can run `.ts` daemon entry via `node --import tsx`
+- [x] T098 launchd plist `WorkingDirectory` so the spawned daemon can resolve `tsx` from the repo
+- [x] T099 `matrix sync` skip launchctl bounce when daemon already running on same path
+- [x] T100 Mac menu bar `IPCResponse` envelope decoder so `{result: ...}` from the daemon parses correctly
+- [x] T101 `matrix` bin alias + `bin/matrixos.mjs` launcher (re-execs node with `--import tsx` so pnpm-link works)
+- [x] T102 `matrix` top-level CLI auto-loads JWT from `~/.matrixos/auth.json` (no need for `--token` on `matrix status`)
+- [x] T103 `matrix login --dev` writes localhost `gatewayUrl`/`platformUrl` so the daemon points at the local docker stack on first run
+
+### NOT STARTED in Phase 10
+
+- [ ] T104 [P0] Replace basename-as-prefix heuristic with explicit `gatewayFolder` config field. Schema added in `packages/sync-client/src/lib/config.ts`; daemon still uses basename. Unblocks "I see my container files locally" -- F1 in follow-ups.md.
+- [ ] T105 [P0] Container-side WS subscriber in `home-mirror.ts` so changes pushed by the laptop appear in `/home/matrixos/home/` on the container. Currently container only does an initial pull, never receives updates -- F2 in follow-ups.md.
+- [ ] T106 [P1] Mac menu bar Settings view: show `syncPath`/`gatewayUrl`/`peerId`, folder picker to change syncPath, log-out button. Requires new IPC commands `getConfig`/`setSyncPath`/`restart` -- F4 in follow-ups.md.
+- [ ] T107 [P1] Per-target config dir support via `MATRIXOS_CONFIG_DIR` so users can run multiple daemons (one per folder) without colliding on `~/.matrixos/{config,sock,pid}` -- F7.
+- [ ] T108 [P1] Initial-pull concurrency limit + progress aggregation; `.syncignore` filter on local side -- F6.
+- [ ] T109 [P2] Self-heal stale manifest entries when R2 objects are missing (logs `pull failed: NoSuchKey` after a bucket reset) -- F8.
+- [ ] T110 [P2] Audit + extend ignore list for known-secret filenames (`.credentials.json`, `*.pem`, `id_rsa*`); add `.syncignore` parsing in the gateway -- F9.
+- [ ] T111 [P2] Wire conflict detection (existing `node-diff3` infra in `sync/conflict.ts`) into the home-mirror and daemon commit paths -- F10.
+- [ ] T112 [P2] Tests for home-mirror, initial-pull, and the new prefix logic in `tests/gateway/sync/home-mirror.test.ts` and `packages/sync-client/tests/unit/initial-pull.test.ts` -- F11.
+- [ ] T113 [P3] `matrix doctor` extended with sync diagnostics (daemon up?, last sync, peer count) -- F12.
+- [ ] T114 [P3] `matrix logs [--follow]` pretty-prints the pino daemon log -- F13.
+- [ ] T115 [P3] Document the three-way architecture in `docs/dev/sync-testing.md` -- F14.
+
+Full notes: `specs/066-file-sync/follow-ups.md`.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -443,17 +482,22 @@ With multiple agents:
 | Phase 6: US4 Remote Access (P4) | 4 | 0 | 0 | 4 |
 | Phase 7: US5 Menu Bar App (P5) | 4 | 0 | 1 | 5 |
 | Phase 8: Polish | 4 | 3 | 0 | 7 |
-| Phase 9: OAuth Device Flow (NEW) | 22 | 0 | 0 | 22 |
-| **Total** | **83** | **5** | **4** | **92** |
+| Phase 9: OAuth Device Flow | 22 | 0 | 0 | 22 |
+| Phase 10: Three-way sync (in flight) | 11 | 0 | 12 | 23 |
+| **Total** | **94** | **5** | **16** | **115** |
 
 **Status legend**: `[x]` done, `[~]` partial (notes inline), `[ ]` not started.
 
 **Critical follow-ups for next session** (in priority order):
 
-1. **T052/T053 (share CLI)** -- gateway endpoints work; CLI commands missing.
-2. **T054 (share events in daemon)** -- daemon ignores `sync:share-invite` and `sync:access-revoked` WS events.
-3. **T064 (tombstone GC scheduler)** -- function exists but never called periodically.
-4. **T063 (Mac app notifications)** -- menu bar app shows status but doesn't post Notification Center alerts.
+1. **T104 (`gatewayFolder` plumbing)** -- closes the "I see my container files locally" UX gap. Schema field already added; daemon still uses basename. ~30 lines. See `specs/066-file-sync/follow-ups.md` F1.
+2. **T105 (container WS subscriber)** -- closes the three-way loop so container reflects laptop edits. ~80 lines. See follow-ups F2.
+3. **T106 (Mac app settings panel)** -- folder picker, gateway URL display, log-out. See follow-ups F4.
+4. **T112 (tests for home-mirror + initial-pull)** -- lock in Phase 10 before regressions.
+5. **T052/T053 (share CLI)** -- gateway endpoints work; CLI commands missing.
+6. **T054 (share events in daemon)** -- daemon ignores `sync:share-invite` and `sync:access-revoked` WS events.
+7. **T064 (tombstone GC scheduler)** -- function exists but never called periodically.
+8. **T063 (Mac app notifications)** -- menu bar app shows status but doesn't post Notification Center alerts.
 
 ## Notes
 
