@@ -247,14 +247,21 @@ export async function startDaemon(): Promise<void> {
 
   await ipcServer.start();
 
-  // Fetch the remote manifest version BEFORE starting the watcher. Without
-  // this, a daemon started against a non-empty bucket commits with
-  // expectedVersion=0 and the gateway returns 409 (version conflict).
+  // Fetch the remote manifest BEFORE starting the watcher. Two reasons:
+  //  1. Pick up the gateway's manifestVersion so the first commit doesn't
+  //     race with expectedVersion=0 against a non-empty bucket.
+  //  2. Initial-pull: download every file in the manifest that's missing
+  //     locally (or stale) so a fresh daemon on a new machine actually
+  //     materializes the user's existing files.
   try {
     const remote = await fetchManifest(gatewayClient);
+    const remoteEnvelope = remote.manifest as {
+      manifestVersion?: number;
+      manifest?: { files?: Record<string, { hash: string; size: number; mtime: number; peerId: string; version: number }> };
+    };
     const remoteVersion =
-      typeof (remote.manifest as { manifestVersion?: number })?.manifestVersion === "number"
-        ? (remote.manifest as { manifestVersion: number }).manifestVersion
+      typeof remoteEnvelope?.manifestVersion === "number"
+        ? remoteEnvelope.manifestVersion
         : 0;
     if (remoteVersion > syncState.manifestVersion) {
       syncState.manifestVersion = remoteVersion;
@@ -263,6 +270,46 @@ export async function startDaemon(): Promise<void> {
         { manifestVersion: remoteVersion },
         "Synced remote manifest version on startup",
       );
+    }
+
+    const remoteFiles = remoteEnvelope?.manifest?.files ?? {};
+    let pulled = 0;
+    let skipped = 0;
+    for (const [remotePath, entry] of Object.entries(remoteFiles)) {
+      if (!entry?.hash) continue;
+      // Only pull files that belong to our prefix. A daemon for `~/audit`
+      // doesn't materialize `notes/...` from the same gateway.
+      const localRel = toLocal(remotePath);
+      if (!localRel) continue;
+
+      const cached = syncState.files[remotePath];
+      if (cached?.lastSyncedHash === entry.hash) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        const urls = await requestPresignedUrls(gatewayClient, [
+          { path: remotePath, action: "get" },
+        ]);
+        if (!urls[0]) continue;
+
+        const localAbsPath = join(config.syncPath, localRel);
+        await downloadFile(urls[0].url, localAbsPath);
+        syncState.files[remotePath] = {
+          hash: entry.hash,
+          mtime: entry.mtime,
+          size: entry.size,
+          lastSyncedHash: entry.hash,
+        };
+        pulled++;
+      } catch (err) {
+        logger.error({ err, path: remotePath }, "Initial-pull failed");
+      }
+    }
+    if (pulled > 0 || skipped > 0) {
+      await saveSyncState(stateFile, syncState);
+      logger.info({ pulled, skipped }, "Initial pull complete");
     }
   } catch (err) {
     logger.warn(

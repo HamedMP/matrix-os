@@ -123,6 +123,9 @@ services:
       - S3_FORCE_PATH_STYLE=true
       # Sync JWT verification -- must match the platform's PLATFORM_JWT_SECRET.
       - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET:-dev-platform-jwt-secret-please-change-32}
+      # Mirror /home/matrixos/home/ to the sync R2 bucket so the user's
+      # local daemon can pull container files (agents, apps, system, etc).
+      - MATRIX_HOME_MIRROR=${MATRIX_HOME_MIRROR:-true}
       # Pipedream vars loaded from .env.docker via env_file
     healthcheck:
       test: wget -qO- http://localhost:4000/health || exit 1

@@ -80,7 +80,14 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
-import { syncApp } from "./sync/routes.js";
+import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
+import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
+import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
+import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
+import { createSharingService, type SharingService } from "./sync/sharing.js";
+import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
+import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -203,11 +210,13 @@ export async function createGateway(config: GatewayConfig) {
   let queryEngine: QueryEngine | null = null;
   let kvStore: KvStore | null = null;
   let appRegistry: AppRegistry | null = null;
+  let kyselyInstance: Kysely<any> | null = null;
 
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
       appDb = db;
+      kyselyInstance = kysely;
       await appDb.bootstrap();
       queryEngine = createQueryEngine(appDb);
       kvStore = createKvStore(kysely);
@@ -273,6 +282,90 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = null;
       kvStore = null;
       appRegistry = null;
+    }
+  }
+
+  // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
+  let syncR2: R2Client | null = null;
+  let syncPeerRegistry: PeerRegistry | null = null;
+  let syncSharing: SharingService | null = null;
+  let syncDeps: SyncRouteDeps | null = null;
+
+  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
+  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
+  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
+  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
+  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
+
+  if (s3AccessKey && s3SecretKey && kyselyInstance) {
+    try {
+      const r2Config: R2ClientConfig = {
+        accessKeyId: s3AccessKey,
+        secretAccessKey: s3SecretKey,
+        bucket: s3Bucket,
+        endpoint: s3Endpoint,
+        publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
+        accountId: process.env.R2_ACCOUNT_ID,
+        forcePathStyle: s3ForcePathStyle,
+      };
+      syncR2 = createR2Client(r2Config);
+
+      await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
+
+      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
+      syncPeerRegistry = createPeerRegistry();
+      const sharingDb = createKyselySharingDb(kyselyInstance as Kysely<SyncDatabase>);
+      syncSharing = createSharingService({ db: sharingDb, peerRegistry: syncPeerRegistry });
+
+      const userId = process.env.MATRIX_HANDLE ?? "default";
+      syncDeps = {
+        r2: syncR2,
+        db: manifestDb,
+        peerRegistry: syncPeerRegistry,
+        sharing: syncSharing,
+        getUserId: () => userId,
+        getPeerId: (c) => c.req.header("X-Peer-Id") ?? "unknown",
+      };
+
+      console.log("[sync] Sync API initialized (S3 endpoint:", s3Endpoint ?? "R2", ")");
+    } catch (err) {
+      console.error("[sync] Failed to initialize sync:", (err as Error).message);
+      syncR2 = null;
+      syncPeerRegistry = null;
+      syncSharing = null;
+      syncDeps = null;
+    }
+  } else if (!s3AccessKey || !s3SecretKey) {
+    console.log("[sync] S3/R2 credentials not configured, sync API disabled");
+  }
+
+  // Container-side home mirror: watches the user's home directory and
+  // pushes changes to the same R2 bucket the user's local daemon reads.
+  // Off by default; enable with MATRIX_HOME_MIRROR=true.
+  let homeMirror: HomeMirror | null = null;
+  const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
+  if (homeMirrorEnabled && syncR2 && kyselyInstance) {
+    try {
+      const userId = process.env.MATRIX_HANDLE ?? "default";
+      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
+      homeMirror = createHomeMirror({
+        r2: syncR2,
+        manifestDb,
+        homeRoot: rawHomePath,
+        userId,
+        peerId: `gateway-${userId}`,
+        logger: {
+          info: (msg, ...rest) => console.log(`[home-mirror] ${msg}`, ...rest),
+          error: (msg, ...rest) => console.error(`[home-mirror] ${msg}`, ...rest),
+        },
+      });
+      // Start asynchronously so server boot isn't blocked by the initial pull.
+      homeMirror.start().catch((err) => {
+        console.error("[home-mirror] start failed:", (err as Error).message);
+      });
+    } catch (err) {
+      console.error("[home-mirror] init failed:", (err as Error).message);
+      homeMirror = null;
     }
   }
 
@@ -960,6 +1053,24 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "approval_response" && approvalBridge) {
             approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
+            return;
+          }
+
+          if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
+            const userId = process.env.MATRIX_HANDLE ?? "default";
+            syncPeerRegistry.registerPeer(
+              userId,
+              {
+                peerId: parsed.peerId,
+                hostname: parsed.hostname,
+                platform: parsed.platform,
+                clientVersion: parsed.clientVersion,
+              },
+              {
+                send: (data: string) => ws.send(data),
+                readyState: 1,
+              },
+            );
             return;
           }
 
@@ -2216,7 +2327,11 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/settings", settingsRoutes);
 
   // 066: Sync API routes
-  app.route("/api/sync", syncApp);
+  if (syncDeps) {
+    app.route("/api/sync", createSyncRoutes(syncDeps));
+  } else {
+    app.route("/api/sync", syncApp);
+  }
 
   // T2030-T2037: Social API routes
   const getCurrentUser = () => {
@@ -2342,6 +2457,7 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
+      syncR2?.destroy();
       await appDb?.destroy();
       server.close();
     },
