@@ -321,18 +321,18 @@ Before starting T076, decide:
 
 ### NOT STARTED in Phase 10
 
-- [ ] T104 [P0] Replace basename-as-prefix heuristic with explicit `gatewayFolder` config field. Schema added in `packages/sync-client/src/lib/config.ts`; daemon still uses basename. Unblocks "I see my container files locally" -- F1 in follow-ups.md.
-- [ ] T105 [P0] Container-side WS subscriber in `home-mirror.ts` so changes pushed by the laptop appear in `/home/matrixos/home/` on the container. Currently container only does an initial pull, never receives updates -- F2 in follow-ups.md.
+- [x] T104 [P0] Replace basename-as-prefix heuristic with explicit `gatewayFolder` config field. Extracted `packages/sync-client/src/daemon/remote-prefix.ts`; wired into daemon, `matrix sync --folder`, and `matrix login --dev` defaults. Empty = full mirror, non-empty = scoped subtree. Closes F1.
+- [x] T105 [P0] Container-side WS subscriber in `home-mirror.ts` via virtual peer on `PeerRegistry`. Mirror registers a shim `SyncPeerConnection` whose `send()` pulls files on `sync:change` broadcasts (or deletes on action=delete); `recentlyWritten` suppresses the chokidar echo. Closes F2.
 - [ ] T106 [P1] Mac menu bar Settings view: show `syncPath`/`gatewayUrl`/`peerId`, folder picker to change syncPath, log-out button. Requires new IPC commands `getConfig`/`setSyncPath`/`restart` -- F4 in follow-ups.md.
 - [ ] T107 [P1] Per-target config dir support via `MATRIXOS_CONFIG_DIR` so users can run multiple daemons (one per folder) without colliding on `~/.matrixos/{config,sock,pid}` -- F7.
 - [ ] T108 [P1] Initial-pull concurrency limit + progress aggregation; `.syncignore` filter on local side -- F6.
 - [ ] T109 [P2] Self-heal stale manifest entries when R2 objects are missing (logs `pull failed: NoSuchKey` after a bucket reset) -- F8.
 - [ ] T110 [P2] Audit + extend ignore list for known-secret filenames (`.credentials.json`, `*.pem`, `id_rsa*`); add `.syncignore` parsing in the gateway -- F9.
 - [ ] T111 [P2] Wire conflict detection (existing `node-diff3` infra in `sync/conflict.ts`) into the home-mirror and daemon commit paths -- F10.
-- [ ] T112 [P2] Tests for home-mirror, initial-pull, and the new prefix logic in `tests/gateway/sync/home-mirror.test.ts` and `packages/sync-client/tests/unit/initial-pull.test.ts` -- F11.
+- [~] T112 [P2] Tests for home-mirror, initial-pull, and the new prefix logic. DONE: `packages/sync-client/tests/unit/remote-prefix.test.ts` + `tests/gateway/sync/home-mirror.test.ts` (subscribe path, delete, ignored paths, no-echo). TODO: daemon initial-pull unit test in `packages/sync-client/tests/unit/initial-pull.test.ts` -- F11.
 - [ ] T113 [P3] `matrix doctor` extended with sync diagnostics (daemon up?, last sync, peer count) -- F12.
 - [ ] T114 [P3] `matrix logs [--follow]` pretty-prints the pino daemon log -- F13.
-- [ ] T115 [P3] Document the three-way architecture in `docs/dev/sync-testing.md` -- F14.
+- [x] T115 [P3] Document the three-way architecture in `docs/dev/sync-testing.md` -- F14. Added "How Three-Way Sync Actually Works" section covering the three actors, `gatewayFolder` modes, echo-loop suppression, and `MATRIX_HOME_MIRROR`.
 
 Full notes: `specs/066-file-sync/follow-ups.md`.
 
@@ -490,10 +490,10 @@ With multiple agents:
 
 **Critical follow-ups for next session** (in priority order):
 
-1. **T104 (`gatewayFolder` plumbing)** -- closes the "I see my container files locally" UX gap. Schema field already added; daemon still uses basename. ~30 lines. See `specs/066-file-sync/follow-ups.md` F1.
-2. **T105 (container WS subscriber)** -- closes the three-way loop so container reflects laptop edits. ~80 lines. See follow-ups F2.
-3. **T106 (Mac app settings panel)** -- folder picker, gateway URL display, log-out. See follow-ups F4.
-4. **T112 (tests for home-mirror + initial-pull)** -- lock in Phase 10 before regressions.
+1. ~~**T104 (`gatewayFolder` plumbing)**~~ -- DONE (see `remote-prefix.ts`).
+2. ~~**T105 (container WS subscriber)**~~ -- DONE (home-mirror virtual peer).
+3. **T106 (Mac app settings panel)** -- folder picker, gateway URL display, log-out. Partially addressed: daemon IPC status already exposes the fields and MenuBarView renders them. Next step: writable settings view + new IPC commands (`getConfig` / `setSyncPath` / `restart`). See follow-ups F4.
+4. **T112 tail** -- home-mirror tests landed; still owe `packages/sync-client/tests/unit/initial-pull.test.ts` for the daemon's initial-pull path.
 5. **T052/T053 (share CLI)** -- gateway endpoints work; CLI commands missing.
 6. **T054 (share events in daemon)** -- daemon ignores `sync:share-invite` and `sync:access-revoked` WS events.
 7. **T064 (tombstone GC scheduler)** -- function exists but never called periodically.

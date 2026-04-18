@@ -24,6 +24,83 @@ If the second line is missing, sync is disabled -- check the env vars in
 `docker-compose.dev.yml` (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` must be set
 and `DATABASE_URL` must point at a working Postgres).
 
+## How Three-Way Sync Actually Works
+
+There are **three actors** that all read/write the same R2 bucket, coordinated
+via a single Postgres manifest row. Think of it as Dropbox where one of the
+"devices" happens to live inside a container.
+
+```
+                  +----------------------+
+                  |   R2 / MinIO bucket  |   <-- content store (hashed)
+                  |  matrixos-sync/...   |
+                  +----------+-----------+
+                             ^
+                             | presigned PUT/GET
+              +--------------+--------------+
+              |                             |
+       +------v--------+            +-------v-------+
+       |  Container    |            |   Laptop      |
+       |  home-mirror  |            |   daemon      |
+       |  (gateway)    |<---WS----->|  (sync-client)|
+       +------+--------+            +-------+-------+
+              ^                             ^
+              | chokidar                    | chokidar
+              v                             v
+    /home/matrixos/home/            ~/matrixos-mirror/
+```
+
+1. **Container home-mirror** (`packages/gateway/src/sync/home-mirror.ts`)
+   watches `/home/matrixos/home/` inside the gateway container. On change it
+   hashes + uploads the file to R2 and bumps the Postgres manifest version.
+   On startup it does a one-shot **initial pull** of the manifest and
+   subscribes to `sync:change` broadcasts from other peers via the in-process
+   `PeerRegistry` (registered as virtual peer `gateway-${userId}`).
+
+2. **Laptop daemon** (`packages/sync-client/src/daemon/index.ts`) watches
+   the user's local sync folder. On startup it fetches the manifest and
+   downloads any missing/stale files. Then it connects over WebSocket
+   (`/api/sync/ws`) to receive `sync:change` broadcasts in real time.
+
+3. **Postgres `sync_manifests`** holds the authoritative manifest version
+   per user. The `/api/sync/commit` endpoint updates it under an optimistic
+   concurrency check, then broadcasts a `sync:change` message to every
+   connected peer *except the sender*.
+
+### What `gatewayFolder` does
+
+The daemon's `config.gatewayFolder` (CLI: `matrix sync --folder <name>`)
+scopes the daemon to a subtree of the user's gateway sync root:
+
+- `gatewayFolder: ""` (default, set by `matrix login --dev`) — **full
+  mirror**. Every file in the manifest maps 1:1 to the local sync folder.
+  This is what you want on a fresh laptop that should see the entire
+  container home.
+
+- `gatewayFolder: "audit"` — **scoped mode**. Only files under `audit/` on
+  the gateway are pulled/pushed; locally they live at the top of the sync
+  folder. Two daemons on the same machine can safely use different scopes
+  without colliding (but still share `~/.matrixos/{config.json,daemon.sock}`
+  — see F7 in follow-ups.md).
+
+The mapping lives in `packages/sync-client/src/daemon/remote-prefix.ts` and
+is exercised end-to-end by `remote-prefix.test.ts`.
+
+### Avoiding echo loops
+
+Both mirror sides use the same pattern: when a file arrives **from** the
+remote (via pull or WS broadcast), the path is stamped in a `recentlyWritten`
+map (5s TTL) **before** the write. When chokidar then fires its `add`/
+`change` event for that write, the handler checks the map and skips the
+push. Without this, every downloaded file would be re-uploaded and bounce
+forever.
+
+### Enabling the container mirror
+
+Off by default. Set `MATRIX_HOME_MIRROR=true` on the gateway container
+(already wired into `docker-compose.dev.yml`). Without it, only the laptop
+daemon side is active and the container is read-only from a sync perspective.
+
 ## Quick Verification (curl)
 
 The gateway runs without the bearer-token middleware in dev mode (no

@@ -11,31 +11,25 @@ State at end of session 2026-04-18 evening. Phase 9 (OAuth) is complete and merg
 - Serial commit chain (both daemon and container mirror) — no more 13-files-racing-on-optimistic-concurrency timeouts.
 - Mac menu bar app shows daemon status (after the IPCResponse envelope fix).
 
-## P0 — Things blocking everyday usage
+## Done in this session (2026-04-18, evening+2)
 
-### F1. Replace basename-as-prefix with explicit `gatewayFolder` config
+### F1. Replace basename-as-prefix with explicit `gatewayFolder` — DONE
 
-**Problem**: today `matrix sync ~/foo` uses the basename `foo` as a gateway prefix. So `matrix sync ~/matrixos-mirror` filters out everything from the gateway that isn't already under `matrixos-mirror/...` — and the container mirror pushes to NO prefix, so the local daemon sees an empty intersection.
+Extracted `packages/sync-client/src/daemon/remote-prefix.ts` (`createRemotePrefixMapper(folder)` returning identity maps when folder is empty, prefix-guarded maps otherwise). Wired into the daemon; added `--folder <name>` flag on `matrix sync`; `matrix login --dev` now explicitly writes `gatewayFolder: ""`. First-run = full mirror. Covered by `packages/sync-client/tests/unit/remote-prefix.test.ts`.
 
-**Fix**:
-- `SyncConfigSchema.gatewayFolder` already added (`packages/sync-client/src/lib/config.ts`). Default `""` = "mirror everything".
-- Daemon (`packages/sync-client/src/daemon/index.ts`) currently computes `remotePrefix = basename(config.syncPath)`. Replace with `config.gatewayFolder ?? ""`.
-- When `gatewayFolder === ""`: `toRemote(rel) = rel`, `toLocal(remote) = remote`, no filter.
-- When `gatewayFolder === "audit"`: same logic as today's basename, but explicit.
-- Add `--folder <name>` flag to `matrix sync` so users can opt into scoped mode.
-- Update `matrix login --dev` to write `gatewayFolder: ""` so first-run is full-mirror.
+### F2. Container mirror subscribes to sync:change — DONE
 
-**Acceptance**: after `matrix login --dev` + `matrix sync ~/matrixos-mirror`, the local folder mirrors the entire container home (`.claude/`, `system/`, `agents/`, etc).
+`packages/gateway/src/sync/home-mirror.ts` now accepts an optional `peerRegistry` and registers itself as a virtual peer (`gateway-${userId}`) with a shim `SyncPeerConnection`. The shim's `send()` parses incoming broadcasts, and for each file either pulls via `r2.getObject` + `writeFile` or unlinks locally. `recentlyWritten` guards the chokidar echo. Wired into `packages/gateway/src/server.ts`. Covered by `tests/gateway/sync/home-mirror.test.ts` (download, delete, ignored paths, no-echo).
 
-### F2. Container mirror doesn't sync container ← R2 changes
+### Menu bar app surfaces sync scope — DONE
 
-`packages/gateway/src/sync/home-mirror.ts` only does an initial pull at startup. Files uploaded to R2 by another peer (i.e. the user's laptop) never appear in `/home/matrixos/home/` on the container — there's no WebSocket subscriber on the container side.
+Daemon IPC `status` response gained `syncPath` / `gatewayFolder` / `gatewayUrl` / `peerId`. Swift `DaemonStatus` struct adds those (optional for backwards compat with older daemons). `MenuBarView` displays the local folder, "Full mirror" vs "Folder: <name>", peer id, and an Open-in-Finder button.
 
-**Fix**: have `home-mirror.ts` open a self-WS to `ws://localhost:4000/ws` (or skip WS entirely and use the in-process `peerRegistry` event stream) and download files on `sync:change` events. Suppress the resulting `add`/`change` watcher event with the existing `recentlyWritten` map.
+## P0 — Things still blocking everyday usage
 
 ### F3. The watcher's "skip if same hash" check has a subtle bug
 
-In `packages/sync-client/src/daemon/index.ts`, the on-change handler checks `existing?.lastSyncedHash === event.hash` to skip re-uploads. But `existing` is keyed by `remotePath` (post my prefix change), and chokidar emits the local rel path — fixed for the daemon, but verify after F1 lands. The home-mirror has the same shape; verify against `manifest.files[relPath]?.hash`.
+In `packages/sync-client/src/daemon/index.ts`, the on-change handler checks `existing?.lastSyncedHash === event.hash` to skip re-uploads. Post-F1 the daemon keys `syncState.files` by the REMOTE path (which equals the local rel path in full-mirror mode, or is prefixed with `gatewayFolder/` in scoped mode). Verify no off-by-one when comparing against `manifest.files[relPath]?.hash` after the first sync after F1.
 
 ## P1 — UX gaps
 
@@ -130,8 +124,8 @@ Add a "How sync actually works" section to `docs/dev/sync-testing.md` showing th
 
 ## Recommended next-session order
 
-1. **F1 (`gatewayFolder` plumbing)** — unblocks "see container files locally" UX. ~30 lines.
-2. **F2 (container subscribes to R2 changes)** — closes the three-way loop. ~80 lines.
-3. **F4 (Mac app settings)** — user-facing polish that surfaces the new config field.
-4. **F11 (tests)** — lock in F1/F2 before they regress.
+1. **F3 (hash-skip verification)** — smoke-test the daemon now that F1 rebased the key shape. Low effort but high-value regression gate.
+2. **F4 (Mac app settings panel)** — IPC scaffolding (`getConfig` / `setSyncPath` / `restart`) + SwiftUI form. Daemon IPC `status` already exposes the fields; F1/F2 menu-bar surfacing is live. Next step is a writable settings view.
+3. **F6 (initial-pull concurrency + progress)** — currently 2k+ file initial pulls are sequential and noisy. Biggest UX complaint after F1/F2 land.
+4. **F11 tail (daemon initial-pull test)** — F11 is partly done; still owe `packages/sync-client/tests/unit/initial-pull.test.ts` before refactoring the initial-pull loop.
 5. Everything else is opportunistic.
