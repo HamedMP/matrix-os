@@ -3,11 +3,23 @@
 import { parseArgs, formatStatus, formatDoctor, getVersion, getHelpText } from "./cli.js";
 import type { StatusInfo, DoctorCheck } from "./cli.js";
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
 const args = parseArgs(process.argv.slice(2));
+
+// Auto-pick the saved auth token from `matrix login` so commands like
+// `matrix status` work without an explicit --token. Explicit --token wins.
+if (!args.token) {
+  const authPath = join(homedir(), ".matrixos", "auth.json");
+  try {
+    const raw = JSON.parse(readFileSync(authPath, "utf-8")) as { accessToken?: string };
+    if (raw.accessToken) args.token = raw.accessToken;
+  } catch {
+    // No saved auth -- that's fine; commands that need a token will fail clearly.
+  }
+}
 
 async function fetchJSON(url: string, token?: string): Promise<unknown> {
   const headers: Record<string, string> = {};

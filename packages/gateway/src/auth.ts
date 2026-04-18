@@ -71,14 +71,18 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
-    // Read JWT config and handle on every call so env-var changes during
-    // tests are picked up without recreating the middleware.
+    // Original semantics: no MATRIX_AUTH_TOKEN means the gateway runs in
+    // open mode (dev convenience). PLATFORM_JWT_SECRET on its own does NOT
+    // enforce auth -- it just enables the JWT acceptance path WHEN auth is
+    // already required by MATRIX_AUTH_TOKEN. To enforce auth in dev, set
+    // MATRIX_AUTH_TOKEN to any value (and optionally PLATFORM_JWT_SECRET to
+    // also accept platform-issued JWTs).
+    if (!token) return next();
+
+    // Read JWT config + handle per-call so env-var changes during tests
+    // are picked up without recreating the middleware.
     const jwtKey = readJwtKeyConfig();
     const expectedHandle = process.env.MATRIX_HANDLE;
-
-    // No legacy token AND no JWT key means the gateway is open (dev mode
-    // before any auth wiring). Preserve existing behavior.
-    if (!token && !jwtKey) return next();
 
     let decodedPath: string;
     try {
