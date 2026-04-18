@@ -12,6 +12,7 @@ export type ServerMessage =
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
   | { type: "kernel:result"; data: Record<string, unknown>; requestId?: string }
   | { type: "kernel:error"; message: string; requestId?: string }
+  | { type: "kernel:aborted"; requestId?: string }
   | { type: "file:change"; path: string; event: "add" | "change" | "unlink" }
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
@@ -122,6 +123,10 @@ export function sendMessage(msg: { type: string; text?: string; sessionId?: stri
   const data = JSON.stringify(msg);
   if (globalSocket?.readyState === WebSocket.OPEN) {
     globalSocket.send(data);
+  } else if (msg.type === "abort") {
+    // Don't queue aborts -- if the socket dropped, the run on the gateway
+    // is already cleaned up server-side via the WS close handler.
+    return;
   } else {
     messageQueue.enqueue(data);
   }

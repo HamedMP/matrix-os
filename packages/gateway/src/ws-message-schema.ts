@@ -19,6 +19,10 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ping"),
   }),
+  z.object({
+    type: z.literal("abort"),
+    requestId: z.string().min(1).max(256),
+  }),
 ]);
 
 export type MainWsClientMessage = z.infer<typeof MainWsClientMessageSchema>;

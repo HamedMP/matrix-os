@@ -47,6 +47,10 @@ interface WindowManagerState {
   closedPaths: Set<string>;
   closedLayouts: Map<string, ClosedLayout>;
   apps: AppEntry[];
+  /** Per-app last-launched timestamp (ms since epoch). Drives the dock's
+      default sort when the user hasn't manually reordered. In-memory only
+      for now -- survives navigation but not full reload. */
+  appLaunchTimes: Record<string, number>;
 }
 
 interface WindowManagerActions {
@@ -139,9 +143,11 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     closedPaths: new Set<string>(),
     closedLayouts: new Map<string, ClosedLayout>(),
     apps: [],
+    appLaunchTimes: {},
 
     openWindow: (name, path, dockXOffset) => {
       set((state) => {
+        const launchTimes = { ...state.appLaunchTimes, [path]: Date.now() };
         const existing = state.windows.find((w) => w.path === path);
         if (existing) {
           return {
@@ -151,6 +157,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
                 : w,
             ),
             nextZ: state.nextZ + 1,
+            appLaunchTimes: launchTimes,
           };
         }
 
@@ -172,6 +179,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             createWindowRecord(state, name, path, fallbackX, fallbackY),
           ],
           nextZ: state.nextZ + 1,
+          appLaunchTimes: launchTimes,
         };
       });
     },

@@ -175,6 +175,9 @@ export function CanvasRenderer() {
     [screenToCanvas, createLabel],
   );
 
+  // Minimized windows stay mounted (display:none in CanvasWindow) so their
+  // iframe / terminal state survives a minimize -> restore round-trip. We
+  // still derive a visible-windows list for empty-state and fit-all logic.
   const visibleWindows = windows.filter((w) => !w.minimized);
 
   const handleFitAll = useCallback(() => {
@@ -231,8 +234,8 @@ export function CanvasRenderer() {
             </p>
           </div>
         )}
-        {visibleWindows.map((win) => (
-          <CanvasWindow key={win.id} win={win} />
+        {windows.map((win) => (
+          <CanvasWindow key={win.id} win={win} hidden={win.minimized} />
         ))}
       </CanvasTransform>
       <CanvasMinimap />

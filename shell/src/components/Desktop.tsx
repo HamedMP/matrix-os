@@ -36,7 +36,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -46,8 +46,11 @@ import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
 import { ChatApp } from "./ChatApp";
+import { ChatPopover } from "./ChatPopover";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
+import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
@@ -328,16 +331,23 @@ function ModeSwitcher({
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen((prev) => !prev)}
-        className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-          open ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/60"
-        }`}
-        style={{ width: iconSize, height: iconSize }}
-        aria-label={`${modeConfig.label} mode`}
-      >
-        <MonitorIcon className="size-4" />
-      </button>
+      {/* Suppress hover tooltip while the mode menu is open so it
+          doesn't overlap the dropdown panel. */}
+      <Tooltip open={open ? false : undefined}>
+        <TooltipTrigger asChild>
+          <button
+            onClick={() => setOpen((prev) => !prev)}
+            className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+              open ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/60"
+            }`}
+            style={{ width: iconSize, height: iconSize }}
+            aria-label={`${modeConfig.label} mode`}
+          >
+            <MonitorIcon className="size-4" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side={tooltipSide} sideOffset={8}>{modeConfig.label}</TooltipContent>
+      </Tooltip>
       {open && (
         <div
           className={[
@@ -395,8 +405,18 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Chat popup is now fully controlled here so the dock button can toggle
+  // it on click (open if closed, close if open). ChatPopover used to wrap
+  // the button in Radix Dialog.Trigger, which only opened — clicking the
+  // dock to dismiss never worked, especially obvious while the agent was
+  // busy because the popup auto-opens then resists close.
+  const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
-  const [showSetup, setShowSetup] = useState(false);
+  // Default to true so the dock / chat / canvas don't flash onto screen
+  // during the ~200ms API-key status fetch. If the user HAS a key, the
+  // check resolves quickly and we drop into the normal desktop. If they
+  // don't, they stay on the onboarding screen -- no transition needed.
+  const [showSetup, setShowSetup] = useState(true);
   const setupChecked = useRef(false);
 
   useEffect(() => {
@@ -407,14 +427,20 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     })
       .then((r) => r.json())
       .then((data: { hasKey: boolean }) => {
-        if (!data.hasKey) setShowSetup(true);
+        if (data.hasKey) setShowSetup(false);
       })
-      .catch(() => setShowSetup(true));
+      .catch(() => {
+        // Fetch failure: stay on onboarding (safer than exposing a half-
+        // configured desktop).
+      });
   }, []);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? [];
   const togglePin = useDesktopConfigStore((s) => s.togglePin);
+  const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
+  const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
+  const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
   const dockXOffset = dock.position === "left" ? dock.size + 16 : 20;
@@ -1144,7 +1170,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     <TooltipProvider delayDuration={300}>
       {!showSetup && (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
-          {desktopMode === "canvas" && <CanvasToolbar />}
+          {(desktopMode === "canvas" || desktopMode === "vocal") && <CanvasToolbar />}
         </MenuBar>
       )}
       {showSetup && (
@@ -1196,148 +1222,230 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           ].filter(Boolean).join(" ")}
           style={{ padding: 6 }}
         >
-          {/* Center section: app icons */}
-          <div className={isHorizontal
-            ? "flex flex-row items-center justify-center gap-1"
-            : "flex flex-col items-center justify-center gap-1"
-          }>
-            {(() => {
-              const pinnedSet = new Set(pinnedApps);
-              const visibleWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
-              const hasVisibleWindow = (appPath: string) =>
-                visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
-              const pinnedList = apps.filter((a) => pinnedSet.has(a.path));
-              const openUnpinned = apps.filter((a) => !pinnedSet.has(a.path) && hasVisibleWindow(a.path));
-              const allDockApps = [...pinnedList, ...openUnpinned];
+          {/* User-generated apps section: pinned + open user apps. Sorted
+              by recency by default; reorderable via framer-motion's
+              Reorder. The macOS-Dock feel (real icon follows the pointer,
+              neighbors slide aside) needs pointer-event drag + layout
+              animations on siblings -- HTML5 DnD can't deliver that
+              because its drag image is a static bitmap and the source
+              element stays in place. */}
+          {(() => {
+            const pinnedSet = new Set(pinnedApps);
+            const visibleWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
+            const hasVisibleWindow = (appPath: string) =>
+              visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
 
-              return allDockApps.length > 0 ? (
-                <>
-                  {pinnedList.map((app) => {
-                    const hasAny = hasVisibleWindow(app.path);
-                    return (
+            const userAppsRaw = apps.filter(
+              (a) => !isSystemApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+            );
+            const userApps = applyOrder(userAppsRaw, dockOrder?.userApps, appLaunchTimes);
+            if (userApps.length === 0) return null;
+
+            return (
+              <Reorder.Group
+                as="div"
+                axis={isHorizontal ? "x" : "y"}
+                values={userApps.map((a) => a.path)}
+                onReorder={(newOrder) => reorderDockSection("userApps", newOrder)}
+                className={isHorizontal
+                  ? "flex flex-row items-center gap-1"
+                  : "flex flex-col items-center gap-1"
+                }
+                data-dock-section="user"
+              >
+                {userApps.map((app) => {
+                  const hasAny = hasVisibleWindow(app.path);
+                  return (
+                    <Reorder.Item
+                      key={app.path}
+                      value={app.path}
+                      as="div"
+                      // touch-none keeps touch drags from scrolling the page
+                      // mid-reorder. cursor-grab signals the affordance.
+                      className="cursor-grab touch-none active:cursor-grabbing"
+                      // macOS-style lift: scale + shadow + zIndex so the
+                      // dragged icon visually detaches from the dock.
+                      whileDrag={{
+                        scale: 1.18,
+                        zIndex: 50,
+                        boxShadow: "0 12px 32px -8px rgba(0,0,0,0.35)",
+                      }}
+                      // Snappy spring on settle.
+                      transition={{ type: "spring", stiffness: 600, damping: 38 }}
+                    >
                       <DockIcon
-                        key={app.path}
                         name={app.name}
                         active={hasAny}
                         onClick={() => focusOrOpen(app.name, app.path)}
                         iconSize={dock.iconSize}
                         tooltipSide={tooltipSide}
                         iconUrl={app.iconUrl}
-                        onUnpin={() => togglePin(app.path)}
+                        onUnpin={pinnedSet.has(app.path) ? () => togglePin(app.path) : undefined}
                         onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
                         onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
                         onQuit={() => removeFromCanvas(app.path)}
                         canQuit={hasAny}
                       />
-                    );
-                  })}
-                  {pinnedList.length > 0 && openUnpinned.length > 0 && (
-                    <div className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"} />
-                  )}
-                  {openUnpinned.map((app) => (
+                    </Reorder.Item>
+                  );
+                })}
+              </Reorder.Group>
+            );
+          })()}
+
+          {/* Minimized windows — each gets its own dock icon with entrance animation */}
+          {(() => {
+            const minimizedWindows = windows.filter((w) => w.minimized);
+            if (minimizedWindows.length === 0) return null;
+            const appIconMap = new Map(apps.map((a) => [a.path, a.iconUrl]));
+            const getIconForWindow = (winPath: string) => {
+              const basePath = winPath.split(":")[0];
+              return appIconMap.get(basePath) ?? appIconMap.get(winPath);
+            };
+            return (
+              <div className={isHorizontal
+                ? "flex flex-row items-center gap-1"
+                : "flex flex-col items-center gap-1"
+              }>
+                <div
+                  className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"}
+                  style={{ animation: "dock-sep-in 300ms ease-out both" }}
+                />
+                {minimizedWindows.map((win, i) => (
+                  <div
+                    key={`min-${win.id}`}
+                    style={{
+                      animation: `dock-icon-in 400ms cubic-bezier(0.34, 1.56, 0.64, 1) ${100 + i * 60}ms both`,
+                    }}
+                  >
+                    <DockIcon
+                      name={win.title}
+                      active={false}
+                      onClick={() => {
+                        wmRestoreAndFocusWindow(win.id);
+                      }}
+                      iconSize={Math.round(dock.iconSize * 0.8)}
+                      tooltipSide={tooltipSide}
+                      iconUrl={getIconForWindow(win.path)}
+                    />
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Bold divider between user apps / minimized and the system
+              section below. This is the visible "main vs other apps"
+              boundary the user asked for. */}
+          <div
+            className={isHorizontal
+              ? "h-8 w-px bg-border/60 mx-1"
+              : "w-8 h-px bg-border/60 my-1"
+            }
+            aria-hidden
+          />
+
+          {/* System cluster: built-in apps (Terminal, Files, Preview if
+              pinned/open) followed by system controls. Launcher sits
+              above Chat per spec. This is the "main apps every user has"
+              section -- always at the dock's inner edge. */}
+          {(() => {
+            const pinnedSet = new Set(pinnedApps);
+            const visibleWindowPaths = windows.filter((w) => !w.minimized).map((w) => w.path);
+            const hasVisibleWindow = (appPath: string) =>
+              visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
+            const systemAppsRaw = apps.filter(
+              (a) => isSystemApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+            );
+            const systemApps = applyOrder(systemAppsRaw, dockOrder?.systemApps, appLaunchTimes);
+            return (
+              <div className={isHorizontal
+                ? "flex flex-row items-center gap-1"
+                : "flex flex-col items-center gap-1"
+              }>
+                {systemApps.map((app) => {
+                  const hasAny = hasVisibleWindow(app.path);
+                  return (
                     <DockIcon
                       key={app.path}
                       name={app.name}
-                      active
+                      active={hasAny}
                       onClick={() => focusOrOpen(app.name, app.path)}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
                       iconUrl={app.iconUrl}
-                      onRegenerateIcon={() => regenerateIcon(nameToSlug(app.name))}
-                      onRename={(newName) => renameAppOnServer(nameToSlug(app.name), newName)}
+                      onUnpin={pinnedSet.has(app.path) ? () => togglePin(app.path) : undefined}
                       onQuit={() => removeFromCanvas(app.path)}
-                      canQuit
+                      canQuit={hasAny}
                     />
-                  ))}
-                </>
-              ) : null;
-            })()}
-
-            {/* Minimized windows — each gets its own dock icon with entrance animation */}
-            {(() => {
-              const minimizedWindows = windows.filter((w) => w.minimized);
-              if (minimizedWindows.length === 0) return null;
-              const appIconMap = new Map(apps.map((a) => [a.path, a.iconUrl]));
-              const getIconForWindow = (winPath: string) => {
-                const basePath = winPath.split(":")[0];
-                return appIconMap.get(basePath) ?? appIconMap.get(winPath);
-              };
-              return (
-                <>
-                  <div
-                    className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"}
-                    style={{ animation: "dock-sep-in 300ms ease-out both" }}
-                  />
-                  {minimizedWindows.map((win, i) => (
-                    <div
-                      key={`min-${win.id}`}
-                      style={{
-                        animation: `dock-icon-in 400ms cubic-bezier(0.34, 1.56, 0.64, 1) ${100 + i * 60}ms both`,
-                      }}
+                  );
+                })}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-testid="dock-tasks"
+                      onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
+                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                        taskBoardOpen
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card border-border/60"
+                      }`}
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
                     >
-                      <DockIcon
-                        name={win.title}
-                        active={false}
-                        onClick={() => {
-                          wmRestoreAndFocusWindow(win.id);
-                        }}
-                        iconSize={Math.round(dock.iconSize * 0.8)}
-                        tooltipSide={tooltipSide}
-                        iconUrl={getIconForWindow(win.path)}
-                      />
-                    </div>
-                  ))}
-                </>
-              );
-            })()}
-          </div>
-
-          {/* Bottom cluster: launcher + mode switcher + settings, grouped
-              together so all system controls sit below the app icons. */}
-          <div className={isHorizontal
-            ? "flex flex-row items-center gap-1"
-            : "flex flex-col items-center gap-1"
-          }>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-testid="dock-tasks"
-                  onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
-                  className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                    taskBoardOpen
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card border-border/60"
-                  }`}
-                  style={{ width: dock.iconSize, height: dock.iconSize }}
-                >
-                  <KanbanSquareIcon className="size-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side={tooltipSide} sideOffset={8}>
-                Launcher
-              </TooltipContent>
-            </Tooltip>
-            <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-testid="dock-settings"
-                  onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
-                  className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                    settingsOpen
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card border-border/60"
-                  }`}
-                  style={{ width: dock.iconSize, height: dock.iconSize }}
-                >
-                  <SettingsIcon className="size-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side={tooltipSide} sideOffset={8}>
-                Settings
-              </TooltipContent>
-            </Tooltip>
-          </div>
+                      <KanbanSquareIcon className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>
+                    Launcher
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-testid="dock-chat"
+                      onClick={() => setChatOpen((v) => !v)}
+                      className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                        chatOpen
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card border-border/60"
+                      }`}
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                      aria-label={chatOpen ? "Close chat" : "Open chat"}
+                    >
+                      <MessageSquareIcon className="size-4" />
+                      {chat?.busy && (
+                        <span
+                          className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
+                          aria-hidden
+                        />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Chat</TooltipContent>
+                </Tooltip>
+                <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-testid="dock-settings"
+                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                        settingsOpen
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card border-border/60"
+                      }`}
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                    >
+                      <SettingsIcon className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>
+                    Settings
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            );
+          })()}
           <div
             className={
               isHorizontal
@@ -1353,6 +1461,24 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         {/* Mobile dock (bottom tab bar) */}
         {modeConfig.showDock && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
+            <button
+              data-testid="dock-chat-mobile"
+              onClick={() => setChatOpen((v) => !v)}
+              className={`relative flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                chatOpen
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border/60"
+              }`}
+              aria-label={chatOpen ? "Close chat" : "Open chat"}
+            >
+              <MessageSquareIcon className="size-4" />
+              {chat?.busy && (
+                <span
+                  className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-primary"
+                  aria-hidden
+                />
+              )}
+            </button>
             <button
               onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
@@ -1456,10 +1582,12 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               </div>
             )}
 
-          {/* Desktop: positioned windows; Mobile: full-screen cards */}
+          {/* Desktop: positioned windows; Mobile: full-screen cards.
+              We render minimized windows too (display:none) so iframe state,
+              terminal sockets, and React state survive minimize -> restore. */}
           {modeConfig.showWindows && desktopMode !== "canvas" && desktopMode !== "vocal" && windows.map((win) => {
             const isMinimizing = minimizingIds.has(win.id);
-            if (win.minimized && !isMinimizing) return null;
+            const isHidden = win.minimized && !isMinimizing;
 
             // Compute dock target for suck animation
             let dockTargetX = 0;
@@ -1504,6 +1632,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   opacity: isMinimizing ? 0 : undefined,
                   filter: isMinimizing ? "blur(2px)" : undefined,
                   pointerEvents: isMinimizing ? "none" : undefined,
+                  display: isHidden ? "none" : undefined,
                 } as React.CSSProperties}
                 onMouseDown={() => wmFocusWindow(win.id)}
               >
@@ -1589,6 +1718,10 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       </div>
 
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {/* Single ChatPopover instance shared by desktop + mobile dock
+          buttons. Lives outside both dock-orientation branches so it
+          isn't unmounted when the viewport flips. */}
+      <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
     </TooltipProvider>
   );
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useVocalSession, type VocalIntent, type BuildProgressSnapshot } from "@/hooks/useVocalSession";
 import type { ChatState } from "@/hooks/useChatState";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import { AgentStatusCard } from "./AgentStatusCard";
 
 const GLOW_OPACITY: Record<string, number> = {
   idle: 0.68,
@@ -493,67 +494,27 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
         </div>
       </div>
 
-      {/* Build progress card — appears when user asks about build status */}
-      <div
-        className="fixed inset-x-0 flex justify-center transition-all duration-500 pointer-events-none z-40"
-        style={{
-          top: delegation ? (rememberedFlash ? "8.5rem" : "5.5rem") : (rememberedFlash ? "5.5rem" : "2.5rem"),
-          opacity: buildProgress ? 1 : 0,
-          transform: `translateY(${buildProgress ? 0 : -6}px)`,
-        }}
-      >
-        {buildProgress && (() => {
-          const progress = Math.min(buildProgress.elapsedSec / buildProgress.estimatedTotalSec, 0.95);
-          const remainingSec = Math.max(0, buildProgress.estimatedTotalSec - buildProgress.elapsedSec);
-          return (
-            <div
-              className="flex flex-col gap-2.5 px-5 py-3.5 rounded-2xl backdrop-blur-md min-w-[280px] max-w-[380px]"
-              style={{
-                background: "color-mix(in srgb, var(--primary) 18%, rgba(0,0,0,0.55))",
-                border: "1px solid color-mix(in srgb, var(--primary) 45%, transparent)",
-                boxShadow: "0 4px 24px rgba(0,0,0,0.4), 0 0 40px color-mix(in srgb, var(--primary) 20%, transparent)",
-              }}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span
-                  className="text-[10px] uppercase tracking-[0.25em]"
-                  style={{ color: "#ffffff", fontFamily: "var(--font-inter), system-ui, sans-serif" }}
-                >
-                  {buildProgress.stage}
-                </span>
-                <span
-                  className="text-[10px] tabular-nums"
-                  style={{ color: "rgba(255,255,255,0.65)", fontFamily: "var(--font-inter), system-ui, sans-serif" }}
-                >
-                  ~{remainingSec}s remaining
-                </span>
-              </div>
-
-              {/* Progress bar */}
-              <div
-                className="w-full h-1.5 rounded-full overflow-hidden"
-                style={{ background: "rgba(255,255,255,0.12)" }}
-              >
-                <div
-                  className="h-full rounded-full transition-all duration-700 ease-out"
-                  style={{
-                    width: `${progress * 100}%`,
-                    background: "linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 70%, white))",
-                    boxShadow: "0 0 8px color-mix(in srgb, var(--primary) 60%, transparent)",
-                  }}
-                />
-              </div>
-
-              <span
-                className="text-xs truncate"
-                style={{ color: "rgba(255,255,255,0.7)", fontFamily: "var(--font-inter), system-ui, sans-serif" }}
-              >
-                {buildProgress.description}
-              </span>
-            </div>
-          );
-        })()}
-      </div>
+      {/* Build progress card -- shares the AgentStatusCard surface with
+          the global chat busy indicator. Top offset shifts down when
+          delegation banner / remembered flash are stacked above. */}
+      <AgentStatusCard
+        visible={!!buildProgress}
+        stage={buildProgress?.stage ?? ""}
+        description={buildProgress?.description}
+        progress={
+          buildProgress
+            ? {
+                elapsedSec: buildProgress.elapsedSec,
+                estimatedTotalSec: buildProgress.estimatedTotalSec,
+              }
+            : undefined
+        }
+        topOffsetRem={
+          delegation
+            ? (rememberedFlash ? 8.5 : 5.5)
+            : (rememberedFlash ? 5.5 : 2.5)
+        }
+      />
 
       {error && (
         <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs">

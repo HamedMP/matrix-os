@@ -16,6 +16,13 @@ export interface DesktopConfig {
   dock: DockConfig;
   pinnedApps: string[];
   iconStyle?: string;
+  /** Per-section dock ordering. User-generated apps in the outer section,
+      system apps adjacent to the system controls. Most-recent / outermost
+      first in each array. Missing means default sort (launch-time desc). */
+  dockOrder?: {
+    userApps?: string[];
+    systemApps?: string[];
+  };
 }
 
 const BUNDLED_WALLPAPERS = new Set(["moraine-lake.jpg"]);
@@ -87,6 +94,7 @@ export function useDesktopConfig() {
   const [config, setConfig] = useState<DesktopConfig>(DEFAULT_DESKTOP_CONFIG);
   const setDock = useDesktopConfigStore((s) => s.setDock);
   const setPinnedApps = useDesktopConfigStore((s) => s.setPinnedApps);
+  const setDockOrder = useDesktopConfigStore((s) => s.setDockOrder);
   const gatewayUrl = getGatewayUrl();
 
   useEffect(() => {
@@ -94,9 +102,10 @@ export function useDesktopConfig() {
       setConfig(cfg);
       setDock(cfg.dock);
       setPinnedApps(cfg.pinnedApps);
+      setDockOrder(cfg.dockOrder);
       applyBackground(cfg.background, gatewayUrl);
     });
-  }, [gatewayUrl, setDock, setPinnedApps]);
+  }, [gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
   useEffect(() => {
     applyBackground(config.background, gatewayUrl);
@@ -108,6 +117,7 @@ export function useDesktopConfig() {
         setConfig(cfg);
         setDock(cfg.dock);
         setPinnedApps(cfg.pinnedApps);
+        setDockOrder(cfg.dockOrder);
       });
     }
   });

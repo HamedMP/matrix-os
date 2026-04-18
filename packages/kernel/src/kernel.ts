@@ -16,11 +16,17 @@ export type KernelEvent =
   | { type: "text"; text: string }
   | { type: "tool_start"; tool: string }
   | { type: "tool_end"; input?: Record<string, unknown> }
-  | { type: "result"; data: KernelResult };
+  | { type: "result"; data: KernelResult }
+  | { type: "aborted" };
 
 export async function* spawnKernel(
   message: string,
   config: KernelConfig,
+  /** Optional controller -- when aborted, the SDK halts and the generator
+      yields a final `aborted` event before completing. Callers (gateway
+      dispatcher) maintain a Map<requestId, AbortController> and call
+      `.abort()` on the user's stop request. */
+  abortController?: AbortController,
 ): AsyncGenerator<KernelEvent> {
   const opts = kernelOptions(config);
 
@@ -33,6 +39,7 @@ export async function* spawnKernel(
       options: {
         ...options,
         includePartialMessages: true,
+        abortController,
         stderr: (data: Buffer | string) => {
           const line = data.toString().trim();
           if (line) console.error("[kernel:stderr]", line);
@@ -101,6 +108,13 @@ export async function* spawnKernel(
   try {
     yield* run(opts);
   } catch (error) {
+    // Aborted: SDK throws AbortError when controller fires. Convert to a
+    // clean `aborted` event so dispatcher / gateway can treat it as a
+    // normal terminal state instead of an exception.
+    if (abortController?.signal.aborted) {
+      yield { type: "aborted" };
+      return;
+    }
     // If we were resuming a session and it failed, retry without resume
     if (!retried && opts.resume) {
       retried = true;

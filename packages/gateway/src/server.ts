@@ -122,6 +122,7 @@ export type ServerMessage =
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
   | { type: "kernel:result"; data: unknown; requestId?: string }
   | { type: "kernel:error"; message: string; requestId?: string }
+  | { type: "kernel:aborted"; requestId?: string }
   | { type: "file:change"; path: string; event: string }
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
@@ -148,6 +149,8 @@ function kernelEventToServerMessage(event: KernelEvent, requestId?: string): Ser
       return { type: "kernel:tool_end", input: event.input, requestId };
     case "result":
       return { type: "kernel:result", data: event.data, requestId };
+    case "aborted":
+      return { type: "kernel:aborted", requestId };
   }
 }
 
@@ -821,6 +824,11 @@ export async function createGateway(config: GatewayConfig) {
       let approvalBridge: ApprovalBridge | undefined;
       let detachConversationRun: (() => void) | null = null;
       let conversationReplayVersion = 0;
+      // Per-WS-connection abort controllers, keyed by requestId. Created
+      // when the user submits a message; consumed when they explicitly
+      // stop the agent. Cleaned up after result / error / aborted so the
+      // map doesn't grow.
+      const abortControllers = new Map<string, AbortController>();
 
       const clearConversationRunAttachment = () => {
         conversationReplayVersion++;
@@ -958,11 +966,29 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
+          if (parsed.type === "abort") {
+            const controller = abortControllers.get(parsed.requestId);
+            if (controller) {
+              controller.abort();
+              // Map cleanup happens in the dispatcher's terminal-event
+              // path (kernel:aborted -> delete). No need to delete here.
+            }
+            return;
+          }
+
           if (parsed.type === "message") {
             clearConversationRunAttachment();
             pendingText = parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
+
+            // Register abort controller so the user can stop this run.
+            // Skip if no requestId (legacy clients) -- they can't target
+            // a specific run anyway.
+            const abortController = requestId ? new AbortController() : undefined;
+            if (requestId && abortController) {
+              abortControllers.set(requestId, abortController);
+            }
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
@@ -999,8 +1025,12 @@ export async function createGateway(config: GatewayConfig) {
                   });
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
+                } else if (msg.type === "kernel:aborted" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
+                  finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
-              })
+              }, undefined, abortController)
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
                 if (activeSessionId) {
@@ -1017,12 +1047,21 @@ export async function createGateway(config: GatewayConfig) {
                   message: CLIENT_KERNEL_ERROR_MESSAGE,
                   requestId,
                 });
+              })
+              .finally(() => {
+                if (requestId) abortControllers.delete(requestId);
               });
           }
         },
 
         onClose(_evt, ws) {
           clearConversationRunAttachment();
+          // Abort any in-flight runs for this client so the kernel doesn't
+          // keep burning tokens after the WS closes.
+          for (const controller of abortControllers.values()) {
+            controller.abort();
+          }
+          abortControllers.clear();
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }

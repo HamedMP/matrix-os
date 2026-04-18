@@ -31,9 +31,12 @@ const MIN_HEIGHT = 200;
 
 interface CanvasWindowProps {
   win: AppWindow;
+  /** When true, the window stays mounted but is visually hidden so iframe
+      state, terminal sockets, and React state survive minimize -> restore. */
+  hidden?: boolean;
 }
 
-export function CanvasWindow({ win }: CanvasWindowProps) {
+export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
@@ -360,7 +363,13 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     return (
       <div
         className="absolute"
-        style={{ left: win.x, top: win.y, zIndex: win.zIndex, pointerEvents: "auto" }}
+        style={{
+          left: win.x,
+          top: win.y,
+          zIndex: win.zIndex,
+          pointerEvents: "auto",
+          display: hidden ? "none" : undefined,
+        }}
       >
         {titleBar}
         <div
@@ -385,7 +394,12 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   return (
     <div
       className="absolute"
-      style={{ left: win.x, top: win.y, zIndex: win.zIndex }}
+      style={{
+        left: win.x,
+        top: win.y,
+        zIndex: win.zIndex,
+        display: hidden ? "none" : undefined,
+      }}
       onMouseDown={() => focusWindow(win.id)}
     >
       {titleBar}

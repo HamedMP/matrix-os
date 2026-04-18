@@ -179,6 +179,72 @@ pre {
   to { opacity: 1; }
 }
 
+/* Chat popover aurora -- a slow rotating conic gradient that lives behind
+   the input bar. Barely visible at rest; intensified on focus; pulses
+   when the agent is responding. The slow rotation gives a "this is alive"
+   quality without being distracting. */
+@keyframes chat-aurora-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Indeterminate progress shimmer for AgentStatusCard when no progress data
+   is known (chat flow has no elapsed/estimated, just busy=true). The bar
+   sweeps left-to-right then resets. */
+@keyframes agent-status-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(380%); }
+}
+
+/* Brief border tint to confirm a queued message landed. Fires when user
+   submits while agent is busy; the input border pulses primary for a
+   moment so the user sees the queue acknowledged the input. */
+@keyframes chat-input-queued-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  20% { box-shadow: 0 0 0 2px var(--primary); }
+}
+
+@keyframes chat-aurora-breathe {
+  0%, 100% { opacity: 0.28; }
+  50% { opacity: 0.55; }
+}
+
+/* Chat popover entrance: rises from the bottom-center of the screen. The
+   popup is horizontally centered via `left: 50%` + `translateX(-50%)`, so
+   the keyframes bake the -50% X translation in to keep centering coherent
+   with the animated Y/scale. transformOrigin is bottom-center so the scale
+   "grows out of" the bottom edge -- the popup feels like it's surfacing
+   from below rather than appearing in place. */
+@keyframes chat-popup-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 24px) scale(0.96);
+    filter: blur(10px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes chat-popup-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, 12px) scale(0.98);
+    filter: blur(6px);
+  }
+}
+
 /* App windows: full-screen on mobile, positioned on desktop */
 .app-window {
   inset: 0;

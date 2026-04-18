@@ -60,6 +60,9 @@ export interface Dispatcher {
     sessionId: string | undefined,
     onEvent: (event: KernelEvent) => void,
     context?: DispatchContext,
+    /** Optional abort controller. Caller (gateway) passes this so it can
+        stop the in-flight kernel run on user request. */
+    abortController?: AbortController,
   ): Promise<void>;
   dispatchBatch(entries: BatchEntry[]): Promise<BatchResult[]>;
   readonly queueLength: number;
@@ -75,6 +78,7 @@ type InternalEntry =
       sessionId: string | undefined;
       onEvent: (event: KernelEvent) => void;
       context?: DispatchContext;
+      abortController?: AbortController;
       resolve: () => void;
       reject: (error: Error) => void;
     }
@@ -166,7 +170,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       }
 
       try {
-        for await (const event of spawnFn(message, config)) {
+        for await (const event of spawnFn(message, config, entry.abortController)) {
           entry.onEvent(event);
           if (event.type === "init") {
             resultSessionId = event.sessionId;
@@ -374,9 +378,18 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       return active;
     },
 
-    dispatch(message, sessionId, onEvent, context) {
+    dispatch(message, sessionId, onEvent, context, abortController) {
       return new Promise<void>((resolve, reject) => {
-        queue.push({ kind: "serial", message, sessionId, onEvent, context, resolve, reject });
+        queue.push({
+          kind: "serial",
+          message,
+          sessionId,
+          onEvent,
+          context,
+          abortController,
+          resolve,
+          reject,
+        });
         processQueue();
       });
     },
