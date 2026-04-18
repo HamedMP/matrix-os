@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreServices
 
 struct SettingsView: View {
     @ObservedObject var status: SyncStatusModel
@@ -45,6 +46,9 @@ struct SettingsView: View {
                         Button("Browse…") { pickFolder() }
                         Spacer()
                         if let path = status.syncPath {
+                            Button("Pin to Finder Sidebar") {
+                                pinToSidebar(path: path)
+                            }
                             Button("Reveal in Finder") {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
                             }
@@ -100,6 +104,46 @@ struct SettingsView: View {
     private func loadDraft() {
         syncPathDraft = status.syncPath ?? ""
         gatewayFolderDraft = status.gatewayFolder ?? ""
+    }
+
+    // LSSharedFileList* was deprecated in macOS 10.11 but is still the only
+    // public-adjacent way to add a Finder sidebar favorite. It still ships
+    // and works on macOS 14/15; Apple just doesn't add new features to it.
+    // If a future release breaks this, fall back to a "drag this to your
+    // sidebar" NSAlert.
+    @available(macOS, deprecated: 10.11, message: "Apple has no public replacement; still works on macOS 14/15.")
+    private func pinToSidebar(path: String) {
+        guard let list = LSSharedFileListCreate(
+            nil,
+            kLSSharedFileListFavoriteItems.takeUnretainedValue(),
+            nil,
+        )?.takeRetainedValue() else {
+            showError("Could not open Finder favorites list.")
+            return
+        }
+        let url = URL(fileURLWithPath: path) as CFURL
+        // Insert at the end. Passing kLSSharedFileListItemLast lets Finder
+        // decide ordering; duplicates are harmless (Finder dedupes by URL).
+        let item = LSSharedFileListInsertItemURL(
+            list,
+            kLSSharedFileListItemLast.takeUnretainedValue(),
+            nil,
+            nil,
+            url,
+            nil,
+            nil,
+        )
+        if item != nil {
+            message = "Pinned to Finder sidebar."
+            isError = false
+        } else {
+            showError("Adding to sidebar failed. Drag the folder in manually.")
+        }
+    }
+
+    private func showError(_ text: String) {
+        message = text
+        isError = true
     }
 
     private func pickFolder() {

@@ -11,7 +11,24 @@
 		A1000002 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
 		A1000003 /* SyncStatusModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
 		A1000004 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000004; };
+		B1000001 /* FinderSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001; };
+		B1000002 /* MatrixSyncFinderSync.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B3000001; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B1000003 /* FinderSync.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B4000001; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B6000001 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B1000002 /* MatrixSyncFinderSync.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A2000001 /* MatrixSyncApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixSyncApp.swift; sourceTree = "<group>"; };
@@ -19,13 +36,30 @@
 		A2000003 /* SyncStatusModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStatusModel.swift; sourceTree = "<group>"; };
 		A2000004 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A3000001 /* MatrixSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MatrixSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B2000001 /* FinderSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderSync.swift; sourceTree = "<group>"; };
+		B2000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B3000001 /* MatrixSyncFinderSync.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MatrixSyncFinderSync.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B4000001 /* FinderSync.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FinderSync.framework; path = System/Library/Frameworks/FinderSync.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B5000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1000003 /* FinderSync.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		A4000001 = {
 			isa = PBXGroup;
 			children = (
 				A4000002 /* MatrixSync */,
+				B4000002 /* MatrixSyncFinderSync */,
+				B4000003 /* Frameworks */,
 				A4000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -45,8 +79,26 @@
 			isa = PBXGroup;
 			children = (
 				A3000001 /* MatrixSync.app */,
+				B3000001 /* MatrixSyncFinderSync.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B4000002 /* MatrixSyncFinderSync */ = {
+			isa = PBXGroup;
+			children = (
+				B2000001 /* FinderSync.swift */,
+				B2000002 /* Info.plist */,
+			);
+			path = MatrixSyncFinderSync;
+			sourceTree = "<group>";
+		};
+		B4000003 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B4000001 /* FinderSync.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -57,15 +109,33 @@
 			buildConfigurationList = A7000001;
 			buildPhases = (
 				A6000001 /* Sources */,
+				B6000001 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B7000001 /* PBXTargetDependency */,
 			);
 			name = MatrixSync;
 			productName = MatrixSync;
 			productReference = A3000001;
 			productType = "com.apple.product-type.application";
+		};
+		B8000001 /* MatrixSyncFinderSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9000001;
+			buildPhases = (
+				B8000002 /* Sources */,
+				B5000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MatrixSyncFinderSync;
+			productName = MatrixSyncFinderSync;
+			productReference = B3000001;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -91,6 +161,7 @@
 			projectRoot = "";
 			targets = (
 				A5000001,
+				B8000001,
 			);
 		};
 /* End PBXProject section */
@@ -107,7 +178,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B8000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1000001,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B7000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B8000001 /* MatrixSyncFinderSync */;
+			targetProxy = B7000002 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		B7000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A8000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B8000001;
+			remoteInfo = MatrixSyncFinderSync;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin XCBuildConfiguration section */
 		A9000001 /* Debug */ = {
@@ -193,6 +290,42 @@
 			};
 			name = Release;
 		};
+		B9000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MatrixSyncFinderSync/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.matrixos.sync.FinderSync;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B9000003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MatrixSyncFinderSync/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.matrixos.sync.FinderSync;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -210,6 +343,15 @@
 			buildConfigurations = (
 				A9000003,
 				A9000004,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B9000001 /* Build configuration list for PBXNativeTarget "MatrixSyncFinderSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9000002,
+				B9000003,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
