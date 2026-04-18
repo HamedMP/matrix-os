@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import type { Context } from "hono";
 import { join } from "node:path";
 import { resolveWithinHome } from "../path-security.js";
@@ -30,11 +30,20 @@ const BINARY_MIME_TYPES: Record<string, string> = {
   otf: "font/otf",
 };
 
-export function serveStaticFileWithin(
+async function statOrNull(path: string) {
+  try {
+    return await stat(path);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+export async function serveStaticFileWithin(
   baseDir: string,
   requestPath: string,
   c: Context,
-): Response {
+): Promise<Response> {
   // SPA fallback: empty path or directory -> index.html
   let filePath = requestPath;
   if (filePath === "" || filePath === "/") {
@@ -51,11 +60,14 @@ export function serveStaticFileWithin(
     return c.text("Forbidden", 403);
   }
 
-  if (!existsSync(fullPath)) {
+  const fileStat = await statOrNull(fullPath);
+
+  if (!fileStat) {
     // SPA fallback: non-existing paths serve index.html
     const indexPath = join(baseDir, "index.html");
-    if (existsSync(indexPath)) {
-      const content = readFileSync(indexPath, "utf-8");
+    const indexStat = await statOrNull(indexPath);
+    if (indexStat?.isFile()) {
+      const content = await readFile(indexPath, "utf-8");
       return c.body(content, 200, {
         "Content-Type": "text/html",
       });
@@ -63,11 +75,11 @@ export function serveStaticFileWithin(
     return c.text("Not found", 404);
   }
 
-  if (statSync(fullPath).isDirectory()) {
-    // Try index.html within the directory
+  if (fileStat.isDirectory()) {
     const indexPath = join(fullPath, "index.html");
-    if (existsSync(indexPath)) {
-      const content = readFileSync(indexPath, "utf-8");
+    const indexStat = await statOrNull(indexPath);
+    if (indexStat?.isFile()) {
+      const content = await readFile(indexPath, "utf-8");
       return c.body(content, 200, {
         "Content-Type": "text/html",
       });
@@ -78,12 +90,11 @@ export function serveStaticFileWithin(
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
 
   if (BINARY_MIME_TYPES[ext]) {
-    const fileStat = statSync(fullPath);
     const etag = `"${fileStat.mtimeMs.toString(36)}-${fileStat.size.toString(36)}"`;
     if (c.req.header("if-none-match") === etag) {
       return c.body(null, 304);
     }
-    const buffer = readFileSync(fullPath);
+    const buffer = await readFile(fullPath);
     return c.body(buffer, 200, {
       "Content-Type": BINARY_MIME_TYPES[ext],
       "Cache-Control": "public, max-age=86400, immutable",
@@ -91,7 +102,7 @@ export function serveStaticFileWithin(
     });
   }
 
-  const content = readFileSync(fullPath, "utf-8");
+  const content = await readFile(fullPath, "utf-8");
   return c.body(content, 200, {
     "Content-Type": TEXT_MIME_TYPES[ext] ?? "application/octet-stream",
   });

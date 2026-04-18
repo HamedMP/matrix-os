@@ -179,15 +179,23 @@ export class BuildOrchestrator {
         signal: ac.signal,
       });
 
+      // Ring-buffer output to cap memory. A verbose pnpm install / vite build
+      // can emit hundreds of MB of logs; accumulating all of it would OOM the
+      // gateway. We keep the most recent MAX_LOG_SIZE bytes, which is what the
+      // log writer and stderrTail slice would use anyway.
       const chunks: Buffer[] = [];
-
-      child.stdout?.on("data", (data: Buffer) => {
+      let totalBytes = 0;
+      const appendChunk = (data: Buffer) => {
         chunks.push(data);
-      });
+        totalBytes += data.length;
+        while (totalBytes > MAX_LOG_SIZE && chunks.length > 1) {
+          const dropped = chunks.shift();
+          if (dropped) totalBytes -= dropped.length;
+        }
+      };
 
-      child.stderr?.on("data", (data: Buffer) => {
-        chunks.push(data);
-      });
+      child.stdout?.on("data", appendChunk);
+      child.stderr?.on("data", appendChunk);
 
       child.on("error", (err) => {
         clearTimeout(timer);
