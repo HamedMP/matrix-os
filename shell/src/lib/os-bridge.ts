@@ -74,7 +74,11 @@ export function handleBridgeMessage(
 
     case "os:open-app":
       if (handler.openApp && msg.payload.name && msg.payload.path) {
-        handler.openApp(msg.payload.name, msg.payload.path);
+        // Strip /files/ prefix — internal app paths are relative (e.g.
+        // "apps/games/2048/index.html"). /api/apps returns absolute
+        // "/files/..." URLs, which existing launchers pass through verbatim.
+        const normalizedPath = msg.payload.path.replace(/^\/files\//, "");
+        handler.openApp(msg.payload.name, normalizedPath);
       }
       break;
   }

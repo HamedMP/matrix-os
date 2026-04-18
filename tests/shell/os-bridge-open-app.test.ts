@@ -51,6 +51,51 @@ describe("OS Bridge - openApp (T2060)", () => {
       expect(handler.fetchData).not.toHaveBeenCalled();
     });
 
+    it("strips leading /files/ prefix from path (spec 063 regression)", () => {
+      const handler: BridgeHandler = {
+        sendToKernel: vi.fn(),
+        fetchData: vi.fn(),
+        openApp: vi.fn(),
+      };
+
+      const event = makeMessageEvent({
+        type: "os:open-app",
+        app: "game-center",
+        payload: {
+          name: "2048",
+          path: "/files/apps/games/2048/index.html",
+        },
+      });
+
+      handleBridgeMessage(event, handler);
+
+      expect(handler.openApp).toHaveBeenCalledWith(
+        "2048",
+        "apps/games/2048/index.html",
+      );
+    });
+
+    it("leaves paths without /files/ prefix unchanged", () => {
+      const handler: BridgeHandler = {
+        sendToKernel: vi.fn(),
+        fetchData: vi.fn(),
+        openApp: vi.fn(),
+      };
+
+      const event = makeMessageEvent({
+        type: "os:open-app",
+        app: "launcher",
+        payload: { name: "Snake", path: "apps/snake/index.html" },
+      });
+
+      handleBridgeMessage(event, handler);
+
+      expect(handler.openApp).toHaveBeenCalledWith(
+        "Snake",
+        "apps/snake/index.html",
+      );
+    });
+
     it("ignores os:open-app with missing payload fields", () => {
       const handler: BridgeHandler = {
         sendToKernel: vi.fn(),
