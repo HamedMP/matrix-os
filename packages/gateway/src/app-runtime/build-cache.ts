@@ -1,7 +1,6 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, glob, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
-import { glob } from "glob";
 
 export interface BuildStamp {
   sourceHash: string;
@@ -15,8 +14,18 @@ const STAMP_FILE = ".build-stamp";
 export async function hashSources(appDir: string, globs: string[]): Promise<string> {
   const files: string[] = [];
   for (const pattern of globs) {
-    const matches = await glob(pattern, { cwd: appDir, nodir: true, absolute: true });
-    files.push(...matches);
+    for await (const match of glob(pattern, { cwd: appDir })) {
+      const abs = join(appDir, match);
+      try {
+        const st = await stat(abs);
+        if (st.isFile()) files.push(abs);
+      } catch (err: unknown) {
+        // ENOENT is expected for symlink-to-missing; rethrow anything else
+        // (EACCES, EIO, EMFILE) so the build surfaces real filesystem errors
+        // rather than silently dropping files from the source hash.
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+    }
   }
 
   // Sort by relative path for determinism regardless of filesystem order

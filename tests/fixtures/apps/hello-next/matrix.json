@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "runtime": "node",
   "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
   "build": {
     "command": "echo build-done",
     "output": "dist"
