@@ -40,7 +40,10 @@ async function runStart(rawPath: string | undefined): Promise<void> {
   }
   await saveConfig(config);
 
-  const daemonPath = new URL("../../daemon/index.js", import.meta.url).pathname;
+  // Point launchd/systemd at the .mjs launcher -- it re-execs node with
+  // --import tsx so the .ts daemon entry can be loaded directly. Plain node
+  // can't import .ts files.
+  const daemonPath = new URL("../../daemon/launcher.mjs", import.meta.url).pathname;
   await installService(daemonPath);
   await startService();
 

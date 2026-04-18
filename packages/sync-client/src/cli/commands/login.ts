@@ -35,7 +35,25 @@ export const loginCommand = defineCommand({
         userId: "user_dev",
         handle: process.env.MATRIX_HANDLE ?? "dev",
       });
+
+      // Also stamp localhost endpoints into config so the daemon points at
+      // the local docker stack instead of matrix-os.com. Preserve syncPath
+      // and peerId if a config already exists.
+      const existingDev = await loadConfig();
+      const next: SyncConfig = {
+        platformUrl: process.env.MATRIXOS_PLATFORM_URL ?? "http://localhost:9000",
+        gatewayUrl: process.env.MATRIXOS_GATEWAY_URL ?? "http://localhost:4000",
+        syncPath: existingDev?.syncPath ?? defaultSyncPath(),
+        peerId: existingDev?.peerId ?? generatePeerId(),
+        folders: existingDev?.folders,
+        exclude: existingDev?.exclude,
+        pauseSync: existingDev?.pauseSync ?? false,
+      };
+      await saveConfig(next);
+
       console.log("Logged in (dev) as @dev");
+      console.log(`Gateway: ${next.gatewayUrl}`);
+      console.log(`Platform: ${next.platformUrl}`);
       return;
     }
 
