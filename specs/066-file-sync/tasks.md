@@ -323,7 +323,7 @@ Before starting T076, decide:
 
 - [x] T104 [P0] Replace basename-as-prefix heuristic with explicit `gatewayFolder` config field. Extracted `packages/sync-client/src/daemon/remote-prefix.ts`; wired into daemon, `matrix sync --folder`, and `matrix login --dev` defaults. Empty = full mirror, non-empty = scoped subtree. Closes F1.
 - [x] T105 [P0] Container-side WS subscriber in `home-mirror.ts` via virtual peer on `PeerRegistry`. Mirror registers a shim `SyncPeerConnection` whose `send()` pulls files on `sync:change` broadcasts (or deletes on action=delete); `recentlyWritten` suppresses the chokidar echo. Closes F2.
-- [ ] T106 [P1] Mac menu bar Settings view: show `syncPath`/`gatewayUrl`/`peerId`, folder picker to change syncPath, log-out button. Requires new IPC commands `getConfig`/`setSyncPath`/`restart` -- F4 in follow-ups.md.
+- [x] T106 [P1] Mac menu bar Settings view (`SettingsView.swift`) with identity (peer/gateway URL, Log Out), sync folder (text field + NSOpenPanel picker + Reveal in Finder), gateway scope (text field with full-mirror explainer). Daemon IPC gained `getConfig`, `setSyncPath`, `setGatewayFolder`, `restart`, `logout`. Opened via SettingsLink + ⌘,. Closes F4.
 - [ ] T107 [P1] Per-target config dir support via `MATRIXOS_CONFIG_DIR` so users can run multiple daemons (one per folder) without colliding on `~/.matrixos/{config,sock,pid}` -- F7.
 - [ ] T108 [P1] Initial-pull concurrency limit + progress aggregation; `.syncignore` filter on local side -- F6.
 - [ ] T109 [P2] Self-heal stale manifest entries when R2 objects are missing (logs `pull failed: NoSuchKey` after a bucket reset) -- F8.
