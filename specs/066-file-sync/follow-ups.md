@@ -27,6 +27,33 @@ Daemon IPC `status` response gained `syncPath` / `gatewayFolder` / `gatewayUrl` 
 
 ## P0 — Things still blocking everyday usage
 
+### F16. Coalesce commits instead of one-per-file
+
+Every single file change today is its own commit: `home-mirror.pushFile` and the daemon's `onEvent` each call `writeManifest(newVersion = existing + 1)`. Saving 30 files in a burst = 30 commits = 30 manifest rewrites in R2 and 30 `sync_manifests` row updates in Postgres.
+
+This is why the manifestVersion inflates fast (e.g. 172 after a single session). It's not a correctness bug, but:
+
+- Manifest size grows linearly with writes, not with file count (more writes → more `version` churn, which on re-pulls means more diffing work).
+- R2 costs 1 PUT per commit.
+- Large folder pastes / `pnpm install` outputs / git operations create commit storms that pressure the serial chain.
+
+**Fix**: batch window (~200–500ms). Collect `pushFile`/`onEvent` events into a pending map, and every tick commit all pending as one `writeManifest` call with one broadcast. Retry the whole batch on optimistic-concurrency conflict. Preserves per-file hashes; just drops the per-commit overhead.
+
+### F15. Bucket prefix should be Clerk `userId`, not `handle`
+
+Today `buildFileKey(userId, ...)` uses `MATRIX_HANDLE` from env (see `server.ts:320`, `349`). A handle is a display name the user can change; a Clerk userId (e.g. `user_2abc...`) is immutable. Using handle as the bucket prefix means that:
+
+- Renaming a handle orphans every R2 key + `sync_manifests` row under the old prefix.
+- Handle collisions on re-registration could let a new user read a prior user's files.
+
+**Fix**:
+- Thread Clerk userId through the JWT and make the gateway's `getUserId` return `claims.sub`, not the handle env var.
+- Update `home-mirror.ts` to use the same.
+- Keep handle as a purely cosmetic field (logs, menu bar display).
+- Migration: for any existing data, add a one-shot script that copies `matrixos-sync/<handle>/...` → `matrixos-sync/<clerk_user_id>/...` and rewrites the `sync_manifests` row. In dev (where `MATRIX_HANDLE=dev` today) we can just wipe MinIO.
+
+Do this BEFORE the first real user data lands to avoid the migration pain.
+
 ### F3. The watcher's "skip if same hash" check has a subtle bug
 
 In `packages/sync-client/src/daemon/index.ts`, the on-change handler checks `existing?.lastSyncedHash === event.hash` to skip re-uploads. Post-F1 the daemon keys `syncState.files` by the REMOTE path (which equals the local rel path in full-mirror mode, or is prefixed with `gatewayFolder/` in scoped mode). Verify no off-by-one when comparing against `manifest.files[relPath]?.hash` after the first sync after F1.

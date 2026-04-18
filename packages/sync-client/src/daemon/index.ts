@@ -1,7 +1,8 @@
-import { join } from "node:path";
-import { writeFile, unlink } from "node:fs/promises";
+import { join, isAbsolute, resolve } from "node:path";
+import { writeFile, unlink, mkdir } from "node:fs/promises";
 import pino from "pino";
-import { loadConfig, getConfigDir } from "../lib/config.js";
+import { loadConfig, saveConfig, getConfigDir } from "../lib/config.js";
+import { clearAuth } from "../auth/token-store.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { loadAuth } from "../auth/token-store.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
@@ -207,7 +208,7 @@ export async function startDaemon(): Promise<void> {
 
   const ipcServer = new IpcServer({
     socketPath,
-    handler: async (command, _args) => {
+    handler: async (command, args) => {
       switch (command) {
         case "status":
           return {
@@ -218,6 +219,7 @@ export async function startDaemon(): Promise<void> {
             syncPath: config.syncPath,
             gatewayFolder: config.gatewayFolder ?? "",
             gatewayUrl: config.gatewayUrl,
+            platformUrl: config.platformUrl,
             peerId: config.peerId,
           };
         case "pause":
@@ -226,6 +228,58 @@ export async function startDaemon(): Promise<void> {
         case "resume":
           config.pauseSync = false;
           return { paused: false };
+        case "getConfig":
+          // Exposes the full persisted config (without auth tokens) so the
+          // menu bar app can render a Settings view. Token lives in auth.json
+          // and is fetched separately via /me on the platform.
+          return {
+            syncPath: config.syncPath,
+            gatewayFolder: config.gatewayFolder ?? "",
+            gatewayUrl: config.gatewayUrl,
+            platformUrl: config.platformUrl,
+            peerId: config.peerId,
+            pauseSync: config.pauseSync,
+          };
+        case "setSyncPath": {
+          // Writes the new path to config.json and asks the caller to
+          // restart the daemon. Changing syncPath live would require tearing
+          // down the FileWatcher + restarting the initial-pull, which is
+          // exactly what a daemon restart does -- so we stop short of that
+          // here and let the client call `restart` next.
+          const raw = typeof args.syncPath === "string" ? args.syncPath : "";
+          if (!raw.trim()) throw new Error("syncPath is required");
+          const newPath = isAbsolute(raw) ? raw : resolve(raw);
+          await mkdir(newPath, { recursive: true });
+          const updated = { ...config, syncPath: newPath };
+          await saveConfig(updated);
+          return { syncPath: newPath, restartRequired: true };
+        }
+        case "setGatewayFolder": {
+          // Same semantics as setSyncPath -- persist, caller restarts.
+          const folder = typeof args.gatewayFolder === "string" ? args.gatewayFolder : "";
+          const updated = { ...config, gatewayFolder: folder };
+          await saveConfig(updated);
+          return { gatewayFolder: folder, restartRequired: true };
+        }
+        case "restart":
+          // Exit with a distinct code; launchd's KeepAlive will restart us.
+          // Schedule after the IPC response is flushed so the client sees
+          // "restarting" before the socket closes.
+          setTimeout(() => {
+            logger.info("Restart requested via IPC");
+            process.exit(3);
+          }, 50);
+          return { restarting: true };
+        case "logout":
+          // Wipe the auth token and exit. Next launch will fail the
+          // loadAuth() guard and the daemon stays down until the user runs
+          // `matrix login` again.
+          await clearAuth();
+          setTimeout(() => {
+            logger.info("Logout requested via IPC");
+            process.exit(0);
+          }, 50);
+          return { loggedOut: true };
         default:
           throw new Error(`Unknown command: ${command}`);
       }

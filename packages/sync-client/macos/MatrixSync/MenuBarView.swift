@@ -31,7 +31,6 @@ struct MenuBarView: View {
                 )
 
                 Label("\(status.fileCount) files tracked", systemImage: "doc.on.doc")
-                Label("Manifest v\(status.manifestVersion)", systemImage: "number")
 
                 if let lastSync = status.lastSyncAt {
                     Label("Last sync: \(lastSync, style: .relative) ago", systemImage: "clock")
@@ -75,6 +74,11 @@ struct MenuBarView: View {
             }
 
             Divider()
+
+            SettingsLink {
+                Label("Settings…", systemImage: "gearshape")
+            }
+            .keyboardShortcut(",")
 
             Button("Refresh") { status.refresh() }
                 .keyboardShortcut("r")

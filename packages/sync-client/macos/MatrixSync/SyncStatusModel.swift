@@ -116,7 +116,31 @@ class SyncStatusModel: ObservableObject {
         }
     }
 
-    private func sendIPC(command: String) async throws -> String {
+    func logout() {
+        Task {
+            _ = try? await sendIPC(command: "logout")
+            refresh()
+        }
+    }
+
+    // Persist syncPath through IPC. Caller is expected to `restart()` to
+    // make the change take effect; the daemon re-reads config on boot.
+    func setSyncPath(_ path: String) async throws {
+        _ = try await sendIPC(command: "setSyncPath", args: ["syncPath": path])
+    }
+
+    func setGatewayFolder(_ folder: String) async throws {
+        _ = try await sendIPC(command: "setGatewayFolder", args: ["gatewayFolder": folder])
+    }
+
+    // Exits the daemon with code 3; launchd's KeepAlive brings it back up
+    // with the new config. The menu bar's polling loop will reconnect once
+    // the socket reappears.
+    func restart() async throws {
+        _ = try await sendIPC(command: "restart")
+    }
+
+    private func sendIPC(command: String, args: [String: String]? = nil) async throws -> String {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw IPCError.socketCreation }
         defer { close(fd) }
@@ -142,7 +166,15 @@ class SyncStatusModel: ObservableObject {
         }
         guard connectResult == 0 else { throw IPCError.connectionFailed }
 
-        let message = "{\"command\":\"\(command)\"}\n"
+        // Build the JSON payload. args go into an optional `args` object so
+        // the daemon handler sees them as args.syncPath / args.gatewayFolder.
+        var payload: [String: Any] = ["command": command]
+        if let args = args, !args.isEmpty {
+            payload["args"] = args
+        }
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+        var message = String(data: data, encoding: .utf8) ?? "{}"
+        message.append("\n")
         message.withCString { cstr in
             _ = send(fd, cstr, strlen(cstr), 0)
         }
