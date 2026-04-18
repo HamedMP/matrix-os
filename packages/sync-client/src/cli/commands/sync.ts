@@ -27,18 +27,27 @@ async function runStart(rawPath: string | undefined): Promise<void> {
   const syncPath = rawPath ? resolve(rawPath) : defaultSyncPath();
   await mkdir(syncPath, { recursive: true });
 
-  let config = await loadConfig();
-  if (!config) {
-    config = {
-      gatewayUrl: "https://matrix-os.com",
-      syncPath,
-      peerId: generatePeerId(),
-      pauseSync: false,
-    };
-  } else {
-    config.syncPath = syncPath;
-  }
+  const previous = await loadConfig();
+  const config = previous
+    ? { ...previous, syncPath }
+    : {
+        gatewayUrl: "https://matrix-os.com",
+        syncPath,
+        peerId: generatePeerId(),
+        pauseSync: false,
+      };
   await saveConfig(config);
+
+  // Skip the launchctl unload/load bounce if the daemon is already running
+  // and the sync path didn't change. Bouncing for no reason creates a race
+  // where `matrix sync status` immediately after returns "not running"
+  // while the socket is being recreated.
+  const sameTarget = previous?.syncPath === syncPath;
+  if (sameTarget && (await isDaemonRunning())) {
+    console.log(`Sync already running for: ${syncPath}`);
+    console.log(`Peer ID: ${config.peerId}`);
+    return;
+  }
 
   // Point launchd/systemd at the .mjs launcher -- it re-execs node with
   // --import tsx so the .ts daemon entry can be loaded directly. Plain node
