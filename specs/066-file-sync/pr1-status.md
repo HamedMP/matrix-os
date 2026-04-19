@@ -73,7 +73,7 @@ bun run test tests/gateway/sync/user-id-from-jwt.test.ts
 
 ## Group B — Platform Orchestrator + Auth Routes
 
-**Status**: `[~]` in progress
+**Status**: `[x]` committed
 **Owner**: platform-orchestrator
 
 ### Files
@@ -119,7 +119,9 @@ bun run test packages/platform
 
 ### Commit
 
-(empty)
+- `d34ba1d` — feat(066): platform wires S3 env + single-domain gateway url
+  (`packages/platform/src/main.ts`, `tests/platform/device-routes.test.ts`).
+  All 249 tests in `tests/platform` pass.
 
 ---
 
