@@ -348,7 +348,13 @@ export async function createGateway(config: GatewayConfig) {
   const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
   if (homeMirrorEnabled && syncR2 && kyselyInstance) {
     try {
-      const userId = process.env.MATRIX_HANDLE ?? "default";
+      // Keep home-mirror's R2 prefix aligned with what authenticated
+      // HTTP/WS routes use (Clerk userId via claims.sub). The orchestrator
+      // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
+      // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
+      // identity is plumbed through.
+      const userId =
+        process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       homeMirror = createHomeMirror({
         r2: syncR2,

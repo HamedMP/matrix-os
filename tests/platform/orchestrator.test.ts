@@ -51,7 +51,39 @@ describe('platform/orchestrator', () => {
     expect(docker.createContainer).toHaveBeenCalledOnce();
     const createArgs = docker.createContainer.mock.calls[0][0];
     expect(createArgs.Env).toContain('MATRIX_HANDLE=alice');
+    expect(createArgs.Env).toContain('MATRIX_USER_ID=clerk_1');
     expect(createArgs.name).toBe('matrixos-alice');
+  });
+
+  it('passes MATRIX_USER_ID on upgrade so home-mirror keeps its R2 prefix', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('bob', 'user_2abc');
+    docker.createContainer.mockClear();
+    mockContainer.start.mockClear();
+
+    await orch.upgrade('bob');
+
+    expect(docker.createContainer).toHaveBeenCalledOnce();
+    const upgradeArgs = docker.createContainer.mock.calls[0][0];
+    expect(upgradeArgs.Env).toContain('MATRIX_USER_ID=user_2abc');
+    expect(upgradeArgs.Env).toContain('MATRIX_HANDLE=bob');
+  });
+
+  it('passes MATRIX_USER_ID on rolling restart', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('carol', 'user_2def');
+    docker.createContainer.mockClear();
+
+    await orch.rollingRestart();
+
+    expect(docker.createContainer).toHaveBeenCalledOnce();
+    const restartArgs = docker.createContainer.mock.calls[0][0];
+    expect(restartArgs.Env).toContain('MATRIX_USER_ID=user_2def');
+    expect(restartArgs.Env).toContain('MATRIX_HANDLE=carol');
   });
 
   it('rejects duplicate handles', async () => {

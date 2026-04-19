@@ -143,7 +143,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     }
   }
 
-  function buildEnv(handle: string, displayName?: string): string[] {
+  function buildEnv(handle: string, displayName?: string, clerkUserId?: string): string[] {
     const containerName = `matrixos-${handle}`;
     const env = [
       `MATRIX_HANDLE=${handle}`,
@@ -157,6 +157,13 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `SHELL_PORT=3000`,
       ...extraEnv,
     ];
+    // MATRIX_USER_ID is the immutable Clerk userId; gateway + home-mirror
+    // key R2 prefixes off it so renaming the handle never orphans files.
+    // Only emit when we have it; buildEnv is also called from upgrade /
+    // rollingRestart paths where the DB record supplies it.
+    if (clerkUserId) {
+      env.push(`MATRIX_USER_ID=${clerkUserId}`);
+    }
     const dbUrl = databaseUrlForHandle(handle);
     if (dbUrl) {
       env.push(`DATABASE_URL=${dbUrl}`);
@@ -191,7 +198,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const container = await docker.createContainer({
         Image: image,
         name: containerName,
-        Env: buildEnv(handle, displayName),
+        Env: buildEnv(handle, displayName, clerkUserId),
         HostConfig: {
           Memory: memoryLimit,
           CpuQuota: cpuQuota,
@@ -284,7 +291,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const container = await docker.createContainer({
         Image: image,
         name: containerName,
-        Env: buildEnv(handle),
+        Env: buildEnv(handle, undefined, record.clerkUserId),
         HostConfig: {
           Memory: memoryLimit,
           CpuQuota: cpuQuota,
@@ -343,7 +350,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           const container = await docker.createContainer({
             Image: image,
             name: containerName,
-            Env: buildEnv(record.handle),
+            Env: buildEnv(record.handle, undefined, record.clerkUserId),
             HostConfig: {
               Memory: memoryLimit,
               CpuQuota: cpuQuota,
