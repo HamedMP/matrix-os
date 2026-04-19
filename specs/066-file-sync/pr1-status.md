@@ -73,8 +73,8 @@ bun run test tests/gateway/sync/user-id-from-jwt.test.ts
 
 ## Group B — Platform Orchestrator + Auth Routes
 
-**Status**: `[ ]` not started
-**Owner**: (unassigned)
+**Status**: `[~]` in progress
+**Owner**: platform-orchestrator
 
 ### Files
 
@@ -125,8 +125,8 @@ bun run test packages/platform
 
 ## Group C — Client CLI + Daemon UX
 
-**Status**: `[ ]` not started
-**Owner**: (unassigned)
+**Status**: `[~]` in progress
+**Owner**: client-ux
 
 ### Files
 
