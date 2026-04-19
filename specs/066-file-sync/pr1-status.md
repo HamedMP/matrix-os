@@ -294,13 +294,15 @@ Post-review audit surfaced defense-in-depth gaps and silent-failure hotspots acr
 the four landed commits. Fix waves below; each is scoped to one teammate's files
 and landed as a single conventional commit.
 
-- [~] Group A hardening — fix-gateway — in progress. Scope: tighten
-  `validateSyncJwt` to reject empty `sub`/`handle`; add a debug log when
-  JWT verification fails in `authMiddleware` (keeps fall-through behaviour);
+- [x] Group A hardening — fix-gateway — commit `247d066`. Tightened
+  `validateSyncJwt` to reject empty `sub`/`handle`; added a debug log when
+  JWT verification fails in `authMiddleware` (fall-through behaviour kept);
   warn-once when `getUserIdFromContext` drops to `"default"`; loud-fail in
   `server.ts` home-mirror init when `NODE_ENV=production` and
-  `MATRIX_USER_ID` is absent. Extends `tests/gateway/sync/user-id-from-jwt.test.ts`
-  with empty-`sub` and tampered-JWT cases.
+  `MATRIX_USER_ID` is absent (with a dev-mode warn when falling back to
+  `MATRIX_HANDLE`). Extended `tests/gateway/sync/user-id-from-jwt.test.ts`
+  with empty-`sub` and tampered-JWT cases (7 tests total in that file;
+  all 16 auth-jwt + user-id-from-jwt tests pass).
 - [~] Group B hardening — fix-platform — in progress. Scope:
   (1) assert `record.clerkUserId` in `orchestrator.upgrade` / `rollingRestart`
   before calling `buildEnv` (silent-failure #12);
