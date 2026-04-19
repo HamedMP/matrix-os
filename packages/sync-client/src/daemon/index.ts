@@ -75,11 +75,17 @@ export async function waitForManifest(
       );
     }
 
+    // Clamp the per-request timeout to whatever's left of the overall
+    // deadline. Without this, a fetch kicked off at t=119s can push the
+    // total wait to ~129s (per-request 10s on top of the 120s budget).
+    const remaining = timeoutMs - elapsed;
+    const perRequestTimeout = Math.min(fetchTimeoutMs, remaining);
+
     let res: Response;
     try {
       res = await fetch(`${opts.gatewayUrl}/api/sync/manifest`, {
         headers: { authorization: `Bearer ${opts.token}` },
-        signal: AbortSignal.timeout(fetchTimeoutMs),
+        signal: AbortSignal.timeout(perRequestTimeout),
       });
     } catch {
       // Don't propagate the underlying error message — fetch can surface raw
