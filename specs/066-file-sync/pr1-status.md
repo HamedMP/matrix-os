@@ -33,7 +33,7 @@ they go. Keep it concise — status per group, files touched, open questions.
 
 ## Group A — Gateway Identity (getUserId → claims.sub)
 
-**Status**: `[~]` in progress
+**Status**: `[x]` committed
 **Owner**: gateway-identity
 
 ### Files
@@ -67,7 +67,45 @@ bun run test tests/gateway/sync/user-id-from-jwt.test.ts
 
 ### Commit
 
-(empty)
+`084ac2b` — feat(066): gateway reads userId from JWT claims.sub
+
+Summary of changes:
+
+- `packages/gateway/src/auth.ts`: new `getUserIdFromContext(c)` helper and
+  `JWT_CLAIMS_CONTEXT_KEY`. `authMiddleware` now calls
+  `c.set("jwtClaims", claims)` after a successful JWT verification so
+  downstream routes can read the Clerk userId off the Hono context.
+- `packages/gateway/src/server.ts`: `syncDeps.getUserId` switches from a
+  captured `process.env.MATRIX_HANDLE` closure to `getUserIdFromContext(c)`.
+  The `/ws` upgrade handler captures `wsSyncUserId` once at connect time
+  so `sync:subscribe` registers peers under the same identity the HTTP
+  sync routes use.
+- `tests/gateway/sync/user-id-from-jwt.test.ts`: new TDD test — 5 cases
+  covering the helper (claims.sub, MATRIX_HANDLE fallback, "default"
+  last resort) and end-to-end route behaviour (JWT → Clerk userId key,
+  legacy bearer → handle key).
+- `tests/gateway/auth-jwt.test.ts`: `mockContext` gained a `set/get` pair
+  so existing middleware tests pass after the context-stash change.
+
+Test verification: all 187 tests in `tests/gateway/sync/` +
+`tests/gateway/auth-jwt.test.ts` pass. Full `tests/gateway/` suite:
+1533/1534 pass (the one failure is the unrelated `qmd-integration.test.ts`
+that requires an external CLI binary).
+
+TypeScript build errors in `packages/gateway` exist but none are in the
+files I touched — they are pre-existing issues in `social.ts`,
+`voice/stt/whisper.ts`, `channels/telegram.ts`, `files-tree.ts`,
+`platform-db.ts`, and other unrelated lines in `server.ts`.
+
+Notes for follow-ups:
+
+- `home-mirror.ts` still reads `process.env.MATRIX_HANDLE` via its `userId`
+  config argument at `server.ts:349`. That codepath is owned by follow-up
+  F2 (per `follow-ups.md`) and is another teammate's turf; not changed
+  here. Once that work lands, swap its userId source to the same
+  `getUserIdFromContext`/claims path used by the HTTP and WS routes.
+- The helper is exported and MUST be used by every new sync route. No
+  sync handler should read `process.env.MATRIX_HANDLE` directly.
 
 ---
 
