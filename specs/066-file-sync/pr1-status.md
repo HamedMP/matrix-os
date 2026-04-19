@@ -127,7 +127,7 @@ bun run test packages/platform
 
 ## Group C — Client CLI + Daemon UX
 
-**Status**: `[~]` in progress
+**Status**: `[x]` committed (commit `841f570`)
 **Owner**: client-ux
 
 ### Files
@@ -170,7 +170,18 @@ bun run test packages/sync-client/tests/unit/daemon-poll.test.ts  # NEW file
 
 ### Commit
 
-(empty)
+- `841f570` feat(066): client waits for manifest + friendly no-account login
+  - Adds `waitForManifest` export in `daemon/index.ts` (polls `/api/sync/manifest`
+    until `manifestVersion > 0` or a non-empty `files` map). 401/403 throws
+    immediately; 5xx / network errors retried; 120s overall timeout.
+  - Daemon startup now runs `waitForManifest` after auth/config and before
+    the initial manifest fetch, so a fresh provisioning doesn't race an
+    empty remote.
+  - `login.ts` detects "no container" (either `/api/me` → 404 or 200 with no
+    `gatewayUrl`), clears the just-written `auth.json`, prints a friendly
+    two-line message, and exits 0 without writing `config.json`.
+  - New `tests/unit/daemon-poll.test.ts` covers happy/wait/timeout/401/
+    5xx-retry/network-error paths with fake timers.
 
 ---
 
