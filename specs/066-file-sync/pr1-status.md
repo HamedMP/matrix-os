@@ -285,3 +285,19 @@ for pull) and broken sync silently.
 
 - `bun run test tests/platform` — 251/251 (was 249 pre-fix, +2 new tests).
 - `bun run test tests/gateway/sync` — 178/178 (Group A's 187 plus additions).
+
+---
+
+## Post-review fixes
+
+Post-review audit surfaced defense-in-depth gaps and silent-failure hotspots across
+the four landed commits. Fix waves below; each is scoped to one teammate's files
+and landed as a single conventional commit.
+
+- [~] Group A hardening — fix-gateway — in progress. Scope: tighten
+  `validateSyncJwt` to reject empty `sub`/`handle`; add a debug log when
+  JWT verification fails in `authMiddleware` (keeps fall-through behaviour);
+  warn-once when `getUserIdFromContext` drops to `"default"`; loud-fail in
+  `server.ts` home-mirror init when `NODE_ENV=production` and
+  `MATRIX_USER_ID` is absent. Extends `tests/gateway/sync/user-id-from-jwt.test.ts`
+  with empty-`sub` and tampered-JWT cases.
