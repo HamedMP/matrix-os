@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { login } from "../../auth/oauth.js";
-import { saveAuth } from "../../auth/token-store.js";
+import { clearAuth, saveAuth } from "../../auth/token-store.js";
 import {
   defaultPlatformUrl,
   defaultSyncPath,
@@ -77,14 +77,21 @@ export const loginCommand = defineCommand({
     // mapping (clerkUserId -> handle -> gateway endpoint); the CLI persists
     // the result so the daemon knows where to point.
     let gatewayUrl: string | undefined;
+    let noContainer = false;
     try {
       const meRes = await fetch(`${platformUrl}/api/me`, {
         headers: { Authorization: `Bearer ${auth.accessToken}` },
         signal: AbortSignal.timeout(10_000),
       });
-      if (meRes.ok) {
+      if (meRes.status === 404) {
+        noContainer = true;
+      } else if (meRes.ok) {
         const me = (await meRes.json()) as { gatewayUrl?: string };
-        if (me.gatewayUrl) gatewayUrl = me.gatewayUrl;
+        if (me.gatewayUrl) {
+          gatewayUrl = me.gatewayUrl;
+        } else {
+          noContainer = true;
+        }
       } else {
         console.error(
           `Warning: /api/me returned ${meRes.status} -- gatewayUrl not discovered. Set it manually in ~/.matrixos/config.json.`,
@@ -94,6 +101,22 @@ export const loginCommand = defineCommand({
       console.error(
         `Warning: failed to fetch /api/me: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+
+    if (noContainer) {
+      // Don't persist auth.json or config.json in this half-provisioned
+      // state. `pollForToken` already wrote auth.json inside `login()`, so
+      // clear it — leaving it around would make `matrix sync` appear to work
+      // while every gateway call 404s.
+      await clearAuth();
+      console.log(
+        "You're signed in, but there's no Matrix instance for this account yet.",
+      );
+      console.log("");
+      console.log(
+        "Sign up at https://app.matrix-os.com first, then re-run `matrix login`.",
+      );
+      return;
     }
 
     const next: SyncConfig = {

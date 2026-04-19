@@ -1,4 +1,5 @@
 import { join, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { writeFile, unlink, mkdir } from "node:fs/promises";
 import pino from "pino";
 import { loadConfig, saveConfig, getConfigDir } from "../lib/config.js";
@@ -24,6 +25,116 @@ const configDir = getConfigDir();
 const stateFile = join(configDir, "sync-state.json");
 const socketPath = join(configDir, "daemon.sock");
 const pidFile = join(configDir, "daemon.pid");
+
+interface PollLogger {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
+  error: (msg: string) => void;
+}
+
+export interface WaitForManifestOptions {
+  gatewayUrl: string;
+  token: string;
+  logger: PollLogger;
+  // Overrides so tests can dial these down; production uses the defaults.
+  timeoutMs?: number;
+  intervalMs?: number;
+  fetchTimeoutMs?: number;
+}
+
+/**
+ * Polls `/api/sync/manifest` until the gateway reports a populated manifest
+ * (manifestVersion > 0 or a non-empty `files` map), then resolves. Throws on
+ * auth failure (401/403) or overall timeout. Transient 5xx and network
+ * errors are logged and retried.
+ *
+ * Rationale: on fresh provisioning, the platform may spin up the container
+ * before any file has been mirrored, so the manifest is empty for a few
+ * seconds. Starting chokidar against an empty remote leads to confusing
+ * "we just uploaded everything local" behavior the first time.
+ */
+export async function waitForManifest(
+  opts: WaitForManifestOptions,
+): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const intervalMs = opts.intervalMs ?? 2_000;
+  const fetchTimeoutMs = opts.fetchTimeoutMs ?? 10_000;
+
+  const start = Date.now();
+  let attempt = 0;
+
+  for (;;) {
+    attempt++;
+    const elapsed = Date.now() - start;
+    if (elapsed >= timeoutMs) {
+      throw new Error(
+        "Timed out waiting for your Matrix instance. Check https://app.matrix-os.com that your container is running, then restart the daemon.",
+      );
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`${opts.gatewayUrl}/api/sync/manifest`, {
+        headers: { authorization: `Bearer ${opts.token}` },
+        signal: AbortSignal.timeout(fetchTimeoutMs),
+      });
+    } catch (err) {
+      opts.logger.warn(
+        `Manifest poll attempt ${attempt} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await sleep(intervalMs);
+      continue;
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Auth token rejected. Re-run `matrix login`.");
+    }
+
+    if (res.status >= 500) {
+      opts.logger.warn(
+        `Manifest poll attempt ${attempt} got ${res.status}; retrying`,
+      );
+      await sleep(intervalMs);
+      continue;
+    }
+
+    if (!res.ok) {
+      // 4xx other than auth — surface so ops notice instead of looping forever.
+      throw new Error(`Manifest fetch failed: ${res.status}`);
+    }
+
+    let body: {
+      manifestVersion?: number;
+      manifest?: { files?: Record<string, unknown> };
+      files?: Record<string, unknown>;
+    };
+    try {
+      body = (await res.json()) as typeof body;
+    } catch (err) {
+      opts.logger.warn(
+        `Manifest poll attempt ${attempt} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await sleep(intervalMs);
+      continue;
+    }
+
+    const version = typeof body.manifestVersion === "number" ? body.manifestVersion : 0;
+    const files = body.manifest?.files ?? body.files ?? {};
+    const fileCount = Object.keys(files).length;
+
+    if (version > 0 || fileCount > 0) {
+      return;
+    }
+
+    const elapsedSeconds = Math.floor((Date.now() - start) / 1000);
+    opts.logger.info(`Waiting for your Matrix instance... (${elapsedSeconds}s)`);
+    await sleep(intervalMs);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function startDaemon(): Promise<void> {
   const logger = pino({
@@ -300,6 +411,25 @@ export async function startDaemon(): Promise<void> {
 
   await ipcServer.start();
 
+  // Wait for the gateway's manifest to be populated before we start pushing
+  // local files up. On first provisioning the container may still be seeding
+  // its home directory; if we race past that we end up uploading our local
+  // state into an empty remote instead of merging with what's about to arrive.
+  try {
+    await waitForManifest({
+      gatewayUrl: config.gatewayUrl,
+      token: auth.accessToken,
+      logger: {
+        info: (msg) => logger.info(msg),
+        warn: (msg) => logger.warn(msg),
+        error: (msg) => logger.error(msg),
+      },
+    });
+  } catch (err) {
+    logger.error({ err }, "waitForManifest failed; exiting");
+    throw err;
+  }
+
   // Fetch the remote manifest BEFORE starting the watcher. Two reasons:
   //  1. Pick up the gateway's manifestVersion so the first commit doesn't
   //     race with expectedVersion=0 against a non-empty bucket.
@@ -380,7 +510,21 @@ export async function startDaemon(): Promise<void> {
   );
 }
 
-startDaemon().catch((err) => {
-  console.error("Daemon failed to start:", err);
-  process.exit(1);
-});
+// Only auto-start when invoked as an entry point (tsx / compiled bin).
+// Importing this module (e.g. from tests) must not trigger daemon startup.
+const isEntrypoint = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return fileURLToPath(import.meta.url) === entry;
+  } catch {
+    return false;
+  }
+})();
+
+if (isEntrypoint) {
+  startDaemon().catch((err) => {
+    console.error("Daemon failed to start:", err);
+    process.exit(1);
+  });
+}
