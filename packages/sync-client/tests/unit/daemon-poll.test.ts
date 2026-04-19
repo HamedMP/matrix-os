@@ -73,9 +73,15 @@ describe("waitForManifest", () => {
   });
 
   it("throws after 120s of empty manifests", async () => {
+    // Use mockImplementation so each poll gets a fresh Response. `mockResolvedValue`
+    // returns the same instance, and Response bodies are single-use — the second
+    // res.json() call would throw "body already used" and trick the non-JSON
+    // strike counter.
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(jsonResponse({ manifestVersion: 0, manifest: { files: {} } }));
+      .mockImplementation(async () =>
+        jsonResponse({ manifestVersion: 0, manifest: { files: {} } }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
@@ -164,5 +170,160 @@ describe("waitForManifest", () => {
 
     await expect(promise).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries once on non-JSON response and recovers on next poll", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("<html>proxy page</html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          manifestVersion: 1,
+          manifest: {
+            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
+          },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("hard-fails after 3 consecutive non-JSON responses (misconfigured gateway)", async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response("<html>bad</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const caught = promise.catch((err) => err);
+
+    // 3 polls, each followed by the 2s sleep. Can't just advance 6s in one
+    // go -- the fetch promise needs to settle between timer ticks so the
+    // next sleep gets queued.
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    const err = await caught;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/non-JSON responses/);
+    expect((err as Error).message).toContain(gatewayUrl);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("resets the non-JSON strike counter when a valid JSON response arrives", async () => {
+    // Two non-JSON hits, then a valid (but empty) response resets the counter,
+    // then two more non-JSON hits — should NOT hard-fail because counter was
+    // reset after the valid response.
+    const htmlRes = () =>
+      new Response("<html>x</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(htmlRes())
+      .mockResolvedValueOnce(htmlRes())
+      .mockResolvedValueOnce(
+        jsonResponse({ manifestVersion: 0, manifest: { files: {} } }),
+      )
+      .mockResolvedValueOnce(htmlRes())
+      .mockResolvedValueOnce(htmlRes())
+      .mockResolvedValueOnce(
+        jsonResponse({
+          manifestVersion: 1,
+          manifest: {
+            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
+          },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("includes gatewayUrl in the 120s timeout error", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () =>
+        jsonResponse({ manifestVersion: 0, manifest: { files: {} } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const caught = promise.catch((err) => err);
+
+    for (let i = 0; i < 80; i++) {
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    const err = await caught;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain(gatewayUrl);
+  });
+
+  it("does not leak raw fetch error messages on network failure", async () => {
+    const warnings: string[] = [];
+    const logger = {
+      info: () => {},
+      warn: (msg: string) => warnings.push(msg),
+      error: () => {},
+    };
+    // fetch throws an error whose message mimics a server response leak
+    // (what res.json() does on HTML bodies).
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new SyntaxError("Unexpected token '<', \"<html>secret</html>\" is not valid JSON"),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          manifestVersion: 1,
+          manifest: {
+            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
+          },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForManifest({ gatewayUrl, token, logger });
+
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    await expect(promise).resolves.toBeUndefined();
+    // The generic warning must NOT include the raw error text.
+    expect(warnings.some((w) => w.includes("<html>secret</html>"))).toBe(false);
+    // But SHOULD include the gateway URL for triage.
+    expect(warnings.some((w) => w.includes(gatewayUrl))).toBe(true);
   });
 });

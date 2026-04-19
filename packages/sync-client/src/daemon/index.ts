@@ -3,9 +3,8 @@ import { fileURLToPath } from "node:url";
 import { writeFile, unlink, mkdir } from "node:fs/promises";
 import pino from "pino";
 import { loadConfig, saveConfig, getConfigDir } from "../lib/config.js";
-import { clearAuth } from "../auth/token-store.js";
+import { clearAuth, loadAuth } from "../auth/token-store.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
-import { loadAuth } from "../auth/token-store.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
 import { detectChanges, buildPresignBatch } from "./sync-engine.js";
 import { FileWatcher } from "./watcher.js";
@@ -62,13 +61,17 @@ export async function waitForManifest(
 
   const start = Date.now();
   let attempt = 0;
+  // If the gateway responds but returns HTML/text (misconfigured proxy, wrong
+  // host), no amount of waiting will fix it — bail after 3 consecutive
+  // non-JSON responses instead of burning the full 120s timeout.
+  let consecutiveNonJson = 0;
 
   for (;;) {
     attempt++;
     const elapsed = Date.now() - start;
     if (elapsed >= timeoutMs) {
       throw new Error(
-        "Timed out waiting for your Matrix instance. Check https://app.matrix-os.com that your container is running, then restart the daemon.",
+        `Timed out waiting for your Matrix instance at ${opts.gatewayUrl}. Check https://app.matrix-os.com that your container is running, then restart the daemon.`,
       );
     }
 
@@ -78,9 +81,12 @@ export async function waitForManifest(
         headers: { authorization: `Bearer ${opts.token}` },
         signal: AbortSignal.timeout(fetchTimeoutMs),
       });
-    } catch (err) {
+    } catch {
+      // Don't propagate the underlying error message — fetch can surface raw
+      // server response bytes (HTML, binary) in parse errors, which violates
+      // CLAUDE.md § Error Handling. Log a generic message instead.
       opts.logger.warn(
-        `Manifest poll attempt ${attempt} failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Manifest poll attempt ${attempt} failed (network error talking to ${opts.gatewayUrl})`,
       );
       await sleep(intervalMs);
       continue;
@@ -92,7 +98,7 @@ export async function waitForManifest(
 
     if (res.status >= 500) {
       opts.logger.warn(
-        `Manifest poll attempt ${attempt} got ${res.status}; retrying`,
+        `Manifest poll attempt ${attempt}: ${opts.gatewayUrl} returned ${res.status}; retrying`,
       );
       await sleep(intervalMs);
       continue;
@@ -100,7 +106,26 @@ export async function waitForManifest(
 
     if (!res.ok) {
       // 4xx other than auth — surface so ops notice instead of looping forever.
-      throw new Error(`Manifest fetch failed: ${res.status}`);
+      throw new Error(`Manifest fetch from ${opts.gatewayUrl} failed: ${res.status}`);
+    }
+
+    // Guard against gateways that return HTML (misconfigured reverse proxy,
+    // captive portal, wrong host) before we feed bytes into res.json(). This
+    // keeps the catch-path from ever receiving a SyntaxError whose message
+    // could leak response bytes.
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      consecutiveNonJson++;
+      opts.logger.warn(
+        `Manifest poll attempt ${attempt}: ${opts.gatewayUrl} returned non-JSON response (content-type: ${contentType || "(none)"})`,
+      );
+      if (consecutiveNonJson >= 3) {
+        throw new Error(
+          `Gateway at ${opts.gatewayUrl} keeps returning non-JSON responses. This usually means the URL is wrong or a reverse proxy is misconfigured. Fix the gateway URL and restart the daemon.`,
+        );
+      }
+      await sleep(intervalMs);
+      continue;
     }
 
     let body: {
@@ -110,14 +135,24 @@ export async function waitForManifest(
     };
     try {
       body = (await res.json()) as typeof body;
-    } catch (err) {
+    } catch {
+      // Shouldn't normally hit this path after the Content-Type guard above,
+      // but a gateway can still lie about the header. Treat the same way —
+      // generic message, bump the counter, hard-fail at 3 strikes.
+      consecutiveNonJson++;
       opts.logger.warn(
-        `Manifest poll attempt ${attempt} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+        `Manifest poll attempt ${attempt}: ${opts.gatewayUrl} returned malformed JSON despite application/json header`,
       );
+      if (consecutiveNonJson >= 3) {
+        throw new Error(
+          `Gateway at ${opts.gatewayUrl} keeps returning malformed JSON. Fix the gateway and restart the daemon.`,
+        );
+      }
       await sleep(intervalMs);
       continue;
     }
 
+    consecutiveNonJson = 0;
     const version = typeof body.manifestVersion === "number" ? body.manifestVersion : 0;
     const files = body.manifest?.files ?? body.files ?? {};
     const fileCount = Object.keys(files).length;
