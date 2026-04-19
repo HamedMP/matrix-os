@@ -73,41 +73,30 @@ export const loginCommand = defineCommand({
       clientId: "matrixos-cli",
     });
 
-    // Discover the user's gateway URL via /api/me. The platform owns the
-    // mapping (clerkUserId -> handle -> gateway endpoint); the CLI persists
-    // the result so the daemon knows where to point.
+    // Discover the user's gateway URL via /api/me. Contract: 404 means the
+    // user has no container yet (the ONLY "no container" signal); 200 always
+    // carries a `gatewayUrl`. Any other response or a fetch throw is treated
+    // as transient — we preserve the existing auth.json so the user can retry
+    // without redoing the device flow, and we skip writing config.json so we
+    // don't leave a half-provisioned state pointing at a guessed gateway.
     let gatewayUrl: string | undefined;
-    let noContainer = false;
+    let meRes: Response;
     try {
-      const meRes = await fetch(`${platformUrl}/api/me`, {
+      meRes = await fetch(`${platformUrl}/api/me`, {
         headers: { Authorization: `Bearer ${auth.accessToken}` },
         signal: AbortSignal.timeout(10_000),
       });
-      if (meRes.status === 404) {
-        noContainer = true;
-      } else if (meRes.ok) {
-        const me = (await meRes.json()) as { gatewayUrl?: string };
-        if (me.gatewayUrl) {
-          gatewayUrl = me.gatewayUrl;
-        } else {
-          noContainer = true;
-        }
-      } else {
-        console.error(
-          `Warning: /api/me returned ${meRes.status} -- gatewayUrl not discovered. Set it manually in ~/.matrixos/config.json.`,
-        );
-      }
     } catch (err) {
       console.error(
-        `Warning: failed to fetch /api/me: ${err instanceof Error ? err.message : String(err)}`,
+        `Could not reach ${platformUrl}/api/me (${err instanceof Error ? err.message : "network error"}). Your auth token was saved — re-run \`matrix login\` once the platform is reachable.`,
       );
+      return;
     }
 
-    if (noContainer) {
-      // Don't persist auth.json or config.json in this half-provisioned
-      // state. `pollForToken` already wrote auth.json inside `login()`, so
-      // clear it — leaving it around would make `matrix sync` appear to work
-      // while every gateway call 404s.
+    if (meRes.status === 404) {
+      // User signed in but no Matrix container exists. Wipe the just-written
+      // auth.json (pollForToken persisted it inside `login()`) — otherwise
+      // `matrix sync` would appear to work while every gateway call 404s.
       await clearAuth();
       console.log(
         "You're signed in, but there's no Matrix instance for this account yet.",
@@ -117,6 +106,21 @@ export const loginCommand = defineCommand({
         "Sign up at https://app.matrix-os.com first, then re-run `matrix login`.",
       );
       return;
+    }
+
+    if (!meRes.ok) {
+      // 5xx, 400, 502, etc. Keep the auth token (transient server issue) and
+      // skip the config write — writing a config with a guessed gatewayUrl
+      // is the exact half-provisioned state the 404 branch above prevents.
+      console.error(
+        `/api/me returned ${meRes.status}. Your auth token was saved — re-run \`matrix login\` once the platform recovers.`,
+      );
+      return;
+    }
+
+    const me = (await meRes.json()) as { gatewayUrl?: string };
+    if (me.gatewayUrl) {
+      gatewayUrl = me.gatewayUrl;
     }
 
     const next: SyncConfig = {
