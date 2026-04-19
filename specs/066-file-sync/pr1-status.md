@@ -23,7 +23,8 @@ they go. Keep it concise — status per group, files touched, open questions.
 
 - [x] Decisions locked — see deployment-plan.md § "Decisions locked before starting" (commit `6ee152b`)
 - [x] VPS deployment guide updated with Cloudflare R2 section (commit `6ee152b`)
-- [ ] All three groups committed
+- [x] All three groups committed (`084ac2b`, `d34ba1d`, `841f570`)
+- [x] Group D follow-up (home-mirror userId alignment via `MATRIX_USER_ID`) committed (`e5b72dc`)
 - [ ] Review agents run per group
 - [ ] Integration verification: `bun run lint`, `bun run build`, `bun run test`
 - [ ] Smoke tests per deployment-plan.md § "Smoke tests" executed against staging
@@ -256,3 +257,31 @@ None. All five decisions are locked in `deployment-plan.md` § "Decisions locked
 - Do NOT use worktree isolation.
 - Do NOT rebase main or force-push.
 - Keep the status file current — it's the handoff contract.
+
+---
+
+## Group D — home-mirror userId alignment (post-hoc)
+
+**Status**: `[x]` committed (`e5b72dc`)
+**Owner**: team-lead
+
+Surfaced by gateway-identity in Group A's completion note: home-mirror was
+still reading `process.env.MATRIX_HANDLE` as its R2 prefix at startup, while
+the rest of the gateway had switched to `claims.sub`. That would have split
+the bucket into two prefix spaces per user (handle for push, Clerk userId
+for pull) and broken sync silently.
+
+### Files
+
+- `packages/platform/src/orchestrator.ts` — `buildEnv` accepts `clerkUserId`;
+  provision / upgrade / rollingRestart pass it through from the DB record.
+  Emits `MATRIX_USER_ID=<clerk>` env var on every create.
+- `packages/gateway/src/server.ts` — home-mirror `userId` reads
+  `MATRIX_USER_ID` first, falls back to `MATRIX_HANDLE` for dev-mode.
+- `tests/platform/orchestrator.test.ts` — asserts `MATRIX_USER_ID` is set
+  on provision, upgrade, and rollingRestart Env arrays.
+
+### Verification
+
+- `bun run test tests/platform` — 251/251 (was 249 pre-fix, +2 new tests).
+- `bun run test tests/gateway/sync` — 178/178 (Group A's 187 plus additions).
