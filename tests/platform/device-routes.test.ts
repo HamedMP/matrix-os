@@ -322,7 +322,7 @@ describe("device routes", () => {
       expect(meRes.status).toBe(200);
       const me = await meRes.json();
       expect(me.handle).toBe("alice");
-      expect(me.gatewayUrl).toMatch(/alice/);
+      expect(me.gatewayUrl).toBe("https://app.matrix-os.com");
     });
 
     it("returns 401 when Authorization header is missing", async () => {

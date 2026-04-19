@@ -171,12 +171,14 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
         jwtSecret: platformJwtSecret,
         platformUrl: platformPublicUrl,
         gatewayUrlForHandle: (handle) => {
-          // Production: each handle gets a subdomain on matrix-os.com.
+          // Single-domain production: every handle hits https://app.matrix-os.com,
+          // where the platform middleware resolves the Clerk session and proxies
+          // to the right container. Per-handle subdomains are deprecated.
           // Dev override via GATEWAY_URL_TEMPLATE='http://localhost:4000' (single-tenant)
           // or 'http://matrixos-{handle}:4000' for in-cluster Docker routing.
           const tmpl = process.env.GATEWAY_URL_TEMPLATE;
           if (tmpl) return tmpl.replace('{handle}', handle);
-          return `https://${handle}.matrix-os.com`;
+          return 'https://app.matrix-os.com';
         },
       }),
     );
@@ -187,6 +189,19 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     const host = c.req.header('host') ?? '';
     const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
     if (!isAppDomain) return next();
+
+    // Device-flow paths are served directly by the platform's auth-routes.ts
+    // (registered above). In normal dispatch they never reach this middleware,
+    // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
+    // a future refactor can't accidentally proxy them into a user container.
+    const reqPath = c.req.path;
+    if (
+      reqPath === '/auth/device' ||
+      reqPath.startsWith('/auth/device/') ||
+      reqPath.startsWith('/api/auth/device/')
+    ) {
+      return next();
+    }
 
     if (!clerkAuth) {
       return c.text('Clerk not configured', 500);
@@ -282,6 +297,18 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     const host = c.req.header('host') ?? '';
     const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
     if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') return next();
+
+    // Device-flow paths are platform-global (auth-routes.ts); never proxy them
+    // into a per-handle container, even if a request somehow hits the legacy
+    // subdomain host.
+    const reqPath = c.req.path;
+    if (
+      reqPath === '/auth/device' ||
+      reqPath.startsWith('/auth/device/') ||
+      reqPath.startsWith('/api/auth/device/')
+    ) {
+      return next();
+    }
 
     const handle = match[1];
     const record = getContainer(db, handle);
@@ -636,6 +663,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     'PIPEDREAM_PROJECT_ID',
     'PIPEDREAM_ENVIRONMENT',
     'PIPEDREAM_WEBHOOK_SECRET',
+    'S3_ENDPOINT',
+    'S3_PUBLIC_ENDPOINT',
+    'S3_ACCESS_KEY_ID',
+    'S3_SECRET_ACCESS_KEY',
+    'S3_BUCKET',
+    'S3_FORCE_PATH_STYLE',
+    'MATRIX_HOME_MIRROR',
   ]) {
     if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
   }
