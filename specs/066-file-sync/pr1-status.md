@@ -25,10 +25,12 @@ they go. Keep it concise — status per group, files touched, open questions.
 - [x] VPS deployment guide updated with Cloudflare R2 section (commit `6ee152b`)
 - [x] All three groups committed (`084ac2b`, `d34ba1d`, `841f570`)
 - [x] Group D follow-up (home-mirror userId alignment via `MATRIX_USER_ID`) committed (`e5b72dc`)
-- [ ] Review agents run per group
-- [ ] Integration verification: `bun run lint`, `bun run build`, `bun run test`
-- [ ] Smoke tests per deployment-plan.md § "Smoke tests" executed against staging
-- [ ] Ready to merge
+- [x] Review agents run per group (Review A+D: SHIP; Review B: SHIP; Review C: FIX; silent-failure-hunter: FIX)
+- [x] Fix wave landed (gateway `247d066`, client `e45cf5b`/`01148e1`/`06927c3`, platform `1894145`)
+- [x] Legacy `{handle}.matrix-os.com` middleware retired in `1894145` (voice-tunnel still uses per-handle subdomain via Cloudflare tunnel ingress — not via the retired platform middleware, so safe)
+- [x] Integration verification (local): 451/451 platform+gateway-sync+auth-jwt, 149/149 sync-client (2 pre-existing oauth.test.ts unhandled-rejection warnings unrelated to PR 1)
+- [ ] Smoke tests per deployment-plan.md § "Smoke tests" executed against prod (requires VPS deploy)
+- [ ] Ready to merge — pending user approval + VPS smoke tests
 
 ---
 
