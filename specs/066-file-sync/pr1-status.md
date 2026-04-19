@@ -303,16 +303,34 @@ and landed as a single conventional commit.
   `MATRIX_HANDLE`). Extended `tests/gateway/sync/user-id-from-jwt.test.ts`
   with empty-`sub` and tampered-JWT cases (7 tests total in that file;
   all 16 auth-jwt + user-id-from-jwt tests pass).
-- [~] Group B hardening — fix-platform — in progress. Scope:
-  (1) assert `record.clerkUserId` in `orchestrator.upgrade` / `rollingRestart`
-  before calling `buildEnv` (silent-failure #12);
-  (2) startup warning when `MATRIX_HOME_MIRROR=true` and any of
-  `S3_ENDPOINT`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_BUCKET` are
-  missing (silent-failure #6);
-  (3) test for `/auth/device*` short-circuit in container-proxy middleware
-  (Review B H1);
-  (4) retire legacy `{handle}.matrix-os.com` subdomain proxy middleware
-  (user-approved).
+- [x] Group B hardening — fix-platform — commit `1894145` (platform
+  hardening + legacy retirement). Test files `middleware-shortcircuit.test.ts`
+  and `home-mirror-env-check.test.ts` landed under `e45cf5b` via a
+  stash/pop collision (already noted in Group C's entry). Scope delivered:
+  (1) `orchestrator.upgrade` / `rollingRestart` assert `clerkUserId`
+  before calling `buildEnv` with a clear operator error message pointing
+  at `orch destroy` + re-provision (silent-failure #12). 2 new
+  orchestrator tests.
+  (2) `checkHomeMirrorS3Env()` exported from `main.ts` and called at
+  startup, logging a single WARNING (not throw) when
+  `MATRIX_HOME_MIRROR=true` but any of `S3_ENDPOINT` /
+  `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_BUCKET` is missing
+  (silent-failure #6). 5 new home-mirror-env-check tests.
+  (3) Regression test for `/auth/device*` short-circuit on
+  `app.matrix-os.com` (Review B H1) — proves device-flow paths never
+  reach the container-proxy middleware even when Clerk is broken.
+  4 new middleware-shortcircuit tests.
+  (4) Retired legacy `{handle}.matrix-os.com` subdomain proxy:
+  removed HTTP middleware (main.ts:326-403) + WebSocket routing
+  branch (main.ts:805-855) + the redundant in-middleware device-flow
+  short-circuit that went with it. `gatewayUrlForHandle` still returns
+  `https://app.matrix-os.com` for every handle (contract unchanged).
+  Remaining consumers of `{handle}.matrix-os.com` in the codebase
+  (`voice-provisioner.ts`, `voice/tunnel/cloudflare.ts`) serve Twilio
+  webhooks via a Cloudflare tunnel pointing directly at the user
+  container — they never went through this platform middleware, so
+  retiring it is safe. Flagged to lead.
+  Tests: 262/262 platform (was 251 pre-wave; +11).
 - [x] Group C hardening — fix-client — committed. Commits:
   - `e45cf5b` fix(066): client login preserves auth on transient /api/me
     errors — addresses Review C C1 / silent-failure #9, #11. Prunes the
