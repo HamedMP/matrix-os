@@ -301,3 +301,13 @@ and landed as a single conventional commit.
   `server.ts` home-mirror init when `NODE_ENV=production` and
   `MATRIX_USER_ID` is absent. Extends `tests/gateway/sync/user-id-from-jwt.test.ts`
   with empty-`sub` and tampered-JWT cases.
+- [~] Group B hardening — fix-platform — in progress. Scope:
+  (1) assert `record.clerkUserId` in `orchestrator.upgrade` / `rollingRestart`
+  before calling `buildEnv` (silent-failure #12);
+  (2) startup warning when `MATRIX_HOME_MIRROR=true` and any of
+  `S3_ENDPOINT`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_BUCKET` are
+  missing (silent-failure #6);
+  (3) test for `/auth/device*` short-circuit in container-proxy middleware
+  (Review B H1);
+  (4) retire legacy `{handle}.matrix-os.com` subdomain proxy middleware
+  (user-approved).
