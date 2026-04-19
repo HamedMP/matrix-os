@@ -4,11 +4,11 @@ Incremental rollout of the three-way file sync system (Phase 9 OAuth + Phase 10 
 
 ## Principles
 
-- **Server ships before client.** Backend changes must be backward-compatible so older CLIs keep working against upgraded prod.
+- **Server ships before client.** PR 1 (server + R2) lands first and is validated in isolation. PR 2 (new CLI) is built against the upgraded prod. Since there are currently zero CLI users in the wild, backward compat with older CLIs is NOT a concern for PR 1 — we get a clean break. From PR 2 onward, each shipped CLI must continue to work against subsequent backend PRs.
 - **Single rollout domain.** All HTTP + WebSocket traffic terminates at `app.matrix-os.com` / `matrix-os.com`. No new subdomains.
 - **Clerk userId is the source of truth.** R2 keys, manifest rows, and JWT claims all key off `claims.sub`. Handle is cosmetic.
 - **Each user keeps their own container.** Platform proxies `app.matrix-os.com` → `matrixos-<handle>:{3000,4000}` based on Clerk session → container lookup. Nothing in this plan merges users into a shared gateway.
-- **Every PR is independently revertable.** No PR depends on a later PR to function. PR N-1 running against PR N backend must keep working.
+- **Every PR is independently revertable.** No PR depends on a later PR to function.
 
 ## Current Production Topology (for context)
 
@@ -46,90 +46,152 @@ Local dev mirrors the container half via `docker-compose.dev.yml`. Platform + pr
 
 ---
 
-## PR 1 — Backend + Identity (ship to prod first)
+## PR 1 — Backend + Identity + R2 wiring (ship to prod first)
 
-**Goal**: prod has everything the new CLI will need. Deploy, verify, then develop PR 2 against the updated prod.
+**Goal**: prod has everything the new CLI will need — Clerk identity on the server side, Cloudflare R2 provisioned and wired into every per-user container, and a session-based gateway URL. No data exists yet in prod, so no migration or legacy-fallback concerns.
+
+### Decisions locked before starting
+
+1. **"No account" UX** — when `matrix login` succeeds Clerk auth but `/api/me` returns 404, print a friendly "sign up at https://app.matrix-os.com first" message. (CLI-side signup lands in PR 4.)
+2. **First-sync UX** — daemon polls the manifest after login until `manifestVersion > 0`, with a "Waiting for your Matrix instance…" progress message. Timeout 120s, then instruct user to check `app.matrix-os.com` that their container is running.
+3. **No data migration** — prod has zero sync users; fresh-start on new Clerk-userId-prefixed bucket. If any stray handle-prefixed keys exist in Cloudflare R2, wipe them manually in the dashboard.
+4. **No legacy CLI fallback** — zero existing CLIs in the wild. `getUserId` switches cleanly to `claims.sub` with no handle path.
+5. **Cloudflare R2 directly** (not MinIO-in-prod). One shared `matrixos-sync` bucket, shared access key injected into every per-user container by the Platform orchestrator. Prefix isolation enforced at the gateway (`buildFileKey(userId, …)`). Per-user scoped R2 tokens = hardening follow-up, not blocker.
 
 ### Scope
 
-- **F15 — Clerk userId as bucket prefix**. Gateway's `getUserId` returns `claims.sub` (Clerk user id, e.g. `user_2abc...`) instead of `MATRIX_HANDLE` env var. `buildFileKey` + `sync_manifests` user_id column switch to the same. Handle stays as a display-only field.
-- **Device approval UI lives on `app.matrix-os.com`**. Platform exempts `/auth/device*` and `/api/auth/device/*` paths from the container-proxy step. The Clerk-embedded approval page is served directly by platform (current raw HTML), or optionally rendered by shell's Next.js (see "Stretch" below).
-- **Bi-directional broadcast in `home-mirror.ts`**. The push path now calls `peerRegistry.broadcastChange` after `writeManifest`, so laptop peers see container-originated edits in real-time via their existing WS connection (not just on reconnect).
-- **Subscribe-to-changes in `home-mirror.ts`**. The mirror registers itself as a virtual peer on `peerRegistry` so broadcasts from laptop commits pull into the container's home. Already merged as part of this branch; confirm it's in the PR diff.
-- **Drop username subdomain dependency in `gatewayUrlForHandle`**. The function now returns `https://app.matrix-os.com` for every handle (with session-based routing doing the per-user dispatch). Keeps the `GATEWAY_URL_TEMPLATE` env override intact for dev.
-- **Data migration** (run once, during deploy): rewrite R2 keys `matrixos-sync/<handle>/...` → `matrixos-sync/<clerk_user_id>/...`, update the `sync_manifests.user_id` column to the Clerk id, and purge any orphan rows pointing at handles that no longer resolve.
+- **F15 — Clerk userId as bucket prefix**. Gateway's `getUserId` returns `claims.sub` (e.g. `user_2abc...`) instead of `MATRIX_HANDLE` env var. `buildFileKey` + `sync_manifests.user_id` switch to the same. Handle stays as a purely cosmetic field (logs, menu bar display).
+- **Cloudflare R2 provisioning**. New bucket `matrixos-sync`, API token scoped to it, credentials in Hetzner `.env`. Details in `docs/dev/vps-deployment.md` § "Sync Storage (Cloudflare R2)".
+- **Orchestrator env-var injection**. `packages/platform/src/main.ts` pushes `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `S3_FORCE_PATH_STYLE=false`, `MATRIX_HOME_MIRROR=true` into `extraEnv` so every per-user container boots with sync storage wired up. Same pattern as the existing `CLERK_SECRET_KEY` / `GEMINI_API_KEY` injection at `main.ts:626–641`.
+- **Device approval UI lives on `app.matrix-os.com`**. Platform exempts `/auth/device*` and `/api/auth/device/*` paths from the container-proxy step. The Clerk-embedded approval page served directly by platform (current raw HTML is fine for PR 1).
+- **Bi-directional broadcast in `home-mirror.ts`**. Push path calls `peerRegistry.broadcastChange` after `writeManifest` (already on branch).
+- **Subscribe-to-changes in `home-mirror.ts`**. Mirror registers itself as a virtual peer; broadcasts from laptop commits pull into the container's home (already on branch).
+- **Drop username subdomain dependency in `gatewayUrlForHandle`**. Returns `https://app.matrix-os.com` for every handle. `GATEWAY_URL_TEMPLATE` env override kept intact for dev.
+- **Friendly "no account" branch in `login.ts`**. On `/api/me` 404, print the sign-up hint and exit 0 without writing auth.json.
+- **Poll-for-manifest loop in daemon**. After login, before starting chokidar, GET `/api/sync/manifest` in a 2s-backoff loop until `manifestVersion > 0` or 120s elapsed. Each iteration prints one dot; on timeout print a clear error pointing to `app.matrix-os.com`.
 
 ### Files touched
 
 ```
-packages/gateway/src/server.ts                 # getUserId from JWT sub
-packages/gateway/src/sync/routes.ts            # getUserId helper
-packages/gateway/src/sync/home-mirror.ts       # push broadcast (already here)
-packages/platform/src/main.ts                  # path exempt for /auth/device*
-packages/platform/src/auth-routes.ts           # gatewayUrlForHandle -> app.matrix-os.com
-scripts/migrate-keys-to-clerk-userid.ts        # NEW -- one-shot migration
-tests/gateway/sync/home-mirror.test.ts         # already here
+packages/gateway/src/server.ts                 # getUserId from JWT sub (claims.sub)
+packages/gateway/src/sync/routes.ts            # getUserId helper: same
+packages/gateway/src/sync/home-mirror.ts       # push broadcast + subscribe (already on branch)
+packages/platform/src/main.ts                  # extraEnv gets S3_* + MATRIX_HOME_MIRROR
+packages/platform/src/main.ts                  # /auth/device* path exempt (find the container-proxy branch)
+packages/platform/src/auth-routes.ts           # gatewayUrlForHandle -> https://app.matrix-os.com
+packages/sync-client/src/cli/commands/login.ts # friendly "no account" message on /api/me 404
+packages/sync-client/src/daemon/index.ts       # poll-for-manifest before chokidar
+docs/dev/vps-deployment.md                     # new "Sync Storage (Cloudflare R2)" section
+tests/gateway/sync/home-mirror.test.ts         # already on branch
+tests/gateway/sync/user-id-from-jwt.test.ts    # NEW -- assert getUserId returns claims.sub
 ```
 
-### Deploy steps
+### Deploy steps (run from the VPS)
 
-1. Merge PR 1 to `main`.
-2. In production DB, take a logical backup of `sync_manifests`.
-3. `docker compose -f docker-compose.prod.yml pull` on the Hetzner host.
-4. Run the migration script once: `bun run scripts/migrate-keys-to-clerk-userid.ts --dry-run` (inspect output), then without `--dry-run`.
-5. Roll platform first (`docker compose up -d --force-recreate platform`), then roll each user container (`docker compose up -d --force-recreate matrixos-*`).
-6. Watch `docker compose logs platform gateway` for 10 minutes.
+These assume a working deployment per `docs/dev/vps-deployment.md`. The VPS agent does steps 2–10.
+
+1. **Local only**: merge PR 1 to `main`, tag `v0.4.0-rc1`.
+2. On VPS: `cd /root/matrix-os && git fetch --tags && git checkout v0.4.0-rc1`.
+3. **Cloudflare R2 setup** (first-time only — skip if already done on this account):
+   - In Cloudflare dashboard → R2 → Create bucket `matrixos-sync` (default location).
+   - R2 → Manage R2 API Tokens → Create API Token with permissions *Object Read & Write* scoped to the `matrixos-sync` bucket. Copy the `Access Key ID` and `Secret Access Key`. Note the `S3 API` endpoint URL — it looks like `https://<account-id>.r2.cloudflarestorage.com`.
+4. Append to `/root/matrix-os/.env`:
+   ```
+   S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+   S3_PUBLIC_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+   S3_ACCESS_KEY_ID=<access-key-from-step-3>
+   S3_SECRET_ACCESS_KEY=<secret-key-from-step-3>
+   S3_BUCKET=matrixos-sync
+   S3_FORCE_PATH_STYLE=false
+   ```
+   (R2 supports virtual-host addressing, so `S3_FORCE_PATH_STYLE=false`. Dev still uses `true` because MinIO requires it.)
+5. Rebuild the user-container image (R2 wiring is runtime, but the home-mirror code is baked in):
+   ```bash
+   docker build \
+     --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY \
+     -t matrixos-user:local \
+     -f Dockerfile .
+   ```
+6. Rebuild + restart platform so it picks up the new `extraEnv` vars:
+   ```bash
+   docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build platform
+   ```
+7. Roll every user container so they re-launch with the new env:
+   ```bash
+   curl -X POST http://localhost:9000/containers/rolling-restart \
+     -H "Authorization: Bearer $PLATFORM_SECRET"
+   ```
+8. Verify the env reached a container:
+   ```bash
+   CANARY=$(docker ps --filter "name=matrixos-" --format "{{.Names}}" | head -1)
+   docker exec $CANARY env | grep -E '^(S3_|MATRIX_HOME_MIRROR)='
+   # Expect: all six S3_* vars + MATRIX_HOME_MIRROR=true
+   ```
+9. Run the smoke tests below.
+10. Watch logs for 10 minutes: `docker compose -f distro/docker-compose.platform.yml logs -f platform | grep -E '(error|ERROR|sync)'`.
 
 ### Smoke tests
 
-Run these against `https://app.matrix-os.com` (or `https://matrix-os.com`):
+Run from your laptop against `https://app.matrix-os.com`. Have at least one Clerk-authenticated account with a provisioned container (`$HANDLE` below).
 
 ```bash
 # 1. /auth/device renders (exempt from container proxy)
 curl -sI https://app.matrix-os.com/auth/device?user_code=TEST-1234
 # Expect: 200, Content-Type: text/html
 
-# 2. /api/auth/device/code still works (exempt from container proxy)
+# 2. /api/auth/device/code works (exempt from container proxy)
 curl -sX POST -H 'content-type: application/json' \
   -d '{"clientId":"smoke-test"}' \
   https://app.matrix-os.com/api/auth/device/code
 # Expect: 200, {deviceCode, userCode, verificationUri, expiresIn, interval}
 
-# 3. Sync endpoints still work for old tokens. Login on an existing CLI
-#    install (pre-PR2) and run:
-matrix sync status
-# Expect: peer count, manifest version, last sync timestamp -- no errors.
+# 3. Container's home-mirror uploaded seed files to R2
+CANARY=$(docker ps --filter "name=matrixos-" --format "{{.Names}}" | head -1)
+docker exec $CANARY sh -c 'wget -qO- http://localhost:4000/api/sync/manifest -H "Authorization: Bearer $MATRIX_AUTH_TOKEN" | head -c 500'
+# Expect: non-empty JSON with manifestVersion >= 1 and files object populated
 
-# 4. Bucket prefix really is Clerk userId
-aws s3 ls s3://matrixos-sync/user_  # or minio mc ls
-# Expect: keys like matrixos-sync/user_2abc.../files/...
+# 4. Bucket prefix really is Clerk userId. Use `rclone` or the Cloudflare dashboard:
+#    R2 > matrixos-sync > Objects.
+# Expect: top-level prefixes look like `user_2abc.../files/...` (Clerk ids), not handles.
 
-# 5. Three-way sync live
-echo "from container" > /home/matrixos/home/smoke.md  # inside container
+# 5. End-to-end matrix login + sync (do this from your laptop, not the VPS)
+matrix login           # device flow, browser approve
+matrix sync ~/matrixos-smoke
+# Expect: "Waiting for your Matrix instance..." for a few seconds, then pulls files.
+ls ~/matrixos-smoke    # expect agents/, system/, .claude/ etc.
+
+# 6. Three-way round-trip
+docker exec $CANARY sh -c 'echo "from container" > /home/matrixos/home/smoke.md'
 # Wait 5s. On laptop:
-cat ~/matrixos/smoke.md
+cat ~/matrixos-smoke/smoke.md
 # Expect: "from container"
-echo "from laptop" > ~/matrixos/smoke.md
+echo "from laptop" > ~/matrixos-smoke/smoke.md
 # Wait 5s. In container:
-cat /home/matrixos/home/smoke.md
+docker exec $CANARY cat /home/matrixos/home/smoke.md
 # Expect: "from laptop"
+
+# 7. Friendly "no account" UX. Pick a fresh machine with no Clerk account:
+matrix login
+# After device approval fails (or from a Clerk account with no container):
+# Expect: "No Matrix instance yet. Sign up at https://app.matrix-os.com first."
 ```
 
 ### Rollback
 
-- Migration script wrote a reverse-map file (`migration-<timestamp>.json`) — rerun with `--reverse` to undo.
-- Git revert the PR and redeploy platform + one canary container first.
-- Postgres backup taken in step 2 is the final fallback if the migration corrupts the manifest.
+- No migration, no irreversible data changes. Rollback = `git checkout v0.3.x && docker compose up -d --build` + remove the S3_* vars from `.env`.
+- R2 bucket can be wiped via Cloudflare dashboard if needed; nothing else depends on it yet.
 
 ### Done criteria
 
-- All five smoke tests pass.
-- No `NoSuchKey` errors in gateway logs for 24h.
-- Grafana dashboards (sync_commit_duration, sync_files_synced_total) show normal traffic.
+- All seven smoke tests pass.
+- No `NoSuchKey`, `AccessDenied`, or `SignatureDoesNotMatch` errors in gateway logs for 24h.
+- Cloudflare R2 dashboard shows objects under Clerk-userId prefixes.
+- Grafana `sync_files_synced_total` counter increments on test edits.
 
 ### Stretch (optional inside PR 1 or split to PR 1b)
 
-- Rebuild the device approval UI in shell (`shell/src/app/auth/device/page.tsx`) using shadcn components matching the rest of app.matrix-os.com. Calls the platform `/api/auth/device/approve` endpoint server-side via Next.js route handler.
+- Rebuild the device approval UI in shell (`shell/src/app/auth/device/page.tsx`) using shadcn components. Calls platform `/api/auth/device/approve` via Next.js route handler.
+- Per-user scoped R2 tokens (one token per Clerk userId, prefix-limited). Hardening win; not needed for v1.
 
 ---
 
