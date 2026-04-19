@@ -276,6 +276,15 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     async upgrade(handle) {
       const record = getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
+      // Silent-failure #12: buildEnv silently drops MATRIX_USER_ID when
+      // clerkUserId is falsy, so the re-provisioned container would boot
+      // with a handle-prefixed R2 key and split the bucket. Refuse early
+      // with a clear operator message before touching Docker.
+      if (typeof record.clerkUserId !== 'string' || record.clerkUserId.length === 0) {
+        throw new Error(
+          `No clerkUserId in container record for handle '${handle}'. Cannot safely provision — run \`orch destroy\` and re-provision with a Clerk userId.`,
+        );
+      }
 
       if (record.containerId) {
         const old = docker.getContainer(record.containerId);
@@ -338,6 +347,14 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const results: RollingRestartResult['results'] = [];
       for (const record of running) {
         try {
+          // Silent-failure #12: same reason as upgrade() above -- refuse to
+          // recreate a container whose DB row has no clerkUserId, since the
+          // new container would boot with a handle-prefixed R2 key.
+          if (typeof record.clerkUserId !== 'string' || record.clerkUserId.length === 0) {
+            throw new Error(
+              `No clerkUserId in container record for handle '${record.handle}'. Cannot safely provision — run \`orch destroy\` and re-provision with a Clerk userId.`,
+            );
+          }
           await createUserDatabase(record.handle);
 
           if (record.containerId) {

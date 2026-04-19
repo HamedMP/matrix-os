@@ -130,6 +130,37 @@ function getNoContainerPage() {
 </html>`;
 }
 
+/**
+ * Startup assertion for silent-failure #6: if the platform is telling user
+ * containers to run the home-mirror (MATRIX_HOME_MIRROR=true) but the S3
+ * credentials the gateway needs to reach R2 are missing, the mirror would
+ * silently fail inside every user container. Warn loudly at platform start
+ * so ops notices instead of discovering it days later when sync is broken.
+ *
+ * Returns the list of missing env var names (empty if all is well or
+ * home-mirror is disabled). Exposed for tests; callers typically just
+ * discard the return value after logging.
+ */
+export function checkHomeMirrorS3Env(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.warn,
+): string[] {
+  if (env.MATRIX_HOME_MIRROR !== 'true') return [];
+  const required = [
+    'S3_ENDPOINT',
+    'S3_ACCESS_KEY_ID',
+    'S3_SECRET_ACCESS_KEY',
+    'S3_BUCKET',
+  ] as const;
+  const missing = required.filter((key) => !env[key]);
+  if (missing.length > 0) {
+    log(
+      `[platform] MATRIX_HOME_MIRROR=true but S3 credentials are incomplete; gateway home-mirror will not run in user containers. Missing: ${missing.join(', ')}.`,
+    );
+  }
+  return missing;
+}
+
 export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth; matrixProvisioner?: MatrixProvisioner }) {
   const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const app = new Hono();
@@ -276,85 +307,6 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       // Platform already verified Clerk session -- tell user shell to skip re-verification
       headers.set('x-platform-verified', PLATFORM_SECRET);
       headers.set('x-platform-user-id', result.userId);
-
-      const upstream = await fetch(targetUrl, {
-        method: c.req.method,
-        headers,
-        body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-      });
-
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers: upstream.headers,
-      });
-    } catch {
-      return c.json({ error: 'Container unreachable' }, 502);
-    }
-  });
-
-  // Subdomain proxy: {handle}.matrix-os.com -> user container (before auth)
-  app.use('*', async (c, next) => {
-    const host = c.req.header('host') ?? '';
-    const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
-    if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') return next();
-
-    // Device-flow paths are platform-global (auth-routes.ts); never proxy them
-    // into a per-handle container, even if a request somehow hits the legacy
-    // subdomain host.
-    const reqPath = c.req.path;
-    if (
-      reqPath === '/auth/device' ||
-      reqPath.startsWith('/auth/device/') ||
-      reqPath.startsWith('/api/auth/device/')
-    ) {
-      return next();
-    }
-
-    const handle = match[1];
-    const record = getContainer(db, handle);
-    if (!record) return c.json({ error: 'Unknown instance' }, 404);
-
-    // Clerk JWT verification -- disabled until Clerk cookie domain is configured
-    // to share sessions across subdomains (.matrix-os.com).
-    // TODO: re-enable once Clerk Dashboard -> Domains has matrix-os.com as primary
-    // and cookies are set with Domain=.matrix-os.com
-    // if (clerkAuth && !clerkAuth.isPublicPath(c.req.path) && record.clerkUserId) {
-    //   const token = clerkAuth.extractToken(
-    //     c.req.header('authorization'),
-    //     c.req.header('cookie'),
-    //   );
-    //   if (!token) {
-    //     return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-    //   }
-    //   const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
-    //   if (!result.authenticated) {
-    //     return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-    //   }
-    // }
-
-    if (record.status === 'stopped') {
-      try {
-        await orchestrator.start(handle);
-      } catch {
-        return c.json({ error: 'Failed to wake container' }, 503);
-      }
-    }
-
-    updateLastActive(db, handle);
-
-    const path = c.req.path;
-    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const isGatewayPath = path.startsWith('/api/') || path.startsWith('/ws') || path.startsWith('/files/') || path.startsWith('/modules/') || path === '/health';
-    const targetPort = isGatewayPath ? 4000 : 3000;
-    const targetUrl = `http://matrixos-${handle}:${targetPort}${path}${qs}`;
-
-    try {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && value) headers.set(key, value);
-      }
-      headers.set('x-forwarded-host', host);
-      headers.set('x-forwarded-proto', 'https');
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
@@ -674,6 +626,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
   }
 
+  checkHomeMirrorS3Env();
+
   const orchestrator = createOrchestrator({
     db,
     docker,
@@ -769,56 +723,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    // Subdomain-based WebSocket routing
-    const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
-    if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') {
-      socket.destroy();
-      return;
-    }
-
-    const handle = match[1];
-    const record = getContainer(db, handle);
-    if (!record) {
-      socket.destroy();
-      return;
-    }
-
-    // Verify Clerk JWT for WebSocket connections -- disabled until cookie domain configured
-    // TODO: re-enable with subdomain cookie sharing
-    // if (clerkAuth && record.clerkUserId) {
-    //   const token = clerkAuth.extractToken(
-    //     req.headers.authorization,
-    //     req.headers.cookie,
-    //   );
-    //   if (!token) {
-    //     socket.destroy();
-    //     return;
-    //   }
-    //   const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
-    //   if (!result.authenticated) {
-    //     socket.destroy();
-    //     return;
-    //   }
-    // }
-
-    // Proxy WebSocket upgrade to the user container's gateway (port 4000)
-    const upstream = createConnection({ host: `matrixos-${handle}`, port: 4000 }, () => {
-      const path = req.url ?? '/';
-      const headers = Object.entries(req.headers)
-        .filter(([k]) => k !== 'host')
-        .map(([k, v]) => `${k}: ${v}`)
-        .join('\r\n');
-
-      upstream.write(
-        `${req.method} ${path} HTTP/1.1\r\nHost: matrixos-${handle}:4000\r\n${headers}\r\n\r\n`
-      );
-      if (head.length > 0) upstream.write(head);
-
-      upstream.pipe(socket);
-      socket.pipe(upstream);
-    });
-
-    upstream.on('error', () => socket.destroy());
-    socket.on('error', () => upstream.destroy());
+    // Unknown host -- legacy {handle}.matrix-os.com subdomain routing retired;
+    // only app.matrix-os.com is supported for WebSocket upgrades.
+    socket.destroy();
   });
 }

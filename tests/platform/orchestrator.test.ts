@@ -86,6 +86,50 @@ describe('platform/orchestrator', () => {
     expect(restartArgs.Env).toContain('MATRIX_HANDLE=carol');
   });
 
+  // Silent-failure #12: a missing clerkUserId on the DB record would
+  // cause buildEnv to drop MATRIX_USER_ID, regressing e5b72dc (home-mirror
+  // would fall back to the handle-prefixed R2 key). upgrade must refuse.
+  it('upgrade throws if the container record has no clerkUserId', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('dan', 'user_2ghi');
+    // Simulate legacy DB row: blank out clerkUserId directly in the DB
+    // bypassing the type-safe insert path.
+    const { getDb } = await import('../../packages/platform/src/db.js');
+    // Cheap hack via raw SQL on the underlying sqlite: the drizzle handle
+    // wraps a sqlite.prepare-capable client.
+    // (Use the same db instance to keep the test self-contained.)
+    (db as any).$client.prepare("UPDATE containers SET clerk_user_id = '' WHERE handle = 'dan'").run();
+
+    await expect(orch.upgrade('dan')).rejects.toThrow(
+      /No clerkUserId in container record for handle 'dan'/,
+    );
+    // Also sanity: no container was recreated.
+    expect(docker.createContainer).toHaveBeenCalledOnce(); // the provision call
+  });
+
+  it('rollingRestart skips-with-failure for a record missing clerkUserId', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('erin', 'user_2jkl');
+    await orch.provision('frank', 'user_2mno');
+    // Corrupt one record to simulate partial-failure state.
+    (db as any).$client.prepare("UPDATE containers SET clerk_user_id = '' WHERE handle = 'erin'").run();
+    docker.createContainer.mockClear();
+
+    const result = await orch.rollingRestart();
+
+    // The good record should still be restarted; the bad one reported as failed.
+    expect(result.total).toBe(2);
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(1);
+    const failure = result.results.find((r) => r.status === 'failed');
+    expect(failure?.handle).toBe('erin');
+    expect(failure?.error).toMatch(/No clerkUserId in container record for handle 'erin'/);
+  });
+
   it('rejects duplicate handles', async () => {
     const { docker } = createMockDocker();
     const orch = createOrchestrator({ db, docker: docker as any });
