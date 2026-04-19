@@ -64,7 +64,9 @@ export async function validateSyncJwt(
 
   if (
     typeof payload.sub !== "string" ||
+    payload.sub.length === 0 ||
     typeof payload.handle !== "string" ||
+    payload.handle.length === 0 ||
     typeof payload.gateway_url !== "string" ||
     typeof payload.iat !== "number" ||
     typeof payload.exp !== "number"

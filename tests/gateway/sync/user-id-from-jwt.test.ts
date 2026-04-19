@@ -98,6 +98,19 @@ describe("getUserIdFromContext (helper)", () => {
     const ctx = { get: () => undefined } as any;
     expect(getUserIdFromContext(ctx)).toBe("default");
   });
+
+  it("treats an empty claims.sub as missing and falls back to MATRIX_HANDLE", () => {
+    // Defense-in-depth: an empty string in `sub` must not silently become
+    // the R2 prefix. `validateSyncJwt` should reject these at the gate,
+    // but the helper must also refuse to use a zero-length user id.
+    const ctx = {
+      get: (key: string) =>
+        key === "jwtClaims"
+          ? { sub: "", handle: HANDLE, gateway_url: "https://app" }
+          : undefined,
+    } as any;
+    expect(getUserIdFromContext(ctx)).toBe(HANDLE);
+  });
 });
 
 describe("sync routes: userId resolution from JWT", () => {
@@ -137,5 +150,49 @@ describe("sync routes: userId resolution from JWT", () => {
     const key = mockR2.getObject.mock.calls[0][0] as string;
     expect(key).toBe(`matrixos-sync/${HANDLE}/manifest.json`);
     expect(mockDb.getManifestMeta).toHaveBeenCalledWith(HANDLE);
+  });
+
+  it("tampered JWT falls through to legacy bearer path and uses MATRIX_HANDLE", async () => {
+    // A JWT whose signature no longer matches must NOT be treated as a
+    // valid Clerk identity. `authMiddleware` falls through to the legacy
+    // bearer check — with the legacy secret presented separately, we
+    // wouldn't get in; so this case sends ONLY the tampered JWT and
+    // asserts a 401. The second half of the case then sends the legacy
+    // secret and asserts we get in under MATRIX_HANDLE (proving the
+    // tampered JWT didn't silently stash forged claims on the context).
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: CLERK_USER_ID,
+      handle: HANDLE,
+      gatewayUrl: "https://app.matrix-os.com",
+    });
+    // Flip the last character of the signature segment. Base64url uses
+    // [A-Za-z0-9_-]; swap 'A' ↔ 'B' so the token still *looks* like a JWT
+    // (3 base64url segments) and reaches the validator.
+    const parts = issued.token.split(".");
+    const sig = parts[2]!;
+    const lastChar = sig.slice(-1);
+    const flipped = lastChar === "A" ? "B" : "A";
+    const tamperedToken = `${parts[0]}.${parts[1]}.${sig.slice(0, -1)}${flipped}`;
+
+    const app = buildApp(getUserIdFromContext);
+
+    // 1. Tampered JWT alone → 401 (JWT path fails, legacy path can't match).
+    const deniedRes = await app.request("/api/sync/manifest", {
+      headers: {
+        Authorization: `Bearer ${tamperedToken}`,
+        "X-Forwarded-For": "10.0.0.99",
+      },
+    });
+    expect(deniedRes.status).toBe(401);
+
+    // 2. Legitimate legacy bearer still lands under MATRIX_HANDLE — the
+    //    tampered JWT didn't poison the shared `authMiddleware` state.
+    const res = await app.request("/api/sync/manifest", {
+      headers: { Authorization: "Bearer legacy-shared-secret" },
+    });
+    expect(res.status).toBe(200);
+    const key = mockR2.getObject.mock.calls[0][0] as string;
+    expect(key).toBe(`matrixos-sync/${HANDLE}/manifest.json`);
   });
 });

@@ -347,6 +347,18 @@ export async function createGateway(config: GatewayConfig) {
   let homeMirror: HomeMirror | null = null;
   const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
   if (homeMirrorEnabled && syncR2 && kyselyInstance) {
+    // Loud fail-fast in production: if the orchestrator didn't inject
+    // MATRIX_USER_ID, the mirror would fall back to MATRIX_HANDLE (or
+    // worse, "default") and publish every user's home directory under a
+    // single shared R2 prefix. Refuse to start rather than corrupt state.
+    if (
+      process.env.NODE_ENV === "production" &&
+      !process.env.MATRIX_USER_ID
+    ) {
+      throw new Error(
+        "[home-mirror] MATRIX_USER_ID is required in production when MATRIX_HOME_MIRROR=true. Check that the platform orchestrator injected it.",
+      );
+    }
     try {
       // Keep home-mirror's R2 prefix aligned with what authenticated
       // HTTP/WS routes use (Clerk userId via claims.sub). The orchestrator
@@ -355,6 +367,11 @@ export async function createGateway(config: GatewayConfig) {
       // identity is plumbed through.
       const userId =
         process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
+      if (!process.env.MATRIX_USER_ID) {
+        console.warn(
+          "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
+        );
+      }
       const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
       homeMirror = createHomeMirror({
         r2: syncR2,

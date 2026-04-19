@@ -24,12 +24,24 @@ export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
  * same identity. Do not read `process.env.MATRIX_HANDLE` directly from
  * sync handlers.
  */
+let warnedDefaultUserIdOnce = false;
+
 export function getUserIdFromContext(c: Context): string {
   const claims = c.get(JWT_CLAIMS_CONTEXT_KEY) as SyncJwtClaims | undefined;
   if (claims && typeof claims.sub === "string" && claims.sub.length > 0) {
     return claims.sub;
   }
-  return process.env.MATRIX_HANDLE ?? "default";
+  const handle = process.env.MATRIX_HANDLE;
+  if (handle && handle.length > 0) {
+    return handle;
+  }
+  if (!warnedDefaultUserIdOnce) {
+    warnedDefaultUserIdOnce = true;
+    console.warn(
+      "[auth] No JWT claims and no MATRIX_HANDLE env var — falling back to userId='default'. In prod this will mix all users into one R2 prefix.",
+    );
+  }
+  return "default";
 }
 
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
@@ -183,8 +195,15 @@ export function authMiddleware(
         // resolve the authenticated Clerk userId via getUserIdFromContext.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
         return next();
-      } catch {
-        // Fall through. We don't expose JWT failure reasons to the client.
+      } catch (err) {
+        // Fall through. We don't expose JWT failure reasons to the client,
+        // but a debug log here prevents a misconfigured PLATFORM_JWT_SECRET
+        // from silently locking out every platform-issued token with zero
+        // operator signal.
+        console.debug(
+          "[auth] JWT validation failed; falling through to legacy bearer:",
+          (err as Error).message,
+        );
       }
     }
 
