@@ -47,7 +47,7 @@ import {
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
-import { authMiddleware } from "./auth.js";
+import { authMiddleware, getUserIdFromContext } from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -317,13 +317,15 @@ export async function createGateway(config: GatewayConfig) {
       const sharingDb = createKyselySharingDb(kyselyInstance as Kysely<SyncDatabase>);
       syncSharing = createSharingService({ db: sharingDb, peerRegistry: syncPeerRegistry });
 
-      const userId = process.env.MATRIX_HANDLE ?? "default";
       syncDeps = {
         r2: syncR2,
         db: manifestDb,
         peerRegistry: syncPeerRegistry,
         sharing: syncSharing,
-        getUserId: () => userId,
+        // Resolve userId per-request from the JWT's `sub` claim (Clerk
+        // userId); falls back to MATRIX_HANDLE only when no JWT is present
+        // (legacy bearer / dev mode).
+        getUserId: (c) => getUserIdFromContext(c),
         getPeerId: (c) => c.req.header("X-Peer-Id") ?? "unknown",
       };
 
@@ -918,7 +920,13 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get(
     "/ws",
-    upgradeWebSocket(() => {
+    upgradeWebSocket((c) => {
+      // Capture the authenticated sync userId (Clerk userId from JWT
+      // claims.sub when present, else MATRIX_HANDLE) at upgrade time so
+      // the sync:subscribe branch below keys peers off the same identity
+      // the HTTP sync routes use. authMiddleware ran on the upgrade
+      // request and stashed claims if a JWT was presented.
+      const wsSyncUserId = getUserIdFromContext(c);
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -1062,9 +1070,8 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
-            const userId = process.env.MATRIX_HANDLE ?? "default";
             syncPeerRegistry.registerPeer(
-              userId,
+              wsSyncUserId,
               {
                 peerId: parsed.peerId,
                 hostname: parsed.hostname,

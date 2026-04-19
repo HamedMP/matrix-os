@@ -1,11 +1,36 @@
 import { timingSafeEqual } from "node:crypto";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import {
   looksLikeJwt,
   readJwtKeyConfig,
   validateSyncJwt,
+  type SyncJwtClaims,
 } from "./auth-jwt.js";
+
+// Hono context key for a validated sync JWT's claims. Routes that need the
+// authenticated Clerk userId read `c.get("jwtClaims")?.sub`. See
+// `getUserIdFromContext` below for the canonical helper.
+export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
+
+/**
+ * Canonical resolver for the "who is this request for?" question used by
+ * sync routes. Prefers the Clerk userId embedded in a validated JWT's
+ * `sub` claim; falls back to `MATRIX_HANDLE` so the legacy bearer-token
+ * (dev) mode keeps working, then `"default"` as a last resort.
+ *
+ * MUST be used by every sync code path (manifest, presign, commit,
+ * resolve-conflict, share, WS `sync:subscribe`) so they all key off the
+ * same identity. Do not read `process.env.MATRIX_HANDLE` directly from
+ * sync handlers.
+ */
+export function getUserIdFromContext(c: Context): string {
+  const claims = c.get(JWT_CLAIMS_CONTEXT_KEY) as SyncJwtClaims | undefined;
+  if (claims && typeof claims.sub === "string" && claims.sub.length > 0) {
+    return claims.sub;
+  }
+  return process.env.MATRIX_HANDLE ?? "default";
+}
 
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
@@ -150,10 +175,13 @@ export function authMiddleware(
     // callers.
     if (presentedToken && jwtKey && looksLikeJwt(presentedToken)) {
       try {
-        await validateSyncJwt(presentedToken, {
+        const claims = await validateSyncJwt(presentedToken, {
           ...jwtKey,
           expectedHandle,
         });
+        // Stash claims on the Hono context so downstream handlers can
+        // resolve the authenticated Clerk userId via getUserIdFromContext.
+        c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
         return next();
       } catch {
         // Fall through. We don't expose JWT failure reasons to the client.

@@ -10,6 +10,7 @@ const JWT_SECRET = "test-secret-at-least-32-characters-long";
 const HANDLE = "alice";
 
 function mockContext(path: string, authHeader?: string, ip?: string) {
+  const store = new Map<string, unknown>();
   return {
     req: {
       path,
@@ -20,6 +21,10 @@ function mockContext(path: string, authHeader?: string, ip?: string) {
         return undefined;
       },
     },
+    set: (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    get: (key: string) => store.get(key),
     json: (body: unknown, status?: number) => ({ body, status: status ?? 200 }),
   } as any;
 }
