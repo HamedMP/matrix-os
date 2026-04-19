@@ -313,15 +313,27 @@ and landed as a single conventional commit.
   (Review B H1);
   (4) retire legacy `{handle}.matrix-os.com` subdomain proxy middleware
   (user-approved).
-- [~] Group C hardening — fix-client — in progress. Scope:
-  (1) `login.ts` preserves auth + skips config write on transient `/api/me`
-  errors (Review C C1 / silent-failure #9) — prune dead `!me.gatewayUrl`
-  branch now that `/api/me` always returns `gatewayUrl` on 200;
-  (2) `daemon/index.ts` `waitForManifest` logs generic messages instead of
-  raw error text (Review C C2 / silent-failure #8), adds a `Content-Type`
-  JSON guard, and hard-fails after 3 consecutive non-JSON responses;
-  (3) include `gatewayUrl` in poll warnings + timeout error (Review C H3
-  / silent-failure #10);
-  (4) collapse duplicate token-store import in `daemon/index.ts` (Review C N1);
-  (5) NEW `tests/unit/login.test.ts` covers 404/500/throw/200 paths
-  (silent-failure #11 / Review C N5).
+- [x] Group C hardening — fix-client — committed. Commits:
+  - `e45cf5b` fix(066): client login preserves auth on transient /api/me
+    errors — addresses Review C C1 / silent-failure #9, #11. Prunes the
+    dead `!me.gatewayUrl` branch (server contract verified: `/api/me`
+    returns 404 as the ONLY no-container signal; 200 always carries
+    `gatewayUrl`). NEW `tests/unit/login.test.ts` (5 cases) covers 404,
+    500, 502, fetch-throw, 200 paths.
+  - `01148e1` fix(066): daemon poll sanitizes errors + Content-Type guard —
+    addresses Review C C2, N1, H3 / silent-failure #8, #10. `waitForManifest`
+    now logs generic messages with gatewayUrl (never raw `err.message`),
+    rejects non-JSON responses via `Content-Type` guard before calling
+    `res.json()`, hard-fails after 3 consecutive non-JSON responses, and
+    includes gatewayUrl in the 120s timeout error. Collapses the duplicate
+    `token-store.js` import. 5 new tests in `tests/unit/daemon-poll.test.ts`
+    cover the new paths (Content-Type reject, 3-strike hard-fail, counter
+    reset, timeout-includes-url, negative-leak assertion).
+  - `06927c3` fix(066): clamp waitForManifest per-request timeout to
+    remaining deadline — addresses Review C H1. `min(fetchTimeoutMs,
+    timeoutMs - elapsed)` so the last fetch can't push past 120s.
+  - Test counts: sync-client 149/149 (was 145 pre-fix; +5 login, +5 poll,
+    −1 latent test bug fix). `bun run build` clean.
+  - Two `tests/platform/*` test files authored by fix-platform landed in
+    `e45cf5b` via a stash/pop collision — they're valid tests, just attributed
+    to the wrong commit. Noted for the record.
