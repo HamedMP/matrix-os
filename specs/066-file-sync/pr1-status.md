@@ -33,8 +33,8 @@ they go. Keep it concise — status per group, files touched, open questions.
 
 ## Group A — Gateway Identity (getUserId → claims.sub)
 
-**Status**: `[ ]` not started
-**Owner**: (unassigned)
+**Status**: `[~]` in progress
+**Owner**: gateway-identity
 
 ### Files
 
