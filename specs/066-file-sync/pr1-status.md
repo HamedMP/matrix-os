@@ -311,3 +311,15 @@ and landed as a single conventional commit.
   (Review B H1);
   (4) retire legacy `{handle}.matrix-os.com` subdomain proxy middleware
   (user-approved).
+- [~] Group C hardening — fix-client — in progress. Scope:
+  (1) `login.ts` preserves auth + skips config write on transient `/api/me`
+  errors (Review C C1 / silent-failure #9) — prune dead `!me.gatewayUrl`
+  branch now that `/api/me` always returns `gatewayUrl` on 200;
+  (2) `daemon/index.ts` `waitForManifest` logs generic messages instead of
+  raw error text (Review C C2 / silent-failure #8), adds a `Content-Type`
+  JSON guard, and hard-fails after 3 consecutive non-JSON responses;
+  (3) include `gatewayUrl` in poll warnings + timeout error (Review C H3
+  / silent-failure #10);
+  (4) collapse duplicate token-store import in `daemon/index.ts` (Review C N1);
+  (5) NEW `tests/unit/login.test.ts` covers 404/500/throw/200 paths
+  (silent-failure #11 / Review C N5).
