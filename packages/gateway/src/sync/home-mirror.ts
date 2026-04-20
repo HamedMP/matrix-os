@@ -218,7 +218,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function pushFile(relPath: string): Promise<void> {
-    const absPath = join(config.homeRoot, relPath);
+    const safeRelPath = normalizeRelativePath(relPath);
+    const absPath = join(config.homeRoot, safeRelPath);
 
     await enqueue(async () => {
       let fileStat;
@@ -231,7 +232,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if (!fileStat.isFile()) return;
       if (fileStat.size > maxPushBytes) {
         log.error(
-          `skipping push for ${relPath}: file exceeds ${maxPushBytes} bytes`,
+          `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
         );
         return;
       }
@@ -241,58 +242,59 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const body = await readFile(absPath);
         const hash = hashBuffer(body);
 
-        const currentEntry = existing.manifest.files[relPath];
+        const currentEntry = existing.manifest.files[safeRelPath];
         if (currentEntry?.hash === hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
           return;
         }
 
-        const key = buildFileKey(config.userId, relPath);
+        const key = buildFileKey(config.userId, safeRelPath);
         await config.r2.putObject(key, body);
 
         const action = currentEntry ? "update" : "add";
         const next: Manifest = applyCommitToManifest(
           existing.manifest,
-          [{ path: relPath, hash, size: body.length, action }],
+          [{ path: safeRelPath, hash, size: body.length, action }],
           config.peerId,
         );
 
         const newVersion = existing.manifestVersion + 1;
         await writeManifest(lockedStore, config.userId, next, newVersion);
-        broadcastChange({ path: relPath, hash, size: body.length, action }, newVersion);
-        log.info(`pushed ${relPath} (${body.length}B)`);
+        broadcastChange({ path: safeRelPath, hash, size: body.length, action }, newVersion);
+        log.info(`pushed ${safeRelPath} (${body.length}B)`);
       });
     });
   }
 
   async function pushDelete(relPath: string): Promise<void> {
+    const safeRelPath = normalizeRelativePath(relPath);
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, config.userId);
-        const entry = existing.manifest.files[relPath];
+        const entry = existing.manifest.files[safeRelPath];
         if (!entry || entry.deleted) return;
 
         const next: Manifest = applyCommitToManifest(
           existing.manifest,
-          [{ path: relPath, hash: entry.hash, size: 0, action: "delete" }],
+          [{ path: safeRelPath, hash: entry.hash, size: 0, action: "delete" }],
           config.peerId,
         );
 
         const newVersion = existing.manifestVersion + 1;
         await writeManifest(lockedStore, config.userId, next, newVersion);
 
-        const key = buildFileKey(config.userId, relPath);
+        const key = buildFileKey(config.userId, safeRelPath);
         await config.r2.deleteObject(key).catch((err: unknown) => {
           log.error(
-            `delete blob failed for ${relPath}:`,
+            `delete blob failed for ${safeRelPath}:`,
             err instanceof Error ? err.message : String(err),
           );
         });
         broadcastChange(
-          { path: relPath, hash: entry.hash, size: 0, action: "delete" },
+          { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
           newVersion,
         );
-        log.info(`deleted ${relPath}`);
+        log.info(`deleted ${safeRelPath}`);
       });
     });
   }

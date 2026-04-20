@@ -330,7 +330,7 @@ export function createApp(deps: {
       return c.html(getAuthPage(publishableKey, authMode));
     }
 
-    console.log(`[app] verified userId=${result.userId} path=${path}`);
+    console.log(`[app] verified request path=${path}`);
     const record = getContainerByClerkId(db, result.userId);
     if (!record) {
       return c.html(getNoContainerPage());
@@ -353,7 +353,9 @@ export function createApp(deps: {
     try {
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && value) headers.set(key, value);
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
       }
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');

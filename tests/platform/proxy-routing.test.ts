@@ -67,6 +67,7 @@ describe("platform proxy routing", () => {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
+        cookie: "__session=clerk-cookie; other=session",
       },
     });
 
@@ -78,6 +79,9 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("x-platform-verified")).not.toBe("platform-secret-123");
     expect(headers.get("x-platform-verified")).toBeTruthy();
+    expect(headers.get("x-platform-user-id")).toBe("user_alice");
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
   });
 
   it("adds a timeout on /proxy/:handle fetches", async () => {

@@ -148,6 +148,11 @@ function approvalSuccessPage(): string {
 <body><div class="card"><h1>Login successful</h1><p>You can close this tab and return to your terminal.</p></div></body></html>`;
 }
 
+function applyNoFrameHeaders(c: import('hono').Context): void {
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Content-Security-Policy', "frame-ancestors 'none'");
+}
+
 export function createAuthRoutes(config: AuthRoutesConfig): Hono {
   const app = new Hono();
   const rateLimit = createRateLimiter();
@@ -271,6 +276,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       'Set-Cookie',
       `device_csrf=${csrf}; Path=/auth/device; Max-Age=900; HttpOnly; SameSite=Strict${secure}`,
     );
+    applyNoFrameHeaders(c);
     return c.html(approvalPage(userCodeRaw, csrf, publishableKey));
   });
 
@@ -330,6 +336,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         return c.json({ error: 'server_error' }, 500);
       }
 
+      applyNoFrameHeaders(c);
       return c.html(approvalSuccessPage());
     },
   );

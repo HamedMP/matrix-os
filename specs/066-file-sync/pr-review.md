@@ -53,10 +53,13 @@ for that item both exist locally.
 - [x] Gateway auth must treat JWT validation failure as terminal when a JWT-looking bearer token is presented and JWT auth is configured.
 - [x] Gateway sync user identity must fail closed when auth is enabled and neither JWT claims nor `MATRIX_HANDLE` is available.
 - [x] Platform admin rate-limit eviction must refresh hot keys instead of pure FIFO eviction.
+- [x] Device approval HTML responses must set no-frame headers against clickjacking.
 - [x] Device-flow approval polling must consume the approved device code before awaiting token issuance.
 - [x] Platform port allocation must reserve ports transactionally to avoid duplicate allocations under concurrent provision calls.
 - [x] Orchestrator `provision()` must release reserved ports and remove partially started containers on failure.
 - [x] `/containers/provision`, `/containers/:handle/self-upgrade`, and `/social/send/:handle` must enforce `bodyLimit`.
+- [x] Platform app-domain proxy must not forward raw `cookie` / `authorization` headers into user containers after Clerk verification.
+- [x] Platform app-domain proxy logs must not emit Clerk user IDs on every verified request.
 
 ## Sync Client Follow-up Review Wave
 
@@ -82,6 +85,7 @@ for that item both exist locally.
 - [x] Home-mirror uploads must hash the exact bytes they send to R2, not hash before the queued read/upload path.
 - [x] Home-mirror local-write suppression must cover large initial pulls instead of evicting entries after 1000 files.
 - [x] Home-mirror local push/delete manifest updates must use the same advisory lock discipline as HTTP commits.
+- [x] Home-mirror local push/delete paths must normalize and validate watcher-provided relative paths before manifest/R2 writes.
 - [x] Home-mirror peer-registry subscriber must log malformed broadcast frames instead of empty-catching parse errors.
 - [x] Home-mirror local auto-push must skip files above a size cap instead of buffering arbitrarily large files into memory.
 - [x] Device-flow approval must run under a transaction and reject re-approval by a different user.
@@ -106,6 +110,7 @@ for that item both exist locally.
 - [x] Host-side `tests/platform/db.test.ts` remains non-signal in this worktree because the local `better-sqlite3` native module is built for a different Node ABI; Docker dev-container results are authoritative for that suite.
 - [x] Latest home-mirror regression passes locally: `tests/gateway/sync/home-mirror.test.ts` (`1 file`, `13 tests`).
 - [x] Latest gateway peer-registry + home-mirror regressions pass locally: `tests/gateway/sync/ws-events.test.ts`, `home-mirror.test.ts` (`2 files`, `29 tests`).
+- [x] Latest security-hardening regressions pass: host `tests/gateway/sync/home-mirror.test.ts` (`1 file`, `15 tests`) and Docker `tests/platform/device-routes.test.ts`, `proxy-routing.test.ts` (`2 files`, `13 tests`).
 - [x] Shell theme regression passes locally: `tests/shell/useTheme.test.ts`, `theme-presets.test.ts` (`2 files`, `39 tests`).
 - [ ] Local Playwright verification for `shell/e2e/screenshots.spec.ts` is currently blocked on this machine because the Chromium test binary is not installed (`pnpm exec playwright install` required). CI remains the source of truth for the screenshot path.
 - [x] Latest presign/routes/home-mirror regression passes locally: `tests/gateway/sync/presign.test.ts`, `routes.test.ts`, `home-mirror.test.ts` (`3 files`, `56 tests`).
