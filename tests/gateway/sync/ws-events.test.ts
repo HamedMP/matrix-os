@@ -255,6 +255,22 @@ describe("PeerRegistry", () => {
     });
   });
 
+  describe("bounded user registry", () => {
+    it("evicts the oldest user bucket when the outer map cap is exceeded", () => {
+      for (let i = 0; i < 10_001; i++) {
+        registry.registerPeer(`user-${i}`, {
+          peerId: `peer-${i}`,
+          hostname: `host-${i}`,
+          platform: "linux",
+          clientVersion: "0.1.0",
+        }, mockWs());
+      }
+
+      expect(registry.getPeers("user-0")).toHaveLength(0);
+      expect(registry.getPeers("user-10000")).toHaveLength(1);
+    });
+  });
+
   describe("getPeers", () => {
     it("returns empty array for unknown user", () => {
       expect(registry.getPeers("unknown")).toEqual([]);

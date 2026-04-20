@@ -1,6 +1,7 @@
 import type { PeerInfo } from "./types.js";
 
 const MAX_PEERS_PER_USER = 100;
+const MAX_USERS = 10_000;
 
 export interface SyncPeerConnection {
   send(data: string): void;
@@ -35,10 +36,21 @@ export function createPeerRegistry(): PeerRegistry {
 
   function getUserMap(userId: string): Map<string, PeerEntry> {
     let map = userPeers.get(userId);
-    if (!map) {
-      map = new Map();
+    if (map) {
+      userPeers.delete(userId);
       userPeers.set(userId, map);
+      return map;
     }
+
+    if (userPeers.size >= MAX_USERS) {
+      const oldestUserId = userPeers.keys().next().value;
+      if (oldestUserId !== undefined) {
+        userPeers.delete(oldestUserId);
+      }
+    }
+
+    map = new Map();
+    userPeers.set(userId, map);
     return map;
   }
 

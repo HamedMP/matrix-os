@@ -1,0 +1,153 @@
+import { sql, type Kysely } from "kysely";
+import type { ManifestDb, ManifestMeta } from "./manifest.js";
+import type { SharingDb, ShareRow } from "./sharing.js";
+import type { ShareRole } from "./types.js";
+import type { SyncDatabase } from "./sharing-db.js";
+
+export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
+  return {
+    async getManifestMeta(userId: string): Promise<ManifestMeta | null> {
+      const row = await kysely
+        .selectFrom("sync_manifests")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .executeTakeFirst();
+
+      if (!row) return null;
+
+      return {
+        version: row.version,
+        file_count: row.file_count,
+        total_size: BigInt(row.total_size),
+        etag: row.etag,
+        updated_at: row.updated_at,
+      };
+    },
+
+    async upsertManifestMeta(
+      userId: string,
+      meta: Omit<ManifestMeta, "updated_at">,
+    ): Promise<void> {
+      await kysely
+        .insertInto("sync_manifests")
+        .values({
+          user_id: userId,
+          version: meta.version,
+          file_count: meta.file_count,
+          total_size: meta.total_size,
+          etag: meta.etag,
+          updated_at: new Date(),
+        })
+        .onConflict((oc) =>
+          oc.column("user_id").doUpdateSet({
+            version: meta.version,
+            file_count: meta.file_count,
+            total_size: meta.total_size,
+            etag: meta.etag,
+            updated_at: new Date(),
+          }),
+        )
+        .execute();
+    },
+
+    async withAdvisoryLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+      return await kysely.transaction().execute(async (trx) => {
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`.execute(trx);
+        return fn();
+      });
+    },
+  };
+}
+
+export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
+  return {
+    async insertShare(input: {
+      owner_id: string;
+      path: string;
+      grantee_id: string;
+      role: ShareRole;
+      expires_at?: string;
+    }): Promise<ShareRow> {
+      const row = await kysely
+        .insertInto("sync_shares")
+        .values({
+          owner_id: input.owner_id,
+          path: input.path,
+          grantee_id: input.grantee_id,
+          role: input.role,
+          accepted: false,
+          created_at: new Date(),
+          expires_at: input.expires_at ? new Date(input.expires_at) : null,
+        } as any)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return row as unknown as ShareRow;
+    },
+
+    async getShare(shareId: string): Promise<ShareRow | null> {
+      const row = await kysely
+        .selectFrom("sync_shares")
+        .selectAll()
+        .where("id", "=", shareId)
+        .executeTakeFirst();
+
+      return (row as unknown as ShareRow) ?? null;
+    },
+
+    async updateShareAccepted(shareId: string, accepted: boolean): Promise<void> {
+      await kysely
+        .updateTable("sync_shares")
+        .set({ accepted })
+        .where("id", "=", shareId)
+        .execute();
+    },
+
+    async deleteShare(shareId: string): Promise<void> {
+      await kysely
+        .deleteFrom("sync_shares")
+        .where("id", "=", shareId)
+        .execute();
+    },
+
+    async listSharesByOwner(ownerId: string): Promise<ShareRow[]> {
+      const rows = await kysely
+        .selectFrom("sync_shares")
+        .selectAll()
+        .where("owner_id", "=", ownerId)
+        .execute();
+
+      return rows as unknown as ShareRow[];
+    },
+
+    async listSharesByGrantee(granteeId: string): Promise<ShareRow[]> {
+      const rows = await kysely
+        .selectFrom("sync_shares")
+        .selectAll()
+        .where("grantee_id", "=", granteeId)
+        .execute();
+
+      return rows as unknown as ShareRow[];
+    },
+
+    async resolveHandle(handle: string): Promise<string | null> {
+      const row = await kysely
+        .selectFrom("users" as any)
+        .select("id")
+        .where("handle" as any, "=", handle)
+        .executeTakeFirst();
+
+      return (row as any)?.id ?? null;
+    },
+
+    async resolveUserId(userId: string): Promise<string | null> {
+      const row = await kysely
+        .selectFrom("users" as any)
+        .select("handle" as any)
+        .where("id" as any, "=", userId)
+        .executeTakeFirst();
+
+      return (row as any)?.handle ?? null;
+    },
+  };
+}

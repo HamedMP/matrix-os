@@ -104,6 +104,32 @@ describe("device routes", () => {
 
       expect(res.status).toBe(413);
     });
+
+    it("does not trust X-Forwarded-For for rate limiting", async () => {
+      for (let i = 0; i < 100; i++) {
+        const res = await app.request("/api/auth/device/code", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": `203.0.113.${i}`,
+          },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        });
+        expect(res.status).toBe(200);
+      }
+
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "198.51.100.99",
+        },
+        body: JSON.stringify({ clientId: "matrixos-cli" }),
+      });
+
+      expect(res.status).toBe(429);
+      expect((await res.json()).error).toBe("too_many_requests");
+    });
   });
 
   describe("POST /api/auth/device/token", () => {

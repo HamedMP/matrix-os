@@ -181,10 +181,10 @@ export function authMiddleware(
         ? queryToken
         : null;
 
-    // JWT path: if the bearer looks like a JWT and we have a JWT key, try
-    // validating it. Falls through to the legacy shared-secret check on
-    // failure so a misformatted JWT doesn't lock out service-to-service
-    // callers.
+    // JWT path: if the bearer looks like a JWT and we have a JWT key, treat
+    // JWT validation as terminal. Falling back to the legacy shared-secret
+    // path would let an attacker reuse a JWT-shaped token string as the
+    // legacy bearer and bypass the JWT verifier entirely.
     if (presentedToken && jwtKey && looksLikeJwt(presentedToken)) {
       try {
         const claims = await validateSyncJwt(presentedToken, {
@@ -201,9 +201,14 @@ export function authMiddleware(
         // from silently locking out every platform-issued token with zero
         // operator signal.
         console.debug(
-          "[auth] JWT validation failed; falling through to legacy bearer:",
+          "[auth] JWT validation failed:",
           (err as Error).message,
         );
+        const ip = getClientIp(c);
+        if (!rateLimiter.check(ip)) {
+          return c.json({ error: "Too many requests" }, 429);
+        }
+        return c.json({ error: "Unauthorized" }, 401);
       }
     }
 

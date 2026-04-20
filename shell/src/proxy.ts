@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
-const platformSecret = process.env.PLATFORM_SECRET;
+const platformUpgradeToken = process.env.UPGRADE_TOKEN;
 
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
@@ -42,7 +42,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
 
   // Platform already verified the Clerk session -- skip re-verification
   const platformVerified = request.headers.get("x-platform-verified");
-  if (platformSecret && platformVerified === platformSecret) {
+  if (platformUpgradeToken && platformVerified === platformUpgradeToken) {
     // Proxy gateway API and file requests
     if (isGatewayProxy(request)) {
       const target = pathname.startsWith("/gateway/")

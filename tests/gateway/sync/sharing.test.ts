@@ -346,6 +346,27 @@ describe("SharingService", () => {
       expect(result).toBe("forbidden");
     });
 
+    it("does not match partial directory prefixes", async () => {
+      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeShareRow({
+          owner_id: "owner1",
+          grantee_id: "grantee1",
+          path: "projects/app",
+          role: "viewer",
+          accepted: true,
+        }),
+      ]);
+
+      const result = await service.checkSharePermission(
+        "owner1",
+        "grantee1",
+        "projects/application-secrets/keys.json",
+        "get",
+      );
+
+      expect(result).toBe("forbidden");
+    });
+
     it("denies access for unaccepted shares", async () => {
       (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
@@ -354,6 +375,22 @@ describe("SharingService", () => {
           path: "projects/",
           role: "editor",
           accepted: false,
+        }),
+      ]);
+
+      const result = await service.checkSharePermission("owner1", "grantee1", "projects/readme.md", "get");
+      expect(result).toBe("forbidden");
+    });
+
+    it("denies access for expired shares", async () => {
+      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeShareRow({
+          owner_id: "owner1",
+          grantee_id: "grantee1",
+          path: "projects/",
+          role: "editor",
+          accepted: true,
+          expires_at: new Date("2020-01-01T00:00:00.000Z"),
         }),
       ]);
 

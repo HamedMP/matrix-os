@@ -26,6 +26,28 @@ import { createAuthRoutes } from './auth-routes.js';
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
+const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
+
+function timingSafeTokenEquals(actual: string | undefined, expected: string): boolean {
+  if (!actual) return false;
+  const actualBuf = Buffer.from(actual);
+  const expectedBuf = Buffer.from(expected);
+  if (actualBuf.length !== expectedBuf.length || actualBuf.length === 0) {
+    return false;
+  }
+  return timingSafeEqual(actualBuf, expectedBuf);
+}
+
+function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {
+  if (!authHeader?.startsWith('Bearer ')) {
+    return false;
+  }
+  return timingSafeTokenEquals(authHeader.slice(7), expected);
+}
+
+function buildPlatformVerificationToken(handle: string, platformSecret: string): string {
+  return createHmac('sha256', platformSecret).update(handle).digest('hex');
+}
 
 function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
   const otherMode = mode === 'sign-in' ? 'sign-up' : 'sign-in';
@@ -92,6 +114,7 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
     const upstream = await fetch(targetUrl, {
       method: c.req.method,
       headers,
+      signal: AbortSignal.timeout(30_000),
       body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
     });
 
@@ -161,8 +184,15 @@ export function checkHomeMirrorS3Env(
   return missing;
 }
 
-export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth; matrixProvisioner?: MatrixProvisioner }) {
+export function createApp(deps: {
+  db: PlatformDB;
+  orchestrator: Orchestrator;
+  clerkAuth?: ClerkAuth;
+  matrixProvisioner?: MatrixProvisioner;
+  platformSecret?: string;
+}) {
   const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
+  const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
   const app = new Hono();
 
   // Health check (unauthenticated)
@@ -305,12 +335,15 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
       // Platform already verified Clerk session -- tell user shell to skip re-verification
-      headers.set('x-platform-verified', PLATFORM_SECRET);
+      if (platformSecret) {
+        headers.set('x-platform-verified', buildPlatformVerificationToken(record.handle, platformSecret));
+      }
       headers.set('x-platform-user-id', result.userId);
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
         headers,
+        signal: AbortSignal.timeout(30_000),
         body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
       });
 
@@ -328,9 +361,11 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     if (c.req.path === '/health') return next();
     if (c.req.path === '/metrics') return next();
     if (c.req.path.endsWith('/self-upgrade') && c.req.method === 'POST') return next();
-    if (!PLATFORM_SECRET) return next();
+    if (!platformSecret) {
+      return c.json({ error: 'Platform admin not configured' }, 503);
+    }
     const auth = c.req.header('authorization');
-    if (auth !== `Bearer ${PLATFORM_SECRET}`) {
+    if (!bearerTokenEquals(auth, platformSecret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     return next();
@@ -342,6 +377,9 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     const { handle, clerkUserId, displayName } = await c.req.json<{ handle: string; clerkUserId: string; displayName?: string }>();
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
+    }
+    if (!HANDLE_PATTERN.test(handle)) {
+      return c.json({ error: 'Invalid handle' }, 400);
     }
     try {
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
@@ -389,14 +427,14 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
   });
 
   app.post('/containers/:handle/self-upgrade', async (c) => {
-    if (!PLATFORM_SECRET) {
+    if (!platformSecret) {
       return c.json({ error: 'Self-upgrade not configured' }, 503);
     }
     const handle = c.req.param('handle');
     const auth = c.req.header('authorization');
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : '';
 
-    const expected = createHmac('sha256', PLATFORM_SECRET).update(handle).digest('hex');
+    const expected = buildPlatformVerificationToken(handle, platformSecret);
     const tokenBuf = Buffer.from(token);
     const expectedBuf = Buffer.from(expected);
 
@@ -583,6 +621,7 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
         headers,
+        signal: AbortSignal.timeout(30_000),
         body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
       });
 

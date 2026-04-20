@@ -150,6 +150,73 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("refuses traversal paths on remote writes", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const outsidePath = join(tmpRoot, "..", "escaped-write.txt");
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: "../escaped-write.txt", hash: sha256(Buffer.from("evil")), size: 4, action: "update" }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await settle(80);
+
+      await expect(stat(outsidePath)).rejects.toThrow(/ENOENT/);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("remote-change failed for ../escaped-write.txt:"),
+        expect.stringMatching(/invalid/i),
+      );
+
+      await mirror.stop();
+    });
+
+    it("refuses traversal paths on remote deletes", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const outsidePath = join(tmpRoot, "..", "escaped-delete.txt");
+      await writeFile(outsidePath, "keep me");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: "../escaped-delete.txt", hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await settle(80);
+
+      const remaining = await readFile(outsidePath, "utf8");
+      expect(remaining).toBe("keep me");
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("remote-change failed for ../escaped-delete.txt:"),
+        expect.stringMatching(/invalid/i),
+      );
+
+      await mirror.stop();
+    });
+
     it("ignores broadcasts for ignored paths (e.g. node_modules)", async () => {
       const mirror = createHomeMirror({
         r2,

@@ -126,6 +126,57 @@ describe("handleCommit", () => {
     );
   });
 
+  it("writes the new manifest before deleting file blobs", async () => {
+    const manifest = makeManifest({ "deleted.txt": { hash: HASH_A, size: 100 } });
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 2, etag: '"e"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "deleted.txt", hash: HASH_A, size: 0, action: "delete" }],
+      expectedVersion: 2,
+    });
+
+    expect(mockR2.putObject.mock.invocationCallOrder[0]).toBeLessThan(
+      mockR2.deleteObject.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("garbage-collects expired tombstones before writing the manifest", async () => {
+    const oldDeletedAt = Date.now() - 40 * 24 * 60 * 60 * 1000;
+    const manifest: Manifest = {
+      version: 2,
+      files: {
+        "old.txt": {
+          hash: HASH_A,
+          size: 0,
+          mtime: oldDeletedAt,
+          peerId: "peer1",
+          version: 1,
+          deleted: true,
+          deletedAt: oldDeletedAt,
+        },
+      },
+    };
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 2, etag: '"e"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "new.txt", hash: HASH_B, size: 1 }],
+      expectedVersion: 2,
+    });
+
+    const [, manifestBody] = mockR2.putObject.mock.calls[0]!;
+    const written = JSON.parse(String(manifestBody));
+    expect(written.files["old.txt"]).toBeUndefined();
+    expect(written.files["new.txt"]).toBeDefined();
+  });
+
   it("rejects commit when file count would exceed 50K", async () => {
     // Create manifest near the 50K limit
     const files: Record<string, any> = {};

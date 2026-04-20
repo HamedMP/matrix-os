@@ -9,6 +9,7 @@ import {
   writeManifest,
   type ManifestDb,
 } from "./manifest.js";
+import { resolveWithinPrefix } from "./path-validation.js";
 import {
   buildFileKey,
   type R2Client,
@@ -86,6 +87,14 @@ function hashFileStream(absPath: string): Promise<string> {
     s.on("end", () => resolve(`sha256:${h.digest("hex")}`));
     s.on("error", reject);
   });
+}
+
+function normalizeRelativePath(relPath: string): string {
+  const checked = resolveWithinPrefix("home-mirror", relPath);
+  if (!checked.valid) {
+    throw new Error(`invalid path: ${checked.reason}`);
+  }
+  return relPath.replace(/\/+/g, "/").replace(/\/$/, "");
 }
 
 // AWS SDK v3 returns its own stream type with `transformToByteArray()`,
@@ -241,7 +250,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function pullFile(relPath: string, entry: ManifestEntry): Promise<void> {
-    const absPath = join(config.homeRoot, relPath);
+    const safeRelPath = normalizeRelativePath(relPath);
+    const absPath = join(config.homeRoot, safeRelPath);
     try {
       const localStat = await stat(absPath);
       if (localStat.isFile()) {
@@ -252,15 +262,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
 
-    const key = buildFileKey(config.userId, relPath);
+    const key = buildFileKey(config.userId, safeRelPath);
     const obj = await config.r2.getObject(key);
     if (!obj.body) return;
 
     const buf = await streamToBuffer(obj.body);
     await mkdir(dirname(absPath), { recursive: true });
-    markWritten(relPath);
+    markWritten(safeRelPath);
     await writeFile(absPath, buf);
-    log.info(`pulled ${relPath} (${buf.length}B)`);
+    log.info(`pulled ${safeRelPath} (${buf.length}B)`);
   }
 
   async function initialPull(): Promise<void> {
@@ -280,16 +290,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function pullDelete(relPath: string): Promise<void> {
-    const absPath = join(config.homeRoot, relPath);
+    const safeRelPath = normalizeRelativePath(relPath);
+    const absPath = join(config.homeRoot, safeRelPath);
     try {
       await stat(absPath); // throws ENOENT if already gone
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    markWritten(relPath);
+    markWritten(safeRelPath);
     await unlink(absPath).catch(() => undefined);
-    log.info(`pulled delete ${relPath}`);
+    log.info(`pulled delete ${safeRelPath}`);
   }
 
   // Handle a `sync:change` broadcast from another peer. Applies to each file

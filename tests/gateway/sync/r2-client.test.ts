@@ -2,9 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockSend = vi.fn();
 const mockGetSignedUrl = vi.fn();
+const createdClientConfigs: unknown[] = [];
 
 vi.mock("@aws-sdk/client-s3", () => {
   class MockS3Client {
+    constructor(config: unknown) {
+      createdClientConfigs.push(config);
+    }
     send = mockSend;
     destroy = vi.fn();
   }
@@ -57,12 +61,38 @@ describe("R2 client", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    createdClientConfigs.length = 0;
     client = createR2Client({
       accountId: "test-account",
       accessKeyId: "AKIATEST",
       secretAccessKey: "secret",
       bucket: "matrixos-sync",
     });
+  });
+
+  it("uses an explicit endpoint override when provided", () => {
+    createR2Client({
+      accessKeyId: "AKIATEST",
+      secretAccessKey: "secret",
+      bucket: "matrixos-sync",
+      endpoint: "https://s3.example.internal",
+      forcePathStyle: true,
+    });
+
+    expect(createdClientConfigs.at(-1)).toMatchObject({
+      endpoint: "https://s3.example.internal",
+      forcePathStyle: true,
+    });
+  });
+
+  it("throws when neither endpoint nor accountId is configured", () => {
+    expect(() =>
+      createR2Client({
+        accessKeyId: "AKIATEST",
+        secretAccessKey: "secret",
+        bucket: "matrixos-sync",
+      }),
+    ).toThrow(/accountId|endpoint/i);
   });
 
   describe("getPresignedGetUrl", () => {

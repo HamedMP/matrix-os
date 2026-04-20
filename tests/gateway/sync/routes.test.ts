@@ -300,6 +300,28 @@ describe("GET /api/sync/status", () => {
   });
 });
 
+describe("DELETE /api/sync/share", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects oversized bodies with 413", async () => {
+    const app = createTestApp();
+    const body = JSON.stringify({ shareId: "a".repeat(100_000) });
+
+    const res = await app.request("/api/sync/share", {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(body)),
+      },
+      body,
+    });
+
+    expect(res.status).toBe(413);
+  });
+});
+
 describe("POST /api/sync/resolve-conflict", () => {
   beforeEach(() => vi.clearAllMocks());
 

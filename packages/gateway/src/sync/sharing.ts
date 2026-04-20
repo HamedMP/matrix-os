@@ -150,6 +150,15 @@ export function createSharingService(deps: {
 }): SharingService {
   const { db, peerRegistry } = deps;
 
+  function shareMatchesPath(sharePath: string, filePath: string): boolean {
+    const normalizedSharePath = sharePath.replace(/\/+/g, "/").replace(/\/$/, "");
+    const normalizedFilePath = filePath.replace(/\/+/g, "/").replace(/\/$/, "");
+    return (
+      normalizedFilePath === normalizedSharePath ||
+      normalizedFilePath.startsWith(`${normalizedSharePath}/`)
+    );
+  }
+
   return {
     async createShare(ownerId, input) {
       // Resolve grantee handle to user ID
@@ -288,7 +297,11 @@ export function createSharingService(deps: {
       // Look up shares granted to this caller by this owner
       const shares = await db.listSharesByGrantee(callerId);
       const matchingShares = shares.filter(
-        (s) => s.owner_id === ownerId && s.accepted && filePath.startsWith(s.path),
+        (s) =>
+          s.owner_id === ownerId &&
+          s.accepted &&
+          (!s.expires_at || s.expires_at.getTime() > Date.now()) &&
+          shareMatchesPath(s.path, filePath),
       );
 
       if (matchingShares.length === 0) {

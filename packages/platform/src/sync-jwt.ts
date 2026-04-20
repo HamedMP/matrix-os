@@ -78,6 +78,7 @@ export async function verifySyncJwt(
 
   const { payload } = await jwtVerify(token, key, {
     issuer: SYNC_JWT_ISSUER,
+    algorithms: opts.publicKey ? ['RS256'] : ['HS256'],
     clockTolerance: opts.clockTolerance,
     currentDate: opts.now !== undefined ? new Date(opts.now * 1000) : undefined,
   });

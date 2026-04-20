@@ -85,6 +85,7 @@ import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-cl
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
+import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
 import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
@@ -950,6 +951,14 @@ export async function createGateway(config: GatewayConfig) {
       // the HTTP sync routes use. authMiddleware ran on the upgrade
       // request and stashed claims if a JWT was presented.
       const wsSyncUserId = getUserIdFromContext(c);
+      const syncPeerLifecycle = syncPeerRegistry
+        ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
+            send: (data: string) => ws.send(data),
+            get readyState() {
+              return ws.readyState;
+            },
+          })
+        : null;
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -1093,19 +1102,12 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
-            syncPeerRegistry.registerPeer(
-              wsSyncUserId,
-              {
-                peerId: parsed.peerId,
-                hostname: parsed.hostname,
-                platform: parsed.platform,
-                clientVersion: parsed.clientVersion,
-              },
-              {
-                send: (data: string) => ws.send(data),
-                readyState: 1,
-              },
-            );
+            syncPeerLifecycle?.subscribe({
+              peerId: parsed.peerId,
+              hostname: parsed.hostname,
+              platform: parsed.platform,
+              clientVersion: parsed.clientVersion,
+            });
             return;
           }
 
@@ -1174,6 +1176,7 @@ export async function createGateway(config: GatewayConfig) {
 
         onClose(_evt, ws) {
           clearConversationRunAttachment();
+          syncPeerLifecycle?.close();
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }

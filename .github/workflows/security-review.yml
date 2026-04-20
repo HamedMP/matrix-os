@@ -101,5 +101,5 @@ jobs:
             Maximum 15 inline comments.
           claude_args: |
             --model claude-opus-4-6
-            --max-turns 25
+            --max-turns 50
             --allowedTools "Bash(gh pr:*),Bash(gh api:*),Read,Glob,Grep"

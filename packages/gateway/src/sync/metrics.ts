@@ -4,14 +4,14 @@ import { metricsRegistry } from "../metrics.js";
 export const syncFilesSyncedTotal = new Counter({
   name: "sync_files_synced_total",
   help: "Total files synced",
-  labelNames: ["action", "user_id"] as const,
+  labelNames: ["action"] as const,
   registers: [metricsRegistry],
 });
 
 export const syncPresignRequestsTotal = new Counter({
   name: "sync_presign_requests_total",
   help: "Presigned URL requests",
-  labelNames: ["action", "user_id"] as const,
+  labelNames: ["action"] as const,
   registers: [metricsRegistry],
 });
 
@@ -39,21 +39,18 @@ export const syncConflictsTotal = new Counter({
 
 export const syncManifestEntries = new Gauge({
   name: "sync_manifest_entries",
-  help: "Current manifest entry count per user",
-  labelNames: ["user_id"] as const,
+  help: "Latest observed manifest entry count",
   registers: [metricsRegistry],
 });
 
 export const syncManifestBytes = new Gauge({
   name: "sync_manifest_bytes",
-  help: "Current manifest total file size per user",
-  labelNames: ["user_id"] as const,
+  help: "Latest observed manifest total file size",
   registers: [metricsRegistry],
 });
 
 export const syncConnectedPeers = new Gauge({
   name: "sync_connected_peers",
-  help: "Currently connected peers per user",
-  labelNames: ["user_id"] as const,
+  help: "Latest observed connected peer count",
   registers: [metricsRegistry],
 });

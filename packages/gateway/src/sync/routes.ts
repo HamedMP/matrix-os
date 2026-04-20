@@ -16,6 +16,8 @@ import {
   syncPresignDuration,
   syncCommitDuration,
   syncFilesSyncedTotal,
+  syncConnectedPeers,
+  syncManifestBytes,
   syncManifestEntries,
 } from "./metrics.js";
 import type { PeerRegistry } from "./ws-events.js";
@@ -87,7 +89,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       const urls = await generatePresignedUrls({ r2: deps.r2 }, userId, parsed.data.files);
 
       for (const file of parsed.data.files) {
-        syncPresignRequestsTotal.inc({ action: file.action, user_id: userId });
+        syncPresignRequestsTotal.inc({ action: file.action });
       }
 
       timer({ action: "batch" });
@@ -133,9 +135,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       // Update metrics
       for (const file of parsed.data.files) {
         const action = file.action ?? "update";
-        syncFilesSyncedTotal.inc({ action, user_id: userId });
+        syncFilesSyncedTotal.inc({ action });
       }
-      syncManifestEntries.set({ user_id: userId }, result.committed);
 
       return c.json(result);
     } catch (err: unknown) {
@@ -150,6 +151,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const userId = deps.getUserId(c);
     const peers = deps.peerRegistry.getPeers(userId);
     const meta = await deps.db.getManifestMeta(userId);
+
+    syncConnectedPeers.set(peers.length);
+    syncManifestEntries.set(meta?.file_count ?? 0);
+    syncManifestBytes.set(Number(meta?.total_size ?? 0n));
 
     return c.json({
       connectedPeers: peers.map((p) => ({
@@ -224,7 +229,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   });
 
   // DELETE /share -- revoke sharing grant
-  app.delete("/share", async (c) => {
+  app.delete("/share", mutatingBodyLimit, async (c) => {
     const userId = deps.getUserId(c);
     const body = await c.req.json();
     const shareId = body?.shareId;

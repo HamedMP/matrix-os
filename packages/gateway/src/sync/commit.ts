@@ -4,6 +4,7 @@ import {
   readManifest,
   writeManifest,
   applyCommitToManifest,
+  garbageCollectTombstones,
   type ManifestDb,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
@@ -69,17 +70,20 @@ export async function handleCommit(
       throw err;
     }
 
-    // Step 4: Delete R2 objects for deleted files
+    const compacted = garbageCollectTombstones(updated);
+
+    // Step 4: Write updated manifest
+    const newVersion = currentVersion + 1;
+    await writeManifest(store, userId, compacted, newVersion);
+
+    // Step 5: Delete R2 objects for deleted files only after the manifest
+    // update has committed, so a transient write failure cannot orphan data.
     for (const file of request.files) {
       if (file.action === "delete") {
         const key = buildFileKey(userId, file.path);
         await deps.r2.deleteObject(key);
       }
     }
-
-    // Step 5: Write updated manifest
-    const newVersion = currentVersion + 1;
-    await writeManifest(store, userId, updated, newVersion);
 
     // Step 6: Broadcast sync:change to other peers
     const changeFiles = request.files.map((f) => ({

@@ -1,9 +1,31 @@
+import { createHmac } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import {
   issueSyncJwt,
   verifySyncJwt,
   SYNC_JWT_ISSUER,
 } from "../../packages/platform/src/sync-jwt.js";
+
+function base64UrlEncode(value: string | Uint8Array): string {
+  return Buffer.from(value)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function signHs256Jwt(
+  claims: Record<string, string | number>,
+  secretBytes: Uint8Array,
+): string {
+  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64UrlEncode(JSON.stringify(claims));
+  const signingInput = `${header}.${payload}`;
+  const signature = createHmac("sha256", Buffer.from(secretBytes))
+    .update(signingInput)
+    .digest();
+  return `${signingInput}.${base64UrlEncode(signature)}`;
+}
 
 const SECRET = "test-secret-at-least-32-characters-long";
 
@@ -67,6 +89,22 @@ describe("sync-jwt: verification", () => {
 
     await expect(
       verifySyncJwt(issued.token, { secret: "different-secret-also-32-chars-long!!" }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects HS256 tokens when verifying with a configured public key", async () => {
+    const fakePublicKey = new TextEncoder().encode("fake-public-key-material");
+    const token = signHs256Jwt({
+      sub: "user_abc",
+      handle: "alice",
+      gateway_url: "https://alice.matrix-os.com",
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iss: SYNC_JWT_ISSUER,
+    }, fakePublicKey);
+
+    await expect(
+      verifySyncJwt(token, { publicKey: fakePublicKey }),
     ).rejects.toThrow();
   });
 

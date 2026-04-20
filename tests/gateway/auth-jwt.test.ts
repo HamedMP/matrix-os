@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
@@ -8,6 +9,27 @@ import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 const HANDLE = "alice";
+
+function base64UrlEncode(value: string | Uint8Array): string {
+  return Buffer.from(value)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function signHs256Jwt(
+  claims: Record<string, string | number>,
+  secretBytes: Uint8Array,
+): string {
+  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64UrlEncode(JSON.stringify(claims));
+  const signingInput = `${header}.${payload}`;
+  const signature = createHmac("sha256", Buffer.from(secretBytes))
+    .update(signingInput)
+    .digest();
+  return `${signingInput}.${base64UrlEncode(signature)}`;
+}
 
 function mockContext(path: string, authHeader?: string, ip?: string) {
   const store = new Map<string, unknown>();
@@ -98,6 +120,22 @@ describe("validateSyncJwt", () => {
       validateSyncJwt(issued.token, { ...keyConfig, expectedHandle: HANDLE }),
     ).rejects.toThrow();
   });
+
+  it("rejects HS256 tokens when verifying with a configured public key", async () => {
+    const fakePublicKey = new TextEncoder().encode("fake-public-key-material");
+    const token = signHs256Jwt({
+      sub: "user_alice",
+      handle: HANDLE,
+      gateway_url: "https://alice.matrix-os.com",
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iss: "matrix-os-platform",
+    }, fakePublicKey);
+
+    await expect(
+      validateSyncJwt(token, { publicKey: fakePublicKey, expectedHandle: HANDLE }),
+    ).rejects.toThrow();
+  });
 });
 
 describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
@@ -181,6 +219,26 @@ describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
     let nextCalled = false;
     const res = await mw(
       mockContext("/api/message", `Bearer ${issued.token}`, "10.0.0.3"),
+      async () => {
+        nextCalled = true;
+      },
+    );
+    expect(nextCalled).toBe(false);
+    expect(res?.status).toBe(401);
+  });
+
+  it("does not fall back to legacy bearer auth after JWT validation fails", async () => {
+    const issued = await issueSyncJwt({
+      secret: "completely-different-secret-32-char!!",
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://alice.matrix-os.com",
+    });
+
+    const mw = authMiddleware(issued.token);
+    let nextCalled = false;
+    const res = await mw(
+      mockContext("/api/message", `Bearer ${issued.token}`, "10.0.0.4"),
       async () => {
         nextCalled = true;
       },

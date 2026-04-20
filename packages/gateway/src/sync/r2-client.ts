@@ -12,10 +12,13 @@ const DEFAULT_PRESIGN_EXPIRY = 900; // 15 minutes
 const R2_OPERATION_TIMEOUT_MS = 10_000;
 
 export interface R2ClientConfig {
-  accountId: string;
+  accountId?: string;
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
+  endpoint?: string;
+  publicEndpoint?: string;
+  forcePathStyle?: boolean;
 }
 
 export interface R2Client {
@@ -31,10 +34,15 @@ export interface R2Client {
 
 export function createR2Client(config: R2ClientConfig): R2Client {
   const { accountId, accessKeyId, secretAccessKey, bucket } = config;
+  const endpoint = config.endpoint ?? (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : null);
+  if (!endpoint) {
+    throw new Error("R2 client requires either accountId or endpoint");
+  }
 
   const s3 = new S3Client({
     region: "auto",
-    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    endpoint,
+    forcePathStyle: config.forcePathStyle ?? false,
     credentials: { accessKeyId, secretAccessKey },
   });
 

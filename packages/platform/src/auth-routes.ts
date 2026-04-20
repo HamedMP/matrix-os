@@ -56,7 +56,11 @@ function createRateLimiter(): RateLimiter {
 }
 
 function clientIp(c: import('hono').Context): string {
-  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1';
+  return (
+    c.req.header('cf-connecting-ip')?.trim() ??
+    c.req.header('x-real-ip')?.trim() ??
+    '127.0.0.1'
+  );
 }
 
 function csrfToken(): string {

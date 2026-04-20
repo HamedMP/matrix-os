@@ -39,8 +39,8 @@ describe("sync metrics", () => {
   });
 
   it("counters increment correctly", () => {
-    syncFilesSyncedTotal.inc({ action: "upload", user_id: "test" });
-    syncPresignRequestsTotal.inc({ action: "put", user_id: "test" });
+    syncFilesSyncedTotal.inc({ action: "upload" });
+    syncPresignRequestsTotal.inc({ action: "put" });
     syncConflictsTotal.inc({ resolution: "auto_merged" });
 
     // No throws = correct label config
@@ -55,9 +55,9 @@ describe("sync metrics", () => {
   });
 
   it("gauges set correctly", () => {
-    syncManifestEntries.set({ user_id: "test" }, 42);
-    syncManifestBytes.set({ user_id: "test" }, 1024);
-    syncConnectedPeers.set({ user_id: "test" }, 2);
+    syncManifestEntries.set(42);
+    syncManifestBytes.set(1024);
+    syncConnectedPeers.set(2);
 
     expect(true).toBe(true);
   });

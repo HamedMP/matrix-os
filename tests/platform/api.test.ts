@@ -30,13 +30,15 @@ describe('platform/api', () => {
   let tmpDir: string;
   let db: PlatformDB;
   let app: ReturnType<typeof createApp>;
+  const platformSecret = 'platform-secret-123';
+  const adminHeaders = { authorization: `Bearer ${platformSecret}` };
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'platform-api-'));
     db = createPlatformDb(join(tmpDir, 'test.db'));
     const { docker } = createMockDocker();
     const orchestrator = createOrchestrator({ db, docker: docker as any });
-    app = createApp({ db, orchestrator });
+    app = createApp({ db, orchestrator, platformSecret });
   });
 
   afterEach(() => {
@@ -52,7 +54,7 @@ describe('platform/api', () => {
   it('POST /containers/provision creates a container', async () => {
     const res = await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice', clerkUserId: 'clerk_1' }),
     });
     expect(res.status).toBe(201);
@@ -64,25 +66,43 @@ describe('platform/api', () => {
   it('POST /containers/provision rejects missing fields', async () => {
     const res = await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice' }),
     });
     expect(res.status).toBe(400);
   });
 
+  it('POST /containers/provision rejects invalid handles', async () => {
+    const res = await app.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ handle: '../../etc', clerkUserId: 'clerk_1' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('fails closed when admin routes are not configured with a secret', async () => {
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const noSecretApp = createApp({ db, orchestrator, platformSecret: '' });
+
+    const res = await noSecretApp.request('/containers');
+    expect(res.status).toBe(503);
+  });
+
   it('GET /containers lists all containers', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
     });
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'bob', clerkUserId: 'c2' }),
     });
 
-    const res = await app.request('/containers');
+    const res = await app.request('/containers', { headers: adminHeaders });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveLength(2);
@@ -91,32 +111,32 @@ describe('platform/api', () => {
   it('GET /containers/:handle returns container info', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
     });
 
-    const res = await app.request('/containers/alice');
+    const res = await app.request('/containers/alice', { headers: adminHeaders });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.handle).toBe('alice');
   });
 
   it('GET /containers/:handle returns 404 for unknown handle', async () => {
-    const res = await app.request('/containers/ghost');
+    const res = await app.request('/containers/ghost', { headers: adminHeaders });
     expect(res.status).toBe(404);
   });
 
   it('POST /containers/:handle/stop stops a container', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
     });
 
-    const res = await app.request('/containers/alice/stop', { method: 'POST' });
+    const res = await app.request('/containers/alice/stop', { method: 'POST', headers: adminHeaders });
     expect(res.status).toBe(200);
 
-    const info = await app.request('/containers/alice');
+    const info = await app.request('/containers/alice', { headers: adminHeaders });
     const body = await info.json();
     expect(body.status).toBe('stopped');
   });
@@ -124,16 +144,16 @@ describe('platform/api', () => {
   it('POST /containers/rolling-restart upgrades running containers', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
     });
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'bob', clerkUserId: 'c2' }),
     });
 
-    const res = await app.request('/containers/rolling-restart', { method: 'POST' });
+    const res = await app.request('/containers/rolling-restart', { method: 'POST', headers: adminHeaders });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.total).toBe(2);
@@ -145,14 +165,14 @@ describe('platform/api', () => {
   it('DELETE /containers/:handle destroys a container', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...adminHeaders },
       body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
     });
 
-    const res = await app.request('/containers/alice', { method: 'DELETE' });
+    const res = await app.request('/containers/alice', { method: 'DELETE', headers: adminHeaders });
     expect(res.status).toBe(200);
 
-    const info = await app.request('/containers/alice');
+    const info = await app.request('/containers/alice', { headers: adminHeaders });
     expect(info.status).toBe(404);
   });
 });
