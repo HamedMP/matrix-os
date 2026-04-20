@@ -46,9 +46,6 @@
 - [x] T009 [P] Create R2 S3 client factory in `packages/gateway/src/sync/r2-client.ts` (S3Client with region "auto", R2 endpoint from env, presigned URL generation for GET and PUT using `@aws-sdk/s3-request-presigner`, `AbortSignal.timeout(10_000)` on all operations) -- supports MinIO via `endpoint`/`publicEndpoint`/`forcePathStyle`
 - [x] T010 [P] Create path validation utility `resolveWithinPrefix` in `packages/gateway/src/sync/path-validation.ts` (validate relative paths, reject `..` segments, reject leading `/`, max 1024 chars, resolve within `matrixos-sync/{userId}/files/`)
 - [x] T011 [P] Register Prometheus metrics in `packages/gateway/src/sync/metrics.ts` (sync_files_synced_total counter, sync_presign_requests_total counter, sync_presign_duration_seconds histogram, sync_commit_duration_seconds histogram, sync_conflicts_total counter, sync_manifest_entries gauge, sync_manifest_bytes gauge, sync_connected_peers gauge -- per spec section 2)
-<!-- audit:T011:start -->
-  Audit: The metric definitions exist, but the live gauge updates do not match the spec yet. Update gauges from manifest metadata and peer-registry state, not from per-request batch counts, and wire peer-count updates into connect/disconnect paths.
-<!-- audit:T011:end -->
 - [x] T012 Add `sync:subscribe` to `MainWsClientMessageSchema` discriminated union in `packages/gateway/src/ws-message-schema.ts` (peerId, hostname, platform, clientVersion fields per contracts/sync-ws.md)
 - [x] T013 Mount sync routes at `/api/sync` in `packages/gateway/src/server.ts` (import from `sync/routes.ts`, apply `authMiddleware`, apply `bodyLimit({ maxSize: 65536 })` on mutating endpoints) -- `createSyncRoutes(deps)` now wired with R2/MinIO client, ManifestDb, PeerRegistry, and SharingService; `sync:subscribe` WS handler registered (2026-04-18)
 
