@@ -464,6 +464,45 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("logs serial queue failures instead of silently swallowing them", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      db = {
+        async getManifestMeta() {
+          return null;
+        },
+        async upsertManifestMeta() {
+          throw new Error("manifest db down");
+        },
+        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
+          return fn(undefined);
+        },
+      } as unknown as ManifestDb;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      await writeFile(join(tmpRoot, "queue-error.txt"), "hello");
+      await waitFor(() =>
+        logger.error.mock.calls.some(
+          ([message]: [string]) => message.includes("serial queue task failed:"),
+        ),
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "serial queue task failed:",
+        "manifest db down",
+      );
+      await mirror.stop();
+    });
+
     it("records the hash for the exact bytes uploaded", async () => {
       const gate = deferred<void>();
       let getMetaCalls = 0;

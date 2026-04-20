@@ -157,6 +157,20 @@ describe("POST /api/sync/presign", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 500 when R2 signing fails with a message that happens to mention path", async () => {
+    mockR2.getPresignedGetUrl.mockRejectedValueOnce(new Error("upstream path lookup failed"));
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/presign", {
+      files: [{ path: "readme.md", action: "get" }],
+    }));
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Presign generation failed",
+    });
+  });
+
   it("handles batch of mixed GET and PUT", async () => {
     const app = createTestApp();
     const res = await app.request(jsonRequest("/api/sync/presign", {

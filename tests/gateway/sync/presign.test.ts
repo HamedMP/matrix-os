@@ -15,6 +15,7 @@ const mockR2 = {
 
 import {
   generatePresignedUrls,
+  PresignValidationError,
   type PresignDeps,
 } from "../../../packages/gateway/src/sync/presign.js";
 
@@ -54,7 +55,7 @@ describe("generatePresignedUrls", () => {
       generatePresignedUrls(deps, "user1", [
         { path: "../etc/passwd", action: "get" as const },
       ]),
-    ).rejects.toThrow(/path/i);
+    ).rejects.toBeInstanceOf(PresignValidationError);
   });
 
   it("handles batch of up to 100 files", async () => {
@@ -90,7 +91,7 @@ describe("generatePresignedUrls", () => {
           size: 1025 * 1024 * 1024,
         },
       ]),
-    ).rejects.toThrow(/1.*GB|size/i);
+    ).rejects.toBeInstanceOf(PresignValidationError);
   });
 
   it("accepts files at exactly 100MB for PUT (single presign)", async () => {

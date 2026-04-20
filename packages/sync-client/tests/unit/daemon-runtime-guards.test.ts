@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  createSerialTaskQueue,
   persistPauseState,
   resolveWithinSyncRoot,
   writePidFileExclusive,
@@ -81,5 +82,28 @@ describe("daemon runtime guards", () => {
 
     expect(config.pauseSync).toBe(true);
     await expect(loadConfig(configPath)).resolves.toMatchObject({ pauseSync: true });
+  });
+
+  it("logs serial queue task failures and keeps later tasks running", async () => {
+    const onError = vi.fn();
+    const enqueue = createSerialTaskQueue(onError);
+    const events: string[] = [];
+
+    await expect(
+      enqueue(async () => {
+        events.push("first");
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    await expect(
+      enqueue(async () => {
+        events.push("second");
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(events).toEqual(["first", "second"]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 });

@@ -211,29 +211,33 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
     async approveDeviceCode(userCode: string, clerkUserId: string): Promise<void> {
       const ts = now();
       const normalized = normalizeUserCode(userCode);
+      sqliteClient(config.db).transaction(() => {
+        const row = config.db
+          .select()
+          .from(deviceCodes)
+          .where(eq(deviceCodes.userCode, normalized))
+          .get();
 
-      const row = config.db
-        .select()
-        .from(deviceCodes)
-        .where(eq(deviceCodes.userCode, normalized))
-        .get();
+        if (!row) {
+          throw new Error('Unknown user_code');
+        }
+        if (row.expiresAt < ts) {
+          config.db
+            .delete(deviceCodes)
+            .where(eq(deviceCodes.userCode, normalized))
+            .run();
+          throw new Error('Expired user_code');
+        }
+        if (row.clerkUserId && row.clerkUserId !== clerkUserId) {
+          throw new Error('Device code already approved');
+        }
 
-      if (!row) {
-        throw new Error('Unknown user_code');
-      }
-      if (row.expiresAt < ts) {
         config.db
-          .delete(deviceCodes)
+          .update(deviceCodes)
+          .set({ clerkUserId })
           .where(eq(deviceCodes.userCode, normalized))
           .run();
-        throw new Error('Expired user_code');
-      }
-
-      config.db
-        .update(deviceCodes)
-        .set({ clerkUserId })
-        .where(eq(deviceCodes.userCode, normalized))
-        .run();
+      })();
     },
   };
 }

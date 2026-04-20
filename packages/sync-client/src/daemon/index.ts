@@ -182,6 +182,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function createSerialTaskQueue(
+  onError: (err: unknown) => void,
+): <T>(fn: () => Promise<T>) => Promise<T> {
+  let chain: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn);
+    chain = next.catch((err: unknown) => {
+      onError(err);
+      return undefined;
+    });
+    return next;
+  };
+}
+
 export function resolveWithinSyncRoot(syncRoot: string, localRel: string): string {
   const root = resolve(syncRoot);
   const candidate = resolve(root, localRel);
@@ -310,12 +324,9 @@ export async function startDaemon(): Promise<void> {
   // manifest writes, so 13 parallel onEvent calls all racing with the same
   // expectedVersion produce 12 conflicts and a 10s timeout per loser.
   // Serializing makes each commit pick up the prior commit's new version.
-  let commitChain: Promise<unknown> = Promise.resolve();
-  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = commitChain.then(fn, fn);
-    commitChain = next.catch(() => undefined);
-    return next;
-  };
+  const enqueue = createSerialTaskQueue((err) => {
+    logger.error({ err }, "Serialized sync task failed");
+  });
 
   const watcher = new FileWatcher({
     syncRoot: config.syncPath,

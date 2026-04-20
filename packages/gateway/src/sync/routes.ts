@@ -9,7 +9,10 @@ import {
   AcceptShareSchema,
 } from "./types.js";
 import { readManifest, type ManifestStore } from "./manifest.js";
-import { generatePresignedUrls } from "./presign.js";
+import {
+  generatePresignedUrls,
+  PresignValidationError,
+} from "./presign.js";
 import { handleCommit, type CommitDeps } from "./commit.js";
 import { resolveWithinPrefix } from "./path-validation.js";
 import {
@@ -109,9 +112,15 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ urls });
     } catch (err: unknown) {
       timer({ action: "batch" });
-      const isValidationErr = err instanceof Error && (err.message.includes("path") || err.message.includes("size"));
-      console.error("[sync/presign] Presign generation failed:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: isValidationErr ? "Invalid request" : "Presign generation failed" }, isValidationErr ? 400 : 500);
+      const isValidationErr = err instanceof PresignValidationError;
+      console.error(
+        "[sync/presign] Presign generation failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json(
+        { error: isValidationErr ? "Invalid request" : "Presign generation failed" },
+        isValidationErr ? 400 : 500,
+      );
     }
   });
 

@@ -25,6 +25,13 @@ export interface PresignResult {
   multipart?: MultipartInfo;
 }
 
+export class PresignValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PresignValidationError";
+  }
+}
+
 export async function generatePresignedUrls(
   deps: PresignDeps,
   userId: string,
@@ -34,14 +41,16 @@ export async function generatePresignedUrls(
   for (const file of files) {
     const validation = resolveWithinPrefix(userId, file.path);
     if (!validation.valid) {
-      throw new Error(`Invalid path "${file.path}": ${validation.reason}`);
+      throw new PresignValidationError(
+        `Invalid path "${file.path}": ${validation.reason}`,
+      );
     }
   }
 
   // Validate sizes for PUT actions
   for (const file of files) {
     if (file.action === "put" && file.size != null && file.size > MAX_PUT_SIZE) {
-      throw new Error(
+      throw new PresignValidationError(
         `File "${file.path}" exceeds maximum size of 1GB (${file.size} bytes)`,
       );
     }

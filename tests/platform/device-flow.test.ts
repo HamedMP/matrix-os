@@ -201,6 +201,15 @@ describe("device flow: approval", () => {
     expect(result.status).toBe("approved");
   });
 
+  it("rejects approval by a different user after the device code is already approved", async () => {
+    const issued = await flow.createDeviceCode();
+    await flow.approveDeviceCode(issued.userCode, "user_alice");
+
+    await expect(
+      flow.approveDeviceCode(issued.userCode, "user_bob"),
+    ).rejects.toThrow("Device code already approved");
+  });
+
   it("approveDeviceCode throws for an unknown user_code", async () => {
     await expect(
       flow.approveDeviceCode("ZZZZ-ZZZZ", "user_alice"),

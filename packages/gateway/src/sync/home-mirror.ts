@@ -68,6 +68,20 @@ export interface HomeMirror {
   stop(): Promise<void>;
 }
 
+function createSerialQueue(
+  onError: (err: unknown) => void,
+): <T>(fn: () => Promise<T>) => Promise<T> {
+  let chain: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn);
+    chain = next.catch((err: unknown) => {
+      onError(err);
+      return undefined;
+    });
+    return next;
+  };
+}
+
 function isIgnored(relPath: string, extraDirs?: Set<string>): boolean {
   // Treat the home root itself ("") as NOT ignored -- otherwise chokidar
   // refuses to descend into it. Only ignore actual entries.
@@ -140,12 +154,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   // Serial commit chain: home-mirror updates manifest in-process, but
   // multiple writes still need to read-modify-write the version counter.
-  let chain: Promise<unknown> = Promise.resolve();
-  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = chain.then(fn, fn);
-    chain = next.catch(() => undefined);
-    return next;
-  };
+  const enqueue = createSerialQueue((err) => {
+    log.error(
+      "serial queue task failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  });
 
   // Suppress watcher events for paths we just downloaded ourselves.
   // chokidar will emit `add`/`change` for files we wrote during initial

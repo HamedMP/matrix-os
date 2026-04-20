@@ -27,7 +27,7 @@ they go. Keep it concise — status per group, files touched, open questions.
 - [x] Group D follow-up (home-mirror userId alignment via `MATRIX_USER_ID`) committed (`e5b72dc`)
 - [x] Review agents run per group (Review A+D: SHIP; Review B: SHIP; Review C: FIX; silent-failure-hunter: FIX)
 - [x] Fix wave landed (gateway `247d066`, client `e45cf5b`/`01148e1`/`06927c3`, platform `1894145`)
-- [~] PR 30 review remediation in progress — tracker: `specs/066-file-sync/pr-review.md` (latest blocker wave plus new home-mirror follow-up fixes addressed locally; gateway blocker regressions `29/29`, home-mirror `11/11`, shell theme `39/39`, and Docker platform blocker regressions `71/71` pass; local Playwright verification is blocked by missing Chromium on this machine)
+- [~] PR 30 review remediation in progress — tracker: `specs/066-file-sync/pr-review.md` (latest transaction/queue/presign follow-up fixes addressed locally; gateway sync regressions `56/56`, sync-client queue guards `7/7`, Docker device-flow `20/20`, earlier home-mirror `11/11`, shell theme `39/39`, and Docker platform blocker regressions `71/71` all pass; local Playwright verification is still blocked by missing Chromium on this machine)
 - [x] Legacy `{handle}.matrix-os.com` middleware retired in `1894145` (voice-tunnel still uses per-handle subdomain via Cloudflare tunnel ingress — not via the retired platform middleware, so safe)
 - [x] Integration verification (local): 451/451 platform+gateway-sync+auth-jwt, 149/149 sync-client (2 pre-existing oauth.test.ts unhandled-rejection warnings unrelated to PR 1)
 - [ ] Smoke tests per deployment-plan.md § "Smoke tests" executed against prod (requires VPS deploy)

@@ -81,6 +81,10 @@ for that item both exist locally.
 - [x] Home-mirror initial pull must skip tombstoned manifest entries instead of resurrecting deleted files.
 - [x] Home-mirror uploads must hash the exact bytes they send to R2, not hash before the queued read/upload path.
 - [x] Home-mirror local-write suppression must cover large initial pulls instead of evicting entries after 1000 files.
+- [x] Device-flow approval must run under a transaction and reject re-approval by a different user.
+- [x] Home-mirror serial commit queue must log task failures instead of silently swallowing them.
+- [x] Sync-client daemon serial commit queue must report task failures instead of silently swallowing them.
+- [x] Presign route must classify validation failures with a typed error instead of matching strings in `err.message`.
 
 ## Verification Notes
 
@@ -98,6 +102,9 @@ for that item both exist locally.
 - [x] Latest home-mirror regression passes locally: `tests/gateway/sync/home-mirror.test.ts` (`1 file`, `11 tests`).
 - [x] Shell theme regression passes locally: `tests/shell/useTheme.test.ts`, `theme-presets.test.ts` (`2 files`, `39 tests`).
 - [ ] Local Playwright verification for `shell/e2e/screenshots.spec.ts` is currently blocked on this machine because the Chromium test binary is not installed (`pnpm exec playwright install` required). CI remains the source of truth for the screenshot path.
+- [x] Latest presign/routes/home-mirror regression passes locally: `tests/gateway/sync/presign.test.ts`, `routes.test.ts`, `home-mirror.test.ts` (`3 files`, `56 tests`).
+- [x] Latest sync-client queue guard regression passes locally: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `7 tests`).
+- [x] Latest device-flow regression passes in Docker dev container: `tests/platform/device-flow.test.ts` (`1 file`, `20 tests`).
 
 ## Lower-Priority Follow-ups From Review
 
