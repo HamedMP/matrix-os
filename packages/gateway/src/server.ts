@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
+import { mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -956,13 +957,14 @@ export async function createGateway(config: GatewayConfig) {
       // the HTTP sync routes use. authMiddleware ran on the upgrade
       // request and stashed claims if a JWT was presented.
       let syncPeerLifecycle = null;
+      let syncPeerSocket: WSContext | null = null;
       try {
         const wsSyncUserId = getUserIdFromContext(c);
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
-              send: (data: string) => ws.send(data),
+              send: (data: string) => syncPeerSocket?.send(data),
               get readyState() {
-                return ws.readyState;
+                return syncPeerSocket?.readyState ?? 3;
               },
             })
           : null;
@@ -1032,6 +1034,7 @@ export async function createGateway(config: GatewayConfig) {
 
       return {
         onOpen(_evt, ws) {
+          syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
           wsConnectionsActive.inc();
@@ -1190,6 +1193,7 @@ export async function createGateway(config: GatewayConfig) {
         onClose(_evt, ws) {
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
+          syncPeerSocket = null;
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }
@@ -1626,8 +1630,8 @@ export async function createGateway(config: GatewayConfig) {
     if (!fullPath) return c.text("Invalid path", 403);
     const content = await c.req.text();
     const dir = dirname(fullPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(fullPath, content, "utf-8");
+    await mkdirAsync(dir, { recursive: true });
+    await writeFileAsync(fullPath, content, "utf-8");
     return c.json({ ok: true });
   });
 

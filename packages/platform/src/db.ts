@@ -30,6 +30,12 @@ export function createPlatformDb(path: string = DB_PATH) {
   return db;
 }
 
+type BetterSqliteClient = InstanceType<typeof Database>;
+
+function sqliteClient(db: PlatformDB): BetterSqliteClient {
+  return (db as { $client: BetterSqliteClient }).$client;
+}
+
 export function getDb(dbPath?: string): PlatformDB {
   if (!_db) {
     _sqlite = new Database(dbPath ?? DB_PATH);
@@ -152,20 +158,22 @@ export function deleteContainer(db: PlatformDB, handle: string): void {
 }
 
 export function allocatePort(db: PlatformDB, basePort: number, handle: string): number {
-  const existing = db.select({ port: portAssignments.port })
-    .from(portAssignments)
-    .where(eq(portAssignments.handle, handle))
-    .get();
-  if (existing) return existing.port;
+  return sqliteClient(db).transaction(() => {
+    const existing = db.select({ port: portAssignments.port })
+      .from(portAssignments)
+      .where(eq(portAssignments.handle, handle))
+      .get();
+    if (existing) return existing.port;
 
-  const result = db.select({ maxPort: max(portAssignments.port) })
-    .from(portAssignments)
-    .get();
+    const result = db.select({ maxPort: max(portAssignments.port) })
+      .from(portAssignments)
+      .get();
 
-  const nextPort = result?.maxPort ? result.maxPort + 1 : basePort;
+    const nextPort = result?.maxPort ? result.maxPort + 1 : basePort;
 
-  db.insert(portAssignments).values({ port: nextPort, handle }).run();
-  return nextPort;
+    db.insert(portAssignments).values({ port: nextPort, handle }).run();
+    return nextPort;
+  })();
 }
 
 export function releasePort(db: PlatformDB, handle: string): void {

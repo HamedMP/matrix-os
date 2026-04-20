@@ -41,10 +41,12 @@ function createRateLimiter(): RateLimiter {
       const cutoff = now - RATE_LIMIT_WINDOW_MS;
       const arr = (windows.get(key) ?? []).filter((t) => t > cutoff);
       if (arr.length >= RATE_LIMIT_MAX) {
+        if (windows.has(key)) windows.delete(key);
         windows.set(key, arr);
         return false;
       }
       arr.push(now);
+      if (windows.has(key)) windows.delete(key);
       windows.set(key, arr);
       if (windows.size > RATE_LIMIT_MAX_KEYS) {
         const first = windows.keys().next().value;

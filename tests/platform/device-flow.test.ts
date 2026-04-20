@@ -118,6 +118,39 @@ describe("device flow: polling", () => {
     expect(result.token).toBe("jwt-for-user_alice");
   });
 
+  it("consumes the approved device code before awaiting token issuance", async () => {
+    let resolveIssue: (() => void) | null = null;
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      issueToken: async ({ clerkUserId }) => {
+        await new Promise<void>((resolve) => {
+          resolveIssue = resolve;
+        });
+        return {
+          token: `jwt-for-${clerkUserId}`,
+          expiresAt: now + 30 * 24 * 3_600_000,
+          handle: clerkUserId.replace("user_", "@"),
+        };
+      },
+    });
+
+    const issued = await flow.createDeviceCode();
+    await flow.approveDeviceCode(issued.userCode, "user_alice");
+    now += 5_000;
+    const firstPoll = flow.pollDeviceCode(issued.deviceCode);
+    now += 5_000;
+
+    await expect(flow.pollDeviceCode(issued.deviceCode)).resolves.toEqual({ status: "expired" });
+
+    resolveIssue?.();
+    await expect(firstPoll).resolves.toMatchObject({
+      status: "approved",
+      token: "jwt-for-user_alice",
+    });
+  });
+
   it("treats an unknown device_code as expired (cleanup-friendly)", async () => {
     const result = await flow.pollDeviceCode("does-not-exist");
     expect(result.status).toBe("expired");

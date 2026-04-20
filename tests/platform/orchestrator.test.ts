@@ -138,6 +138,53 @@ describe('platform/orchestrator', () => {
     await expect(orch.provision('alice', 'clerk_2')).rejects.toThrow('already exists');
   });
 
+  it('releases allocated ports when container creation fails', async () => {
+    const { docker } = createMockDocker();
+    docker.createContainer.mockRejectedValueOnce(new Error('create failed'));
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await expect(orch.provision('alice', 'clerk_1')).rejects.toThrow('create failed');
+    expect(getContainer(db, 'alice')).toBeUndefined();
+
+    const record = await orch.provision('bob', 'clerk_2');
+    expect(record.port).toBe(4001);
+    expect(record.shellPort).toBe(4002);
+  });
+
+  it('removes the started container and releases ports when DB insert fails', async () => {
+    const firstContainer = {
+      id: 'container-1',
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    const secondContainer = {
+      id: 'container-2',
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    const { docker } = createMockDocker();
+    docker.createContainer
+      .mockResolvedValueOnce(firstContainer)
+      .mockResolvedValueOnce(secondContainer)
+      .mockResolvedValueOnce({
+        id: 'container-3',
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+      });
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+    await expect(orch.provision('bob', 'clerk_1')).rejects.toThrow();
+    expect(secondContainer.remove).toHaveBeenCalledWith({ force: true });
+
+    const record = await orch.provision('carol', 'clerk_3');
+    expect(record.port).toBe(4003);
+    expect(record.shellPort).toBe(4004);
+  });
+
   it('creates network if not exists', async () => {
     const { docker } = createMockDocker();
     docker.listNetworks.mockResolvedValue([]);

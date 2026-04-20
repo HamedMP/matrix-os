@@ -75,6 +75,19 @@ describe("readManifest", () => {
     expect(result.manifestVersion).toBe(3);
     expect(result.etag).toBe('"etag1"');
   });
+
+  it("supports AWS SDK bodies that expose transformToString()", async () => {
+    const manifest = makeManifest({ "sdk.txt": { hash: HASH_A, size: 100 } });
+    const body = { transformToString: () => Promise.resolve(JSON.stringify(manifest)) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"etag2"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 4, etag: '"etag2"' });
+
+    const result = await readManifest(store, "user1");
+
+    expect(result.manifest.files["sdk.txt"]!.hash).toBe(HASH_A);
+    expect(result.manifestVersion).toBe(4);
+    expect(result.etag).toBe('"etag2"');
+  });
 });
 
 describe("writeManifest", () => {
@@ -98,8 +111,10 @@ describe("writeManifest", () => {
       expect.objectContaining({
         version: 5,
         file_count: 1,
+        total_size: 200n,
         etag: '"new-etag"',
       }),
+      undefined,
     );
   });
 
@@ -118,7 +133,8 @@ describe("writeManifest", () => {
 
     expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
       "user1",
-      expect.objectContaining({ file_count: 1 }),
+      expect.objectContaining({ file_count: 1, total_size: 100n }),
+      undefined,
     );
   });
 });

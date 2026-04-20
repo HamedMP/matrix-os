@@ -52,6 +52,11 @@ for that item both exist locally.
 - [x] Gateway JWT verification must pin allowed algorithms.
 - [x] Gateway auth must treat JWT validation failure as terminal when a JWT-looking bearer token is presented and JWT auth is configured.
 - [x] Gateway sync user identity must fail closed when auth is enabled and neither JWT claims nor `MATRIX_HANDLE` is available.
+- [x] Platform admin rate-limit eviction must refresh hot keys instead of pure FIFO eviction.
+- [x] Device-flow approval polling must consume the approved device code before awaiting token issuance.
+- [x] Platform port allocation must reserve ports transactionally to avoid duplicate allocations under concurrent provision calls.
+- [x] Orchestrator `provision()` must release reserved ports and remove partially started containers on failure.
+- [x] `/containers/provision`, `/containers/:handle/self-upgrade`, and `/social/send/:handle` must enforce `bodyLimit`.
 
 ## Sync Client Follow-up Review Wave
 
@@ -67,6 +72,13 @@ for that item both exist locally.
 - [x] WebSocket client malformed-message handling must report the parse failure instead of empty-catching it.
 - [x] Auth token-store writes must create the file with `0o600` permissions immediately.
 
+## Latest Gateway Follow-up Wave
+
+- [x] Gateway WebSocket peer lifecycle wiring must hold a real socket reference in scope instead of closing over an undefined `ws`.
+- [x] Manifest reads must support AWS SDK stream bodies that expose `transformToString()` instead of assuming `.text()`.
+- [x] HTTP file writes in request handlers must use async `fs/promises`, not `mkdirSync` / `writeFileSync`.
+- [x] Commit-time blob cleanup failures after manifest persistence must log and continue instead of surfacing a partial-success error.
+
 ## Verification Notes
 
 - [x] Targeted sync/gateway regression suite passes locally: `tests/gateway/sync/r2-client.test.ts`, `home-mirror.test.ts`, `sharing.test.ts`, `commit.test.ts`, `routes.test.ts`, `metrics.test.ts`, `ws-events.test.ts`, `ws-peer-lifecycle.test.ts` (`8 files`, `100 tests`).
@@ -77,6 +89,9 @@ for that item both exist locally.
 - [x] Latest gateway identity regression passes locally: `tests/gateway/sync/user-id-from-jwt.test.ts` (`1 file`, `9 tests`).
 - [x] Latest sync-client regression suite passes locally via package config: `tests/unit/manifest-cache.test.ts`, `daemon-runtime-guards.test.ts`, `daemon-client.test.ts`, `service.test.ts`, `token-store.test.ts`, `ws-client.test.ts` (`6 files`, `30 tests`).
 - [x] Latest platform route-validation regression passes in Docker dev container: `tests/platform/api.test.ts` (`1 file`, `18 tests`).
+- [x] Latest gateway blocker regression passes locally: `tests/gateway/sync/manifest.test.ts`, `commit.test.ts`, `ws-peer-lifecycle.test.ts` (`3 files`, `29 tests`).
+- [x] Latest platform blocker regression passes in Docker dev container: `tests/platform/api.test.ts`, `orchestrator.test.ts`, `device-flow.test.ts`, `db.test.ts` (`4 files`, `71 tests`).
+- [x] Host-side `tests/platform/db.test.ts` remains non-signal in this worktree because the local `better-sqlite3` native module is built for a different Node ABI; Docker dev-container results are authoritative for that suite.
 
 ## Lower-Priority Follow-ups From Review
 

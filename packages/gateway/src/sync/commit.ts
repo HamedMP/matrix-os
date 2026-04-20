@@ -81,7 +81,14 @@ export async function handleCommit(
     for (const file of request.files) {
       if (file.action === "delete") {
         const key = buildFileKey(userId, file.path);
-        await deps.r2.deleteObject(key);
+        try {
+          await deps.r2.deleteObject(key);
+        } catch (err: unknown) {
+          console.warn(
+            "[sync/commit] Failed to delete stale file blob after manifest update:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
       }
     }
 

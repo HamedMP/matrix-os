@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { eq, lt } from 'drizzle-orm';
 import type { PlatformDB } from './db.js';
 import { deviceCodes } from './schema.js';
+import Database from 'better-sqlite3';
 
 // RFC 8628 §6.1 example alphabet: 20-char consonants only.
 // Excludes vowels (no offensive accidental words) and visually
@@ -49,6 +50,12 @@ export interface DeviceFlow {
   createDeviceCode(): Promise<DeviceCodeIssue>;
   pollDeviceCode(deviceCode: string): Promise<DevicePollResult>;
   approveDeviceCode(userCode: string, clerkUserId: string): Promise<void>;
+}
+
+type BetterSqliteClient = InstanceType<typeof Database>;
+
+function sqliteClient(db: PlatformDB): BetterSqliteClient {
+  return (db as { $client: BetterSqliteClient }).$client;
 }
 
 export function formatUserCode(raw: string): string {
@@ -145,52 +152,59 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
 
     async pollDeviceCode(deviceCode: string): Promise<DevicePollResult> {
       const ts = now();
-      const row = config.db
-        .select()
-        .from(deviceCodes)
-        .where(eq(deviceCodes.deviceCode, deviceCode))
-        .get();
+      const claimed = sqliteClient(config.db).transaction(() => {
+        const row = config.db
+          .select()
+          .from(deviceCodes)
+          .where(eq(deviceCodes.deviceCode, deviceCode))
+          .get();
 
-      if (!row || row.expiresAt < ts) {
-        if (row) {
+        if (!row || row.expiresAt < ts) {
+          if (row) {
+            config.db
+              .delete(deviceCodes)
+              .where(eq(deviceCodes.deviceCode, deviceCode))
+              .run();
+          }
+          return { status: 'expired' } as DevicePollResult;
+        }
+
+        if (row.lastPolledAt && ts - row.lastPolledAt < intervalSec * 1000) {
+          return { status: 'slow_down' } as DevicePollResult;
+        }
+
+        if (!row.clerkUserId) {
           config.db
-            .delete(deviceCodes)
+            .update(deviceCodes)
+            .set({ lastPolledAt: ts })
             .where(eq(deviceCodes.deviceCode, deviceCode))
             .run();
+          return { status: 'pending' } as DevicePollResult;
         }
-        return { status: 'expired' };
+
+        config.db
+          .delete(deviceCodes)
+          .where(eq(deviceCodes.deviceCode, deviceCode))
+          .run();
+
+        return {
+          status: 'approved',
+          clerkUserId: row.clerkUserId,
+        } as const;
+      })();
+
+      if (claimed.status !== 'approved') {
+        return claimed;
       }
 
-      // Slow-down enforcement: reject polls within `intervalSec` of the last
-      // one. Per RFC 8628 §3.5, the client MUST then increase its interval.
-      if (row.lastPolledAt && ts - row.lastPolledAt < intervalSec * 1000) {
-        return { status: 'slow_down' };
-      }
-
-      config.db
-        .update(deviceCodes)
-        .set({ lastPolledAt: ts })
-        .where(eq(deviceCodes.deviceCode, deviceCode))
-        .run();
-
-      if (!row.clerkUserId) {
-        return { status: 'pending' };
-      }
-
-      const issued = await issueToken({ clerkUserId: row.clerkUserId });
-
-      // Single-use: delete the row so a second poll can't replay the JWT.
-      config.db
-        .delete(deviceCodes)
-        .where(eq(deviceCodes.deviceCode, deviceCode))
-        .run();
+      const issued = await issueToken({ clerkUserId: claimed.clerkUserId });
 
       return {
         status: 'approved',
         token: issued.token,
         expiresAt: issued.expiresAt,
         handle: issued.handle,
-        clerkUserId: row.clerkUserId,
+        clerkUserId: claimed.clerkUserId,
       };
     },
 

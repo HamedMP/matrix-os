@@ -44,6 +44,24 @@ export interface ReadManifestResult {
   etag: string;
 }
 
+async function readObjectBodyAsText(body: unknown): Promise<string> {
+  const anyBody = body as {
+    transformToString?: () => Promise<string>;
+    text?: () => Promise<string>;
+    transformToByteArray?: () => Promise<Uint8Array>;
+  };
+  if (typeof anyBody.transformToString === "function") {
+    return anyBody.transformToString();
+  }
+  if (typeof anyBody.text === "function") {
+    return anyBody.text();
+  }
+  if (typeof anyBody.transformToByteArray === "function") {
+    return Buffer.from(await anyBody.transformToByteArray()).toString("utf-8");
+  }
+  throw new Error("Unsupported R2 object body type");
+}
+
 const EMPTY_MANIFEST: Manifest = { version: 2, files: {} };
 
 export async function readManifest(
@@ -59,7 +77,7 @@ export async function readManifest(
   try {
     const result = await store.r2.getObject(key);
     if (result.body) {
-      const text = await (result.body as any).text();
+      const text = await readObjectBodyAsText(result.body);
       manifest = ManifestSchema.parse(JSON.parse(text));
     } else {
       manifest = { ...EMPTY_MANIFEST, files: {} };

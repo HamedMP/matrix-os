@@ -144,6 +144,28 @@ describe("handleCommit", () => {
     );
   });
 
+  it("logs and continues when blob deletion fails after the manifest update", async () => {
+    const manifest = makeManifest({ "deleted.txt": { hash: HASH_A, size: 100 } });
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 2, etag: '"e"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockR2.deleteObject.mockRejectedValueOnce(new Error("r2 delete failed"));
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "deleted.txt", hash: HASH_A, size: 0, action: "delete" }],
+      expectedVersion: 2,
+    });
+
+    expect(result).toEqual({ manifestVersion: 3, committed: 1 });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[sync/commit] Failed to delete stale file blob after manifest update:",
+      "r2 delete failed",
+    );
+  });
+
   it("garbage-collects expired tombstones before writing the manifest", async () => {
     const oldDeletedAt = Date.now() - 40 * 24 * 60 * 60 * 1000;
     const manifest: Manifest = {

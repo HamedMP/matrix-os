@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
 import { createConnection } from 'node:net';
 import type { IncomingMessage } from 'node:http';
@@ -27,6 +28,7 @@ const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
+const ADMIN_BODY_LIMIT = 64 * 1024;
 
 function isMissingContainerError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith('No container for handle:');
@@ -43,10 +45,13 @@ function timingSafeTokenEquals(actual: string | undefined, expected: string): bo
   if (!actual) return false;
   const actualBuf = Buffer.from(actual);
   const expectedBuf = Buffer.from(expected);
-  if (actualBuf.length !== expectedBuf.length || actualBuf.length === 0) {
-    return false;
-  }
-  return timingSafeEqual(actualBuf, expectedBuf);
+  const maxLen = Math.max(actualBuf.length, expectedBuf.length);
+  if (maxLen === 0) return false;
+  const paddedActual = Buffer.alloc(maxLen);
+  const paddedExpected = Buffer.alloc(maxLen);
+  actualBuf.copy(paddedActual);
+  expectedBuf.copy(paddedExpected);
+  return actualBuf.length === expectedBuf.length && timingSafeEqual(paddedActual, paddedExpected);
 }
 
 function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {
@@ -391,7 +396,7 @@ export function createApp(deps: {
 
   // --- Container management ---
 
-  app.post('/containers/provision', async (c) => {
+  app.post('/containers/provision', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
     const { handle, clerkUserId, displayName } = await c.req.json<{ handle: string; clerkUserId: string; displayName?: string }>();
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
@@ -469,7 +474,7 @@ export function createApp(deps: {
     }
   });
 
-  app.post('/containers/:handle/self-upgrade', async (c) => {
+  app.post('/containers/:handle/self-upgrade', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
     if (!platformSecret) {
       return c.json({ error: 'Self-upgrade not configured' }, 503);
     }
@@ -635,7 +640,7 @@ export function createApp(deps: {
     return c.json(profile);
   });
 
-  app.post('/social/send/:handle', async (c) => {
+  app.post('/social/send/:handle', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
     const { text, from } = await c.req.json<{ text: string; from: { handle: string; displayName?: string } }>();
     try {
       const result = await social.sendMessage(c.req.param('handle'), text, from);

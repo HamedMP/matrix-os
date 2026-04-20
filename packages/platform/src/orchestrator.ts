@@ -216,39 +216,48 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const shellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
 
       const containerName = `matrixos-${handle}`;
-
-      const container = await docker.createContainer({
-        Image: image,
-        name: containerName,
-        Env: buildEnv(handle, displayName, clerkUserId),
-        HostConfig: {
-          Memory: memoryLimit,
-          CpuQuota: cpuQuota,
-          PortBindings: {
-            '4000/tcp': [{ HostPort: String(gatewayPort) }],
-            '3000/tcp': [{ HostPort: String(shellPort) }],
+      let container: Dockerode.Container | null = null;
+      try {
+        container = await docker.createContainer({
+          Image: image,
+          name: containerName,
+          Env: buildEnv(handle, displayName, clerkUserId),
+          HostConfig: {
+            Memory: memoryLimit,
+            CpuQuota: cpuQuota,
+            PortBindings: {
+              '4000/tcp': [{ HostPort: String(gatewayPort) }],
+              '3000/tcp': [{ HostPort: String(shellPort) }],
+            },
+            Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
+            NetworkMode: network,
+            RestartPolicy: { Name: 'unless-stopped' },
+            Init: true,
           },
-          Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
-          NetworkMode: network,
-          RestartPolicy: { Name: 'unless-stopped' },
-          Init: true,
-        },
-        ExposedPorts: {
-          '4000/tcp': {},
-          '3000/tcp': {},
-        },
-      });
+          ExposedPorts: {
+            '4000/tcp': {},
+            '3000/tcp': {},
+          },
+        });
 
-      await container.start();
+        await container.start();
 
-      insertContainer(db, {
-        handle,
-        clerkUserId,
-        containerId: container.id,
-        port: gatewayPort,
-        shellPort,
-        status: 'running',
-      });
+        insertContainer(db, {
+          handle,
+          clerkUserId,
+          containerId: container.id,
+          port: gatewayPort,
+          shellPort,
+          status: 'running',
+        });
+      } catch (err) {
+        releasePort(db, `${handle}-gw`);
+        releasePort(db, `${handle}-sh`);
+        if (container) {
+          await safeStopAndRemoveContainer(container, handle);
+        }
+        throw err;
+      }
 
       end();
 
