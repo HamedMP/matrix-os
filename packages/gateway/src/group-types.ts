@@ -153,3 +153,15 @@ export const ShareAppBodySchema = z.object({
 export const InviteBodySchema = z.object({
   user_id: z.string().regex(MEMBER_HANDLE_REGEX),
 });
+
+export const RenameGroupBodySchema = z.object({
+  name: z.string().min(1).max(200),
+});
+
+export const KickBodySchema = z.object({
+  user_id: z.string().regex(MEMBER_HANDLE_REGEX),
+});
+
+export const ChangeRoleBodySchema = z.object({
+  role: z.enum(["owner", "editor", "viewer"]),
+});

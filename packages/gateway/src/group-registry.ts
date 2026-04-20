@@ -158,6 +158,27 @@ export class GroupRegistry {
     this.groups.delete(slug);
   }
 
+  async updateManifest(slug: string, updates: Partial<Pick<GroupManifest, "name">>): Promise<GroupManifest> {
+    const entry = this.groups.get(slug);
+    if (!entry) {
+      throw new Error(`Group not found: "${slug}"`);
+    }
+
+    const updated: GroupManifest = { ...entry.manifest, ...updates };
+    GroupManifestSchema.parse(updated);
+
+    const groupDir = resolveWithinHome(this.homePath, join("groups", slug));
+    if (!groupDir) {
+      throw new Error(`Path traversal detected for slug "${slug}"`);
+    }
+
+    const manifestPath = join(groupDir, "manifest.json");
+    await atomicWrite(manifestPath, JSON.stringify(updated, null, 2));
+
+    entry.manifest = updated;
+    return updated;
+  }
+
   attachSync(slug: string, sync: GroupSyncHandle): void {
     const entry = this.groups.get(slug);
     if (!entry) return;

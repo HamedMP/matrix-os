@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { cp, writeFile, readFile, mkdir, readdir, stat } from "node:fs/promises";
+import { cp, writeFile, readFile, mkdir, readdir, stat, rm } from "node:fs/promises";
 import type { MatrixClient } from "./matrix-client.js";
 import type { GroupRegistry } from "./group-registry.js";
-import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, CreateGroupBodySchema, JoinGroupBodySchema, ShareAppBodySchema, InviteBodySchema } from "./group-types.js";
+import { GroupDataRequestSchema, GroupAclSchema, GROUP_SLUG_REGEX, CreateGroupBodySchema, JoinGroupBodySchema, ShareAppBodySchema, InviteBodySchema, RenameGroupBodySchema, KickBodySchema, ChangeRoleBodySchema } from "./group-types.js";
 import { resolveWithinHome } from "./path-security.js";
 
 export interface GroupRoutesOptions {
@@ -604,6 +604,264 @@ export function createGroupRoutes(opts: GroupRoutesOptions) {
       }
     },
   );
+
+  // ── PATCH /api/groups/:slug — rename a group ────────────────────────────
+  app.patch(
+    "/api/groups/:slug",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug } = c.req.param();
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = RenameGroupBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const { name } = parsed.data;
+
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+        const stateDefault = powerLevels.state_default ?? 50;
+
+        if (callerPl < stateDefault) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+
+        await matrixClient.setRoomState(manifest.room_id, "m.room.name", "", { name });
+        const updated = await groupRegistry.updateManifest(slug, { name });
+
+        return c.json({ slug: updated.slug, name: updated.name }, 200);
+      } catch {
+        return c.json({ error: "Failed to rename group" }, 500);
+      }
+    },
+  );
+
+  // ── DELETE /api/groups/:slug/apps/:app — unshare an app ─────────────────
+  app.delete(
+    "/api/groups/:slug/apps/:app",
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug, app: appSlug } = c.req.param();
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+
+        if (callerPl < 100) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+      } catch {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+
+      const homePath = opts.homePath;
+      if (!homePath) return c.json({ error: "Server misconfigured" }, 500);
+
+      const appDir = resolveWithinHome(homePath, `groups/${slug}/apps/${appSlug}`);
+      if (!appDir) return c.json({ error: "Invalid path" }, 400);
+
+      try {
+        const s = await stat(appDir);
+        if (!s.isDirectory()) {
+          return c.json({ error: "App not found" }, 404);
+        }
+      } catch {
+        return c.json({ error: "App not found" }, 404);
+      }
+
+      try {
+        await rm(appDir, { recursive: true, force: true });
+      } catch {
+        return c.json({ error: "Failed to remove app" }, 500);
+      }
+
+      try {
+        await matrixClient.setRoomState(manifest.room_id, "m.matrix_os.app_acl", appSlug, {});
+      } catch {
+        // best-effort ACL cleanup
+      }
+
+      return c.json({ ok: true }, 200);
+    },
+  );
+
+  // ── PATCH /api/groups/:slug/members/:handle/role — change member role ───
+  app.patch(
+    "/api/groups/:slug/members/:handle/role",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug, handle } = c.req.param();
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = ChangeRoleBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const roleToPl: Record<string, number> = { owner: 100, editor: 50, viewer: 0 };
+      const targetPl = roleToPl[parsed.data.role];
+
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+
+        if (callerPl < targetPl) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+
+        const targetHandle = decodeURIComponent(handle);
+        const updatedPl = {
+          ...powerLevels,
+          users: { ...powerLevels.users, [targetHandle]: targetPl },
+        };
+
+        await matrixClient.setPowerLevels(manifest.room_id, updatedPl);
+        return c.json({ ok: true, role: parsed.data.role }, 200);
+      } catch {
+        return c.json({ error: "Failed to change role" }, 500);
+      }
+    },
+  );
+
+  // ── POST /api/groups/:slug/kick — remove a member ──────────────────────
+  app.post(
+    "/api/groups/:slug/kick",
+    bodyLimit({ maxSize: BODY_LIMIT }),
+    async (c) => {
+      if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+      const { slug } = c.req.param();
+      if (!GROUP_SLUG_REGEX.test(slug)) return c.json({ error: "Group not found" }, 404);
+      const manifest = groupRegistry.get(slug);
+      if (!manifest) return c.json({ error: "Group not found" }, 404);
+
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+
+      const parsed = KickBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid request body" }, 400);
+      }
+
+      const { user_id } = parsed.data;
+
+      try {
+        const { userId: callerHandle } = await matrixClient.whoami();
+        const powerLevels = await matrixClient.getPowerLevels(manifest.room_id);
+        const callerPl =
+          powerLevels.users?.[callerHandle] ??
+          powerLevels.users_default ??
+          0;
+        const kickPl = powerLevels.kick ?? 50;
+
+        if (callerPl < kickPl) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+
+        await matrixClient.kickFromRoom(manifest.room_id, user_id);
+        return c.json({ ok: true }, 200);
+      } catch {
+        return c.json({ error: "Failed to kick member" }, 500);
+      }
+    },
+  );
+
+  // ── GET /api/apps — list personal apps ─────────────────────────────────
+  app.get("/api/apps", async (c) => {
+    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+
+    const homePath = opts.homePath;
+    if (!homePath) return c.json({ apps: [] }, 200);
+
+    const appsDir = resolveWithinHome(homePath, "apps");
+    if (!appsDir) return c.json({ apps: [] }, 200);
+
+    let entries: string[];
+    try {
+      entries = await readdir(appsDir);
+    } catch {
+      return c.json({ apps: [] }, 200);
+    }
+
+    const apps: Array<{ slug: string; name: string; icon?: string }> = [];
+    for (const entry of entries) {
+      const entryPath = resolveWithinHome(homePath, `apps/${entry}`);
+      if (!entryPath) continue;
+      try {
+        const s = await stat(entryPath);
+        if (!s.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+
+      let name = entry;
+      let icon: string | undefined;
+      for (const metaName of ["matrix.json", "meta.json"]) {
+        try {
+          const metaRaw = await readFile(`${entryPath}/${metaName}`, "utf8");
+          const meta = JSON.parse(metaRaw);
+          if (typeof meta.name === "string" && meta.name.length > 0) {
+            name = meta.name;
+          }
+          if (typeof meta.icon === "string" && meta.icon.length > 0) {
+            icon = meta.icon;
+          }
+          break;
+        } catch {
+          // try next meta file
+        }
+      }
+
+      apps.push({ slug: entry, name, ...(icon ? { icon } : {}) });
+    }
+
+    return c.json({ apps }, 200);
+  });
 
   // ── POST /api/groups/:slug/leave — leave and archive a group ─────────────
   app.post("/api/groups/:slug/leave", bodyLimit({ maxSize: 1024 }), async (c) => {

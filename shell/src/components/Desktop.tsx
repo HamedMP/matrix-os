@@ -35,9 +35,10 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon, Share2Icon, XIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, TrashIcon, Share2Icon, XIcon, UsersIcon } from "lucide-react";
 import { ShareAppDialog } from "./ShareAppDialog";
 import { GroupAppList } from "./GroupAppList";
+import { GroupsApp } from "./groups";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -351,6 +352,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [shareAppSlug, setShareAppSlug] = useState<string | null>(null);
   const [activeGroupSlug, setActiveGroupSlug] = useState<string | null>(null);
   const [showGroupApps, setShowGroupApps] = useState(true);
@@ -1258,8 +1260,27 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  data-testid="dock-groups"
+                  onClick={() => { setGroupsOpen((prev) => !prev); setSettingsOpen(false); setTaskBoardOpen(false); }}
+                  className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                    groupsOpen
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card border-border/60"
+                  }`}
+                  style={{ width: dock.iconSize, height: dock.iconSize }}
+                >
+                  <UsersIcon className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side={tooltipSide} sideOffset={8}>
+                Groups
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
                   data-testid="dock-settings"
-                  onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+                  onClick={() => { setSettingsOpen((prev) => !prev); setGroupsOpen(false); setTaskBoardOpen(false); }}
                   className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                     settingsOpen
                       ? "bg-primary text-primary-foreground border-primary"
@@ -1294,7 +1315,18 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             </button>
             <ModeSwitcher iconSize={36} tooltipSide="top" />
             <button
-              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+              onClick={() => { setGroupsOpen((prev) => !prev); setSettingsOpen(false); setTaskBoardOpen(false); }}
+              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                groupsOpen
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card border-border/60"
+              }`}
+              title="Groups"
+            >
+              <UsersIcon className="size-4" />
+            </button>
+            <button
+              onClick={() => { setSettingsOpen((prev) => !prev); setGroupsOpen(false); setTaskBoardOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
                   ? "bg-primary text-primary-foreground border-primary"
@@ -1539,6 +1571,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       </div>
 
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <GroupsApp open={groupsOpen} onOpenChange={setGroupsOpen} />
       {shareAppSlug && (
         <ShareAppDialog
           appSlug={shareAppSlug}

@@ -171,6 +171,23 @@ describe("MembersPanel", () => {
     });
   });
 
+  it("calls /kick endpoint (not /leave) when removing a member", async () => {
+    render(<MembersPanel groupSlug="family" isOwner={true} onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("members-remove").length).toBeGreaterThanOrEqual(1);
+    });
+
+    fireEvent.click(screen.getAllByTestId("members-remove")[0]);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/groups/family/kick"),
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
   it("calls onClose when close button is clicked", async () => {
     const onClose = vi.fn();
     render(<MembersPanel groupSlug="family" isOwner={true} onClose={onClose} />);

@@ -75,7 +75,7 @@ export function MembersPanel({ groupSlug, isOwner, onClose }: MembersPanelProps)
 
   async function handleRemove(userId: string) {
     try {
-      await fetch(`${GATEWAY_URL}/api/groups/${groupSlug}/leave`, {
+      await fetch(`${GATEWAY_URL}/api/groups/${groupSlug}/kick`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId }),
