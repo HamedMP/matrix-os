@@ -15,6 +15,15 @@ function execFileAsync(cmd: string, args: string[]): Promise<void> {
 
 const LABEL = "com.matrixos.sync";
 
+export function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
 // Walk up from `daemonPath` to find the directory containing node_modules/tsx.
 // launchd/systemd give the spawned process an empty cwd, so node module
 // resolution can't find tsx unless we set WorkingDirectory there.
@@ -38,19 +47,19 @@ function launchdPlist(daemonPath: string, logDir: string, workDir: string): stri
   <string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${process.execPath}</string>
-    <string>${daemonPath}</string>
+    <string>${escapeXml(process.execPath)}</string>
+    <string>${escapeXml(daemonPath)}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${workDir}</string>
+  <string>${escapeXml(workDir)}</string>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${logDir}/daemon-stdout.log</string>
+  <string>${escapeXml(`${logDir}/daemon-stdout.log`)}</string>
   <key>StandardErrorPath</key>
-  <string>${logDir}/daemon-stderr.log</string>
+  <string>${escapeXml(`${logDir}/daemon-stderr.log`)}</string>
 </dict>
 </plist>`;
 }

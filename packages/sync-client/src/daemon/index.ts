@@ -1,8 +1,13 @@
-import { join, isAbsolute, resolve } from "node:path";
+import { join, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFile, unlink, mkdir } from "node:fs/promises";
+import { readFile, writeFile, unlink, mkdir } from "node:fs/promises";
 import pino from "pino";
-import { loadConfig, saveConfig, getConfigDir } from "../lib/config.js";
+import {
+  loadConfig,
+  saveConfig,
+  getConfigDir,
+  type SyncConfig,
+} from "../lib/config.js";
 import { clearAuth, loadAuth } from "../auth/token-store.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
@@ -177,6 +182,88 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function resolveWithinSyncRoot(syncRoot: string, localRel: string): string {
+  const root = resolve(syncRoot);
+  const candidate = resolve(root, localRel);
+  const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (candidate !== root && !candidate.startsWith(rootPrefix)) {
+    throw new Error("Remote event path escapes sync root");
+  }
+  return candidate;
+}
+
+export async function persistPauseState(
+  config: SyncConfig,
+  paused: boolean,
+  path?: string,
+): Promise<void> {
+  config.pauseSync = paused;
+  await saveConfig(config, path);
+}
+
+export async function writePidFileExclusive(filePath: string, pid: number): Promise<void> {
+  const writeExclusive = async () => {
+    await writeFile(filePath, String(pid), { flag: "wx" });
+  };
+
+  try {
+    await writeExclusive();
+    return;
+  } catch (err: unknown) {
+    if (
+      !(err instanceof Error) ||
+      !("code" in err) ||
+      (err as NodeJS.ErrnoException).code !== "EEXIST"
+    ) {
+      throw err;
+    }
+  }
+
+  let existingPid: number | null = null;
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    const parsed = Number.parseInt(raw.trim(), 10);
+    existingPid = Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      await writeExclusive();
+      return;
+    }
+    throw err;
+  }
+
+  if (existingPid !== null) {
+    try {
+      process.kill(existingPid, 0);
+      throw new Error(`Sync daemon already running (pid ${existingPid})`);
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "ESRCH"
+      ) {
+        throw err;
+      }
+    }
+  }
+
+  await unlink(filePath).catch((err: unknown) => {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return;
+    }
+    throw err;
+  });
+  await writeExclusive();
+}
+
 export async function startDaemon(): Promise<void> {
   const logger = pino({
     transport: {
@@ -197,7 +284,12 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
-  await writeFile(pidFile, String(process.pid));
+  try {
+    await writePidFileExclusive(pidFile, process.pid);
+  } catch (err) {
+    logger.error({ err }, "Could not acquire daemon pid file");
+    process.exit(1);
+  }
 
   const ignorePatterns = await loadSyncIgnore(config.syncPath);
   let syncState = await loadSyncState(stateFile);
@@ -320,9 +412,10 @@ export async function startDaemon(): Promise<void> {
             { path: event.path, action: "get" },
           ]);
           if (urls[0]) {
+            const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
             await downloadFile(
               urls[0].url,
-              join(config.syncPath, localRel),
+              localPath,
             );
             syncState.files[event.path] = {
               hash: event.hash,
@@ -340,9 +433,19 @@ export async function startDaemon(): Promise<void> {
         event.action === "delete"
       ) {
         try {
-          const localPath = join(config.syncPath, localRel);
+          const localPath = resolveWithinSyncRoot(config.syncPath, localRel);
           const { unlink: unlinkFile } = await import("node:fs/promises");
-          await unlinkFile(localPath).catch(() => {});
+          try {
+            await unlinkFile(localPath);
+          } catch (err: unknown) {
+            if (
+              !(err instanceof Error) ||
+              !("code" in err) ||
+              (err as NodeJS.ErrnoException).code !== "ENOENT"
+            ) {
+              throw err;
+            }
+          }
           delete syncState.files[event.path];
           await saveSyncState(stateFile, syncState);
         } catch (err) {
@@ -375,10 +478,10 @@ export async function startDaemon(): Promise<void> {
             peerId: config.peerId,
           };
         case "pause":
-          config.pauseSync = true;
+          await persistPauseState(config, true);
           return { paused: true };
         case "resume":
-          config.pauseSync = false;
+          await persistPauseState(config, false);
           return { paused: false };
         case "getConfig":
           // Exposes the full persisted config (without auth tokens) so the
@@ -443,7 +546,17 @@ export async function startDaemon(): Promise<void> {
     await watcher.stop();
     wsClient.close();
     await ipcServer.stop();
-    await unlink(pidFile).catch(() => {});
+    try {
+      await unlink(pidFile);
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        logger.warn({ err }, "Failed to remove daemon pid file during shutdown");
+      }
+    }
     process.exit(0);
   };
 
@@ -518,7 +631,7 @@ export async function startDaemon(): Promise<void> {
         ]);
         if (!urls[0]) continue;
 
-        const localAbsPath = join(config.syncPath, localRel);
+        const localAbsPath = resolveWithinSyncRoot(config.syncPath, localRel);
         await downloadFile(urls[0].url, localAbsPath);
         syncState.files[remotePath] = {
           hash: entry.hash,

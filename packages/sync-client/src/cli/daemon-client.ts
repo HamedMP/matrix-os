@@ -1,19 +1,37 @@
 import { createConnection } from "node:net";
 import { join } from "node:path";
-import { access } from "node:fs/promises";
 import { getConfigDir } from "../lib/config.js";
 
 function socketPath(): string {
   return join(getConfigDir(), "daemon.sock");
 }
 
+export async function probeDaemonSocket(
+  sock: string,
+  timeout = 500,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(sock);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, timeout);
+
+    socket.on("connect", () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve(true);
+    });
+
+    socket.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
 export async function isDaemonRunning(): Promise<boolean> {
-  try {
-    await access(socketPath());
-    return true;
-  } catch {
-    return false;
-  }
+  return probeDaemonSocket(socketPath());
 }
 
 export async function sendCommand(

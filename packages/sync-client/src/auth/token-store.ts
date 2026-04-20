@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, chmod } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod/v4";
@@ -41,8 +41,7 @@ export async function saveAuth(
 ): Promise<void> {
   const filePath = path ?? authFilePath();
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(data, null, 2));
-  await chmod(filePath, 0o600);
+  await writeFile(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
 export async function clearAuth(path?: string): Promise<void> {

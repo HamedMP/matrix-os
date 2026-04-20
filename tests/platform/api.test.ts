@@ -173,6 +173,22 @@ describe('platform/api', () => {
     expect(await res.json()).toEqual({ error: 'Failed to start container' });
   });
 
+  it.each([
+    ['POST', '/containers/Bad_Handle/start'],
+    ['POST', '/containers/Bad_Handle/stop'],
+    ['POST', '/containers/Bad_Handle/upgrade'],
+    ['POST', '/containers/Bad_Handle/self-upgrade'],
+    ['DELETE', '/containers/Bad_Handle'],
+  ])('%s %s rejects invalid handles before orchestrator access', async (method, path) => {
+    const res = await app.request(path, {
+      method,
+      headers: adminHeaders,
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid handle' });
+  });
+
   it('POST /containers/rolling-restart upgrades running containers', async () => {
     await app.request('/containers/provision', {
       method: 'POST',

@@ -13,6 +13,13 @@ import {
 // `getUserIdFromContext` below for the canonical helper.
 export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
 
+export class MissingSyncUserIdentityError extends Error {
+  constructor() {
+    super("Missing authenticated sync user identity");
+    this.name = "MissingSyncUserIdentityError";
+  }
+}
+
 /**
  * Canonical resolver for the "who is this request for?" question used by
  * sync routes. Prefers the Clerk userId embedded in a validated JWT's
@@ -26,6 +33,10 @@ export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
  */
 let warnedDefaultUserIdOnce = false;
 
+function allowDefaultSyncUserIdFallback(): boolean {
+  return !process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production";
+}
+
 export function getUserIdFromContext(c: Context): string {
   const claims = c.get(JWT_CLAIMS_CONTEXT_KEY) as SyncJwtClaims | undefined;
   if (claims && typeof claims.sub === "string" && claims.sub.length > 0) {
@@ -35,10 +46,19 @@ export function getUserIdFromContext(c: Context): string {
   if (handle && handle.length > 0) {
     return handle;
   }
+  if (!allowDefaultSyncUserIdFallback()) {
+    if (!warnedDefaultUserIdOnce) {
+      warnedDefaultUserIdOnce = true;
+      console.error(
+        "[auth] No JWT claims and no MATRIX_HANDLE env var — refusing to fall back to userId='default' while sync auth is enabled.",
+      );
+    }
+    throw new MissingSyncUserIdentityError();
+  }
   if (!warnedDefaultUserIdOnce) {
     warnedDefaultUserIdOnce = true;
     console.warn(
-      "[auth] No JWT claims and no MATRIX_HANDLE env var — falling back to userId='default'. In prod this will mix all users into one R2 prefix.",
+      "[auth] No JWT claims and no MATRIX_HANDLE env var — falling back to userId='default' in open local-dev mode only.",
     );
   }
   return "default";

@@ -44,12 +44,28 @@ for that item both exist locally.
 - [x] Platform admin middleware must fail closed when `PLATFORM_SECRET` is unset.
 - [x] Platform admin bearer-token comparison must be constant-time.
 - [x] `/containers/provision` must validate `handle` before it reaches Docker bind mounts.
+- [x] `/containers/:handle/start|stop|upgrade|self-upgrade|DELETE` must validate `handle` before it reaches orchestrator or token derivation.
 - [x] Device-flow rate limiting must stop trusting spoofable `X-Forwarded-For`.
 - [x] Platform proxy fetches must use `AbortSignal.timeout(...)`.
 - [x] Platform admin/container routes must not echo raw internal exception text back to clients.
 - [x] Orchestrator cleanup paths must log stop/remove failures instead of using empty `catch {}` blocks.
 - [x] Gateway JWT verification must pin allowed algorithms.
 - [x] Gateway auth must treat JWT validation failure as terminal when a JWT-looking bearer token is presented and JWT auth is configured.
+- [x] Gateway sync user identity must fail closed when auth is enabled and neither JWT claims nor `MATRIX_HANDLE` is available.
+
+## Sync Client Follow-up Review Wave
+
+- [x] Daemon remote `sync:change` download writes must reject path traversal outside the sync root.
+- [x] Daemon remote `sync:change` delete handling must reject path traversal outside the sync root.
+- [x] Daemon initial pull must reject path traversal outside the sync root.
+- [x] Daemon pid file acquisition must use exclusive create semantics and reject a live competing process.
+- [x] Daemon pause/resume IPC must persist `pauseSync` to config.
+- [x] Daemon local delete handling must not silently swallow unlink failures.
+- [x] Manifest cache writes must use temp-file + rename atomic persistence.
+- [x] launchd plist generation must XML-escape interpolated paths.
+- [x] Daemon liveness probing must connect to the IPC socket instead of checking path existence only.
+- [x] WebSocket client malformed-message handling must report the parse failure instead of empty-catching it.
+- [x] Auth token-store writes must create the file with `0o600` permissions immediately.
 
 ## Verification Notes
 
@@ -58,11 +74,14 @@ for that item both exist locally.
 - [x] Docker dev-container verification passes for `tests/platform/api.test.ts`, `tests/platform/device-routes.test.ts`, `tests/platform/sync-jwt.test.ts`, `tests/platform/proxy-routing.test.ts`, and `tests/gateway/auth-jwt.test.ts` (`5 files`, `44 tests`).
 - [x] Docker dev-container verification passes for the latest platform follow-up fixes: `tests/platform/api.test.ts`, `tests/platform/orchestrator.test.ts` (`2 files`, `34 tests`).
 - [x] Root-level JWT tests no longer rely on hoisted `jose` resolution from `/app/node_modules`; the HS256 negative-case tokens are generated with `node:crypto` inside the tests.
+- [x] Latest gateway identity regression passes locally: `tests/gateway/sync/user-id-from-jwt.test.ts` (`1 file`, `9 tests`).
+- [x] Latest sync-client regression suite passes locally via package config: `tests/unit/manifest-cache.test.ts`, `daemon-runtime-guards.test.ts`, `daemon-client.test.ts`, `service.test.ts`, `token-store.test.ts`, `ws-client.test.ts` (`6 files`, `30 tests`).
+- [x] Latest platform route-validation regression passes in Docker dev container: `tests/platform/api.test.ts` (`1 file`, `18 tests`).
 
 ## Lower-Priority Follow-ups From Review
 
 - [ ] Review whether sync route error payloads leak internal details and tighten where needed.
-- [ ] Review token-store file permissions for create-time mode safety.
+- [x] Review token-store file permissions for create-time mode safety.
 - [ ] Review home-mirror default ignores for obvious secret material.
 - [ ] Review whether orchestrator `provision()` / `destroy()` DB-write sequences should be bundled more transactionally.
 - [ ] Review manifest R2-vs-DB metadata ordering if DB upsert fails after an R2 manifest write.

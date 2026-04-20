@@ -60,6 +60,13 @@ function buildPlatformVerificationToken(handle: string, platformSecret: string):
   return createHmac('sha256', platformSecret).update(handle).digest('hex');
 }
 
+function requireValidHandle(handle: string): string {
+  if (!HANDLE_PATTERN.test(handle)) {
+    throw new Error('Invalid handle');
+  }
+  return handle;
+}
+
 function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
   const otherMode = mode === 'sign-in' ? 'sign-up' : 'sign-in';
   const otherLabel = mode === 'sign-in' ? 'Sign up' : 'Sign in';
@@ -416,9 +423,12 @@ export function createApp(deps: {
 
   app.post('/containers/:handle/start', async (c) => {
     try {
-      await orchestrator.start(c.req.param('handle'));
+      await orchestrator.start(requireValidHandle(c.req.param('handle')));
       return c.json({ ok: true });
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }
@@ -429,9 +439,12 @@ export function createApp(deps: {
 
   app.post('/containers/:handle/stop', async (c) => {
     try {
-      await orchestrator.stop(c.req.param('handle'));
+      await orchestrator.stop(requireValidHandle(c.req.param('handle')));
       return c.json({ ok: true });
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }
@@ -442,9 +455,12 @@ export function createApp(deps: {
 
   app.post('/containers/:handle/upgrade', async (c) => {
     try {
-      const record = await orchestrator.upgrade(c.req.param('handle'));
+      const record = await orchestrator.upgrade(requireValidHandle(c.req.param('handle')));
       return c.json(record);
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }
@@ -457,7 +473,12 @@ export function createApp(deps: {
     if (!platformSecret) {
       return c.json({ error: 'Self-upgrade not configured' }, 503);
     }
-    const handle = c.req.param('handle');
+    let handle: string;
+    try {
+      handle = requireValidHandle(c.req.param('handle'));
+    } catch {
+      return c.json({ error: 'Invalid handle' }, 400);
+    }
     const auth = c.req.header('authorization');
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : '';
 
@@ -485,9 +506,12 @@ export function createApp(deps: {
 
   app.delete('/containers/:handle', async (c) => {
     try {
-      await orchestrator.destroy(c.req.param('handle'));
+      await orchestrator.destroy(requireValidHandle(c.req.param('handle')));
       return c.json({ ok: true });
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
       if (isMissingContainerError(e)) {
         return c.json({ error: 'Container not found' }, 404);
       }

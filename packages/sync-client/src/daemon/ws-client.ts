@@ -15,6 +15,14 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 const PING_INTERVAL_MS = 30_000;
 
+export function parseSyncEventMessage(payload: string): SyncEvent | null {
+  const msg = JSON.parse(payload) as { type?: string };
+  if (!msg.type?.startsWith("sync:")) {
+    return null;
+  }
+  return msg as SyncEvent;
+}
+
 export class SyncWsClient {
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
@@ -56,12 +64,14 @@ export class SyncWsClient {
 
     this.ws.on("message", (data) => {
       try {
-        const msg = JSON.parse(data.toString()) as { type: string };
-        if (msg.type?.startsWith("sync:")) {
-          this.options.onEvent(msg as SyncEvent);
+        const event = parseSyncEventMessage(data.toString());
+        if (event) {
+          this.options.onEvent(event);
         }
       } catch {
-        // Ignore unparseable messages
+        this.options.onError?.(
+          new Error("Received malformed sync message from gateway"),
+        );
       }
     });
 

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import { authMiddleware } from "../../../packages/gateway/src/auth.js";
-import { getUserIdFromContext } from "../../../packages/gateway/src/auth.js";
+import {
+  authMiddleware,
+  getUserIdFromContext,
+  MissingSyncUserIdentityError,
+} from "../../../packages/gateway/src/auth.js";
 import { issueSyncJwt } from "../../../packages/platform/src/sync-jwt.js";
 import {
   createSyncRoutes,
@@ -93,10 +96,17 @@ describe("getUserIdFromContext (helper)", () => {
     expect(getUserIdFromContext(ctx)).toBe(HANDLE);
   });
 
-  it('falls back to "default" when neither claims nor MATRIX_HANDLE are set', () => {
+  it('falls back to "default" only in open local-dev mode', () => {
     delete process.env.MATRIX_HANDLE;
+    delete process.env.MATRIX_AUTH_TOKEN;
     const ctx = { get: () => undefined } as any;
     expect(getUserIdFromContext(ctx)).toBe("default");
+  });
+
+  it("throws when sync auth is enabled and neither claims nor MATRIX_HANDLE are set", () => {
+    delete process.env.MATRIX_HANDLE;
+    const ctx = { get: () => undefined } as any;
+    expect(() => getUserIdFromContext(ctx)).toThrow(MissingSyncUserIdentityError);
   });
 
   it("treats an empty claims.sub as missing and falls back to MATRIX_HANDLE", () => {
@@ -137,7 +147,7 @@ describe("sync routes: userId resolution from JWT", () => {
     expect(key).not.toContain(`/${HANDLE}/`);
 
     // ManifestDb metadata row is keyed by the same user id.
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(CLERK_USER_ID);
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(CLERK_USER_ID, undefined);
   });
 
   it("GET /api/sync/manifest falls back to MATRIX_HANDLE when legacy bearer is used (no JWT)", async () => {
@@ -149,7 +159,17 @@ describe("sync routes: userId resolution from JWT", () => {
     expect(res.status).toBe(200);
     const key = mockR2.getObject.mock.calls[0][0] as string;
     expect(key).toBe(`matrixos-sync/${HANDLE}/manifest.json`);
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(HANDLE);
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(HANDLE, undefined);
+  });
+
+  it("returns 401 when auth is enabled but no sync identity can be resolved", async () => {
+    delete process.env.MATRIX_HANDLE;
+    const app = buildApp(getUserIdFromContext);
+    const res = await app.request("/api/sync/manifest", {
+      headers: { Authorization: "Bearer legacy-shared-secret" },
+    });
+
+    expect(res.status).toBe(401);
   });
 
   it("tampered JWT falls through to legacy bearer path and uses MATRIX_HANDLE", async () => {

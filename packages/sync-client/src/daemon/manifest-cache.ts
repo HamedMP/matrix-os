@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SyncStateSchema } from "./types.js";
 import type { SyncState, Manifest, ManifestEntry } from "./types.js";
@@ -54,7 +54,23 @@ export async function saveSyncState(
   state: SyncState,
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(state, null, 2));
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, JSON.stringify(state, null, 2));
+    await rename(tempPath, filePath);
+  } catch (err) {
+    await unlink(tempPath).catch((unlinkErr: unknown) => {
+      if (
+        unlinkErr instanceof Error &&
+        "code" in unlinkErr &&
+        (unlinkErr as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return;
+      }
+      throw unlinkErr;
+    });
+    throw err;
+  }
 }
 
 export function compareSyncState(

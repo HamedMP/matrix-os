@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { HTTPException } from "hono/http-exception";
 import {
   PresignRequestSchema,
   CommitRequestSchema,
@@ -33,6 +34,7 @@ import {
   ShareInvalidPathError,
 } from "./sharing.js";
 import { createSyncRateLimiter } from "./rate-limiter.js";
+import { MissingSyncUserIdentityError } from "../auth.js";
 
 const SYNC_BODY_LIMIT = 65536;
 
@@ -50,10 +52,20 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
   const store: ManifestStore = { r2: deps.r2, db: deps.db };
   const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const getUserId = (c: Parameters<SyncRouteDeps["getUserId"]>[0]): string => {
+    try {
+      return deps.getUserId(c);
+    } catch (err) {
+      if (err instanceof MissingSyncUserIdentityError) {
+        throw new HTTPException(401, { message: "Unauthorized" });
+      }
+      throw err;
+    }
+  };
 
   // GET /manifest
   app.get("/manifest", async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const ifNoneMatch = c.req.header("If-None-Match");
 
     const result = await readManifest(store, userId);
@@ -72,7 +84,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /presign
   app.post("/presign", mutatingBodyLimit, async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
 
     if (!presignLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
@@ -105,7 +117,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /commit
   app.post("/commit", mutatingBodyLimit, async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const peerId = deps.getPeerId(c);
     const body = await c.req.json();
     const parsed = CommitRequestSchema.safeParse(body);
@@ -149,7 +161,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // GET /status
   app.get("/status", async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const peers = deps.peerRegistry.getPeers(userId);
     const meta = await deps.db.getManifestMeta(userId);
 
@@ -174,7 +186,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const body = await c.req.json();
     const parsed = ResolveConflictSchema.safeParse(body);
 
@@ -203,7 +215,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /share -- create sharing grant
   app.post("/share", mutatingBodyLimit, async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const body = await c.req.json();
     const parsed = CreateShareSchema.safeParse(body);
 
@@ -234,7 +246,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // DELETE /share -- revoke sharing grant
   app.delete("/share", mutatingBodyLimit, async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const body = await c.req.json();
     const shareId = body?.shareId;
 
@@ -259,7 +271,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /share/accept -- accept share invitation
   app.post("/share/accept", mutatingBodyLimit, async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
     const body = await c.req.json();
     const parsed = AcceptShareSchema.safeParse(body);
 
@@ -284,7 +296,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // GET /shares -- list active shares
   app.get("/shares", async (c) => {
-    const userId = deps.getUserId(c);
+    const userId = getUserId(c);
 
     try {
       const result = await deps.sharing.listShares(userId);

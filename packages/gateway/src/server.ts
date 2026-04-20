@@ -47,7 +47,11 @@ import {
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
-import { authMiddleware, getUserIdFromContext } from "./auth.js";
+import {
+  authMiddleware,
+  getUserIdFromContext,
+  MissingSyncUserIdentityError,
+} from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -951,15 +955,23 @@ export async function createGateway(config: GatewayConfig) {
       // the sync:subscribe branch below keys peers off the same identity
       // the HTTP sync routes use. authMiddleware ran on the upgrade
       // request and stashed claims if a JWT was presented.
-      const wsSyncUserId = getUserIdFromContext(c);
-      const syncPeerLifecycle = syncPeerRegistry
-        ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
-            send: (data: string) => ws.send(data),
-            get readyState() {
-              return ws.readyState;
-            },
-          })
-        : null;
+      let syncPeerLifecycle = null;
+      try {
+        const wsSyncUserId = getUserIdFromContext(c);
+        syncPeerLifecycle = syncPeerRegistry
+          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
+              send: (data: string) => ws.send(data),
+              get readyState() {
+                return ws.readyState;
+              },
+            })
+          : null;
+      } catch (err) {
+        if (!(err instanceof MissingSyncUserIdentityError)) {
+          throw err;
+        }
+        console.warn("[sync/ws] Missing sync user identity on websocket upgrade");
+      }
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;

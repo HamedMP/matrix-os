@@ -107,6 +107,15 @@ describe("saveSyncState", () => {
     const raw = await readFile(deepPath, "utf-8");
     expect(JSON.parse(raw).manifestVersion).toBe(0);
   });
+
+  it("does not leave temporary files behind after saving", async () => {
+    const state: SyncState = { manifestVersion: 4, lastSyncAt: 0, files: {} };
+
+    await saveSyncState(STATE_PATH, state);
+
+    const entries = await import("node:fs/promises").then(({ readdir }) => readdir(TEST_DIR));
+    expect(entries.filter((entry) => entry.includes(".tmp"))).toEqual([]);
+  });
 });
 
 describe("compareSyncState", () => {
