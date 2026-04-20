@@ -73,6 +73,12 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     return `matrixos_${handle.replace(/[^a-z0-9_]/g, '_')}`;
   }
 
+  function assertSafeDbIdentifier(dbName: string): void {
+    if (!/^[a-z0-9_]+$/.test(dbName)) {
+      throw new Error(`Unsafe database identifier: ${dbName}`);
+    }
+  }
+
   function databaseUrlForHandle(handle: string): string | undefined {
     if (!postgresUrl) return undefined;
     return `${postgresUrl}/${dbNameForHandle(handle)}`;
@@ -81,6 +87,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   async function createUserDatabase(handle: string): Promise<void> {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
+    assertSafeDbIdentifier(dbName);
     const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
     try {
       await client.connect();
@@ -100,6 +107,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   async function dropUserDatabase(handle: string): Promise<void> {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
+    assertSafeDbIdentifier(dbName);
     const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
     try {
       await client.connect();

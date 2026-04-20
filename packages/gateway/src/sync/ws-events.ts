@@ -6,6 +6,7 @@ const MAX_USERS = 10_000;
 export interface SyncPeerConnection {
   send(data: string): void;
   readyState: number;
+  close?: (code?: number, reason?: string) => void;
 }
 
 interface PeerEntry {
@@ -34,6 +35,33 @@ export function createPeerRegistry(): PeerRegistry {
   // userId -> peerId -> PeerEntry
   const userPeers = new Map<string, Map<string, PeerEntry>>();
 
+  function sendSafe(ws: SyncPeerConnection, data: string): void {
+    if (ws.readyState === 1) {
+      ws.send(data);
+    }
+  }
+
+  function evictPeer(
+    peers: Map<string, PeerEntry>,
+    peerId: string,
+    reason: string,
+  ): void {
+    const entry = peers.get(peerId);
+    if (!entry) return;
+    sendSafe(entry.ws, JSON.stringify({ type: "sync:evicted", reason }));
+    entry.ws.close?.(4000, "sync peer evicted");
+    peers.delete(peerId);
+  }
+
+  function evictUserBucket(userId: string, reason: string): void {
+    const peers = userPeers.get(userId);
+    if (!peers) return;
+    for (const peerId of Array.from(peers.keys())) {
+      evictPeer(peers, peerId, reason);
+    }
+    userPeers.delete(userId);
+  }
+
   function getUserMap(userId: string): Map<string, PeerEntry> {
     let map = userPeers.get(userId);
     if (map) {
@@ -45,19 +73,13 @@ export function createPeerRegistry(): PeerRegistry {
     if (userPeers.size >= MAX_USERS) {
       const oldestUserId = userPeers.keys().next().value;
       if (oldestUserId !== undefined) {
-        userPeers.delete(oldestUserId);
+        evictUserBucket(oldestUserId, "user_registry_cap");
       }
     }
 
     map = new Map();
     userPeers.set(userId, map);
     return map;
-  }
-
-  function sendSafe(ws: SyncPeerConnection, data: string): void {
-    if (ws.readyState === 1) {
-      ws.send(data);
-    }
   }
 
   return {
@@ -68,7 +90,7 @@ export function createPeerRegistry(): PeerRegistry {
       if (peers.size >= MAX_PEERS_PER_USER && !peers.has(params.peerId)) {
         const oldestKey = peers.keys().next().value;
         if (oldestKey !== undefined) {
-          peers.delete(oldestKey);
+          evictPeer(peers, oldestKey, "peer_limit");
           // Broadcast peer-leave for the evicted peer
           const leaveMsg = JSON.stringify({ type: "sync:peer-leave", peerId: oldestKey });
           for (const entry of peers.values()) {

@@ -82,10 +82,14 @@ for that item both exist locally.
 - [x] Home-mirror uploads must hash the exact bytes they send to R2, not hash before the queued read/upload path.
 - [x] Home-mirror local-write suppression must cover large initial pulls instead of evicting entries after 1000 files.
 - [x] Home-mirror local push/delete manifest updates must use the same advisory lock discipline as HTTP commits.
+- [x] Home-mirror peer-registry subscriber must log malformed broadcast frames instead of empty-catching parse errors.
+- [x] Home-mirror local auto-push must skip files above a size cap instead of buffering arbitrarily large files into memory.
 - [x] Device-flow approval must run under a transaction and reject re-approval by a different user.
 - [x] Home-mirror serial commit queue must log task failures instead of silently swallowing them.
 - [x] Sync-client daemon serial commit queue must report task failures instead of silently swallowing them.
 - [x] Presign route must classify validation failures with a typed error instead of matching strings in `err.message`.
+- [x] Peer-registry LRU eviction must notify and close evicted peer sockets instead of leaving orphaned live connections behind.
+- [x] Orchestrator database creation/drop must assert a safe SQL identifier before interpolating the database name.
 
 ## Verification Notes
 
@@ -101,11 +105,13 @@ for that item both exist locally.
 - [x] Latest platform blocker regression passes in Docker dev container: `tests/platform/api.test.ts`, `orchestrator.test.ts`, `device-flow.test.ts`, `db.test.ts` (`4 files`, `71 tests`).
 - [x] Host-side `tests/platform/db.test.ts` remains non-signal in this worktree because the local `better-sqlite3` native module is built for a different Node ABI; Docker dev-container results are authoritative for that suite.
 - [x] Latest home-mirror regression passes locally: `tests/gateway/sync/home-mirror.test.ts` (`1 file`, `13 tests`).
+- [x] Latest gateway peer-registry + home-mirror regressions pass locally: `tests/gateway/sync/ws-events.test.ts`, `home-mirror.test.ts` (`2 files`, `29 tests`).
 - [x] Shell theme regression passes locally: `tests/shell/useTheme.test.ts`, `theme-presets.test.ts` (`2 files`, `39 tests`).
 - [ ] Local Playwright verification for `shell/e2e/screenshots.spec.ts` is currently blocked on this machine because the Chromium test binary is not installed (`pnpm exec playwright install` required). CI remains the source of truth for the screenshot path.
 - [x] Latest presign/routes/home-mirror regression passes locally: `tests/gateway/sync/presign.test.ts`, `routes.test.ts`, `home-mirror.test.ts` (`3 files`, `56 tests`).
 - [x] Latest sync-client queue guard regression passes locally: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `7 tests`).
 - [x] Latest device-flow regression passes in Docker dev container: `tests/platform/device-flow.test.ts` (`1 file`, `20 tests`).
+- [x] Latest orchestrator regression passes in Docker dev container: `tests/platform/orchestrator.test.ts` (`1 file`, `24 tests`).
 
 ## Lower-Priority Follow-ups From Review
 

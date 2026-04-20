@@ -10,6 +10,7 @@ function mockWs(): SyncPeerConnection {
   return {
     send: vi.fn(),
     readyState: 1, // OPEN
+    close: vi.fn(),
   };
 }
 
@@ -230,6 +231,42 @@ describe("PeerRegistry", () => {
       expect(peers).toHaveLength(100);
       expect(peers.find((p) => p.peerId === "peer-0")).toBeUndefined();
       expect(peers.find((p) => p.peerId === "peer-100")).toBeDefined();
+    });
+
+    it("notifies and closes an evicted peer connection", () => {
+      const oldest = mockWs();
+      registry.registerPeer("user1", {
+        peerId: "peer-0",
+        hostname: "host-0",
+        platform: "linux",
+        clientVersion: "0.1.0",
+      }, oldest);
+
+      for (let i = 1; i < 100; i++) {
+        registry.registerPeer("user1", {
+          peerId: `peer-${i}`,
+          hostname: `host-${i}`,
+          platform: "linux",
+          clientVersion: "0.1.0",
+        }, mockWs());
+      }
+
+      vi.clearAllMocks();
+
+      registry.registerPeer("user1", {
+        peerId: "peer-100",
+        hostname: "host-100",
+        platform: "linux",
+        clientVersion: "0.1.0",
+      }, mockWs());
+
+      expect(oldest.send).toHaveBeenCalledWith(
+        expect.stringContaining('"type":"sync:evicted"'),
+      );
+      expect(oldest.send).toHaveBeenCalledWith(
+        expect.stringContaining('"reason":"peer_limit"'),
+      );
+      expect(oldest.close).toHaveBeenCalledWith(4000, "sync peer evicted");
     });
 
     it("different users have independent peer limits", () => {

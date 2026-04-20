@@ -206,6 +206,50 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("logs malformed peer broadcasts instead of silently swallowing them", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      let subscriber: { send(data: string): void } | null = null;
+      const peerRegistry = {
+        registerPeer(_userId, _params, ws) {
+          subscriber = ws;
+          return {
+            peerId: "gateway-alice",
+            userId: "alice",
+            hostname: "gateway",
+            platform: "linux",
+            clientVersion: "home-mirror",
+            connectedAt: Date.now(),
+          };
+        },
+        removePeer() {},
+        broadcastChange() {},
+        sendToUser() {},
+        getPeers() {
+          return [];
+        },
+      } as unknown as PeerRegistry;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry,
+        logger,
+      });
+      await mirror.start();
+
+      subscriber?.send("{not-json");
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "ignored malformed peer broadcast:",
+        expect.any(String),
+      );
+
+      await mirror.stop();
+    });
+
     it("refuses traversal paths on remote writes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const outsidePath = join(tmpRoot, "..", "escaped-write.txt");
@@ -337,6 +381,34 @@ describe("createHomeMirror", () => {
       const syncChanges = laptopSends.filter((s) => s.includes('"sync:change"'));
       expect(syncChanges.length).toBeGreaterThan(0);
       expect(syncChanges.some((s) => s.includes("new.md"))).toBe(true);
+
+      await mirror.stop();
+    });
+
+    it("skips local auto-push for files over the configured max size", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const putSpy = vi.spyOn(r2, "putObject");
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+        maxPushBytes: 4,
+      });
+      await mirror.start();
+
+      await writeFile(join(tmpRoot, "too-big.txt"), "12345");
+      await waitFor(() =>
+        logger.error.mock.calls.some(
+          ([message]: [string]) => message.includes("skipping push for too-big.txt"),
+        ),
+      );
+
+      expect(putSpy).not.toHaveBeenCalled();
+      expect(r2.store.has("matrixos-sync/alice/files/too-big.txt")).toBe(false);
 
       await mirror.stop();
     });

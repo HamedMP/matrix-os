@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import pg from 'pg';
 import { createPlatformDb, type PlatformDB, getContainer } from '../../packages/platform/src/db.js';
 import { createOrchestrator, type Orchestrator } from '../../packages/platform/src/orchestrator.js';
 
@@ -192,6 +193,39 @@ describe('platform/orchestrator', () => {
 
     await orch.provision('alice', 'clerk_1');
     expect(docker.createNetwork).toHaveBeenCalledWith({ Name: 'matrixos-net', Driver: 'bridge' });
+  });
+
+  it('uses a sanitized database identifier for per-user Postgres databases', async () => {
+    const { docker } = createMockDocker();
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({}),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://postgres@db:5432',
+    });
+
+    await orch.provision('alice-admin.prod', 'clerk_1');
+
+    expect(mockClient.query).toHaveBeenNthCalledWith(
+      1,
+      'SELECT 1 FROM pg_database WHERE datname = $1',
+      ['matrixos_alice_admin_prod'],
+    );
+    expect(mockClient.query).toHaveBeenNthCalledWith(
+      2,
+      'CREATE DATABASE "matrixos_alice_admin_prod"',
+    );
+
+    clientSpy.mockRestore();
   });
 
   it('starts a stopped container', async () => {

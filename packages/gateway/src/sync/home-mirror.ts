@@ -19,6 +19,7 @@ import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 
 const RECENT_WRITE_CAP = 50_000;
+const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 
 // Folders we never push -- big build outputs, transient state, secrets,
 // or things that would loop on themselves (the home dir itself when run
@@ -62,6 +63,8 @@ export interface HomeMirrorConfig {
   logger?: { info: (msg: string, ...args: unknown[]) => void; error: (msg: string, ...args: unknown[]) => void };
   /** Override the path-segment match list. Used by tests. */
   extraIgnoreDirs?: Iterable<string>;
+  /** Skip local auto-push for files larger than this many bytes. */
+  maxPushBytes?: number;
 }
 
 export interface HomeMirror {
@@ -150,6 +153,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const extraIgnore = config.extraIgnoreDirs
     ? new Set(config.extraIgnoreDirs)
     : undefined;
+  const maxPushBytes = config.maxPushBytes ?? DEFAULT_MAX_PUSH_BYTES;
 
   let watcher: FSWatcher | null = null;
 
@@ -225,6 +229,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         throw err;
       }
       if (!fileStat.isFile()) return;
+      if (fileStat.size > maxPushBytes) {
+        log.error(
+          `skipping push for ${relPath}: file exceeds ${maxPushBytes} bytes`,
+        );
+        return;
+      }
 
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, config.userId);
@@ -383,7 +393,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         let parsed: unknown;
         try {
           parsed = JSON.parse(data);
-        } catch {
+        } catch (err: unknown) {
+          log.error(
+            "ignored malformed peer broadcast:",
+            err instanceof Error ? err.message : String(err),
+          );
           return;
         }
         const msg = parsed as { type?: string };
