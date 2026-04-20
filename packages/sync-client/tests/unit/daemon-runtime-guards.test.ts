@@ -3,12 +3,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  adoptRemoteManifestVersion,
   createSerialTaskQueue,
   persistPauseState,
   resolveWithinSyncRoot,
   writePidFileExclusive,
 } from "../../src/daemon/index.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
+import { VersionConflictError } from "../../src/daemon/r2-client.js";
+import type { SyncState } from "../../src/daemon/types.js";
 
 describe("daemon runtime guards", () => {
   let tempDir: string;
@@ -105,5 +108,22 @@ describe("daemon runtime guards", () => {
     expect(events).toEqual(["first", "second"]);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it("adopts the gateway manifest version after a conflict", async () => {
+    const syncState: SyncState = {
+      manifestVersion: 3,
+      lastSyncAt: 0,
+      files: {},
+    };
+
+    const adopted = await adoptRemoteManifestVersion(
+      syncState,
+      new VersionConflictError(3, 7),
+      async () => undefined,
+    );
+
+    expect(adopted).toBe(true);
+    expect(syncState.manifestVersion).toBe(7);
   });
 });

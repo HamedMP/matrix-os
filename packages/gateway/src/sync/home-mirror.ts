@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import {
@@ -217,6 +217,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     });
   }
 
+  function broadcastChanges(
+    files: Array<{ path: string; hash: string; size: number; action: "add" | "update" | "delete" }>,
+    manifestVersion: number,
+  ): void {
+    if (!config.peerRegistry || files.length === 0) return;
+    config.peerRegistry.broadcastChange(config.userId, config.peerId, {
+      type: "sync:change",
+      files,
+      peerId: config.peerId,
+      manifestVersion,
+    });
+  }
+
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(relPath);
     const absPath = join(config.homeRoot, safeRelPath);
@@ -339,6 +352,90 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }
 
+  async function collectLocalFiles(dir: string, relDir = ""): Promise<string[]> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      const relPath = relDir ? join(relDir, entry.name) : entry.name;
+      if (isIgnored(relPath, extraIgnore)) continue;
+      const absPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        files.push(...await collectLocalFiles(absPath, relPath));
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push(relPath);
+      }
+    }
+
+    return files;
+  }
+
+  async function initialPush(): Promise<void> {
+    const relPaths = await collectLocalFiles(config.homeRoot);
+    if (relPaths.length === 0) return;
+
+    await enqueue(async () => {
+      await withManifestLock(async (lockedStore) => {
+        const existing = await readManifest(lockedStore, config.userId);
+        let nextManifest = existing.manifest;
+        const changedFiles: Array<{
+          path: string;
+          hash: string;
+          size: number;
+          action: "add" | "update";
+        }> = [];
+
+        for (const relPath of relPaths) {
+          const safeRelPath = normalizeRelativePath(relPath);
+          const absPath = join(config.homeRoot, safeRelPath);
+
+          let fileStat;
+          try {
+            fileStat = await stat(absPath);
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw err;
+          }
+          if (!fileStat.isFile()) continue;
+          if (fileStat.size > maxPushBytes) {
+            log.error(
+              `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
+            );
+            continue;
+          }
+
+          const body = await readFile(absPath);
+          const hash = hashBuffer(body);
+          const currentEntry = nextManifest.files[safeRelPath];
+          if (currentEntry?.hash === hash && !currentEntry.deleted) {
+            continue;
+          }
+
+          await config.r2.putObject(buildFileKey(config.userId, safeRelPath), body);
+
+          const file = {
+            path: safeRelPath,
+            hash,
+            size: body.length,
+            action: currentEntry ? "update" as const : "add" as const,
+          };
+          nextManifest = applyCommitToManifest(nextManifest, [file], config.peerId);
+          changedFiles.push(file);
+        }
+
+        if (changedFiles.length === 0) return;
+
+        const newVersion = existing.manifestVersion + 1;
+        await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
+        broadcastChanges(changedFiles, newVersion);
+        log.info(`initial push: ${changedFiles.length} files`);
+      });
+    });
+  }
+
   async function pullDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(relPath);
     const absPath = join(config.homeRoot, safeRelPath);
@@ -434,9 +531,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         log.info(`home mirror subscribed to broadcasts as ${config.peerId}`);
       }
 
+      await initialPush();
+
       watcher = watch(config.homeRoot, {
         persistent: true,
-        ignoreInitial: false,
+        ignoreInitial: true,
         awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
         ignored: (absPath) => {
           const rel = relative(config.homeRoot, absPath);

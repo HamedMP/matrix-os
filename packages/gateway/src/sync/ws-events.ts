@@ -29,6 +29,7 @@ export interface PeerRegistry {
   broadcastChange(userId: string, senderPeerId: string, message: Record<string, unknown>): void;
   sendToUser(userId: string, message: Record<string, unknown>): void;
   getPeers(userId: string): PeerInfo[];
+  getTotalPeerCount(): number;
 }
 
 export function createPeerRegistry(): PeerRegistry {
@@ -169,6 +170,14 @@ export function createPeerRegistry(): PeerRegistry {
       const peers = userPeers.get(userId);
       if (!peers) return [];
       return Array.from(peers.values()).map((e) => e.info);
+    },
+
+    getTotalPeerCount() {
+      let total = 0;
+      for (const peers of userPeers.values()) {
+        total += peers.size;
+      }
+      return total;
     },
   };
 }

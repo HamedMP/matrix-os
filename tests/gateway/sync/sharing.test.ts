@@ -30,8 +30,10 @@ function createMockDb(): SharingDb {
     deleteShare: vi.fn(),
     listSharesByOwner: vi.fn(),
     listSharesByGrantee: vi.fn(),
+    listSharesByGranteeAndOwner: vi.fn(),
     resolveHandle: vi.fn(),
     resolveUserId: vi.fn(),
+    resolveUserIds: vi.fn(),
   };
 }
 
@@ -254,9 +256,12 @@ describe("SharingService", () => {
 
       (db.listSharesByOwner as ReturnType<typeof vi.fn>).mockResolvedValue(owned);
       (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue(received);
-      (db.resolveUserId as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce("@g1:matrix-os.com")
-        .mockResolvedValueOnce("@o1:matrix-os.com");
+      (db.resolveUserIds as ReturnType<typeof vi.fn>).mockResolvedValue(
+        new Map([
+          ["g1", "@g1:matrix-os.com"],
+          ["o1", "@o1:matrix-os.com"],
+        ]),
+      );
 
       const result = await service.listShares("user1");
 
@@ -267,6 +272,7 @@ describe("SharingService", () => {
       expect(result.received).toHaveLength(1);
       expect(result.received[0]!.id).toBe("s2");
       expect(result.received[0]!.ownerHandle).toBe("@o1:matrix-os.com");
+      expect(db.resolveUserIds).toHaveBeenCalledWith(["g1", "o1"]);
     });
 
     it("returns empty arrays when no shares exist", async () => {
@@ -290,7 +296,7 @@ describe("SharingService", () => {
     });
 
     it("viewer can GET but not PUT", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "viewer1",
@@ -305,10 +311,11 @@ describe("SharingService", () => {
 
       const putResult = await service.checkSharePermission("owner1", "viewer1", "projects/readme.md", "put");
       expect(putResult).toBe("forbidden"); // denied
+      expect(db.listSharesByGranteeAndOwner).toHaveBeenCalledWith("viewer1", "owner1");
     });
 
     it("editor can GET and PUT", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "editor1",
@@ -326,7 +333,7 @@ describe("SharingService", () => {
     });
 
     it("admin can GET, PUT, and delete", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "admin1",
@@ -347,7 +354,7 @@ describe("SharingService", () => {
     });
 
     it("denies access for paths outside the shared prefix", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "grantee1",
@@ -362,7 +369,7 @@ describe("SharingService", () => {
     });
 
     it("does not match partial directory prefixes", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "grantee1",
@@ -383,7 +390,7 @@ describe("SharingService", () => {
     });
 
     it("denies access for unaccepted shares", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "grantee1",
@@ -398,7 +405,7 @@ describe("SharingService", () => {
     });
 
     it("denies access for expired shares", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({
           owner_id: "owner1",
           grantee_id: "grantee1",
@@ -414,7 +421,7 @@ describe("SharingService", () => {
     });
 
     it("denies access when no shares exist for the user", async () => {
-      (db.listSharesByGrantee as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
       const result = await service.checkSharePermission("owner1", "stranger", "projects/readme.md", "get");
       expect(result).toBe("forbidden");

@@ -23,6 +23,7 @@ const mockR2 = {
 
 const mockDb = {
   getManifestMeta: vi.fn(),
+  getAggregateManifestStats: vi.fn(),
   upsertManifestMeta: vi.fn(),
   withAdvisoryLock: vi.fn(),
 };
@@ -33,6 +34,7 @@ const mockPeerRegistry = {
   broadcastChange: vi.fn(),
   sendToUser: vi.fn(),
   getPeers: vi.fn(),
+  getTotalPeerCount: vi.fn(),
 };
 
 const mockSharing = {
@@ -205,6 +207,18 @@ describe("POST /api/sync/presign", () => {
     const json = await res.json();
     expect(json.error).toMatch(/rate limit/i);
   });
+
+  it("returns 400 for invalid JSON", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/presign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Invalid JSON" });
+  });
 });
 
 describe("POST /api/sync/commit", () => {
@@ -276,6 +290,18 @@ describe("POST /api/sync/commit", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 for invalid JSON", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Invalid JSON" });
+  });
 });
 
 describe("GET /api/sync/status", () => {
@@ -285,7 +311,9 @@ describe("GET /api/sync/status", () => {
     mockPeerRegistry.getPeers.mockReturnValue([
       { peerId: "p1", userId: "test-user", hostname: "laptop", platform: "darwin", clientVersion: "0.1.0", connectedAt: 1000 },
     ]);
+    mockPeerRegistry.getTotalPeerCount.mockReturnValue(9);
     mockDb.getManifestMeta.mockResolvedValue({ version: 5, file_count: 100, total_size: 50000n, etag: '"e"', updated_at: new Date(2000) });
+    mockDb.getAggregateManifestStats.mockResolvedValue({ fileCount: 500, totalSize: 99999n });
 
     const app = createTestApp();
     const res = await app.request("/api/sync/status");
@@ -296,6 +324,8 @@ describe("GET /api/sync/status", () => {
     expect(json.connectedPeers[0].peerId).toBe("p1");
     expect(json.manifestVersion).toBe(5);
     expect(json.fileCount).toBe(100);
+    expect(mockPeerRegistry.getTotalPeerCount).toHaveBeenCalledTimes(1);
+    expect(mockDb.getAggregateManifestStats).toHaveBeenCalledTimes(1);
   });
 
   it("returns defaults when no manifest metadata exists", async () => {
@@ -333,6 +363,29 @@ describe("DELETE /api/sync/share", () => {
     });
 
     expect(res.status).toBe(413);
+  });
+
+  it("returns 400 for invalid JSON", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/share", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "Invalid JSON" });
+  });
+
+  it("returns 400 when shareId is not a UUID", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/share", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ shareId: "not-a-uuid" }),
+    });
+
+    expect(res.status).toBe(400);
   });
 });
 
@@ -453,7 +506,7 @@ describe("sharing routes", () => {
     const res = await app.request(new Request("http://localhost/api/sync/share", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shareId: "uuid-1" }),
+      body: JSON.stringify({ shareId: "550e8400-e29b-41d4-a716-446655440000" }),
     }));
 
     expect(res.status).toBe(200);
@@ -479,7 +532,7 @@ describe("sharing routes", () => {
     const res = await app.request(new Request("http://localhost/api/sync/share", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shareId: "nonexistent" }),
+      body: JSON.stringify({ shareId: "550e8400-e29b-41d4-a716-446655440001" }),
     }));
 
     expect(res.status).toBe(404);
@@ -492,7 +545,7 @@ describe("sharing routes", () => {
     const res = await app.request(new Request("http://localhost/api/sync/share", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shareId: "uuid-1" }),
+      body: JSON.stringify({ shareId: "550e8400-e29b-41d4-a716-446655440002" }),
     }));
 
     expect(res.status).toBe(403);

@@ -31,6 +31,21 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
       };
     },
 
+    async getAggregateManifestStats(): Promise<{ fileCount: number; totalSize: bigint }> {
+      const row = await kysely
+        .selectFrom("sync_manifests")
+        .select([
+          sql<number>`COALESCE(SUM(file_count), 0)`.as("file_count"),
+          sql<string>`COALESCE(SUM(total_size), 0)`.as("total_size"),
+        ])
+        .executeTakeFirstOrThrow();
+
+      return {
+        fileCount: Number(row.file_count ?? 0),
+        totalSize: BigInt(row.total_size ?? "0"),
+      };
+    },
+
     async upsertManifestMeta(
       userId: string,
       meta: Omit<ManifestMeta, "updated_at">,
@@ -141,6 +156,17 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
       return rows as unknown as ShareRow[];
     },
 
+    async listSharesByGranteeAndOwner(granteeId: string, ownerId: string): Promise<ShareRow[]> {
+      const rows = await kysely
+        .selectFrom("sync_shares")
+        .selectAll()
+        .where("grantee_id", "=", granteeId)
+        .where("owner_id", "=", ownerId)
+        .execute();
+
+      return rows as unknown as ShareRow[];
+    },
+
     async resolveHandle(handle: string): Promise<string | null> {
       const row = await kysely
         .selectFrom("users" as any)
@@ -159,6 +185,25 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
         .executeTakeFirst();
 
       return (row as any)?.handle ?? null;
+    },
+
+    async resolveUserIds(userIds: string[]): Promise<Map<string, string>> {
+      const ids = Array.from(new Set(userIds));
+      if (ids.length === 0) {
+        return new Map();
+      }
+
+      const rows = await kysely
+        .selectFrom("users" as any)
+        .select(["id" as any, "handle" as any])
+        .where("id" as any, "in", ids)
+        .execute();
+
+      const resolved = new Map<string, string>();
+      for (const row of rows as Array<{ id: string; handle: string }>) {
+        resolved.set(row.id, row.handle);
+      }
+      return resolved;
     },
   };
 }

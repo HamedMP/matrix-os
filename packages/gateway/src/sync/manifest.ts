@@ -21,6 +21,7 @@ export interface ManifestDb {
     userId: string,
     executor?: ManifestDbExecutor,
   ): Promise<ManifestMeta | null>;
+  getAggregateManifestStats?(): Promise<{ fileCount: number; totalSize: bigint }>;
   upsertManifestMeta(
     userId: string,
     meta: Omit<ManifestMeta, "updated_at">,

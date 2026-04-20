@@ -12,6 +12,16 @@ export interface GatewayClient {
   token: string;
 }
 
+export class VersionConflictError extends Error {
+  currentVersion: number;
+
+  constructor(expectedVersion: number, currentVersion: number) {
+    super(`Version conflict: expected ${expectedVersion}, server at ${currentVersion}`);
+    this.name = "VersionConflictError";
+    this.currentVersion = currentVersion;
+  }
+}
+
 export async function requestPresignedUrls(
   client: GatewayClient,
   files: { path: string; action: "put" | "get"; hash?: string }[],
@@ -89,7 +99,7 @@ export async function commitFiles(
 
   if (res.status === 409) {
     const data = (await res.json()) as { error: string; currentVersion: number };
-    throw new Error(`Version conflict: expected ${expectedVersion}, server at ${data.currentVersion}`);
+    throw new VersionConflictError(expectedVersion, data.currentVersion);
   }
 
   if (!res.ok) {

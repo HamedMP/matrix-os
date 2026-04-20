@@ -95,6 +95,16 @@ for that item both exist locally.
 - [x] Peer-registry LRU eviction must notify and close evicted peer sockets instead of leaving orphaned live connections behind.
 - [x] Orchestrator database creation/drop must assert a safe SQL identifier before interpolating the database name.
 
+## Latest Sync Correctness / Perf Follow-up Wave
+
+- [x] Sync-client daemon must adopt the gateway `currentVersion` after a 409 conflict so later queued commits do not stay pinned to a stale manifest version.
+- [x] Sync mutating routes must return `400 Invalid JSON` on malformed request bodies instead of falling through to Hono's default 500.
+- [x] Sync status gauges must use gateway-wide aggregate counts instead of overwriting a global metric with the last-requested user's values.
+- [x] `DELETE /api/sync/share` must use Zod schema validation with UUID enforcement like the other mutating share routes.
+- [x] Share permission checks must query grantee+owner directly instead of loading every share for the grantee and filtering in memory.
+- [x] Share listing must batch handle resolution instead of doing one `resolveUserId()` query per row.
+- [x] Home-mirror startup must avoid chokidar's full `ignoreInitial: false` replay while still syncing pre-existing local-only files.
+
 ## Verification Notes
 
 - [x] Targeted sync/gateway regression suite passes locally: `tests/gateway/sync/r2-client.test.ts`, `home-mirror.test.ts`, `sharing.test.ts`, `commit.test.ts`, `routes.test.ts`, `metrics.test.ts`, `ws-events.test.ts`, `ws-peer-lifecycle.test.ts` (`8 files`, `100 tests`).
@@ -117,6 +127,8 @@ for that item both exist locally.
 - [x] Latest sync-client queue guard regression passes locally: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `7 tests`).
 - [x] Latest device-flow regression passes in Docker dev container: `tests/platform/device-flow.test.ts` (`1 file`, `20 tests`).
 - [x] Latest orchestrator regression passes in Docker dev container: `tests/platform/orchestrator.test.ts` (`1 file`, `24 tests`).
+- [x] Latest sync correctness/perf regression passes locally: `tests/gateway/sync/routes.test.ts`, `sharing.test.ts`, `home-mirror.test.ts`, `metrics.test.ts` (`4 files`, `82 tests`).
+- [x] Latest sync-client conflict-recovery regression passes via package config: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `8 tests`).
 
 ## Lower-Priority Follow-ups From Review
 
@@ -125,5 +137,5 @@ for that item both exist locally.
 - [ ] Review home-mirror default ignores for obvious secret material.
 - [ ] Review whether orchestrator `provision()` / `destroy()` DB-write sequences should be bundled more transactionally.
 - [ ] Review manifest R2-vs-DB metadata ordering if DB upsert fails after an R2 manifest write.
-- [ ] Review share-listing query shape for avoidable N+1 behavior.
+- [x] Review share-listing query shape for avoidable N+1 behavior.
 - [ ] Review JWT lifetime / revocation strategy in platform-issued sync tokens.

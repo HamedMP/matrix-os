@@ -30,8 +30,10 @@ export interface SharingDb {
   deleteShare(shareId: string): Promise<void>;
   listSharesByOwner(ownerId: string): Promise<ShareRow[]>;
   listSharesByGrantee(granteeId: string): Promise<ShareRow[]>;
+  listSharesByGranteeAndOwner(granteeId: string, ownerId: string): Promise<ShareRow[]>;
   resolveHandle(handle: string): Promise<string | null>;
   resolveUserId(userId: string): Promise<string | null>;
+  resolveUserIds(userIds: string[]): Promise<Map<string, string>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,10 +270,18 @@ export function createSharingService(deps: {
         db.listSharesByOwner(userId),
         db.listSharesByGrantee(userId),
       ]);
+      const handleMap = await db.resolveUserIds(
+        Array.from(
+          new Set([
+            ...ownedRows.map((row) => row.grantee_id),
+            ...receivedRows.map((row) => row.owner_id),
+          ]),
+        ),
+      );
 
       const owned = await Promise.all(
         ownedRows.map(async (row) => {
-          const granteeHandle = await db.resolveUserId(row.grantee_id);
+          const granteeHandle = handleMap.get(row.grantee_id);
           return {
             id: row.id,
             path: row.path,
@@ -286,7 +296,7 @@ export function createSharingService(deps: {
 
       const received = await Promise.all(
         receivedRows.map(async (row) => {
-          const ownerHandle = await db.resolveUserId(row.owner_id);
+          const ownerHandle = handleMap.get(row.owner_id);
           return {
             id: row.id,
             path: row.path,
@@ -309,10 +319,9 @@ export function createSharingService(deps: {
       }
 
       // Look up shares granted to this caller by this owner
-      const shares = await db.listSharesByGrantee(callerId);
+      const shares = await db.listSharesByGranteeAndOwner(callerId, ownerId);
       const matchingShares = shares.filter(
         (s) =>
-          s.owner_id === ownerId &&
           s.accepted &&
           (!s.expires_at || s.expires_at.getTime() > Date.now()) &&
           shareMatchesPath(s.path, filePath),

@@ -22,6 +22,7 @@ import {
   downloadFile,
   commitFiles,
   fetchManifest,
+  VersionConflictError,
 } from "./r2-client.js";
 import { ManifestSchema, type SyncState } from "./types.js";
 
@@ -278,6 +279,21 @@ export async function writePidFileExclusive(filePath: string, pid: number): Prom
   await writeExclusive();
 }
 
+export async function adoptRemoteManifestVersion(
+  syncState: SyncState,
+  err: unknown,
+  persist: () => Promise<void>,
+): Promise<boolean> {
+  if (!(err instanceof VersionConflictError)) {
+    return false;
+  }
+  if (err.currentVersion > syncState.manifestVersion) {
+    syncState.manifestVersion = err.currentVersion;
+    await persist();
+  }
+  return true;
+}
+
 export async function startDaemon(): Promise<void> {
   const logger = pino({
     transport: {
@@ -379,6 +395,9 @@ export async function startDaemon(): Promise<void> {
             await saveSyncState(stateFile, syncState);
           }
         } catch (err) {
+          await adoptRemoteManifestVersion(syncState, err, async () => {
+            await saveSyncState(stateFile, syncState);
+          });
           logger.error({ err, path: remotePath }, "Upload failed");
         }
       } else if (event.type === "unlink") {
@@ -397,6 +416,9 @@ export async function startDaemon(): Promise<void> {
             syncState.manifestVersion = deleteResult.manifestVersion;
             await saveSyncState(stateFile, syncState);
           } catch (err) {
+            await adoptRemoteManifestVersion(syncState, err, async () => {
+              await saveSyncState(stateFile, syncState);
+            });
             logger.error({ err, path: remotePath }, "Delete commit failed");
           }
         }

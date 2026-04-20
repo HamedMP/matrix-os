@@ -227,6 +227,9 @@ describe("createHomeMirror", () => {
         getPeers() {
           return [];
         },
+        getTotalPeerCount() {
+          return 0;
+        },
       } as unknown as PeerRegistry;
 
       const mirror = createHomeMirror({
@@ -382,6 +385,38 @@ describe("createHomeMirror", () => {
       expect(syncChanges.length).toBeGreaterThan(0);
       expect(syncChanges.some((s) => s.includes("new.md"))).toBe(true);
 
+      await mirror.stop();
+    });
+
+    it("pushes existing local-only files during startup without relying on watcher replay", async () => {
+      await writeFile(join(tmpRoot, "preexisting.md"), "present before watcher starts");
+
+      const laptopSends: string[] = [];
+      registry.registerPeer(
+        "alice",
+        { peerId: "laptop-1", hostname: "mbp", platform: "darwin", clientVersion: "0.1.0" },
+        {
+          readyState: 1,
+          send(data: string) {
+            laptopSends.push(data);
+          },
+        },
+      );
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
+
+      expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
       await mirror.stop();
     });
 

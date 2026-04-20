@@ -149,3 +149,8 @@ export const AcceptShareSchema = z.object({
   shareId: z.string().uuid(),
 });
 export type AcceptShare = z.infer<typeof AcceptShareSchema>;
+
+export const DeleteShareSchema = z.object({
+  shareId: z.string().uuid(),
+});
+export type DeleteShare = z.infer<typeof DeleteShareSchema>;

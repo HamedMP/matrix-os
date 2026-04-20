@@ -7,6 +7,7 @@ import {
   ResolveConflictSchema,
   CreateShareSchema,
   AcceptShareSchema,
+  DeleteShareSchema,
 } from "./types.js";
 import { readManifest, type ManifestStore } from "./manifest.js";
 import {
@@ -66,6 +67,14 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     }
   };
 
+  async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }) {
+    try {
+      return { ok: true as const, body: await c.req.json() };
+    } catch {
+      return { ok: false as const };
+    }
+  }
+
   // GET /manifest
   app.get("/manifest", async (c) => {
     const userId = getUserId(c);
@@ -93,7 +102,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
 
-    const body = await c.req.json();
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = json.body;
     const parsed = PresignRequestSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -128,7 +141,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   app.post("/commit", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
     const peerId = deps.getPeerId(c);
-    const body = await c.req.json();
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = json.body;
     const parsed = CommitRequestSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -173,10 +190,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const userId = getUserId(c);
     const peers = deps.peerRegistry.getPeers(userId);
     const meta = await deps.db.getManifestMeta(userId);
+    const aggregate = await deps.db.getAggregateManifestStats?.();
 
-    syncConnectedPeers.set(peers.length);
-    syncManifestEntries.set(meta?.file_count ?? 0);
-    syncManifestBytes.set(Number(meta?.total_size ?? 0n));
+    syncConnectedPeers.set(deps.peerRegistry.getTotalPeerCount());
+    syncManifestEntries.set(aggregate?.fileCount ?? 0);
+    syncManifestBytes.set(Number(aggregate?.totalSize ?? 0n));
 
     return c.json({
       connectedPeers: peers.map((p) => ({
@@ -196,7 +214,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
-    const body = await c.req.json();
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = json.body;
     const parsed = ResolveConflictSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -225,7 +247,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /share -- create sharing grant
   app.post("/share", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
-    const body = await c.req.json();
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = json.body;
     const parsed = CreateShareSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -256,12 +282,15 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // DELETE /share -- revoke sharing grant
   app.delete("/share", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
-    const body = await c.req.json();
-    const shareId = body?.shareId;
-
-    if (!shareId || typeof shareId !== "string") {
-      return c.json({ error: "shareId is required" }, 400);
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
     }
+    const parsed = DeleteShareSchema.safeParse(json.body);
+    if (!parsed.success) {
+      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+    }
+    const { shareId } = parsed.data;
 
     try {
       await deps.sharing.revokeShare(userId, shareId);
@@ -281,7 +310,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /share/accept -- accept share invitation
   app.post("/share/accept", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
-    const body = await c.req.json();
+    const json = await parseJsonBody(c);
+    if (!json.ok) {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const body = json.body;
     const parsed = AcceptShareSchema.safeParse(body);
 
     if (!parsed.success) {
