@@ -17,6 +17,8 @@ import {
 import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 
+const RECENT_WRITE_CAP = 50_000;
+
 // Folders we never push -- big build outputs, transient state, secrets,
 // or things that would loop on themselves (the home dir itself when run
 // from inside it). Keep this conservative; the user can override with a
@@ -89,6 +91,10 @@ function hashFileStream(absPath: string): Promise<string> {
   });
 }
 
+function hashBuffer(buf: Buffer): string {
+  return `sha256:${createHash("sha256").update(buf).digest("hex")}`;
+}
+
 function normalizeRelativePath(relPath: string): string {
   const checked = resolveWithinPrefix("home-mirror", relPath);
   if (!checked.valid) {
@@ -148,8 +154,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const SUPPRESS_MS = 5_000;
   const markWritten = (relPath: string) => {
     recentlyWritten.set(relPath, Date.now());
-    // Cap the map; oldest entry evicted if it grows past 1000.
-    if (recentlyWritten.size > 1000) {
+    // Keep enough entries to cover an initial pull of the full manifest.
+    if (recentlyWritten.size > RECENT_WRITE_CAP) {
       const oldest = recentlyWritten.keys().next().value;
       if (oldest !== undefined) recentlyWritten.delete(oldest);
     }
@@ -186,19 +192,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushFile(relPath: string): Promise<void> {
     const absPath = join(config.homeRoot, relPath);
-    let fileStat;
-    try {
-      fileStat = await stat(absPath);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw err;
-    }
-    if (!fileStat.isFile()) return;
-
-    const hash = await hashFileStream(absPath);
 
     await enqueue(async () => {
+      let fileStat;
+      try {
+        fileStat = await stat(absPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
+      }
+      if (!fileStat.isFile()) return;
+
       const existing = await readManifest(store, config.userId);
+      const body = await readFile(absPath);
+      const hash = hashBuffer(body);
 
       const currentEntry = existing.manifest.files[relPath];
       if (currentEntry?.hash === hash && !currentEntry.deleted) {
@@ -206,21 +213,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
-      const body = await readFile(absPath);
       const key = buildFileKey(config.userId, relPath);
       await config.r2.putObject(key, body);
 
       const action = currentEntry ? "update" : "add";
       const next: Manifest = applyCommitToManifest(
         existing.manifest,
-        [{ path: relPath, hash, size: fileStat.size, action }],
+        [{ path: relPath, hash, size: body.length, action }],
         config.peerId,
       );
 
       const newVersion = existing.manifestVersion + 1;
       await writeManifest(store, config.userId, next, newVersion);
-      broadcastChange({ path: relPath, hash, size: fileStat.size, action }, newVersion);
-      log.info(`pushed ${relPath} (${fileStat.size}B)`);
+      broadcastChange({ path: relPath, hash, size: body.length, action }, newVersion);
+      log.info(`pushed ${relPath} (${body.length}B)`);
     });
   }
 
@@ -283,7 +289,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const files = existing.manifest.files ?? {};
     let pulled = 0;
     for (const [relPath, entry] of Object.entries(files)) {
-      if (!entry.hash || isIgnored(relPath, extraIgnore)) continue;
+      if (!entry.hash || entry.deleted || isIgnored(relPath, extraIgnore)) continue;
       try {
         await pullFile(relPath, entry);
         pulled++;

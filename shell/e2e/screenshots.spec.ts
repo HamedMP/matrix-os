@@ -46,9 +46,12 @@ test.describe("Visual regression", () => {
   });
 
   test("chat sidebar open", async ({ page }) => {
-    const chatToggle = page.getByTestId("chat-toggle");
-    await chatToggle.click();
+    await page.keyboard.press("Meta+k");
     await page.waitForTimeout(300);
+    await page.keyboard.type("Chat");
+    await page.waitForTimeout(200);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(500);
     await expect(page).toHaveScreenshot("chat-sidebar.png", {
       maxDiffPixelRatio: 0.01,
     });

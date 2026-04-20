@@ -78,6 +78,9 @@ for that item both exist locally.
 - [x] Manifest reads must support AWS SDK stream bodies that expose `transformToString()` instead of assuming `.text()`.
 - [x] HTTP file writes in request handlers must use async `fs/promises`, not `mkdirSync` / `writeFileSync`.
 - [x] Commit-time blob cleanup failures after manifest persistence must log and continue instead of surfacing a partial-success error.
+- [x] Home-mirror initial pull must skip tombstoned manifest entries instead of resurrecting deleted files.
+- [x] Home-mirror uploads must hash the exact bytes they send to R2, not hash before the queued read/upload path.
+- [x] Home-mirror local-write suppression must cover large initial pulls instead of evicting entries after 1000 files.
 
 ## Verification Notes
 
@@ -92,6 +95,9 @@ for that item both exist locally.
 - [x] Latest gateway blocker regression passes locally: `tests/gateway/sync/manifest.test.ts`, `commit.test.ts`, `ws-peer-lifecycle.test.ts` (`3 files`, `29 tests`).
 - [x] Latest platform blocker regression passes in Docker dev container: `tests/platform/api.test.ts`, `orchestrator.test.ts`, `device-flow.test.ts`, `db.test.ts` (`4 files`, `71 tests`).
 - [x] Host-side `tests/platform/db.test.ts` remains non-signal in this worktree because the local `better-sqlite3` native module is built for a different Node ABI; Docker dev-container results are authoritative for that suite.
+- [x] Latest home-mirror regression passes locally: `tests/gateway/sync/home-mirror.test.ts` (`1 file`, `11 tests`).
+- [x] Shell theme regression passes locally: `tests/shell/useTheme.test.ts`, `theme-presets.test.ts` (`2 files`, `39 tests`).
+- [ ] Local Playwright verification for `shell/e2e/screenshots.spec.ts` is currently blocked on this machine because the Chromium test binary is not installed (`pnpm exec playwright install` required). CI remains the source of truth for the screenshot path.
 
 ## Lower-Priority Follow-ups From Review
 

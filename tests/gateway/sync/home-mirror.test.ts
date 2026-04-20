@@ -83,6 +83,16 @@ async function waitFor(check: () => boolean, timeoutMs = 3_000): Promise<void> {
   throw new Error("Timed out waiting for condition");
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("createHomeMirror", () => {
   let tmpRoot: string;
   let r2: ReturnType<typeof createFakeR2>;
@@ -365,6 +375,67 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("skips tombstoned files during initial pull", async () => {
+      const deletedContent = Buffer.from("do not resurrect");
+      r2.store.set(
+        "matrixos-sync/alice/files/ghost.txt",
+        deletedContent,
+      );
+      r2.store.set(
+        "matrixos-sync/alice",
+        Buffer.from("unused"),
+      );
+      r2.store.set(
+        "matrixos-sync/alice/manifest.json",
+        Buffer.from(
+          JSON.stringify({
+            version: 2,
+            files: {
+              "ghost.txt": {
+                hash: sha256(deletedContent),
+                size: deletedContent.length,
+                mtime: Date.now(),
+                peerId: "laptop-1",
+                version: 1,
+                deleted: true,
+                deletedAt: Date.now(),
+              },
+            },
+          }),
+        ),
+      );
+
+      db = {
+        async getManifestMeta() {
+          return {
+            version: 1,
+            file_count: 0,
+            total_size: 0n,
+            etag: '"etag"',
+            updated_at: new Date(),
+          };
+        },
+        async upsertManifestMeta() {},
+        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
+          return fn(undefined);
+        },
+      } as unknown as ManifestDb;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      await expect(stat(join(tmpRoot, "ghost.txt"))).rejects.toThrow(/ENOENT/);
+      await mirror.stop();
+    });
+
     it("logs blob-delete failures instead of swallowing them", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const mirror = createHomeMirror({
@@ -390,6 +461,56 @@ describe("createHomeMirror", () => {
         expect.stringContaining("delete blob failed for notes.txt:"),
         "r2 unavailable",
       );
+      await mirror.stop();
+    });
+
+    it("records the hash for the exact bytes uploaded", async () => {
+      const gate = deferred<void>();
+      let getMetaCalls = 0;
+      db = {
+        async getManifestMeta() {
+          getMetaCalls++;
+          if (getMetaCalls === 2) {
+            await gate.promise;
+          }
+          return null;
+        },
+        async upsertManifestMeta() {},
+        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
+          return fn(undefined);
+        },
+      } as unknown as ManifestDb;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      const filePath = join(tmpRoot, "race.txt");
+      await writeFile(filePath, "old bytes");
+      await waitFor(() => getMetaCalls > 1);
+      await writeFile(filePath, "new bytes that should win");
+      gate.resolve();
+
+      await waitFor(() => r2.store.has("matrixos-sync/alice/manifest.json"));
+
+      const uploaded = r2.store.get("matrixos-sync/alice/files/race.txt");
+      const manifestBuf = r2.store.get("matrixos-sync/alice/manifest.json");
+      expect(uploaded).toBeDefined();
+      expect(manifestBuf).toBeDefined();
+
+      const manifest = JSON.parse(manifestBuf!.toString("utf8")) as {
+        files: Record<string, { hash: string; size: number }>;
+      };
+      expect(manifest.files["race.txt"]?.hash).toBe(sha256(uploaded!));
+      expect(manifest.files["race.txt"]?.size).toBe(uploaded!.length);
+
       await mirror.stop();
     });
   });
