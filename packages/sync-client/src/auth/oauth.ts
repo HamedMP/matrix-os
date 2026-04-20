@@ -96,8 +96,7 @@ export async function pollForToken(
       throw new Error("Device code expired before authorization completed");
     }
 
-    const body = await res.text().catch(() => "");
-    throw new Error(`Token polling failed: ${res.status} ${body}`);
+    throw new Error(`Token polling failed with status ${res.status}`);
   }
 
   throw new Error("Device authorization timed out");

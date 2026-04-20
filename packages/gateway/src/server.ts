@@ -87,6 +87,7 @@ import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
+import { sanitizePeerId } from "./sync/peer-id.js";
 import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
@@ -327,7 +328,7 @@ export async function createGateway(config: GatewayConfig) {
         // userId); falls back to MATRIX_HANDLE only when no JWT is present
         // (legacy bearer / dev mode).
         getUserId: (c) => getUserIdFromContext(c),
-        getPeerId: (c) => c.req.header("X-Peer-Id") ?? "unknown",
+        getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
       };
 
       console.log("[sync] Sync API initialized (S3 endpoint:", s3Endpoint ?? "R2", ")");

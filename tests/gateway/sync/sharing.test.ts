@@ -5,13 +5,14 @@ import {
   type SharingService,
   type SharingDb,
   type ShareRow,
+  ShareInvalidPathError,
 } from "../../../packages/gateway/src/sync/sharing.js";
 
 function makeShareRow(overrides: Partial<ShareRow> = {}): ShareRow {
   return {
     id: "share-uuid-1",
     owner_id: "owner1",
-    path: "projects/startup/",
+    path: "projects/startup",
     grantee_id: "grantee1",
     role: "editor",
     accepted: false,
@@ -71,12 +72,12 @@ describe("SharingService", () => {
       });
 
       expect(result.shareId).toBe("share-uuid-1");
-      expect(result.path).toBe("projects/startup/");
+      expect(result.path).toBe("projects/startup");
       expect(result.role).toBe("editor");
 
       expect(db.insertShare).toHaveBeenCalledWith({
         owner_id: "owner1",
-        path: "projects/startup/",
+        path: "projects/startup",
         grantee_id: "grantee1",
         role: "editor",
         expires_at: undefined,
@@ -86,9 +87,23 @@ describe("SharingService", () => {
         type: "sync:share-invite",
         shareId: "share-uuid-1",
         ownerHandle: "@owner:matrix-os.com",
-        path: "projects/startup/",
+        path: "projects/startup",
         role: "editor",
       });
+    });
+
+    it("rejects traversal paths before inserting the share", async () => {
+      (db.resolveHandle as ReturnType<typeof vi.fn>).mockResolvedValue("grantee1");
+
+      await expect(
+        service.createShare("owner1", {
+          path: "../../../etc/passwd",
+          granteeHandle: "@colleague:matrix-os.com",
+          role: "viewer",
+        }),
+      ).rejects.toBeInstanceOf(ShareInvalidPathError);
+
+      expect(db.insertShare).not.toHaveBeenCalled();
     });
 
     it("rejects self-share", async () => {
@@ -164,7 +179,7 @@ describe("SharingService", () => {
       const result = await service.acceptShare("grantee1", "share-uuid-1");
 
       expect(result.accepted).toBe(true);
-      expect(result.path).toBe("projects/startup/");
+      expect(result.path).toBe("projects/startup");
       expect(result.ownerHandle).toBe("@owner:matrix-os.com");
       expect(db.updateShareAccepted).toHaveBeenCalledWith("share-uuid-1", true);
     });
@@ -206,7 +221,7 @@ describe("SharingService", () => {
         type: "sync:access-revoked",
         shareId: "share-uuid-1",
         ownerHandle: "@owner:matrix-os.com",
-        path: "projects/startup/",
+        path: "projects/startup",
       });
     });
 

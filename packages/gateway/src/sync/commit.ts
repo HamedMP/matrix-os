@@ -38,9 +38,9 @@ export async function handleCommit(
     }
   }
 
-  return deps.db.withAdvisoryLock(userId, async () => {
+  return deps.db.withAdvisoryLock(userId, async (dbExecutor) => {
     // Step 1: Check version
-    const meta = await deps.db.getManifestMeta(userId);
+    const meta = await deps.db.getManifestMeta(userId, dbExecutor);
     const currentVersion = meta?.version ?? 0;
 
     if (request.expectedVersion !== currentVersion) {
@@ -52,7 +52,7 @@ export async function handleCommit(
     }
 
     // Step 2: Read current manifest from R2
-    const store = { r2: deps.r2, db: deps.db };
+    const store = { r2: deps.r2, db: deps.db, dbExecutor };
     const { manifest } = await readManifest(store, userId);
 
     // Step 3: Apply changes

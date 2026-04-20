@@ -143,6 +143,29 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     }
   }
 
+  async function safeStopAndRemoveContainer(
+    container: { stop: () => Promise<unknown>; remove: (opts: { force: true }) => Promise<unknown> },
+    handle: string,
+  ): Promise<void> {
+    try {
+      await container.stop();
+    } catch (err) {
+      console.warn(
+        `[orchestrator] Failed to stop container for ${handle}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    try {
+      await container.remove({ force: true });
+    } catch (err) {
+      console.warn(
+        `[orchestrator] Failed to remove container for ${handle}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   function buildEnv(handle: string, displayName?: string, clerkUserId?: string): string[] {
     const containerName = `matrixos-${handle}`;
     const env = [
@@ -262,8 +285,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       if (record.containerId) {
         const container = docker.getContainer(record.containerId);
-        try { await container.stop(); } catch {}
-        try { await container.remove({ force: true }); } catch {}
+        await safeStopAndRemoveContainer(container, handle);
       }
 
       releasePort(db, `${handle}-gw`);
@@ -287,8 +309,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       if (record.containerId) {
         const old = docker.getContainer(record.containerId);
-        try { await old.stop(); } catch {}
-        try { await old.remove({ force: true }); } catch {}
+        await safeStopAndRemoveContainer(old, handle);
       }
 
       await pullImageIfRemote(image);
@@ -358,8 +379,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
           if (record.containerId) {
             const old = docker.getContainer(record.containerId);
-            try { await old.stop(); } catch {}
-            try { await old.remove({ force: true }); } catch {}
+            await safeStopAndRemoveContainer(old, record.handle);
           }
 
           const containerName = `matrixos-${record.handle}`;
@@ -429,7 +449,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           if (actual !== record.status) {
             updateContainerStatus(db, record.handle, actual);
           }
-        } catch {
+        } catch (err) {
+          console.warn(
+            `[orchestrator] Failed to inspect container ${record.handle}:`,
+            err instanceof Error ? err.message : String(err),
+          );
           if (record.status !== 'stopped') {
             updateContainerStatus(db, record.handle, 'stopped');
           }

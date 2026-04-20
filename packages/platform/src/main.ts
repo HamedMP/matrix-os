@@ -28,6 +28,17 @@ const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 
+function isMissingContainerError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith('No container for handle:');
+}
+
+function logPlatformRouteError(route: string, err: unknown): void {
+  console.error(
+    `[platform] ${route} failed:`,
+    err instanceof Error ? err.message : String(err),
+  );
+}
+
 function timingSafeTokenEquals(actual: string | undefined, expected: string): boolean {
   if (!actual) return false;
   const actualBuf = Buffer.from(actual);
@@ -394,8 +405,12 @@ export function createApp(deps: {
       }
 
       return c.json(record, 201);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 409);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.startsWith('Container already exists for handle:')) {
+        return c.json({ error: 'Container already exists' }, 409);
+      }
+      logPlatformRouteError('/containers/provision', e);
+      return c.json({ error: 'Provision failed' }, 500);
     }
   });
 
@@ -403,8 +418,12 @@ export function createApp(deps: {
     try {
       await orchestrator.start(c.req.param('handle'));
       return c.json({ ok: true });
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle/start', e);
+      return c.json({ error: 'Failed to start container' }, 500);
     }
   });
 
@@ -412,8 +431,12 @@ export function createApp(deps: {
     try {
       await orchestrator.stop(c.req.param('handle'));
       return c.json({ ok: true });
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle/stop', e);
+      return c.json({ error: 'Failed to stop container' }, 500);
     }
   });
 
@@ -421,8 +444,12 @@ export function createApp(deps: {
     try {
       const record = await orchestrator.upgrade(c.req.param('handle'));
       return c.json(record);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle/upgrade', e);
+      return c.json({ error: 'Upgrade failed' }, 500);
     }
   });
 
@@ -445,8 +472,9 @@ export function createApp(deps: {
     try {
       const record = await orchestrator.upgrade(handle);
       return c.json(record);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 500);
+    } catch (e: unknown) {
+      logPlatformRouteError('/containers/:handle/self-upgrade', e);
+      return c.json({ error: 'Upgrade failed' }, 500);
     }
   });
 
@@ -459,8 +487,12 @@ export function createApp(deps: {
     try {
       await orchestrator.destroy(c.req.param('handle'));
       return c.json({ ok: true });
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle', e);
+      return c.json({ error: 'Failed to destroy container' }, 500);
     }
   });
 
@@ -584,8 +616,9 @@ export function createApp(deps: {
     try {
       const result = await social.sendMessage(c.req.param('handle'), text, from);
       return c.json(result);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      logPlatformRouteError('/social/send/:handle', e);
+      return c.json({ error: 'Message delivery failed' }, 404);
     }
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHomeMirror } from "../../../packages/gateway/src/sync/home-mirror.js";
@@ -28,6 +28,9 @@ function createFakeR2(): R2Client & { store: Map<string, Buffer> } {
         body: {
           async transformToByteArray() {
             return new Uint8Array(buf);
+          },
+          async text() {
+            return buf.toString("utf8");
           },
         } as unknown as ReadableStream,
         etag: `"etag-${key}"`,
@@ -58,14 +61,26 @@ function createFakeManifestDb(): ManifestDb {
     async upsertManifestMeta() {
       /* no-op */
     },
-    async withAdvisoryLock<T>(_userId: string, fn: () => Promise<T>): Promise<T> {
-      return fn();
+    async withAdvisoryLock<T>(
+      _userId: string,
+      fn: (executor: unknown) => Promise<T>,
+    ): Promise<T> {
+      return fn(undefined);
     },
   } as unknown as ManifestDb;
 }
 
 async function settle(ms = 30) {
   await new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await settle(50);
+  }
+  throw new Error("Timed out waiting for condition");
 }
 
 describe("createHomeMirror", () => {
@@ -147,6 +162,37 @@ describe("createHomeMirror", () => {
       await settle(80);
 
       await expect(stat(join(tmpRoot, "notes/bar.md"))).rejects.toThrow(/ENOENT/);
+      await mirror.stop();
+    });
+
+    it("logs remote delete failures instead of swallowing them", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      await mkdir(join(tmpRoot, "notes", "blocked"), { recursive: true });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: "notes/blocked", hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
+        peerId: "laptop-1",
+        manifestVersion: 3,
+      });
+
+      await settle(80);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("remote-change failed for notes/blocked:"),
+        expect.any(String),
+      );
       await mirror.stop();
     });
 
@@ -316,6 +362,34 @@ describe("createHomeMirror", () => {
       await settle(500);
 
       expect(putSpy).not.toHaveBeenCalled();
+      await mirror.stop();
+    });
+
+    it("logs blob-delete failures instead of swallowing them", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      await writeFile(join(tmpRoot, "notes.txt"), "hello");
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/notes.txt"));
+
+      const deleteSpy = vi.spyOn(r2, "deleteObject").mockRejectedValueOnce(new Error("r2 unavailable"));
+      await unlink(join(tmpRoot, "notes.txt"));
+      await waitFor(() => deleteSpy.mock.calls.length > 0);
+
+      expect(deleteSpy).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("delete blob failed for notes.txt:"),
+        "r2 unavailable",
+      );
       await mirror.stop();
     });
   });

@@ -15,6 +15,7 @@ export class IpcServer {
   private server: Server | null = null;
   private connections = new Set<Socket>();
   private readonly maxConnections = 10;
+  private readonly maxBufferBytes = 65_536;
 
   constructor(private readonly options: IpcServerOptions) {}
 
@@ -62,6 +63,10 @@ export class IpcServer {
 
     socket.on("data", (data) => {
       buffer += data.toString();
+      if (buffer.length > this.maxBufferBytes) {
+        socket.destroy();
+        return;
+      }
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
 

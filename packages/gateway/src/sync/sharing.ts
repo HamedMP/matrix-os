@@ -1,5 +1,6 @@
 import type { PeerRegistry } from "./ws-events.js";
 import type { ShareRole } from "./types.js";
+import { resolveWithinPrefix } from "./path-validation.js";
 
 // ---------------------------------------------------------------------------
 // DB interface (for testability without real Postgres)
@@ -116,6 +117,13 @@ export class ShareDuplicateError extends Error {
   }
 }
 
+export class ShareInvalidPathError extends Error {
+  constructor(path: string) {
+    super(`Invalid share path: ${path}`);
+    this.name = "ShareInvalidPathError";
+  }
+}
+
 export class ShareForbiddenError extends Error {
   constructor(reason: string) {
     super(reason);
@@ -161,6 +169,12 @@ export function createSharingService(deps: {
 
   return {
     async createShare(ownerId, input) {
+      const pathCheck = resolveWithinPrefix(ownerId, input.path);
+      if (!pathCheck.valid) {
+        throw new ShareInvalidPathError(input.path);
+      }
+      const normalizedPath = input.path.replace(/\/+/g, "/").replace(/\/$/, "");
+
       // Resolve grantee handle to user ID
       const granteeId = await db.resolveHandle(input.granteeHandle);
       if (!granteeId) {
@@ -176,7 +190,7 @@ export function createSharingService(deps: {
       try {
         row = await db.insertShare({
           owner_id: ownerId,
-          path: input.path,
+          path: normalizedPath,
           grantee_id: granteeId,
           role: input.role,
           expires_at: input.expiresAt,
@@ -194,7 +208,7 @@ export function createSharingService(deps: {
         type: "sync:share-invite",
         shareId: row.id,
         ownerHandle: ownerHandle ?? ownerId,
-        path: input.path,
+        path: row.path,
         role: input.role,
       });
 

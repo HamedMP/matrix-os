@@ -1,6 +1,8 @@
+import type { Kysely, Transaction } from "kysely";
 import { ManifestSchema, type Manifest, type CommitFile } from "./types.js";
 import { buildManifestKey } from "./r2-client.js";
 import type { R2Client } from "./r2-client.js";
+import type { SyncDatabase } from "./sharing-db.js";
 
 const MANIFEST_FILE_CAP = 50_000;
 
@@ -12,15 +14,28 @@ export interface ManifestMeta {
   updated_at: Date;
 }
 
+export type ManifestDbExecutor = Kysely<SyncDatabase> | Transaction<SyncDatabase>;
+
 export interface ManifestDb {
-  getManifestMeta(userId: string): Promise<ManifestMeta | null>;
-  upsertManifestMeta(userId: string, meta: Omit<ManifestMeta, "updated_at">): Promise<void>;
-  withAdvisoryLock<T>(userId: string, fn: () => Promise<T>): Promise<T>;
+  getManifestMeta(
+    userId: string,
+    executor?: ManifestDbExecutor,
+  ): Promise<ManifestMeta | null>;
+  upsertManifestMeta(
+    userId: string,
+    meta: Omit<ManifestMeta, "updated_at">,
+    executor?: ManifestDbExecutor,
+  ): Promise<void>;
+  withAdvisoryLock<T>(
+    userId: string,
+    fn: (executor: ManifestDbExecutor) => Promise<T>,
+  ): Promise<T>;
 }
 
 export interface ManifestStore {
   r2: R2Client;
   db: ManifestDb;
+  dbExecutor?: ManifestDbExecutor;
 }
 
 export interface ReadManifestResult {
@@ -35,7 +50,7 @@ export async function readManifest(
   store: ManifestStore,
   userId: string,
 ): Promise<ReadManifestResult> {
-  const meta = await store.db.getManifestMeta(userId);
+  const meta = await store.db.getManifestMeta(userId, store.dbExecutor);
   const key = buildManifestKey(userId);
 
   let manifest: Manifest;
@@ -84,7 +99,7 @@ export async function writeManifest(
     file_count: fileCount,
     total_size: totalSize,
     etag: result.etag ?? null,
-  });
+  }, store.dbExecutor);
 }
 
 export function applyCommitToManifest(

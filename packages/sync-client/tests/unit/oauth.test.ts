@@ -175,4 +175,17 @@ describe("pollForToken", () => {
     expect(written.accessToken).toBe("jwt-token");
     expect(written.handle).toBe("alice");
   });
+
+  it("does not leak raw response bodies in polling errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response("<html>stack trace</html>", { status: 500 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = pollForToken(config, "device-1", 5, 60, "/tmp/test-auth-5.json");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(promise).rejects.toThrow("Token polling failed with status 500");
+    await expect(promise).rejects.not.toThrow(/stack trace/i);
+  });
 });

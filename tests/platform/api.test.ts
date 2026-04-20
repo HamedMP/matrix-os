@@ -81,6 +81,23 @@ describe('platform/api', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /containers/provision returns a generic duplicate error', async () => {
+    await app.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ handle: 'alice', clerkUserId: 'c1' }),
+    });
+
+    const res = await app.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ handle: 'alice', clerkUserId: 'c2' }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'Container already exists' });
+  });
+
   it('fails closed when admin routes are not configured with a secret', async () => {
     const { docker } = createMockDocker();
     const orchestrator = createOrchestrator({ db, docker: docker as any });
@@ -139,6 +156,21 @@ describe('platform/api', () => {
     const info = await app.request('/containers/alice', { headers: adminHeaders });
     const body = await info.json();
     expect(body.status).toBe('stopped');
+  });
+
+  it('POST /containers/:handle/start does not leak raw orchestrator errors', async () => {
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    vi.spyOn(orchestrator, 'start').mockRejectedValueOnce(new Error('docker exploded'));
+    const errorApp = createApp({ db, orchestrator, platformSecret });
+
+    const res = await errorApp.request('/containers/alice/start', {
+      method: 'POST',
+      headers: adminHeaders,
+    });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Failed to start container' });
   });
 
   it('POST /containers/rolling-restart upgrades running containers', async () => {

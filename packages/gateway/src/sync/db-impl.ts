@@ -1,13 +1,20 @@
 import { sql, type Kysely } from "kysely";
-import type { ManifestDb, ManifestMeta } from "./manifest.js";
+import type { ManifestDb, ManifestDbExecutor, ManifestMeta } from "./manifest.js";
 import type { SharingDb, ShareRow } from "./sharing.js";
 import type { ShareRole } from "./types.js";
 import type { SyncDatabase } from "./sharing-db.js";
 
 export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
+  function getExecutor(executor?: ManifestDbExecutor): ManifestDbExecutor {
+    return executor ?? kysely;
+  }
+
   return {
-    async getManifestMeta(userId: string): Promise<ManifestMeta | null> {
-      const row = await kysely
+    async getManifestMeta(
+      userId: string,
+      executor?: ManifestDbExecutor,
+    ): Promise<ManifestMeta | null> {
+      const row = await getExecutor(executor)
         .selectFrom("sync_manifests")
         .selectAll()
         .where("user_id", "=", userId)
@@ -27,8 +34,9 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
     async upsertManifestMeta(
       userId: string,
       meta: Omit<ManifestMeta, "updated_at">,
+      executor?: ManifestDbExecutor,
     ): Promise<void> {
-      await kysely
+      await getExecutor(executor)
         .insertInto("sync_manifests")
         .values({
           user_id: userId,
@@ -50,10 +58,13 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
         .execute();
     },
 
-    async withAdvisoryLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    async withAdvisoryLock<T>(
+      userId: string,
+      fn: (executor: ManifestDbExecutor) => Promise<T>,
+    ): Promise<T> {
       return await kysely.transaction().execute(async (trx) => {
         await sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`.execute(trx);
-        return fn();
+        return fn(trx);
       });
     },
   };

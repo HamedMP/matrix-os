@@ -193,6 +193,27 @@ describe('platform/orchestrator', () => {
     expect(orch.getInfo('alice')).toBeUndefined();
   });
 
+  it('logs cleanup failures during destroy instead of swallowing them', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    mockContainer.stop.mockRejectedValueOnce(new Error('stop failed'));
+    mockContainer.remove.mockRejectedValueOnce(new Error('remove failed'));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+    await orch.destroy('alice');
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[orchestrator] Failed to stop container for alice:',
+      'stop failed',
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[orchestrator] Failed to remove container for alice:',
+      'remove failed',
+    );
+    expect(orch.getInfo('alice')).toBeUndefined();
+  });
+
   it('lists containers with optional status filter', async () => {
     const { docker } = createMockDocker();
     const orch = createOrchestrator({ db, docker: docker as any });

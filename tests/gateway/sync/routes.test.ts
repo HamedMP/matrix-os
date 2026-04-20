@@ -196,7 +196,7 @@ describe("POST /api/sync/presign", () => {
 describe("POST /api/sync/commit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: () => Promise<unknown>) => fn());
+    mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
   });
 
   it("commits files and returns new version", async () => {

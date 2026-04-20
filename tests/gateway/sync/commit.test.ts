@@ -45,7 +45,7 @@ describe("handleCommit", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: () => Promise<unknown>) => fn());
+    mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
     deps = {
       r2: mockR2,
       db: mockDb as any,
@@ -217,5 +217,30 @@ describe("handleCommit", () => {
     });
 
     expect(mockDb.withAdvisoryLock).toHaveBeenCalledWith("user1", expect.any(Function));
+  });
+
+  it("uses the advisory-lock transaction executor for manifest metadata reads and writes", async () => {
+    const manifest = makeManifest({});
+    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    const txn = { kind: "trx" };
+    mockDb.withAdvisoryLock.mockImplementationOnce(
+      async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(txn),
+    );
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e1"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 0, etag: '"e1"' });
+    mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "new.txt", hash: HASH_A, size: 100 }],
+      expectedVersion: 0,
+    });
+
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith("user1", txn);
+    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
+      "user1",
+      expect.objectContaining({ version: 1 }),
+      txn,
+    );
   });
 });

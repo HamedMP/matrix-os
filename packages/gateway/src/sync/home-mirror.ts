@@ -240,7 +240,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       await writeManifest(store, config.userId, next, newVersion);
 
       const key = buildFileKey(config.userId, relPath);
-      await config.r2.deleteObject(key).catch(() => undefined);
+      await config.r2.deleteObject(key).catch((err: unknown) => {
+        log.error(
+          `delete blob failed for ${relPath}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      });
       broadcastChange(
         { path: relPath, hash: entry.hash, size: 0, action: "delete" },
         newVersion,
@@ -299,7 +304,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       throw err;
     }
     markWritten(safeRelPath);
-    await unlink(absPath).catch(() => undefined);
+    await unlink(absPath);
     log.info(`pulled delete ${safeRelPath}`);
   }
 

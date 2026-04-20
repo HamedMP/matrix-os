@@ -30,6 +30,7 @@ import {
   ShareDuplicateError,
   ShareForbiddenError,
   GranteeNotFoundError,
+  ShareInvalidPathError,
 } from "./sharing.js";
 import { createSyncRateLimiter } from "./rate-limiter.js";
 
@@ -218,6 +219,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
         return c.json({ error: err.message }, 404);
       }
       if (err instanceof ShareSelfError) {
+        return c.json({ error: err.message }, 400);
+      }
+      if (err instanceof ShareInvalidPathError) {
         return c.json({ error: err.message }, 400);
       }
       if (err instanceof ShareDuplicateError) {
