@@ -8,6 +8,7 @@ import {
   readManifest,
   writeManifest,
   type ManifestDb,
+  type ManifestDbExecutor,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
 import {
@@ -186,6 +187,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   const store = { r2: config.r2, db: config.manifestDb };
 
+  async function withManifestLock<T>(
+    fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor }) => Promise<T>,
+  ): Promise<T> {
+    return config.manifestDb.withAdvisoryLock(config.userId, async (dbExecutor) =>
+      fn({ ...store, dbExecutor }),
+    );
+  }
+
   // Broadcast a sync:change to every registered peer EXCEPT this mirror so
   // the laptop daemon sees container edits in real-time. Without this the
   // laptop only learns about them on its own next commit (via the new
@@ -217,60 +226,64 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
       if (!fileStat.isFile()) return;
 
-      const existing = await readManifest(store, config.userId);
-      const body = await readFile(absPath);
-      const hash = hashBuffer(body);
+      await withManifestLock(async (lockedStore) => {
+        const existing = await readManifest(lockedStore, config.userId);
+        const body = await readFile(absPath);
+        const hash = hashBuffer(body);
 
-      const currentEntry = existing.manifest.files[relPath];
-      if (currentEntry?.hash === hash && !currentEntry.deleted) {
-        // Already in manifest with same hash -- skip the upload.
-        return;
-      }
+        const currentEntry = existing.manifest.files[relPath];
+        if (currentEntry?.hash === hash && !currentEntry.deleted) {
+          // Already in manifest with same hash -- skip the upload.
+          return;
+        }
 
-      const key = buildFileKey(config.userId, relPath);
-      await config.r2.putObject(key, body);
+        const key = buildFileKey(config.userId, relPath);
+        await config.r2.putObject(key, body);
 
-      const action = currentEntry ? "update" : "add";
-      const next: Manifest = applyCommitToManifest(
-        existing.manifest,
-        [{ path: relPath, hash, size: body.length, action }],
-        config.peerId,
-      );
+        const action = currentEntry ? "update" : "add";
+        const next: Manifest = applyCommitToManifest(
+          existing.manifest,
+          [{ path: relPath, hash, size: body.length, action }],
+          config.peerId,
+        );
 
-      const newVersion = existing.manifestVersion + 1;
-      await writeManifest(store, config.userId, next, newVersion);
-      broadcastChange({ path: relPath, hash, size: body.length, action }, newVersion);
-      log.info(`pushed ${relPath} (${body.length}B)`);
+        const newVersion = existing.manifestVersion + 1;
+        await writeManifest(lockedStore, config.userId, next, newVersion);
+        broadcastChange({ path: relPath, hash, size: body.length, action }, newVersion);
+        log.info(`pushed ${relPath} (${body.length}B)`);
+      });
     });
   }
 
   async function pushDelete(relPath: string): Promise<void> {
     await enqueue(async () => {
-      const existing = await readManifest(store, config.userId);
-      const entry = existing.manifest.files[relPath];
-      if (!entry || entry.deleted) return;
+      await withManifestLock(async (lockedStore) => {
+        const existing = await readManifest(lockedStore, config.userId);
+        const entry = existing.manifest.files[relPath];
+        if (!entry || entry.deleted) return;
 
-      const next: Manifest = applyCommitToManifest(
-        existing.manifest,
-        [{ path: relPath, hash: entry.hash, size: 0, action: "delete" }],
-        config.peerId,
-      );
-
-      const newVersion = existing.manifestVersion + 1;
-      await writeManifest(store, config.userId, next, newVersion);
-
-      const key = buildFileKey(config.userId, relPath);
-      await config.r2.deleteObject(key).catch((err: unknown) => {
-        log.error(
-          `delete blob failed for ${relPath}:`,
-          err instanceof Error ? err.message : String(err),
+        const next: Manifest = applyCommitToManifest(
+          existing.manifest,
+          [{ path: relPath, hash: entry.hash, size: 0, action: "delete" }],
+          config.peerId,
         );
+
+        const newVersion = existing.manifestVersion + 1;
+        await writeManifest(lockedStore, config.userId, next, newVersion);
+
+        const key = buildFileKey(config.userId, relPath);
+        await config.r2.deleteObject(key).catch((err: unknown) => {
+          log.error(
+            `delete blob failed for ${relPath}:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+        broadcastChange(
+          { path: relPath, hash: entry.hash, size: 0, action: "delete" },
+          newVersion,
+        );
+        log.info(`deleted ${relPath}`);
       });
-      broadcastChange(
-        { path: relPath, hash: entry.hash, size: 0, action: "delete" },
-        newVersion,
-      );
-      log.info(`deleted ${relPath}`);
     });
   }
 

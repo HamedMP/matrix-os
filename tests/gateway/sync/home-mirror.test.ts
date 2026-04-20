@@ -552,5 +552,66 @@ describe("createHomeMirror", () => {
 
       await mirror.stop();
     });
+
+    it("uses the manifest advisory lock for local pushes and deletes", async () => {
+      const lockedExecutor = { tx: "home-mirror-lock" } as unknown;
+      let meta: {
+        version: number;
+        file_count: number;
+        total_size: bigint;
+        etag: string | null;
+        updated_at: Date;
+      } | null = null;
+      const lockCalls: string[] = [];
+      const getMetaExecutors: unknown[] = [];
+      const upsertExecutors: unknown[] = [];
+
+      db = {
+        async getManifestMeta(userId: string, executor?: unknown) {
+          lockCalls.push(`meta:${userId}`);
+          getMetaExecutors.push(executor);
+          return meta;
+        },
+        async upsertManifestMeta(_userId: string, nextMeta, executor?: unknown) {
+          upsertExecutors.push(executor);
+          meta = {
+            ...nextMeta,
+            updated_at: new Date(),
+          };
+        },
+        async withAdvisoryLock<T>(userId: string, fn: (executor: unknown) => Promise<T>) {
+          lockCalls.push(`lock:${userId}`);
+          return fn(lockedExecutor);
+        },
+      } as unknown as ManifestDb;
+
+      const deleteSpy = vi.spyOn(r2, "deleteObject");
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+      lockCalls.length = 0;
+      getMetaExecutors.length = 0;
+      upsertExecutors.length = 0;
+
+      const filePath = join(tmpRoot, "locked.txt");
+      await writeFile(filePath, "hello");
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/locked.txt"));
+
+      await unlink(filePath);
+      await waitFor(() => deleteSpy.mock.calls.length > 0);
+
+      expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
+      expect(getMetaExecutors).toEqual([lockedExecutor, lockedExecutor]);
+      expect(upsertExecutors).toEqual([lockedExecutor, lockedExecutor]);
+
+      await mirror.stop();
+    });
   });
 });
