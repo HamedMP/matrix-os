@@ -104,6 +104,11 @@ export async function readJwtKeyConfig(
     if (!cached) {
       publicKeyCache.clear();
       cached = importSPKI(pub, "RS256");
+      cached.catch(() => {
+        if (publicKeyCache.get(pub) === cached) {
+          publicKeyCache.delete(pub);
+        }
+      });
       publicKeyCache.set(pub, cached);
     }
     return { publicKey: await cached };

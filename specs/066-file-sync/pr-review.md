@@ -132,6 +132,7 @@ for that item both exist locally.
 - [x] `POST /api/sync/resolve-conflict` now returns `500` when conflict-copy cleanup fails instead of claiming success after a failed R2 delete.
 - [x] Gateway JWT RS256 public-key cache is now explicitly capped to the active key instead of growing without bound.
 - [x] Platform-issued sync JWTs now default to a 24-hour lifetime instead of 30 days to reduce exposure before revocation exists.
+- [x] Gateway JWT public-key cache now evicts rejected RS256 import promises so a bad PEM does not poison verification until process restart.
 
 ## Still Open / Architectural
 
@@ -171,6 +172,7 @@ for that item both exist locally.
 - [x] Latest gateway conflict-cleanup regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/gateway/sync/home-mirror.test.ts`, `tests/gateway/sync/routes.test.ts` (`3 files`, `69 tests`).
 - [x] Latest platform internal sync body-limit regression passes in Docker dev container: `tests/platform/internal-sync-routes.test.ts`, `tests/platform/proxy-routing.test.ts`, `tests/platform/orchestrator.test.ts` (`3 files`, `33 tests`).
 - [x] Latest sync JWT lifetime regression passes locally and in Docker: `tests/platform/sync-jwt.test.ts`, `tests/platform/device-flow.test.ts`, `tests/platform/device-routes.test.ts`.
+- [x] Latest JWT key-cache retry regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/gateway/auth-jwt-cache.test.ts` (`13 tests`).
 
 ## Lower-Priority Follow-ups From Review
 
