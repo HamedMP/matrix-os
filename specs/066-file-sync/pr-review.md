@@ -127,7 +127,7 @@ for that item both exist locally.
 
 ## Still Open / Architectural
 
-- [ ] Platform startup still needs a safe way to propagate sync-auth configuration into user containers without widening tenant secret exposure.
+- [x] Platform app-domain routing now terminates sync JWT auth at the trusted platform boundary and proxies to containers with a per-container bearer token, so containers do not need platform JWT signing material.
 - [x] User containers no longer receive broad R2 credentials; storage signing/object access now stays on the trusted platform via the internal sync proxy and per-handle HMAC auth.
 - [x] User containers no longer receive `PLATFORM_DATABASE_URL`; integrations and sync storage now proxy through trusted platform routes instead of tenant-visible admin DB credentials.
 
@@ -155,6 +155,7 @@ for that item both exist locally.
 - [x] Latest orchestrator regression passes in Docker dev container: `tests/platform/orchestrator.test.ts` (`1 file`, `24 tests`).
 - [x] Trusted platform-proxy storage regression passes locally for gateway clients: `tests/gateway/sync/platform-r2-client.test.ts`, `r2-client.test.ts`, `presign.test.ts` (`3 files`, `27 tests`).
 - [x] Trusted platform-proxy platform regression passes in the Docker dev container: `tests/platform/home-mirror-env-check.test.ts`, `orchestrator.test.ts`, `internal-sync-routes.test.ts`, `proxy-routing.test.ts` (`4 files`, `37 tests`).
+- [x] Sync-JWT platform-boundary proxy regression passes in the Docker dev container: `tests/platform/orchestrator.test.ts`, `proxy-routing.test.ts`, `device-routes.test.ts`, `middleware-shortcircuit.test.ts` (`4 files`, `43 tests`).
 - [x] Latest sync correctness/perf regression passes locally: `tests/gateway/sync/routes.test.ts`, `sharing.test.ts`, `home-mirror.test.ts`, `metrics.test.ts` (`4 files`, `82 tests`).
 - [x] Latest sync-client conflict-recovery regression passes via package config: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `8 tests`).
 - [x] Latest JWT/presign/home-mirror/config hardening regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/platform/sync-jwt.test.ts`, `tests/gateway/sync/presign.test.ts`, `tests/gateway/sync/r2-client.test.ts`, `tests/gateway/app-db.test.ts`, `tests/gateway/sync/home-mirror.test.ts`, `packages/sync-client/tests/unit/oauth.test.ts`, `config.test.ts`, `ipc-server.test.ts`, `tests/gateway/sync/routes.test.ts`, `tests/gateway/sync/user-id-from-jwt.test.ts` (`11 files`, `119 tests`).

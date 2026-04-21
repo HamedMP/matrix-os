@@ -79,6 +79,7 @@ describe('platform/orchestrator', () => {
     expect(createArgs.Env).toContain('DATABASE_URL=postgres://postgres@db:5432/matrixos_alice');
     expect(createArgs.Env).toContain('PLATFORM_INTERNAL_URL=http://distro-platform-1:9000');
     expect(createArgs.Env.some((value: string) => value.startsWith('UPGRADE_TOKEN='))).toBe(true);
+    expect(createArgs.Env.some((value: string) => value.startsWith('MATRIX_AUTH_TOKEN='))).toBe(true);
     expect(createArgs.Env.some((value: string) => value.startsWith('PLATFORM_DATABASE_URL='))).toBe(false);
     clientSpy.mockRestore();
   });

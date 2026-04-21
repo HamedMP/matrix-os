@@ -6,6 +6,9 @@ import { createPlatformDb, type PlatformDB, insertContainer } from "../../packag
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
+import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
+
+const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
 function stubOrchestrator(): Orchestrator {
   return {
@@ -48,6 +51,7 @@ describe("platform proxy routing", () => {
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
+    delete process.env.PLATFORM_JWT_SECRET;
   });
 
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {
@@ -78,11 +82,42 @@ describe("platform proxy routing", () => {
     expect(init?.redirect).toBe("manual");
     expect(init?.headers).toBeInstanceOf(Headers);
     const headers = init?.headers as Headers;
-    expect(headers.get("x-platform-verified")).not.toBe("platform-secret-123");
-    expect(headers.get("x-platform-verified")).toBeTruthy();
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("authorization")).not.toBe("Bearer platform-secret-123");
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
-    expect(headers.get("authorization")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("routes sync JWT bearer requests through app.matrix-os.com to the matching container", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+    });
+
+    const res = await app.request("/api/sync/manifest", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://matrixos-alice:4000/api/sync/manifest");
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("x-platform-user-id")).toBe("user_alice");
   });
 
   it("adds a timeout on /proxy/:handle fetches", async () => {

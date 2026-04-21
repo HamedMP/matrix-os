@@ -23,6 +23,7 @@ import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provis
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
 import { createAuthRoutes } from './auth-routes.js';
+import { verifySyncJwt } from './sync-jwt.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -65,11 +66,73 @@ function buildPlatformVerificationToken(handle: string, platformSecret: string):
   return createHmac('sha256', platformSecret).update(handle).digest('hex');
 }
 
+function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
+  const handleToken = buildPlatformVerificationToken(handle, platformSecret);
+  return createHmac('sha256', handleToken).update(userId).digest('hex');
+}
+
 function requireValidHandle(handle: string): string {
   if (!HANDLE_PATTERN.test(handle)) {
     throw new Error('Invalid handle');
   }
   return handle;
+}
+
+interface AppDomainIdentity {
+  handle: string;
+  userId: string;
+}
+
+async function resolveAppDomainIdentity(opts: {
+  authHeader: string | undefined;
+  cookieHeader: string | undefined;
+  clerkAuth?: ClerkAuth;
+  db: PlatformDB;
+  platformJwtSecret: string;
+}): Promise<AppDomainIdentity | null> {
+  const bearerToken = opts.authHeader?.startsWith('Bearer ')
+    ? opts.authHeader.slice(7)
+    : null;
+
+  if (bearerToken && opts.platformJwtSecret) {
+    try {
+      const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
+      const record = getContainer(opts.db, claims.handle);
+      if (record?.clerkUserId !== claims.sub) {
+        return null;
+      }
+      return {
+        handle: record.handle,
+        userId: record.clerkUserId,
+      };
+    } catch {
+      // Fall through to Clerk session auth.
+    }
+  }
+
+  if (!opts.clerkAuth) {
+    return null;
+  }
+
+  const token = opts.clerkAuth.extractToken(opts.authHeader, opts.cookieHeader);
+  if (!token) {
+    return null;
+  }
+
+  const result = await opts.clerkAuth.verify(token);
+  if (!result.authenticated || !result.userId) {
+    return null;
+  }
+
+  const record = getContainerByClerkId(opts.db, result.userId);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    handle: record.handle,
+    userId: result.userId,
+  };
 }
 
 function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
@@ -309,14 +372,8 @@ export function createApp(deps: {
       return next();
     }
 
-    if (!clerkAuth) {
-      return c.text('Clerk not configured', 500);
-    }
-
-    const token = clerkAuth.extractToken(
-      c.req.header('authorization'),
-      c.req.header('cookie'),
-    );
+    const authHeader = c.req.header('authorization');
+    const cookieHeader = c.req.header('cookie');
 
     const path = c.req.path;
     const isGatewayPath =
@@ -328,38 +385,34 @@ export function createApp(deps: {
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
 
-    // No session -- serve Clerk auth directly from the platform.
-    if (!token) {
+    const identity = await resolveAppDomainIdentity({
+      authHeader,
+      cookieHeader,
+      clerkAuth,
+      db,
+      platformJwtSecret,
+    });
+
+    // No session/JWT -- serve Clerk auth directly from the platform.
+    if (!identity) {
       console.log(`[app] no token path=${path}`);
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      if (!publishableKey) {
-        return c.text('Clerk publishable key not configured', 500);
-      }
-      return c.html(getAuthPage(publishableKey, authMode));
-    }
-
-    const result = await clerkAuth.verify(token);
-    if (!result.authenticated || !result.userId) {
-      console.log(`[app] verify failed: ${result.error}, path=${path}`);
-      if (isGatewayPath) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-      if (!publishableKey) {
+      if (!publishableKey || !clerkAuth) {
         return c.text('Clerk publishable key not configured', 500);
       }
       return c.html(getAuthPage(publishableKey, authMode));
     }
 
     console.log(`[app] verified request path=${path}`);
-    const record = getContainerByClerkId(db, result.userId);
+    const record = getContainer(db, identity.handle);
     if (!record) {
       return c.html(getNoContainerPage());
     }
 
     if (isIntegrationPath) {
-      c.set('platformUserId', result.userId);
+      c.set('platformUserId', identity.userId);
       c.set('platformHandle', record.handle);
       return next();
     }
@@ -387,11 +440,11 @@ export function createApp(deps: {
       }
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
-      // Platform already verified Clerk session -- tell user shell to skip re-verification
       if (platformSecret) {
-        headers.set('x-platform-verified', buildPlatformVerificationToken(record.handle, platformSecret));
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
+        headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
       }
-      headers.set('x-platform-user-id', result.userId);
+      headers.set('x-platform-user-id', identity.userId);
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
@@ -908,24 +961,33 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     // Session-based WebSocket routing for app.matrix-os.com
     const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
-    if (isAppDomain && clerkAuth) {
-      const token = clerkAuth.extractToken(
-        req.headers.authorization as string | undefined,
-        req.headers.cookie,
-      );
-      if (!token) { socket.destroy(); return; }
+    if (isAppDomain) {
+      const identity = await resolveAppDomainIdentity({
+        authHeader: req.headers.authorization as string | undefined,
+        cookieHeader: req.headers.cookie,
+        clerkAuth,
+        db,
+        platformJwtSecret,
+      });
+      if (!identity) { socket.destroy(); return; }
 
-      const result = await clerkAuth.verify(token);
-      if (!result.authenticated || !result.userId) { socket.destroy(); return; }
-
-      const record = getContainerByClerkId(db, result.userId);
+      const record = getContainer(db, identity.handle);
       if (!record) { socket.destroy(); return; }
 
       const upstream = createConnection({ host: `matrixos-${record.handle}`, port: 4000 }, () => {
         const path = req.url ?? '/';
         const headers = Object.entries(req.headers)
-          .filter(([k]) => k !== 'host')
+          .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
           .map(([k, v]) => `${k}: ${v}`)
+          .concat(
+            platformSecret
+              ? [
+                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`,
+                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, platformSecret)}`,
+                  `x-platform-user-id: ${identity.userId}`,
+                ]
+              : [],
+          )
           .join('\r\n');
 
         upstream.write(

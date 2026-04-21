@@ -202,6 +202,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);
+      env.push(`MATRIX_AUTH_TOKEN=${token}`);
       env.push(`PLATFORM_INTERNAL_URL=http://distro-platform-1:9000`);
     }
     return env;
