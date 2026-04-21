@@ -1115,8 +1115,10 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
   });
 
+  const appSessionBodyLimit = bodyLimit({ maxSize: 4096 });
+
   // POST /api/apps/:slug/ack — bearer-authed, issues ack token for gated installs
-  app.post("/api/apps/:slug/ack", async (c) => {
+  app.post("/api/apps/:slug/ack", appSessionBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     if (!SAFE_SLUG.test(slug)) {
       return c.json({ error: "invalid slug" }, 400);
@@ -1147,7 +1149,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   // POST /api/apps/:slug/session — bearer-authed, issues signed session cookie
-  app.post("/api/apps/:slug/session", async (c) => {
+  app.post("/api/apps/:slug/session", appSessionBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     if (!SAFE_SLUG.test(slug)) {
       return c.json({ error: "invalid slug" }, 400);

@@ -12,6 +12,7 @@ import {
   type BuildStamp,
 } from "./build-cache.js";
 import { parseManifest, type AppManifest } from "./manifest-schema.js";
+import { safeBuildEnv } from "./safe-env.js";
 
 export type BuildResult =
   | { ok: true; stamp: BuildStamp }
@@ -163,14 +164,7 @@ export class BuildOrchestrator {
       const bin = parts[0];
       const args = parts.slice(1);
 
-      const env: Record<string, string> = {
-        ...process.env as Record<string, string>,
-        NODE_ENV: "production",
-      };
-
-      if (this.storeDir) {
-        env.npm_config_store_dir = this.storeDir;
-      }
+      const env = safeBuildEnv({ storeDir: this.storeDir });
 
       const child = spawn(bin, args, {
         cwd,

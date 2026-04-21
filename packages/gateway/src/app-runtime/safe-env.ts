@@ -44,3 +44,39 @@ export function safeEnv(opts: SafeEnvOptions): Record<string, string> {
     MATRIX_GATEWAY_URL: "http://127.0.0.1:4000",
   };
 }
+
+export interface SafeBuildEnvOptions {
+  storeDir?: string;
+}
+
+// MATRIX_AUTH_TOKEN is the HKDF master key used by deriveAppSessionKey; a
+// postinstall script or Vite plugin that reads it could forge cookies for any
+// slug. NODE_OPTIONS is blocked because --inspect / --require lets a child
+// process escalate into the gateway's debugger.
+const EXPLICIT_BUILD_DENY = new Set([
+  "MATRIX_AUTH_TOKEN",
+  "DATABASE_URL",
+  "NODE_OPTIONS",
+]);
+
+// Anchored on `(^|_)` so NEXT_PUBLIC_*_PUBLISHABLE_KEY and other vars ending in
+// plain `_KEY` are intentionally not matched.
+const SECRET_SUFFIX_RE = /(^|_)(SECRET|TOKEN|PASSWORD|PRIVATE_KEY|API_KEY|SECRET_KEY)$/i;
+
+// Denylist (not allowlist like safeEnv): builds need the surrounding tool
+// ecosystem — XDG dirs, npm_config_*, TMPDIR, locale, proxy config — so we
+// start from process.env and strip known-sensitive keys.
+export function safeBuildEnv(opts: SafeBuildEnvOptions = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    if (EXPLICIT_BUILD_DENY.has(k)) continue;
+    if (SECRET_SUFFIX_RE.test(k)) continue;
+    env[k] = v;
+  }
+  env.NODE_ENV = "production";
+  if (opts.storeDir) {
+    env.npm_config_store_dir = opts.storeDir;
+  }
+  return env;
+}

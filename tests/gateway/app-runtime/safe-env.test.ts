@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { dirname } from "node:path";
-import { safeEnv } from "../../../packages/gateway/src/app-runtime/safe-env.js";
+import { safeEnv, safeBuildEnv } from "../../../packages/gateway/src/app-runtime/safe-env.js";
 
 describe("safeEnv", () => {
   const savedEnv = { ...process.env };
@@ -105,5 +105,69 @@ describe("safeEnv", () => {
     for (const k of keys) {
       expect(expectedKeys).toContain(k);
     }
+  });
+});
+
+describe("safeBuildEnv", () => {
+  const savedEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...savedEnv };
+  });
+
+  it("strips explicit denylist entries (MATRIX_AUTH_TOKEN, DATABASE_URL, NODE_OPTIONS)", () => {
+    process.env.MATRIX_AUTH_TOKEN = "hkdf-master-secret";
+    process.env.DATABASE_URL = "postgres://secret@db/prod";
+    process.env.NODE_OPTIONS = "--inspect=0.0.0.0:9229";
+    const env = safeBuildEnv();
+    expect(env.MATRIX_AUTH_TOKEN).toBeUndefined();
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.NODE_OPTIONS).toBeUndefined();
+  });
+
+  it("strips *_SECRET, *_TOKEN, *_API_KEY, *_PRIVATE_KEY, *_PASSWORD suffixes", () => {
+    process.env.CLERK_SECRET_KEY = "sk_test_secret";
+    process.env.CLAUDE_API_KEY = "sk-ant-secret";
+    process.env.GITHUB_TOKEN = "ghp_secret";
+    process.env.SSH_PRIVATE_KEY = "-----BEGIN-----";
+    process.env.DB_PASSWORD = "pw";
+    const env = safeBuildEnv();
+    expect(env.CLERK_SECRET_KEY).toBeUndefined();
+    expect(env.CLAUDE_API_KEY).toBeUndefined();
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.SSH_PRIVATE_KEY).toBeUndefined();
+    expect(env.DB_PASSWORD).toBeUndefined();
+  });
+
+  it("lets tooling env through (XDG_*, npm_config_*, TMPDIR, locale) so pnpm and vite work", () => {
+    process.env.XDG_CONFIG_HOME = "/tmp/xdg-config";
+    process.env.npm_config_registry = "https://registry.npmjs.org/";
+    process.env.TMPDIR = "/tmp";
+    process.env.LANG = "en_US.UTF-8";
+    const env = safeBuildEnv();
+    expect(env.XDG_CONFIG_HOME).toBe("/tmp/xdg-config");
+    expect(env.npm_config_registry).toBe("https://registry.npmjs.org/");
+    expect(env.TMPDIR).toBe("/tmp");
+    expect(env.LANG).toBe("en_US.UTF-8");
+  });
+
+  it("does NOT strip public/publishable keys that legitimately end in _KEY", () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_public";
+    process.env.MY_CONFIG_KEY = "not-a-secret";
+    const env = safeBuildEnv();
+    expect(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY).toBe("pk_test_public");
+    expect(env.MY_CONFIG_KEY).toBe("not-a-secret");
+  });
+
+  it("forces NODE_ENV=production even when gateway is in development", () => {
+    process.env.NODE_ENV = "development";
+    const env = safeBuildEnv();
+    expect(env.NODE_ENV).toBe("production");
+  });
+
+  it("sets npm_config_store_dir when storeDir is given, leaves it unset otherwise", () => {
+    delete process.env.npm_config_store_dir;
+    expect(safeBuildEnv().npm_config_store_dir).toBeUndefined();
+    expect(safeBuildEnv({ storeDir: "/var/pnpm-store" }).npm_config_store_dir).toBe("/var/pnpm-store");
   });
 });
