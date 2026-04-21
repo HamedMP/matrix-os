@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
@@ -25,6 +25,10 @@ import { createStatsCollector } from './stats-collector.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { verifySyncJwt } from './sync-jwt.js';
 import { isSafeWebSocketUpgradePath } from './ws-upgrade.js';
+import {
+  buildPlatformVerificationToken,
+  timingSafeTokenEquals,
+} from './platform-token.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -45,30 +49,11 @@ function logPlatformRouteError(route: string, err: unknown): void {
   );
 }
 
-function timingSafeTokenEquals(actual: string | undefined, expected: string): boolean {
-  if (!actual) return false;
-  const actualBuf = Buffer.from(actual);
-  const expectedBuf = Buffer.from(expected);
-  const maxLen = Math.max(actualBuf.length, expectedBuf.length);
-  if (maxLen === 0) return false;
-  const paddedActual = Buffer.alloc(maxLen);
-  const paddedExpected = Buffer.alloc(maxLen);
-  actualBuf.copy(paddedActual);
-  expectedBuf.copy(paddedExpected);
-  const lengthMatch = actualBuf.length === expectedBuf.length;
-  const contentMatch = timingSafeEqual(paddedActual, paddedExpected);
-  return lengthMatch && contentMatch;
-}
-
 function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {
   if (!authHeader?.startsWith('Bearer ')) {
     return false;
   }
   return timingSafeTokenEquals(authHeader.slice(7), expected);
-}
-
-function buildPlatformVerificationToken(handle: string, platformSecret: string): string {
-  return createHmac('sha256', platformSecret).update(handle).digest('hex');
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -653,10 +638,7 @@ export function createApp(deps: {
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : '';
 
     const expected = buildPlatformVerificationToken(handle, platformSecret);
-    const tokenBuf = Buffer.from(token);
-    const expectedBuf = Buffer.from(expected);
-
-    if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+    if (!timingSafeTokenEquals(token, expected)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 

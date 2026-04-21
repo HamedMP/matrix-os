@@ -242,7 +242,11 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       let body: { clientId?: unknown };
       try {
         body = await c.req.json();
-      } catch {
+      } catch (err: unknown) {
+        console.error(
+          '[device/code] JSON parse failed:',
+          err instanceof Error ? err.message : String(err),
+        );
         return c.json({ error: 'invalid_request' }, 400);
       }
       if (typeof body.clientId !== 'string' || body.clientId.length > 256) {
@@ -276,7 +280,11 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       let body: { deviceCode?: string };
       try {
         body = await c.req.json();
-      } catch {
+      } catch (err: unknown) {
+        console.error(
+          '[device/token] JSON parse failed:',
+          err instanceof Error ? err.message : String(err),
+        );
         return c.json({ error: 'invalid_request' }, 400);
       }
       if (!body.deviceCode || typeof body.deviceCode !== 'string') {
@@ -359,7 +367,11 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         const form = await c.req.parseBody();
         formCsrf = typeof form.csrf === 'string' ? form.csrf : undefined;
         userCode = typeof form.userCode === 'string' ? form.userCode : undefined;
-      } catch {
+      } catch (err: unknown) {
+        console.error(
+          '[device-flow] Form parse failed:',
+          err instanceof Error ? err.message : String(err),
+        );
         return c.json({ error: 'invalid_request' }, 400);
       }
 

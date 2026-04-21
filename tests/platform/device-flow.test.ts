@@ -207,6 +207,96 @@ describe("device flow: polling", () => {
     expect(consumed).toBeUndefined();
   });
 
+  it("does not evict an in-flight approved poll when the dedupe map is full", async () => {
+    let issueCalls = 0;
+    const resolvers = new Map<string, () => void>();
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      maxInFlightPolls: 1,
+      issueToken: async ({ clerkUserId }) => {
+        issueCalls++;
+        await new Promise<void>((resolve) => {
+          resolvers.set(clerkUserId, resolve);
+        });
+        return {
+          token: `jwt-for-${clerkUserId}`,
+          expiresAt: now + 24 * 3_600_000,
+          handle: clerkUserId.replace("user_", "@"),
+        };
+      },
+    });
+
+    const first = await flow.createDeviceCode();
+    await flow.approveDeviceCode(first.userCode, "user_alice");
+    now += 5_000;
+    const firstPoll = flow.pollDeviceCode(first.deviceCode);
+
+    await vi.waitFor(() => {
+      expect(issueCalls).toBe(1);
+    });
+
+    const second = await flow.createDeviceCode();
+    await flow.approveDeviceCode(second.userCode, "user_bob");
+    now += 5_000;
+
+    await expect(flow.pollDeviceCode(second.deviceCode)).resolves.toEqual({
+      status: "slow_down",
+    });
+
+    const repeatFirstPoll = flow.pollDeviceCode(first.deviceCode);
+    resolvers.get("user_alice")?.();
+
+    const [firstResult, repeatedResult] = await Promise.all([
+      firstPoll,
+      repeatFirstPoll,
+    ]);
+    expect(firstResult).toEqual(repeatedResult);
+    expect(issueCalls).toBe(1);
+
+    const secondPoll = flow.pollDeviceCode(second.deviceCode);
+    await vi.waitFor(() => {
+      expect(issueCalls).toBe(2);
+    });
+    resolvers.get("user_bob")?.();
+
+    await expect(secondPoll).resolves.toMatchObject({
+      status: "approved",
+      token: "jwt-for-user_bob",
+    });
+  });
+
+  it("removes fast-resolving in-flight polls before admitting a later approval", async () => {
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      maxInFlightPolls: 1,
+      issueToken: async ({ clerkUserId }) => ({
+        token: `jwt-for-${clerkUserId}`,
+        expiresAt: now + 24 * 3_600_000,
+        handle: clerkUserId.replace("user_", "@"),
+      }),
+    });
+
+    const first = await flow.createDeviceCode();
+    await flow.approveDeviceCode(first.userCode, "user_alice");
+    now += 5_000;
+    await expect(flow.pollDeviceCode(first.deviceCode)).resolves.toMatchObject({
+      status: "approved",
+      token: "jwt-for-user_alice",
+    });
+
+    const second = await flow.createDeviceCode();
+    await flow.approveDeviceCode(second.userCode, "user_bob");
+    now += 5_000;
+    await expect(flow.pollDeviceCode(second.deviceCode)).resolves.toMatchObject({
+      status: "approved",
+      token: "jwt-for-user_bob",
+    });
+  });
+
   it("does not consume the device code when token issuance fails", async () => {
     flow = createDeviceFlow({
       db,

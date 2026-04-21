@@ -185,6 +185,66 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("logs non-Error failures during initial pull without losing the reason", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const content = Buffer.from("startup payload");
+      const originalGetObject = r2.getObject.bind(r2);
+      r2.store.set(
+        "matrixos-sync/alice/manifest.json",
+        Buffer.from(JSON.stringify({
+          version: 2,
+          files: {
+            "notes/startup.md": {
+              hash: sha256(content),
+              size: content.length,
+              mtime: Date.now(),
+              peerId: "laptop-1",
+              version: 1,
+            },
+          },
+        })),
+      );
+      db = {
+        async getManifestMeta() {
+          return {
+            version: 1,
+            file_count: 1,
+            total_size: BigInt(content.length),
+            etag: '"etag"',
+            updated_at: new Date(),
+          };
+        },
+        async upsertManifestMeta() {},
+        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
+          return fn(undefined);
+        },
+      } as unknown as ManifestDb;
+      vi.spyOn(r2, "getObject").mockImplementation(async (key: string) => {
+        if (key === "matrixos-sync/alice/files/notes/startup.md") {
+          throw "non-error initial pull failure";
+        }
+        return originalGetObject(key);
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "pull failed for notes/startup.md:",
+        "non-error initial pull failure",
+      );
+
+      await mirror.stop();
+    });
+
     it("rejects remote files that exceed the auto-sync byte cap", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const content = Buffer.from("oversized");
@@ -451,6 +511,49 @@ describe("createHomeMirror", () => {
       expect(logger.error).toHaveBeenCalledWith(
         expect.stringContaining("remote-change failed for linked.txt:"),
         expect.stringMatching(/symlink/i),
+      );
+
+      await mirror.stop();
+    });
+
+    it("logs non-Error failures during remote pulls without losing the reason", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const originalGetObject = r2.getObject.bind(r2);
+      vi.spyOn(r2, "getObject").mockImplementation(async (key: string) => {
+        if (key === "matrixos-sync/alice/files/notes/string-failure.md") {
+          throw "non-error remote pull failure";
+        }
+        return originalGetObject(key);
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: "notes/string-failure.md",
+          hash: sha256(Buffer.from("replacement")),
+          size: 11,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await settle(80);
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "remote-change failed for notes/string-failure.md:",
+        "non-error remote pull failure",
       );
 
       await mirror.stop();

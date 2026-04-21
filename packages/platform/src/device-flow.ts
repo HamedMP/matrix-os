@@ -41,6 +41,7 @@ export interface DeviceFlowConfig {
   verificationBase: string;
   expiresInSec?: number; // default 900
   intervalSec?: number; // default 5
+  maxInFlightPolls?: number; // default 1024
   now?: () => number;
   random?: (bytes: number) => Buffer;
   issueToken?: (input: IssueTokenInput) => Promise<IssuedToken>;
@@ -92,10 +93,10 @@ function generateDeviceCode(random: (bytes: number) => Buffer): string {
 export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
   const expiresInSec = config.expiresInSec ?? 900;
   const intervalSec = config.intervalSec ?? 5;
+  const maxInFlightPolls = Math.max(1, config.maxInFlightPolls ?? 1024);
   const now = config.now ?? (() => Date.now());
   const random = config.random ?? ((n: number) => randomBytes(n));
   const inFlightPolls = new Map<string, Promise<DevicePollResult>>();
-  const MAX_IN_FLIGHT_POLLS = 1024;
   const issueToken =
     config.issueToken ??
     (() => {
@@ -199,8 +200,22 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
         return existingPoll;
       }
 
-      let issuePromise!: Promise<DevicePollResult>;
-      issuePromise = (async () => {
+      // Fail closed when the dedupe map is saturated. Evicting another
+      // approved device code's in-flight promise would allow a later poll
+      // for that code to issue a duplicate token.
+      if (inFlightPolls.size >= maxInFlightPolls) {
+        return { status: 'slow_down' };
+      }
+
+      let resolveIssue!: (value: DevicePollResult) => void;
+      let rejectIssue!: (reason?: unknown) => void;
+      const issuePromise = new Promise<DevicePollResult>((resolve, reject) => {
+        resolveIssue = resolve;
+        rejectIssue = reject;
+      });
+      inFlightPolls.set(deviceCode, issuePromise);
+
+      void (async () => {
         try {
           const issued = await issueToken({ clerkUserId: claimed.clerkUserId });
 
@@ -209,27 +224,21 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             .where(eq(deviceCodes.deviceCode, deviceCode))
             .run();
 
-          return {
+          resolveIssue({
             status: 'approved',
             token: issued.token,
             expiresAt: issued.expiresAt,
             handle: issued.handle,
             clerkUserId: claimed.clerkUserId,
-          };
+          });
+        } catch (err: unknown) {
+          rejectIssue(err);
         } finally {
           if (inFlightPolls.get(deviceCode) === issuePromise) {
             inFlightPolls.delete(deviceCode);
           }
         }
       })();
-
-      if (inFlightPolls.size >= MAX_IN_FLIGHT_POLLS) {
-        const oldest = inFlightPolls.keys().next().value;
-        if (oldest !== undefined) {
-          inFlightPolls.delete(oldest);
-        }
-      }
-      inFlightPolls.set(deviceCode, issuePromise);
       return issuePromise;
     },
 

@@ -159,6 +159,9 @@ export async function writeManifest(
     etag: null,
   }, store.dbExecutor);
 
+  // DB metadata remains the source of truth for fast reads, but readManifest()
+  // reconciles split-brain by taking Math.max(db.version, manifestVersion) and
+  // repairing the DB metadata if an R2 write succeeds before the DB commit does.
   await store.r2.putObject(key, body);
 }
 

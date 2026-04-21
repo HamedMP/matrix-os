@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -187,6 +188,42 @@ describe('platform/api', () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Invalid handle' });
+  });
+
+  it('POST /containers/:handle/self-upgrade rejects invalid bearer tokens regardless of length', async () => {
+    insertContainer(db, {
+      handle: 'alice',
+      clerkUserId: 'c1',
+      port: 5001,
+      shellPort: 6001,
+      status: 'running',
+    });
+
+    const res = await app.request('/containers/alice/self-upgrade', {
+      method: 'POST',
+      headers: { authorization: 'Bearer short' },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /containers/:handle/self-upgrade accepts the derived per-handle bearer token', async () => {
+    insertContainer(db, {
+      handle: 'alice',
+      clerkUserId: 'c1',
+      port: 5001,
+      shellPort: 6001,
+      status: 'running',
+    });
+    const expected = createHmac('sha256', platformSecret).update('alice').digest('hex');
+
+    const res = await app.request('/containers/alice/self-upgrade', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${expected}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ handle: 'alice' });
   });
 
   it('POST /containers/rolling-restart upgrades running containers', async () => {

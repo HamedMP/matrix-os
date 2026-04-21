@@ -141,6 +141,10 @@ function hashBuffer(buf: Buffer): string {
   return `sha256:${createHash("sha256").update(buf).digest("hex")}`;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 type LocalPushFile =
   | { kind: "file"; body: Buffer; hash: string; size: number }
   | { kind: "too_large"; size: number }
@@ -493,14 +497,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     log.info(`pulled ${safeRelPath} (${buf.length}B)`);
   }
 
-  async function cleanupTempFiles(dir: string, relDir = ""): Promise<void> {
+  async function cleanupTempFiles(dir: string, relDir = "", depth = 0): Promise<void> {
+    if (depth > LOCAL_WALK_DEPTH_CAP) {
+      throw new Error(
+        `temp file cleanup exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
+      );
+    }
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
       const absPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         if (isIgnored(relPath, extraIgnore)) continue;
-        await cleanupTempFiles(absPath, relPath);
+        await cleanupTempFiles(absPath, relPath, depth + 1);
         continue;
       }
       if (entry.isFile() && HOME_MIRROR_TMP_SUFFIX.test(entry.name)) {
@@ -531,8 +540,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       try {
         await pullFile(relPath, entry);
         pulled++;
-      } catch (err) {
-        log.error(`pull failed for ${relPath}:`, (err as Error).message);
+      } catch (err: unknown) {
+        log.error(`pull failed for ${relPath}:`, errorMessage(err));
       }
     }
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
@@ -717,8 +726,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             version: 0,
           } as ManifestEntry);
         }
-      } catch (err) {
-        log.error(`remote-change failed for ${f.path}:`, (err as Error).message);
+      } catch (err: unknown) {
+        log.error(`remote-change failed for ${f.path}:`, errorMessage(err));
       }
     }
   }
@@ -761,7 +770,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         // Fire-and-forget; the registry's send is synchronous so we can't
         // await here. Errors are logged inside handleRemoteChange.
         enqueue(() => handleRemoteChange(parsedMsg.data))
-          .catch((err) => log.error("remote-change enqueue failed:", (err as Error).message));
+          .catch((err: unknown) => log.error("remote-change enqueue failed:", errorMessage(err)));
       },
     };
   }
@@ -818,20 +827,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       watcher.on("add", (absPath) => {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err) => log.error(`push failed for ${rel}: ${err.message}`));
+        pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
       });
       watcher.on("change", (absPath) => {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err) => log.error(`push failed for ${rel}: ${err.message}`));
+        pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
       });
       watcher.on("unlink", (absPath) => {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
-        pushDelete(rel).catch((err) => log.error(`delete failed for ${rel}: ${err.message}`));
+        pushDelete(rel).catch((err: unknown) => log.error(`delete failed for ${rel}: ${errorMessage(err)}`));
       });
-      watcher.on("error", (err) => {
-        log.error(`home mirror watcher error: ${(err as Error).message}`);
+      watcher.on("error", (err: unknown) => {
+        log.error(`home mirror watcher error: ${errorMessage(err)}`);
       });
 
       if (stopRequested) {

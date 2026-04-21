@@ -106,6 +106,24 @@ describe("device routes", () => {
       expect(res.status).toBe(413);
     });
 
+    it("logs JSON parse failures before returning invalid_request", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      });
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[device/code] JSON parse failed:",
+        expect.any(String),
+      );
+      errorSpy.mockRestore();
+    });
+
     it("uses X-Forwarded-For as a fallback rate-limit key when no proxy IP header is present", async () => {
       for (let i = 0; i < 100; i++) {
         const res = await app.request("/api/auth/device/code", {
@@ -180,6 +198,24 @@ describe("device routes", () => {
       expect(res.status).toBe(429);
       const body = await res.json();
       expect(body.error).toBe("slow_down");
+    });
+
+    it("logs JSON parse failures before returning invalid_request", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await app.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      });
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[device/token] JSON parse failed:",
+        expect.any(String),
+      );
+      errorSpy.mockRestore();
     });
 
     it("returns 200 with a valid sync JWT after approval", async () => {
@@ -288,6 +324,47 @@ describe("device routes", () => {
         }).toString(),
       });
       expect(res.status).toBe(403);
+    });
+
+    it("logs form parse failures before returning invalid_request", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const formDataSpy = vi
+        .spyOn(Request.prototype, "formData")
+        .mockRejectedValueOnce(new Error("form parse boom"));
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+
+      const res = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-alice",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf,
+        }).toString(),
+      });
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
+      expect(errorSpy).toHaveBeenCalledWith("[device-flow] Form parse failed:", "form parse boom");
+
+      formDataSpy.mockRestore();
+      errorSpy.mockRestore();
     });
   });
 
