@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod/v4";
 
-const AuthDataSchema = z.object({
+export const AuthDataSchema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
   expiresAt: z.number().nonnegative(),

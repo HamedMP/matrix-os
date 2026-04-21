@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { platform } from "node:os";
-import { saveAuth, type AuthData } from "./token-store.js";
+import { AuthDataSchema, saveAuth, type AuthData } from "./token-store.js";
 
 export interface DeviceCodeResponse {
   deviceCode: string;
@@ -80,7 +80,7 @@ export async function pollForToken(
     });
 
     if (res.ok) {
-      const data = (await res.json()) as AuthData;
+      const data = AuthDataSchema.parse(await res.json());
       await saveAuth(data, tokenStorePath);
       return data;
     }

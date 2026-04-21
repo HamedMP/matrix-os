@@ -195,7 +195,7 @@ describe("POST /api/sync/presign", () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
-      error: "Invalid request",
+      error: "Validation error",
     });
   });
 

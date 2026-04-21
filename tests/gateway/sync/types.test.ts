@@ -112,6 +112,14 @@ describe("PresignRequestSchema", () => {
     }));
     expect(() => PresignRequestSchema.parse({ files })).toThrow();
   });
+
+  it("rejects zero-byte PUT uploads at the schema boundary", () => {
+    expect(() => PresignRequestSchema.parse({
+      files: [
+        { path: "apps/test.txt", action: "put" as const, hash: "sha256:" + "d".repeat(64), size: 0 },
+      ],
+    })).toThrow();
+  });
 });
 
 describe("CommitRequestSchema", () => {

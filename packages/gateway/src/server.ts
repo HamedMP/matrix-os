@@ -121,6 +121,8 @@ const BridgeCallBodySchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
+
 export interface GatewayConfig {
   homePath: string;
   port?: number;
@@ -1001,10 +1003,10 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/integrations", integrationRoutes);
     console.log("[platform-db] Integration routes mounted (after auth)");
   } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
-    app.all("/api/integrations", async (c) =>
+    app.all("/api/integrations", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) =>
       proxyIntegrationRequest(c, internalIntegrationBaseUrl, true),
     );
-    app.all("/api/integrations/*", async (c) => {
+    app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
       const isPublic =
         c.req.path === "/api/integrations/available" ||
         c.req.path.startsWith("/api/integrations/webhook/");

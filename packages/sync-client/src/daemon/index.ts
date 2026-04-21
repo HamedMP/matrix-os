@@ -11,7 +11,6 @@ import {
 import { clearAuth, isExpired, loadAuth } from "../auth/token-store.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
-import { detectChanges } from "./sync-engine.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";

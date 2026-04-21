@@ -206,4 +206,24 @@ describe("pollForToken", () => {
     await expect(promise).rejects.toThrow("Token polling failed with status 500");
     await expect(promise).rejects.not.toThrow(/stack trace/i);
   });
+
+  it("rejects malformed auth payloads before writing them to disk", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accessToken: "jwt-token",
+          expiresAt: 9_999_999_999_000,
+          userId: "user_alice",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tokenStorePath = "/tmp/test-auth-invalid.json";
+    const promise = pollForToken(config, "device-1", 5, 60, tokenStorePath);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(promise).rejects.toThrow();
+  });
 });

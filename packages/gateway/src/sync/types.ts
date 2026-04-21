@@ -97,7 +97,7 @@ const PresignPutFileSchema = z.object({
   path: z.string().min(1).max(1024),
   action: z.literal("put"),
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  size: z.int().nonnegative().max(1024 * 1024 * 1024), // 1GB max (multipart for >100MB)
+  size: z.int().positive().max(1024 * 1024 * 1024), // 1GB max (multipart for >100MB)
 });
 
 export const PresignFileSchema = z.discriminatedUnion("action", [
