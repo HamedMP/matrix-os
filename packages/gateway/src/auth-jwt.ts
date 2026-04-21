@@ -102,6 +102,7 @@ export async function readJwtKeyConfig(
   if (pub) {
     let cached = publicKeyCache.get(pub);
     if (!cached) {
+      publicKeyCache.clear();
       cached = importSPKI(pub, "RS256");
       publicKeyCache.set(pub, cached);
     }

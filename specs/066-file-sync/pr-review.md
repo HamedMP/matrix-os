@@ -125,6 +125,13 @@ for that item both exist locally.
 - [x] Sync mutating write paths (`/commit`, `/resolve-conflict`, share mutations) must be rate-limited like `/presign`.
 - [x] Sync in-memory rate limiter must refresh hot users instead of pure FIFO eviction.
 
+## Latest Review Follow-up Wave
+
+- [x] Platform internal sync `PUT /object` now enforces a request `bodyLimit` instead of buffering arbitrary upload bodies into memory.
+- [x] Home-mirror remote pulls now write through a temp file plus `rename()` so crashes cannot leave partially-written files in place.
+- [x] `POST /api/sync/resolve-conflict` now returns `500` when conflict-copy cleanup fails instead of claiming success after a failed R2 delete.
+- [x] Gateway JWT RS256 public-key cache is now explicitly capped to the active key instead of growing without bound.
+
 ## Still Open / Architectural
 
 - [x] Platform app-domain routing now terminates sync JWT auth at the trusted platform boundary and proxies to containers with a per-container bearer token, so containers do not need platform JWT signing material.
@@ -160,6 +167,8 @@ for that item both exist locally.
 - [x] Latest sync-client conflict-recovery regression passes via package config: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `8 tests`).
 - [x] Latest JWT/presign/home-mirror/config hardening regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/platform/sync-jwt.test.ts`, `tests/gateway/sync/presign.test.ts`, `tests/gateway/sync/r2-client.test.ts`, `tests/gateway/app-db.test.ts`, `tests/gateway/sync/home-mirror.test.ts`, `packages/sync-client/tests/unit/oauth.test.ts`, `config.test.ts`, `ipc-server.test.ts`, `tests/gateway/sync/routes.test.ts`, `tests/gateway/sync/user-id-from-jwt.test.ts` (`11 files`, `119 tests`).
 - [x] Latest platform-native verification passes in Docker dev container: `tests/platform/device-flow.test.ts`, `tests/platform/proxy-routing.test.ts` (`2 files`, `23 tests`).
+- [x] Latest gateway conflict-cleanup regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/gateway/sync/home-mirror.test.ts`, `tests/gateway/sync/routes.test.ts` (`3 files`, `69 tests`).
+- [x] Latest platform internal sync body-limit regression passes in Docker dev container: `tests/platform/internal-sync-routes.test.ts`, `tests/platform/proxy-routing.test.ts`, `tests/platform/orchestrator.test.ts` (`3 files`, `33 tests`).
 
 ## Lower-Priority Follow-ups From Review
 

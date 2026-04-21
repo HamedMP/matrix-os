@@ -429,6 +429,20 @@ describe("POST /api/sync/resolve-conflict", () => {
       "matrixos-sync/test-user/files/readme (conflict - peer1 - 2026-04-14).md",
     );
   });
+
+  it("returns 500 when deleting the conflict copy from R2 fails", async () => {
+    mockR2.deleteObject.mockRejectedValue(new Error("r2 unavailable"));
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/resolve-conflict", {
+      path: "readme.md",
+      resolution: "keep-local",
+      conflictPath: "readme (conflict - peer1 - 2026-04-14).md",
+    }));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Failed to delete conflict copy" });
+  });
 });
 
 describe("sharing routes", () => {

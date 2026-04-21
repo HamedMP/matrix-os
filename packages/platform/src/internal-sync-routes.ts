@@ -2,12 +2,25 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getContainer, type PlatformDB } from "./db.js";
-import {
-  buildManifestKey,
-} from "../../gateway/src/sync/r2-keys.js";
-import type { R2Client } from "../../gateway/src/sync/r2-client.js";
 
 const INTERNAL_SYNC_BODY_LIMIT = 64 * 1024;
+const INTERNAL_SYNC_OBJECT_BODY_LIMIT = 100 * 1024 * 1024;
+const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
+
+interface R2Client {
+  getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
+  getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
+  createMultipartUpload(key: string): Promise<string>;
+  getPresignedPartUrl(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresIn?: number,
+  ): Promise<string>;
+  getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
+  putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }>;
+  deleteObject(key: string): Promise<void>;
+}
 
 interface PresignGetInput {
   key: string;
@@ -48,6 +61,13 @@ function timingSafeTokenEquals(actual: string | undefined, expected: string): bo
 function getAuthorizedUserId(db: PlatformDB, handle: string): string | null {
   const record = getContainer(db, handle);
   return record?.clerkUserId ?? null;
+}
+
+function buildManifestKey(userId: string): string {
+  if (!SAFE_USER_ID.test(userId)) {
+    throw new Error("Invalid sync user id");
+  }
+  return `matrixos-sync/${userId}/manifest.json`;
 }
 
 function keyAllowedForUser(key: string, userId: string): boolean {
@@ -240,7 +260,7 @@ export function createInternalSyncRoutes(opts: {
     }
   });
 
-  app.put("/object", async (c) => {
+  app.put("/object", bodyLimit({ maxSize: INTERNAL_SYNC_OBJECT_BODY_LIMIT }), async (c) => {
     const key = c.req.query("key");
     if (!key) {
       return c.json({ error: "Missing key" }, 400);

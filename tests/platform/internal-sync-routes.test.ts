@@ -143,4 +143,25 @@ describe("platform/internal-sync-routes", () => {
 
     expect(res.status).toBe(404);
   });
+
+  it("rejects oversized direct object uploads with 413", async () => {
+    const app = createTestApp();
+    const body = "x";
+
+    const res = await app.request(
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Fmanifest.json",
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+          "content-length": String(101 * 1024 * 1024),
+          "content-type": "application/octet-stream",
+        },
+        body,
+      },
+    );
+
+    expect(res.status).toBe(413);
+    expect(r2.putObject).not.toHaveBeenCalled();
+  });
 });

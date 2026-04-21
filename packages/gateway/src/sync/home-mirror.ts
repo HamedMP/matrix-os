@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import {
@@ -334,8 +334,24 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
     const buf = await streamToBuffer(obj.body);
     await mkdir(dirname(absPath), { recursive: true });
-    markWritten(safeRelPath);
-    await writeFile(absPath, buf);
+    const tmpPath = `${absPath}.${process.pid}.tmp`;
+    try {
+      await writeFile(tmpPath, buf);
+      markWritten(safeRelPath);
+      await rename(tmpPath, absPath);
+    } catch (err) {
+      try {
+        await unlink(tmpPath);
+      } catch (cleanupErr) {
+        if ((cleanupErr as NodeJS.ErrnoException).code !== "ENOENT") {
+          log.error(
+            `cleanup failed for ${safeRelPath} temp file:`,
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+        }
+      }
+      throw err;
+    }
     log.info(`pulled ${safeRelPath} (${buf.length}B)`);
   }
 

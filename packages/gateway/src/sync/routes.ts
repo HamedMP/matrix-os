@@ -242,6 +242,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
         await deps.r2.deleteObject(pathCheck.key);
       } catch (err: unknown) {
         console.error("[sync/resolve-conflict] Failed to delete conflict copy:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: "Failed to delete conflict copy" }, 500);
       }
     }
 

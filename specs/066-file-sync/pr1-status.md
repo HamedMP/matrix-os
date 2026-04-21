@@ -358,3 +358,18 @@ and landed as a single conventional commit.
   - Two `tests/platform/*` test files authored by fix-platform landed in
     `e45cf5b` via a stash/pop collision — they're valid tests, just attributed
     to the wrong commit. Noted for the record.
+
+### Latest follow-up hardening
+
+- [x] Internal sync object uploads now enforce a 100 MB `bodyLimit` before the
+  platform reads the request body into memory.
+- [x] Home-mirror pulls now use temp-file + rename semantics so a crash cannot
+  leave a partial file on disk.
+- [x] `resolve-conflict` now fails closed when conflict-copy deletion fails
+  instead of returning a misleading success response.
+- [x] Gateway public-key caching is capped to the active RS256 key.
+
+### Latest verification
+
+- [x] Host: `pnpm test tests/gateway/auth-jwt.test.ts tests/gateway/sync/home-mirror.test.ts tests/gateway/sync/routes.test.ts` (`69/69`).
+- [x] Docker: `pnpm test tests/platform/internal-sync-routes.test.ts tests/platform/proxy-routing.test.ts tests/platform/orchestrator.test.ts` (`33/33`).
