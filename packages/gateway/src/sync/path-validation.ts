@@ -1,6 +1,15 @@
 const MAX_PATH_LENGTH = 1024;
 const DOUBLE_DOT_SEGMENT = /(?:^|\/)\.\.\//;
 
+function normalizeRelativeSyncPath(relativePath: string): string {
+  return relativePath
+    .replace(/\/+/g, "/")
+    .split("/")
+    .filter((segment) => segment !== ".")
+    .join("/")
+    .replace(/\/$/, "");
+}
+
 export type PathValidationResult =
   | { valid: true; key: string }
   | { valid: false; reason: string };
@@ -29,8 +38,9 @@ export function resolveWithinPrefix(
     return { valid: false, reason: "Path must not contain null bytes" };
   }
 
-  // Normalize consecutive slashes
-  const normalized = relativePath.replace(/\/+/g, "/").replace(/\/$/, "");
+  // Normalize redundant separators and no-op "." segments so logically
+  // identical paths always resolve to the same sync key.
+  const normalized = normalizeRelativeSyncPath(relativePath);
 
   if (normalized.length === 0) {
     return { valid: false, reason: "Path resolves to empty after normalization" };

@@ -424,13 +424,37 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
+  function buildIntegrationProxyUrl(c: Context, targetBase: string): string {
+    const targetUrl = new URL(targetBase);
+    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    const decodedSuffix = decodeURIComponent(suffix);
+    if (decodedSuffix.split("/").some((segment) => segment === "..")) {
+      throw new Error("Invalid integration proxy path");
+    }
+
+    const basePath = targetUrl.pathname.endsWith("/")
+      ? targetUrl.pathname.slice(0, -1)
+      : targetUrl.pathname;
+    targetUrl.pathname = suffix ? `${basePath}${suffix}` : basePath;
+    targetUrl.search = new URL(c.req.url).search;
+    return targetUrl.toString();
+  }
+
   async function proxyIntegrationRequest(
     c: Context,
     targetBase: string,
     includeInternalAuth: boolean,
   ): Promise<Response> {
-    const qs = c.req.url.includes("?") ? `?${c.req.url.split("?")[1]}` : "";
-    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    let upstreamUrl: string;
+    try {
+      upstreamUrl = buildIntegrationProxyUrl(c, targetBase);
+    } catch (err: unknown) {
+      console.warn(
+        "[integrations] rejected proxy path:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Bad request" }, 400);
+    }
     const headers = new Headers();
     for (const [key, value] of Object.entries(c.req.header())) {
       if (key !== "host" && key !== "authorization" && value) {
@@ -441,7 +465,7 @@ export async function createGateway(config: GatewayConfig) {
       headers.set("authorization", `Bearer ${internalPlatformToken}`);
     }
 
-    const upstream = await fetch(`${targetBase}${suffix}${qs}`, {
+    const upstream = await fetch(upstreamUrl, {
       method: c.req.method,
       headers,
       redirect: "manual",

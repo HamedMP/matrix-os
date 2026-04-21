@@ -101,6 +101,14 @@ describe("resolveWithinPrefix", () => {
     }
   });
 
+  it("normalizes single-dot path segments", () => {
+    const result = resolveWithinPrefix(userId, "apps/./calculator/./index.html");
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.key).toBe("matrixos-sync/user-123/files/apps/calculator/index.html");
+    }
+  });
+
   it("rejects path that resolves to empty after normalization", () => {
     const result = resolveWithinPrefix(userId, "/");
     expect(result.valid).toBe(false);

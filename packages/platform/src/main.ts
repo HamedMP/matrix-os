@@ -52,7 +52,9 @@ function timingSafeTokenEquals(actual: string | undefined, expected: string): bo
   const paddedExpected = Buffer.alloc(maxLen);
   actualBuf.copy(paddedActual);
   expectedBuf.copy(paddedExpected);
-  return actualBuf.length === expectedBuf.length && timingSafeEqual(paddedActual, paddedExpected);
+  const lengthMatch = actualBuf.length === expectedBuf.length;
+  const contentMatch = timingSafeEqual(paddedActual, paddedExpected);
+  return lengthMatch && contentMatch;
 }
 
 function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {

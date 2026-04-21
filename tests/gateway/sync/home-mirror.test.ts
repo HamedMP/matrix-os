@@ -971,5 +971,37 @@ describe("createHomeMirror", () => {
 
       await mirror.stop();
     });
+
+    it("chunks startup uploads to avoid buffering the full home directory at once", async () => {
+      for (let i = 0; i < 51; i++) {
+        await writeFile(join(tmpRoot, `batch-${i}.md`), `file-${i}`);
+      }
+      const upsertMeta = vi.fn(async () => {});
+      const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
+
+      db = {
+        async getManifestMeta() {
+          return null;
+        },
+        upsertManifestMeta: upsertMeta,
+        withAdvisoryLock: lockSpy,
+      } as unknown as ManifestDb;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      expect(lockSpy).toHaveBeenCalledTimes(2);
+      expect(upsertMeta).toHaveBeenCalledTimes(2);
+
+      await mirror.stop();
+    });
   });
 });

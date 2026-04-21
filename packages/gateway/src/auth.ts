@@ -123,9 +123,11 @@ const webhookRateLimiter = createRateLimiter({
 });
 
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
     c.req.header("cf-connecting-ip")?.trim() ||
     c.req.header("x-real-ip")?.trim() ||
+    forwardedFor ||
     "127.0.0.1"
   );
 }

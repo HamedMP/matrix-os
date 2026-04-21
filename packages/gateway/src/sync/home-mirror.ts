@@ -20,6 +20,7 @@ import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
+const INITIAL_PUSH_CHUNK_SIZE = 50;
 
 // Folders we never push -- big build outputs, transient state, secrets,
 // or things that would loop on themselves (the home dir itself when run
@@ -164,7 +165,7 @@ function normalizeRelativePath(userId: string, relPath: string): string {
   if (!checked.valid) {
     throw new Error(`invalid path: ${checked.reason}`);
   }
-  return relPath.replace(/\/+/g, "/").replace(/\/$/, "");
+  return checked.key.slice(`matrixos-sync/${userId}/files/`.length);
 }
 
 // AWS SDK v3 returns its own stream type with `transformToByteArray()`,
@@ -468,82 +469,95 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const relPaths = await collectLocalFiles(config.homeRoot);
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, config.userId);
-    const localFiles: Array<{
-      path: string;
-      file: Extract<LocalPushFile, { kind: "file" }>;
-    }> = [];
+    let pushed = 0;
 
-    for (const relPath of relPaths) {
-      const safeRelPath = normalizeRelativePath(config.userId, relPath);
-      const absPath = join(config.homeRoot, safeRelPath);
-      const localFile = await readLocalFileForPush(absPath, maxPushBytes);
-      if (localFile.kind === "skip") continue;
-      if (localFile.kind === "too_large") {
-        log.error(
-          `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
-        );
-        continue;
-      }
-      const snapshotEntry = snapshot.manifest.files[safeRelPath];
-      if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
-        continue;
-      }
-      localFiles.push({ path: safeRelPath, file: localFile });
-    }
+    for (let start = 0; start < relPaths.length; start += INITIAL_PUSH_CHUNK_SIZE) {
+      const relPathChunk = relPaths.slice(start, start + INITIAL_PUSH_CHUNK_SIZE);
+      const localFiles: Array<{
+        path: string;
+        file: Extract<LocalPushFile, { kind: "file" }>;
+      }> = [];
 
-    if (localFiles.length === 0) return;
-
-    await enqueue(async () => {
-      await withManifestLock(async (lockedStore) => {
-        const existing = await readManifest(lockedStore, config.userId);
-        let nextManifest = existing.manifest;
-        const changedFiles: Array<{
-          path: string;
-          hash: string;
-          size: number;
-          action: "add" | "update";
-        }> = [];
-
-        for (const { path: safeRelPath, file: localFile } of localFiles) {
-          const currentEntry = nextManifest.files[safeRelPath];
-          if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
-            continue;
-          }
-
-          await config.r2.putObject(
-            buildFileKey(config.userId, safeRelPath),
-            localFile.body,
+      for (const relPath of relPathChunk) {
+        const safeRelPath = normalizeRelativePath(config.userId, relPath);
+        const absPath = join(config.homeRoot, safeRelPath);
+        const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+        if (localFile.kind === "skip") continue;
+        if (localFile.kind === "too_large") {
+          log.error(
+            `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
           );
-          const action = currentEntry ? "update" as const : "add" as const;
-          nextManifest = applyCommitToManifest(
-            nextManifest,
-            [{
+          continue;
+        }
+        const snapshotEntry = snapshot.manifest.files[safeRelPath];
+        if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
+          continue;
+        }
+        localFiles.push({ path: safeRelPath, file: localFile });
+      }
+
+      if (localFiles.length === 0) {
+        continue;
+      }
+
+      const chunkPushed = await enqueue(async () => {
+        return withManifestLock(async (lockedStore) => {
+          const existing = await readManifest(lockedStore, config.userId);
+          let nextManifest = existing.manifest;
+          const changedFiles: Array<{
+            path: string;
+            hash: string;
+            size: number;
+            action: "add" | "update";
+          }> = [];
+
+          for (const { path: safeRelPath, file: localFile } of localFiles) {
+            const currentEntry = nextManifest.files[safeRelPath];
+            if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
+              continue;
+            }
+
+            await config.r2.putObject(
+              buildFileKey(config.userId, safeRelPath),
+              localFile.body,
+            );
+            const action = currentEntry ? "update" as const : "add" as const;
+            nextManifest = applyCommitToManifest(
+              nextManifest,
+              [{
+                path: safeRelPath,
+                hash: localFile.hash,
+                size: localFile.size,
+                action,
+              }],
+              config.peerId,
+            );
+
+            changedFiles.push({
               path: safeRelPath,
               hash: localFile.hash,
               size: localFile.size,
               action,
-            }],
-            config.peerId,
-          );
+            });
+          }
 
-          changedFiles.push({
-            path: safeRelPath,
-            hash: localFile.hash,
-            size: localFile.size,
-            action,
-          });
-        }
+          if (changedFiles.length === 0) {
+            return 0;
+          }
 
-        if (changedFiles.length === 0) {
-          return;
-        }
-
-        const newVersion = existing.manifestVersion + 1;
-        await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
-        broadcastChanges(changedFiles, newVersion);
-        log.info(`initial push: ${changedFiles.length} files`);
+          const newVersion = existing.manifestVersion + 1;
+          await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
+          broadcastChanges(changedFiles, newVersion);
+          return changedFiles.length;
+        });
       });
-    });
+
+      pushed += chunkPushed;
+    }
+
+    if (pushed > 0) {
+      log.info(`initial push: ${pushed} files`);
+    }
   }
 
   async function pullDelete(relPath: string): Promise<void> {
