@@ -399,7 +399,7 @@ export async function createGateway(config: GatewayConfig) {
       homeMirror = createHomeMirror({
         r2: syncR2,
         manifestDb,
-        homeRoot: rawHomePath,
+        homeRoot: homePath,
         userId,
         peerId: `gateway-${userId}`,
         // Subscribe to sync:change broadcasts from other peers so the

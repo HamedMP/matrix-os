@@ -316,6 +316,41 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("refuses to delete symlinks on remote delete events", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const target = join(tmpRoot, "real.txt");
+      const link = join(tmpRoot, "notes-link");
+      await writeFile(target, "keep me");
+      await (await import("node:fs/promises")).symlink(target, link);
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: "notes-link", hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
+        peerId: "laptop-1",
+        manifestVersion: 3,
+      });
+
+      await settle(80);
+
+      expect(logger.error).toHaveBeenCalledWith("refusing to delete symlink notes-link");
+      const linkStat = await (await import("node:fs/promises")).lstat(link);
+      expect(linkStat.isSymbolicLink()).toBe(true);
+      expect(await readFile(target, "utf-8")).toBe("keep me");
+
+      await mirror.stop();
+    });
+
     it("logs remote delete failures instead of swallowing them", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       await mkdir(join(tmpRoot, "notes", "blocked"), { recursive: true });

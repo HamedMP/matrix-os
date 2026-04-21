@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
+import { lstat, readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface PresignedUrl {
@@ -101,6 +101,20 @@ export async function downloadFile(
   const tmpPath = `${localPath}.matrixos-${randomUUID()}.tmp`;
   try {
     await writeFile(tmpPath, buffer, { flag: "wx", mode: 0o600 });
+    try {
+      const localStat = await lstat(localPath);
+      if (localStat.isSymbolicLink()) {
+        throw new Error("refusing to overwrite symlink");
+      }
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        throw err;
+      }
+    }
     await rename(tmpPath, localPath);
   } catch (err) {
     try {

@@ -211,6 +211,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);
+      // The platform terminates sync JWTs on the single-domain app entrypoint
+      // and re-proxies to the container with this HMAC bearer. Containers do
+      // not need PLATFORM_JWT_SECRET unless we intentionally enable direct
+      // JWT validation in the gateway.
       env.push(`MATRIX_AUTH_TOKEN=${token}`);
       env.push(`PLATFORM_INTERNAL_URL=http://distro-platform-1:9000`);
     }

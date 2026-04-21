@@ -647,6 +647,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           const uploadedKeys: string[] = [];
 
           try {
+            // Blob keys are per-user/per-path, not content-addressed. Uploading
+            // outside the manifest lock would let a concurrent write to the same
+            // path race with this chunk and overwrite newer content in R2.
             for (const { path: safeRelPath, file: localFile } of localFiles) {
               const currentEntry = nextManifest.files[safeRelPath];
               if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
@@ -706,13 +709,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const absPath = join(config.homeRoot, safeRelPath);
     try {
-      await lstat(absPath); // throws ENOENT if already gone
+      const localStat = await lstat(absPath); // throws ENOENT if already gone
+      if (localStat.isSymbolicLink()) {
+        log.error(`refusing to delete symlink ${safeRelPath}`);
+        return;
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    markWritten(safeRelPath);
     await unlink(absPath);
+    markWritten(safeRelPath);
     log.info(`pulled delete ${safeRelPath}`);
   }
 

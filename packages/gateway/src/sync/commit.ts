@@ -88,6 +88,9 @@ export async function handleCommit(
       .filter((file) => file.action === "delete")
       .map((file) => buildFileKey(userId, file.path));
 
+    // Keep stale-blob deletion inside the manifest lock. File blobs are keyed
+    // by user + path, not by content hash, so deleting after releasing the
+    // lock can race with another commit that re-uploads the same path.
     for (const key of deleteKeys) {
       try {
         await deps.r2.deleteObject(key);

@@ -102,6 +102,7 @@ describe("daemon/r2-client", () => {
     const legacyTmpPath = `${finalPath}.${process.pid}.tmp`;
     const body = Buffer.from("hello world");
     const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    await (await import("node:fs/promises")).mkdir(join(tempDir, "notes"), { recursive: true });
     await writeFile(legacyTmpPath, "stale temp");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(body, { status: 200 }),
@@ -111,5 +112,25 @@ describe("daemon/r2-client", () => {
 
     expect(await readFile(finalPath, "utf8")).toBe("hello world");
     expect(await readFile(legacyTmpPath, "utf8")).toBe("stale temp");
+  });
+
+  it("refuses to overwrite an existing symlink target", async () => {
+    const finalPath = join(tempDir, "notes", "today.md");
+    const realTarget = join(tempDir, "outside.txt");
+    const body = Buffer.from("hello world");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+
+    await writeFile(realTarget, "outside");
+    await (await import("node:fs/promises")).mkdir(join(tempDir, "notes"), { recursive: true });
+    await (await import("node:fs/promises")).symlink(realTarget, finalPath);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, { status: 200 }),
+    );
+
+    await expect(downloadFile("https://example.test/get", finalPath, hash)).rejects.toThrow(
+      /symlink/i,
+    );
+    expect(await readFile(realTarget, "utf8")).toBe("outside");
+    expect((await (await import("node:fs/promises")).lstat(finalPath)).isSymbolicLink()).toBe(true);
   });
 });
