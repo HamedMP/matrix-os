@@ -24,9 +24,15 @@ export interface SyncSharesTable {
   expires_at: Date | null;
 }
 
+export interface SyncUsersTable {
+  id: string;
+  handle: string;
+}
+
 export interface SyncDatabase {
   sync_manifests: SyncManifestsTable;
   sync_shares: SyncSharesTable;
+  users: SyncUsersTable;
 }
 
 // ---------------------------------------------------------------------------

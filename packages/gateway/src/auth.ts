@@ -195,8 +195,10 @@ export function authMiddleware(
     if (isWsUpgrade) {
       try {
         queryToken = new URL(c.req.url).searchParams.get("token");
-      } catch {
-        // URL parsing may fail in some contexts
+      } catch (err: unknown) {
+        if (!(err instanceof TypeError)) {
+          console.error("[auth] Unexpected error parsing WS URL:", err);
+        }
       }
     }
 

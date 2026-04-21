@@ -42,6 +42,7 @@ export interface DeviceFlowConfig {
   expiresInSec?: number; // default 900
   intervalSec?: number; // default 5
   maxInFlightPolls?: number; // default 1024
+  issueTokenTimeoutMs?: number; // default 30000
   now?: () => number;
   random?: (bytes: number) => Buffer;
   issueToken?: (input: IssueTokenInput) => Promise<IssuedToken>;
@@ -94,6 +95,7 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
   const expiresInSec = config.expiresInSec ?? 900;
   const intervalSec = config.intervalSec ?? 5;
   const maxInFlightPolls = Math.max(1, config.maxInFlightPolls ?? 1024);
+  const issueTokenTimeoutMs = Math.max(1, config.issueTokenTimeoutMs ?? 30_000);
   const now = config.now ?? (() => Date.now());
   const random = config.random ?? ((n: number) => randomBytes(n));
   const inFlightPolls = new Map<string, Promise<DevicePollResult>>();
@@ -217,7 +219,21 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
 
       void (async () => {
         try {
-          const issued = await issueToken({ clerkUserId: claimed.clerkUserId });
+          const issued = await new Promise<IssuedToken>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              reject(new Error('issueToken timeout'));
+            }, issueTokenTimeoutMs);
+            void issueToken({ clerkUserId: claimed.clerkUserId }).then(
+              (value) => {
+                clearTimeout(timer);
+                resolve(value);
+              },
+              (err: unknown) => {
+                clearTimeout(timer);
+                reject(err);
+              },
+            );
+          });
 
           config.db
             .delete(deviceCodes)

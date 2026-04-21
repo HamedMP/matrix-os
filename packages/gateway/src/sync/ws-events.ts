@@ -40,8 +40,14 @@ export function createPeerRegistry(): PeerRegistry {
     if (ws.readyState === 1) {
       try {
         ws.send(data);
-      } catch {
+      } catch (err: unknown) {
         // Socket can transition away from OPEN between readyState and send().
+        if (!(err instanceof Error && /not open|not opened/i.test(err.message))) {
+          console.warn(
+            "[sync/ws] sendSafe failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
       }
     }
   }

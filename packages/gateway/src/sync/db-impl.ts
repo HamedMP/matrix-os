@@ -176,22 +176,22 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
 
       async resolveHandle(handle: string): Promise<string | null> {
         const row = await executor
-          .selectFrom("users" as any)
+          .selectFrom("users")
           .select("id")
-          .where("handle" as any, "=", handle)
+          .where("handle", "=", handle)
           .executeTakeFirst();
 
-        return (row as any)?.id ?? null;
+        return row?.id ?? null;
       },
 
       async resolveUserId(userId: string): Promise<string | null> {
         const row = await executor
-          .selectFrom("users" as any)
-          .select("handle" as any)
-          .where("id" as any, "=", userId)
+          .selectFrom("users")
+          .select("handle")
+          .where("id", "=", userId)
           .executeTakeFirst();
 
-        return (row as any)?.handle ?? null;
+        return row?.handle ?? null;
       },
 
       async resolveUserIds(userIds: string[]): Promise<Map<string, string>> {
@@ -201,13 +201,13 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
         }
 
         const rows = await executor
-          .selectFrom("users" as any)
-          .select(["id" as any, "handle" as any])
-          .where("id" as any, "in", ids)
+          .selectFrom("users")
+          .select(["id", "handle"])
+          .where("id", "in", ids)
           .execute();
 
         const resolved = new Map<string, string>();
-        for (const row of rows as Array<{ id: string; handle: string }>) {
+        for (const row of rows) {
           resolved.set(row.id, row.handle);
         }
         return resolved;

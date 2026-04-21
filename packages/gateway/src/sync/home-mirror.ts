@@ -527,7 +527,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       try {
         assertWithinResolvedHomeRoot(await realpath(absPath));
       } catch (err: unknown) {
-        await unlink(absPath).catch(() => undefined);
+        await unlink(absPath).catch((cleanupErr: unknown) => {
+          if (
+            !(cleanupErr instanceof Error) ||
+            !("code" in cleanupErr) ||
+            (cleanupErr as NodeJS.ErrnoException).code !== "ENOENT"
+          ) {
+            log.error(
+              "failed to clean up escaped-path file:",
+              cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+            );
+          }
+        });
         throw err;
       }
     } catch (err) {

@@ -6,11 +6,12 @@ import {
   adoptRemoteManifestVersion,
   capSyncStateFiles,
   createSerialTaskQueue,
-  exitOnAuthFailure,
-  persistPauseState,
-  resolveWithinSyncRoot,
-  writePidFileExclusive,
-} from "../../src/daemon/index.js";
+    exitOnAuthFailure,
+    parseRemoteManifestEnvelope,
+    persistPauseState,
+    resolveWithinSyncRoot,
+    writePidFileExclusive,
+  } from "../../src/daemon/index.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
 import { AuthRejectedError, VersionConflictError } from "../../src/daemon/r2-client.js";
 import type { SyncState } from "../../src/daemon/types.js";
@@ -151,6 +152,15 @@ describe("daemon runtime guards", () => {
     expect(syncState.files["file-0.txt"]).toBeUndefined();
     expect(syncState.files["file-1.txt"]).toBeUndefined();
     expect(syncState.files["file-50001.txt"]).toBeDefined();
+  });
+
+  it("rejects malformed remote manifest envelopes", () => {
+    expect(() =>
+      parseRemoteManifestEnvelope({
+        manifestVersion: "7",
+        manifest: { files: {} },
+      }),
+    ).toThrow("Invalid remote manifest response");
   });
 
   it("exits cleanly on auth rejection errors", () => {

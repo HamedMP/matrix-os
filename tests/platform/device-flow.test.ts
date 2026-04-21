@@ -320,6 +320,48 @@ describe("device flow: polling", () => {
     );
   });
 
+  it("times out hung token issuance and frees the in-flight slot", async () => {
+    vi.useFakeTimers();
+    try {
+      flow = createDeviceFlow({
+        db,
+        now: () => now,
+        verificationBase: VERIFY_BASE,
+        maxInFlightPolls: 1,
+        issueTokenTimeoutMs: 1_000,
+        issueToken: async ({ clerkUserId }) => {
+          if (clerkUserId === "user_alice") {
+            return await new Promise<never>(() => {});
+          }
+          return {
+            token: `jwt-for-${clerkUserId}`,
+            expiresAt: now + 24 * 3_600_000,
+            handle: clerkUserId.replace("user_", "@"),
+          };
+        },
+      });
+
+      const first = await flow.createDeviceCode();
+      await flow.approveDeviceCode(first.userCode, "user_alice");
+      now += 5_000;
+      const firstPoll = flow.pollDeviceCode(first.deviceCode);
+      const firstPollAssertion = expect(firstPoll).rejects.toThrow("issueToken timeout");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await firstPollAssertion;
+
+      const second = await flow.createDeviceCode();
+      await flow.approveDeviceCode(second.userCode, "user_bob");
+      now += 5_000;
+      await expect(flow.pollDeviceCode(second.deviceCode)).resolves.toMatchObject({
+        status: "approved",
+        token: "jwt-for-user_bob",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("treats an unknown device_code as expired (cleanup-friendly)", async () => {
     const result = await flow.pollDeviceCode("does-not-exist");
     expect(result.status).toBe("expired");

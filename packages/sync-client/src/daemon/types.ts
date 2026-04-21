@@ -17,6 +17,12 @@ export const ManifestSchema = z.object({
 });
 export type Manifest = z.infer<typeof ManifestSchema>;
 
+export const RemoteManifestEnvelopeSchema = z.object({
+  manifestVersion: z.int().nonnegative().optional().default(0),
+  manifest: ManifestSchema,
+});
+export type RemoteManifestEnvelope = z.infer<typeof RemoteManifestEnvelopeSchema>;
+
 export const LocalFileStateSchema = z.object({
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   mtime: z.int().nonnegative(),

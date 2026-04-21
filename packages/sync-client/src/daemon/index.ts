@@ -23,11 +23,15 @@ import {
   uploadFile,
   downloadFile,
   commitFiles,
-  fetchManifest,
-  AuthRejectedError,
-  VersionConflictError,
-} from "./r2-client.js";
-import { ManifestSchema, type SyncState } from "./types.js";
+    fetchManifest,
+    AuthRejectedError,
+    VersionConflictError,
+  } from "./r2-client.js";
+import {
+  RemoteManifestEnvelopeSchema,
+  type RemoteManifestEnvelope,
+  type SyncState,
+} from "./types.js";
 
 const configDir = getConfigDir();
 const stateFile = join(configDir, "sync-state.json");
@@ -325,6 +329,14 @@ export function exitOnAuthFailure(
   logger.error("Auth token rejected or expired. Re-run `matrixos login`.");
   exit(1);
   return true;
+}
+
+export function parseRemoteManifestEnvelope(body: unknown): RemoteManifestEnvelope {
+  const parsed = RemoteManifestEnvelopeSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("Invalid remote manifest response");
+  }
+  return parsed.data;
 }
 
 export async function startDaemon(): Promise<void> {
@@ -692,14 +704,8 @@ export async function startDaemon(): Promise<void> {
   //     materializes the user's existing files.
   try {
     const remote = await fetchManifest(gatewayClient);
-    const remoteEnvelope = remote.manifest as {
-      manifestVersion?: number;
-      manifest?: { files?: Record<string, { hash: string; size: number; mtime: number; peerId: string; version: number }> };
-    };
-    const remoteVersion =
-      typeof remoteEnvelope?.manifestVersion === "number"
-        ? remoteEnvelope.manifestVersion
-        : 0;
+    const remoteEnvelope = parseRemoteManifestEnvelope(remote.manifest);
+    const remoteVersion = remoteEnvelope.manifestVersion;
     if (remoteVersion > syncState.manifestVersion) {
       syncState.manifestVersion = remoteVersion;
       await saveSyncState(stateFile, syncState);
@@ -709,7 +715,7 @@ export async function startDaemon(): Promise<void> {
       );
     }
 
-    const remoteFiles = remoteEnvelope?.manifest?.files ?? {};
+    const remoteFiles = remoteEnvelope.manifest.files;
     let pulled = 0;
     let skipped = 0;
     for (const [remotePath, entry] of Object.entries(remoteFiles)) {

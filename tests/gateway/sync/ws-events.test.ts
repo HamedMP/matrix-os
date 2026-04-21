@@ -202,6 +202,7 @@ describe("PeerRegistry", () => {
     });
 
     it("continues broadcasting when one peer throws during send", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const throwingWs = mockWs();
       const receiverWs = mockWs();
       throwingWs.send = vi.fn(() => {
@@ -238,6 +239,10 @@ describe("PeerRegistry", () => {
 
       expect(throwingWs.send).toHaveBeenCalledOnce();
       expect(receiverWs.send).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[sync/ws] sendSafe failed:",
+        "socket closed",
+      );
     });
   });
 

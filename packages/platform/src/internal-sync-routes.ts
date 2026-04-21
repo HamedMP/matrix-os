@@ -134,11 +134,14 @@ async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Prom
   try {
     return await c.req.json();
   } catch (err: unknown) {
-    console.warn(
-      "[internal-sync] JSON parse failed:",
-      err instanceof Error ? err.message : String(err),
-    );
-    return null;
+    if (err instanceof SyntaxError) {
+      console.warn(
+        "[internal-sync] JSON parse failed:",
+        err.message,
+      );
+      return null;
+    }
+    throw err;
   }
 }
 
