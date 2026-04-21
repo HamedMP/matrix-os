@@ -83,6 +83,16 @@ interface AppDomainIdentity {
   userId: string;
 }
 
+function isSyncJwtAuthError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.name.startsWith("JWT") ||
+    err.name.startsWith("JWS") ||
+    err.message === "Invalid sync JWT claims" ||
+    err.message.startsWith("JWT handle ")
+  );
+}
+
 async function resolveAppDomainIdentity(opts: {
   authHeader: string | undefined;
   cookieHeader: string | undefined;
@@ -105,7 +115,10 @@ async function resolveAppDomainIdentity(opts: {
         handle: record.handle,
         userId: record.clerkUserId,
       };
-    } catch {
+    } catch (err: unknown) {
+      if (!isSyncJwtAuthError(err)) {
+        throw err;
+      }
       // Fall through to Clerk session auth.
     }
   }

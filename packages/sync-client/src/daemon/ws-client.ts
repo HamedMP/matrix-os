@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { z } from "zod/v4";
 import type { SyncEvent } from "./types.js";
 
 export interface WsClientOptions {
@@ -15,12 +16,29 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 const PING_INTERVAL_MS = 30_000;
 
+const SyncEventMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("sync:change"),
+    path: z.string().min(1).max(1024),
+    hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    peerId: z.string().min(1).max(128),
+    action: z.enum(["create", "update", "delete"]),
+  }),
+  z.object({
+    type: z.literal("sync:conflict"),
+    path: z.string().min(1).max(1024),
+    localHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    remoteHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    conflictPath: z.string().min(1),
+  }),
+]);
+
 export function parseSyncEventMessage(payload: string): SyncEvent | null {
   const msg = JSON.parse(payload) as { type?: string };
   if (!msg.type?.startsWith("sync:")) {
     return null;
   }
-  return msg as SyncEvent;
+  return SyncEventMessageSchema.parse(msg);
 }
 
 export class SyncWsClient {

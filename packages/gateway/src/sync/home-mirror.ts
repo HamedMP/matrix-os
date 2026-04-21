@@ -46,6 +46,7 @@ const DEFAULT_IGNORE_PATTERNS = [
   /^\.DS_Store$/,
   /\.env(\..+)?$/,
 ];
+const HOME_MIRROR_TMP_SUFFIX = /\.\d+\.tmp$/;
 
 export interface HomeMirrorConfig {
   r2: R2Client;
@@ -217,6 +218,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const recentlyWritten = new Map<string, number>();
   const SUPPRESS_MS = 5_000;
   const markWritten = (relPath: string) => {
+    recentlyWritten.delete(relPath);
     recentlyWritten.set(relPath, Date.now());
     // Keep enough entries to cover an initial pull of the full manifest.
     if (recentlyWritten.size > RECENT_WRITE_CAP) {
@@ -368,6 +370,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (!obj.body) return;
 
     const buf = await streamToBuffer(obj.body);
+    if (hashBuffer(buf) !== entry.hash) {
+      throw new Error("downloaded blob hash did not match manifest entry");
+    }
     await mkdir(dirname(absPath), { recursive: true });
     const tmpPath = `${absPath}.${process.pid}.tmp`;
     try {
@@ -388,6 +393,35 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       throw err;
     }
     log.info(`pulled ${safeRelPath} (${buf.length}B)`);
+  }
+
+  async function cleanupTempFiles(dir: string, relDir = ""): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const relPath = relDir ? join(relDir, entry.name) : entry.name;
+      const absPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (isIgnored(relPath, extraIgnore)) continue;
+        await cleanupTempFiles(absPath, relPath);
+        continue;
+      }
+      if (entry.isFile() && HOME_MIRROR_TMP_SUFFIX.test(entry.name)) {
+        try {
+          await unlink(absPath);
+        } catch (err: unknown) {
+          if (
+            !(err instanceof Error) ||
+            !("code" in err) ||
+            (err as NodeJS.ErrnoException).code !== "ENOENT"
+          ) {
+            log.error(
+              `cleanup failed for orphaned temp ${relPath}:`,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        }
+      }
+    }
   }
 
   async function initialPull(): Promise<void> {
@@ -568,6 +602,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   return {
     async start(): Promise<void> {
       await mkdir(config.homeRoot, { recursive: true });
+      await cleanupTempFiles(config.homeRoot);
       await initialPull();
 
       // Register with the peer registry BEFORE starting the watcher. Any

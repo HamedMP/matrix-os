@@ -149,6 +149,18 @@ for that item both exist locally.
 - [x] Home-mirror local file reads now use `O_NOFOLLOW` file handles, skip oversize files before buffering, and upload/write manifest entries under the advisory lock.
 - [x] Home-mirror startup push now checks an unlocked manifest snapshot first and skips re-uploading files whose hash already matches the remote manifest.
 
+## Latest Runtime / Integrity Follow-up Wave
+
+- [x] Sync-client daemon now imports and uses `stat()` correctly when recording downloaded file metadata, so inbound `sync:change` downloads no longer throw at runtime.
+- [x] Platform Postgres admin connections now set `connectionTimeoutMillis` so `createUserDatabase()` / `dropUserDatabase()` cannot hang indefinitely on unreachable Postgres.
+- [x] Orchestrator `destroy()` now wraps related DB cleanup writes in a transaction, and `provision()` now reserves ports plus inserts the provisioning record atomically before container start.
+- [x] App-domain sync-JWT auth now only swallows expected JWT verification failures; unexpected verifier/runtime errors surface instead of silently falling through to Clerk auth.
+- [x] Home-mirror remote pulls now verify the downloaded blob hash against the manifest before writing to disk.
+- [x] Home-mirror recent-write suppression now refreshes existing entries in true LRU order instead of stale insertion order.
+- [x] Sync-client WebSocket event parsing now validates payload shape with Zod instead of casting arbitrary `sync:*` messages to `SyncEvent`.
+- [x] Home-mirror startup now cleans up orphaned `.<pid>.tmp` pull temp files left by prior crashes.
+- [x] Sync-client `syncState.files` is now capped at 50k entries instead of growing without bound.
+
 ## Still Open / Architectural
 
 - [x] Platform app-domain routing now terminates sync JWT auth at the trusted platform boundary and proxies to containers with a per-container bearer token, so containers do not need platform JWT signing material.
@@ -190,6 +202,8 @@ for that item both exist locally.
 - [x] Latest JWT key-cache retry regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/gateway/auth-jwt-cache.test.ts` (`13 tests`).
 - [x] Latest blocker/worth-fixing regression passes locally: `tests/gateway/sync/user-id-from-jwt.test.ts`, `routes.test.ts`, `sharing.test.ts`, `home-mirror.test.ts`, `tests/platform/sync-jwt.test.ts`, `packages/sync-client/tests/unit/watcher.test.ts` (`6 files`, `103 tests`).
 - [x] Latest platform route/auth regression passes in Docker dev container: `tests/platform/device-routes.test.ts`, `tests/platform/device-flow.test.ts` (`2 files`, `33 tests`).
+- [x] Latest runtime/integrity regression passes locally: `tests/gateway/sync/home-mirror.test.ts` plus sync-client `tests/unit/ws-client.test.ts`, `daemon-runtime-guards.test.ts` (`3 files`, `35 tests`).
+- [x] Latest orchestrator/proxy regression passes in Docker dev container: `tests/platform/orchestrator.test.ts`, `tests/platform/proxy-routing.test.ts` (`2 files`, `30 tests`).
 
 ## Lower-Priority Follow-ups From Review
 

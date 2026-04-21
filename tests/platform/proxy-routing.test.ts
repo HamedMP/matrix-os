@@ -7,6 +7,7 @@ import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
+import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -118,6 +119,29 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
+  });
+
+  it("returns 500 when sync JWT verification fails unexpectedly", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    vi.spyOn(syncJwt, "verifySyncJwt").mockRejectedValueOnce(new Error("db unavailable"));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/sync/manifest", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clearly-a-token",
+      },
+    });
+
+    expect(res.status).toBe(500);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("adds a timeout on /proxy/:handle fetches", async () => {

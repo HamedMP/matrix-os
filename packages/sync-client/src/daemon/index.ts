@@ -1,6 +1,6 @@
 import { join, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile, unlink, mkdir } from "node:fs/promises";
+import { readFile, writeFile, unlink, mkdir, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
@@ -30,6 +30,7 @@ const configDir = getConfigDir();
 const stateFile = join(configDir, "sync-state.json");
 const socketPath = join(configDir, "daemon.sock");
 const pidFile = join(configDir, "daemon.pid");
+const SYNC_STATE_FILE_CAP = 50_000;
 
 interface PollLogger {
   info: (msg: string) => void;
@@ -294,6 +295,22 @@ export async function adoptRemoteManifestVersion(
   return true;
 }
 
+export function capSyncStateFiles(syncState: SyncState): boolean {
+  const entries = Object.entries(syncState.files);
+  if (entries.length <= SYNC_STATE_FILE_CAP) {
+    return false;
+  }
+
+  entries
+    .sort(([, left], [, right]) => left.mtime - right.mtime)
+    .slice(0, entries.length - SYNC_STATE_FILE_CAP)
+    .forEach(([path]) => {
+      delete syncState.files[path];
+    });
+
+  return true;
+}
+
 export async function startDaemon(): Promise<void> {
   const logger = pino({
     transport: {
@@ -323,6 +340,9 @@ export async function startDaemon(): Promise<void> {
 
   const ignorePatterns = await loadSyncIgnore(config.syncPath);
   let syncState = await loadSyncState(stateFile);
+  if (capSyncStateFiles(syncState)) {
+    await saveSyncState(stateFile, syncState);
+  }
 
   // `gatewayFolder` scopes this daemon to a subtree of the gateway. An empty
   // string (the default) = full mirror: local syncPath maps 1:1 to the
@@ -377,6 +397,7 @@ export async function startDaemon(): Promise<void> {
           size: event.size,
           lastSyncedHash: existing?.lastSyncedHash,
         };
+        capSyncStateFiles(syncState);
         await saveSyncState(stateFile, syncState);
 
         try {
@@ -458,6 +479,7 @@ export async function startDaemon(): Promise<void> {
               size: downloadedStat.size,
               lastSyncedHash: event.hash,
             };
+            capSyncStateFiles(syncState);
             await saveSyncState(stateFile, syncState);
           }
         } catch (err) {

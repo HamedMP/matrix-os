@@ -180,7 +180,7 @@ describe('platform/orchestrator', () => {
     expect(record.shellPort).toBe(4002);
   });
 
-  it('removes the started container and releases ports when DB insert fails', async () => {
+  it('releases reserved ports and avoids starting a container when the initial DB insert fails', async () => {
     const firstContainer = {
       id: 'container-1',
       start: vi.fn().mockResolvedValue(undefined),
@@ -207,7 +207,8 @@ describe('platform/orchestrator', () => {
 
     await orch.provision('alice', 'clerk_1');
     await expect(orch.provision('bob', 'clerk_1')).rejects.toThrow();
-    expect(secondContainer.remove).toHaveBeenCalledWith({ force: true });
+    expect(secondContainer.start).not.toHaveBeenCalled();
+    expect(secondContainer.remove).not.toHaveBeenCalled();
 
     const record = await orch.provision('carol', 'clerk_3');
     expect(record.port).toBe(4003);
@@ -243,6 +244,11 @@ describe('platform/orchestrator', () => {
 
     await orch.provision('alice-admin.prod', 'clerk_1');
 
+    expect(clientSpy).toHaveBeenCalledWith({
+      connectionString: 'postgres://postgres@db:5432/matrixos',
+      connectionTimeoutMillis: 10_000,
+    });
+
     expect(mockClient.query).toHaveBeenNthCalledWith(
       1,
       'SELECT 1 FROM pg_database WHERE datname = $1',
@@ -252,6 +258,34 @@ describe('platform/orchestrator', () => {
       2,
       'CREATE DATABASE "matrixos_alice_admin_prod"',
     );
+
+    clientSpy.mockRestore();
+  });
+
+  it('uses a Postgres connection timeout when dropping a user database', async () => {
+    const { docker } = createMockDocker();
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockResolvedValue({ rows: [{ 1: 1 }] }),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://postgres@db:5432',
+    });
+
+    await orch.provision('alice', 'clerk_1');
+    await orch.destroy('alice');
+
+    expect(clientSpy).toHaveBeenCalledWith({
+      connectionString: 'postgres://postgres@db:5432/matrixos',
+      connectionTimeoutMillis: 10_000,
+    });
+    expect(mockClient.query).toHaveBeenCalledWith('DROP DATABASE IF EXISTS "matrixos_alice"');
 
     clientSpy.mockRestore();
   });

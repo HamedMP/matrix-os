@@ -11,8 +11,11 @@ import {
   updateContainerStatus,
   listContainers,
   deleteContainer,
+  runInPlatformTransaction,
 } from './db.js';
 import { provisionDuration } from './metrics.js';
+
+const POSTGRES_CONNECT_TIMEOUT_MS = 10_000;
 
 export interface OrchestratorConfig {
   db: PlatformDB;
@@ -88,7 +91,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
     assertSafeDbIdentifier(dbName);
-    const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
+    const client = new pg.Client({
+      connectionString: `${postgresUrl}/matrixos`,
+      connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
+    });
     try {
       await client.connect();
       const exists = await client.query(
@@ -108,7 +114,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
     assertSafeDbIdentifier(dbName);
-    const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
+    const client = new pg.Client({
+      connectionString: `${postgresUrl}/matrixos`,
+      connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
+    });
     try {
       await client.connect();
       await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
@@ -218,8 +227,22 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       await ensureNetwork();
       await createUserDatabase(handle);
 
-      const gatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
-      const shellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
+      const { gatewayPort, shellPort } = runInPlatformTransaction(db, () => {
+        const nextGatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
+        const nextShellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
+        insertContainer(db, {
+          handle,
+          clerkUserId,
+          containerId: null,
+          port: nextGatewayPort,
+          shellPort: nextShellPort,
+          status: 'provisioning',
+        });
+        return {
+          gatewayPort: nextGatewayPort,
+          shellPort: nextShellPort,
+        };
+      });
 
       const containerName = `matrixos-${handle}`;
       let container: Dockerode.Container | null = null;
@@ -248,17 +271,13 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
         await container.start();
 
-        insertContainer(db, {
-          handle,
-          clerkUserId,
-          containerId: container.id,
-          port: gatewayPort,
-          shellPort,
-          status: 'running',
-        });
+        updateContainerStatus(db, handle, 'running', container.id);
       } catch (err) {
-        releasePort(db, `${handle}-gw`);
-        releasePort(db, `${handle}-sh`);
+        runInPlatformTransaction(db, () => {
+          releasePort(db, `${handle}-gw`);
+          releasePort(db, `${handle}-sh`);
+          deleteContainer(db, handle);
+        });
         if (container) {
           await safeStopAndRemoveContainer(container, handle);
         }
@@ -303,9 +322,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         await safeStopAndRemoveContainer(container, handle);
       }
 
-      releasePort(db, `${handle}-gw`);
-      releasePort(db, `${handle}-sh`);
-      deleteContainer(db, handle);
+      runInPlatformTransaction(db, () => {
+        releasePort(db, `${handle}-gw`);
+        releasePort(db, `${handle}-sh`);
+        deleteContainer(db, handle);
+      });
       await dropUserDatabase(handle);
     },
 

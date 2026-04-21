@@ -146,6 +146,45 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("rejects downloaded content whose hash does not match the manifest entry", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const content = Buffer.from("corrupted-or-stale");
+      r2.store.set("matrixos-sync/alice/files/notes/bad.md", content);
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: "notes/bad.md",
+          hash: sha256(Buffer.from("expected-different-content")),
+          size: content.length,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await settle(80);
+
+      await expect(stat(join(tmpRoot, "notes/bad.md"))).rejects.toThrow(/ENOENT/);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("remote-change failed for notes/bad.md:"),
+        expect.stringContaining("hash"),
+      );
+
+      await mirror.stop();
+    });
+
     it("deletes a local file when a sync:change action=delete arrives", async () => {
       // Prep a local file we expect to be deleted.
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
@@ -457,6 +496,26 @@ describe("createHomeMirror", () => {
       await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
 
       expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
+      await mirror.stop();
+    });
+
+    it("cleans up orphaned temp files on startup", async () => {
+      await mkdir(join(tmpRoot, "notes"), { recursive: true });
+      const orphanedTmp = join(tmpRoot, "notes", "stale.md.12345.tmp");
+      await writeFile(orphanedTmp, "stale");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      await expect(stat(orphanedTmp)).rejects.toThrow(/ENOENT/);
       await mirror.stop();
     });
 

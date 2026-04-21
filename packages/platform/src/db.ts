@@ -36,6 +36,13 @@ function sqliteClient(db: PlatformDB): BetterSqliteClient {
   return (db as { $client: BetterSqliteClient }).$client;
 }
 
+export function runInPlatformTransaction<T>(
+  db: PlatformDB,
+  fn: () => T,
+): T {
+  return sqliteClient(db).transaction(fn)();
+}
+
 export function getDb(dbPath?: string): PlatformDB {
   if (!_db) {
     _sqlite = new Database(dbPath ?? DB_PATH);
@@ -158,7 +165,7 @@ export function deleteContainer(db: PlatformDB, handle: string): void {
 }
 
 export function allocatePort(db: PlatformDB, basePort: number, handle: string): number {
-  return sqliteClient(db).transaction(() => {
+  return runInPlatformTransaction(db, () => {
     const existing = db.select({ port: portAssignments.port })
       .from(portAssignments)
       .where(eq(portAssignments.handle, handle))
@@ -173,7 +180,7 @@ export function allocatePort(db: PlatformDB, basePort: number, handle: string): 
 
     db.insert(portAssignments).values({ port: nextPort, handle }).run();
     return nextPort;
-  })();
+  });
 }
 
 export function releasePort(db: PlatformDB, handle: string): void {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   adoptRemoteManifestVersion,
+  capSyncStateFiles,
   createSerialTaskQueue,
   persistPauseState,
   resolveWithinSyncRoot,
@@ -125,5 +126,29 @@ describe("daemon runtime guards", () => {
 
     expect(adopted).toBe(true);
     expect(syncState.manifestVersion).toBe(7);
+  });
+
+  it("caps syncState.files to the most recent 50k entries", () => {
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {},
+    };
+
+    for (let i = 0; i < 50_002; i++) {
+      syncState.files[`file-${i}.txt`] = {
+        hash: `sha256:${"a".repeat(63)}${i % 10}`,
+        mtime: i,
+        size: i,
+      };
+    }
+
+    const trimmed = capSyncStateFiles(syncState);
+
+    expect(trimmed).toBe(true);
+    expect(Object.keys(syncState.files)).toHaveLength(50_000);
+    expect(syncState.files["file-0.txt"]).toBeUndefined();
+    expect(syncState.files["file-1.txt"]).toBeUndefined();
+    expect(syncState.files["file-50001.txt"]).toBeDefined();
   });
 });
