@@ -1261,8 +1261,22 @@ export async function createGateway(config: GatewayConfig) {
             ws.close();
             return;
           }
+          // onOpen awaits isOnboardingComplete; if that rejects (e.g. fs
+          // permission error), we must release the `active` flag and close
+          // the socket, otherwise the singleton stays locked and all future
+          // connections hang on initial message.
           onboardingHandler.onOpen((msg) => {
             ws.send(JSON.stringify(msg));
+          }).catch((err: unknown) => {
+            console.warn(
+              "[onboarding] onOpen failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+            try {
+              ws.send(JSON.stringify({ type: "error", code: "internal", stage: "greeting", message: "onboarding failed to initialize", retryable: true }));
+            } catch { /* socket may already be closed */ }
+            onboardingHandler.onClose();
+            ws.close();
           });
         },
         onMessage(evt, _ws) {
@@ -1285,7 +1299,14 @@ export async function createGateway(config: GatewayConfig) {
       const vocalHandler = createVocalHandler({
         homePath,
         geminiApiKey: process.env.GEMINI_API_KEY ?? "",
-        geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+        // VOCAL_GEMINI_MODEL keeps Aoede independently configurable from
+        // onboarding; fall back to ONBOARDING_GEMINI_MODEL so existing
+        // deployments don't regress until operators set the vocal-specific
+        // var.
+        geminiModel:
+          process.env.VOCAL_GEMINI_MODEL ??
+          process.env.ONBOARDING_GEMINI_MODEL ??
+          "gemini-3.1-flash-live-preview",
       });
       return {
         onOpen(_evt, ws) {

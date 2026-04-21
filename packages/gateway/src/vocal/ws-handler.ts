@@ -440,9 +440,14 @@ export function createVocalHandler(deps: VocalDeps) {
         if (!gemini) break;
         const truncated = data.description.slice(0, 200);
         const nameRef = data.newAppName ? ` It's called "${data.newAppName}" and has been opened on their canvas so they can see it.` : "";
-        const errorCtx = !data.success && data.errorMessage
-          ? ` The error was: "${data.errorMessage.slice(0, 300)}".`
-          : "";
+        // Kernel errorMessage can contain absolute paths, pnpm stderr, or
+        // TSC diagnostics — none of which should be narrated back to the
+        // user. Tell Gemini that something went wrong and let it invent
+        // a plain-language phrasing without raw internals as context.
+        const errorCtx = !data.success ? " The build encountered an error." : "";
+        if (!data.success && data.errorMessage) {
+          console.warn("[vocal] delegated build failed:", data.errorMessage.slice(0, 500));
+        }
         const nudge = data.success
           ? `System note (not from the user): the workspace just finished building the app you delegated ("${truncated}").${nameRef} IMPORTANT: If you are currently speaking, finish your current sentence or thought first — don't cut yourself off. Then, in ONE short warm sentence, let the user know it's ready. Use the app name if you have it. Don't describe what it does. Just a brief "alright, the X is ready" style acknowledgment. Then stop.`
           : `System note (not from the user): the workspace hit an error trying to build the app you delegated ("${truncated}").${errorCtx} IMPORTANT: If you are currently speaking, finish your current thought first. Then in ONE short sentence, let the user know what went wrong in plain language — no technical jargon, no error codes. If they ask for details, you can explain further. Offer to try again differently. Then stop.`;

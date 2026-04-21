@@ -222,8 +222,12 @@ export function createGeminiLiveClient(
 
   function connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = `${GEMINI_WS_URL}?key=${apiKey}`;
-      ws = new WebSocket(url);
+      // Pass the API key via header rather than query string so it doesn't
+      // land in proxy access logs, gateway error traces, or stack dumps
+      // (Google's BidiGenerateContent endpoint accepts both forms).
+      ws = new WebSocket(GEMINI_WS_URL, {
+        headers: { "x-goog-api-key": apiKey },
+      });
 
       const timeout = setTimeout(() => {
         ws?.close();

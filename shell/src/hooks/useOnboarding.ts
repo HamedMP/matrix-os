@@ -85,8 +85,17 @@ export function useOnboarding(): OnboardingHook {
     if (!playCtxRef.current) {
       playCtxRef.current = new AudioContext();
       const g = playCtxRef.current.createGain();
-      g.gain.value = 1.2;
-      g.connect(playCtxRef.current.destination);
+      g.gain.value = 1.0;
+      // DynamicsCompressor keeps loud TTS chunks from clipping past [-1, 1]
+      // while still feeling present at unity gain.
+      const compressor = playCtxRef.current.createDynamicsCompressor();
+      compressor.threshold.value = -6;
+      compressor.knee.value = 10;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.1;
+      g.connect(compressor);
+      compressor.connect(playCtxRef.current.destination);
       playGainRef.current = g;
       nextStartTimeRef.current = 0;
     }

@@ -146,7 +146,12 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         sm.transition("interview");
         sm.startTimer();
         send({ type: "stage", stage: "interview", audioSource: "gemini_live" });
-        saveState();
+        saveState().catch((err: unknown) =>
+          console.warn(
+            "[onboarding] saveState failed:",
+            err instanceof Error ? err.message : String(err),
+          ),
+        );
       }
     });
 
