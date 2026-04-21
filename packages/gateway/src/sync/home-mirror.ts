@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { z } from "zod/v4";
@@ -246,6 +246,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let watcher: FSWatcher | null = null;
   let stopRequested = false;
   let subscribed = false;
+  let resolvedHomeRoot = config.homeRoot;
 
   // Serial commit chain: home-mirror updates manifest in-process, but
   // multiple writes still need to read-modify-write the version counter.
@@ -281,6 +282,34 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   };
 
   const store = { r2: config.r2, db: config.manifestDb };
+
+  async function ensureWritableParent(absPath: string): Promise<void> {
+    const parentDir = dirname(absPath);
+    await mkdir(parentDir, { recursive: true });
+    const resolvedParent = await realpath(parentDir);
+    if (
+      resolvedParent !== resolvedHomeRoot &&
+      !resolvedParent.startsWith(`${resolvedHomeRoot}${sep}`)
+    ) {
+      throw new Error("refusing to write through symlinked parent path");
+    }
+  }
+
+  async function cleanupUploadedBlobs(
+    keys: Iterable<string>,
+    reason: string,
+  ): Promise<void> {
+    for (const key of keys) {
+      try {
+        await config.r2.deleteObject(key);
+      } catch (err: unknown) {
+        log.error(
+          `${reason}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  }
 
   async function releaseResources(): Promise<void> {
     if (watcher) {
@@ -355,18 +384,26 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         }
 
         const key = buildFileKey(config.userId, safeRelPath);
-        await config.r2.putObject(key, localFile.body);
-        const action = currentEntry ? "update" : "add";
-        const next: Manifest = applyCommitToManifest(
-          existing.manifest,
-          [{ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }],
-          config.peerId,
-        );
+        try {
+          await config.r2.putObject(key, localFile.body);
+          const action = currentEntry ? "update" : "add";
+          const next: Manifest = applyCommitToManifest(
+            existing.manifest,
+            [{ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }],
+            config.peerId,
+          );
 
-        const newVersion = existing.manifestVersion + 1;
-        await writeManifest(lockedStore, config.userId, next, newVersion);
-        broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
-        log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
+          const newVersion = existing.manifestVersion + 1;
+          await writeManifest(lockedStore, config.userId, next, newVersion);
+          broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
+          log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
+        } catch (err) {
+          await cleanupUploadedBlobs(
+            [key],
+            `cleanup failed for orphaned upload ${safeRelPath}`,
+          );
+          throw err;
+        }
       });
     });
   }
@@ -434,7 +471,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (hashBuffer(buf) !== entry.hash) {
       throw new Error("downloaded blob hash did not match manifest entry");
     }
-    await mkdir(dirname(absPath), { recursive: true });
+    await ensureWritableParent(absPath);
     const tmpPath = `${absPath}.matrixos-${randomUUID()}.tmp`;
     try {
       await writeFile(tmpPath, buf, { flag: "wx" });
@@ -587,45 +624,53 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             size: number;
             action: "add" | "update";
           }> = [];
+          const uploadedKeys: string[] = [];
 
-          for (const { path: safeRelPath, file: localFile } of localFiles) {
-            const currentEntry = nextManifest.files[safeRelPath];
-            if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
-              continue;
-            }
+          try {
+            for (const { path: safeRelPath, file: localFile } of localFiles) {
+              const currentEntry = nextManifest.files[safeRelPath];
+              if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
+                continue;
+              }
 
-            await config.r2.putObject(
-              buildFileKey(config.userId, safeRelPath),
-              localFile.body,
-            );
-            const action = currentEntry ? "update" as const : "add" as const;
-            nextManifest = applyCommitToManifest(
-              nextManifest,
-              [{
+              const key = buildFileKey(config.userId, safeRelPath);
+              await config.r2.putObject(key, localFile.body);
+              uploadedKeys.push(key);
+              const action = currentEntry ? "update" as const : "add" as const;
+              nextManifest = applyCommitToManifest(
+                nextManifest,
+                [{
+                  path: safeRelPath,
+                  hash: localFile.hash,
+                  size: localFile.size,
+                  action,
+                }],
+                config.peerId,
+              );
+
+              changedFiles.push({
                 path: safeRelPath,
                 hash: localFile.hash,
                 size: localFile.size,
                 action,
-              }],
-              config.peerId,
+              });
+            }
+
+            if (changedFiles.length === 0) {
+              return 0;
+            }
+
+            const newVersion = existing.manifestVersion + 1;
+            await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
+            broadcastChanges(changedFiles, newVersion);
+            return changedFiles.length;
+          } catch (err) {
+            await cleanupUploadedBlobs(
+              uploadedKeys,
+              "cleanup failed for orphaned startup upload",
             );
-
-            changedFiles.push({
-              path: safeRelPath,
-              hash: localFile.hash,
-              size: localFile.size,
-              action,
-            });
+            throw err;
           }
-
-          if (changedFiles.length === 0) {
-            return 0;
-          }
-
-          const newVersion = existing.manifestVersion + 1;
-          await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
-          broadcastChanges(changedFiles, newVersion);
-          return changedFiles.length;
         });
       });
 
@@ -725,6 +770,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     async start(): Promise<void> {
       stopRequested = false;
       await mkdir(config.homeRoot, { recursive: true });
+      resolvedHomeRoot = await realpath(config.homeRoot).catch(() => config.homeRoot);
       if (stopRequested) return;
       await cleanupTempFiles(config.homeRoot);
       if (stopRequested) return;

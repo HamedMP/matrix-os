@@ -58,6 +58,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
   const commitLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
   const shareLimiter = createSyncRateLimiter({ maxRequests: 60, windowMs: 60_000 });
+  // Shared-folder data-plane access remains intentionally fail-closed in this
+  // PR. Share CRUD/list endpoints ship here, but presign/commit still operate
+  // only on the caller's own namespace until shared-folder daemon plumbing and
+  // owner-scoped JWTs land (tracked in specs/066-file-sync/follow-ups.md).
   const getUserId = (c: Parameters<SyncRouteDeps["getUserId"]>[0]): string => {
     try {
       return deps.getUserId(c);
@@ -236,6 +240,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
     }
 
+    const requestedPath = resolveWithinPrefix(userId, parsed.data.path);
+    if (!requestedPath.valid) {
+      return c.json({ error: "Invalid path" }, 400);
+    }
+
     if (parsed.data.conflictPath) {
       const pathCheck = resolveWithinPrefix(userId, parsed.data.conflictPath);
       if (!pathCheck.valid) {
@@ -278,7 +287,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json(result, 201);
     } catch (err: unknown) {
       if (err instanceof GranteeNotFoundError) {
-        return c.json({ error: err.message }, 404);
+        return c.json({ error: "Grantee not found" }, 404);
       }
       if (err instanceof ShareSelfError) {
         return c.json({ error: err.message }, 400);

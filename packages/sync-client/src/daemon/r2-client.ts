@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -97,10 +97,10 @@ export async function downloadFile(
       throw new Error("Downloaded content hash did not match expected hash");
     }
   }
-  await mkdir(dirname(localPath), { recursive: true });
-  const tmpPath = `${localPath}.${process.pid}.tmp`;
+  await mkdir(dirname(localPath), { recursive: true, mode: 0o700 });
+  const tmpPath = `${localPath}.matrixos-${randomUUID()}.tmp`;
   try {
-    await writeFile(tmpPath, buffer);
+    await writeFile(tmpPath, buffer, { flag: "wx", mode: 0o600 });
     await rename(tmpPath, localPath);
   } catch (err) {
     try {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
+import { writeFile, mkdir, rm, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   loadSyncState,
@@ -84,6 +84,7 @@ describe("saveSyncState", () => {
     const parsed = JSON.parse(raw);
     expect(parsed.manifestVersion).toBe(3);
     expect(parsed.files["README.md"].hash).toBe(state.files["README.md"]!.hash);
+    expect((await stat(STATE_PATH)).mode & 0o777).toBe(0o600);
   });
 
   it("overwrites an existing state file", async () => {
@@ -106,6 +107,7 @@ describe("saveSyncState", () => {
 
     const raw = await readFile(deepPath, "utf-8");
     expect(JSON.parse(raw).manifestVersion).toBe(0);
+    expect((await stat(join(TEST_DIR, "deep", "nested"))).mode & 0o777).toBe(0o700);
   });
 
   it("does not leave temporary files behind after saving", async () => {

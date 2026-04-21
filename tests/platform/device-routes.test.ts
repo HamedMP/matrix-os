@@ -106,13 +106,13 @@ describe("device routes", () => {
       expect(res.status).toBe(413);
     });
 
-    it("does not trust X-Forwarded-For for rate limiting", async () => {
+    it("uses X-Forwarded-For as a fallback rate-limit key when no proxy IP header is present", async () => {
       for (let i = 0; i < 100; i++) {
         const res = await app.request("/api/auth/device/code", {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-forwarded-for": `203.0.113.${i}`,
+            "x-forwarded-for": "203.0.113.10",
           },
           body: JSON.stringify({ clientId: "matrixos-cli" }),
         });
@@ -123,7 +123,7 @@ describe("device routes", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-forwarded-for": "198.51.100.99",
+          "x-forwarded-for": "203.0.113.10",
         },
         body: JSON.stringify({ clientId: "matrixos-cli" }),
       });
@@ -299,6 +299,8 @@ describe("device routes", () => {
       expect(res.headers.get("x-frame-options")).toBe("DENY");
       expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
       expect(res.headers.get("content-security-policy")).toContain("script-src");
+      expect(res.headers.get("content-security-policy")).toContain("'nonce-");
+      expect(res.headers.get("content-security-policy")).not.toContain("'unsafe-inline'");
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
@@ -312,6 +314,7 @@ describe("device routes", () => {
 
       expect(html).toContain('data-clerk-publishable-key="pk_test_&quot;bad&quot;&amp;&lt;tag&gt;"');
       expect(html).not.toContain('data-clerk-publishable-key="pk_test_"bad"&<tag>"');
+      expect(html).toMatch(/<script nonce="[^"]+"/);
     });
   });
 

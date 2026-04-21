@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -95,5 +95,21 @@ describe("daemon/r2-client", () => {
     expect(
       (await readdir(join(tempDir, "notes"))).filter((name) => name.endsWith(".tmp")),
     ).toEqual([]);
+  });
+
+  it("does not clobber stale PID-based temp files from an earlier crash", async () => {
+    const finalPath = join(tempDir, "notes", "today.md");
+    const legacyTmpPath = `${finalPath}.${process.pid}.tmp`;
+    const body = Buffer.from("hello world");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    await writeFile(legacyTmpPath, "stale temp");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, { status: 200 }),
+    );
+
+    await downloadFile("https://example.test/get", finalPath, hash);
+
+    expect(await readFile(finalPath, "utf8")).toBe("hello world");
+    expect(await readFile(legacyTmpPath, "utf8")).toBe("stale temp");
   });
 });

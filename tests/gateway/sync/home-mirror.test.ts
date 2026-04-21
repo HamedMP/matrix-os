@@ -456,6 +456,57 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("does not write through symlinked parent directories on remote writes", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const outsideRoot = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
+      try {
+        await (await import("node:fs/promises")).symlink(
+          outsideRoot,
+          join(tmpRoot, "projects"),
+        );
+        const remoteContent = Buffer.from("blocked write");
+        r2.store.set(
+          "matrixos-sync/alice/files/projects/crontab",
+          remoteContent,
+        );
+
+        const mirror = createHomeMirror({
+          r2,
+          manifestDb: db,
+          homeRoot: tmpRoot,
+          userId: "alice",
+          peerId: "gateway-alice",
+          peerRegistry: registry,
+          logger,
+        });
+        await mirror.start();
+
+        registry.broadcastChange("alice", "laptop-1", {
+          type: "sync:change",
+          files: [{
+            path: "projects/crontab",
+            hash: sha256(remoteContent),
+            size: remoteContent.length,
+            action: "update",
+          }],
+          peerId: "laptop-1",
+          manifestVersion: 2,
+        });
+
+        await settle(80);
+
+        await expect(stat(join(outsideRoot, "crontab"))).rejects.toThrow(/ENOENT/);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining("remote-change failed for projects/crontab:"),
+          expect.stringContaining("symlinked parent path"),
+        );
+
+        await mirror.stop();
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+
     it("refuses traversal paths on remote deletes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const outsidePath = join(tmpRoot, "..", "escaped-delete.txt");
@@ -817,6 +868,63 @@ describe("createHomeMirror", () => {
         expect.stringContaining("delete blob failed for notes.txt:"),
         "r2 unavailable",
       );
+      await mirror.stop();
+    });
+
+    it("cleans up uploaded blobs when a local manifest write fails", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const originalPutObject = r2.putObject.bind(r2);
+      vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
+        if (key === "matrixos-sync/alice/manifest.json") {
+          throw new Error("manifest write failed");
+        }
+        return originalPutObject(key, body as Buffer);
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      await writeFile(join(tmpRoot, "orphan.txt"), "hello");
+      await waitFor(() =>
+        logger.error.mock.calls.some(
+          ([message]: [string]) => message.includes("push failed for orphan.txt:"),
+        ),
+      );
+
+      expect(r2.store.has("matrixos-sync/alice/files/orphan.txt")).toBe(false);
+
+      await mirror.stop();
+    });
+
+    it("cleans up uploaded startup blobs when the initial manifest write fails", async () => {
+      const originalPutObject = r2.putObject.bind(r2);
+      vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
+        if (key === "matrixos-sync/alice/manifest.json") {
+          throw new Error("manifest write failed");
+        }
+        return originalPutObject(key, body as Buffer);
+      });
+      await writeFile(join(tmpRoot, "startup-orphan.txt"), "hello");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+      });
+
+      await expect(mirror.start()).rejects.toThrow("manifest write failed");
+      expect(r2.store.has("matrixos-sync/alice/files/startup-orphan.txt")).toBe(false);
       await mirror.stop();
     });
 

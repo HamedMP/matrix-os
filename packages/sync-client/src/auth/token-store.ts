@@ -40,7 +40,7 @@ export async function saveAuth(
   path?: string,
 ): Promise<void> {
   const filePath = path ?? authFilePath();
-  await mkdir(dirname(filePath), { recursive: true });
+  await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   await writeFile(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 

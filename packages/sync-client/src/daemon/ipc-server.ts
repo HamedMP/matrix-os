@@ -1,5 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { chmod, unlink } from "node:fs/promises";
+import { chmod, mkdir, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export type IpcHandler = (
   command: string,
@@ -20,6 +21,8 @@ export class IpcServer {
   constructor(private readonly options: IpcServerOptions) {}
 
   async start(): Promise<void> {
+    await mkdir(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
+    await chmod(dirname(this.options.socketPath), 0o700).catch(() => {});
     try {
       await unlink(this.options.socketPath);
     } catch (err: unknown) {
@@ -36,17 +39,24 @@ export class IpcServer {
 
     this.server = createServer((socket) => this.handleConnection(socket));
     this.server.maxConnections = this.maxConnections;
+    const previousUmask = process.umask(0o077);
 
     return new Promise((resolve, reject) => {
+      const onError = (err: Error) => {
+        process.umask(previousUmask);
+        reject(err);
+      };
+      this.server!.once("error", onError);
       this.server!.listen(this.options.socketPath, async () => {
         try {
+          process.umask(previousUmask);
+          this.server?.off("error", onError);
           await chmod(this.options.socketPath, 0o600);
           resolve();
         } catch (err) {
           reject(err);
         }
       });
-      this.server!.on("error", reject);
     });
   }
 

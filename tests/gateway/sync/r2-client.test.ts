@@ -161,6 +161,7 @@ describe("R2 client", () => {
 
   describe("getObject", () => {
     it("sends GetObjectCommand with AbortSignal timeout", async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
       mockSend.mockResolvedValue({
         Body: null,
         ETag: '"abc123"',
@@ -171,6 +172,7 @@ describe("R2 client", () => {
       expect(mockSend).toHaveBeenCalledOnce();
       const [, options] = mockSend.mock.calls[0]!;
       expect(options.abortSignal).toBeDefined();
+      expect(timeoutSpy).toHaveBeenLastCalledWith(10_000);
       expect(result.etag).toBe('"abc123"');
       expect(result.body).toBeNull();
     });
@@ -178,6 +180,7 @@ describe("R2 client", () => {
 
   describe("putObject", () => {
     it("sends PutObjectCommand with AbortSignal timeout", async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
       mockSend.mockResolvedValue({ ETag: '"def456"' });
 
       const result = await client.putObject("key", "content");
@@ -186,6 +189,7 @@ describe("R2 client", () => {
       const [command, options] = mockSend.mock.calls[0]!;
       expect(command.Body).toBe("content");
       expect(options.abortSignal).toBeDefined();
+      expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
       expect(result.etag).toBe('"def456"');
     });
   });

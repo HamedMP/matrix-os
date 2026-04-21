@@ -1,6 +1,7 @@
 import type { R2Client } from "./r2-client.js";
 
-const INTERNAL_SYNC_TIMEOUT_MS = 10_000;
+const INTERNAL_SYNC_READ_TIMEOUT_MS = 10_000;
+const INTERNAL_SYNC_WRITE_TIMEOUT_MS = 30_000;
 
 function noSuchKey(): Error {
   const err = new Error("NoSuchKey");
@@ -15,13 +16,17 @@ export function createPlatformR2Client(config: {
 }): R2Client {
   const routeBase = `${config.baseUrl}/internal/containers/${config.handle}/sync`;
 
-  async function request(path: string, init?: RequestInit): Promise<Response> {
+  async function request(
+    path: string,
+    init?: RequestInit,
+    timeoutMs = INTERNAL_SYNC_READ_TIMEOUT_MS,
+  ): Promise<Response> {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${config.token}`);
     const res = await fetch(`${routeBase}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(INTERNAL_SYNC_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     return res;
   }
@@ -94,7 +99,7 @@ export function createPlatformR2Client(config: {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",
         body,
-      });
+      }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };
     },

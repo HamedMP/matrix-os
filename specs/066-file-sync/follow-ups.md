@@ -45,6 +45,18 @@ macOS requires the user to turn on the Finder extension manually in System Setti
 
 ## P0 — Things still blocking everyday usage
 
+### F19. Shared-folder data plane still fail-closed
+
+Share CRUD/listing landed, but the actual presign/commit path for a grantee syncing an owner's folder is not wired yet. The current routes still operate on the caller's own namespace only; `checkSharePermission()` exists, but owner-scoped JWTs and daemon-side shared-folder plumbing have not shipped.
+
+Before enabling shared-folder sync:
+
+- Add owner-scoped sync auth so the gateway can distinguish "caller" from "target owner" on presign/commit.
+- Wire `checkSharePermission()` into those presign/commit paths using the owner scope from the auth context.
+- Finish daemon shared-folder handling (`sync:share-invite` / `sync:access-revoked`) so accepted shares mount under `~/matrixos/shared/{owner}/...`.
+
+Until then, shared-folder access remains intentionally fail-closed instead of silently granting the wrong namespace.
+
 ### F16. Coalesce commits instead of one-per-file
 
 Every single file change today is its own commit: `home-mirror.pushFile` and the daemon's `onEvent` each call `writeManifest(newVersion = existing + 1)`. Saving 30 files in a burst = 30 commits = 30 manifest rewrites in R2 and 30 `sync_manifests` row updates in Postgres.

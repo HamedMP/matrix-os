@@ -88,6 +88,17 @@ export async function handleCommit(
       .filter((file) => file.action === "delete")
       .map((file) => buildFileKey(userId, file.path));
 
+    for (const key of deleteKeys) {
+      try {
+        await deps.r2.deleteObject(key);
+      } catch (err: unknown) {
+        console.warn(
+          "[sync/commit] Failed to delete stale file blob after manifest update:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+
     return {
       result: {
         manifestVersion: newVersion,
@@ -102,17 +113,6 @@ export async function handleCommit(
       },
     };
   });
-
-  for (const key of locked.deleteKeys) {
-    try {
-      await deps.r2.deleteObject(key);
-    } catch (err: unknown) {
-      console.warn(
-        "[sync/commit] Failed to delete stale file blob after manifest update:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }
 
   if (locked.broadcastMessage) {
     deps.broadcast(userId, peerId, locked.broadcastMessage);

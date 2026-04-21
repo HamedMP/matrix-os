@@ -10,7 +10,8 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { buildFileKey, buildManifestKey } from "./r2-keys.js";
 
 const DEFAULT_PRESIGN_EXPIRY = 900; // 15 minutes
-const R2_OPERATION_TIMEOUT_MS = 10_000;
+const R2_READ_TIMEOUT_MS = 10_000;
+const R2_WRITE_TIMEOUT_MS = 30_000;
 export interface R2ClientConfig {
   accountId?: string;
   accessKeyId: string;
@@ -92,7 +93,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
     async createMultipartUpload(key: string): Promise<string> {
       const command = new CreateMultipartUploadCommand({ Bucket: bucket, Key: key });
       const response = await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_OPERATION_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
       if (!response.UploadId) {
         throw new Error("Failed to create multipart upload: no UploadId returned");
@@ -124,7 +125,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
     ): Promise<{ body: ReadableStream | null; etag?: string }> {
       const command = new GetObjectCommand({ Bucket: bucket, Key: key });
       const response = await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_OPERATION_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
       });
       return {
         body: (response.Body as ReadableStream | undefined) ?? null,
@@ -142,7 +143,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
         Body: body,
       });
       const response = await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_OPERATION_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
       return { etag: response.ETag ?? undefined };
     },
@@ -150,7 +151,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
     async deleteObject(key: string): Promise<void> {
       const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
       await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_OPERATION_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
       });
     },
 

@@ -16,7 +16,7 @@ describe("saveConfig", () => {
   });
 
   it("writes config.json with owner-only permissions", async () => {
-    const configPath = join(tempDir, "config.json");
+    const configPath = join(tempDir, "private", "config.json");
 
     await saveConfig({
       gatewayUrl: "https://alice.matrix-os.com",
@@ -30,6 +30,7 @@ describe("saveConfig", () => {
     expect(JSON.parse(await readFile(configPath, "utf8")).gatewayUrl).toBe(
       "https://alice.matrix-os.com",
     );
+    expect((await stat(join(tempDir, "private"))).mode & 0o777).toBe(0o700);
     expect((await stat(configPath)).mode & 0o777).toBe(0o600);
   });
 });

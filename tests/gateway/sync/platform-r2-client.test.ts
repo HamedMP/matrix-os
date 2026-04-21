@@ -7,6 +7,7 @@ describe("platform R2 client", () => {
   });
 
   it("posts presign requests to the platform internal sync route with bearer auth", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ url: "https://platform.example/presigned-put" }), {
         status: 200,
@@ -31,6 +32,7 @@ describe("platform R2 client", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("authorization")).toBe("Bearer upgrade-token");
     expect(headers.get("content-type")).toBe("application/json");
+    expect(timeoutSpy).toHaveBeenLastCalledWith(10_000);
     expect(init?.body).toBe(
       JSON.stringify({
         key: "matrixos-sync/user_alice/files/test.txt",
@@ -54,6 +56,7 @@ describe("platform R2 client", () => {
   });
 
   it("writes objects through the platform internal sync route", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ etag: '"etag-123"' }), {
         status: 200,
@@ -78,5 +81,6 @@ describe("platform R2 client", () => {
     );
     expect(init?.method).toBe("PUT");
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
   });
 });

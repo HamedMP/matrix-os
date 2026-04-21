@@ -57,10 +57,21 @@ function createRateLimiter(): RateLimiter {
   };
 }
 
+function forwardedClientIp(c: import('hono').Context): string | null {
+  const forwarded = c.req.header('x-forwarded-for');
+  if (!forwarded) return null;
+  const first = forwarded
+    .split(',')
+    .map((part) => part.trim())
+    .find((part) => part.length > 0);
+  return first ?? null;
+}
+
 function clientIp(c: import('hono').Context): string {
   return (
-    c.req.header('cf-connecting-ip')?.trim() ??
-    c.req.header('x-real-ip')?.trim() ??
+    c.req.header('cf-connecting-ip')?.trim() ||
+    c.req.header('x-real-ip')?.trim() ||
+    forwardedClientIp(c) ||
     '127.0.0.1'
   );
 }
@@ -100,7 +111,12 @@ function isJwtAuthError(err: unknown): err is Error {
   );
 }
 
-function approvalPage(userCode: string, csrf: string, publishableKey: string | null): string {
+function approvalPage(
+  userCode: string,
+  csrf: string,
+  publishableKey: string | null,
+  scriptNonce: string,
+): string {
   // Renders an HTML page that lets a Clerk-authenticated user confirm the
   // device pairing. The Clerk widget is loaded for sign-in if needed; once
   // a session exists, the form POSTs to /auth/device/approve. The CSRF
@@ -114,11 +130,12 @@ function approvalPage(userCode: string, csrf: string, publishableKey: string | n
   const clerkScript = publishableKey
     ? `
   <script
+    nonce="${scriptNonce}"
     async crossorigin="anonymous"
     data-clerk-publishable-key="${escapedPublishableKey}"
     src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
     onload="initClerk()"></script>
-  <script>
+  <script nonce="${scriptNonce}">
     function initClerk() {
       window.Clerk.load().then(function() {
         var hasSession = !!window.Clerk.user;
@@ -169,11 +186,17 @@ function approvalSuccessPage(): string {
 <body><div class="card"><h1>Login successful</h1><p>You can close this tab and return to your terminal.</p></div></body></html>`;
 }
 
-function applyNoFrameHeaders(c: import('hono').Context): void {
+function applyNoFrameHeaders(
+  c: import('hono').Context,
+  scriptNonce?: string,
+): void {
   c.header('X-Frame-Options', 'DENY');
+  const scriptSrc = scriptNonce
+    ? `'self' 'nonce-${scriptNonce}' https://clerk.matrix-os.com`
+    : `'self' https://clerk.matrix-os.com`;
   c.header(
     'Content-Security-Policy',
-    "frame-ancestors 'none'; script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com; object-src 'none'; base-uri 'none'",
+    `frame-ancestors 'none'; script-src ${scriptSrc}; object-src 'none'; base-uri 'none'`,
   );
 }
 
@@ -291,6 +314,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       return c.text('Missing user_code', 400);
     }
     const csrf = csrfToken();
+    const scriptNonce = randomBytes(16).toString('base64');
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null;
 
     // Set the CSRF cookie -- HttpOnly so JS can't exfiltrate, SameSite=Strict
@@ -300,8 +324,8 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       'Set-Cookie',
       `device_csrf=${csrf}; Path=/auth/device; Max-Age=900; HttpOnly; SameSite=Strict${secure}`,
     );
-    applyNoFrameHeaders(c);
-    return c.html(approvalPage(userCodeRaw, csrf, publishableKey));
+    applyNoFrameHeaders(c, scriptNonce);
+    return c.html(approvalPage(userCodeRaw, csrf, publishableKey, scriptNonce));
   });
 
   // POST /auth/device/approve -- requires Clerk session + CSRF cookie/form match.

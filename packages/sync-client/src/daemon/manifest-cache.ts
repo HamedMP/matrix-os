@@ -53,10 +53,10 @@ export async function saveSyncState(
   filePath: string,
   state: SyncState,
 ): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
+  await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await writeFile(tempPath, JSON.stringify(state, null, 2));
+    await writeFile(tempPath, JSON.stringify(state, null, 2), { mode: 0o600 });
     await rename(tempPath, filePath);
   } catch (err) {
     await unlink(tempPath).catch((unlinkErr: unknown) => {

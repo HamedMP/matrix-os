@@ -35,7 +35,8 @@ describe("IpcServer", () => {
   it("creates the socket with owner-only permissions", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "ipc-server-test-"));
     tempDirs.push(tempDir);
-    const socketPath = join(tempDir, "ipc.sock");
+    const socketDir = join(tempDir, "private");
+    const socketPath = join(socketDir, "ipc.sock");
 
     const server = new IpcServer({
       socketPath,
@@ -43,6 +44,7 @@ describe("IpcServer", () => {
     });
     await server.start();
 
+    expect((await stat(socketDir)).mode & 0o777).toBe(0o700);
     expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
 
     await server.stop();

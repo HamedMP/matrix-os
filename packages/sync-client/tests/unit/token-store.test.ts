@@ -16,7 +16,7 @@ describe("saveAuth", () => {
   });
 
   it("creates auth.json with owner-only permissions", async () => {
-    const authPath = join(tempDir, "auth.json");
+    const authPath = join(tempDir, "private", "auth.json");
 
     await saveAuth({
       accessToken: "access-token",
@@ -27,6 +27,7 @@ describe("saveAuth", () => {
     }, authPath);
 
     expect(JSON.parse(await readFile(authPath, "utf-8")).accessToken).toBe("access-token");
+    expect((await stat(join(tempDir, "private"))).mode & 0o777).toBe(0o700);
     expect((await stat(authPath)).mode & 0o777).toBe(0o600);
   });
 });

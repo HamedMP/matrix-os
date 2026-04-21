@@ -1515,6 +1515,18 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+  const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
+  const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
+  const conversationBodyLimit = bodyLimit({ maxSize: 4096 });
+  const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
+  const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
+  const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
+  const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
+  const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
+  const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
 
   async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
     try { return await c.req.json<T>(); } catch { return null; }
@@ -1634,7 +1646,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/message", async (c) => {
+  app.post("/api/message", apiMessageBodyLimit, async (c) => {
     const body = await c.req.json<{
       text: string;
       sessionId?: string;
@@ -1731,7 +1743,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   // Structured query API (Postgres-backed)
-  app.post("/api/bridge/query", async (c) => {
+  app.post("/api/bridge/query", bridgeQueryBodyLimit, async (c) => {
     if (!queryEngine || !appRegistry) {
       return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
     }
@@ -1878,7 +1890,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ value });
   });
 
-  app.post("/api/bridge/data", async (c) => {
+  app.post("/api/bridge/data", bridgeDataBodyLimit, async (c) => {
     let body: { action: "read" | "write"; app: string; key: string; value?: string };
     try {
       body = await c.req.json();
@@ -2065,7 +2077,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(conversations.list());
   });
 
-  app.post("/api/conversations", async (c) => {
+  app.post("/api/conversations", conversationBodyLimit, async (c) => {
     const body = await c.req.json<{ channel?: string }>().catch((): { channel?: string } => ({}));
     const id = conversations.create(body.channel);
     return c.json({ id }, 201);
@@ -2099,7 +2111,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.put("/api/layout", async (c) => {
+  app.put("/api/layout", layoutBodyLimit, async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     if (!body || typeof body !== "object" || !Array.isArray(body.windows)) {
       return c.json({ error: "Invalid layout: requires windows array" }, 400);
@@ -2122,7 +2134,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.put("/api/canvas", async (c) => {
+  app.put("/api/canvas", canvasBodyLimit, async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     if (!body || typeof body !== "object" || !body.transform) {
       return c.json({ error: "Invalid canvas data: requires transform object" }, 400);
@@ -2183,7 +2195,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(tasks);
   });
 
-  app.post("/api/tasks", async (c) => {
+  app.post("/api/tasks", taskBodyLimit, async (c) => {
     const body = await c.req.json<{ type?: string; input: string; priority?: number }>();
     if (!body.input || typeof body.input !== "string") {
       return c.json({ error: "input is required" }, 400);
@@ -2211,7 +2223,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(listApps(homePath));
   });
 
-  app.put("/api/apps/:slug/rename", async (c) => {
+  app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     const { name } = await c.req.json<{ name: string }>();
     const result = renameApp(homePath, slug, name);
@@ -2232,7 +2244,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/apps/:slug/icon", async (c) => {
+  app.post("/api/apps/:slug/icon", appIconBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
       return c.json({ error: "Invalid slug" }, 400);
@@ -2331,7 +2343,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(cronService.listJobs());
   });
 
-  app.post("/api/cron", async (c) => {
+  app.post("/api/cron", cronBodyLimit, async (c) => {
     const body = await c.req.json<{
       name: string;
       message: string;
@@ -2410,7 +2422,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
-  app.post("/api/system/upgrade", async (c) => {
+  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
     const handle = process.env.MATRIX_HANDLE;
     const token = process.env.UPGRADE_TOKEN;
     const platformUrl = process.env.PLATFORM_INTERNAL_URL;
@@ -2454,7 +2466,7 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.post("/api/push/register", async (c) => {
+  app.post("/api/push/register", pushRegistrationBodyLimit, async (c) => {
     const body = await c.req.json<{ token: string; platform: string }>();
     if (!body.token || !body.platform) {
       return c.json({ error: "token and platform are required" }, 400);
@@ -2463,7 +2475,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.delete("/api/push/register", async (c) => {
+  app.delete("/api/push/register", pushRegistrationBodyLimit, async (c) => {
     const body = await c.req.json<{ token: string }>();
     if (!body.token) {
       return c.json({ error: "token is required" }, 400);

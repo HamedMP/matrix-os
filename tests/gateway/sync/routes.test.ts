@@ -426,6 +426,18 @@ describe("POST /api/sync/resolve-conflict", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 for an invalid path even when conflictPath is valid", async () => {
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/resolve-conflict", {
+      path: "../escape.txt",
+      resolution: "keep-local",
+      conflictPath: "readme (conflict - peer1 - 2026-04-14).md",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mockR2.deleteObject).not.toHaveBeenCalled();
+  });
+
   it("deletes conflict copy from R2 when conflictPath is provided", async () => {
     mockR2.deleteObject.mockResolvedValue(undefined);
 
@@ -497,6 +509,7 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Grantee not found" });
   });
 
   it("POST /share returns 400 on self-share", async () => {

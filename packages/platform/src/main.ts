@@ -29,6 +29,8 @@ import { isSafeWebSocketUpgradePath } from './ws-upgrade.js';
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
+const DEV_PLATFORM_SECRET = 'dev-secret';
+const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
 
@@ -79,6 +81,33 @@ function requireValidHandle(handle: string): string {
     throw new Error('Invalid handle');
   }
   return handle;
+}
+
+export function checkUnsafeDefaultSecrets(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.error,
+): string[] {
+  if (env.NODE_ENV !== 'production') return [];
+  const problems: string[] = [];
+
+  if (!env.PLATFORM_SECRET || env.PLATFORM_SECRET === DEV_PLATFORM_SECRET) {
+    problems.push('PLATFORM_SECRET');
+  }
+
+  if (
+    !env.PLATFORM_JWT_SECRET ||
+    env.PLATFORM_JWT_SECRET === DEV_PLATFORM_JWT_SECRET
+  ) {
+    problems.push('PLATFORM_JWT_SECRET');
+  }
+
+  if (problems.length > 0) {
+    log(
+      `[platform] Refusing to start in production with missing or unsafe default secrets: ${problems.join(', ')}.`,
+    );
+  }
+
+  return problems;
 }
 
 interface AppDomainIdentity {
@@ -483,7 +512,33 @@ export function createApp(deps: {
     app.route('/api/integrations', deps.integrationRoutes);
   }
   if (deps.internalIntegrationRoutes) {
-    app.route('/internal/containers/:handle/integrations', deps.internalIntegrationRoutes);
+    const internalIntegrationApp = new Hono();
+    internalIntegrationApp.use('*', async (c, next) => {
+      const handle = c.req.param('handle');
+      if (!handle) {
+        return c.json({ error: 'Missing handle' }, 400);
+      }
+      if (!platformSecret) {
+        return c.json({ error: 'Internal integrations not configured' }, 503);
+      }
+      const auth = c.req.header('authorization');
+      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+      const expected = buildPlatformVerificationToken(handle, platformSecret);
+      if (!timingSafeTokenEquals(token, expected)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+
+      const record = getContainer(db, handle);
+      if (!record?.clerkUserId) {
+        return c.json({ error: 'Unknown handle' }, 404);
+      }
+
+      c.set('internalContainerHandle', handle);
+      c.set('internalContainerClerkUserId', record.clerkUserId);
+      return next();
+    });
+    internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
+    app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
@@ -812,6 +867,9 @@ export function createApp(deps: {
 
 // Start server when run directly
 if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')) {
+  if (checkUnsafeDefaultSecrets().length > 0) {
+    process.exit(1);
+  }
   const db = createPlatformDb(DB_PATH);
   const docker = new Dockerode();
   const extraEnv: string[] = [];
@@ -921,10 +979,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       pipedream,
       webhookSecret,
       resolveUserId: async (c) => {
-        const handle = c.req.param('handle');
-        const record = getContainer(db, handle);
-        if (!record?.clerkUserId) return null;
-        const user = await trustedPlatformDb!.getUserByClerkId(record.clerkUserId);
+        const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
+        if (!clerkUserId) return null;
+        const user = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
         return user?.id ?? null;
       },
     });

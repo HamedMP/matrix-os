@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkHomeMirrorS3Env } from "../../packages/platform/src/main.js";
+import {
+  checkHomeMirrorS3Env,
+  checkUnsafeDefaultSecrets,
+} from "../../packages/platform/src/main.js";
 
 describe("checkHomeMirrorS3Env (startup assertion for silent-failure #6)", () => {
   it("returns [] and does not log when MATRIX_HOME_MIRROR is not 'true'", () => {
@@ -96,5 +99,51 @@ describe("checkHomeMirrorS3Env (startup assertion for silent-failure #6)", () =>
     expect(() =>
       checkHomeMirrorS3Env({ MATRIX_HOME_MIRROR: "true" }, log),
     ).not.toThrow();
+  });
+});
+
+describe("checkUnsafeDefaultSecrets", () => {
+  it("allows dev defaults outside production", () => {
+    const log = vi.fn();
+    const problems = checkUnsafeDefaultSecrets(
+      {
+        NODE_ENV: "development",
+        PLATFORM_SECRET: "dev-secret",
+        PLATFORM_JWT_SECRET: "dev-platform-jwt-secret-please-change-32",
+      },
+      log,
+    );
+
+    expect(problems).toEqual([]);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("flags missing or known dev defaults in production", () => {
+    const log = vi.fn();
+    const problems = checkUnsafeDefaultSecrets(
+      {
+        NODE_ENV: "production",
+        PLATFORM_SECRET: "dev-secret",
+        PLATFORM_JWT_SECRET: "dev-platform-jwt-secret-please-change-32",
+      },
+      log,
+    );
+
+    expect(problems).toEqual(["PLATFORM_SECRET", "PLATFORM_JWT_SECRET"]);
+    expect(log).toHaveBeenCalledOnce();
+  });
+
+  it("flags a missing PLATFORM_JWT_SECRET in production", () => {
+    const log = vi.fn();
+    const problems = checkUnsafeDefaultSecrets(
+      {
+        NODE_ENV: "production",
+        PLATFORM_SECRET: "platform-secret-123",
+      },
+      log,
+    );
+
+    expect(problems).toEqual(["PLATFORM_JWT_SECRET"]);
+    expect(log).toHaveBeenCalledOnce();
   });
 });
