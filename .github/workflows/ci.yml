@@ -11,8 +11,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Gate 1: Mechanical checks ──
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # TODO: remove continue-on-error once baseline type errors in kernel are fixed
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Type check all packages
+        run: bun run typecheck
+
+  patterns:
+    name: Pattern Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ripgrep
+        run: sudo apt-get install -y ripgrep
+
+      - name: Run CLAUDE.md pattern scanner on changed files
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
+          else
+            ./scripts/review/check-patterns.sh
+          fi
+
+  # ── Gate 2: Tests ──
   unit:
     name: Unit Tests
+    needs: [typecheck, patterns]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -50,7 +96,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Configure git for tests

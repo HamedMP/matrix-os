@@ -33,7 +33,11 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "typecheck": "bun run --filter '@matrix-os/kernel' build && bun run --filter '@matrix-os/gateway' build && bun run --filter '@matrix-os/platform' build && bun run --filter '@matrix-os/proxy' build",
+    "check:patterns": "./scripts/review/check-patterns.sh",
+    "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
+    "lint": "bun run --filter './shell' lint"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

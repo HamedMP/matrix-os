@@ -146,29 +146,40 @@ Read `specs/ux-guide.md`. Key rules:
 
 Every spec with endpoints/WebSockets/IPC/file I/O must include: security architecture (auth matrix, input validation, error policy), integration wiring (startup sequence, cross-package comms), failure modes (timeouts, concurrent access, crash recovery), resource management (buffer limits, file cleanup). Full checklist: `specs/quality-gates.md`
 
-## Code Review Essentials
+## Code Review Pipeline
 
-Check failure modes, not just happy paths:
+Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line-by-line review.
 
-- **Error handling**: typed catch blocks (not bare `catch { return null }`), async `.catch()`, no leaking internals
-- **Atomicity**: 3+ sequential DB writes need transactions, no TOCTOU races
-- **API contract**: response field names match frontend, no dead code paths
-- **Type safety**: no unchecked `as` casts, sync/async signature matches
+### Pre-PR Checklist (mandatory)
 
-### Review Sweeps
+```bash
+bun run typecheck           # tsc --noEmit for all packages
+bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
+bun run test                # unit tests
+```
 
-For every PR review, run these targeted sweeps on touched files:
+### Three Review Passes
 
-- **Fetch timeout sweep**: inspect every new `fetch(` call in backend, shell, injected bridge scripts, and tests/mocks that mirror production code. Real calls must include `signal: AbortSignal.timeout(...)`.
-- **Empty catch sweep**: grep for `catch {}`, `catch { return ... }`, and `.catch(() => {})`. Every catch must log or explicitly handle the failure mode.
-- **Parity sweep for mirrored routes**: if logic exists in both a public route and a bridge/dev/proxy route, verify they share one helper or match behavior exactly (validation, verb dispatch, fallback behavior, errors, timeouts).
-- **Bridge/API argument sweep**: when shell bridge helpers call backend routes, confirm they expose every backend disambiguator the feature depends on (`label`, IDs, paging, etc.), not just the "happy path" arguments.
-- **Review grep commands**: at minimum run `rg -n 'fetch\\(' packages shell` and `rg -n 'catch\\s*\\{|\\.catch\\(\\(\\) => \\{\\s*\\}\\)' packages shell tests` before finalizing a review.
+1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
+
+2. **Trust-boundary sweep**: For each changed file, classify it (route handler, filesystem, database, WS/IPC) and apply the matching checklist from `docs/dev/review-pipeline.md`. Trace external input from entry to use.
+
+3. **Atomicity/failure-mode review**: For each subsystem touched, answer: What is the source of truth? What is inside the lock/transaction? What happens on partial failure? What happens on shutdown? What is explicitly deferred?
+
+### PR Size Limits
+
+- **> 3000 additions or > 50 files**: split the PR
+- Split along: gateway, platform, sync-client, shell, docs/deploy
+
+### PR Body: Mandatory Invariants
+
+Every backend PR must document: source of truth, lock/transaction scope, acceptable orphan states, auth source of truth, and explicitly deferred scope.
 
 ## Reference Docs
 
 Read these on demand, not every session:
 
+- `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues

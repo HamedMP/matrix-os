@@ -27,18 +27,103 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           use_sticky_comment: true
           prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            You are reviewing a PR for Matrix OS. Read CLAUDE.md first for project conventions.
 
-            Review this PR. Focus on:
-            1. Bugs, logic errors, and potential runtime failures
-            2. Security vulnerabilities (XSS, injection, auth issues)
-            3. Performance problems (memory leaks, unnecessary re-renders, N+1 queries)
-            4. Code quality and adherence to project conventions in CLAUDE.md
+            ## PR Size Gate
 
-            Be concise. Only flag real issues, not style nitpicks.
-            Use the gh CLI to read the PR diff and post inline comments on specific lines.
+            Check the PR stats. If additions > 3000 or changed files > 50, post a
+            top-level comment recommending the PR be split, with suggested groupings.
+            Still review, but note the size makes thorough review unreliable.
+
+            ## Review Structure: Three Passes
+
+            Do NOT review line-by-line. Instead, make three structured passes over the
+            changed files. Each pass catches a distinct class of issue. Do not repeat
+            findings across passes.
+
+            ### Pass 1: Mechanical CLAUDE.md Sweep
+
+            Run these searches on changed files and flag violations:
+
+            1. **Bare/empty catch blocks**: `catch {}`, `.catch(() => {})`, `.catch(() => undefined)`
+               Rule: every catch must check error type and at minimum log
+            2. **fetch() without signal**: any `fetch(` call missing `signal: AbortSignal.timeout()`
+               Rule: 10s for APIs, 30s for downloads
+            3. **Body consumption without bodyLimit**: `c.req.json()`, `.text()`, `.blob()`, `.arrayBuffer()`
+               Rule: Hono bodyLimit middleware required on every mutating endpoint
+            4. **Unbounded Map/Set**: `new Map()`, `new Set()` without size cap nearby
+               Rule: must have cap + eviction (LRU via delete-then-set, or TTL)
+            5. **Sync file I/O**: `writeFileSync`, `appendFileSync` in non-test code
+               Rule: banned in request handlers, use fs/promises
+            6. **Non-atomic file writes**: `writeFile(finalPath, ...)` without temp+rename
+               Rule: write to temp, then rename atomically
+
+            Report only confirmed violations with file:line. Skip if CI pattern scanner
+            already catches it (note that in the summary).
+
+            ### Pass 2: Trust-Boundary Sweep
+
+            For each changed file, identify where external input enters and trace it:
+
+            **Route handler files** (files with `app.get/post/put/delete/patch`):
+            - [ ] Every path/query/header param validated before use
+            - [ ] Error responses don't leak internals (no raw err.message, no Zod .issues)
+            - [ ] Auth middleware applied (check mounting order in parent file)
+
+            **Filesystem operation files** (files using join/resolve/readFile/writeFile/unlink):
+            - [ ] All paths validated via resolveWithinPrefix or equivalent
+            - [ ] Symlink checks before write/delete operations
+            - [ ] No path.join() on unvalidated external input
+
+            **Database operation files** (files with Drizzle/Kysely queries):
+            - [ ] 2+ related writes wrapped in transaction
+            - [ ] No TOCTOU (read-check-write without lock)
+            - [ ] ON CONFLICT for upserts instead of check-then-insert
+
+            **WebSocket/IPC handlers** (files processing ws.on('message') or IPC):
+            - [ ] Incoming messages validated with Zod schema before use
+            - [ ] No unchecked `as` casts on external data
+            - [ ] Buffer/message size caps
+
+            ### Pass 3: Atomicity and Failure-Mode Review
+
+            For each subsystem touched by the PR, ask these questions:
+
+            1. **What is the source of truth?** (DB? R2? filesystem?)
+               If there are two stores, what reconciles them on divergence?
+            2. **What is inside the lock/transaction?**
+               Are network calls (R2, external APIs) inside the critical section?
+               Could they be moved outside?
+            3. **What happens on partial failure?**
+               If step N succeeds and step N+1 fails, is there orphaned state?
+               Is there compensation/cleanup?
+            4. **What happens on shutdown/restart?**
+               Are watchers/intervals/connections cleaned up?
+               Is in-flight work drained or abandoned?
+            5. **What is explicitly deferred?**
+               If auth, validation, or cleanup is "not in scope", is that stated?
+
+            ## Output Format
+
+            Post ONE review comment with this structure:
+
+            ### PR Size Assessment
+            [additions/files count, split recommendation if needed]
+
+            ### Findings
+            [Grouped by pass. Each finding: severity (CRITICAL/HIGH/MEDIUM/LOW),
+            file:line, one-sentence description, one-sentence fix suggestion.
+            No duplicates across passes.]
+
+            ### What Looked Good
+            [2-3 bullet points on things done well — important for calibration]
+
+            Then post INLINE comments only for CRITICAL and HIGH findings on specific lines.
+            Do not post inline comments for MEDIUM/LOW — those go in the summary only.
+
+            Maximum 20 inline comments. If you find more than 20 HIGH+ issues, the PR
+            should probably be split.
           claude_args: |
             --model claude-opus-4-6
-            --max-turns 50
-            --allowedTools "Bash(gh pr:*),Bash(gh api:*),Bash(gh diff:*),Bash(cat:*),Bash(head:*),Bash(wc:*),Read,Glob,Grep"
+            --max-turns 25
+            --allowedTools "Bash(gh pr:*),Bash(gh api:*),Bash(gh diff:*),Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(rg:*),Read,Glob,Grep"
