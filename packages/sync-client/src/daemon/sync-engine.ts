@@ -37,6 +37,7 @@ export interface PresignRequest {
   path: string;
   action: "put" | "get";
   hash?: string;
+  size?: number;
 }
 
 const MAX_PRESIGN_BATCH = 100;
@@ -141,7 +142,12 @@ export function buildPresignBatch(changes: ChangeSet): PresignRequest[] {
   const requests: PresignRequest[] = [];
 
   for (const upload of changes.uploads) {
-    requests.push({ path: upload.path, action: "put", hash: upload.hash });
+    requests.push({
+      path: upload.path,
+      action: "put",
+      hash: upload.hash,
+      size: upload.size,
+    });
   }
   for (const download of changes.downloads) {
     requests.push({ path: download.path, action: "get", hash: download.hash });

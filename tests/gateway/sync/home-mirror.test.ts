@@ -940,5 +940,36 @@ describe("createHomeMirror", () => {
 
       await mirror.stop();
     });
+
+    it("batches startup manifest persistence into a single locked write", async () => {
+      await writeFile(join(tmpRoot, "one.md"), "one");
+      await writeFile(join(tmpRoot, "two.md"), "two");
+      const upsertMeta = vi.fn(async () => {});
+      const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
+
+      db = {
+        async getManifestMeta() {
+          return null;
+        },
+        upsertManifestMeta: upsertMeta,
+        withAdvisoryLock: lockSpy,
+      } as unknown as ManifestDb;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      expect(lockSpy).toHaveBeenCalledTimes(1);
+      expect(upsertMeta).toHaveBeenCalledTimes(1);
+
+      await mirror.stop();
+    });
   });
 });

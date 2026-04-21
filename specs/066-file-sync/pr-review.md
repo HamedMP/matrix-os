@@ -161,6 +161,16 @@ for that item both exist locally.
 - [x] Home-mirror startup now cleans up orphaned `.<pid>.tmp` pull temp files left by prior crashes.
 - [x] Sync-client `syncState.files` is now capped at 50k entries instead of growing without bound.
 
+## Latest Sync-Client Data Plane Follow-up Wave
+
+- [x] Sync-client PUT presign requests now include `size` all the way through `PresignRequest`, `buildPresignBatch()`, and the watcher upload path, so gateway presign validation no longer rejects uploads with `400`.
+- [x] Sync-client WebSocket subscribe frames now include the required `hostname`, `platform`, and `clientVersion` fields so the gateway accepts peer registration.
+- [x] Sync-client download writes now verify the expected blob hash before replacing local files.
+- [x] Sync-client download writes now use temp-file + `rename()` atomic replacement instead of writing directly to the destination path.
+- [x] Sync-client daemon now exits cleanly on runtime auth rejection instead of silently limping after the 24-hour JWT expires.
+- [x] Device approval HTML now includes an explicit `script-src` Content Security Policy directive in addition to `frame-ancestors 'none'`.
+- [x] Home-mirror startup push now batches changed files into one locked manifest write instead of rewriting the manifest once per startup file.
+
 ## Still Open / Architectural
 
 - [x] Platform app-domain routing now terminates sync JWT auth at the trusted platform boundary and proxies to containers with a per-container bearer token, so containers do not need platform JWT signing material.
@@ -204,6 +214,9 @@ for that item both exist locally.
 - [x] Latest platform route/auth regression passes in Docker dev container: `tests/platform/device-routes.test.ts`, `tests/platform/device-flow.test.ts` (`2 files`, `33 tests`).
 - [x] Latest runtime/integrity regression passes locally: `tests/gateway/sync/home-mirror.test.ts` plus sync-client `tests/unit/ws-client.test.ts`, `daemon-runtime-guards.test.ts` (`3 files`, `35 tests`).
 - [x] Latest orchestrator/proxy regression passes in Docker dev container: `tests/platform/orchestrator.test.ts`, `tests/platform/proxy-routing.test.ts` (`2 files`, `30 tests`).
+- [x] Latest sync-client data-plane regression passes via package config: `tests/unit/r2-client.test.ts`, `ws-client.test.ts`, `daemon-runtime-guards.test.ts`, `sync-engine.test.ts` (`4 files`, `35 tests`).
+- [x] Latest home-mirror batching regression passes locally: `tests/gateway/sync/home-mirror.test.ts` (`1 file`, `23 tests`).
+- [x] Latest device approval CSP regression passes in Docker dev container: `tests/platform/device-routes.test.ts` (`1 file`, `12 tests`).
 
 ## Lower-Priority Follow-ups From Review
 

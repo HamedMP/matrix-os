@@ -1,4 +1,5 @@
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface PresignedUrl {
@@ -10,6 +11,13 @@ export interface PresignedUrl {
 export interface GatewayClient {
   gatewayUrl: string;
   token: string;
+}
+
+export class AuthRejectedError extends Error {
+  constructor(message = "Auth token rejected or expired. Re-run `matrixos login`.") {
+    super(message);
+    this.name = "AuthRejectedError";
+  }
 }
 
 export class VersionConflictError extends Error {
@@ -24,7 +32,7 @@ export class VersionConflictError extends Error {
 
 export async function requestPresignedUrls(
   client: GatewayClient,
-  files: { path: string; action: "put" | "get"; hash?: string }[],
+  files: { path: string; action: "put" | "get"; hash?: string; size?: number }[],
 ): Promise<PresignedUrl[]> {
   const res = await fetch(`${client.gatewayUrl}/api/sync/presign`, {
     method: "POST",
@@ -35,6 +43,10 @@ export async function requestPresignedUrls(
     body: JSON.stringify({ files }),
     signal: AbortSignal.timeout(10_000),
   });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new AuthRejectedError();
+  }
 
   if (!res.ok) {
     throw new Error(`Presign request failed: ${res.status}`);
@@ -68,6 +80,7 @@ export async function uploadFile(
 export async function downloadFile(
   presignedUrl: string,
   localPath: string,
+  expectedHash?: string,
 ): Promise<void> {
   const res = await fetch(presignedUrl, {
     signal: AbortSignal.timeout(30_000),
@@ -78,8 +91,31 @@ export async function downloadFile(
   }
 
   const buffer = Buffer.from(await res.arrayBuffer());
+  if (expectedHash) {
+    const actualHash = `sha256:${createHash("sha256").update(buffer).digest("hex")}`;
+    if (actualHash !== expectedHash) {
+      throw new Error("Downloaded content hash did not match expected hash");
+    }
+  }
   await mkdir(dirname(localPath), { recursive: true });
-  await writeFile(localPath, buffer);
+  const tmpPath = `${localPath}.${process.pid}.tmp`;
+  try {
+    await writeFile(tmpPath, buffer);
+    await rename(tmpPath, localPath);
+  } catch (err) {
+    try {
+      await unlink(tmpPath);
+    } catch (cleanupErr) {
+      if (
+        !(cleanupErr instanceof Error) ||
+        !("code" in cleanupErr) ||
+        (cleanupErr as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        throw cleanupErr;
+      }
+    }
+    throw err;
+  }
 }
 
 export async function commitFiles(
@@ -96,6 +132,10 @@ export async function commitFiles(
     body: JSON.stringify({ files, expectedVersion }),
     signal: AbortSignal.timeout(10_000),
   });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new AuthRejectedError();
+  }
 
   if (res.status === 409) {
     const data = (await res.json()) as { error: string; currentVersion: number };
@@ -119,6 +159,10 @@ export async function fetchManifest(client: GatewayClient): Promise<{
     },
     signal: AbortSignal.timeout(10_000),
   });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new AuthRejectedError();
+  }
 
   if (!res.ok) {
     throw new Error(`Manifest fetch failed: ${res.status}`);

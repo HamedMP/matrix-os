@@ -171,7 +171,10 @@ function approvalSuccessPage(): string {
 
 function applyNoFrameHeaders(c: import('hono').Context): void {
   c.header('X-Frame-Options', 'DENY');
-  c.header('Content-Security-Policy', "frame-ancestors 'none'");
+  c.header(
+    'Content-Security-Policy',
+    "frame-ancestors 'none'; script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com; object-src 'none'; base-uri 'none'",
+  );
 }
 
 export function createAuthRoutes(config: AuthRoutesConfig): Hono {

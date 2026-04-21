@@ -468,29 +468,46 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const relPaths = await collectLocalFiles(config.homeRoot);
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, config.userId);
+    const localFiles: Array<{
+      path: string;
+      file: Extract<LocalPushFile, { kind: "file" }>;
+    }> = [];
+
+    for (const relPath of relPaths) {
+      const safeRelPath = normalizeRelativePath(config.userId, relPath);
+      const absPath = join(config.homeRoot, safeRelPath);
+      const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+      if (localFile.kind === "skip") continue;
+      if (localFile.kind === "too_large") {
+        log.error(
+          `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
+        );
+        continue;
+      }
+      const snapshotEntry = snapshot.manifest.files[safeRelPath];
+      if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
+        continue;
+      }
+      localFiles.push({ path: safeRelPath, file: localFile });
+    }
+
+    if (localFiles.length === 0) return;
 
     await enqueue(async () => {
-      for (const relPath of relPaths) {
-        const safeRelPath = normalizeRelativePath(config.userId, relPath);
-        const absPath = join(config.homeRoot, safeRelPath);
-        const localFile = await readLocalFileForPush(absPath, maxPushBytes);
-        if (localFile.kind === "skip") continue;
-        if (localFile.kind === "too_large") {
-          log.error(
-            `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
-          );
-          continue;
-        }
-        const snapshotEntry = snapshot.manifest.files[safeRelPath];
-        if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
-          continue;
-        }
+      await withManifestLock(async (lockedStore) => {
+        const existing = await readManifest(lockedStore, config.userId);
+        let nextManifest = existing.manifest;
+        const changedFiles: Array<{
+          path: string;
+          hash: string;
+          size: number;
+          action: "add" | "update";
+        }> = [];
 
-        await withManifestLock(async (lockedStore) => {
-          const existing = await readManifest(lockedStore, config.userId);
-          const currentEntry = existing.manifest.files[safeRelPath];
+        for (const { path: safeRelPath, file: localFile } of localFiles) {
+          const currentEntry = nextManifest.files[safeRelPath];
           if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
-            return;
+            continue;
           }
 
           await config.r2.putObject(
@@ -498,8 +515,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             localFile.body,
           );
           const action = currentEntry ? "update" as const : "add" as const;
-          const nextManifest = applyCommitToManifest(
-            existing.manifest,
+          nextManifest = applyCommitToManifest(
+            nextManifest,
             [{
               path: safeRelPath,
               hash: localFile.hash,
@@ -509,20 +526,23 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             config.peerId,
           );
 
-          const newVersion = existing.manifestVersion + 1;
-          await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
-          broadcastChange(
-            {
-              path: safeRelPath,
-              hash: localFile.hash,
-              size: localFile.size,
-              action,
-            },
-            newVersion,
-          );
-          log.info(`initial push: ${safeRelPath}`);
-        });
-      }
+          changedFiles.push({
+            path: safeRelPath,
+            hash: localFile.hash,
+            size: localFile.size,
+            action,
+          });
+        }
+
+        if (changedFiles.length === 0) {
+          return;
+        }
+
+        const newVersion = existing.manifestVersion + 1;
+        await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
+        broadcastChanges(changedFiles, newVersion);
+        log.info(`initial push: ${changedFiles.length} files`);
+      });
     });
   }
 

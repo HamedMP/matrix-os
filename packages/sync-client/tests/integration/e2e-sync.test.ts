@@ -101,7 +101,12 @@ describe("E2E sync cycle", () => {
     // -- Step 2: Watcher triggers direct upload (new files bypass detectChanges) --
     // The watcher's onEvent fires for new files and the daemon directly
     // requests a presigned URL, uploads, and commits. We simulate this path.
-    const presignRequest = { path: filePath, action: "put" as const, hash: hashA };
+    const presignRequest = {
+      path: filePath,
+      action: "put" as const,
+      hash: hashA,
+      size: content.length,
+    };
     expect(presignRequest.action).toBe("put");
 
     // Simulate: file content goes to R2, gateway commits manifest

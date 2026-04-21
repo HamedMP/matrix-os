@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import WebSocket from "ws";
 import { z } from "zod/v4";
 import type { SyncEvent } from "./types.js";
@@ -6,6 +7,9 @@ export interface WsClientOptions {
   gatewayUrl: string;
   token: string;
   peerId: string;
+  hostname?: string;
+  platform?: "darwin" | "linux" | "win32";
+  clientVersion?: string;
   onEvent: (event: SyncEvent) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -39,6 +43,24 @@ export function parseSyncEventMessage(payload: string): SyncEvent | null {
     return null;
   }
   return SyncEventMessageSchema.parse(msg);
+}
+
+export function buildSyncSubscribeMessage(
+  options: Pick<WsClientOptions, "peerId" | "hostname" | "platform" | "clientVersion">,
+): {
+  type: "sync:subscribe";
+  peerId: string;
+  hostname: string;
+  platform: "darwin" | "linux" | "win32";
+  clientVersion: string;
+} {
+  return {
+    type: "sync:subscribe",
+    peerId: options.peerId,
+    hostname: options.hostname ?? hostname(),
+    platform: options.platform ?? (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux"),
+    clientVersion: options.clientVersion ?? process.env.MATRIXOS_SYNC_CLIENT_VERSION ?? "0.1.0",
+  };
 }
 
 export class SyncWsClient {
@@ -111,12 +133,7 @@ export class SyncWsClient {
   }
 
   private sendSubscribe(): void {
-    this.ws?.send(
-      JSON.stringify({
-        type: "sync:subscribe",
-        peerId: this.options.peerId,
-      }),
-    );
+    this.ws?.send(JSON.stringify(buildSyncSubscribeMessage(this.options)));
   }
 
   private startPing(): void {

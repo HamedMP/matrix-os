@@ -298,6 +298,7 @@ describe("device routes", () => {
       expect(res.headers.get("content-type")).toContain("text/html");
       expect(res.headers.get("x-frame-options")).toBe("DENY");
       expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+      expect(res.headers.get("content-security-policy")).toContain("script-src");
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);

@@ -6,12 +6,13 @@ import {
   adoptRemoteManifestVersion,
   capSyncStateFiles,
   createSerialTaskQueue,
+  exitOnAuthFailure,
   persistPauseState,
   resolveWithinSyncRoot,
   writePidFileExclusive,
 } from "../../src/daemon/index.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
-import { VersionConflictError } from "../../src/daemon/r2-client.js";
+import { AuthRejectedError, VersionConflictError } from "../../src/daemon/r2-client.js";
 import type { SyncState } from "../../src/daemon/types.js";
 
 describe("daemon runtime guards", () => {
@@ -150,5 +151,18 @@ describe("daemon runtime guards", () => {
     expect(syncState.files["file-0.txt"]).toBeUndefined();
     expect(syncState.files["file-1.txt"]).toBeUndefined();
     expect(syncState.files["file-50001.txt"]).toBeDefined();
+  });
+
+  it("exits cleanly on auth rejection errors", () => {
+    const logger = { error: vi.fn() };
+    const exit = vi.fn();
+
+    const handled = exitOnAuthFailure(new AuthRejectedError(), logger, exit);
+
+    expect(handled).toBe(true);
+    expect(logger.error).toHaveBeenCalledWith(
+      "Auth token rejected or expired. Re-run `matrixos login`.",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });

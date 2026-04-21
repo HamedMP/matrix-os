@@ -8,10 +8,10 @@ import {
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
-import { clearAuth, loadAuth } from "../auth/token-store.js";
+import { clearAuth, isExpired, loadAuth } from "../auth/token-store.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
-import { detectChanges, buildPresignBatch } from "./sync-engine.js";
+import { detectChanges } from "./sync-engine.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
@@ -22,6 +22,7 @@ import {
   downloadFile,
   commitFiles,
   fetchManifest,
+  AuthRejectedError,
   VersionConflictError,
 } from "./r2-client.js";
 import { ManifestSchema, type SyncState } from "./types.js";
@@ -311,6 +312,19 @@ export function capSyncStateFiles(syncState: SyncState): boolean {
   return true;
 }
 
+export function exitOnAuthFailure(
+  err: unknown,
+  logger: { error: (msg: string) => void },
+  exit: (code: number) => void = process.exit,
+): boolean {
+  if (!(err instanceof AuthRejectedError)) {
+    return false;
+  }
+  logger.error("Auth token rejected or expired. Re-run `matrixos login`.");
+  exit(1);
+  return true;
+}
+
 export async function startDaemon(): Promise<void> {
   const logger = pino({
     transport: {
@@ -328,6 +342,10 @@ export async function startDaemon(): Promise<void> {
   const auth = await loadAuth();
   if (!auth) {
     logger.error("Not logged in. Run 'matrixos login' first.");
+    process.exit(1);
+  }
+  if (isExpired(auth)) {
+    logger.error("Auth token rejected or expired. Re-run `matrixos login`.");
     process.exit(1);
   }
 
@@ -402,7 +420,7 @@ export async function startDaemon(): Promise<void> {
 
         try {
           const urls = await requestPresignedUrls(gatewayClient, [
-            { path: remotePath, action: "put", hash: event.hash },
+            { path: remotePath, action: "put", hash: event.hash, size: event.size },
           ]);
           if (urls[0]) {
             await uploadFile(
@@ -417,6 +435,7 @@ export async function startDaemon(): Promise<void> {
             await saveSyncState(stateFile, syncState);
           }
         } catch (err) {
+          if (exitOnAuthFailure(err, logger)) return;
           await adoptRemoteManifestVersion(syncState, err, async () => {
             await saveSyncState(stateFile, syncState);
           });
@@ -438,6 +457,7 @@ export async function startDaemon(): Promise<void> {
             syncState.manifestVersion = deleteResult.manifestVersion;
             await saveSyncState(stateFile, syncState);
           } catch (err) {
+            if (exitOnAuthFailure(err, logger)) return;
             await adoptRemoteManifestVersion(syncState, err, async () => {
               await saveSyncState(stateFile, syncState);
             });
@@ -471,6 +491,7 @@ export async function startDaemon(): Promise<void> {
             await downloadFile(
               urls[0].url,
               localPath,
+              event.hash,
             );
             const downloadedStat = await stat(localPath);
             syncState.files[event.path] = {
@@ -483,6 +504,7 @@ export async function startDaemon(): Promise<void> {
             await saveSyncState(stateFile, syncState);
           }
         } catch (err) {
+          if (exitOnAuthFailure(err, logger)) return;
           logger.error({ err, path: event.path }, "Download failed");
         }
       } else if (
@@ -689,7 +711,7 @@ export async function startDaemon(): Promise<void> {
         if (!urls[0]) continue;
 
         const localAbsPath = resolveWithinSyncRoot(config.syncPath, localRel);
-        await downloadFile(urls[0].url, localAbsPath);
+        await downloadFile(urls[0].url, localAbsPath, entry.hash);
         syncState.files[remotePath] = {
           hash: entry.hash,
           mtime: entry.mtime,
@@ -698,6 +720,7 @@ export async function startDaemon(): Promise<void> {
         };
         pulled++;
       } catch (err) {
+        if (exitOnAuthFailure(err, logger)) return;
         logger.error({ err, path: remotePath }, "Initial-pull failed");
       }
     }
@@ -706,6 +729,7 @@ export async function startDaemon(): Promise<void> {
       logger.info({ pulled, skipped }, "Initial pull complete");
     }
   } catch (err) {
+    if (exitOnAuthFailure(err, logger)) return;
     logger.warn(
       { err },
       "Could not fetch remote manifest on startup -- continuing with cached version",

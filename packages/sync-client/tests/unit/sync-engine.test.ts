@@ -304,10 +304,10 @@ describe("buildPresignBatch", () => {
     const requests = buildPresignBatch(changes);
 
     expect(requests).toContainEqual(
-      expect.objectContaining({ path: "file1.ts", action: "put" }),
+      expect.objectContaining({ path: "file1.ts", action: "put", size: 100 }),
     );
     expect(requests).toContainEqual(
-      expect.objectContaining({ path: "file2.ts", action: "put" }),
+      expect.objectContaining({ path: "file2.ts", action: "put", size: 200 }),
     );
   });
 
