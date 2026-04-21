@@ -372,6 +372,27 @@ describe("SharingService", () => {
       expect(result).toBe("forbidden");
     });
 
+    it("denies traversal-shaped file paths even when the prefix appears to match", async () => {
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeShareRow({
+          owner_id: "owner1",
+          grantee_id: "grantee1",
+          path: "documents/",
+          role: "viewer",
+          accepted: true,
+        }),
+      ]);
+
+      const result = await service.checkSharePermission(
+        "owner1",
+        "grantee1",
+        "documents/../secrets/key.txt",
+        "get",
+      );
+
+      expect(result).toBe("forbidden");
+    });
+
     it("does not match partial directory prefixes", async () => {
       (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeShareRow({

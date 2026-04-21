@@ -30,6 +30,10 @@ export function resolveWithinPrefix(
     return { valid: false, reason: "Path must not start with /" };
   }
 
+  if (relativePath.includes("\\")) {
+    return { valid: false, reason: "Path must not contain backslashes" };
+  }
+
   if (DOUBLE_DOT_SEGMENT.test(relativePath) || relativePath === ".." || relativePath.endsWith("/..")) {
     return { valid: false, reason: "Path must not contain '..' segments" };
   }

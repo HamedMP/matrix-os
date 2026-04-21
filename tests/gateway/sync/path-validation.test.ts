@@ -85,6 +85,14 @@ describe("resolveWithinPrefix", () => {
     }
   });
 
+  it("rejects paths containing backslashes", () => {
+    const result = resolveWithinPrefix(userId, "apps\\..\\secret.txt");
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.reason).toContain("backslashes");
+    }
+  });
+
   it("normalizes consecutive slashes", () => {
     const result = resolveWithinPrefix(userId, "apps//calculator///index.html");
     expect(result.valid).toBe(true);

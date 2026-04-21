@@ -167,6 +167,14 @@ export function createSharingService(deps: {
     return fn(db);
   };
 
+  function normalizeSharedPath(ownerId: string, path: string): string | null {
+    const checked = resolveWithinPrefix(ownerId, path);
+    if (!checked.valid) {
+      return null;
+    }
+    return checked.key.slice(`matrixos-sync/${ownerId}/files/`.length);
+  }
+
   function shareMatchesPath(sharePath: string, filePath: string): boolean {
     const normalizedSharePath = sharePath.replace(/\/+/g, "/").replace(/\/$/, "");
     const normalizedFilePath = filePath.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -335,13 +343,18 @@ export function createSharingService(deps: {
         return null;
       }
 
+      const normalizedFilePath = normalizeSharedPath(ownerId, filePath);
+      if (!normalizedFilePath) {
+        return "forbidden";
+      }
+
       // Look up shares granted to this caller by this owner
       const shares = await db.listSharesByGranteeAndOwner(callerId, ownerId);
       const matchingShares = shares.filter(
         (s) =>
           s.accepted &&
           (!s.expires_at || s.expires_at.getTime() > Date.now()) &&
-          shareMatchesPath(s.path, filePath),
+          shareMatchesPath(s.path, normalizedFilePath),
       );
 
       if (matchingShares.length === 0) {

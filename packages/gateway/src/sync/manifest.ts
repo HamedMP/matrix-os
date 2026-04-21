@@ -106,9 +106,6 @@ export async function writeManifest(
   newVersion: number,
 ): Promise<void> {
   const key = buildManifestKey(userId);
-  const body = JSON.stringify(manifest);
-  const result = await store.r2.putObject(key, body);
-
   const liveFiles = Object.values(manifest.files).filter((e) => !e.deleted);
   const fileCount = liveFiles.length;
   const totalSize = liveFiles.reduce((sum, e) => sum + BigInt(e.size), 0n);
@@ -117,8 +114,11 @@ export async function writeManifest(
     version: newVersion,
     file_count: fileCount,
     total_size: totalSize,
-    etag: result.etag ?? null,
+    etag: null,
   }, store.dbExecutor);
+
+  const body = JSON.stringify(manifest);
+  await store.r2.putObject(key, body);
 }
 
 export function applyCommitToManifest(

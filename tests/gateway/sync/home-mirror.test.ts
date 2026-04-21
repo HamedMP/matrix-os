@@ -292,6 +292,56 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("logs invalid sync:change payloads instead of trusting their shape", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      let subscriber: { send(data: string): void } | null = null;
+      const peerRegistry = {
+        registerPeer(_userId, _params, ws) {
+          subscriber = ws;
+          return {
+            peerId: "gateway-alice",
+            userId: "alice",
+            hostname: "gateway",
+            platform: "linux",
+            clientVersion: "home-mirror",
+            connectedAt: Date.now(),
+          };
+        },
+        removePeer() {},
+        broadcastChange() {},
+        sendToUser() {},
+        getPeers() {
+          return [];
+        },
+        getTotalPeerCount() {
+          return 0;
+        },
+      } as unknown as PeerRegistry;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry,
+        logger,
+      });
+      await mirror.start();
+
+      subscriber?.send(JSON.stringify({
+        type: "sync:change",
+        files: [{ path: "notes/oops.md", hash: "bad-hash", size: "wrong" }],
+      }));
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "ignored malformed peer broadcast:",
+        expect.any(String),
+      );
+
+      await mirror.stop();
+    });
+
     it("refuses traversal paths on remote writes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const outsidePath = join(tmpRoot, "..", "escaped-write.txt");

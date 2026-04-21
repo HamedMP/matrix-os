@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
+import { z } from "zod/v4";
 import {
   applyCommitToManifest,
   readManifest,
@@ -47,7 +48,18 @@ const DEFAULT_IGNORE_PATTERNS = [
   /^\.DS_Store$/,
   /\.env(\..+)?$/,
 ];
-const HOME_MIRROR_TMP_SUFFIX = /\.\d+\.tmp$/;
+const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
+const RemoteChangeFileSchema = z.object({
+  path: z.string().min(1).max(1024),
+  hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  size: z.number().int().nonnegative(),
+  action: z.enum(["add", "update", "delete"]).optional(),
+});
+const RemoteChangeMessageSchema = z.object({
+  type: z.literal("sync:change"),
+  files: z.array(RemoteChangeFileSchema).max(100),
+  peerId: z.string().min(1).max(128).optional(),
+});
 
 export interface HomeMirrorConfig {
   r2: R2Client;
@@ -375,9 +387,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       throw new Error("downloaded blob hash did not match manifest entry");
     }
     await mkdir(dirname(absPath), { recursive: true });
-    const tmpPath = `${absPath}.${process.pid}.tmp`;
+    const tmpPath = `${absPath}.matrixos-${randomUUID()}.tmp`;
     try {
-      await writeFile(tmpPath, buf);
+      await writeFile(tmpPath, buf, { flag: "wx" });
       markWritten(safeRelPath);
       await rename(tmpPath, absPath);
     } catch (err) {
@@ -579,11 +591,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   // recentlyWritten guard suppresses the chokidar echo so we don't push it
   // back up to R2. Errors are logged per-file; one bad file doesn't stop
   // the rest. Returns after all files have been processed.
-  async function handleRemoteChange(msg: {
-    files?: Array<{ path: string; hash: string; size: number; action?: string }>;
-    peerId?: string;
-  }): Promise<void> {
-    const files = msg.files ?? [];
+  async function handleRemoteChange(msg: z.infer<typeof RemoteChangeMessageSchema>): Promise<void> {
+    const files = msg.files;
     for (const f of files) {
       if (!f.path || isIgnored(f.path, extraIgnore)) continue;
       try {
@@ -623,11 +632,25 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           );
           return;
         }
-        const msg = parsed as { type?: string };
-        if (msg?.type !== "sync:change") return;
+        const parsedMsg = RemoteChangeMessageSchema.safeParse(parsed);
+        if (!parsedMsg.success) {
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            "type" in (parsed as Record<string, unknown>) &&
+            (parsed as Record<string, unknown>).type !== "sync:change"
+          ) {
+            return;
+          }
+          log.error(
+            "ignored malformed peer broadcast:",
+            parsedMsg.error.issues[0]?.message ?? "invalid sync:change payload",
+          );
+          return;
+        }
         // Fire-and-forget; the registry's send is synchronous so we can't
         // await here. Errors are logged inside handleRemoteChange.
-        enqueue(() => handleRemoteChange(msg as Parameters<typeof handleRemoteChange>[0]))
+        enqueue(() => handleRemoteChange(parsedMsg.data))
           .catch((err) => log.error("remote-change enqueue failed:", (err as Error).message));
       },
     };

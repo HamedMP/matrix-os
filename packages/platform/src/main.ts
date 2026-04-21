@@ -24,6 +24,7 @@ import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { verifySyncJwt } from './sync-jwt.js';
+import { isSafeWebSocketUpgradePath } from './ws-upgrade.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -991,6 +992,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
       const upstream = createConnection({ host: `matrixos-${record.handle}`, port: 4000 }, () => {
         const path = req.url ?? '/';
+        if (!isSafeWebSocketUpgradePath(path)) {
+          socket.destroy();
+          upstream.destroy();
+          return;
+        }
         const headers = Object.entries(req.headers)
           .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
           .map(([k, v]) => `${k}: ${v}`)

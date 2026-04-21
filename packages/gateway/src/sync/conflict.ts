@@ -45,6 +45,10 @@ export function createConflictCopyPath(
   peerId: string,
   date: Date,
 ): string {
+  const safePeerId = peerId
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "unknown";
   const dateStr = date.toISOString().split("T")[0]!;
   const lastDot = originalPath.lastIndexOf(".");
   const lastSlash = originalPath.lastIndexOf("/");
@@ -55,10 +59,10 @@ export function createConflictCopyPath(
   if (hasExtension) {
     const base = originalPath.slice(0, lastDot);
     const ext = originalPath.slice(lastDot);
-    return `${base} (conflict - ${peerId} - ${dateStr})${ext}`;
+    return `${base} (conflict - ${safePeerId} - ${dateStr})${ext}`;
   }
 
-  return `${originalPath} (conflict - ${peerId} - ${dateStr})`;
+  return `${originalPath} (conflict - ${safePeerId} - ${dateStr})`;
 }
 
 export function isTextFile(path: string): boolean {

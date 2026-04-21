@@ -112,9 +112,12 @@ describe("writeManifest", () => {
         version: 5,
         file_count: 1,
         total_size: 200n,
-        etag: '"new-etag"',
+        etag: null,
       }),
       undefined,
+    );
+    expect(mockDb.upsertManifestMeta.mock.invocationCallOrder[0]).toBeLessThan(
+      mockR2.putObject.mock.invocationCallOrder[0],
     );
   });
 

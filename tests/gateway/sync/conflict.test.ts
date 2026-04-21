@@ -113,6 +113,16 @@ describe("createConflictCopyPath", () => {
 
     expect(result).toBe("a/b/c/file (conflict - peer - 2026-06-15).txt");
   });
+
+  it("sanitizes peer ids before embedding them in conflict copy paths", () => {
+    const result = createConflictCopyPath(
+      "apps/readme.md",
+      "../peer/with\\slashes",
+      new Date("2026-04-14"),
+    );
+
+    expect(result).toBe("apps/readme (conflict - peer_with_slashes - 2026-04-14).md");
+  });
 });
 
 describe("isTextFile", () => {
