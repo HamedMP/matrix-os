@@ -256,7 +256,7 @@ describe("handleCommit", () => {
     });
 
     expect(result).toHaveProperty("error");
-    expect((result as any).error).toMatch(/cap|limit|50/i);
+    expect((result as any).error).toBe("File limit exceeded");
   });
 
   it("acquires advisory lock for the commit", async () => {

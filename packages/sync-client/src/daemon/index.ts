@@ -101,10 +101,15 @@ export async function waitForManifest(
         headers: { authorization: `Bearer ${opts.token}` },
         signal: AbortSignal.timeout(perRequestTimeout),
       });
-    } catch {
+    } catch (err: unknown) {
       // Don't propagate the underlying error message — fetch can surface raw
       // server response bytes (HTML, binary) in parse errors, which violates
       // CLAUDE.md § Error Handling. Log a generic message instead.
+      if (!(err instanceof Error)) {
+        opts.logger.warn(
+          `Manifest poll attempt ${attempt} failed (unexpected non-Error talking to ${opts.gatewayUrl})`,
+        );
+      }
       opts.logger.warn(
         `Manifest poll attempt ${attempt} failed (network error talking to ${opts.gatewayUrl})`,
       );
@@ -155,7 +160,10 @@ export async function waitForManifest(
     };
     try {
       body = (await res.json()) as typeof body;
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        throw err;
+      }
       // Shouldn't normally hit this path after the Content-Type guard above,
       // but a gateway can still lie about the header. Treat the same way —
       // generic message, bump the counter, hard-fail at 3 strikes.

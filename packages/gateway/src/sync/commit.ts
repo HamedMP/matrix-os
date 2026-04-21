@@ -62,7 +62,7 @@ export async function handleCommit(
       if (err instanceof ManifestCapExceededError) {
         return {
           result: {
-            error: err.message,
+            error: "File limit exceeded",
             currentVersion,
             expectedVersion: request.expectedVersion,
           } satisfies CommitResult,

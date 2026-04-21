@@ -846,7 +846,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     async start(): Promise<void> {
       stopRequested = false;
       await mkdir(config.homeRoot, { recursive: true });
-      resolvedHomeRoot = await realpath(config.homeRoot).catch(() => config.homeRoot);
+      try {
+        resolvedHomeRoot = await realpath(config.homeRoot);
+      } catch (err: unknown) {
+        log.error(
+          `failed to resolve home root ${config.homeRoot}; using configured path:`,
+          errorMessage(err),
+        );
+        resolvedHomeRoot = config.homeRoot;
+      }
       if (stopRequested) return;
       await cleanupTempFiles(config.homeRoot);
       if (stopRequested) return;
