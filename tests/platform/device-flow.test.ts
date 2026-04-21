@@ -160,6 +160,53 @@ describe("device flow: polling", () => {
     expect(consumed).toBeUndefined();
   });
 
+  it("deduplicates concurrent approved polls and issues a single token", async () => {
+    let issueCalls = 0;
+    let resolveIssue: (() => void) | null = null;
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      issueToken: async ({ clerkUserId }) => {
+        issueCalls++;
+        await new Promise<void>((resolve) => {
+          resolveIssue = resolve;
+        });
+        return {
+          token: `jwt-for-${clerkUserId}`,
+          expiresAt: now + 24 * 3_600_000,
+          handle: clerkUserId.replace("user_", "@"),
+        };
+      },
+    });
+
+    const issued = await flow.createDeviceCode();
+    await flow.approveDeviceCode(issued.userCode, "user_alice");
+    now += 5_000;
+
+    const firstPoll = flow.pollDeviceCode(issued.deviceCode);
+    const secondPoll = flow.pollDeviceCode(issued.deviceCode);
+
+    await vi.waitFor(() => {
+      expect(issueCalls).toBe(1);
+    });
+
+    resolveIssue?.();
+    const [firstResult, secondResult] = await Promise.all([firstPoll, secondPoll]);
+
+    expect(firstResult).toMatchObject({
+      status: "approved",
+      token: "jwt-for-user_alice",
+    });
+    expect(secondResult).toEqual(firstResult);
+    expect(issueCalls).toBe(1);
+
+    const consumed = (db as any).$client
+      .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
+      .get(issued.deviceCode);
+    expect(consumed).toBeUndefined();
+  });
+
   it("does not consume the device code when token issuance fails", async () => {
     flow = createDeviceFlow({
       db,

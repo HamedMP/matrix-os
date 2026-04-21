@@ -22,6 +22,9 @@ import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 const INITIAL_PUSH_CHUNK_SIZE = 50;
+const HASH_STREAM_TIMEOUT_MS = 30_000;
+const LOCAL_WALK_FILE_CAP = 50_000;
+const LOCAL_WALK_DEPTH_CAP = 64;
 
 // Folders we never push -- big build outputs, transient state, secrets,
 // or things that would loop on themselves (the home dir itself when run
@@ -77,7 +80,7 @@ export interface HomeMirrorConfig {
   logger?: { info: (msg: string, ...args: unknown[]) => void; error: (msg: string, ...args: unknown[]) => void };
   /** Override the path-segment match list. Used by tests. */
   extraIgnoreDirs?: Iterable<string>;
-  /** Skip local auto-push for files larger than this many bytes. */
+  /** Skip local auto-sync for files larger than this many bytes. */
   maxPushBytes?: number;
 }
 
@@ -117,9 +120,20 @@ function hashFileStream(absPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const h = createHash("sha256");
     const s = createReadStream(absPath);
+    const timeout = setTimeout(() => {
+      s.destroy(new Error(`hash stream timed out after ${HASH_STREAM_TIMEOUT_MS}ms`));
+    }, HASH_STREAM_TIMEOUT_MS);
+    const cleanup = () => clearTimeout(timeout);
     s.on("data", (chunk) => h.update(chunk));
-    s.on("end", () => resolve(`sha256:${h.digest("hex")}`));
-    s.on("error", reject);
+    s.on("end", () => {
+      cleanup();
+      resolve(`sha256:${h.digest("hex")}`);
+    });
+    s.on("error", (err) => {
+      cleanup();
+      reject(err);
+    });
+    s.on("close", cleanup);
   });
 }
 
@@ -183,25 +197,40 @@ function normalizeRelativePath(userId: string, relPath: string): string {
 // AWS SDK v3 returns its own stream type with `transformToByteArray()`,
 // NOT a Web ReadableStream -- calling .getReader() throws "is not a function".
 // Match what manifest.ts does for body decoding (transformToString fallback).
-async function streamToBuffer(body: unknown): Promise<Buffer> {
+async function streamToBuffer(body: unknown, maxBytes: number): Promise<Buffer> {
   const anyBody = body as {
     transformToByteArray?: () => Promise<Uint8Array>;
     getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
   };
   if (typeof anyBody.transformToByteArray === "function") {
-    return Buffer.from(await anyBody.transformToByteArray());
+    const bytes = await anyBody.transformToByteArray();
+    if (bytes.length > maxBytes) {
+      throw new Error(`remote blob exceeded ${maxBytes} bytes`);
+    }
+    return Buffer.from(bytes);
   }
   if (typeof anyBody.getReader === "function") {
     const reader = anyBody.getReader();
     const chunks: Uint8Array[] = [];
+    let total = 0;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (value) chunks.push(value);
+      if (value) {
+        total += value.length;
+        if (total > maxBytes) {
+          throw new Error(`remote blob exceeded ${maxBytes} bytes`);
+        }
+        chunks.push(value);
+      }
     }
     return Buffer.concat(chunks);
   }
-  return Buffer.from(await new Response(body as BodyInit).arrayBuffer());
+  const buf = Buffer.from(await new Response(body as BodyInit).arrayBuffer());
+  if (buf.length > maxBytes) {
+    throw new Error(`remote blob exceeded ${maxBytes} bytes`);
+  }
+  return buf;
 }
 
 export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
@@ -215,6 +244,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const maxPushBytes = config.maxPushBytes ?? DEFAULT_MAX_PUSH_BYTES;
 
   let watcher: FSWatcher | null = null;
+  let stopRequested = false;
+  let subscribed = false;
 
   // Serial commit chain: home-mirror updates manifest in-process, but
   // multiple writes still need to read-modify-write the version counter.
@@ -250,6 +281,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   };
 
   const store = { r2: config.r2, db: config.manifestDb };
+
+  async function releaseResources(): Promise<void> {
+    if (watcher) {
+      await watcher.close();
+      watcher = null;
+    }
+    if (subscribed && config.peerRegistry) {
+      config.peerRegistry.removePeer(config.userId, config.peerId);
+      subscribed = false;
+    }
+  }
 
   async function withManifestLock<T>(
     fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor }) => Promise<T>,
@@ -365,6 +407,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function pullFile(relPath: string, entry: ManifestEntry): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const absPath = join(config.homeRoot, safeRelPath);
+    if (entry.size > maxPushBytes) {
+      throw new Error(`remote file exceeds ${maxPushBytes} bytes`);
+    }
     try {
       const localStat = await lstat(absPath);
       if (localStat.isSymbolicLink()) {
@@ -382,7 +427,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const obj = await config.r2.getObject(key);
     if (!obj.body) return;
 
-    const buf = await streamToBuffer(obj.body);
+    const buf = await streamToBuffer(obj.body, maxPushBytes);
+    if (buf.length !== entry.size) {
+      throw new Error("downloaded blob size did not match manifest entry");
+    }
     if (hashBuffer(buf) !== entry.hash) {
       throw new Error("downloaded blob hash did not match manifest entry");
     }
@@ -453,9 +501,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }
 
-  async function collectLocalFiles(dir: string, relDir = ""): Promise<string[]> {
+  async function collectLocalFiles(
+    dir: string,
+    relDir = "",
+    files: string[] = [],
+    depth = 0,
+  ): Promise<string[]> {
+    if (depth > LOCAL_WALK_DEPTH_CAP) {
+      throw new Error(
+        `local file walk exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
+      );
+    }
     const entries = await readdir(dir, { withFileTypes: true });
-    const files: string[] = [];
 
     for (const entry of entries) {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
@@ -463,7 +520,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       const absPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        files.push(...await collectLocalFiles(absPath, relPath));
+        await collectLocalFiles(absPath, relPath, files, depth + 1);
         continue;
       }
       if (entry.isSymbolicLink()) {
@@ -471,6 +528,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
       if (entry.isFile()) {
         files.push(relPath);
+        if (files.length > LOCAL_WALK_FILE_CAP) {
+          throw new Error(
+            `local file walk exceeded ${LOCAL_WALK_FILE_CAP.toLocaleString()} files`,
+          );
+        }
       }
     }
 
@@ -484,6 +546,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     let pushed = 0;
 
     for (let start = 0; start < relPaths.length; start += INITIAL_PUSH_CHUNK_SIZE) {
+      if (stopRequested) {
+        return;
+      }
       const relPathChunk = relPaths.slice(start, start + INITIAL_PUSH_CHUNK_SIZE);
       const localFiles: Array<{
         path: string;
@@ -658,9 +723,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   return {
     async start(): Promise<void> {
+      stopRequested = false;
       await mkdir(config.homeRoot, { recursive: true });
+      if (stopRequested) return;
       await cleanupTempFiles(config.homeRoot);
+      if (stopRequested) return;
       await initialPull();
+      if (stopRequested) return;
 
       // Register with the peer registry BEFORE starting the watcher. Any
       // commits that land while we're catching up will queue through
@@ -676,10 +745,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           },
           createSubscriberConnection(),
         );
+        subscribed = true;
         log.info(`home mirror subscribed to broadcasts as ${config.peerId}`);
       }
 
+      if (stopRequested) {
+        await releaseResources();
+        return;
+      }
       await initialPush();
+      if (stopRequested) {
+        await releaseResources();
+        return;
+      }
 
       watcher = watch(config.homeRoot, {
         persistent: true,
@@ -710,17 +788,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         log.error(`home mirror watcher error: ${(err as Error).message}`);
       });
 
+      if (stopRequested) {
+        await releaseResources();
+        return;
+      }
+
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
     },
 
     async stop(): Promise<void> {
-      if (watcher) {
-        await watcher.close();
-        watcher = null;
-      }
-      if (config.peerRegistry) {
-        config.peerRegistry.removePeer(config.userId, config.peerId);
-      }
+      stopRequested = true;
+      await releaseResources();
     },
   };
 }

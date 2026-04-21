@@ -185,6 +185,48 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("rejects remote files that exceed the auto-sync byte cap", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const content = Buffer.from("oversized");
+      const getObject = vi.spyOn(r2, "getObject");
+      r2.store.set("matrixos-sync/alice/files/notes/huge.md", content);
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+        maxPushBytes: 4,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: "notes/huge.md",
+          hash: sha256(content),
+          size: content.length,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await settle(80);
+
+      await expect(stat(join(tmpRoot, "notes/huge.md"))).rejects.toThrow(/ENOENT/);
+      expect(getObject).not.toHaveBeenCalledWith("matrixos-sync/alice/files/notes/huge.md");
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("remote-change failed for notes/huge.md:"),
+        expect.stringContaining("exceeds 4 bytes"),
+      );
+
+      await mirror.stop();
+    });
+
     it("deletes a local file when a sync:change action=delete arrives", async () => {
       // Prep a local file we expect to be deleted.
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
@@ -515,6 +557,37 @@ describe("createHomeMirror", () => {
       expect(syncChanges.some((s) => s.includes("new.md"))).toBe(true);
 
       await mirror.stop();
+    });
+
+    it("does not leave a peer subscription behind when stopped during startup", async () => {
+      const manifestRead = deferred<void>();
+      const getObject = vi.spyOn(r2, "getObject").mockImplementation(async (key: string) => {
+        if (key === "matrixos-sync/alice/manifest.json") {
+          await manifestRead.promise;
+          const err = Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" });
+          throw err;
+        }
+        throw new Error(`unexpected key: ${key}`);
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+
+      const startPromise = mirror.start();
+      await settle(20);
+      await mirror.stop();
+      manifestRead.resolve();
+      await startPromise;
+
+      expect(registry.getPeers("alice")).toHaveLength(0);
+      getObject.mockRestore();
     });
 
     it("pushes existing local-only files during startup without relying on watcher replay", async () => {
@@ -1049,7 +1122,7 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       expect(lockSpy).toHaveBeenCalledTimes(2);
-      expect(upsertMeta).toHaveBeenCalledTimes(2);
+      expect(upsertMeta).toHaveBeenCalledTimes(3);
 
       await mirror.stop();
     });

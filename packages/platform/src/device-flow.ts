@@ -94,6 +94,8 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
   const intervalSec = config.intervalSec ?? 5;
   const now = config.now ?? (() => Date.now());
   const random = config.random ?? ((n: number) => randomBytes(n));
+  const inFlightPolls = new Map<string, Promise<DevicePollResult>>();
+  const MAX_IN_FLIGHT_POLLS = 1024;
   const issueToken =
     config.issueToken ??
     (() => {
@@ -192,20 +194,43 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
         return claimed;
       }
 
-      const issued = await issueToken({ clerkUserId: claimed.clerkUserId });
+      const existingPoll = inFlightPolls.get(deviceCode);
+      if (existingPoll) {
+        return existingPoll;
+      }
 
-      config.db
-        .delete(deviceCodes)
-        .where(eq(deviceCodes.deviceCode, deviceCode))
-        .run();
+      let issuePromise!: Promise<DevicePollResult>;
+      issuePromise = (async () => {
+        try {
+          const issued = await issueToken({ clerkUserId: claimed.clerkUserId });
 
-      return {
-        status: 'approved',
-        token: issued.token,
-        expiresAt: issued.expiresAt,
-        handle: issued.handle,
-        clerkUserId: claimed.clerkUserId,
-      };
+          config.db
+            .delete(deviceCodes)
+            .where(eq(deviceCodes.deviceCode, deviceCode))
+            .run();
+
+          return {
+            status: 'approved',
+            token: issued.token,
+            expiresAt: issued.expiresAt,
+            handle: issued.handle,
+            clerkUserId: claimed.clerkUserId,
+          };
+        } finally {
+          if (inFlightPolls.get(deviceCode) === issuePromise) {
+            inFlightPolls.delete(deviceCode);
+          }
+        }
+      })();
+
+      if (inFlightPolls.size >= MAX_IN_FLIGHT_POLLS) {
+        const oldest = inFlightPolls.keys().next().value;
+        if (oldest !== undefined) {
+          inFlightPolls.delete(oldest);
+        }
+      }
+      inFlightPolls.set(deviceCode, issuePromise);
+      return issuePromise;
     },
 
     async approveDeviceCode(userCode: string, clerkUserId: string): Promise<void> {

@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
-import { mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
+import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -367,6 +367,7 @@ export async function createGateway(config: GatewayConfig) {
   // pushes changes to the same R2 bucket the user's local daemon reads.
   // Off by default; enable with MATRIX_HOME_MIRROR=true.
   let homeMirror: HomeMirror | null = null;
+  let homeMirrorStart: Promise<void> | null = null;
   const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
   if (homeMirrorEnabled && syncR2 && kyselyInstance) {
     // Loud fail-fast in production: if the orchestrator didn't inject
@@ -412,7 +413,7 @@ export async function createGateway(config: GatewayConfig) {
         },
       });
       // Start asynchronously so server boot isn't blocked by the initial pull.
-      homeMirror.start().catch((err) => {
+      homeMirrorStart = homeMirror.start().catch((err) => {
         console.error("[home-mirror] start failed:", (err as Error).message);
       });
     } catch (err) {
@@ -636,7 +637,13 @@ export async function createGateway(config: GatewayConfig) {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] [heal] ${message}\n`;
     const logPath = join(homePath, "system/activity.log");
-    try { appendFileSync(logPath, line); } catch { /* log dir may not exist yet */ }
+    appendFileAsync(logPath, line).catch((err: unknown) => {
+      if (err instanceof Error) {
+        console.warn("[heal] failed to append activity log:", err.message);
+      } else {
+        console.warn("[heal] failed to append activity log:", String(err));
+      }
+    });
   }
 
   function broadcast(msg: ServerMessage) {
@@ -2600,6 +2607,8 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
+      await homeMirror?.stop();
+      await homeMirrorStart?.catch(() => {});
       syncR2?.destroy();
       await appDb?.destroy();
       server.close();

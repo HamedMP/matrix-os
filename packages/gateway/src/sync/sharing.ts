@@ -186,41 +186,42 @@ export function createSharingService(deps: {
 
   return {
     async createShare(ownerId, input) {
-      const pathCheck = resolveWithinPrefix(ownerId, input.path);
-      if (!pathCheck.valid) {
+      const normalizedPath = normalizeSharedPath(ownerId, input.path);
+      if (!normalizedPath) {
         throw new ShareInvalidPathError(input.path);
       }
-      const normalizedPath = input.path.replace(/\/+/g, "/").replace(/\/$/, "");
 
-      // Resolve grantee handle to user ID
-      const granteeId = await db.resolveHandle(input.granteeHandle);
-      if (!granteeId) {
-        throw new GranteeNotFoundError(input.granteeHandle);
-      }
-
-      // Self-share check
-      if (granteeId === ownerId) {
-        throw new ShareSelfError();
-      }
-
-      let row: ShareRow;
-      try {
-        row = await db.insertShare({
-          owner_id: ownerId,
-          path: normalizedPath,
-          grantee_id: granteeId,
-          role: input.role,
-          expires_at: input.expiresAt,
-        });
-      } catch (err: unknown) {
-        if (err instanceof Error && "code" in err && (err as any).code === "23505") {
-          throw new ShareDuplicateError();
+      const { row, ownerHandle, granteeId } = await withTransaction(async (txDb) => {
+        const granteeId = await txDb.resolveHandle(input.granteeHandle);
+        if (!granteeId) {
+          throw new GranteeNotFoundError(input.granteeHandle);
         }
-        throw err;
-      }
+
+        if (granteeId === ownerId) {
+          throw new ShareSelfError();
+        }
+
+        let row: ShareRow;
+        try {
+          row = await txDb.insertShare({
+            owner_id: ownerId,
+            path: normalizedPath,
+            grantee_id: granteeId,
+            role: input.role,
+            expires_at: input.expiresAt,
+          });
+        } catch (err: unknown) {
+          if (err instanceof Error && "code" in err && (err as any).code === "23505") {
+            throw new ShareDuplicateError();
+          }
+          throw err;
+        }
+
+        const ownerHandle = await txDb.resolveUserId(ownerId);
+        return { row, ownerHandle, granteeId };
+      });
 
       // Broadcast invite to grantee via WS
-      const ownerHandle = await db.resolveUserId(ownerId);
       peerRegistry.sendToUser(granteeId, {
         type: "sync:share-invite",
         shareId: row.id,

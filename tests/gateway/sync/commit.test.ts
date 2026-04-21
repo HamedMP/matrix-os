@@ -46,6 +46,8 @@ describe("handleCommit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
+    mockDb.getManifestMeta.mockResolvedValue(null);
+    mockR2.getObject.mockRejectedValue(Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" }));
     deps = {
       r2: mockR2,
       db: mockDb as any,
@@ -82,6 +84,25 @@ describe("handleCommit", () => {
       error: "version_conflict",
       currentVersion: 5,
       expectedVersion: 3,
+    });
+  });
+
+  it("uses the embedded manifestVersion when R2 is ahead of DB metadata", async () => {
+    const manifest = makeManifest({});
+    const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"e7"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"e5"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "test.txt", hash: HASH_A, size: 100 }],
+      expectedVersion: 5,
+    });
+
+    expect(result).toEqual({
+      error: "version_conflict",
+      currentVersion: 7,
+      expectedVersion: 5,
     });
   });
 

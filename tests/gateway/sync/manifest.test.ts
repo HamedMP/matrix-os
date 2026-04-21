@@ -65,7 +65,7 @@ describe("readManifest", () => {
 
   it("reads and parses manifest from R2", async () => {
     const manifest = makeManifest({ "test.txt": { hash: HASH_A, size: 100 } });
-    const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
+    const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 3 })) };
     mockR2.getObject.mockResolvedValue({ body, etag: '"etag1"' });
     mockDb.getManifestMeta.mockResolvedValue({ version: 3, etag: '"etag1"' });
 
@@ -78,7 +78,7 @@ describe("readManifest", () => {
 
   it("supports AWS SDK bodies that expose transformToString()", async () => {
     const manifest = makeManifest({ "sdk.txt": { hash: HASH_A, size: 100 } });
-    const body = { transformToString: () => Promise.resolve(JSON.stringify(manifest)) };
+    const body = { transformToString: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 4 })) };
     mockR2.getObject.mockResolvedValue({ body, etag: '"etag2"' });
     mockDb.getManifestMeta.mockResolvedValue({ version: 4, etag: '"etag2"' });
 
@@ -87,6 +87,28 @@ describe("readManifest", () => {
     expect(result.manifest.files["sdk.txt"]!.hash).toBe(HASH_A);
     expect(result.manifestVersion).toBe(4);
     expect(result.etag).toBe('"etag2"');
+  });
+
+  it("reconciles to the embedded manifestVersion when R2 is ahead of DB metadata", async () => {
+    const manifest = makeManifest({ "ahead.txt": { hash: HASH_A, size: 100 } });
+    const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };
+    mockR2.getObject.mockResolvedValue({ body, etag: '"etag7"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"etag5"' });
+    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+
+    const result = await readManifest(store, "user1");
+
+    expect(result.manifestVersion).toBe(7);
+    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
+      "user1",
+      expect.objectContaining({
+        version: 7,
+        file_count: 1,
+        total_size: 100n,
+        etag: '"etag7"',
+      }),
+      undefined,
+    );
   });
 });
 
@@ -106,6 +128,8 @@ describe("writeManifest", () => {
     await writeManifest(store, "user1", manifest, 5);
 
     expect(mockR2.putObject).toHaveBeenCalledOnce();
+    const [, manifestBody] = mockR2.putObject.mock.calls[0]!;
+    expect(JSON.parse(String(manifestBody))).toMatchObject({ manifestVersion: 5 });
     expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
       "user1",
       expect.objectContaining({

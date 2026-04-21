@@ -94,6 +94,40 @@ describe("SharingService", () => {
         path: "projects/startup",
         role: "editor",
       });
+      expect(db.runInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("normalizes dot segments so shared paths remain accessible", async () => {
+      (db.resolveHandle as ReturnType<typeof vi.fn>).mockResolvedValue("grantee1");
+      (db.resolveUserId as ReturnType<typeof vi.fn>).mockResolvedValue("@owner:matrix-os.com");
+      (db.insertShare as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeShareRow({ path: "documents/reports" }),
+      );
+      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeShareRow({
+          path: "documents/reports",
+          grantee_id: "grantee1",
+          accepted: true,
+        }),
+      ]);
+
+      await service.createShare("owner1", {
+        path: "documents/./reports/",
+        granteeHandle: "@colleague:matrix-os.com",
+        role: "viewer",
+      });
+
+      expect(db.insertShare).toHaveBeenCalledWith(
+        expect.objectContaining({ path: "documents/reports" }),
+      );
+      await expect(
+        service.checkSharePermission(
+          "owner1",
+          "grantee1",
+          "documents/reports/q1.md",
+          "get",
+        ),
+      ).resolves.toBeNull();
     });
 
     it("rejects traversal paths before inserting the share", async () => {

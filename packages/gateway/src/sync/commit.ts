@@ -5,6 +5,7 @@ import {
   writeManifest,
   applyCommitToManifest,
   garbageCollectTombstones,
+  ManifestCapExceededError,
   type ManifestDb,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
@@ -38,61 +39,44 @@ export async function handleCommit(
     }
   }
 
-  return deps.db.withAdvisoryLock(userId, async (dbExecutor) => {
-    // Step 1: Check version
-    const meta = await deps.db.getManifestMeta(userId, dbExecutor);
-    const currentVersion = meta?.version ?? 0;
+  const locked = await deps.db.withAdvisoryLock(userId, async (dbExecutor) => {
+    const store = { r2: deps.r2, db: deps.db, dbExecutor };
+    const { manifest, manifestVersion: currentVersion } = await readManifest(store, userId);
 
     if (request.expectedVersion !== currentVersion) {
       return {
-        error: "version_conflict",
-        currentVersion,
-        expectedVersion: request.expectedVersion,
+        result: {
+          error: "version_conflict",
+          currentVersion,
+          expectedVersion: request.expectedVersion,
+        } satisfies CommitResult,
+        deleteKeys: [] as string[],
+        broadcastMessage: null as Record<string, unknown> | null,
       };
     }
 
-    // Step 2: Read current manifest from R2
-    const store = { r2: deps.r2, db: deps.db, dbExecutor };
-    const { manifest } = await readManifest(store, userId);
-
-    // Step 3: Apply changes
     let updated;
     try {
       updated = applyCommitToManifest(manifest, request.files, peerId);
     } catch (err: unknown) {
-      if (err instanceof Error && /cap|limit|50/i.test(err.message)) {
+      if (err instanceof ManifestCapExceededError) {
         return {
-          error: err.message,
-          currentVersion,
-          expectedVersion: request.expectedVersion,
+          result: {
+            error: err.message,
+            currentVersion,
+            expectedVersion: request.expectedVersion,
+          } satisfies CommitResult,
+          deleteKeys: [] as string[],
+          broadcastMessage: null as Record<string, unknown> | null,
         };
       }
       throw err;
     }
 
     const compacted = garbageCollectTombstones(updated);
-
-    // Step 4: Write updated manifest
     const newVersion = currentVersion + 1;
     await writeManifest(store, userId, compacted, newVersion);
 
-    // Step 5: Delete R2 objects for deleted files only after the manifest
-    // update has committed, so a transient write failure cannot orphan data.
-    for (const file of request.files) {
-      if (file.action === "delete") {
-        const key = buildFileKey(userId, file.path);
-        try {
-          await deps.r2.deleteObject(key);
-        } catch (err: unknown) {
-          console.warn(
-            "[sync/commit] Failed to delete stale file blob after manifest update:",
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-      }
-    }
-
-    // Step 6: Broadcast sync:change to other peers
     const changeFiles = request.files.map((f) => ({
       path: f.path,
       hash: f.hash,
@@ -100,16 +84,39 @@ export async function handleCommit(
       action: f.action ?? "update",
     }));
 
-    deps.broadcast(userId, peerId, {
-      type: "sync:change",
-      files: changeFiles,
-      peerId,
-      manifestVersion: newVersion,
-    });
+    const deleteKeys = request.files
+      .filter((file) => file.action === "delete")
+      .map((file) => buildFileKey(userId, file.path));
 
     return {
-      manifestVersion: newVersion,
-      committed: request.files.length,
+      result: {
+        manifestVersion: newVersion,
+        committed: request.files.length,
+      } satisfies CommitResult,
+      deleteKeys,
+      broadcastMessage: {
+        type: "sync:change",
+        files: changeFiles,
+        peerId,
+        manifestVersion: newVersion,
+      },
     };
   });
+
+  for (const key of locked.deleteKeys) {
+    try {
+      await deps.r2.deleteObject(key);
+    } catch (err: unknown) {
+      console.warn(
+        "[sync/commit] Failed to delete stale file blob after manifest update:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  if (locked.broadcastMessage) {
+    deps.broadcast(userId, peerId, locked.broadcastMessage);
+  }
+
+  return locked.result;
 }

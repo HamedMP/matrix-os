@@ -6,6 +6,18 @@ import type { SyncDatabase } from "./sharing-db.js";
 
 const MANIFEST_FILE_CAP = 50_000;
 
+export class ManifestCapExceededError extends Error {
+  constructor(
+    readonly liveCount: number,
+    readonly cap: number = MANIFEST_FILE_CAP,
+  ) {
+    super(
+      `Manifest file cap exceeded: ${liveCount} live files (max ${cap.toLocaleString()})`,
+    );
+    this.name = "ManifestCapExceededError";
+  }
+}
+
 export interface ManifestMeta {
   version: number;
   file_count: number;
@@ -65,6 +77,14 @@ async function readObjectBodyAsText(body: unknown): Promise<string> {
 
 const EMPTY_MANIFEST: Manifest = { version: 2, files: {} };
 
+function liveManifestStats(manifest: Manifest): { fileCount: number; totalSize: bigint } {
+  const liveFiles = Object.values(manifest.files).filter((e) => !e.deleted);
+  return {
+    fileCount: liveFiles.length,
+    totalSize: liveFiles.reduce((sum, e) => sum + BigInt(e.size), 0n),
+  };
+}
+
 export async function readManifest(
   store: ManifestStore,
   userId: string,
@@ -74,12 +94,21 @@ export async function readManifest(
 
   let manifest: Manifest;
   let etag = "";
+  let storedManifestVersion = 0;
 
   try {
     const result = await store.r2.getObject(key);
     if (result.body) {
       const text = await readObjectBodyAsText(result.body);
-      manifest = ManifestSchema.parse(JSON.parse(text));
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (
+        typeof parsed.manifestVersion === "number" &&
+        Number.isInteger(parsed.manifestVersion) &&
+        parsed.manifestVersion >= 0
+      ) {
+        storedManifestVersion = parsed.manifestVersion;
+      }
+      manifest = ManifestSchema.parse(parsed);
     } else {
       manifest = { ...EMPTY_MANIFEST, files: {} };
     }
@@ -92,9 +121,20 @@ export async function readManifest(
     }
   }
 
+  const manifestVersion = Math.max(meta?.version ?? 0, storedManifestVersion);
+  if (manifestVersion > (meta?.version ?? 0)) {
+    const stats = liveManifestStats(manifest);
+    await store.db.upsertManifestMeta(userId, {
+      version: manifestVersion,
+      file_count: stats.fileCount,
+      total_size: stats.totalSize,
+      etag: etag || null,
+    }, store.dbExecutor);
+  }
+
   return {
     manifest,
-    manifestVersion: meta?.version ?? 0,
+    manifestVersion,
     etag,
   };
 }
@@ -106,9 +146,11 @@ export async function writeManifest(
   newVersion: number,
 ): Promise<void> {
   const key = buildManifestKey(userId);
-  const liveFiles = Object.values(manifest.files).filter((e) => !e.deleted);
-  const fileCount = liveFiles.length;
-  const totalSize = liveFiles.reduce((sum, e) => sum + BigInt(e.size), 0n);
+  const { fileCount, totalSize } = liveManifestStats(manifest);
+  const body = JSON.stringify({
+    ...manifest,
+    manifestVersion: newVersion,
+  });
 
   await store.db.upsertManifestMeta(userId, {
     version: newVersion,
@@ -117,7 +159,6 @@ export async function writeManifest(
     etag: null,
   }, store.dbExecutor);
 
-  const body = JSON.stringify(manifest);
   await store.r2.putObject(key, body);
 }
 
@@ -159,7 +200,7 @@ export function applyCommitToManifest(
   // Enforce 50K file cap (counting non-tombstoned files only)
   const liveCount = Object.values(updated.files).filter((e) => !e.deleted).length;
   if (liveCount > MANIFEST_FILE_CAP) {
-    throw new Error(`Manifest file cap exceeded: ${liveCount} live files (max ${MANIFEST_FILE_CAP.toLocaleString()})`);
+    throw new ManifestCapExceededError(liveCount);
   }
 
   return updated;
