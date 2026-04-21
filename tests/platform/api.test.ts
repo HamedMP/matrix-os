@@ -82,6 +82,17 @@ describe('platform/api', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /containers/provision rejects invalid runtime types for clerkUserId', async () => {
+    const res = await app.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ handle: 'alice', clerkUserId: true }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Validation error' });
+  });
+
   it('POST /containers/provision returns a generic duplicate error', async () => {
     await app.request('/containers/provision', {
       method: 'POST',
@@ -172,6 +183,17 @@ describe('platform/api', () => {
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: 'Failed to start container' });
+  });
+
+  it('POST /social/send/:handle rejects invalid runtime body types', async () => {
+    const res = await app.request('/social/send/alice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ text: null, from: { handle: 'alice' } }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Validation error' });
   });
 
   it.each([

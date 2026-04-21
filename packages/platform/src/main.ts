@@ -1,10 +1,11 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
 import { createConnection } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import Dockerode from 'dockerode';
+import { z } from 'zod/v4';
 import {
   createPlatformDb,
   type PlatformDB,
@@ -37,6 +38,21 @@ const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
+const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
+
+const ProvisionBodySchema = z.object({
+  handle: z.string().regex(HANDLE_PATTERN),
+  clerkUserId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(100).optional(),
+});
+
+const SocialSendBodySchema = z.object({
+  text: z.string().min(1).max(10_000),
+  from: z.object({
+    handle: z.string().regex(HANDLE_PATTERN),
+    displayName: z.string().min(1).max(100).optional(),
+  }),
+});
 
 function isMissingContainerError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith('No container for handle:');
@@ -66,6 +82,26 @@ function requireValidHandle(handle: string): string {
     throw new Error('Invalid handle');
   }
   return handle;
+}
+
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("'", "&#39;");
+}
+
+function applyAuthPageHeaders(
+  c: import('hono').Context,
+  scriptNonce: string,
+): void {
+  c.header('X-Frame-Options', 'DENY');
+  c.header(
+    'Content-Security-Policy',
+    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN}; object-src 'none'; base-uri 'none'`,
+  );
 }
 
 export function checkUnsafeDefaultSecrets(
@@ -165,9 +201,12 @@ async function resolveAppDomainIdentity(opts: {
   };
 }
 
-function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
-  const otherMode = mode === 'sign-in' ? 'sign-up' : 'sign-in';
-  const otherLabel = mode === 'sign-in' ? 'Sign up' : 'Sign in';
+function getAuthPage(
+  publishableKey: string,
+  mode: 'sign-in' | 'sign-up',
+  scriptNonce: string,
+) {
+  const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -184,14 +223,15 @@ function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
 <body>
   <div id="auth"><span class="loading">Loading...</span></div>
   <script
+    nonce="${scriptNonce}"
     async
     crossorigin="anonymous"
-    data-clerk-publishable-key="${publishableKey}"
-    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+    data-clerk-publishable-key="${escapedPublishableKey}"
+    src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
     type="text/javascript"
     onload="initClerk()"
   ></script>
-  <script>
+  <script nonce="${scriptNonce}">
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
@@ -239,7 +279,8 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
       status: upstream.status,
       headers: upstream.headers,
     });
-  } catch {
+  } catch (err: unknown) {
+    logPlatformRouteError('proxyToShell', err);
     return new Response('Auth service unavailable', { status: 502 });
   }
 }
@@ -433,7 +474,9 @@ export function createApp(deps: {
       if (!publishableKey || !clerkAuth) {
         return c.text('Clerk publishable key not configured', 500);
       }
-      return c.html(getAuthPage(publishableKey, authMode));
+      const scriptNonce = randomBytes(16).toString('base64');
+      applyAuthPageHeaders(c, scriptNonce);
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce));
     }
 
     console.log(`[app] verified request path=${path}`);
@@ -451,7 +494,8 @@ export function createApp(deps: {
     if (record.status === 'stopped') {
       try {
         await orchestrator.start(record.handle);
-      } catch {
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain container start', err);
         return c.json({ error: 'Failed to wake container' }, 503);
       }
     }
@@ -489,7 +533,8 @@ export function createApp(deps: {
         status: upstream.status,
         headers: upstream.headers,
       });
-    } catch {
+    } catch (err: unknown) {
+      logPlatformRouteError('app-domain proxy', err);
       return c.json({ error: 'Container unreachable' }, 502);
     }
   });
@@ -548,12 +593,28 @@ export function createApp(deps: {
   // --- Container management ---
 
   app.post('/containers/provision', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
-    const { handle, clerkUserId, displayName } = await c.req.json<{ handle: string; clerkUserId: string; displayName?: string }>();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/containers/provision parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = ProvisionBodySchema.safeParse(body);
+    if (!parsed.success) {
+      const data = body as { handle?: unknown; clerkUserId?: unknown } | null;
+      if (!data || typeof data !== 'object' || data.handle === undefined || data.clerkUserId === undefined) {
+        return c.json({ error: 'handle and clerkUserId required' }, 400);
+      }
+      if (typeof data.handle !== 'string' || !HANDLE_PATTERN.test(data.handle)) {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { handle, clerkUserId, displayName } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
-    }
-    if (!HANDLE_PATTERN.test(handle)) {
-      return c.json({ error: 'Invalid handle' }, 400);
     }
     try {
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
@@ -800,7 +861,19 @@ export function createApp(deps: {
   });
 
   app.post('/social/send/:handle', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
-    const { text, from } = await c.req.json<{ text: string; from: { handle: string; displayName?: string } }>();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/social/send/:handle parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = SocialSendBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { text, from } = parsed.data;
     try {
       const result = await social.sendMessage(c.req.param('handle'), text, from);
       return c.json(result);
@@ -820,7 +893,8 @@ export function createApp(deps: {
     if (record.status === 'stopped') {
       try {
         await orchestrator.start(handle);
-      } catch {
+      } catch (err: unknown) {
+        logPlatformRouteError('/proxy/:handle/* start', err);
         return c.json({ error: 'Failed to wake container' }, 503);
       }
     }
@@ -851,7 +925,8 @@ export function createApp(deps: {
         status: upstream.status,
         headers: upstream.headers,
       });
-    } catch {
+    } catch (err: unknown) {
+      logPlatformRouteError('/proxy/:handle/*', err);
       return c.json({ error: 'Container unreachable' }, 502);
     }
   });

@@ -37,6 +37,7 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
 
   beforeEach(() => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_"bad"&<tag>';
     tmpDir = mkdtempSync(join(tmpdir(), "middleware-shortcircuit-"));
     db = createPlatformDb(join(tmpDir, "test.db"));
 
@@ -52,6 +53,7 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.PLATFORM_JWT_SECRET;
+    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   });
 
   it("GET /auth/device?user_code=XYZ on Host app.matrix-os.com short-circuits to the device-flow handler (not 500/502)", async () => {
@@ -67,6 +69,21 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
     // device-flow's GET handler sets a CSRF cookie.
     const cookie = res.headers.get("set-cookie") ?? "";
     expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
+  });
+
+  it("GET /sign-in on Host app.matrix-os.com serves an escaped Clerk page with nonce CSP", async () => {
+    const res = await app.request("/sign-in", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(res.headers.get("content-security-policy")).toContain("'nonce-");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(html).toContain('data-clerk-publishable-key="pk_test_&quot;bad&quot;&amp;&lt;tag&gt;"');
+    expect(html).not.toContain('data-clerk-publishable-key="pk_test_"bad"&<tag>"');
+    expect(html).toMatch(/<script nonce="[^"]+"/);
   });
 
   it("POST /api/auth/device/code on Host app.matrix-os.com does NOT proxy to a container (reaches device-flow handler)", async () => {

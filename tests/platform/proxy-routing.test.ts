@@ -163,4 +163,28 @@ describe("platform proxy routing", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.redirect).toBe("manual");
   });
+
+  it("logs and returns 502 when the app-domain container proxy fetch fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("upstream exploded"));
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/ping", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "Container unreachable" });
+    expect(errorSpy).toHaveBeenCalledWith("[platform] app-domain proxy failed:", "upstream exploded");
+  });
 });
