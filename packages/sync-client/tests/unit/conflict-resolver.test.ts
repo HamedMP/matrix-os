@@ -121,6 +121,16 @@ describe("generateConflictPath", () => {
       "packages/gateway/src/sync/routes (conflict - cloud-vps - 2026-03-20).ts",
     );
   });
+
+  it("sanitizes peerId before interpolating it into the conflict filename", () => {
+    const result = generateConflictPath(
+      "src/index.ts",
+      "../../evil/peer id",
+      new Date("2026-04-14"),
+    );
+
+    expect(result).toBe("src/index (conflict - evil_peer_id - 2026-04-14).ts");
+  });
 });
 
 describe("resolveTextConflict", () => {
@@ -228,5 +238,23 @@ describe("resolveBinaryConflict", () => {
 
     const preserved = await readFile(localPath);
     expect(preserved).toEqual(originalContent);
+  });
+
+  it("keeps the conflict copy inside syncRoot when peerId contains path characters", async () => {
+    const remoteContent = Buffer.from([0x10, 0x20, 0x30]);
+
+    const result = await resolveBinaryConflict({
+      filePath: "nested/image.png",
+      syncRoot: TEST_DIR,
+      remoteContent,
+      peerId: "../../outside/path",
+      date: new Date("2026-04-14"),
+    });
+
+    expect(result.conflictPath).toBe(
+      "nested/image (conflict - outside_path - 2026-04-14).png",
+    );
+    const written = await readFile(join(TEST_DIR, result.conflictPath!));
+    expect(written).toEqual(remoteContent);
   });
 });

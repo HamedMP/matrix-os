@@ -39,10 +39,14 @@ export function generateConflictPath(
   peerId: string,
   date: Date,
 ): string {
+  const safePeerId = peerId
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "unknown";
   const dateStr = date.toISOString().split("T")[0]!;
   const ext = extname(filePath);
   const base = filePath.slice(0, filePath.length - ext.length);
-  const suffix = ` (conflict - ${peerId} - ${dateStr})`;
+  const suffix = ` (conflict - ${safePeerId} - ${dateStr})`;
   return `${base}${suffix}${ext}`;
 }
 
