@@ -87,6 +87,19 @@ describe("handleCommit", () => {
     });
   });
 
+  it("returns a generic invalid file path error", async () => {
+    const result = await handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "../escape.txt", hash: HASH_A, size: 100 }],
+      expectedVersion: 0,
+    });
+
+    expect(result).toEqual({
+      error: "Invalid file path",
+      currentVersion: 0,
+      expectedVersion: 0,
+    });
+  });
+
   it("uses the embedded manifestVersion when R2 is ahead of DB metadata", async () => {
     const manifest = makeManifest({});
     const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };

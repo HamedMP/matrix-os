@@ -98,10 +98,13 @@ export function createPlatformR2Client(config: {
       };
     },
 
-    async putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }> {
+    async putObject(
+      key: string,
+      body: string | Uint8Array | ReadableStream<Uint8Array>,
+    ): Promise<{ etag?: string }> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",
-        body: typeof body === "string" ? body : Buffer.from(body),
+        body: body instanceof Uint8Array ? Buffer.from(body) : body,
       }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };

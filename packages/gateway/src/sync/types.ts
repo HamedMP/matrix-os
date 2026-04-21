@@ -146,10 +146,14 @@ export type ResolveConflict = z.infer<typeof ResolveConflictSchema>;
 
 export const ShareRoleSchema = z.enum(["viewer", "editor", "admin"]);
 export type ShareRole = z.infer<typeof ShareRoleSchema>;
+export const SHARE_HANDLE_SCHEMA = z.string().regex(
+  /^@[a-z][a-z0-9_-]{0,62}:matrix-os\.com$/,
+  "Invalid Matrix OS handle",
+);
 
 export const CreateShareSchema = z.object({
   path: z.string().min(1).max(1024),
-  granteeHandle: z.string().min(1).max(256),
+  granteeHandle: SHARE_HANDLE_SCHEMA,
   role: ShareRoleSchema,
   expiresAt: z.iso.datetime().optional(),
 });

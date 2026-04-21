@@ -12,6 +12,7 @@ import {
 } from "../lib/config.js";
 import { clearAuth, isExpired, loadAuth } from "../auth/token-store.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
+import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
@@ -355,6 +356,25 @@ export async function startDaemon(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Could not acquire daemon pid file");
     process.exit(1);
+  }
+
+  for (const root of [configDir, config.syncPath]) {
+    try {
+      await cleanupStaleMatrixosTempFiles(root, {
+        olderThanMs: 60_000,
+        logger: {
+          warn: (msg, err) => {
+            if (err) {
+              logger.warn({ err }, msg);
+              return;
+            }
+            logger.warn(msg);
+          },
+        },
+      });
+    } catch (err) {
+      logger.warn({ err, root }, "Temp file cleanup failed");
+    }
   }
 
   const ignorePatterns = await loadSyncIgnore(config.syncPath);

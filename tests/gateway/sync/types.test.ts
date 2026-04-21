@@ -172,6 +172,14 @@ describe("CreateShareSchema", () => {
     };
     expect(CreateShareSchema.parse(share)).toEqual(share);
   });
+
+  it("rejects malformed grantee handles", () => {
+    expect(() => CreateShareSchema.parse({
+      path: "projects/startup/",
+      granteeHandle: "colleague",
+      role: "editor",
+    })).toThrow();
+  });
 });
 
 describe("AcceptShareSchema", () => {

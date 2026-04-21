@@ -265,6 +265,16 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
           const lockedStore: ManifestStore = { ...store, dbExecutor };
           const existing = await readManifest(lockedStore, userId);
           const entry = existing.manifest.files[conflictPath];
+          const deleteConflictBlob = async (): Promise<void> => {
+            try {
+              await deps.r2.deleteObject(pathCheck.key);
+            } catch (err: unknown) {
+              console.warn(
+                "[sync/resolve-conflict] Failed to delete orphaned conflict blob after manifest update:",
+                err instanceof Error ? err.message : String(err),
+              );
+            }
+          };
 
           if (entry && !entry.deleted) {
             const next = applyCommitToManifest(
@@ -274,7 +284,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
             );
             const manifestVersion = existing.manifestVersion + 1;
             await writeManifest(lockedStore, userId, next, manifestVersion);
-            await deps.r2.deleteObject(pathCheck.key);
+            await deleteConflictBlob();
             return {
               deleted: true,
               manifestVersion,
@@ -282,7 +292,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
             };
           }
 
-          await deps.r2.deleteObject(pathCheck.key);
+          await deleteConflictBlob();
           return {
             deleted: false,
             manifestVersion: existing.manifestVersion,
@@ -336,17 +346,14 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       const result = await deps.sharing.createShare(userId, parsed.data);
       return c.json(result, 201);
     } catch (err: unknown) {
-      if (err instanceof GranteeNotFoundError) {
-        return c.json({ error: "Grantee not found" }, 404);
+      if (err instanceof GranteeNotFoundError || err instanceof ShareDuplicateError) {
+        return c.json({ error: "Share request could not be created" }, 400);
       }
       if (err instanceof ShareSelfError) {
         return c.json({ error: "Cannot share with self" }, 400);
       }
       if (err instanceof ShareInvalidPathError) {
         return c.json({ error: "Invalid share path" }, 400);
-      }
-      if (err instanceof ShareDuplicateError) {
-        return c.json({ error: "Share already exists" }, 409);
       }
       console.error("[sync/share] Create share failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Share creation failed" }, 500);

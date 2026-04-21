@@ -493,7 +493,8 @@ describe("POST /api/sync/resolve-conflict", () => {
     );
   });
 
-  it("returns 500 when deleting the conflict copy from R2 fails", async () => {
+  it("logs and continues when deleting the conflict copy from R2 fails after the manifest update", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockR2.deleteObject.mockRejectedValue(new Error("r2 unavailable"));
 
     const app = createTestApp();
@@ -503,8 +504,12 @@ describe("POST /api/sync/resolve-conflict", () => {
       conflictPath: "readme (conflict - peer1 - 2026-04-14).md",
     }));
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Failed to delete conflict copy" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ resolved: true });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[sync/resolve-conflict] Failed to delete orphaned conflict blob after manifest update:",
+      "r2 unavailable",
+    );
   });
 });
 
@@ -537,7 +542,7 @@ describe("sharing routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /share returns 404 when grantee not found", async () => {
+  it("POST /share returns a generic 400 when grantee resolution fails", async () => {
     mockSharing.createShare.mockRejectedValue(new GranteeNotFoundError("@nobody:matrix-os.com"));
 
     const app = createTestApp();
@@ -547,8 +552,8 @@ describe("sharing routes", () => {
       role: "viewer",
     }));
 
-    expect(res.status).toBe(404);
-    await expect(res.json()).resolves.toEqual({ error: "Grantee not found" });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Share request could not be created" });
   });
 
   it("POST /share returns 400 on self-share", async () => {
@@ -579,7 +584,7 @@ describe("sharing routes", () => {
     await expect(res.json()).resolves.toEqual({ error: "Invalid share path" });
   });
 
-  it("POST /share returns 409 on duplicate", async () => {
+  it("POST /share returns a generic 400 on duplicate", async () => {
     mockSharing.createShare.mockRejectedValue(new ShareDuplicateError());
 
     const app = createTestApp();
@@ -589,8 +594,20 @@ describe("sharing routes", () => {
       role: "editor",
     }));
 
-    expect(res.status).toBe(409);
-    await expect(res.json()).resolves.toEqual({ error: "Share already exists" });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Share request could not be created" });
+  });
+
+  it("POST /share rejects invalid Matrix handles before hitting the service", async () => {
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share", {
+      path: "projects/",
+      granteeHandle: "not-a-matrix-id",
+      role: "editor",
+    }));
+
+    expect(res.status).toBe(400);
+    expect(mockSharing.createShare).not.toHaveBeenCalled();
   });
 
   it("DELETE /share revokes and returns 200", async () => {

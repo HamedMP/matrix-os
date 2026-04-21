@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -11,6 +11,7 @@ import {
   verifySyncJwt,
   type SyncJwtClaims,
 } from './sync-jwt.js';
+import { timingSafeTokenEquals } from './platform-token.js';
 import type { PlatformDB } from './db.js';
 import { getContainer, getContainerByClerkId } from './db.js';
 import type { ClerkAuth } from './clerk-auth.js';
@@ -85,10 +86,7 @@ function csrfToken(): string {
 }
 
 function csrfCookieMatchesForm(cookieValue: string, formValue: string): boolean {
-  const a = Buffer.from(cookieValue);
-  const b = Buffer.from(formValue);
-  if (a.length !== b.length || a.length === 0) return false;
-  return timingSafeEqual(a, b);
+  return timingSafeTokenEquals(cookieValue, formValue);
 }
 
 function readCsrfCookie(cookieHeader: string | undefined): string | null {

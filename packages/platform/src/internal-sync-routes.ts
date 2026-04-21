@@ -21,7 +21,10 @@ interface R2Client {
     expiresIn?: number,
   ): Promise<string>;
   getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
-  putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }>;
+  putObject(
+    key: string,
+    body: string | Uint8Array | ReadableStream<Uint8Array>,
+  ): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
 }
 
@@ -253,7 +256,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, key);
     if (allowed instanceof Response) return allowed;
-    const body = new Uint8Array(await c.req.arrayBuffer());
+    const body = c.req.raw.body ?? new Uint8Array();
     const result = await opts.r2.putObject(key, body);
     return c.json({ etag: result.etag ?? null });
   });

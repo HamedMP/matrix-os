@@ -32,7 +32,7 @@ export async function handleCommit(
     const pathCheck = resolveWithinPrefix(userId, file.path);
     if (!pathCheck.valid) {
       return {
-        error: `Invalid path: ${file.path}`,
+        error: "Invalid file path",
         currentVersion: 0,
         expectedVersion: request.expectedVersion,
       };

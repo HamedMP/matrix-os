@@ -28,7 +28,10 @@ export interface R2Client {
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
   getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
-  putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }>;
+  putObject(
+    key: string,
+    body: string | Uint8Array | ReadableStream<Uint8Array>,
+  ): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
   destroy(): void;
 }
@@ -136,7 +139,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
 
     async putObject(
       key: string,
-      body: string | Uint8Array,
+      body: string | Uint8Array | ReadableStream<Uint8Array>,
     ): Promise<{ etag?: string }> {
       const command = new PutObjectCommand({
         Bucket: bucket,

@@ -1,7 +1,8 @@
-import { readFile, writeFile, mkdir, rename, unlink } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SyncStateSchema } from "./types.js";
 import type { SyncState, Manifest, ManifestEntry } from "./types.js";
+import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
 
 export type { SyncState };
 
@@ -54,23 +55,7 @@ export async function saveSyncState(
   state: SyncState,
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    await writeFile(tempPath, JSON.stringify(state, null, 2), { mode: 0o600 });
-    await rename(tempPath, filePath);
-  } catch (err) {
-    await unlink(tempPath).catch((unlinkErr: unknown) => {
-      if (
-        unlinkErr instanceof Error &&
-        "code" in unlinkErr &&
-        (unlinkErr as NodeJS.ErrnoException).code === "ENOENT"
-      ) {
-        return;
-      }
-      throw unlinkErr;
-    });
-    throw err;
-  }
+  await writeUtf8FileAtomic(filePath, JSON.stringify(state, null, 2), 0o600);
 }
 
 export function compareSyncState(

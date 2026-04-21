@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Transaction } from "kysely";
+import { sql, type Insertable, type Kysely, type Transaction } from "kysely";
 import type { ManifestDb, ManifestDbExecutor, ManifestMeta } from "./manifest.js";
 import type { SharingDb, ShareRow } from "./sharing.js";
 import type { ShareRole } from "./types.js";
@@ -59,16 +59,21 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
           file_count: meta.file_count,
           total_size: meta.total_size,
           etag: meta.etag,
-          updated_at: new Date(),
+          updated_at: sql`CURRENT_TIMESTAMP`,
         })
         .onConflict((oc) =>
-          oc.column("user_id").doUpdateSet({
-            version: meta.version,
-            file_count: meta.file_count,
-            total_size: meta.total_size,
-            etag: meta.etag,
-            updated_at: new Date(),
-          }),
+          oc.column("user_id")
+            .doUpdateSet({
+              version: meta.version,
+              file_count: meta.file_count,
+              total_size: meta.total_size,
+              etag: meta.etag,
+              updated_at: sql`CURRENT_TIMESTAMP`,
+            })
+            // readManifest() may repair stale DB metadata without holding the
+            // writer lock. Never let that repair path overwrite a newer
+            // manifest version that a concurrent commit already stored.
+            .where("sync_manifests.version", "<", meta.version),
         )
         .execute();
     },
@@ -95,17 +100,18 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
         role: ShareRole;
         expires_at?: string;
       }): Promise<ShareRow> {
+        const values: Insertable<SyncDatabase["sync_shares"]> = {
+          owner_id: input.owner_id,
+          path: input.path,
+          grantee_id: input.grantee_id,
+          role: input.role,
+          accepted: false,
+          created_at: new Date(),
+          expires_at: input.expires_at ? new Date(input.expires_at) : null,
+        };
         const row = await executor
           .insertInto("sync_shares")
-          .values({
-            owner_id: input.owner_id,
-            path: input.path,
-            grantee_id: input.grantee_id,
-            role: input.role,
-            accepted: false,
-            created_at: new Date(),
-            expires_at: input.expires_at ? new Date(input.expires_at) : null,
-          } as any)
+          .values(values)
           .returningAll()
           .executeTakeFirstOrThrow();
 
