@@ -41,6 +41,8 @@ import {
   writeManifest,
   applyCommitToManifest,
   garbageCollectTombstones,
+  ManifestTooLargeError,
+  MANIFEST_JSON_MAX_BYTES,
   type ManifestStore,
 } from "../../../packages/gateway/src/sync/manifest.js";
 
@@ -110,6 +112,19 @@ describe("readManifest", () => {
       undefined,
     );
   });
+
+  it("rejects oversized manifest JSON before buffering the body", async () => {
+    const text = vi.fn().mockResolvedValue("{}");
+    mockR2.getObject.mockResolvedValue({
+      body: { text },
+      etag: '"etag-big"',
+      contentLength: MANIFEST_JSON_MAX_BYTES + 1,
+    });
+    mockDb.getManifestMeta.mockResolvedValue(null);
+
+    await expect(readManifest(store, "user1")).rejects.toThrow(ManifestTooLargeError);
+    expect(text).not.toHaveBeenCalled();
+  });
 });
 
 describe("writeManifest", () => {
@@ -136,12 +151,12 @@ describe("writeManifest", () => {
         version: 5,
         file_count: 1,
         total_size: 200n,
-        etag: null,
+        etag: '"new-etag"',
       }),
       undefined,
     );
-    expect(mockDb.upsertManifestMeta.mock.invocationCallOrder[0]).toBeLessThan(
-      mockR2.putObject.mock.invocationCallOrder[0],
+    expect(mockR2.putObject.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDb.upsertManifestMeta.mock.invocationCallOrder[0],
     );
   });
 

@@ -1,7 +1,8 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod/v4";
+import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
 
 export const AuthDataSchema = z.object({
   accessToken: z.string().min(1),
@@ -41,7 +42,7 @@ export async function saveAuth(
 ): Promise<void> {
   const filePath = path ?? authFilePath();
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  await writeFile(filePath, JSON.stringify(data, null, 2), { mode: 0o600 });
+  await writeUtf8FileAtomic(filePath, JSON.stringify(data, null, 2), 0o600);
 }
 
 export async function clearAuth(path?: string): Promise<void> {

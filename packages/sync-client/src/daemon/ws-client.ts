@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import WebSocket from "ws";
+import WebSocket, { type ClientOptions } from "ws";
 import { z } from "zod/v4";
 import type { SyncEvent } from "./types.js";
 
@@ -19,6 +19,7 @@ export interface WsClientOptions {
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 const PING_INTERVAL_MS = 30_000;
+export const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 const SyncEventMessageSchema = z.discriminatedUnion("type", [
   z.object({
@@ -63,6 +64,15 @@ export function buildSyncSubscribeMessage(
   };
 }
 
+export function buildWebSocketOptions(
+  token: string,
+): ClientOptions {
+  return {
+    headers: { authorization: `Bearer ${token}` },
+    handshakeTimeout: WS_HANDSHAKE_TIMEOUT_MS,
+  };
+}
+
 export class SyncWsClient {
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
@@ -91,9 +101,7 @@ export class SyncWsClient {
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
 
-    this.ws = new WebSocket(`${wsUrl}/ws`, {
-      headers: { authorization: `Bearer ${this.options.token}` },
-    });
+    this.ws = new WebSocket(`${wsUrl}/ws`, buildWebSocketOptions(this.options.token));
 
     this.ws.on("open", () => {
       this.reconnectAttempt = 0;

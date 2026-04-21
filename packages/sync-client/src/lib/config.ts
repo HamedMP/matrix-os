@@ -1,7 +1,9 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { readFile, mkdir } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { homedir, hostname } from "node:os";
 import { z } from "zod/v4";
+import { writeUtf8FileAtomic } from "./atomic-write.js";
 
 export const SyncConfigSchema = z.object({
   // platformUrl owns identity: device-flow login, JWT issuance, /api/me.
@@ -24,6 +26,9 @@ export const SyncConfigSchema = z.object({
 });
 
 export type SyncConfig = z.infer<typeof SyncConfigSchema>;
+
+const MAX_GATEWAY_FOLDER_LENGTH = 1024;
+const DOUBLE_DOT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
 
 export function defaultPlatformUrl(): string {
   return process.env.MATRIXOS_PLATFORM_URL ?? "https://platform.matrix-os.com";
@@ -65,14 +70,72 @@ export async function saveConfig(
 ): Promise<void> {
   const filePath = path ?? configPath();
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  await writeFile(filePath, JSON.stringify(config, null, 2), { mode: 0o600 });
+  await writeUtf8FileAtomic(filePath, JSON.stringify(config, null, 2), 0o600);
 }
 
 export function defaultSyncPath(): string {
   return join(homedir(), "matrixos");
 }
 
+export function resolveSyncPathWithinHome(
+  rawPath: string,
+  homeDir: string = homedir(),
+): string {
+  if (!rawPath.trim()) {
+    throw new Error("syncPath is required");
+  }
+
+  const homeRoot = resolve(homeDir);
+  const candidate = isAbsolute(rawPath)
+    ? resolve(rawPath)
+    : resolve(homeRoot, rawPath);
+  const homePrefix = homeRoot.endsWith(sep) ? homeRoot : `${homeRoot}${sep}`;
+  if (candidate !== homeRoot && !candidate.startsWith(homePrefix)) {
+    throw new Error("syncPath must stay within your home directory");
+  }
+  return candidate;
+}
+
+function normalizeFolderPath(folder: string): string {
+  return folder
+    .replace(/\/+/g, "/")
+    .split("/")
+    .filter((segment) => segment !== ".")
+    .join("/")
+    .replace(/^\/+|\/+$/g, "");
+}
+
+export function normalizeGatewayFolder(folder: string): string {
+  const trimmed = folder.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+  if (trimmed.length > MAX_GATEWAY_FOLDER_LENGTH) {
+    throw new Error(
+      `gatewayFolder exceeds maximum length of ${MAX_GATEWAY_FOLDER_LENGTH} characters`,
+    );
+  }
+  if (trimmed.startsWith("/")) {
+    throw new Error("gatewayFolder must not start with /");
+  }
+  if (trimmed.includes("\\")) {
+    throw new Error("gatewayFolder must not contain backslashes");
+  }
+  if (trimmed.includes("\0")) {
+    throw new Error("gatewayFolder must not contain null bytes");
+  }
+
+  const normalized = normalizeFolderPath(trimmed);
+  if (
+    normalized === ".." ||
+    DOUBLE_DOT_SEGMENT.test(normalized)
+  ) {
+    throw new Error("gatewayFolder must not contain '..' segments");
+  }
+  return normalized;
+}
+
 export function generatePeerId(): string {
   const host = hostname().toLowerCase().replace(/\.local$/, "");
-  return host;
+  return `${host}-${randomBytes(4).toString("hex")}`;
 }

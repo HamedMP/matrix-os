@@ -36,8 +36,8 @@ function createFakeR2(): R2Client & { store: Map<string, Buffer> } {
         etag: `"etag-${key}"`,
       };
     },
-    async putObject(key: string, body: Buffer) {
-      store.set(key, body);
+    async putObject(key: string, body: string | Uint8Array) {
+      store.set(key, typeof body === "string" ? Buffer.from(body) : Buffer.from(body));
       return { etag: `"etag-${key}-${store.size}"` };
     },
     async deleteObject(key: string) {

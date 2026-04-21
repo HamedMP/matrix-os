@@ -9,7 +9,12 @@ import {
   AcceptShareSchema,
   DeleteShareSchema,
 } from "./types.js";
-import { readManifest, type ManifestStore } from "./manifest.js";
+import {
+  readManifest,
+  writeManifest,
+  applyCommitToManifest,
+  type ManifestStore,
+} from "./manifest.js";
 import {
   generatePresignedUrls,
   PresignValidationError,
@@ -230,6 +235,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
+    const peerId = deps.getPeerId(c);
     if (!commitLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
@@ -244,8 +250,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return validationError(c);
     }
 
-    const requestedPath = resolveWithinPrefix(userId, parsed.data.path);
-    if (!requestedPath.valid) {
+    if (!resolveWithinPrefix(userId, parsed.data.path).valid) {
       return c.json({ error: "Invalid path" }, 400);
     }
 
@@ -255,7 +260,48 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
         return c.json({ error: "Invalid conflict path" }, 400);
       }
       try {
-        await deps.r2.deleteObject(pathCheck.key);
+        const conflictPath = pathCheck.key.slice(`matrixos-sync/${userId}/files/`.length);
+        const deletion = await deps.db.withAdvisoryLock(userId, async (dbExecutor) => {
+          const lockedStore: ManifestStore = { ...store, dbExecutor };
+          const existing = await readManifest(lockedStore, userId);
+          const entry = existing.manifest.files[conflictPath];
+
+          if (entry && !entry.deleted) {
+            const next = applyCommitToManifest(
+              existing.manifest,
+              [{ path: conflictPath, hash: entry.hash, size: 0, action: "delete" }],
+              peerId,
+            );
+            const manifestVersion = existing.manifestVersion + 1;
+            await writeManifest(lockedStore, userId, next, manifestVersion);
+            await deps.r2.deleteObject(pathCheck.key);
+            return {
+              deleted: true,
+              manifestVersion,
+              hash: entry.hash,
+            };
+          }
+
+          await deps.r2.deleteObject(pathCheck.key);
+          return {
+            deleted: false,
+            manifestVersion: existing.manifestVersion,
+            hash: null,
+          };
+        });
+        if (deletion.deleted && deletion.hash) {
+          deps.peerRegistry.broadcastChange(userId, peerId, {
+            type: "sync:change",
+            files: [{
+              path: conflictPath,
+              hash: deletion.hash,
+              size: 0,
+              action: "delete",
+            }],
+            peerId,
+            manifestVersion: deletion.manifestVersion,
+          });
+        }
       } catch (err: unknown) {
         console.error("[sync/resolve-conflict] Failed to delete conflict copy:", err instanceof Error ? err.message : String(err));
         return c.json({ error: "Failed to delete conflict copy" }, 500);
@@ -294,13 +340,13 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
         return c.json({ error: "Grantee not found" }, 404);
       }
       if (err instanceof ShareSelfError) {
-        return c.json({ error: err.message }, 400);
+        return c.json({ error: "Cannot share with self" }, 400);
       }
       if (err instanceof ShareInvalidPathError) {
-        return c.json({ error: err.message }, 400);
+        return c.json({ error: "Invalid share path" }, 400);
       }
       if (err instanceof ShareDuplicateError) {
-        return c.json({ error: err.message }, 409);
+        return c.json({ error: "Share already exists" }, 409);
       }
       console.error("[sync/share] Create share failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Share creation failed" }, 500);
@@ -328,10 +374,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ revoked: true });
     } catch (err: unknown) {
       if (err instanceof ShareNotFoundError) {
-        return c.json({ error: err.message }, 404);
+        return c.json({ error: "Share not found" }, 404);
       }
       if (err instanceof ShareForbiddenError) {
-        return c.json({ error: err.message }, 403);
+        return c.json({ error: "Forbidden" }, 403);
       }
       console.error("[sync/share] Revoke share failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Share revocation failed" }, 500);
@@ -360,10 +406,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json(result);
     } catch (err: unknown) {
       if (err instanceof ShareNotFoundError) {
-        return c.json({ error: err.message }, 404);
+        return c.json({ error: "Share not found" }, 404);
       }
       if (err instanceof ShareForbiddenError) {
-        return c.json({ error: err.message }, 403);
+        return c.json({ error: "Forbidden" }, 403);
       }
       console.error("[sync/share] Accept share failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Share acceptance failed" }, 500);

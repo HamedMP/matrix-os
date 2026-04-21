@@ -367,8 +367,9 @@ export function createApp(deps: {
           // to the right container. Per-handle subdomains are deprecated.
           // Dev override via GATEWAY_URL_TEMPLATE='http://localhost:4000' (single-tenant)
           // or 'http://matrixos-{handle}:4000' for in-cluster Docker routing.
+          const safeHandle = requireValidHandle(handle);
           const tmpl = process.env.GATEWAY_URL_TEMPLATE;
-          if (tmpl) return tmpl.replace('{handle}', handle);
+          if (tmpl) return tmpl.replace('{handle}', safeHandle);
           return 'https://app.matrix-os.com';
         },
       }),
@@ -703,23 +704,29 @@ export function createApp(deps: {
         const base = `http://matrixos-${r.handle}:4000`;
         const timeout = 3000;
 
-        const fetchJson = async (url: string) => {
+        const fetchJson = async (url: string, label: string) => {
           try {
-            const ac = new AbortController();
-            const timer = setTimeout(() => ac.abort(), timeout);
-            const res = await fetch(url, { signal: ac.signal });
-            clearTimeout(timer);
-            if (!res.ok) return null;
+            const res = await fetch(url, {
+              signal: AbortSignal.timeout(timeout),
+            });
+            if (!res.ok) {
+              console.warn(`[platform] ${label} returned ${res.status}`);
+              return null;
+            }
             return await res.json();
-          } catch {
+          } catch (err: unknown) {
+            console.warn(
+              `[platform] ${label} failed:`,
+              err instanceof Error ? err.message : String(err),
+            );
             return null;
           }
         };
 
         const [health, systemInfo, conversations] = await Promise.all([
-          fetchJson(`${base}/health`),
-          fetchJson(`${base}/api/system/info`),
-          fetchJson(`${base}/api/conversations`),
+          fetchJson(`${base}/health`, `${r.handle} health check`),
+          fetchJson(`${base}/api/system/info`, `${r.handle} system info`),
+          fetchJson(`${base}/api/conversations`, `${r.handle} conversations`),
         ]);
 
         return {
@@ -735,12 +742,17 @@ export function createApp(deps: {
 
     let usageSummary = null;
     try {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 3000);
-      const res = await fetch('http://proxy:8080/usage/summary', { signal: ac.signal });
-      clearTimeout(timer);
+      const res = await fetch('http://proxy:8080/usage/summary', {
+        signal: AbortSignal.timeout(3000),
+      });
       if (res.ok) usageSummary = await res.json();
-    } catch { /* proxy may not be reachable */ }
+      else console.warn(`[platform] usage summary returned ${res.status}`);
+    } catch (err: unknown) {
+      console.warn(
+        '[platform] usage summary fetch failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
 
     return c.json({
       timestamp: new Date().toISOString(),

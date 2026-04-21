@@ -5,6 +5,7 @@ import type { R2Client } from "./r2-client.js";
 import type { SyncDatabase } from "./sharing-db.js";
 
 const MANIFEST_FILE_CAP = 50_000;
+export const MANIFEST_JSON_MAX_BYTES = 32 * 1024 * 1024;
 
 export class ManifestCapExceededError extends Error {
   constructor(
@@ -15,6 +16,18 @@ export class ManifestCapExceededError extends Error {
       `Manifest file cap exceeded: ${liveCount} live files (max ${cap.toLocaleString()})`,
     );
     this.name = "ManifestCapExceededError";
+  }
+}
+
+export class ManifestTooLargeError extends Error {
+  constructor(
+    readonly sizeBytes: number,
+    readonly maxBytes: number = MANIFEST_JSON_MAX_BYTES,
+  ) {
+    super(
+      `Manifest JSON exceeds ${maxBytes.toLocaleString()} bytes (received ${sizeBytes.toLocaleString()})`,
+    );
+    this.name = "ManifestTooLargeError";
   }
 }
 
@@ -57,20 +70,35 @@ export interface ReadManifestResult {
   etag: string;
 }
 
-async function readObjectBodyAsText(body: unknown): Promise<string> {
+function ensureManifestSize(sizeBytes: number, maxBytes = MANIFEST_JSON_MAX_BYTES): void {
+  if (sizeBytes > maxBytes) {
+    throw new ManifestTooLargeError(sizeBytes, maxBytes);
+  }
+}
+
+async function readObjectBodyAsText(
+  body: unknown,
+  maxBytes = MANIFEST_JSON_MAX_BYTES,
+): Promise<string> {
   const anyBody = body as {
     transformToString?: () => Promise<string>;
     text?: () => Promise<string>;
     transformToByteArray?: () => Promise<Uint8Array>;
   };
+  if (typeof anyBody.transformToByteArray === "function") {
+    const bytes = await anyBody.transformToByteArray();
+    ensureManifestSize(bytes.byteLength, maxBytes);
+    return Buffer.from(bytes).toString("utf-8");
+  }
   if (typeof anyBody.transformToString === "function") {
-    return anyBody.transformToString();
+    const text = await anyBody.transformToString();
+    ensureManifestSize(Buffer.byteLength(text, "utf-8"), maxBytes);
+    return text;
   }
   if (typeof anyBody.text === "function") {
-    return anyBody.text();
-  }
-  if (typeof anyBody.transformToByteArray === "function") {
-    return Buffer.from(await anyBody.transformToByteArray()).toString("utf-8");
+    const text = await anyBody.text();
+    ensureManifestSize(Buffer.byteLength(text, "utf-8"), maxBytes);
+    return text;
   }
   throw new Error("Unsupported R2 object body type");
 }
@@ -99,6 +127,9 @@ export async function readManifest(
   try {
     const result = await store.r2.getObject(key);
     if (result.body) {
+      if (typeof result.contentLength === "number") {
+        ensureManifestSize(result.contentLength);
+      }
       const text = await readObjectBodyAsText(result.body);
       const parsed = JSON.parse(text) as Record<string, unknown>;
       if (
@@ -152,17 +183,18 @@ export async function writeManifest(
     manifestVersion: newVersion,
   });
 
+  const { etag } = await store.r2.putObject(key, body);
+
+  // Write R2 first, then advance the DB metadata. If the later DB write or
+  // transaction commit fails, readManifest() self-heals by taking
+  // Math.max(db.version, manifestVersion) and repairing sync_manifests from
+  // the manifest stored in R2.
   await store.db.upsertManifestMeta(userId, {
     version: newVersion,
     file_count: fileCount,
     total_size: totalSize,
-    etag: null,
+    etag: etag ?? null,
   }, store.dbExecutor);
-
-  // DB metadata remains the source of truth for fast reads, but readManifest()
-  // reconciles split-brain by taking Math.max(db.version, manifestVersion) and
-  // repairing the DB metadata if an R2 write succeeds before the DB commit does.
-  await store.r2.putObject(key, body);
 }
 
 export function applyCommitToManifest(

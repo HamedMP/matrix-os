@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildWebSocketOptions,
   buildSyncSubscribeMessage,
   parseSyncEventMessage,
+  WS_HANDSHAKE_TIMEOUT_MS,
 } from "../../src/daemon/ws-client.js";
 
 describe("parseSyncEventMessage", () => {
@@ -47,6 +49,15 @@ describe("buildSyncSubscribeMessage", () => {
       hostname: "mbp",
       platform: "darwin",
       clientVersion: "0.1.0",
+    });
+  });
+});
+
+describe("buildWebSocketOptions", () => {
+  it("sets auth headers and a finite handshake timeout", () => {
+    expect(buildWebSocketOptions("token-123")).toEqual({
+      headers: { authorization: "Bearer token-123" },
+      handshakeTimeout: WS_HANDSHAKE_TIMEOUT_MS,
     });
   });
 });

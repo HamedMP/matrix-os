@@ -449,5 +449,27 @@ describe("device routes", () => {
       const res = await app.request("/api/me");
       expect(res.status).toBe(401);
     });
+
+    it("rate limits repeated invalid JWT lookups from the same client IP", async () => {
+      for (let i = 0; i < 100; i++) {
+        const res = await app.request("/api/me", {
+          headers: {
+            authorization: "Bearer not-a-valid-sync-jwt",
+            "x-forwarded-for": "203.0.113.44",
+          },
+        });
+        expect(res.status).toBe(401);
+      }
+
+      const res = await app.request("/api/me", {
+        headers: {
+          authorization: "Bearer not-a-valid-sync-jwt",
+          "x-forwarded-for": "203.0.113.44",
+        },
+      });
+
+      expect(res.status).toBe(429);
+      await expect(res.json()).resolves.toEqual({ error: "too_many_requests" });
+    });
   });
 });

@@ -81,7 +81,9 @@ export function createPlatformR2Client(config: {
       return (await expectJson<{ url: string }>(res)).url;
     },
 
-    async getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }> {
+    async getObject(
+      key: string,
+    ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`);
       if (res.status === 404) {
         throw noSuchKey();
@@ -92,13 +94,14 @@ export function createPlatformR2Client(config: {
       return {
         body: (res.body as ReadableStream | null) ?? null,
         etag: res.headers.get("etag") ?? undefined,
+        contentLength: Number(res.headers.get("content-length") ?? "") || undefined,
       };
     },
 
     async putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",
-        body,
+        body: typeof body === "string" ? body : Buffer.from(body),
       }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };

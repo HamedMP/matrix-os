@@ -252,6 +252,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
 
+  function assertWithinResolvedHomeRoot(resolvedPath: string): void {
+    if (
+      resolvedPath !== resolvedHomeRoot &&
+      !resolvedPath.startsWith(`${resolvedHomeRoot}${sep}`)
+    ) {
+      throw new Error("refusing to write through symlinked parent path");
+    }
+  }
+
   // Serial commit chain: home-mirror updates manifest in-process, but
   // multiple writes still need to read-modify-write the version counter.
   const enqueue = createSerialQueue((err) => {
@@ -290,13 +299,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function ensureWritableParent(absPath: string): Promise<void> {
     const parentDir = dirname(absPath);
     await mkdir(parentDir, { recursive: true });
-    const resolvedParent = await realpath(parentDir);
-    if (
-      resolvedParent !== resolvedHomeRoot &&
-      !resolvedParent.startsWith(`${resolvedHomeRoot}${sep}`)
-    ) {
-      throw new Error("refusing to write through symlinked parent path");
-    }
+    assertWithinResolvedHomeRoot(await realpath(parentDir));
   }
 
   async function cleanupUploadedBlobs(
@@ -479,8 +482,16 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const tmpPath = `${absPath}.matrixos-${randomUUID()}.tmp`;
     try {
       await writeFile(tmpPath, buf, { flag: "wx" });
+      assertWithinResolvedHomeRoot(await realpath(tmpPath));
       markWritten(safeRelPath);
+      await ensureWritableParent(absPath);
       await rename(tmpPath, absPath);
+      try {
+        assertWithinResolvedHomeRoot(await realpath(absPath));
+      } catch (err: unknown) {
+        await unlink(absPath).catch(() => undefined);
+        throw err;
+      }
     } catch (err) {
       try {
         await unlink(tmpPath);

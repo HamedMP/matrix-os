@@ -1948,9 +1948,9 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ value });
     }
 
-    mkdirSync(dataDir, { recursive: true });
+    await mkdirAsync(dataDir, { recursive: true });
     const raw = body.value ?? "";
-    writeFileSync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
+    await writeFileAsync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
   });
@@ -2117,7 +2117,8 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid layout: requires windows array" }, 400);
     }
     const layoutPath = join(homePath, "system/layout.json");
-    writeFileSync(layoutPath, JSON.stringify(body, null, 2));
+    await mkdirAsync(dirname(layoutPath), { recursive: true });
+    await writeFileAsync(layoutPath, JSON.stringify(body, null, 2));
     return c.json({ ok: true });
   });
 
@@ -2140,7 +2141,8 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid canvas data: requires transform object" }, 400);
     }
     const canvasPath = join(homePath, "system/canvas.json");
-    writeFileSync(canvasPath, JSON.stringify(body, null, 2));
+    await mkdirAsync(dirname(canvasPath), { recursive: true });
+    await writeFileAsync(canvasPath, JSON.stringify(body, null, 2));
     return c.json({ ok: true });
   });
 
@@ -2178,6 +2180,7 @@ export async function createGateway(config: GatewayConfig) {
     const res = await fetch(targetUrl, {
       method: c.req.method,
       headers: c.req.raw.headers,
+      signal: AbortSignal.timeout(30_000),
       body: c.req.method !== "GET" && c.req.method !== "HEAD"
         ? c.req.raw.body
         : undefined,
@@ -2289,7 +2292,7 @@ export async function createGateway(config: GatewayConfig) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error(`Icon generation failed for "${slug}":`, message);
-      return c.json({ error: message }, 500);
+      return c.json({ error: "Icon generation failed" }, 500);
     }
   });
 
@@ -2435,6 +2438,7 @@ export async function createGateway(config: GatewayConfig) {
       const res = await fetch(`${platformUrl}/containers/${handle}/self-upgrade`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
@@ -2443,7 +2447,11 @@ export async function createGateway(config: GatewayConfig) {
       }
 
       return c.json({ ok: true });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        console.error("[system/upgrade] Platform self-upgrade request timed out");
+        return c.json({ error: "Upgrade timed out" }, 504);
+      }
       // Connection drop likely means the container is being replaced
       return c.json({ ok: true });
     }

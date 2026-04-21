@@ -35,23 +35,27 @@ interface RateLimiter {
 
 function createRateLimiter(): RateLimiter {
   const windows = new Map<string, number[]>();
+
+  function upsertWindow(key: string, entries: number[]): void {
+    if (windows.has(key)) windows.delete(key);
+    windows.set(key, entries);
+    if (windows.size > RATE_LIMIT_MAX_KEYS) {
+      const first = windows.keys().next().value;
+      if (first !== undefined && first !== key) windows.delete(first);
+    }
+  }
+
   return {
     check(key: string): boolean {
       const now = Date.now();
       const cutoff = now - RATE_LIMIT_WINDOW_MS;
       const arr = (windows.get(key) ?? []).filter((t) => t > cutoff);
       if (arr.length >= RATE_LIMIT_MAX) {
-        if (windows.has(key)) windows.delete(key);
-        windows.set(key, arr);
+        upsertWindow(key, arr);
         return false;
       }
       arr.push(now);
-      if (windows.has(key)) windows.delete(key);
-      windows.set(key, arr);
-      if (windows.size > RATE_LIMIT_MAX_KEYS) {
-        const first = windows.keys().next().value;
-        if (first !== undefined && first !== key) windows.delete(first);
-      }
+      upsertWindow(key, arr);
       return true;
     },
   };
@@ -102,12 +106,10 @@ function escapeHtmlAttr(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function isJwtAuthError(err: unknown): err is Error {
+function isSyncJwtConfigError(err: unknown): boolean {
   return err instanceof Error && (
-    err.name.startsWith('JWT') ||
-    err.name.startsWith('JWS') ||
-    err.name.startsWith('JOSE') ||
-    err.message.includes('JWT')
+    err.message === 'verifySyncJwt requires either secret or publicKey' ||
+    err.message.includes('PLATFORM_JWT_SECRET must be at least 32 characters')
   );
 }
 
@@ -403,6 +405,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
 
   // GET /api/me -- authed via sync JWT. Returns handle + gatewayUrl.
   app.get('/api/me', async (c) => {
+    if (!rateLimit.check(clientIp(c))) {
+      return c.json({ error: 'too_many_requests' }, 429);
+    }
     const auth = c.req.header('authorization');
     if (!auth?.startsWith('Bearer ')) {
       return c.json({ error: 'unauthorized' }, 401);
@@ -412,10 +417,10 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     try {
       claims = await verifySyncJwt(token, { secret: config.jwtSecret });
     } catch (err: unknown) {
-      if (isJwtAuthError(err)) {
-        return c.json({ error: 'unauthorized' }, 401);
+      if (isSyncJwtConfigError(err)) {
+        throw err;
       }
-      throw err;
+      return c.json({ error: 'unauthorized' }, 401);
     }
     if (!claims.sub || !claims.handle) {
       return c.json({ error: 'unauthorized' }, 401);

@@ -27,7 +27,7 @@ export interface R2Client {
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
-  getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
+  getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
   putObject(key: string, body: string | Uint8Array): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
   destroy(): void;
@@ -122,7 +122,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
 
     async getObject(
       key: string,
-    ): Promise<{ body: ReadableStream | null; etag?: string }> {
+    ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }> {
       const command = new GetObjectCommand({ Bucket: bucket, Key: key });
       const response = await s3.send(command, {
         abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
@@ -130,6 +130,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
       return {
         body: (response.Body as ReadableStream | undefined) ?? null,
         etag: response.ETag ?? undefined,
+        contentLength: response.ContentLength ?? undefined,
       };
     },
 

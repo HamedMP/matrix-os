@@ -1,4 +1,4 @@
-import { join, isAbsolute, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile, writeFile, unlink, mkdir, stat } from "node:fs/promises";
 import pino from "pino";
@@ -6,6 +6,8 @@ import {
   loadConfig,
   saveConfig,
   getConfigDir,
+  normalizeGatewayFolder,
+  resolveSyncPathWithinHome,
   type SyncConfig,
 } from "../lib/config.js";
 import { clearAuth, isExpired, loadAuth } from "../auth/token-store.js";
@@ -580,8 +582,7 @@ export async function startDaemon(): Promise<void> {
           // exactly what a daemon restart does -- so we stop short of that
           // here and let the client call `restart` next.
           const raw = typeof args.syncPath === "string" ? args.syncPath : "";
-          if (!raw.trim()) throw new Error("syncPath is required");
-          const newPath = isAbsolute(raw) ? raw : resolve(raw);
+          const newPath = resolveSyncPathWithinHome(raw);
           await mkdir(newPath, { recursive: true });
           const updated = { ...config, syncPath: newPath };
           await saveConfig(updated);
@@ -590,9 +591,10 @@ export async function startDaemon(): Promise<void> {
         case "setGatewayFolder": {
           // Same semantics as setSyncPath -- persist, caller restarts.
           const folder = typeof args.gatewayFolder === "string" ? args.gatewayFolder : "";
-          const updated = { ...config, gatewayFolder: folder };
+          const normalizedFolder = normalizeGatewayFolder(folder);
+          const updated = { ...config, gatewayFolder: normalizedFolder };
           await saveConfig(updated);
-          return { gatewayFolder: folder, restartRequired: true };
+          return { gatewayFolder: normalizedFolder, restartRequired: true };
         }
         case "restart":
           // Exit with a distinct code; launchd's KeepAlive will restart us.

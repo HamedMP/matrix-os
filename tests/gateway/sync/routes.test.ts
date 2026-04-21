@@ -6,6 +6,7 @@ import {
   ShareDuplicateError,
   ShareForbiddenError,
   GranteeNotFoundError,
+  ShareInvalidPathError,
 } from "../../../packages/gateway/src/sync/sharing.js";
 
 const HASH_A = "sha256:" + "a".repeat(64);
@@ -402,7 +403,36 @@ describe("DELETE /api/sync/share", () => {
 });
 
 describe("POST /api/sync/resolve-conflict", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
+    mockDb.getManifestMeta.mockResolvedValue({
+      version: 2,
+      file_count: 1,
+      total_size: 100n,
+      etag: '"etag-1"',
+      updated_at: new Date(),
+    });
+    mockR2.getObject.mockResolvedValue({
+      body: {
+        text: () => Promise.resolve(JSON.stringify({
+          version: 2,
+          manifestVersion: 2,
+          files: {
+            "readme (conflict - peer1 - 2026-04-14).md": {
+              hash: HASH_A,
+              size: 12,
+              mtime: 1000,
+              peerId: "peer1",
+              version: 1,
+            },
+          },
+        })),
+      },
+      etag: '"etag-1"',
+    });
+    mockR2.putObject.mockResolvedValue({ etag: '"etag-2"' });
+  });
 
   it("resolves a conflict and returns success", async () => {
     const app = createTestApp();
@@ -449,8 +479,17 @@ describe("POST /api/sync/resolve-conflict", () => {
     }));
 
     expect(res.status).toBe(200);
+    expect(mockR2.putObject).toHaveBeenCalledOnce();
     expect(mockR2.deleteObject).toHaveBeenCalledWith(
       "matrixos-sync/test-user/files/readme (conflict - peer1 - 2026-04-14).md",
+    );
+    expect(mockPeerRegistry.broadcastChange).toHaveBeenCalledWith(
+      "test-user",
+      "test-peer",
+      expect.objectContaining({
+        type: "sync:change",
+        manifestVersion: 3,
+      }),
     );
   });
 
@@ -523,6 +562,21 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Cannot share with self" });
+  });
+
+  it("POST /share returns 400 with a generic invalid path message", async () => {
+    mockSharing.createShare.mockRejectedValue(new ShareInvalidPathError("../../../etc"));
+
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/share", {
+      path: "../../../etc",
+      granteeHandle: "@colleague:matrix-os.com",
+      role: "editor",
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid share path" });
   });
 
   it("POST /share returns 409 on duplicate", async () => {
@@ -536,6 +590,7 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: "Share already exists" });
   });
 
   it("DELETE /share revokes and returns 200", async () => {
@@ -575,6 +630,7 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Share not found" });
   });
 
   it("DELETE /share returns 403 when caller is not owner", async () => {
@@ -588,6 +644,7 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
   });
 
   it("POST /share/accept returns 400 for invalid body", async () => {
@@ -624,6 +681,7 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Share not found" });
   });
 
   it("POST /share/accept returns 403 when caller is not grantee", async () => {
@@ -635,6 +693,7 @@ describe("sharing routes", () => {
     }));
 
     expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
   });
 
   it("GET /shares returns owned and received", async () => {
