@@ -48,6 +48,11 @@ describe("generatePresignedUrls", () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.url).toBe("https://r2.example.com/put");
     expect(result[0]!.expiresIn).toBe(900);
+    expect(mockR2.getPresignedPutUrl).toHaveBeenCalledWith(
+      "matrixos-sync/user1/files/apps/test.ts",
+      500,
+      900,
+    );
   });
 
   it("validates all paths and rejects traversal attempts", async () => {
@@ -90,6 +95,18 @@ describe("generatePresignedUrls", () => {
           hash: HASH_A,
           size: 1025 * 1024 * 1024,
         },
+      ]),
+    ).rejects.toBeInstanceOf(PresignValidationError);
+  });
+
+  it("rejects PUT requests that omit size", async () => {
+    await expect(
+      generatePresignedUrls(deps, "user1", [
+        {
+          path: "missing-size.bin",
+          action: "put" as const,
+          hash: HASH_A,
+        } as any,
       ]),
     ).rejects.toBeInstanceOf(PresignValidationError);
   });

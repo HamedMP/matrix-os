@@ -49,7 +49,12 @@ export async function generatePresignedUrls(
 
   // Validate sizes for PUT actions
   for (const file of files) {
-    if (file.action === "put" && file.size != null && file.size > MAX_PUT_SIZE) {
+    if (file.action === "put" && typeof file.size !== "number") {
+      throw new PresignValidationError(
+        `File "${file.path}" must include size for PUT`,
+      );
+    }
+    if (file.action === "put" && file.size > MAX_PUT_SIZE) {
       throw new PresignValidationError(
         `File "${file.path}" exceeds maximum size of 1GB (${file.size} bytes)`,
       );
@@ -64,7 +69,7 @@ export async function generatePresignedUrls(
     if (file.action === "get") {
       const url = await deps.r2.getPresignedGetUrl(key, PRESIGN_EXPIRY_SECONDS);
       results.push({ path: file.path, url, expiresIn: PRESIGN_EXPIRY_SECONDS });
-    } else if (file.size != null && file.size > SINGLE_PUT_MAX) {
+    } else if (file.action === "put" && file.size > SINGLE_PUT_MAX) {
       // Multipart upload for files >100MB
       const uploadId = await deps.r2.createMultipartUpload(key);
       const partCount = Math.ceil(file.size / MULTIPART_PART_SIZE);
@@ -84,7 +89,11 @@ export async function generatePresignedUrls(
         multipart: { uploadId, partUrls, partSize: MULTIPART_PART_SIZE },
       });
     } else {
-      const url = await deps.r2.getPresignedPutUrl(key, PRESIGN_EXPIRY_SECONDS);
+      const url = await deps.r2.getPresignedPutUrl(
+        key,
+        file.size,
+        PRESIGN_EXPIRY_SECONDS,
+      );
       results.push({ path: file.path, url, expiresIn: PRESIGN_EXPIRY_SECONDS });
     }
   }

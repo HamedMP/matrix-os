@@ -33,6 +33,7 @@ export class FileWatcher {
     this.watcher = watch(this.options.syncRoot, {
       persistent: true,
       ignoreInitial: false,
+      followSymlinks: false,
       awaitWriteFinish: {
         stabilityThreshold: 200,
         pollInterval: 100,

@@ -2,9 +2,11 @@ import { createHmac } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import {
+  SYNC_JWT_AUDIENCE,
   validateSyncJwt,
   type JwtKeyConfig,
 } from "../../packages/gateway/src/auth-jwt.js";
+import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
@@ -122,19 +124,50 @@ describe("validateSyncJwt", () => {
   });
 
   it("rejects HS256 tokens when verifying with a configured public key", async () => {
-    const fakePublicKey = new TextEncoder().encode("fake-public-key-material");
+    const { publicKey } = await generateKeyPair("RS256");
     const token = signHs256Jwt({
       sub: "user_alice",
       handle: HANDLE,
       gateway_url: "https://alice.matrix-os.com",
+      aud: SYNC_JWT_AUDIENCE,
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
       iss: "matrix-os-platform",
-    }, fakePublicKey);
+    }, new TextEncoder().encode("fake-public-key-material"));
 
     await expect(
-      validateSyncJwt(token, { publicKey: fakePublicKey, expectedHandle: HANDLE }),
+      validateSyncJwt(token, { publicKey, expectedHandle: HANDLE }),
     ).rejects.toThrow();
+  });
+
+  it("accepts an RS256 token when configured with a PEM public key", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const pem = await exportSPKI(publicKey);
+    process.env.PLATFORM_JWT_PUBLIC_KEY = pem;
+    delete process.env.PLATFORM_JWT_SECRET;
+
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({
+      sub: "user_alice",
+      handle: HANDLE,
+      gateway_url: "https://alice.matrix-os.com",
+    })
+      .setProtectedHeader({ alg: "RS256", typ: "JWT" })
+      .setIssuer("matrix-os-platform")
+      .setAudience(SYNC_JWT_AUDIENCE)
+      .setIssuedAt(now)
+      .setExpirationTime(now + 3600)
+      .sign(privateKey);
+
+    const mw = authMiddleware("legacy-shared-secret");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/message", `Bearer ${token}`),
+      async () => {
+        nextCalled = true;
+      },
+    );
+    expect(nextCalled).toBe(true);
   });
 });
 

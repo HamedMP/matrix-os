@@ -1,12 +1,14 @@
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 
 export const SYNC_JWT_ISSUER = 'matrix-os-platform';
+export const SYNC_JWT_AUDIENCE = 'matrix-os-sync';
 const DEFAULT_EXPIRES_IN_SEC = 30 * 24 * 60 * 60; // 30 days
 
 export interface SyncJwtClaims extends JWTPayload {
   sub: string; // clerkUserId
   handle: string;
   gateway_url: string;
+  aud?: string | string[];
   iat: number;
   exp: number;
   iss: string;
@@ -54,6 +56,7 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
     sub: opts.clerkUserId,
     handle: opts.handle,
     gateway_url: opts.gatewayUrl,
+    aud: SYNC_JWT_AUDIENCE,
     iat: now,
     exp,
     iss: SYNC_JWT_ISSUER,
@@ -61,6 +64,7 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
 
   const token = await new SignJWT(claims)
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setAudience(SYNC_JWT_AUDIENCE)
     .sign(key);
 
   return { token, expiresAt: exp * 1000, claims };
@@ -78,6 +82,7 @@ export async function verifySyncJwt(
 
   const { payload } = await jwtVerify(token, key, {
     issuer: SYNC_JWT_ISSUER,
+    audience: SYNC_JWT_AUDIENCE,
     algorithms: opts.publicKey ? ['RS256'] : ['HS256'],
     clockTolerance: opts.clockTolerance,
     currentDate: opts.now !== undefined ? new Date(opts.now * 1000) : undefined,

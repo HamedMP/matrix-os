@@ -7,10 +7,10 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { buildFileKey, buildManifestKey } from "./r2-keys.js";
 
 const DEFAULT_PRESIGN_EXPIRY = 900; // 15 minutes
 const R2_OPERATION_TIMEOUT_MS = 10_000;
-
 export interface R2ClientConfig {
   accountId?: string;
   accessKeyId: string;
@@ -23,7 +23,7 @@ export interface R2ClientConfig {
 
 export interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
-  getPresignedPutUrl(key: string, expiresIn?: number): Promise<string>;
+  getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
   getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
@@ -46,6 +46,15 @@ export function createR2Client(config: R2ClientConfig): R2Client {
     credentials: { accessKeyId, secretAccessKey },
   });
 
+  function rewritePublicEndpoint(url: string): string {
+    if (!config.publicEndpoint) return url;
+    const signed = new URL(url);
+    const publicUrl = new URL(config.publicEndpoint);
+    signed.protocol = publicUrl.protocol;
+    signed.host = publicUrl.host;
+    return signed.toString();
+  }
+
   return {
     async getPresignedGetUrl(
       key: string,
@@ -56,22 +65,28 @@ export function createR2Client(config: R2ClientConfig): R2Client {
       // generics across @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner.
       // The runtime behavior is correct; the cast silences the type error.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AWS SDK cross-package type mismatch
-      return getSignedUrl(s3 as any, command as any, {
+      return rewritePublicEndpoint(await getSignedUrl(s3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
-      });
+      }));
     },
 
     async getPresignedPutUrl(
       key: string,
+      size: number,
       expiresIn = DEFAULT_PRESIGN_EXPIRY,
     ): Promise<string> {
-      const command = new PutObjectCommand({ Bucket: bucket, Key: key });
+      const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentLength: size,
+      });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AWS SDK cross-package type mismatch
-      return getSignedUrl(s3 as any, command as any, {
+      return rewritePublicEndpoint(await getSignedUrl(s3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
-      });
+        unhoistableHeaders: new Set(["content-length"]),
+      }));
     },
 
     async createMultipartUpload(key: string): Promise<string> {
@@ -98,10 +113,10 @@ export function createR2Client(config: R2ClientConfig): R2Client {
         PartNumber: partNumber,
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AWS SDK cross-package type mismatch
-      return getSignedUrl(s3 as any, command as any, {
+      return rewritePublicEndpoint(await getSignedUrl(s3 as any, command as any, {
         expiresIn,
         signingDate: new Date(),
-      });
+      }));
     },
 
     async getObject(
@@ -145,10 +160,4 @@ export function createR2Client(config: R2ClientConfig): R2Client {
   };
 }
 
-export function buildFileKey(userId: string, relativePath: string): string {
-  return `matrixos-sync/${userId}/files/${relativePath}`;
-}
-
-export function buildManifestKey(userId: string): string {
-  return `matrixos-sync/${userId}/manifest.json`;
-}
+export { buildFileKey, buildManifestKey } from "./r2-keys.js";

@@ -3,7 +3,7 @@
 **PR**: `#30` — `feat(066): PR 1 — file sync backend + identity + Cloudflare R2 wiring`
 **Branch**: `066-file-sync`
 **Status owner**: local worktree
-**Last updated**: 2026-04-20
+**Last updated**: 2026-04-21
 
 This file tracks the actionable review comments on PR 30 and their implementation
 status in this worktree. Update the checkbox only when the code and covering test
@@ -105,6 +105,32 @@ for that item both exist locally.
 - [x] Share listing must batch handle resolution instead of doing one `resolveUserId()` query per row.
 - [x] Home-mirror startup must avoid chokidar's full `ignoreInitial: false` replay while still syncing pre-existing local-only files.
 
+## Latest Security / Reliability Follow-up Wave
+
+- [x] Sync JWT verification must require the intended audience and support RS256 PEM public keys instead of treating the PEM text as raw bytes.
+- [x] Platform-issued sync JWTs must carry the sync audience claim so the verifier can reject cross-purpose token replay.
+- [x] Device-code polling must keep the approved code until token issuance succeeds instead of burning the flow on issuer failure.
+- [x] Presign PUT requests must require `size` and bind `Content-Length` into the signed request.
+- [x] R2 presigned URLs must honor `publicEndpoint` so Docker/local clients do not receive container-internal MinIO hosts.
+- [x] Sync key builders must reject unsafe `userId` input instead of blindly concatenating prefixes.
+- [x] Gateway DB bootstrap must create the `public.users` table required by sync manifest/share foreign keys.
+- [x] Home-mirror must skip symlinked local files instead of following them during startup/local push.
+- [x] Home-mirror must not hold the manifest advisory lock while uploading startup files to R2.
+- [x] Home-mirror remote pulls must refuse to overwrite local symlinks.
+- [x] Platform proxy fetches must disable redirect following to avoid container-driven internal SSRF via 30x responses.
+- [x] Sync-client config writes must create `config.json` with `0o600` permissions.
+- [x] Sync-client browser launch must reject non-HTTP(S) verification URLs.
+- [x] Sync-client IPC sockets must tighten permissions to `0o600` after bind.
+- [x] Sync-client chokidar watcher must disable symlink following.
+- [x] Sync mutating write paths (`/commit`, `/resolve-conflict`, share mutations) must be rate-limited like `/presign`.
+- [x] Sync in-memory rate limiter must refresh hot users instead of pure FIFO eviction.
+
+## Still Open / Architectural
+
+- [ ] Platform startup still needs a safe way to propagate sync-auth configuration into user containers without widening tenant secret exposure.
+- [x] User containers no longer receive broad R2 credentials; storage signing/object access now stays on the trusted platform via the internal sync proxy and per-handle HMAC auth.
+- [x] User containers no longer receive `PLATFORM_DATABASE_URL`; integrations and sync storage now proxy through trusted platform routes instead of tenant-visible admin DB credentials.
+
 ## Verification Notes
 
 - [x] Targeted sync/gateway regression suite passes locally: `tests/gateway/sync/r2-client.test.ts`, `home-mirror.test.ts`, `sharing.test.ts`, `commit.test.ts`, `routes.test.ts`, `metrics.test.ts`, `ws-events.test.ts`, `ws-peer-lifecycle.test.ts` (`8 files`, `100 tests`).
@@ -127,8 +153,12 @@ for that item both exist locally.
 - [x] Latest sync-client queue guard regression passes locally: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `7 tests`).
 - [x] Latest device-flow regression passes in Docker dev container: `tests/platform/device-flow.test.ts` (`1 file`, `20 tests`).
 - [x] Latest orchestrator regression passes in Docker dev container: `tests/platform/orchestrator.test.ts` (`1 file`, `24 tests`).
+- [x] Trusted platform-proxy storage regression passes locally for gateway clients: `tests/gateway/sync/platform-r2-client.test.ts`, `r2-client.test.ts`, `presign.test.ts` (`3 files`, `27 tests`).
+- [x] Trusted platform-proxy platform regression passes in the Docker dev container: `tests/platform/home-mirror-env-check.test.ts`, `orchestrator.test.ts`, `internal-sync-routes.test.ts`, `proxy-routing.test.ts` (`4 files`, `37 tests`).
 - [x] Latest sync correctness/perf regression passes locally: `tests/gateway/sync/routes.test.ts`, `sharing.test.ts`, `home-mirror.test.ts`, `metrics.test.ts` (`4 files`, `82 tests`).
 - [x] Latest sync-client conflict-recovery regression passes via package config: `packages/sync-client/tests/unit/daemon-runtime-guards.test.ts` (`1 file`, `8 tests`).
+- [x] Latest JWT/presign/home-mirror/config hardening regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/platform/sync-jwt.test.ts`, `tests/gateway/sync/presign.test.ts`, `tests/gateway/sync/r2-client.test.ts`, `tests/gateway/app-db.test.ts`, `tests/gateway/sync/home-mirror.test.ts`, `packages/sync-client/tests/unit/oauth.test.ts`, `config.test.ts`, `ipc-server.test.ts`, `tests/gateway/sync/routes.test.ts`, `tests/gateway/sync/user-id-from-jwt.test.ts` (`11 files`, `119 tests`).
+- [x] Latest platform-native verification passes in Docker dev container: `tests/platform/device-flow.test.ts`, `tests/platform/proxy-routing.test.ts` (`2 files`, `23 tests`).
 
 ## Lower-Priority Follow-ups From Review
 

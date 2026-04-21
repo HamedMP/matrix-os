@@ -75,6 +75,7 @@ describe("platform proxy routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.redirect).toBe("manual");
     expect(init?.headers).toBeInstanceOf(Headers);
     const headers = init?.headers as Headers;
     expect(headers.get("x-platform-verified")).not.toBe("platform-secret-123");
@@ -101,5 +102,6 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.redirect).toBe("manual");
   });
 });

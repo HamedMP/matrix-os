@@ -26,10 +26,12 @@ vi.mock("@aws-sdk/client-s3", () => {
       Bucket: string;
       Key: string;
       Body?: unknown;
-      constructor(params: { Bucket: string; Key: string; Body?: unknown }) {
+      ContentLength?: number;
+      constructor(params: { Bucket: string; Key: string; Body?: unknown; ContentLength?: number }) {
         this.Bucket = params.Bucket;
         this.Key = params.Key;
         this.Body = params.Body;
+        this.ContentLength = params.ContentLength;
       }
     },
     DeleteObjectCommand: class {
@@ -120,17 +122,40 @@ describe("R2 client", () => {
   });
 
   describe("getPresignedPutUrl", () => {
-    it("calls getSignedUrl with a PutObjectCommand", async () => {
+    it("calls getSignedUrl with a PutObjectCommand and signed content-length", async () => {
       mockGetSignedUrl.mockResolvedValue("https://r2.example.com/presigned-put");
 
-      const url = await client.getPresignedPutUrl("matrixos-sync/user1/files/upload.txt");
+      const url = await client.getPresignedPutUrl("matrixos-sync/user1/files/upload.txt", 123);
 
       expect(mockGetSignedUrl).toHaveBeenCalledOnce();
       const [, command, options] = mockGetSignedUrl.mock.calls[0]!;
       expect(command.Bucket).toBe("matrixos-sync");
       expect(command.Key).toBe("matrixos-sync/user1/files/upload.txt");
+      expect(command.ContentLength).toBe(123);
       expect(options.expiresIn).toBe(900);
+      expect(options.unhoistableHeaders).toEqual(new Set(["content-length"]));
       expect(url).toBe("https://r2.example.com/presigned-put");
+    });
+
+    it("rewrites presigned URLs to the configured public endpoint", async () => {
+      const publicClient = createR2Client({
+        endpoint: "http://minio:9000",
+        publicEndpoint: "http://localhost:9100",
+        accessKeyId: "AKIATEST",
+        secretAccessKey: "secret",
+        bucket: "matrixos-sync",
+      });
+      mockGetSignedUrl.mockResolvedValue(
+        "http://minio:9000/matrixos-sync/user1/files/upload.txt?X-Amz-SignedHeaders=content-length%3Bhost",
+      );
+
+      const url = await publicClient.getPresignedPutUrl(
+        "matrixos-sync/user1/files/upload.txt",
+        123,
+      );
+
+      expect(url).toContain("http://localhost:9100/matrixos-sync/user1/files/upload.txt");
+      expect(url).toContain("X-Amz-SignedHeaders=content-length%3Bhost");
     });
   });
 
@@ -188,5 +213,12 @@ describe("key builders", () => {
 
   it("buildManifestKey constructs correct manifest key", () => {
     expect(buildManifestKey("hamed")).toBe("matrixos-sync/hamed/manifest.json");
+  });
+
+  it("rejects unsafe user ids", () => {
+    expect(() => buildFileKey("../hamed", "apps/calculator/index.html")).toThrow(
+      /Invalid sync user id/,
+    );
+    expect(() => buildManifestKey("bad/user")).toThrow(/Invalid sync user id/);
   });
 });

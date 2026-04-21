@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { unlink } from "node:fs/promises";
+import { chmod, unlink } from "node:fs/promises";
 
 export type IpcHandler = (
   command: string,
@@ -38,7 +38,14 @@ export class IpcServer {
     this.server.maxConnections = this.maxConnections;
 
     return new Promise((resolve, reject) => {
-      this.server!.listen(this.options.socketPath, () => resolve());
+      this.server!.listen(this.options.socketPath, async () => {
+        try {
+          await chmod(this.options.socketPath, 0o600);
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
       this.server!.on("error", reject);
     });
   }

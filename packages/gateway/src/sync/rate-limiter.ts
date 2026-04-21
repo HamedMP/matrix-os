@@ -35,11 +35,13 @@ export function createSyncRateLimiter(
       }
 
       if (timestamps.length >= maxRequests) {
+        if (userTimestamps.has(userId)) userTimestamps.delete(userId);
         userTimestamps.set(userId, timestamps);
         return false;
       }
 
       timestamps.push(now);
+      if (userTimestamps.has(userId)) userTimestamps.delete(userId);
       userTimestamps.set(userId, timestamps);
 
       // Evict oldest user if map exceeds cap

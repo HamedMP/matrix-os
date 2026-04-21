@@ -118,7 +118,7 @@ describe("device flow: polling", () => {
     expect(result.token).toBe("jwt-for-user_alice");
   });
 
-  it("consumes the approved device code before awaiting token issuance", async () => {
+  it("keeps the approved device code until token issuance succeeds", async () => {
     let resolveIssue: (() => void) | null = null;
     flow = createDeviceFlow({
       db,
@@ -140,15 +140,47 @@ describe("device flow: polling", () => {
     await flow.approveDeviceCode(issued.userCode, "user_alice");
     now += 5_000;
     const firstPoll = flow.pollDeviceCode(issued.deviceCode);
-    now += 5_000;
 
-    await expect(flow.pollDeviceCode(issued.deviceCode)).resolves.toEqual({ status: "expired" });
+    await vi.waitFor(() => {
+      const row = (db as any).$client
+        .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
+        .get(issued.deviceCode);
+      expect(row).toBeTruthy();
+    });
 
     resolveIssue?.();
     await expect(firstPoll).resolves.toMatchObject({
       status: "approved",
       token: "jwt-for-user_alice",
     });
+
+    const consumed = (db as any).$client
+      .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
+      .get(issued.deviceCode);
+    expect(consumed).toBeUndefined();
+  });
+
+  it("does not consume the device code when token issuance fails", async () => {
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      issueToken: async () => {
+        throw new Error("token issuance failed");
+      },
+    });
+
+    const issued = await flow.createDeviceCode();
+    await flow.approveDeviceCode(issued.userCode, "user_alice");
+    now += 5_000;
+
+    await expect(flow.pollDeviceCode(issued.deviceCode)).rejects.toThrow(
+      "token issuance failed",
+    );
+
+    await expect(flow.pollDeviceCode(issued.deviceCode)).rejects.toThrow(
+      "token issuance failed",
+    );
   });
 
   it("treats an unknown device_code as expired (cleanup-friendly)", async () => {

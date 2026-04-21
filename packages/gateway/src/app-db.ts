@@ -83,6 +83,14 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
           PRIMARY KEY (app, key)
         )
       `.execute(kysely);
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS public.users (
+          id          text PRIMARY KEY,
+          handle      text UNIQUE,
+          created_at  timestamptz DEFAULT now()
+        )
+      `.execute(kysely);
     },
 
     async createAppSchema(slug: string): Promise<void> {

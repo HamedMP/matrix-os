@@ -34,6 +34,10 @@ export async function requestDeviceCode(
 }
 
 export function openBrowser(url: string): void {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Refusing to open non-http(s) verification URL: ${parsed.protocol}`);
+  }
   // execFile (not exec) so the URL is passed as argv -- no shell, no command
   // injection. The URL comes from the platform but treat it as untrusted.
   const os = platform();

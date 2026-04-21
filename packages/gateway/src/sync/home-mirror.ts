@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import {
@@ -113,8 +113,8 @@ function hashBuffer(buf: Buffer): string {
   return `sha256:${createHash("sha256").update(buf).digest("hex")}`;
 }
 
-function normalizeRelativePath(relPath: string): string {
-  const checked = resolveWithinPrefix("home-mirror", relPath);
+function normalizeRelativePath(userId: string, relPath: string): string {
+  const checked = resolveWithinPrefix(userId, relPath);
   if (!checked.valid) {
     throw new Error(`invalid path: ${checked.reason}`);
   }
@@ -231,17 +231,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function pushFile(relPath: string): Promise<void> {
-    const safeRelPath = normalizeRelativePath(relPath);
+    const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const absPath = join(config.homeRoot, safeRelPath);
 
     await enqueue(async () => {
       let fileStat;
+      let body: Buffer;
       try {
-        fileStat = await stat(absPath);
+        fileStat = await lstat(absPath);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
         throw err;
       }
+      if (fileStat.isSymbolicLink()) return;
       if (!fileStat.isFile()) return;
       if (fileStat.size > maxPushBytes) {
         log.error(
@@ -249,20 +251,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         );
         return;
       }
+      body = await readFile(absPath);
+      const hash = hashBuffer(body);
+      const key = buildFileKey(config.userId, safeRelPath);
+      await config.r2.putObject(key, body);
 
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, config.userId);
-        const body = await readFile(absPath);
-        const hash = hashBuffer(body);
-
         const currentEntry = existing.manifest.files[safeRelPath];
         if (currentEntry?.hash === hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
           return;
         }
-
-        const key = buildFileKey(config.userId, safeRelPath);
-        await config.r2.putObject(key, body);
 
         const action = currentEntry ? "update" : "add";
         const next: Manifest = applyCommitToManifest(
@@ -280,7 +280,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function pushDelete(relPath: string): Promise<void> {
-    const safeRelPath = normalizeRelativePath(relPath);
+    const safeRelPath = normalizeRelativePath(config.userId, relPath);
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, config.userId);
@@ -313,10 +313,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function pullFile(relPath: string, entry: ManifestEntry): Promise<void> {
-    const safeRelPath = normalizeRelativePath(relPath);
+    const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const absPath = join(config.homeRoot, safeRelPath);
     try {
-      const localStat = await stat(absPath);
+      const localStat = await lstat(absPath);
+      if (localStat.isSymbolicLink()) {
+        throw new Error("refusing to overwrite symlink");
+      }
       if (localStat.isFile()) {
         const localHash = await hashFileStream(absPath);
         if (localHash === entry.hash) return;
@@ -365,6 +368,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         files.push(...await collectLocalFiles(absPath, relPath));
         continue;
       }
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
       if (entry.isFile()) {
         files.push(relPath);
       }
@@ -378,69 +384,83 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (relPaths.length === 0) return;
 
     await enqueue(async () => {
+      const uploadedFiles: Array<{
+        path: string;
+        hash: string;
+        size: number;
+      }> = [];
+
+      for (const relPath of relPaths) {
+        const safeRelPath = normalizeRelativePath(config.userId, relPath);
+        const absPath = join(config.homeRoot, safeRelPath);
+
+        let fileStat;
+        let body: Buffer;
+        try {
+          fileStat = await lstat(absPath);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw err;
+        }
+        if (fileStat.isSymbolicLink()) continue;
+        if (!fileStat.isFile()) continue;
+        if (fileStat.size > maxPushBytes) {
+          log.error(
+            `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
+          );
+          continue;
+        }
+
+        body = await readFile(absPath);
+        const hash = hashBuffer(body);
+        await config.r2.putObject(buildFileKey(config.userId, safeRelPath), body);
+        uploadedFiles.push({
+          path: safeRelPath,
+          hash,
+          size: body.length,
+        });
+      }
+
+      if (uploadedFiles.length === 0) return;
+
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, config.userId);
         let nextManifest = existing.manifest;
-        const changedFiles: Array<{
+        const committedFiles: Array<{
           path: string;
           hash: string;
           size: number;
           action: "add" | "update";
         }> = [];
 
-        for (const relPath of relPaths) {
-          const safeRelPath = normalizeRelativePath(relPath);
-          const absPath = join(config.homeRoot, safeRelPath);
-
-          let fileStat;
-          try {
-            fileStat = await stat(absPath);
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-            throw err;
-          }
-          if (!fileStat.isFile()) continue;
-          if (fileStat.size > maxPushBytes) {
-            log.error(
-              `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
-            );
+        for (const file of uploadedFiles) {
+          const currentEntry = nextManifest.files[file.path];
+          if (currentEntry?.hash === file.hash && !currentEntry.deleted) {
             continue;
           }
-
-          const body = await readFile(absPath);
-          const hash = hashBuffer(body);
-          const currentEntry = nextManifest.files[safeRelPath];
-          if (currentEntry?.hash === hash && !currentEntry.deleted) {
-            continue;
-          }
-
-          await config.r2.putObject(buildFileKey(config.userId, safeRelPath), body);
-
-          const file = {
-            path: safeRelPath,
-            hash,
-            size: body.length,
+          const nextFile = {
+            ...file,
             action: currentEntry ? "update" as const : "add" as const,
           };
-          nextManifest = applyCommitToManifest(nextManifest, [file], config.peerId);
-          changedFiles.push(file);
+          nextManifest = applyCommitToManifest(nextManifest, [nextFile], config.peerId);
+          committedFiles.push(nextFile);
         }
 
-        if (changedFiles.length === 0) return;
+        if (committedFiles.length === 0) return;
 
         const newVersion = existing.manifestVersion + 1;
         await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
-        broadcastChanges(changedFiles, newVersion);
-        log.info(`initial push: ${changedFiles.length} files`);
+        broadcastChanges(committedFiles, newVersion);
+        log.info(`initial push: ${committedFiles.length} files`);
       });
     });
   }
 
   async function pullDelete(relPath: string): Promise<void> {
-    const safeRelPath = normalizeRelativePath(relPath);
+    const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const absPath = join(config.homeRoot, safeRelPath);
     try {
-      await stat(absPath); // throws ENOENT if already gone
+      await lstat(absPath); // throws ENOENT if already gone
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
@@ -557,6 +577,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const rel = relative(config.homeRoot, absPath);
         if (wasJustWritten(rel)) return;
         pushDelete(rel).catch((err) => log.error(`delete failed for ${rel}: ${err.message}`));
+      });
+      watcher.on("error", (err) => {
+        log.error(`home mirror watcher error: ${(err as Error).message}`);
       });
 
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);

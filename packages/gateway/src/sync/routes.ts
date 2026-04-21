@@ -56,6 +56,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
   const store: ManifestStore = { r2: deps.r2, db: deps.db };
   const presignLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const commitLimiter = createSyncRateLimiter({ maxRequests: 100, windowMs: 60_000 });
+  const shareLimiter = createSyncRateLimiter({ maxRequests: 60, windowMs: 60_000 });
   const getUserId = (c: Parameters<SyncRouteDeps["getUserId"]>[0]): string => {
     try {
       return deps.getUserId(c);
@@ -141,6 +143,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   app.post("/commit", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
     const peerId = deps.getPeerId(c);
+    if (!commitLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
@@ -214,6 +219,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
+    if (!commitLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
@@ -247,6 +255,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /share -- create sharing grant
   app.post("/share", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
+    if (!shareLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
@@ -282,6 +293,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // DELETE /share -- revoke sharing grant
   app.delete("/share", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
+    if (!shareLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
@@ -310,6 +324,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // POST /share/accept -- accept share invitation
   app.post("/share/accept", mutatingBodyLimit, async (c) => {
     const userId = getUserId(c);
+    if (!shareLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);

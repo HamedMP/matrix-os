@@ -87,6 +87,7 @@ import {
 import { createSettingsRoutes } from "./routes/settings.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
+import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
@@ -304,18 +305,30 @@ export async function createGateway(config: GatewayConfig) {
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
 
-  if (s3AccessKey && s3SecretKey && kyselyInstance) {
+  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
+  const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalHandle = process.env.MATRIX_HANDLE;
+
+  if (((s3AccessKey && s3SecretKey) || (internalPlatformUrl && internalPlatformToken && internalHandle)) && kyselyInstance) {
     try {
-      const r2Config: R2ClientConfig = {
-        accessKeyId: s3AccessKey,
-        secretAccessKey: s3SecretKey,
-        bucket: s3Bucket,
-        endpoint: s3Endpoint,
-        publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-        accountId: process.env.R2_ACCOUNT_ID,
-        forcePathStyle: s3ForcePathStyle,
-      };
-      syncR2 = createR2Client(r2Config);
+      if (s3AccessKey && s3SecretKey) {
+        const r2Config: R2ClientConfig = {
+          accessKeyId: s3AccessKey,
+          secretAccessKey: s3SecretKey,
+          bucket: s3Bucket,
+          endpoint: s3Endpoint,
+          publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
+          accountId: process.env.R2_ACCOUNT_ID,
+          forcePathStyle: s3ForcePathStyle,
+        };
+        syncR2 = createR2Client(r2Config);
+      } else {
+        syncR2 = createPlatformR2Client({
+          baseUrl: internalPlatformUrl!,
+          handle: internalHandle!,
+          token: internalPlatformToken!,
+        });
+      }
 
       await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
 
@@ -336,7 +349,7 @@ export async function createGateway(config: GatewayConfig) {
         getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
       };
 
-      console.log("[sync] Sync API initialized (S3 endpoint:", s3Endpoint ?? "R2", ")");
+      console.log("[sync] Sync API initialized (storage:", s3AccessKey && s3SecretKey ? (s3Endpoint ?? "R2") : "platform-internal", ")");
     } catch (err) {
       console.error("[sync] Failed to initialize sync:", (err as Error).message);
       syncR2 = null;
@@ -344,8 +357,8 @@ export async function createGateway(config: GatewayConfig) {
       syncSharing = null;
       syncDeps = null;
     }
-  } else if (!s3AccessKey || !s3SecretKey) {
-    console.log("[sync] S3/R2 credentials not configured, sync API disabled");
+  } else {
+    console.log("[sync] No trusted sync storage configured, sync API disabled");
   }
 
   // Container-side home mirror: watches the user's home directory and
@@ -406,13 +419,48 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
+  const internalIntegrationBaseUrl =
+    internalPlatformUrl && internalHandle
+      ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
+      : null;
+
+  async function proxyIntegrationRequest(
+    c: Context,
+    targetBase: string,
+    includeInternalAuth: boolean,
+  ): Promise<Response> {
+    const qs = c.req.url.includes("?") ? `?${c.req.url.split("?")[1]}` : "";
+    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(c.req.header())) {
+      if (key !== "host" && key !== "authorization" && value) {
+        headers.set(key, value);
+      }
+    }
+    if (includeInternalAuth && internalPlatformToken) {
+      headers.set("authorization", `Bearer ${internalPlatformToken}`);
+    }
+
+    const upstream = await fetch(`${targetBase}${suffix}${qs}`, {
+      method: c.req.method,
+      headers,
+      redirect: "manual",
+      signal: AbortSignal.timeout(30_000),
+      body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
+    });
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: upstream.headers,
+    });
+  }
+
   // Platform DB + Integrations (Pipedream Connect)
   let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
-  const platformDbUrl = process.env.PLATFORM_DATABASE_URL
-    || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
+  const platformDbUrl = process.env.PLATFORM_DATABASE_URL;
   if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
     try {
       platformDb = createPlatformDb(platformDbUrl);
@@ -928,6 +976,20 @@ export async function createGateway(config: GatewayConfig) {
   if (integrationRoutes) {
     app.route("/api/integrations", integrationRoutes);
     console.log("[platform-db] Integration routes mounted (after auth)");
+  } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
+    app.all("/api/integrations", async (c) =>
+      proxyIntegrationRequest(c, internalIntegrationBaseUrl, true),
+    );
+    app.all("/api/integrations/*", async (c) => {
+      const isPublic =
+        c.req.path === "/api/integrations/available" ||
+        c.req.path.startsWith("/api/integrations/webhook/");
+      const targetBase = isPublic
+        ? `${internalPlatformUrl}/api/integrations`
+        : internalIntegrationBaseUrl;
+      return proxyIntegrationRequest(c, targetBase, !isPublic);
+    });
+    console.log("[platform-db] Integration routes proxied via platform internal API");
   }
 
   app.use("*", async (c, next) => {

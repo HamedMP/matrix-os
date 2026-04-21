@@ -1,11 +1,13 @@
-import { jwtVerify, type JWTPayload } from "jose";
+import { importSPKI, jwtVerify, type JWTPayload } from "jose";
 
 export const SYNC_JWT_ISSUER = "matrix-os-platform";
+export const SYNC_JWT_AUDIENCE = "matrix-os-sync";
 
 export interface SyncJwtClaims extends JWTPayload {
   sub: string;
   handle: string;
   gateway_url: string;
+  aud?: string | string[];
   iat: number;
   exp: number;
   iss: string;
@@ -14,8 +16,8 @@ export interface SyncJwtClaims extends JWTPayload {
 export interface JwtKeyConfig {
   /** HS256 shared secret (>= 32 chars). Either this or publicKey must be set. */
   secret?: string;
-  /** RS256 public key (CryptoKey or PEM-encoded bytes). */
-  publicKey?: CryptoKey | Uint8Array;
+  /** RS256 public key. */
+  publicKey?: CryptoKey;
 }
 
 export interface ValidateOpts extends JwtKeyConfig {
@@ -58,6 +60,7 @@ export async function validateSyncJwt(
 
   const { payload } = await jwtVerify(token, key, {
     issuer: SYNC_JWT_ISSUER,
+    audience: SYNC_JWT_AUDIENCE,
     algorithms: opts.publicKey ? ["RS256"] : ["HS256"],
     clockTolerance: opts.clockTolerance ?? 30,
     currentDate: opts.now !== undefined ? new Date(opts.now * 1000) : undefined,
@@ -84,16 +87,25 @@ export async function validateSyncJwt(
   return payload as SyncJwtClaims;
 }
 
+const publicKeyCache = new Map<string, Promise<CryptoKey>>();
+
 /**
  * Reads the JWT key configuration from environment variables. Prefers
  * PLATFORM_JWT_PUBLIC_KEY (RS256, prod) over PLATFORM_JWT_SECRET (HS256, dev).
  * Returns null if neither is set -- the gateway then falls back to the
  * legacy MATRIX_AUTH_TOKEN bearer secret only.
  */
-export function readJwtKeyConfig(env: NodeJS.ProcessEnv = process.env): JwtKeyConfig | null {
+export async function readJwtKeyConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<JwtKeyConfig | null> {
   const pub = env.PLATFORM_JWT_PUBLIC_KEY;
   if (pub) {
-    return { publicKey: new TextEncoder().encode(pub) };
+    let cached = publicKeyCache.get(pub);
+    if (!cached) {
+      cached = importSPKI(pub, "RS256");
+      publicKeyCache.set(pub, cached);
+    }
+    return { publicKey: await cached };
   }
   const secret = env.PLATFORM_JWT_SECRET;
   if (secret && secret.length >= 32) {

@@ -118,7 +118,11 @@ const webhookRateLimiter = createRateLimiter({
 });
 
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
-  return c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "127.0.0.1";
+  return (
+    c.req.header("cf-connecting-ip")?.trim() ||
+    c.req.header("x-real-ip")?.trim() ||
+    "127.0.0.1"
+  );
 }
 
 export function authMiddleware(
@@ -138,7 +142,7 @@ export function authMiddleware(
 
     // Read JWT config + handle per-call so env-var changes during tests
     // are picked up without recreating the middleware.
-    const jwtKey = readJwtKeyConfig();
+    const jwtKey = await readJwtKeyConfig();
     const expectedHandle = process.env.MATRIX_HANDLE;
 
     let decodedPath: string;
@@ -220,7 +224,7 @@ export function authMiddleware(
         // but a debug log here prevents a misconfigured PLATFORM_JWT_SECRET
         // from silently locking out every platform-issued token with zero
         // operator signal.
-        console.debug(
+        console.warn(
           "[auth] JWT validation failed:",
           (err as Error).message,
         );

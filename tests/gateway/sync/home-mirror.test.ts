@@ -285,6 +285,46 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("does not follow local symlinks on remote writes", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const target = join(tmpRoot, "..", "outside-target.txt");
+      const link = join(tmpRoot, "linked.txt");
+      await writeFile(target, "outside");
+      await (await import("node:fs/promises")).symlink(target, link);
+      r2.store.set(
+        "matrixos-sync/alice/files/linked.txt",
+        Buffer.from("replacement"),
+      );
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+      });
+      await mirror.start();
+
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: "linked.txt", hash: sha256(Buffer.from("replacement")), size: 11, action: "update" }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await settle(80);
+
+      expect(await readFile(target, "utf8")).toBe("outside");
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("remote-change failed for linked.txt:"),
+        expect.stringMatching(/symlink/i),
+      );
+
+      await mirror.stop();
+    });
+
     it("refuses traversal paths on remote deletes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const outsidePath = join(tmpRoot, "..", "escaped-delete.txt");
@@ -444,6 +484,33 @@ describe("createHomeMirror", () => {
 
       expect(putSpy).not.toHaveBeenCalled();
       expect(r2.store.has("matrixos-sync/alice/files/too-big.txt")).toBe(false);
+
+      await mirror.stop();
+    });
+
+    it("skips symlinked files during startup push", async () => {
+      const target = join(tmpRoot, "target.txt");
+      const link = join(tmpRoot, "linked.txt");
+      await writeFile(target, "do not upload via symlink");
+      await (await import("node:fs/promises")).symlink(target, link);
+
+      const putSpy = vi.spyOn(r2, "putObject");
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+      await settle(150);
+
+      expect(putSpy).not.toHaveBeenCalledWith(
+        "matrixos-sync/alice/files/linked.txt",
+        expect.any(Buffer),
+      );
 
       await mirror.stop();
     });
@@ -717,6 +784,46 @@ describe("createHomeMirror", () => {
       expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
       expect(getMetaExecutors).toEqual([lockedExecutor, lockedExecutor]);
       expect(upsertExecutors).toEqual([lockedExecutor, lockedExecutor]);
+
+      await mirror.stop();
+    });
+
+    it("uploads startup files before acquiring the manifest advisory lock", async () => {
+      const order: string[] = [];
+      await writeFile(join(tmpRoot, "preexisting.md"), "present before watcher starts");
+
+      db = {
+        async getManifestMeta() {
+          return null;
+        },
+        async upsertManifestMeta() {
+          /* no-op */
+        },
+        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
+          order.push("lock");
+          return fn(undefined);
+        },
+      } as unknown as ManifestDb;
+
+      const originalPut = r2.putObject.bind(r2);
+      vi.spyOn(r2, "putObject").mockImplementation(async (...args) => {
+        order.push("put");
+        return originalPut(...args as Parameters<typeof originalPut>);
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      expect(order.indexOf("put")).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf("lock")).toBeGreaterThan(order.indexOf("put"));
 
       await mirror.stop();
     });

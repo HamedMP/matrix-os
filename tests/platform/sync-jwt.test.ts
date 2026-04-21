@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
 import { describe, it, expect } from "vitest";
+import { generateKeyPair } from "jose";
 import {
+  SYNC_JWT_AUDIENCE,
   issueSyncJwt,
   verifySyncJwt,
   SYNC_JWT_ISSUER,
@@ -44,6 +46,7 @@ describe("sync-jwt: issuance", () => {
       sub: "user_abc",
       handle: "alice",
       gateway_url: "https://alice.matrix-os.com",
+      aud: SYNC_JWT_AUDIENCE,
       iss: SYNC_JWT_ISSUER,
       iat: 1_700_000_000,
     });
@@ -93,18 +96,19 @@ describe("sync-jwt: verification", () => {
   });
 
   it("rejects HS256 tokens when verifying with a configured public key", async () => {
-    const fakePublicKey = new TextEncoder().encode("fake-public-key-material");
+    const { publicKey } = await generateKeyPair("RS256");
     const token = signHs256Jwt({
       sub: "user_abc",
       handle: "alice",
       gateway_url: "https://alice.matrix-os.com",
+      aud: SYNC_JWT_AUDIENCE,
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
       iss: SYNC_JWT_ISSUER,
-    }, fakePublicKey);
+    }, new TextEncoder().encode("fake-public-key-material"));
 
     await expect(
-      verifySyncJwt(token, { publicKey: fakePublicKey }),
+      verifySyncJwt(token, { publicKey }),
     ).rejects.toThrow();
   });
 

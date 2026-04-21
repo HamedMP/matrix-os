@@ -137,6 +137,7 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
     const upstream = await fetch(targetUrl, {
       method: c.req.method,
       headers,
+      redirect: 'manual',
       signal: AbortSignal.timeout(30_000),
       body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
     });
@@ -177,31 +178,41 @@ function getNoContainerPage() {
 }
 
 /**
- * Startup assertion for silent-failure #6: if the platform is telling user
- * containers to run the home-mirror (MATRIX_HOME_MIRROR=true) but the S3
- * credentials the gateway needs to reach R2 are missing, the mirror would
- * silently fail inside every user container. Warn loudly at platform start
- * so ops notices instead of discovering it days later when sync is broken.
+ * Startup assertion for the trusted-sync architecture: user containers no
+ * longer receive raw S3 credentials. When MATRIX_HOME_MIRROR=true, the
+ * container gateway reaches storage through the platform's internal sync API,
+ * so the platform itself must hold the trusted storage config plus the
+ * PLATFORM_SECRET used for per-container HMAC auth. Warn loudly at startup
+ * instead of discovering silent sync failure after deploy.
  *
- * Returns the list of missing env var names (empty if all is well or
- * home-mirror is disabled). Exposed for tests; callers typically just
- * discard the return value after logging.
+ * Returns the list of missing logical requirements (empty if all is well or
+ * home-mirror is disabled). Exposed for tests; callers typically just discard
+ * the return value after logging.
  */
 export function checkHomeMirrorS3Env(
   env: NodeJS.ProcessEnv = process.env,
   log: (msg: string) => void = console.warn,
 ): string[] {
   if (env.MATRIX_HOME_MIRROR !== 'true') return [];
-  const required = [
-    'S3_ENDPOINT',
-    'S3_ACCESS_KEY_ID',
-    'S3_SECRET_ACCESS_KEY',
-    'S3_BUCKET',
-  ] as const;
-  const missing = required.filter((key) => !env[key]);
+  const missing: string[] = [];
+  if (!(env.S3_ENDPOINT || env.R2_ENDPOINT || env.R2_ACCOUNT_ID)) {
+    missing.push('S3_ENDPOINT/R2_ENDPOINT or R2_ACCOUNT_ID');
+  }
+  if (!(env.S3_ACCESS_KEY_ID || env.R2_ACCESS_KEY_ID)) {
+    missing.push('S3_ACCESS_KEY_ID/R2_ACCESS_KEY_ID');
+  }
+  if (!(env.S3_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY)) {
+    missing.push('S3_SECRET_ACCESS_KEY/R2_SECRET_ACCESS_KEY');
+  }
+  if (!(env.S3_BUCKET || env.R2_BUCKET)) {
+    missing.push('S3_BUCKET/R2_BUCKET');
+  }
+  if (!env.PLATFORM_SECRET) {
+    missing.push('PLATFORM_SECRET');
+  }
   if (missing.length > 0) {
     log(
-      `[platform] MATRIX_HOME_MIRROR=true but S3 credentials are incomplete; gateway home-mirror will not run in user containers. Missing: ${missing.join(', ')}.`,
+      `[platform] MATRIX_HOME_MIRROR=true but trusted sync storage is incomplete; user containers no longer receive raw S3 credentials and must proxy sync storage through the platform. Missing: ${missing.join(', ')}.`,
     );
   }
   return missing;
@@ -213,6 +224,9 @@ export function createApp(deps: {
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
   platformSecret?: string;
+  integrationRoutes?: Hono;
+  internalIntegrationRoutes?: Hono;
+  internalSyncRoutes?: Hono;
 }) {
   const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
@@ -286,6 +300,14 @@ export function createApp(deps: {
     ) {
       return next();
     }
+    const isPublicIntegrationPath =
+      reqPath === '/api/integrations/available' ||
+      reqPath.startsWith('/api/integrations/webhook/');
+    const isIntegrationPath =
+      reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
+    if (isPublicIntegrationPath) {
+      return next();
+    }
 
     if (!clerkAuth) {
       return c.text('Clerk not configured', 500);
@@ -336,6 +358,12 @@ export function createApp(deps: {
       return c.html(getNoContainerPage());
     }
 
+    if (isIntegrationPath) {
+      c.set('platformUserId', result.userId);
+      c.set('platformHandle', record.handle);
+      return next();
+    }
+
     if (record.status === 'stopped') {
       try {
         await orchestrator.start(record.handle);
@@ -368,6 +396,7 @@ export function createApp(deps: {
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
         headers,
+        redirect: 'manual',
         signal: AbortSignal.timeout(30_000),
         body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
       });
@@ -380,6 +409,16 @@ export function createApp(deps: {
       return c.json({ error: 'Container unreachable' }, 502);
     }
   });
+
+  if (deps.integrationRoutes) {
+    app.route('/api/integrations', deps.integrationRoutes);
+  }
+  if (deps.internalIntegrationRoutes) {
+    app.route('/internal/containers/:handle/integrations', deps.internalIntegrationRoutes);
+  }
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
 
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
@@ -685,6 +724,7 @@ export function createApp(deps: {
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
         headers,
+        redirect: 'manual',
         signal: AbortSignal.timeout(30_000),
         body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
       });
@@ -713,17 +753,6 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     extraEnv.push(`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`);
   }
   for (const key of [
-    'PIPEDREAM_CLIENT_ID',
-    'PIPEDREAM_CLIENT_SECRET',
-    'PIPEDREAM_PROJECT_ID',
-    'PIPEDREAM_ENVIRONMENT',
-    'PIPEDREAM_WEBHOOK_SECRET',
-    'S3_ENDPOINT',
-    'S3_PUBLIC_ENDPOINT',
-    'S3_ACCESS_KEY_ID',
-    'S3_SECRET_ACCESS_KEY',
-    'S3_BUCKET',
-    'S3_FORCE_PATH_STYLE',
     'MATRIX_HOME_MIRROR',
   ]) {
     if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
@@ -780,7 +809,94 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     console.log(`[matrix] Provisioner enabled (${conduitUrl})`);
   }
 
-  const app = createApp({ db, orchestrator, clerkAuth, matrixProvisioner });
+  let integrationRoutes: Hono | undefined;
+  let internalIntegrationRoutes: Hono | undefined;
+  if (
+    process.env.POSTGRES_URL &&
+    process.env.PIPEDREAM_CLIENT_ID &&
+    process.env.PIPEDREAM_CLIENT_SECRET &&
+    process.env.PIPEDREAM_PROJECT_ID
+  ) {
+    const [
+      { createIntegrationRoutes },
+      { createPipedreamClient },
+      { createPlatformDb: createGatewayPlatformDb },
+    ] = await Promise.all([
+      import('../../gateway/src/integrations/routes.js'),
+      import('../../gateway/src/integrations/pipedream.js'),
+      import('../../gateway/src/platform-db.js'),
+    ]);
+
+    const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
+    await trustedPlatformDb.migrate();
+    const pipedream = createPipedreamClient({
+      clientId: process.env.PIPEDREAM_CLIENT_ID,
+      clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
+      projectId: process.env.PIPEDREAM_PROJECT_ID,
+      environment: process.env.PIPEDREAM_ENVIRONMENT ?? 'production',
+    });
+    const webhookSecret = process.env.PIPEDREAM_WEBHOOK_SECRET ?? '';
+    integrationRoutes = createIntegrationRoutes({
+      db: trustedPlatformDb,
+      pipedream,
+      webhookSecret,
+      resolveUserId: async (c) => {
+        const clerkUserId = c.get('platformUserId') as string | undefined;
+        if (!clerkUserId) return null;
+        const user = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
+        return user?.id ?? null;
+      },
+    });
+    internalIntegrationRoutes = createIntegrationRoutes({
+      db: trustedPlatformDb,
+      pipedream,
+      webhookSecret,
+      resolveUserId: async (c) => {
+        const handle = c.req.param('handle');
+        const record = getContainer(db, handle);
+        if (!record?.clerkUserId) return null;
+        const user = await trustedPlatformDb!.getUserByClerkId(record.clerkUserId);
+        return user?.id ?? null;
+      },
+    });
+  }
+
+  let internalSyncRoutes: Hono | undefined;
+  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
+  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
+  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
+  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
+  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+  if (s3AccessKey && s3SecretKey && platformSecret) {
+    const [{ createR2Client }, { createInternalSyncRoutes }] = await Promise.all([
+      import('../../gateway/src/sync/r2-client.js'),
+      import('./internal-sync-routes.js'),
+    ]);
+    const r2 = createR2Client({
+      accessKeyId: s3AccessKey,
+      secretAccessKey: s3SecretKey,
+      bucket: s3Bucket,
+      endpoint: s3Endpoint,
+      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
+      accountId: process.env.R2_ACCOUNT_ID,
+      forcePathStyle: s3ForcePathStyle,
+    });
+    internalSyncRoutes = createInternalSyncRoutes({
+      db,
+      r2,
+      platformSecret,
+    });
+  }
+
+  const app = createApp({
+    db,
+    orchestrator,
+    clerkAuth,
+    matrixProvisioner,
+    integrationRoutes,
+    internalIntegrationRoutes,
+    internalSyncRoutes,
+  });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);

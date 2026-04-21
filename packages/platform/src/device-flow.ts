@@ -182,11 +182,6 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
           return { status: 'pending' } as DevicePollResult;
         }
 
-        config.db
-          .delete(deviceCodes)
-          .where(eq(deviceCodes.deviceCode, deviceCode))
-          .run();
-
         return {
           status: 'approved',
           clerkUserId: row.clerkUserId,
@@ -198,6 +193,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
       }
 
       const issued = await issueToken({ clerkUserId: claimed.clerkUserId });
+
+      config.db
+        .delete(deviceCodes)
+        .where(eq(deviceCodes.deviceCode, deviceCode))
+        .run();
 
       return {
         status: 'approved',

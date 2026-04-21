@@ -56,6 +56,33 @@ describe('platform/orchestrator', () => {
     expect(createArgs.name).toBe('matrixos-alice');
   });
 
+  it('uses platform internal auth helpers instead of injecting PLATFORM_DATABASE_URL', async () => {
+    const { docker } = createMockDocker();
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockResolvedValue({ rows: [{ 1: 1 }] }),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://postgres@db:5432',
+      platformSecret: 'platform-secret-123',
+    });
+
+    await orch.provision('alice', 'clerk_1');
+
+    const createArgs = docker.createContainer.mock.calls[0][0];
+    expect(createArgs.Env).toContain('DATABASE_URL=postgres://postgres@db:5432/matrixos_alice');
+    expect(createArgs.Env).toContain('PLATFORM_INTERNAL_URL=http://distro-platform-1:9000');
+    expect(createArgs.Env.some((value: string) => value.startsWith('UPGRADE_TOKEN='))).toBe(true);
+    expect(createArgs.Env.some((value: string) => value.startsWith('PLATFORM_DATABASE_URL='))).toBe(false);
+    clientSpy.mockRestore();
+  });
+
   it('passes MATRIX_USER_ID on upgrade so home-mirror keeps its R2 prefix', async () => {
     const { docker, mockContainer } = createMockDocker();
     const orch = createOrchestrator({ db, docker: docker as any });

@@ -65,7 +65,7 @@ export async function saveConfig(
 ): Promise<void> {
   const filePath = path ?? configPath();
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  await writeFile(filePath, JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
 export function defaultSyncPath(): string {

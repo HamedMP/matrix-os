@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+const execFileMock = vi.fn();
+vi.mock("node:child_process", () => ({
+  execFile: execFileMock,
+}));
 import {
+  openBrowser,
   pollForToken,
   requestDeviceCode,
   type OAuthConfig,
@@ -46,6 +51,19 @@ describe("requestDeviceCode", () => {
     );
     expect(result.deviceCode).toBe("abc");
     expect(result.userCode).toBe("BCDF-GHJK");
+  });
+});
+
+describe("openBrowser", () => {
+  it("opens http(s) verification URLs via execFile", () => {
+    openBrowser("https://platform.matrix-os.com/auth/device?user_code=BCDF-GHJK");
+    expect(execFileMock).toHaveBeenCalled();
+  });
+
+  it("rejects non-http(s) verification URLs", () => {
+    expect(() => openBrowser("javascript:alert(1)")).toThrow(
+      /Refusing to open non-http\(s\) verification URL/,
+    );
   });
 });
 

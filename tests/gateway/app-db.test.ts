@@ -17,11 +17,11 @@ describe("AppDb connection", () => {
     await db.destroy();
   });
 
-  it("bootstraps _apps and _kv tables in public schema", async () => {
+  it("bootstraps _apps, _kv, and users tables in public schema", async () => {
     const tables = await db.raw(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('_apps', '_kv') ORDER BY table_name",
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('_apps', '_kv', 'users') ORDER BY table_name",
     );
-    expect(tables.rows.map((r) => r.table_name)).toEqual(["_apps", "_kv"]);
+    expect(tables.rows.map((r) => r.table_name)).toEqual(["_apps", "_kv", "users"]);
   });
 
   it("creates a schema for an app", async () => {
