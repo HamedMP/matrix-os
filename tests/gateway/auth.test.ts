@@ -233,4 +233,16 @@ describe("T133: Auth token middleware", () => {
     );
     expect(nextCalled).toBe(true);
   });
+
+  it("does not double-decode already-decoded public paths", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+
+    await mw(
+      mockContext("/voice/webhook/%2e%2e"),
+      async () => { nextCalled = true; },
+    );
+
+    expect(nextCalled).toBe(false);
+  });
 });

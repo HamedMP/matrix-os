@@ -152,13 +152,7 @@ export function authMiddleware(
     const jwtKey = await readJwtKeyConfig();
     const expectedHandle = process.env.MATRIX_HANDLE;
 
-    let decodedPath: string;
-    try {
-      decodedPath = decodeURIComponent(c.req.path);
-    } catch {
-      return c.json({ error: "Bad request" }, 400);
-    }
-    const normalizedPath = new URL(decodedPath, "http://localhost").pathname;
+    const normalizedPath = c.req.path;
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return next();
@@ -182,7 +176,7 @@ export function authMiddleware(
     // registered and active. Uses the stricter "failed auth" rate limiter
     // because the provider allowlist is narrow and a hit from an unknown
     // provider is already suspicious.
-    const webhookMatch = c.req.path.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
+    const webhookMatch = normalizedPath.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
     const isWebhook = webhookMatch && webhookProviders.has(webhookMatch[1]);
     if (isWebhook) {
       const ip = getClientIp(c);
@@ -193,7 +187,7 @@ export function authMiddleware(
     }
 
     const authHeader = c.req.header("Authorization");
-    const isWsUpgrade = WS_QUERY_TOKEN_PATHS.some((p) => c.req.path === p);
+    const isWsUpgrade = WS_QUERY_TOKEN_PATHS.some((p) => normalizedPath === p);
 
     // Only accept query param token for WebSocket upgrades (browsers can't set
     // Authorization headers on WS connections). REST endpoints must use headers.

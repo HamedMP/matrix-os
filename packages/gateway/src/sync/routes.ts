@@ -84,6 +84,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     }
   }
 
+  function validationError(c: Parameters<Hono["request"]>[0] extends never ? never : any) {
+    return c.json({ error: "Validation error" }, 400);
+  }
+
   // GET /manifest
   app.get("/manifest", async (c) => {
     const userId = getUserId(c);
@@ -119,7 +123,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const parsed = PresignRequestSchema.safeParse(body);
 
     if (!parsed.success) {
-      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+      return validationError(c);
     }
 
     const timer = syncPresignDuration.startTimer();
@@ -161,7 +165,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const parsed = CommitRequestSchema.safeParse(body);
 
     if (!parsed.success) {
-      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+      return validationError(c);
     }
 
     const timer = syncCommitDuration.startTimer();
@@ -237,7 +241,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const parsed = ResolveConflictSchema.safeParse(body);
 
     if (!parsed.success) {
-      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+      return validationError(c);
     }
 
     const requestedPath = resolveWithinPrefix(userId, parsed.data.path);
@@ -279,7 +283,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const parsed = CreateShareSchema.safeParse(body);
 
     if (!parsed.success) {
-      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+      return validationError(c);
     }
 
     try {
@@ -315,7 +319,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     }
     const parsed = DeleteShareSchema.safeParse(json.body);
     if (!parsed.success) {
-      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+      return validationError(c);
     }
     const { shareId } = parsed.data;
 
@@ -348,7 +352,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const parsed = AcceptShareSchema.safeParse(body);
 
     if (!parsed.success) {
-      return c.json({ error: "Validation error", details: parsed.error.issues }, 400);
+      return validationError(c);
     }
 
     try {
