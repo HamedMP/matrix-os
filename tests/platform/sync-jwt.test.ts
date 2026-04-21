@@ -158,6 +158,39 @@ describe("sync-jwt: verification", () => {
     expect(claims.handle).toBe("alice");
   });
 
+  it("accepts a token within the default 30-second clock tolerance", async () => {
+    const issued = await issueSyncJwt({
+      secret: SECRET,
+      clerkUserId: "user_abc",
+      handle: "alice",
+      gatewayUrl: "https://alice.matrix-os.com",
+      now: 1_000,
+      expiresInSec: 60,
+    });
+
+    const claims = await verifySyncJwt(issued.token, {
+      secret: SECRET,
+      now: 1_075,
+    });
+    expect(claims.sub).toBe("user_abc");
+  });
+
+  it("rejects a token with an empty sub claim", async () => {
+    const token = signHs256Jwt({
+      sub: "",
+      handle: "alice",
+      gateway_url: "https://alice.matrix-os.com",
+      aud: SYNC_JWT_AUDIENCE,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iss: SYNC_JWT_ISSUER,
+    }, new TextEncoder().encode(SECRET));
+
+    await expect(
+      verifySyncJwt(token, { secret: SECRET }),
+    ).rejects.toThrow(/Invalid sync JWT claims/);
+  });
+
   it("rejects a token with a tampered payload", async () => {
     const issued = await issueSyncJwt({
       secret: SECRET,

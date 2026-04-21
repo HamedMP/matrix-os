@@ -54,9 +54,9 @@ export async function generatePresignedUrls(
         `File "${file.path}" must include size for PUT`,
       );
     }
-    if (file.action === "put" && file.size > MAX_PUT_SIZE) {
+    if (file.action === "put" && (file.size <= 0 || file.size > MAX_PUT_SIZE)) {
       throw new PresignValidationError(
-        `File "${file.path}" exceeds maximum size of 1GB (${file.size} bytes)`,
+        `File "${file.path}" must have size between 1 byte and 1GB (${file.size} bytes)`,
       );
     }
   }

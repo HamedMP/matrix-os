@@ -788,7 +788,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("uploads startup files before acquiring the manifest advisory lock", async () => {
+    it("uploads startup files only after acquiring the manifest advisory lock", async () => {
       const order: string[] = [];
       await writeFile(join(tmpRoot, "preexisting.md"), "present before watcher starts");
 
@@ -822,8 +822,62 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      expect(order.indexOf("put")).toBeGreaterThanOrEqual(0);
-      expect(order.indexOf("lock")).toBeGreaterThan(order.indexOf("put"));
+      expect(order.indexOf("lock")).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf("put")).toBeGreaterThan(order.indexOf("lock"));
+
+      await mirror.stop();
+    });
+
+    it("skips startup uploads when the manifest snapshot already matches the local hash", async () => {
+      const content = Buffer.from("already synced");
+      const putSpy = vi.spyOn(r2, "putObject");
+      r2.store.set(
+        "matrixos-sync/alice/manifest.json",
+        Buffer.from(JSON.stringify({
+          version: 2,
+          files: {
+            "preexisting.md": {
+              hash: sha256(content),
+              size: content.length,
+              mtime: Date.now(),
+              peerId: "laptop-1",
+              version: 1,
+            },
+          },
+        })),
+      );
+      db = {
+        async getManifestMeta() {
+          return {
+            version: 1,
+            file_count: 1,
+            total_size: BigInt(content.length),
+            etag: '"etag"',
+            updated_at: new Date(),
+          };
+        },
+        async upsertManifestMeta() {},
+        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
+          return fn(undefined);
+        },
+      } as unknown as ManifestDb;
+      await writeFile(join(tmpRoot, "preexisting.md"), content);
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      expect(putSpy).not.toHaveBeenCalledWith(
+        "matrixos-sync/alice/files/preexisting.md",
+        expect.any(Buffer),
+      );
 
       await mirror.stop();
     });

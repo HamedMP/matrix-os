@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { constants as fsConstants, createReadStream } from "node:fs";
+import { lstat, mkdir, open, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import {
@@ -111,6 +111,51 @@ function hashFileStream(absPath: string): Promise<string> {
 
 function hashBuffer(buf: Buffer): string {
   return `sha256:${createHash("sha256").update(buf).digest("hex")}`;
+}
+
+type LocalPushFile =
+  | { kind: "file"; body: Buffer; hash: string; size: number }
+  | { kind: "too_large"; size: number }
+  | { kind: "skip" };
+
+async function readLocalFileForPush(
+  absPath: string,
+  maxPushBytes: number,
+): Promise<LocalPushFile> {
+  let handle;
+  try {
+    handle = await open(absPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      ["ENOENT", "EISDIR", "ELOOP", "ENOTDIR"].includes(
+        String((err as NodeJS.ErrnoException).code),
+      )
+    ) {
+      return { kind: "skip" };
+    }
+    throw err;
+  }
+
+  try {
+    const fileStat = await handle.stat();
+    if (!fileStat.isFile()) {
+      return { kind: "skip" };
+    }
+    if (fileStat.size > maxPushBytes) {
+      return { kind: "too_large", size: fileStat.size };
+    }
+    const body = Buffer.from(await handle.readFile());
+    return {
+      kind: "file",
+      body,
+      hash: hashBuffer(body),
+      size: body.length,
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 function normalizeRelativePath(userId: string, relPath: string): string {
@@ -235,46 +280,36 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const absPath = join(config.homeRoot, safeRelPath);
 
     await enqueue(async () => {
-      let fileStat;
-      let body: Buffer;
-      try {
-        fileStat = await lstat(absPath);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-        throw err;
-      }
-      if (fileStat.isSymbolicLink()) return;
-      if (!fileStat.isFile()) return;
-      if (fileStat.size > maxPushBytes) {
+      const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+      if (localFile.kind === "skip") return;
+      if (localFile.kind === "too_large") {
         log.error(
           `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
         );
         return;
       }
-      body = await readFile(absPath);
-      const hash = hashBuffer(body);
-      const key = buildFileKey(config.userId, safeRelPath);
-      await config.r2.putObject(key, body);
 
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, config.userId);
         const currentEntry = existing.manifest.files[safeRelPath];
-        if (currentEntry?.hash === hash && !currentEntry.deleted) {
+        if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
           return;
         }
 
+        const key = buildFileKey(config.userId, safeRelPath);
+        await config.r2.putObject(key, localFile.body);
         const action = currentEntry ? "update" : "add";
         const next: Manifest = applyCommitToManifest(
           existing.manifest,
-          [{ path: safeRelPath, hash, size: body.length, action }],
+          [{ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }],
           config.peerId,
         );
 
         const newVersion = existing.manifestVersion + 1;
         await writeManifest(lockedStore, config.userId, next, newVersion);
-        broadcastChange({ path: safeRelPath, hash, size: body.length, action }, newVersion);
-        log.info(`pushed ${safeRelPath} (${body.length}B)`);
+        broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
+        log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
       });
     });
   }
@@ -398,77 +433,62 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function initialPush(): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot);
     if (relPaths.length === 0) return;
+    const snapshot = await readManifest(store, config.userId);
 
     await enqueue(async () => {
-      const uploadedFiles: Array<{
-        path: string;
-        hash: string;
-        size: number;
-      }> = [];
-
       for (const relPath of relPaths) {
         const safeRelPath = normalizeRelativePath(config.userId, relPath);
         const absPath = join(config.homeRoot, safeRelPath);
-
-        let fileStat;
-        let body: Buffer;
-        try {
-          fileStat = await lstat(absPath);
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw err;
-        }
-        if (fileStat.isSymbolicLink()) continue;
-        if (!fileStat.isFile()) continue;
-        if (fileStat.size > maxPushBytes) {
+        const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+        if (localFile.kind === "skip") continue;
+        if (localFile.kind === "too_large") {
           log.error(
             `skipping push for ${safeRelPath}: file exceeds ${maxPushBytes} bytes`,
           );
           continue;
         }
-
-        body = await readFile(absPath);
-        const hash = hashBuffer(body);
-        await config.r2.putObject(buildFileKey(config.userId, safeRelPath), body);
-        uploadedFiles.push({
-          path: safeRelPath,
-          hash,
-          size: body.length,
-        });
-      }
-
-      if (uploadedFiles.length === 0) return;
-
-      await withManifestLock(async (lockedStore) => {
-        const existing = await readManifest(lockedStore, config.userId);
-        let nextManifest = existing.manifest;
-        const committedFiles: Array<{
-          path: string;
-          hash: string;
-          size: number;
-          action: "add" | "update";
-        }> = [];
-
-        for (const file of uploadedFiles) {
-          const currentEntry = nextManifest.files[file.path];
-          if (currentEntry?.hash === file.hash && !currentEntry.deleted) {
-            continue;
-          }
-          const nextFile = {
-            ...file,
-            action: currentEntry ? "update" as const : "add" as const,
-          };
-          nextManifest = applyCommitToManifest(nextManifest, [nextFile], config.peerId);
-          committedFiles.push(nextFile);
+        const snapshotEntry = snapshot.manifest.files[safeRelPath];
+        if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
+          continue;
         }
 
-        if (committedFiles.length === 0) return;
+        await withManifestLock(async (lockedStore) => {
+          const existing = await readManifest(lockedStore, config.userId);
+          const currentEntry = existing.manifest.files[safeRelPath];
+          if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
+            return;
+          }
 
-        const newVersion = existing.manifestVersion + 1;
-        await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
-        broadcastChanges(committedFiles, newVersion);
-        log.info(`initial push: ${committedFiles.length} files`);
-      });
+          await config.r2.putObject(
+            buildFileKey(config.userId, safeRelPath),
+            localFile.body,
+          );
+          const action = currentEntry ? "update" as const : "add" as const;
+          const nextManifest = applyCommitToManifest(
+            existing.manifest,
+            [{
+              path: safeRelPath,
+              hash: localFile.hash,
+              size: localFile.size,
+              action,
+            }],
+            config.peerId,
+          );
+
+          const newVersion = existing.manifestVersion + 1;
+          await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
+          broadcastChange(
+            {
+              path: safeRelPath,
+              hash: localFile.hash,
+              size: localFile.size,
+              action,
+            },
+            newVersion,
+          );
+          log.info(`initial push: ${safeRelPath}`);
+        });
+      }
     });
   }
 

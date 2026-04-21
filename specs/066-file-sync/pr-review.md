@@ -134,6 +134,21 @@ for that item both exist locally.
 - [x] Platform-issued sync JWTs now default to a 24-hour lifetime instead of 30 days to reduce exposure before revocation exists.
 - [x] Gateway JWT public-key cache now evicts rejected RS256 import promises so a bad PEM does not poison verification until process restart.
 
+## Latest Blocker / Worth-Fixing Wave
+
+- [x] Gateway sync identity fallback now prefers `MATRIX_USER_ID` before `MATRIX_HANDLE`, so proxied sync traffic cannot split state across handle-vs-user-id prefixes.
+- [x] Sync JSON-body parsing now returns `400` only for real `SyntaxError` parse failures and rethrows unexpected stream/read errors as server faults.
+- [x] Presign PUT validation now rejects zero/negative sizes instead of minting signed URLs for invalid uploads.
+- [x] Platform sync-JWT verification now defaults `clockTolerance` to 30 seconds and rejects empty-string `sub` / `handle` claims like the gateway verifier.
+- [x] Device approval HTML now escapes the Clerk publishable key before interpolating it into the page.
+- [x] `/api/me` only maps real JWT-auth failures to `401`; unexpected verifier/runtime failures now surface as `500`.
+- [x] Sync-client file watcher now awaits async event handlers and reports non-`ENOENT` processing failures through `onError` instead of risking unhandled rejections.
+- [x] Sync-client WebSocket client now only treats `SyntaxError` as malformed sync messages and preserves other exceptions for diagnostics.
+- [x] Sync-client download state now records the real downloaded file `size` / `mtime` instead of pinning every pulled file to `size: 0`.
+- [x] Share acceptance and revocation now execute under DB transactions instead of read-check-write races.
+- [x] Home-mirror local file reads now use `O_NOFOLLOW` file handles, skip oversize files before buffering, and upload/write manifest entries under the advisory lock.
+- [x] Home-mirror startup push now checks an unlocked manifest snapshot first and skips re-uploading files whose hash already matches the remote manifest.
+
 ## Still Open / Architectural
 
 - [x] Platform app-domain routing now terminates sync JWT auth at the trusted platform boundary and proxies to containers with a per-container bearer token, so containers do not need platform JWT signing material.
@@ -173,6 +188,8 @@ for that item both exist locally.
 - [x] Latest platform internal sync body-limit regression passes in Docker dev container: `tests/platform/internal-sync-routes.test.ts`, `tests/platform/proxy-routing.test.ts`, `tests/platform/orchestrator.test.ts` (`3 files`, `33 tests`).
 - [x] Latest sync JWT lifetime regression passes locally and in Docker: `tests/platform/sync-jwt.test.ts`, `tests/platform/device-flow.test.ts`, `tests/platform/device-routes.test.ts`.
 - [x] Latest JWT key-cache retry regression passes locally: `tests/gateway/auth-jwt.test.ts`, `tests/gateway/auth-jwt-cache.test.ts` (`13 tests`).
+- [x] Latest blocker/worth-fixing regression passes locally: `tests/gateway/sync/user-id-from-jwt.test.ts`, `routes.test.ts`, `sharing.test.ts`, `home-mirror.test.ts`, `tests/platform/sync-jwt.test.ts`, `packages/sync-client/tests/unit/watcher.test.ts` (`6 files`, `103 tests`).
+- [x] Latest platform route/auth regression passes in Docker dev container: `tests/platform/device-routes.test.ts`, `tests/platform/device-flow.test.ts` (`2 files`, `33 tests`).
 
 ## Lower-Priority Follow-ups From Review
 

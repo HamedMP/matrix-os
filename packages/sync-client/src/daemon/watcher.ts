@@ -11,7 +11,8 @@ export type WatcherEvent =
 export interface WatcherOptions {
   syncRoot: string;
   ignorePatterns: SyncIgnorePatterns;
-  onEvent: (event: WatcherEvent) => void;
+  onEvent: (event: WatcherEvent) => void | Promise<void>;
+  onError?: (err: Error) => void;
   debounceMs?: number;
 }
 
@@ -80,7 +81,7 @@ export class FileWatcher {
           hashFile(absPath),
           stat(absPath),
         ]);
-        this.options.onEvent({
+        await this.options.onEvent({
           type: "change",
           path: relPath,
           hash,
@@ -95,7 +96,9 @@ export class FileWatcher {
         ) {
           return;
         }
-        throw err;
+        this.options.onError?.(
+          err instanceof Error ? err : new Error(String(err)),
+        );
       }
     }, this.debounceMs);
 

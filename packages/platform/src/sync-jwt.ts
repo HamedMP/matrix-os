@@ -84,13 +84,15 @@ export async function verifySyncJwt(
     issuer: SYNC_JWT_ISSUER,
     audience: SYNC_JWT_AUDIENCE,
     algorithms: opts.publicKey ? ['RS256'] : ['HS256'],
-    clockTolerance: opts.clockTolerance,
+    clockTolerance: opts.clockTolerance ?? 30,
     currentDate: opts.now !== undefined ? new Date(opts.now * 1000) : undefined,
   });
 
   if (
     typeof payload.sub !== 'string' ||
+    payload.sub.length === 0 ||
     typeof payload.handle !== 'string' ||
+    payload.handle.length === 0 ||
     typeof payload.gateway_url !== 'string' ||
     typeof payload.iat !== 'number' ||
     typeof payload.exp !== 'number'

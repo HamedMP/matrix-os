@@ -78,6 +78,7 @@ afterEach(() => {
   delete process.env.PLATFORM_JWT_PUBLIC_KEY;
   delete process.env.MATRIX_AUTH_TOKEN;
   delete process.env.MATRIX_HANDLE;
+  delete process.env.MATRIX_USER_ID;
 });
 
 describe("getUserIdFromContext (helper)", () => {
@@ -94,6 +95,12 @@ describe("getUserIdFromContext (helper)", () => {
   it("falls back to MATRIX_HANDLE when no JWT claims are set", () => {
     const ctx = { get: () => undefined } as any;
     expect(getUserIdFromContext(ctx)).toBe(HANDLE);
+  });
+
+  it("prefers MATRIX_USER_ID over MATRIX_HANDLE when no JWT claims are set", () => {
+    process.env.MATRIX_USER_ID = CLERK_USER_ID;
+    const ctx = { get: () => undefined } as any;
+    expect(getUserIdFromContext(ctx)).toBe(CLERK_USER_ID);
   });
 
   it('falls back to "default" only in open local-dev mode', () => {
@@ -150,7 +157,8 @@ describe("sync routes: userId resolution from JWT", () => {
     expect(mockDb.getManifestMeta).toHaveBeenCalledWith(CLERK_USER_ID, undefined);
   });
 
-  it("GET /api/sync/manifest falls back to MATRIX_HANDLE when legacy bearer is used (no JWT)", async () => {
+  it("GET /api/sync/manifest falls back to MATRIX_USER_ID before MATRIX_HANDLE in legacy bearer mode", async () => {
+    process.env.MATRIX_USER_ID = CLERK_USER_ID;
     const app = buildApp(getUserIdFromContext);
     const res = await app.request("/api/sync/manifest", {
       headers: { Authorization: "Bearer legacy-shared-secret" },
@@ -158,8 +166,8 @@ describe("sync routes: userId resolution from JWT", () => {
 
     expect(res.status).toBe(200);
     const key = mockR2.getObject.mock.calls[0][0] as string;
-    expect(key).toBe(`matrixos-sync/${HANDLE}/manifest.json`);
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(HANDLE, undefined);
+    expect(key).toBe(`matrixos-sync/${CLERK_USER_ID}/manifest.json`);
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(CLERK_USER_ID, undefined);
   });
 
   it("returns 401 when auth is enabled but no sync identity can be resolved", async () => {

@@ -347,6 +347,7 @@ export async function startDaemon(): Promise<void> {
   const watcher = new FileWatcher({
     syncRoot: config.syncPath,
     ignorePatterns,
+    onError: (err) => logger.error({ err }, "Watcher event handling failed"),
     onEvent: async (event) => enqueue(async () => {
       if (config.pauseSync) return;
 
@@ -450,10 +451,11 @@ export async function startDaemon(): Promise<void> {
               urls[0].url,
               localPath,
             );
+            const downloadedStat = await stat(localPath);
             syncState.files[event.path] = {
               hash: event.hash,
-              mtime: Date.now(),
-              size: 0,
+              mtime: downloadedStat.mtimeMs,
+              size: downloadedStat.size,
               lastSyncedHash: event.hash,
             };
             await saveSyncState(stateFile, syncState);

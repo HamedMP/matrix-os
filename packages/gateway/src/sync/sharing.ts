@@ -34,6 +34,7 @@ export interface SharingDb {
   resolveHandle(handle: string): Promise<string | null>;
   resolveUserId(userId: string): Promise<string | null>;
   resolveUserIds(userIds: string[]): Promise<Map<string, string>>;
+  runInTransaction?<T>(fn: (db: SharingDb) => Promise<T>): Promise<T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +160,12 @@ export function createSharingService(deps: {
   peerRegistry: PeerRegistry;
 }): SharingService {
   const { db, peerRegistry } = deps;
+  const withTransaction = async <T>(fn: (txDb: SharingDb) => Promise<T>): Promise<T> => {
+    if (db.runInTransaction) {
+      return db.runInTransaction(fn);
+    }
+    return fn(db);
+  };
 
   function shareMatchesPath(sharePath: string, filePath: string): boolean {
     const normalizedSharePath = sharePath.replace(/\/+/g, "/").replace(/\/$/, "");
@@ -223,45 +230,55 @@ export function createSharingService(deps: {
     },
 
     async acceptShare(callerId, shareId) {
-      const share = await db.getShare(shareId);
-      if (!share) {
-        throw new ShareNotFoundError(shareId);
-      }
+      return withTransaction(async (txDb) => {
+        const share = await txDb.getShare(shareId);
+        if (!share) {
+          throw new ShareNotFoundError(shareId);
+        }
 
-      if (share.grantee_id !== callerId) {
-        throw new ShareForbiddenError("Not the grantee of this share");
-      }
+        if (share.grantee_id !== callerId) {
+          throw new ShareForbiddenError("Not the grantee of this share");
+        }
 
-      await db.updateShareAccepted(shareId, true);
+        await txDb.updateShareAccepted(shareId, true);
 
-      const ownerHandle = await db.resolveUserId(share.owner_id);
+        const ownerHandle = await txDb.resolveUserId(share.owner_id);
 
-      return {
-        accepted: true as const,
-        path: share.path,
-        ownerHandle: ownerHandle ?? share.owner_id,
-      };
+        return {
+          accepted: true as const,
+          path: share.path,
+          ownerHandle: ownerHandle ?? share.owner_id,
+        };
+      });
     },
 
     async revokeShare(callerId, shareId) {
-      const share = await db.getShare(shareId);
-      if (!share) {
-        throw new ShareNotFoundError(shareId);
-      }
+      const result = await withTransaction(async (txDb) => {
+        const share = await txDb.getShare(shareId);
+        if (!share) {
+          throw new ShareNotFoundError(shareId);
+        }
 
-      if (share.owner_id !== callerId) {
-        throw new ShareForbiddenError("Not the owner of this share");
-      }
+        if (share.owner_id !== callerId) {
+          throw new ShareForbiddenError("Not the owner of this share");
+        }
 
-      await db.deleteShare(shareId);
+        await txDb.deleteShare(shareId);
+
+        const ownerHandle = await txDb.resolveUserId(callerId);
+        return {
+          granteeId: share.grantee_id,
+          ownerHandle: ownerHandle ?? callerId,
+          path: share.path,
+        };
+      });
 
       // Broadcast access-revoked to grantee
-      const ownerHandle = await db.resolveUserId(callerId);
-      peerRegistry.sendToUser(share.grantee_id, {
+      peerRegistry.sendToUser(result.granteeId, {
         type: "sync:access-revoked",
         shareId,
-        ownerHandle: ownerHandle ?? callerId,
-        path: share.path,
+        ownerHandle: result.ownerHandle,
+        path: result.path,
       });
     },
 

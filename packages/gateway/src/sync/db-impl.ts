@@ -1,4 +1,4 @@
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { ManifestDb, ManifestDbExecutor, ManifestMeta } from "./manifest.js";
 import type { SharingDb, ShareRow } from "./sharing.js";
 import type { ShareRole } from "./types.js";
@@ -86,124 +86,134 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
 }
 
 export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
+  function fromExecutor(executor: Kysely<SyncDatabase> | Transaction<SyncDatabase>): SharingDb {
+    return {
+      async insertShare(input: {
+        owner_id: string;
+        path: string;
+        grantee_id: string;
+        role: ShareRole;
+        expires_at?: string;
+      }): Promise<ShareRow> {
+        const row = await executor
+          .insertInto("sync_shares")
+          .values({
+            owner_id: input.owner_id,
+            path: input.path,
+            grantee_id: input.grantee_id,
+            role: input.role,
+            accepted: false,
+            created_at: new Date(),
+            expires_at: input.expires_at ? new Date(input.expires_at) : null,
+          } as any)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        return row as unknown as ShareRow;
+      },
+
+      async getShare(shareId: string): Promise<ShareRow | null> {
+        const row = await executor
+          .selectFrom("sync_shares")
+          .selectAll()
+          .where("id", "=", shareId)
+          .executeTakeFirst();
+
+        return (row as unknown as ShareRow) ?? null;
+      },
+
+      async updateShareAccepted(shareId: string, accepted: boolean): Promise<void> {
+        await executor
+          .updateTable("sync_shares")
+          .set({ accepted })
+          .where("id", "=", shareId)
+          .execute();
+      },
+
+      async deleteShare(shareId: string): Promise<void> {
+        await executor
+          .deleteFrom("sync_shares")
+          .where("id", "=", shareId)
+          .execute();
+      },
+
+      async listSharesByOwner(ownerId: string): Promise<ShareRow[]> {
+        const rows = await executor
+          .selectFrom("sync_shares")
+          .selectAll()
+          .where("owner_id", "=", ownerId)
+          .execute();
+
+        return rows as unknown as ShareRow[];
+      },
+
+      async listSharesByGrantee(granteeId: string): Promise<ShareRow[]> {
+        const rows = await executor
+          .selectFrom("sync_shares")
+          .selectAll()
+          .where("grantee_id", "=", granteeId)
+          .execute();
+
+        return rows as unknown as ShareRow[];
+      },
+
+      async listSharesByGranteeAndOwner(granteeId: string, ownerId: string): Promise<ShareRow[]> {
+        const rows = await executor
+          .selectFrom("sync_shares")
+          .selectAll()
+          .where("grantee_id", "=", granteeId)
+          .where("owner_id", "=", ownerId)
+          .execute();
+
+        return rows as unknown as ShareRow[];
+      },
+
+      async resolveHandle(handle: string): Promise<string | null> {
+        const row = await executor
+          .selectFrom("users" as any)
+          .select("id")
+          .where("handle" as any, "=", handle)
+          .executeTakeFirst();
+
+        return (row as any)?.id ?? null;
+      },
+
+      async resolveUserId(userId: string): Promise<string | null> {
+        const row = await executor
+          .selectFrom("users" as any)
+          .select("handle" as any)
+          .where("id" as any, "=", userId)
+          .executeTakeFirst();
+
+        return (row as any)?.handle ?? null;
+      },
+
+      async resolveUserIds(userIds: string[]): Promise<Map<string, string>> {
+        const ids = Array.from(new Set(userIds));
+        if (ids.length === 0) {
+          return new Map();
+        }
+
+        const rows = await executor
+          .selectFrom("users" as any)
+          .select(["id" as any, "handle" as any])
+          .where("id" as any, "in", ids)
+          .execute();
+
+        const resolved = new Map<string, string>();
+        for (const row of rows as Array<{ id: string; handle: string }>) {
+          resolved.set(row.id, row.handle);
+        }
+        return resolved;
+      },
+    };
+  }
+
+  const db = fromExecutor(kysely);
   return {
-    async insertShare(input: {
-      owner_id: string;
-      path: string;
-      grantee_id: string;
-      role: ShareRole;
-      expires_at?: string;
-    }): Promise<ShareRow> {
-      const row = await kysely
-        .insertInto("sync_shares")
-        .values({
-          owner_id: input.owner_id,
-          path: input.path,
-          grantee_id: input.grantee_id,
-          role: input.role,
-          accepted: false,
-          created_at: new Date(),
-          expires_at: input.expires_at ? new Date(input.expires_at) : null,
-        } as any)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      return row as unknown as ShareRow;
-    },
-
-    async getShare(shareId: string): Promise<ShareRow | null> {
-      const row = await kysely
-        .selectFrom("sync_shares")
-        .selectAll()
-        .where("id", "=", shareId)
-        .executeTakeFirst();
-
-      return (row as unknown as ShareRow) ?? null;
-    },
-
-    async updateShareAccepted(shareId: string, accepted: boolean): Promise<void> {
-      await kysely
-        .updateTable("sync_shares")
-        .set({ accepted })
-        .where("id", "=", shareId)
-        .execute();
-    },
-
-    async deleteShare(shareId: string): Promise<void> {
-      await kysely
-        .deleteFrom("sync_shares")
-        .where("id", "=", shareId)
-        .execute();
-    },
-
-    async listSharesByOwner(ownerId: string): Promise<ShareRow[]> {
-      const rows = await kysely
-        .selectFrom("sync_shares")
-        .selectAll()
-        .where("owner_id", "=", ownerId)
-        .execute();
-
-      return rows as unknown as ShareRow[];
-    },
-
-    async listSharesByGrantee(granteeId: string): Promise<ShareRow[]> {
-      const rows = await kysely
-        .selectFrom("sync_shares")
-        .selectAll()
-        .where("grantee_id", "=", granteeId)
-        .execute();
-
-      return rows as unknown as ShareRow[];
-    },
-
-    async listSharesByGranteeAndOwner(granteeId: string, ownerId: string): Promise<ShareRow[]> {
-      const rows = await kysely
-        .selectFrom("sync_shares")
-        .selectAll()
-        .where("grantee_id", "=", granteeId)
-        .where("owner_id", "=", ownerId)
-        .execute();
-
-      return rows as unknown as ShareRow[];
-    },
-
-    async resolveHandle(handle: string): Promise<string | null> {
-      const row = await kysely
-        .selectFrom("users" as any)
-        .select("id")
-        .where("handle" as any, "=", handle)
-        .executeTakeFirst();
-
-      return (row as any)?.id ?? null;
-    },
-
-    async resolveUserId(userId: string): Promise<string | null> {
-      const row = await kysely
-        .selectFrom("users" as any)
-        .select("handle" as any)
-        .where("id" as any, "=", userId)
-        .executeTakeFirst();
-
-      return (row as any)?.handle ?? null;
-    },
-
-    async resolveUserIds(userIds: string[]): Promise<Map<string, string>> {
-      const ids = Array.from(new Set(userIds));
-      if (ids.length === 0) {
-        return new Map();
-      }
-
-      const rows = await kysely
-        .selectFrom("users" as any)
-        .select(["id" as any, "handle" as any])
-        .where("id" as any, "in", ids)
-        .execute();
-
-      const resolved = new Map<string, string>();
-      for (const row of rows as Array<{ id: string; handle: string }>) {
-        resolved.set(row.id, row.handle);
-      }
-      return resolved;
+    ...db,
+    async runInTransaction<T>(fn: (db: SharingDb) => Promise<T>): Promise<T> {
+      return kysely.transaction().execute(async (trx) => fn(fromExecutor(trx)));
     },
   };
 }

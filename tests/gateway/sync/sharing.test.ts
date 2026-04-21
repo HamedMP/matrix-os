@@ -23,7 +23,7 @@ function makeShareRow(overrides: Partial<ShareRow> = {}): ShareRow {
 }
 
 function createMockDb(): SharingDb {
-  return {
+  const db = {
     insertShare: vi.fn(),
     getShare: vi.fn(),
     updateShareAccepted: vi.fn(),
@@ -34,7 +34,9 @@ function createMockDb(): SharingDb {
     resolveHandle: vi.fn(),
     resolveUserId: vi.fn(),
     resolveUserIds: vi.fn(),
-  };
+  } as SharingDb & { runInTransaction: ReturnType<typeof vi.fn> };
+  db.runInTransaction = vi.fn(async (fn: (txDb: SharingDb) => Promise<unknown>) => fn(db));
+  return db;
 }
 
 function createMockPeerRegistry() {
@@ -183,6 +185,7 @@ describe("SharingService", () => {
       expect(result.accepted).toBe(true);
       expect(result.path).toBe("projects/startup");
       expect(result.ownerHandle).toBe("@owner:matrix-os.com");
+      expect(db.runInTransaction).toHaveBeenCalledTimes(1);
       expect(db.updateShareAccepted).toHaveBeenCalledWith("share-uuid-1", true);
     });
 
@@ -218,6 +221,7 @@ describe("SharingService", () => {
 
       await service.revokeShare("owner1", "share-uuid-1");
 
+      expect(db.runInTransaction).toHaveBeenCalledTimes(1);
       expect(db.deleteShare).toHaveBeenCalledWith("share-uuid-1");
       expect(peerRegistry.sendToUser).toHaveBeenCalledWith("grantee1", {
         type: "sync:access-revoked",

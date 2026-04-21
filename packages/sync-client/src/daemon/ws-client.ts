@@ -68,9 +68,15 @@ export class SyncWsClient {
         if (event) {
           this.options.onEvent(event);
         }
-      } catch {
+      } catch (err: unknown) {
+        if (err instanceof SyntaxError) {
+          this.options.onError?.(
+            new Error("Received malformed sync message from gateway"),
+          );
+          return;
+        }
         this.options.onError?.(
-          new Error("Received malformed sync message from gateway"),
+          err instanceof Error ? err : new Error(String(err)),
         );
       }
     });

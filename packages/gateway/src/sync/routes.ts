@@ -72,8 +72,11 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }) {
     try {
       return { ok: true as const, body: await c.req.json() };
-    } catch {
-      return { ok: false as const };
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return { ok: false as const };
+      }
+      throw err;
     }
   }
 

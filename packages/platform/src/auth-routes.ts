@@ -82,6 +82,24 @@ function readCsrfCookie(cookieHeader: string | undefined): string | null {
   return m ? m[1] : null;
 }
 
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("'", "&#39;");
+}
+
+function isJwtAuthError(err: unknown): err is Error {
+  return err instanceof Error && (
+    err.name.startsWith('JWT') ||
+    err.name.startsWith('JWS') ||
+    err.name.startsWith('JOSE') ||
+    err.message.includes('JWT')
+  );
+}
+
 function approvalPage(userCode: string, csrf: string, publishableKey: string | null): string {
   // Renders an HTML page that lets a Clerk-authenticated user confirm the
   // device pairing. The Clerk widget is loaded for sign-in if needed; once
@@ -90,11 +108,14 @@ function approvalPage(userCode: string, csrf: string, publishableKey: string | n
   // POST /auth/device/approve can verify the double-submit.
   const escapedCode = userCode.replace(/[^A-Z0-9-]/gi, '');
   const escapedCsrf = csrf.replace(/[^a-f0-9]/gi, '');
+  const escapedPublishableKey = publishableKey
+    ? escapeHtmlAttr(publishableKey)
+    : null;
   const clerkScript = publishableKey
     ? `
   <script
     async crossorigin="anonymous"
-    data-clerk-publishable-key="${publishableKey}"
+    data-clerk-publishable-key="${escapedPublishableKey}"
     src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
     onload="initClerk()"></script>
   <script>
@@ -351,7 +372,13 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     let claims: SyncJwtClaims;
     try {
       claims = await verifySyncJwt(token, { secret: config.jwtSecret });
-    } catch {
+    } catch (err: unknown) {
+      if (isJwtAuthError(err)) {
+        return c.json({ error: 'unauthorized' }, 401);
+      }
+      throw err;
+    }
+    if (!claims.sub || !claims.handle) {
       return c.json({ error: 'unauthorized' }, 401);
     }
     const container = getContainer(config.db, claims.handle);

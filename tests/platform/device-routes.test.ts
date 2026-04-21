@@ -67,6 +67,7 @@ describe("device routes", () => {
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.PLATFORM_JWT_SECRET;
+    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   });
 
   describe("POST /api/auth/device/code", () => {
@@ -300,6 +301,16 @@ describe("device routes", () => {
       const cookie = res.headers.get("set-cookie") ?? "";
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
+    });
+
+    it("escapes the Clerk publishable key in the approval page", async () => {
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_"bad"&<tag>';
+
+      const res = await app.request("/auth/device?user_code=BCDF-GHJK");
+      const html = await res.text();
+
+      expect(html).toContain('data-clerk-publishable-key="pk_test_&quot;bad&quot;&amp;&lt;tag&gt;"');
+      expect(html).not.toContain('data-clerk-publishable-key="pk_test_"bad"&<tag>"');
     });
   });
 

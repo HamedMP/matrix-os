@@ -187,6 +187,18 @@ describe("POST /api/sync/presign", () => {
     expect(json.urls).toHaveLength(2);
   });
 
+  it("returns 400 for PUT files with zero size", async () => {
+    const app = createTestApp();
+    const res = await app.request(jsonRequest("/api/sync/presign", {
+      files: [{ path: "upload.txt", action: "put", hash: HASH_A, size: 0 }],
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Invalid request",
+    });
+  });
+
   it("returns 429 when rate limit exceeded", async () => {
     // Each createTestApp creates its own rate limiter instance (100 req/min)
     const app = createTestApp();

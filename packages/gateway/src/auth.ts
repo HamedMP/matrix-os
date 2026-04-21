@@ -23,8 +23,9 @@ export class MissingSyncUserIdentityError extends Error {
 /**
  * Canonical resolver for the "who is this request for?" question used by
  * sync routes. Prefers the Clerk userId embedded in a validated JWT's
- * `sub` claim; falls back to `MATRIX_HANDLE` so the legacy bearer-token
- * (dev) mode keeps working, then `"default"` as a last resort.
+ * `sub` claim; falls back to `MATRIX_USER_ID` / `MATRIX_HANDLE` so the
+ * container-side home-mirror and legacy bearer-token (dev) mode stay aligned,
+ * then `"default"` as a last resort.
  *
  * MUST be used by every sync code path (manifest, presign, commit,
  * resolve-conflict, share, WS `sync:subscribe`) so they all key off the
@@ -41,6 +42,10 @@ export function getUserIdFromContext(c: Context): string {
   const claims = c.get(JWT_CLAIMS_CONTEXT_KEY) as SyncJwtClaims | undefined;
   if (claims && typeof claims.sub === "string" && claims.sub.length > 0) {
     return claims.sub;
+  }
+  const matrixUserId = process.env.MATRIX_USER_ID;
+  if (matrixUserId && matrixUserId.length > 0) {
+    return matrixUserId;
   }
   const handle = process.env.MATRIX_HANDLE;
   if (handle && handle.length > 0) {
