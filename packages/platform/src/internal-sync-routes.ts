@@ -130,6 +130,18 @@ function parseMultipartPartInput(input: unknown): MultipartPartInput | null {
     : { ...parsed, uploadId, partNumber, expiresIn };
 }
 
+async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown | null> {
+  try {
+    return await c.req.json();
+  } catch (err: unknown) {
+    console.warn(
+      "[internal-sync] JSON parse failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
 export function createInternalSyncRoutes(opts: {
   db: PlatformDB;
   r2: R2Client;
@@ -170,7 +182,7 @@ export function createInternalSyncRoutes(opts: {
   }
 
   app.post("/presign/get", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
-    const parsed = parsePresignGetInput(await c.req.json().catch(() => null));
+    const parsed = parsePresignGetInput(await parseJsonBody(c));
     if (!parsed) {
       return c.json({ error: "Validation error" }, 400);
     }
@@ -181,7 +193,7 @@ export function createInternalSyncRoutes(opts: {
   });
 
   app.post("/presign/put", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
-    const parsed = parsePresignPutInput(await c.req.json().catch(() => null));
+    const parsed = parsePresignPutInput(await parseJsonBody(c));
     if (!parsed) {
       return c.json({ error: "Validation error" }, 400);
     }
@@ -196,7 +208,7 @@ export function createInternalSyncRoutes(opts: {
   });
 
   app.post("/multipart/create", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
-    const parsed = parseMultipartCreateInput(await c.req.json().catch(() => null));
+    const parsed = parseMultipartCreateInput(await parseJsonBody(c));
     if (!parsed) {
       return c.json({ error: "Validation error" }, 400);
     }
@@ -207,7 +219,7 @@ export function createInternalSyncRoutes(opts: {
   });
 
   app.post("/multipart/part", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
-    const parsed = parseMultipartPartInput(await c.req.json().catch(() => null));
+    const parsed = parseMultipartPartInput(await parseJsonBody(c));
     if (!parsed) {
       return c.json({ error: "Validation error" }, 400);
     }
@@ -261,7 +273,7 @@ export function createInternalSyncRoutes(opts: {
     return c.json({ etag: result.etag ?? null });
   });
 
-  app.delete("/object", async (c) => {
+  app.delete("/object", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const key = c.req.query("key");
     if (!key) {
       return c.json({ error: "Missing key" }, 400);

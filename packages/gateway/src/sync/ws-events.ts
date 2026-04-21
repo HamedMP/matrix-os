@@ -38,7 +38,11 @@ export function createPeerRegistry(): PeerRegistry {
 
   function sendSafe(ws: SyncPeerConnection, data: string): void {
     if (ws.readyState === 1) {
-      ws.send(data);
+      try {
+        ws.send(data);
+      } catch {
+        // Socket can transition away from OPEN between readyState and send().
+      }
     }
   }
 

@@ -426,6 +426,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // GET /shares -- list active shares
   app.get("/shares", async (c) => {
     const userId = getUserId(c);
+    if (!shareLimiter.check(userId)) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
 
     try {
       const result = await deps.sharing.listShares(userId);

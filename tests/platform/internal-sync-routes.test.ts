@@ -187,4 +187,44 @@ describe("platform/internal-sync-routes", () => {
       expect.objectContaining({ getReader: expect.any(Function) }),
     );
   });
+
+  it("logs malformed JSON parse failures before returning 400", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/presign/get", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: "{",
+    });
+
+    expect(res.status).toBe(400);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[internal-sync] JSON parse failed:",
+      expect.any(String),
+    );
+  });
+
+  it("rejects oversized DELETE bodies with 413", async () => {
+    const app = createTestApp();
+
+    const res = await app.request(
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Fmanifest.json",
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+          "content-type": "application/octet-stream",
+          "content-length": String(65 * 1024),
+        },
+        body: "x",
+      },
+    );
+
+    expect(res.status).toBe(413);
+    expect(r2.deleteObject).not.toHaveBeenCalled();
+  });
 });

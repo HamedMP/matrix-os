@@ -200,6 +200,45 @@ describe("PeerRegistry", () => {
 
       expect(ws2.send).not.toHaveBeenCalled();
     });
+
+    it("continues broadcasting when one peer throws during send", () => {
+      const throwingWs = mockWs();
+      const receiverWs = mockWs();
+      throwingWs.send = vi.fn(() => {
+        throw new Error("socket closed");
+      });
+
+      registry.registerPeer("user1", {
+        peerId: "sender",
+        hostname: "h1",
+        platform: "darwin",
+        clientVersion: "0.1.0",
+      }, mockWs());
+      registry.registerPeer("user1", {
+        peerId: "thrower",
+        hostname: "h2",
+        platform: "linux",
+        clientVersion: "0.1.0",
+      }, throwingWs);
+      registry.registerPeer("user1", {
+        peerId: "receiver",
+        hostname: "h3",
+        platform: "linux",
+        clientVersion: "0.1.0",
+      }, receiverWs);
+
+      vi.clearAllMocks();
+
+      registry.broadcastChange("user1", "sender", {
+        type: "sync:change",
+        files: [],
+        peerId: "sender",
+        manifestVersion: 1,
+      });
+
+      expect(throwingWs.send).toHaveBeenCalledOnce();
+      expect(receiverWs.send).toHaveBeenCalledOnce();
+    });
   });
 
   describe("bounded peer map (100 max, LRU)", () => {

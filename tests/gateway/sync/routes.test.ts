@@ -610,6 +610,20 @@ describe("sharing routes", () => {
     expect(mockSharing.createShare).not.toHaveBeenCalled();
   });
 
+  it("GET /shares returns 429 when rate limit exceeded", async () => {
+    mockSharing.listShares.mockResolvedValue({ owned: [], received: [] });
+    const app = createTestApp();
+
+    for (let i = 0; i < 60; i++) {
+      const res = await app.request("/api/sync/shares");
+      expect(res.status).toBe(200);
+    }
+
+    const res = await app.request("/api/sync/shares");
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toEqual({ error: "Rate limit exceeded" });
+  });
+
   it("DELETE /share revokes and returns 200", async () => {
     mockSharing.revokeShare.mockResolvedValue(undefined);
 

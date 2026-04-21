@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveTarget } from "../../src/cli/commands/ssh.js";
+
+vi.mock("node:child_process", () => ({
+  spawn: vi.fn(() => ({ on: vi.fn() })),
+}));
+
+import { spawn } from "node:child_process";
+import { resolveTarget, spawnSsh } from "../../src/cli/commands/ssh.js";
 
 describe("resolveTarget", () => {
   afterEach(() => {
@@ -73,5 +79,19 @@ describe("resolveTarget", () => {
         token: "token",
       }),
     ).rejects.toThrow("Platform returned an invalid SSH target");
+  });
+
+  it("uses interactive host key checking for spawned SSH sessions", () => {
+    spawnSsh({
+      host: "ssh.matrix-os.com",
+      port: 2222,
+      user: "matrixos",
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "ssh",
+      expect.arrayContaining(["-o", "StrictHostKeyChecking=ask"]),
+      expect.objectContaining({ stdio: "inherit" }),
+    );
   });
 });

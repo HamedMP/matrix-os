@@ -61,7 +61,7 @@ export async function resolveTarget(options: SshOptions): Promise<SshTarget> {
 export function spawnSsh(target: SshTarget): ReturnType<typeof spawn> {
   const args = [
     "-p", String(target.port),
-    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "StrictHostKeyChecking=ask",
     `${target.user}@${target.host}`,
     // Auto-attach to tmux session if available
     "-t", "tmux attach -t main 2>/dev/null || tmux new-session -s main",
