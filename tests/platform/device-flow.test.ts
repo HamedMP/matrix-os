@@ -79,7 +79,7 @@ describe("device flow: polling", () => {
       verificationBase: VERIFY_BASE,
       issueToken: async ({ clerkUserId }) => ({
         token: `jwt-for-${clerkUserId}`,
-        expiresAt: now + 30 * 24 * 3_600_000,
+        expiresAt: now + 24 * 3_600_000,
         handle: clerkUserId.replace("user_", "@"),
       }),
     });
@@ -130,7 +130,7 @@ describe("device flow: polling", () => {
         });
         return {
           token: `jwt-for-${clerkUserId}`,
-          expiresAt: now + 30 * 24 * 3_600_000,
+          expiresAt: now + 24 * 3_600_000,
           handle: clerkUserId.replace("user_", "@"),
         };
       },

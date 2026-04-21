@@ -53,7 +53,7 @@ describe("sync-jwt: issuance", () => {
     expect(issued.claims.exp).toBeGreaterThan(issued.claims.iat);
   });
 
-  it("defaults expiresInSec to 30 days", async () => {
+  it("defaults expiresInSec to 24 hours", async () => {
     const issued = await issueSyncJwt({
       secret: SECRET,
       clerkUserId: "user_abc",
@@ -62,9 +62,9 @@ describe("sync-jwt: issuance", () => {
       now: 1_700_000_000,
     });
 
-    const thirtyDays = 30 * 24 * 60 * 60;
-    expect(issued.claims.exp - issued.claims.iat).toBe(thirtyDays);
-    expect(issued.expiresAt).toBe((1_700_000_000 + thirtyDays) * 1000);
+    const oneDay = 24 * 60 * 60;
+    expect(issued.claims.exp - issued.claims.iat).toBe(oneDay);
+    expect(issued.expiresAt).toBe((1_700_000_000 + oneDay) * 1000);
   });
 });
 

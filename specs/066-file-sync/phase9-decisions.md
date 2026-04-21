@@ -20,7 +20,7 @@ In dev, both platform and gateway read the same `PLATFORM_JWT_SECRET` env var. I
 
 **Decision**: No explicit revocation in Phase 9.
 
-Tokens carry a 30-day expiry. If a Clerk session is revoked, the next `matrixos login` issues a new token; old tokens age out within 30 days. A future "force logout all devices" flow can drop a `token_blocklist` table indexed by `jti` if needed -- not now.
+Tokens carry a 24-hour expiry. If a Clerk session is revoked, the next `matrixos login` issues a new token; old tokens age out within 24 hours. A future "force logout all devices" flow can drop a `token_blocklist` table indexed by `jti` if needed -- not now.
 
 ## 4. CSRF on `/auth/device/approve`
 

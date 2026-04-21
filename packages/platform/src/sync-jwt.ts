@@ -2,7 +2,7 @@ import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 
 export const SYNC_JWT_ISSUER = 'matrix-os-platform';
 export const SYNC_JWT_AUDIENCE = 'matrix-os-sync';
-const DEFAULT_EXPIRES_IN_SEC = 30 * 24 * 60 * 60; // 30 days
+const DEFAULT_EXPIRES_IN_SEC = 24 * 60 * 60; // 24 hours
 
 export interface SyncJwtClaims extends JWTPayload {
   sub: string; // clerkUserId

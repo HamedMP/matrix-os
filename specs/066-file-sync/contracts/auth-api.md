@@ -86,7 +86,7 @@ The JWT carries:
   handle: string,       // matches the gateway's MATRIX_HANDLE
   gateway_url: string,  // hint -- /api/me is authoritative
   iat: number,          // epoch seconds
-  exp: number,          // epoch seconds (default iat + 30 days)
+  exp: number,          // epoch seconds (default iat + 24 hours)
   iss: "matrix-os-platform"
 }
 ```
@@ -192,9 +192,9 @@ secret while user CLI/Mac app traffic moves to JWTs.
 ## Token lifecycle
 
 - **Issue**: `/api/auth/device/token` after Clerk-authenticated approval.
-- **Expiry**: 30 days from issue (default).
+- **Expiry**: 24 hours from issue (default).
 - **Refresh**: Not in Phase 9. The CLI runs `matrixos login` again to mint
   a fresh JWT.
 - **Revocation**: No explicit revocation endpoint. Revoking the user's
   Clerk session prevents further logins; existing JWTs age out within
-  30 days.
+  24 hours.

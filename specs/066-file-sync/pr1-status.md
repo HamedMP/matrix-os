@@ -368,8 +368,12 @@ and landed as a single conventional commit.
 - [x] `resolve-conflict` now fails closed when conflict-copy deletion fails
   instead of returning a misleading success response.
 - [x] Gateway public-key caching is capped to the active RS256 key.
+- [x] Platform-issued sync JWTs now default to a 24-hour lifetime instead of
+  30 days while revocation remains a separate follow-up.
 
 ### Latest verification
 
 - [x] Host: `pnpm test tests/gateway/auth-jwt.test.ts tests/gateway/sync/home-mirror.test.ts tests/gateway/sync/routes.test.ts` (`69/69`).
 - [x] Docker: `pnpm test tests/platform/internal-sync-routes.test.ts tests/platform/proxy-routing.test.ts tests/platform/orchestrator.test.ts` (`33/33`).
+- [x] Host: `pnpm test tests/platform/sync-jwt.test.ts tests/gateway/auth-jwt.test.ts` (`21/21`).
+- [x] Docker: `pnpm test tests/platform/device-flow.test.ts tests/platform/device-routes.test.ts` (`32/32`).
