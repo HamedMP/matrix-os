@@ -48,7 +48,11 @@ fi
 
 # Build file list
 if [[ -n "$DIFF_BASE" ]]; then
-  FILES=$(git diff --name-only --diff-filter=ACMR "$DIFF_BASE"...HEAD -- $SCAN_PATHS 2>/dev/null | grep -E '\.(ts|tsx)$' || true)
+  if ! git rev-parse --verify "$DIFF_BASE" &>/dev/null; then
+    echo "Error: diff base '$DIFF_BASE' not found. Run 'git fetch' first." >&2
+    exit 2
+  fi
+  FILES=$(git diff --name-only --diff-filter=ACMR "$DIFF_BASE"...HEAD -- $SCAN_PATHS | grep -E '\.(ts|tsx)$' || true)
   if [[ -z "$FILES" ]]; then
     echo "No TypeScript files changed vs $DIFF_BASE."
     exit 0
