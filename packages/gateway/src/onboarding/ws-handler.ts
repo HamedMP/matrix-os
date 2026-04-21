@@ -212,7 +212,8 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     let data: unknown;
     try {
       data = JSON.parse(typeof raw === "string" ? raw : raw.toString());
-    } catch {
+    } catch (err) {
+      console.warn("[onboarding] inbound JSON parse failed:", err instanceof Error ? err.message : String(err));
       return;
     }
 

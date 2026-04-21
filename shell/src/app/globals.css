@@ -245,6 +245,71 @@ pre {
   }
 }
 
+/* Aoede dock button: hover and active states show the same 200%-gradient
+   sweep that drives the "Enter Matrix OS" wordmark in onboarding. The
+   sweep runs on two layers simultaneously:
+   - ::before is a masked 1.5px gradient ring around the button
+   - ::after is a translucent primary wave that overlays the whole button
+     interior (including the mic icon), tinting everything it passes. */
+.aoede-dock-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.aoede-dock-button::before,
+.aoede-dock-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-size: 200% 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Ring: opaque gradient clipped to the border via mask. */
+.aoede-dock-button::before {
+  padding: 1.5px;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 30%,
+    var(--primary) 50%,
+    transparent 70%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+/* Fill sweep: translucent primary wave sits above the white fill AND
+   the black mic icon, so the tint washes across both as it passes. */
+.aoede-dock-button::after {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 30%,
+    color-mix(in srgb, var(--primary) 55%, transparent) 50%,
+    transparent 70%,
+    transparent 100%
+  );
+}
+
+.aoede-dock-button:hover::before,
+.aoede-dock-button:hover::after,
+.aoede-dock-button[data-active="true"]::before,
+.aoede-dock-button[data-active="true"]::after {
+  opacity: 1;
+  animation: shimmer 2.4s ease-in-out infinite;
+}
+
 /* App windows: full-screen on mobile, positioned on desktop */
 .app-window {
   inset: 0;

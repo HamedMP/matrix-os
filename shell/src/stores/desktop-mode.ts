@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev" | "vocal";
+export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev";
 
 export interface ModeConfig {
   id: DesktopMode;
@@ -22,15 +22,6 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     id: "canvas",
     label: "Canvas",
     description: "Spatial canvas with zoom, pan, and app grouping",
-    showDock: true,
-    showWindows: true,
-    showBottomPanel: false,
-    chatPosition: "sidebar",
-  },
-  vocal: {
-    id: "vocal",
-    label: "Aoede",
-    description: "Converse with Aoede",
     showDock: true,
     showWindows: true,
     showBottomPanel: false,
@@ -95,9 +86,11 @@ export const useDesktopMode = create<DesktopModeStore>()(
     {
       name: "matrix-os-desktop-mode",
       onRehydrateStorage: () => (state) => {
-        // Coerce any persisted hidden mode (desktop/ambient/dev) into canvas
-        // so existing users land in a visible mode after this change.
-        if (state && MODE_CONFIGS[state.mode]?.hidden) {
+        // Coerce any persisted hidden mode (desktop/ambient/dev) or the
+        // now-removed "vocal" mode into canvas. Aoede is an overlay now
+        // (see `stores/vocal.ts`), not a mode.
+        const config = state ? MODE_CONFIGS[state.mode] : undefined;
+        if (state && (!config || config.hidden)) {
           state.mode = DEFAULT_MODE;
           state.previousMode = null;
         }

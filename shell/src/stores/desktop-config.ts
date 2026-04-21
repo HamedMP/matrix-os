@@ -29,6 +29,25 @@ interface DesktopConfigStore {
   ) => void;
 }
 
+async function persistDesktopPatch(patch: Record<string, unknown>): Promise<void> {
+  const gatewayUrl = getGatewayUrl();
+  const url = `${gatewayUrl}/api/settings/desktop`;
+  const getRes = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!getRes.ok) {
+    throw new Error(`GET /api/settings/desktop ${getRes.status}`);
+  }
+  const config = (await getRes.json()) as Record<string, unknown>;
+  const putRes = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...config, ...patch }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!putRes.ok) {
+    throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
+  }
+}
+
 export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   dock: { position: "left", size: 44, iconSize: 30, autoHide: false },
   pinnedApps: [],
@@ -42,32 +61,16 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       ? current.filter((p) => p !== path)
       : [...current, path];
     set({ pinnedApps: next });
-    const gatewayUrl = getGatewayUrl();
-    fetch(`${gatewayUrl}/api/settings/desktop`).then((res) => {
-      if (!res.ok) return;
-      return res.json().then((config: Record<string, unknown>) => {
-        fetch(`${gatewayUrl}/api/settings/desktop`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...config, pinnedApps: next }),
-        });
-      });
-    }).catch(() => {});
+    persistDesktopPatch({ pinnedApps: next }).catch((err) => {
+      console.warn("[desktop-config] togglePin persist failed:", err instanceof Error ? err.message : String(err));
+    });
   },
   reorderDockSection: (section, paths) => {
     const current = get().dockOrder ?? {};
     const next: DockOrder = { ...current, [section]: paths };
     set({ dockOrder: next });
-    const gatewayUrl = getGatewayUrl();
-    fetch(`${gatewayUrl}/api/settings/desktop`).then((res) => {
-      if (!res.ok) return;
-      return res.json().then((config: Record<string, unknown>) => {
-        fetch(`${gatewayUrl}/api/settings/desktop`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...config, dockOrder: next }),
-        });
-      });
-    }).catch(() => {});
+    persistDesktopPatch({ dockOrder: next }).catch((err) => {
+      console.warn("[desktop-config] reorderDockSection persist failed:", err instanceof Error ? err.message : String(err));
+    });
   },
 }));

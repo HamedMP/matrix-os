@@ -58,9 +58,13 @@ interface VocalPanelProps {
   active: boolean;
   chat?: ChatState;
   onOpenApp?: (query: string) => { success: boolean; resolvedName?: string };
+  // Dismisses the chat popover so Aoede's delegation banner is the only
+  // build-surface on screen. Called when vocal activates and again when
+  // Aoede delegates a build, since the popup otherwise lingers.
+  onDismissChat?: () => void;
 }
 
-export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
+export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPanelProps) {
   // Delay WS/mic mount by one tick so React strict-mode's double-mount
   // doesn't open two sessions back-to-back.
   const [enabled, setEnabled] = useState(false);
@@ -89,6 +93,17 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
   useEffect(() => {
     onOpenAppRef.current = onOpenApp;
   }, [onOpenApp]);
+
+  const onDismissChatRef = useRef(onDismissChat);
+  useEffect(() => {
+    onDismissChatRef.current = onDismissChat;
+  }, [onDismissChat]);
+
+  // When Aoede activates, dismiss the chat popover so the delegation
+  // banner + progress card are the only build surfaces on screen.
+  useEffect(() => {
+    if (active) onDismissChatRef.current?.();
+  }, [active]);
 
   const [delegation, setDelegation] = useState<DelegationStatus | null>(null);
 
@@ -137,6 +152,10 @@ export function VocalPanel({ active, chat, onOpenApp }: VocalPanelProps) {
     if (intent.kind === "create_app") {
       const startIdx = chatRef.current?.messages.length ?? 0;
       const appsSnapshot = new Set(useWindowManager.getState().apps.map((a) => a.name));
+      // Submitting a message flips chat.busy true, which the ChatPopover's
+      // rising-edge effect would turn into an auto-open. Dismiss first so
+      // the popup can't take over the screen mid-build.
+      onDismissChatRef.current?.();
       chatRef.current?.submitMessage(intent.description);
       setDelegation({
         kind: "create_app",

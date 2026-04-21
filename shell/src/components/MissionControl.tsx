@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo } from "react";
-import { Reorder } from "framer-motion";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
@@ -180,12 +179,9 @@ function LauncherGrid({
   visible: boolean;
   closingRef: React.RefObject<boolean>;
 }) {
-  // Share the dock's ordering: reordering in the launcher persists into
-  // the same dockOrder, so a user's preferred order shows up on both
-  // surfaces. Pinned/open subset on the dock is computed from this same
-  // source list, so the relative order matches.
+  // Share the dock's ordering so launcher and dock display in the same order.
+  // Reorder itself happens only in the dock (single-row, Reorder math stable).
   const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
-  const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
 
   const { mainApps, generatedApps } = useMemo(() => {
@@ -201,27 +197,15 @@ function LauncherGrid({
     };
   }, [apps, dockOrder, appLaunchTimes]);
 
+  // Launcher is an overview — dock (Desktop.tsx) is the reorder surface, which
+  // uses a single-row flex layout where framer-motion Reorder's axis math works.
+  // A wrapped grid + Reorder.Group miscomputes neighbor indices across rows, so
+  // tiles here are plain divs.
   const renderTile = (app: AppEntry, indexInAll: number) => {
     const slug = nameToSlug(app.name);
     return (
-      <Reorder.Item
+      <div
         key={app.path}
-        value={app.path}
-        as="div"
-        // touch-none keeps touch drags from scrolling the launcher
-        // mid-reorder. cursor-grab signals the affordance.
-        className="cursor-grab touch-none active:cursor-grabbing"
-        // macOS-Dock-style lift: scale + shadow so the dragged tile
-        // visually detaches from the grid while siblings slide aside.
-        whileDrag={{
-          scale: 1.12,
-          zIndex: 50,
-          boxShadow: "0 16px 40px -8px rgba(0,0,0,0.5)",
-        }}
-        transition={{ type: "spring", stiffness: 600, damping: 38 }}
-        // Entrance stagger -- delay per index across both sections so
-        // the launcher reveal still feels like one orchestrated moment.
-        // We disable the stagger on close so dismissal feels instant.
         style={{
           opacity: visible ? 1 : 0,
           transform: visible ? "translateY(0)" : "translateY(16px)",
@@ -243,7 +227,7 @@ function LauncherGrid({
           onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
           onRemoveFromCanvas={onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
         />
-      </Reorder.Item>
+      </div>
     );
   };
 
@@ -254,15 +238,9 @@ function LauncherGrid({
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
             Main
           </div>
-          <Reorder.Group
-            as="div"
-            axis="x"
-            values={mainApps.map((a) => a.path)}
-            onReorder={(order) => reorderDockSection("systemApps", order)}
-            className="flex flex-wrap gap-1 justify-start"
-          >
+          <div className="flex flex-wrap gap-1 justify-start">
             {mainApps.map((app, i) => renderTile(app, i))}
-          </Reorder.Group>
+          </div>
         </>
       )}
 
@@ -283,15 +261,9 @@ function LauncherGrid({
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
             My Apps
           </div>
-          <Reorder.Group
-            as="div"
-            axis="x"
-            values={generatedApps.map((a) => a.path)}
-            onReorder={(order) => reorderDockSection("userApps", order)}
-            className="flex flex-wrap gap-1 justify-start"
-          >
+          <div className="flex flex-wrap gap-1 justify-start">
             {generatedApps.map((app, i) => renderTile(app, mainApps.length + i))}
-          </Reorder.Group>
+          </div>
         </>
       )}
     </div>

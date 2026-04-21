@@ -1,9 +1,9 @@
 import { type OnboardingStage, STAGE_TIMEOUTS } from "./types.js";
 
 const VALID_TRANSITIONS: Record<OnboardingStage, OnboardingStage[]> = {
-  greeting: ["interview"],
-  interview: ["extract_profile"],
-  extract_profile: ["suggest_apps"],
+  greeting: ["interview", "done"],
+  interview: ["extract_profile", "done"], // done = claude_code skip from interview
+  extract_profile: ["suggest_apps", "done"],
   suggest_apps: ["api_key", "done"], // done = claude_code path (skip api_key)
   api_key: ["done"],
   done: [],

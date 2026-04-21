@@ -5,6 +5,7 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
+import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
@@ -36,7 +37,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -379,6 +380,50 @@ function ModeSwitcher({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Aoede's dock entrypoint. Uses the `.aoede-dock-button` class (defined
+ * in globals.css) for the shimmer ring + fill sweep shared with the
+ * "Enter Matrix OS" wordmark. `variant` toggles the tooltip wrapper and
+ * default size so desktop and mobile stay in lockstep.
+ */
+function AoedeDockButton({
+  size,
+  variant,
+  tooltipSide,
+}: {
+  size: number;
+  variant: "desktop" | "mobile";
+  tooltipSide?: "left" | "right" | "top";
+}) {
+  const active = useVocalStore((s) => s.active);
+  const toggle = useVocalStore((s) => s.toggle);
+
+  const button = (
+    <button
+      data-testid={variant === "desktop" ? "dock-vocal" : "dock-vocal-mobile"}
+      data-active={active ? "true" : "false"}
+      onClick={toggle}
+      className="aoede-dock-button flex shrink-0 items-center justify-center rounded-full bg-white text-black border border-border/60 shadow-sm transition-transform hover:scale-105 active:scale-95"
+      style={{ width: size, height: size }}
+      aria-label={active ? "Stop Aoede" : "Start Aoede"}
+      aria-pressed={active}
+    >
+      <MicIcon className="size-4" />
+    </button>
+  );
+
+  if (variant === "mobile") return button;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side={tooltipSide} sideOffset={8}>
+        {active ? "Aoede (on)" : "Aoede"}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -932,36 +977,35 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const hydrated = useDesktopMode((s) => s._hydrated);
   const modeConfig = getModeConfig(hydrated ? desktopMode : "canvas");
 
-  // When switching from a canvas-rendering mode to a non-canvas one,
-  // cascade windows to fit the viewport. Canvas positions use a wide
-  // grid that extends off-screen in modes without zoom/pan. Vocal mode
-  // ALSO renders the CanvasRenderer (as an overlay), so canvas↔vocal
-  // transitions must NOT trigger cascading — that would reorder every
-  // window in place every time the user enters voice mode.
+  // Cascade windows back to the viewport when leaving canvas. Canvas
+  // positions use a wide grid that extends off-screen in other modes.
   useEffect(() => {
-    const rendersCanvas = (m: typeof desktopMode) => m === "canvas" || m === "vocal";
-    if (!rendersCanvas(desktopMode) && previousMode && rendersCanvas(previousMode)) {
+    if (desktopMode !== "canvas" && previousMode === "canvas") {
       wmCascadeWindows(dockXOffset, 20, 30);
     }
   }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
 
+  // Aoede is orthogonal to mode now — a pointer-events-none overlay that
+  // can ride on top of any mode. The dock button toggles it.
+  const vocalActive = useVocalStore((s) => s.active);
+  const toggleVocal = useVocalStore((s) => s.toggle);
+
   // Delayed unmount for the vocal overlay so the exit animation has time
-  // to play. `active` flips the instant desktopMode leaves "vocal" (so
-  // the mic/WS shut down immediately), but the DOM lingers for ~700ms
-  // after to let the fade-out finish. The setState-in-effect lint rule
-  // warns about cascading renders but this is a legitimate delayed-
-  // unmount primitive — effect depends on desktopMode, not on
-  // vocalMounted, so there's no cascade loop.
-  const [vocalMounted, setVocalMounted] = useState(desktopMode === "vocal");
+  // to play. `active` flips instantly on toggle (so the mic/WS shut down),
+  // but the DOM lingers for ~950ms after to let the fade-out finish. The
+  // setState-in-effect lint warns about cascading renders but this is a
+  // legitimate delayed-unmount primitive — effect depends on vocalActive,
+  // not on vocalMounted, so there's no cascade loop.
+  const [vocalMounted, setVocalMounted] = useState(vocalActive);
   useEffect(() => {
-    if (desktopMode === "vocal") {
+    if (vocalActive) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setVocalMounted(true);
       return;
     }
     const t = setTimeout(() => setVocalMounted(false), 950);
     return () => clearTimeout(t);
-  }, [desktopMode]);
+  }, [vocalActive]);
 
   const modes = visibleModes();
   const cycleMode = useCallback(() => {
@@ -1009,6 +1053,13 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         group: "Actions",
         keywords: ["files", "finder", "browse", "explorer"],
         execute: () => openWindow("Files", "__file-browser__"),
+      },
+      {
+        id: "action:toggle-vocal",
+        label: "Toggle Aoede",
+        group: "Actions",
+        keywords: ["aoede", "vocal", "voice", "mic", "talk"],
+        execute: () => toggleVocal(),
       },
       ...modeCommands,
       // File menu commands
@@ -1138,6 +1189,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       "action:toggle-mc",
       "action:open-settings",
       "action:open-file-browser",
+      "action:toggle-vocal",
       "file:new-window",
       "file:close-window",
       "file:minimize-window",
@@ -1151,7 +1203,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       "view:fullscreen",
       ...visibleModes().map((m) => `mode:${m.id}`),
     ]);
-  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow]);
+  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, toggleVocal]);
 
   useEffect(() => {
     const appCommands = apps.map((app) => ({
@@ -1170,7 +1222,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     <TooltipProvider delayDuration={300}>
       {!showSetup && (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
-          {(desktopMode === "canvas" || desktopMode === "vocal") && <CanvasToolbar />}
+          {desktopMode === "canvas" && <CanvasToolbar />}
         </MenuBar>
       )}
       {showSetup && (
@@ -1446,6 +1498,21 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               </div>
             );
           })()}
+
+          {/* Aoede lives on its own line below the system cluster. It's
+              not an app or a setting — it's an ambient presence that can
+              ride on top of any mode, so it gets a distinct circular
+              shape and a primary-glow halo instead of the square dock
+              icons. The active state breathes to echo the vocal overlay. */}
+          <div
+            className={isHorizontal
+              ? "h-6 w-px bg-border/40 mx-1.5"
+              : "w-6 h-px bg-border/40 my-1.5"
+            }
+            aria-hidden
+          />
+          <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
+
           <div
             className={
               isHorizontal
@@ -1501,6 +1568,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             >
               <SettingsIcon className="size-4" />
             </button>
+            <div className="h-6 w-px bg-border/40 mx-0.5 shrink-0" aria-hidden />
+            <AoedeDockButton size={36} variant="mobile" />
             <div className="shrink-0">
               <UserButton />
             </div>
@@ -1560,19 +1629,18 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             </div>
           )}
 
-          {modeConfig.showWindows &&
-            (desktopMode === "canvas" || desktopMode === "vocal") &&
-            !showSetup && <CanvasRenderer />}
+          {modeConfig.showWindows && desktopMode === "canvas" && !showSetup && <CanvasRenderer />}
 
           {vocalMounted && !showSetup && (
             <VocalPanel
-              active={desktopMode === "vocal"}
+              active={vocalActive}
               chat={chat}
               onOpenApp={openAppByName}
+              onDismissChat={() => setChatOpen(false)}
             />
           )}
 
-          {modeConfig.showWindows && desktopMode !== "canvas" && desktopMode !== "vocal" && windows.filter((w) => !w.minimized).length === 0 &&
+          {modeConfig.showWindows && desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <p className="text-sm text-white/50 drop-shadow-md">
@@ -1585,7 +1653,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           {/* Desktop: positioned windows; Mobile: full-screen cards.
               We render minimized windows too (display:none) so iframe state,
               terminal sockets, and React state survive minimize -> restore. */}
-          {modeConfig.showWindows && desktopMode !== "canvas" && desktopMode !== "vocal" && windows.map((win) => {
+          {modeConfig.showWindows && desktopMode !== "canvas" && windows.map((win) => {
             const isMinimizing = minimizingIds.has(win.id);
             const isHidden = win.minimized && !isMinimizing;
 

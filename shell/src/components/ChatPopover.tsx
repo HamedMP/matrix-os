@@ -22,6 +22,7 @@ import {
   SquareIcon,
 } from "lucide-react";
 import { useChatContext } from "@/stores/chat-context";
+import { useVocalStore } from "@/stores/vocal";
 import { RichContent } from "@/components/ui-blocks";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/lib/chat";
@@ -98,16 +99,26 @@ export function ChatPopover({
   // reopen (which would trap them inside the popup until streaming ends).
   // The userClosedDuringBusyRef latch makes that respect stick across
   // queue-drain flickers within the same busy session.
+  //
+  // Suppressed when Aoede is active: vocal delegates via submitMessage,
+  // which flips busy and would otherwise snap the chat open on top of the
+  // vocal overlay. The delegation banner inside VocalPanel already
+  // surfaces the build; the chat popup would be noise.
   const busy = chat?.busy ?? false;
+  const vocalActive = useVocalStore((s) => s.active);
   useEffect(() => {
-    // Once the agent is fully idle, re-arm auto-open for the next run
-    // (e.g. vocal mode delegating a fresh task to the chat agent).
+    // Once the agent is fully idle, re-arm auto-open for the next run.
     if (!busy) userClosedDuringBusyRef.current = false;
-    if (busy && !prevBusyRef.current && !userClosedDuringBusyRef.current) {
+    if (
+      busy &&
+      !prevBusyRef.current &&
+      !userClosedDuringBusyRef.current &&
+      !vocalActive
+    ) {
       setOpen(true);
     }
     prevBusyRef.current = busy;
-  }, [busy, setOpen]);
+  }, [busy, vocalActive, setOpen]);
 
   // Wrap setOpen so every close path latches userClosedDuringBusyRef
   // when the user dismisses while the agent is still busy. Used by both
