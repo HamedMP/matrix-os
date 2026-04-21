@@ -235,17 +235,18 @@ export class ProcessManager {
     const startCmd = manifest.serve!.start;
     const memoryMb = manifest.resources?.memoryMb ?? 256;
 
-    // Inject --max-old-space-size for Node.js processes
-    let fullCmd = startCmd;
-    if (startCmd.startsWith("node ") && !startCmd.includes("--max-old-space-size")) {
-      fullCmd = `node --max-old-space-size=${memoryMb} ${startCmd.slice(5)}`;
-    }
+    // Apply the heap cap via NODE_OPTIONS so it reaches the actual Node
+    // process regardless of launcher (`next start`, `pnpm start`, `bun run
+    // start`, `node_modules/.bin/next start`, ...). Injecting into the
+    // startCmd string only worked for bare `node <script>` invocations,
+    // which no real fixture uses.
+    env.NODE_OPTIONS = `--max-old-space-size=${memoryMb}`;
 
     // Use sh -c for shell interpretation (pipes, quotes, etc.)
     // Use detached + process.kill(-pid) so we can kill the entire process group
     let child: ChildProcess;
     try {
-      child = spawn("sh", ["-c", fullCmd], {
+      child = spawn("sh", ["-c", startCmd], {
         cwd: appDir,
         env,
         stdio: ["ignore", "pipe", "pipe"],

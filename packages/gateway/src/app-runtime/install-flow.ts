@@ -1,18 +1,24 @@
 /**
  * App install flow with verified path and trust gate.
  *
- * ack-store contract (shared between session and install endpoints):
- * - Session endpoint uses peekAck (non-consuming) to validate the ack
- *   token before issuing a signed cookie.
- * - Install endpoint uses consumeAck (terminal) to validate and consume
- *   the ack token, ensuring one-time use.
- * - The same ack token covers both endpoints in one user flow.
- *   The session endpoint peeks first, then the install endpoint consumes.
- *   If the install endpoint is called second, it consumes the token.
- *   Contributors: do NOT accidentally double-consume.
+ * ack-store contract:
+ * - Session endpoint (POST /api/apps/:slug/session) uses peekAck
+ *   (non-consuming) to validate the ack token before issuing a signed
+ *   cookie.
+ * - assertInstallAllowed calls consumeAck (terminal) during the install
+ *   step -- the same ack token may have been peeked by the session
+ *   endpoint earlier in the user flow.
+ *
+ * NOTE (T081): the public install endpoint that wires assertInstallAllowed
+ * into an HTTP handler is not yet mounted in server.ts. IPC installs still
+ * route through the legacy packages/gateway/src/app-fork.ts path. Until
+ * that wiring lands, assertInstallAllowed / installVerifiedApp are exercised
+ * only by tests -- any new install entry point MUST call assertInstallAllowed
+ * before installVerifiedApp, or gated-tier apps will bypass the ack check.
  */
 
-import { readFile, mkdir, cp, rm } from "node:fs/promises";
+import { readFile, mkdir, cp, rm, rename } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import { satisfies } from "semver";
@@ -170,11 +176,22 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
     };
   }
 
-  // For idempotent reinstall, remove existing directory
-  const freshInstall = !existsSync(targetDir);
-  if (!freshInstall) {
-    await rm(targetDir, { recursive: true, force: true });
+  // Rename any existing install aside so a failed reinstall can roll back.
+  // Same filesystem as targetDir, so rename is atomic; cp-then-swap would
+  // leave a window where the app is partially written.
+  const backupDir = existsSync(targetDir)
+    ? `${targetDir}.backup-${randomBytes(8).toString("hex")}`
+    : null;
+  if (backupDir) {
+    await rename(targetDir, backupDir);
   }
+
+  const rollback = async () => {
+    await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    if (backupDir) {
+      await rename(backupDir, targetDir).catch(() => {});
+    }
+  };
 
   try {
     // Copy source to target
@@ -190,18 +207,17 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
 
       const buildResult = await orchestrator.build(manifest.slug, targetDir);
       if (!buildResult.ok) {
-        // Rollback on build failure
-        await rm(targetDir, { recursive: true, force: true });
+        await rollback();
         return buildResult;
       }
     }
 
+    if (backupDir) {
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
     return { ok: true, manifest };
   } catch (err: unknown) {
-    // Rollback on any error
-    if (freshInstall) {
-      await rm(targetDir, { recursive: true, force: true });
-    }
+    await rollback();
     return {
       ok: false,
       error: new ManifestError(
@@ -230,6 +246,20 @@ export async function installVerifiedApp(
   // For trusted tiers, use the standard install path
   if (TRUSTED_TIERS.has(listingTrust)) {
     return installApp({ sourceDir, homeDir, storeDir });
+  }
+
+  // Community tier is fail-closed: we refuse to install without an
+  // attested hash to compare the rebuild against. Without it the
+  // `verified` path degrades to an unverified rebuild, which would
+  // break the contract advertised to callers.
+  if (!declaredDistHash) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "invalid_manifest",
+        `community-tier install requires declaredDistHash`,
+      ),
+    };
   }
 
   // Community tier: rebuild from source and verify hash
@@ -296,11 +326,21 @@ export async function installVerifiedApp(
     };
   }
 
-  // For idempotent reinstall, remove existing directory
-  const freshInstall = !existsSync(targetDir);
-  if (!freshInstall) {
-    await rm(targetDir, { recursive: true, force: true });
+  // Rename any existing install aside so a failed reinstall can roll back.
+  // See installApp for rationale.
+  const backupDir = existsSync(targetDir)
+    ? `${targetDir}.backup-${randomBytes(8).toString("hex")}`
+    : null;
+  if (backupDir) {
+    await rename(targetDir, backupDir);
   }
+
+  const rollback = async () => {
+    await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    if (backupDir) {
+      await rename(backupDir, targetDir).catch(() => {});
+    }
+  };
 
   try {
     // Copy source to target
@@ -322,36 +362,36 @@ export async function installVerifiedApp(
 
       const buildResult = await orchestrator.build(manifest.slug, targetDir);
       if (!buildResult.ok) {
-        await rm(targetDir, { recursive: true, force: true });
+        await rollback();
         return buildResult;
       }
 
-      // Hash the rebuilt output and compare to declared hash
-      if (declaredDistHash) {
-        const outputDir = join(targetDir, manifest.build.output);
-        const sourceGlobs = ["**/*"];
-        const rebuiltHash = await hashSources(outputDir, sourceGlobs);
+      // Hash the rebuilt output and compare to the declared hash.
+      // declaredDistHash is guaranteed non-empty above; we verify unconditionally.
+      const outputDir = join(targetDir, manifest.build.output);
+      const sourceGlobs = ["**/*"];
+      const rebuiltHash = await hashSources(outputDir, sourceGlobs);
 
-        if (rebuiltHash !== declaredDistHash) {
-          await rm(targetDir, { recursive: true, force: true });
-          return {
-            ok: false,
-            error: new BuildError(
-              "hash_mismatch",
-              "build",
-              0,
-              `rebuilt dist hash ${rebuiltHash} does not match declared hash ${declaredDistHash}`,
-            ),
-          };
-        }
+      if (rebuiltHash !== declaredDistHash) {
+        await rollback();
+        return {
+          ok: false,
+          error: new BuildError(
+            "hash_mismatch",
+            "build",
+            0,
+            `rebuilt dist hash ${rebuiltHash} does not match declared hash ${declaredDistHash}`,
+          ),
+        };
       }
     }
 
+    if (backupDir) {
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
     return { ok: true, manifest };
   } catch (err: unknown) {
-    if (freshInstall) {
-      await rm(targetDir, { recursive: true, force: true });
-    }
+    await rollback();
     return {
       ok: false,
       error: new ManifestError(

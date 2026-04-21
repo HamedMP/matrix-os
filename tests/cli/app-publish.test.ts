@@ -7,15 +7,24 @@ import { publishApp, type PublishResult } from "../../packages/cli/src/commands/
 
 let tmpDir: string;
 let storeDir: string;
+let prevPublishKey: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "matrix-os-publish-"));
   storeDir = join(tmpDir, "store");
   await mkdir(storeDir, { recursive: true });
+  prevPublishKey = process.env.MATRIX_PUBLISH_KEY;
+  process.env.MATRIX_PUBLISH_KEY =
+    "test-publish-key-0000000000000000000000000000000000";
 });
 
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
+  if (prevPublishKey === undefined) {
+    delete process.env.MATRIX_PUBLISH_KEY;
+  } else {
+    process.env.MATRIX_PUBLISH_KEY = prevPublishKey;
+  }
 });
 
 describe("publishApp", () => {

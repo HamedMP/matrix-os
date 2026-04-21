@@ -6,6 +6,13 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+// Must mirror SAFE_SLUG in packages/gateway/src/app-runtime/paths.ts so the
+// publisher can never produce a slug the gateway will later refuse.
+const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// SemVer 2.0.0 without the `v` prefix. Keeps the segment that gets joined into
+// `storeDir/{slug}/{version}` free of `.` traversal and shell metacharacters.
+const SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
 export interface PublishOptions {
   appDir: string;
   storeDir: string;
@@ -66,8 +73,16 @@ async function hashDirectory(dirPath: string): Promise<string> {
 }
 
 function signBundle(manifestJson: string): string {
-  // Local signing stub -- in production this would use a real signing key
-  const hmac = createHmac("sha256", "matrix-os-publish-key");
+  // Publishers must supply MATRIX_PUBLISH_KEY. Shipping a hardcoded fallback
+  // would mean anyone who reads this repo can forge signatures accepted by
+  // installVerifiedApp's trusted path.
+  const key = process.env.MATRIX_PUBLISH_KEY;
+  if (!key || key.length < 32) {
+    throw new Error(
+      "MATRIX_PUBLISH_KEY environment variable is required (min 32 chars) to sign a bundle",
+    );
+  }
+  const hmac = createHmac("sha256", key);
   hmac.update(manifestJson);
   return hmac.digest("hex");
 }
@@ -107,6 +122,15 @@ export async function publishApp(opts: PublishOptions): Promise<PublishResult> {
   // Basic validation
   if (!manifest.name || !manifest.slug || !manifest.version || !manifest.runtime || !manifest.runtimeVersion) {
     return { ok: false, error: new Error("manifest missing required fields (name, slug, version, runtime, runtimeVersion)") };
+  }
+  // slug and version are joined into a filesystem path below; a malicious or
+  // typoed manifest.json with `"../"` segments would escape storeDir and
+  // clobber arbitrary files on the publisher's machine.
+  if (!SAFE_SLUG.test(manifest.slug)) {
+    return { ok: false, error: new Error(`invalid manifest.slug: must match ${SAFE_SLUG}`) };
+  }
+  if (!SEMVER_RE.test(manifest.version)) {
+    return { ok: false, error: new Error(`invalid manifest.version: must be semver (e.g. 1.2.3)`) };
   }
 
   const bundleDir = join(storeDir, manifest.slug, manifest.version);
