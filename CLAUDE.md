@@ -149,7 +149,27 @@ bun run test                # unit tests
 
 ### PR Body: Mandatory Invariants
 
-Every backend PR must document: source of truth, lock/transaction scope, acceptable orphan states, auth source of truth, and explicitly deferred scope.
+Every backend PR must include an "Invariants" section:
+
+- **Source of truth**: which store is canonical, how divergence is reconciled
+- **Lock/transaction scope**: what is inside the critical section, are network calls inside or outside
+- **Acceptable orphan states**: what happens if step N+1 fails after step N succeeds
+- **Auth source of truth**: primary auth mechanism, fallback behavior
+- **Deferred scope**: what is explicitly NOT in scope -- say so, don't leave dead code
+
+### Branch Freeze
+
+Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
+
+### Hard Rules (never violate)
+
+- No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
+- No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
+- No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
+- No unbounded `Map`/`Set` without size cap and eviction
+- No `path.join()` on unvalidated external input -- use `resolveWithinPrefix`
+- No raw error messages or Zod `.issues` in client responses
+- No PR larger than 3000 additions or 50 files without splitting
 
 ## Reference Docs
 
