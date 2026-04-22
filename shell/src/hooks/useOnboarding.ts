@@ -69,6 +69,11 @@ export function useOnboarding(): OnboardingHook {
   const isPlayingRef = useRef(false);
   const nextStartTimeRef = useRef(0);
   const playGainRef = useRef<GainNode | null>(null);
+  // Tracks whether the hook is still mounted so async mic setup can bail
+  // out cleanly if the user dismisses onboarding while the mic permission
+  // prompt or audioWorklet module load is in flight. Without this, the
+  // MediaStream + AudioContext leak past unmount.
+  const mountedRef = useRef(false);
 
   // Word-by-word subtitle reveal queue
   const wordQueueRef = useRef<string[]>([]);
@@ -186,16 +191,32 @@ export function useOnboarding(): OnboardingHook {
 
   // Start mic capture via AudioWorklet
   const startMic = useCallback(async () => {
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      // Bail if the user dismissed onboarding while the permission prompt
+      // was open — otherwise the freshly-granted MediaStream leaks past
+      // unmount and the OS mic indicator stays on.
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
 
-      const ctx = new AudioContext({ sampleRate: 16000 });
+      ctx = new AudioContext({ sampleRate: 16000 });
       micCtxRef.current = ctx;
 
       await ctx.audioWorklet.addModule("/audio-worklet-processor.js");
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        ctx.close().catch(() => {});
+        streamRef.current = null;
+        micCtxRef.current = null;
+        return;
+      }
       const worklet = new AudioWorkletNode(ctx, "pcm16-processor");
       workletNodeRef.current = worklet;
 
@@ -213,9 +234,16 @@ export function useOnboarding(): OnboardingHook {
       source.connect(worklet);
       setVoiceState("listening");
     } catch {
-      // Mic denied — fall back to text mode
-      setIsVoiceMode(false);
-      send({ type: "start", audioFormat: "text" });
+      // Stop any stream/context we partially acquired before the error.
+      stream?.getTracks().forEach((t) => t.stop());
+      ctx?.close().catch(() => {});
+      streamRef.current = null;
+      micCtxRef.current = null;
+      if (mountedRef.current) {
+        // Mic denied — fall back to text mode
+        setIsVoiceMode(false);
+        send({ type: "start", audioFormat: "text" });
+      }
     }
   }, [send]);
 
@@ -328,7 +356,9 @@ export function useOnboarding(): OnboardingHook {
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       wsRef.current?.close();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       micCtxRef.current?.close();
