@@ -918,6 +918,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         log.error(`home mirror watcher error: ${errorMessage(err)}`);
       });
 
+      // Wait for chokidar to finish its initial scan and register inotify
+      // watches before returning. Otherwise a write that lands immediately
+      // after start() resolves can be missed on slow filesystems (notably
+      // GitHub Actions runners), where the watches aren't installed yet.
+      await new Promise<void>((resolve) => {
+        watcher!.once("ready", resolve);
+      });
+
       if (stopRequested) {
         await releaseResources();
         return;
