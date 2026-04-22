@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createPlatformDb, type PlatformDB, insertContainer } from "../../packages/platform/src/db.js";
+import { createPlatformDb, type PlatformDB, getContainer, insertContainer } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
+import type Dockerode from "dockerode";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -31,6 +32,29 @@ function stubOrchestrator(): Orchestrator {
     listAll: vi.fn().mockReturnValue([]),
     syncStates: vi.fn(),
   };
+}
+
+function stubDocker(inspectInfo: { id?: string; ipAddress?: string; running?: boolean } = {}): Dockerode {
+  const {
+    id = "docker-ctr-1",
+    ipAddress = "172.18.0.14",
+    running = true,
+  } = inspectInfo;
+  return {
+    getContainer: vi.fn(() => ({
+      inspect: vi.fn().mockResolvedValue({
+        Id: id,
+        State: { Running: running },
+        NetworkSettings: {
+          Networks: {
+            "matrixos-net": {
+              IPAddress: ipAddress,
+            },
+          },
+        },
+      }),
+    })),
+  } as unknown as Dockerode;
 }
 
 describe("platform proxy routing", () => {
@@ -165,8 +189,11 @@ describe("platform proxy routing", () => {
   });
 
   it("logs and returns 502 when the app-domain container proxy fetch fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("upstream exploded"));
+    vi.spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("upstream exploded"))
+      .mockRejectedValueOnce(new TypeError("fetch failed"));
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -185,6 +212,45 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: "Container unreachable" });
-    expect(errorSpy).toHaveBeenCalledWith("[platform] app-domain proxy failed:", "upstream exploded");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[platform] app-domain proxy retry attempt=1 handle=alice"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[platform] app-domain proxy retry attempt=2 handle=alice"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith("[platform] app-domain proxy failed:", "fetch failed");
+  });
+
+  it("re-resolves the live container endpoint and retries the proxy request", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    const docker = stubDocker({ id: "docker-ctr-2", ipAddress: "172.18.0.55" });
+    const app = createApp({
+      db,
+      docker,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/ping", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://172.18.0.55:4000/api/ping");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://172.18.0.55:4000/api/ping");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[platform] app-domain proxy retry attempt=1 handle=alice"),
+    );
+    expect(getContainer(db, "alice")?.containerId).toBe("docker-ctr-2");
   });
 });
