@@ -24,9 +24,9 @@
     "node": ">=24"
   },
   "bin": {
-    "matrix": "./bin/matrix.mjs",
-    "matrixos": "./bin/matrix.mjs",
-    "mos": "./bin/matrix.mjs"
+    "matrix": "bin/matrix.mjs",
+    "matrixos": "bin/matrix.mjs",
+    "mos": "bin/matrix.mjs"
   },
   "exports": {
     ".": "./src/index.ts"
