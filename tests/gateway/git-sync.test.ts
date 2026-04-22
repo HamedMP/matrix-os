@@ -103,7 +103,7 @@ describe("T220: GitSync", () => {
     execFileSync("git", ["clone", remote, clone], { stdio: "ignore" });
     writeFileSync(join(clone, "new-file.txt"), "from clone");
     execFileSync("git", ["add", "."], { cwd: clone, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "remote change"], { cwd: clone, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "remote change"], { cwd: clone, stdio: "ignore" });
     execFileSync("git", ["push"], { cwd: clone, stdio: "ignore" });
 
     // Pull into original
