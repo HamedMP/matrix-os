@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Published-package entry for `matrix` / `matrixos` when installed via
+// Published-package entry for `matrix` / `matrixos` / `mos` when installed via
 // `npm i -g @finnaai/matrix`. Re-execs with the tsx loader so Node can
 // import the .ts CLI sources directly. Mirrors bin/matrixos.mjs in the
 // monorepo, but resolves tsx from the package's own node_modules.
