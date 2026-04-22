@@ -863,10 +863,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             return { content: [{ type: "text" as const, text: "Cannot access app data (no home path)" }] };
           }
           const { appDataHandler } = await import("./app-data.js");
-          return appDataHandler(homePath, { action, app, key, value }) as Promise<{
-            [key: string]: unknown;
-            content: Array<{ type: "text"; text: string }>;
-          }>;
+          return appDataHandler(homePath, { action, app, key, value });
         },
       ),
 

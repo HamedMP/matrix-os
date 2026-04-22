@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { parseFrontmatter } from "./agents.js";
@@ -19,30 +19,50 @@ interface RegistryData {
 }
 
 export interface SkillRegistry {
-  publish(skillName: string): SkillRegistryEntry;
-  install(skillName: string): { installed: boolean; reason?: string };
-  list(category?: string): SkillRegistryEntry[];
-  get(name: string): SkillRegistryEntry | null;
+  publish(skillName: string): Promise<SkillRegistryEntry>;
+  install(skillName: string): Promise<{ installed: boolean; reason?: string }>;
+  list(category?: string): Promise<SkillRegistryEntry[]>;
+  get(name: string): Promise<SkillRegistryEntry | null>;
 }
 
 function registryPath(homePath: string): string {
   return join(homePath, "system", "skill-registry.json");
 }
 
-function loadRegistryData(homePath: string): RegistryData {
-  const path = registryPath(homePath);
-  if (!existsSync(path)) return { skills: [] };
+async function pathExists(path: string): Promise<boolean> {
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+    await access(path);
+    return true;
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function loadRegistryData(homePath: string): Promise<RegistryData> {
+  const path = registryPath(homePath);
+  if (!(await pathExists(path))) return { skills: [] };
+  try {
+    return JSON.parse(await readFile(path, "utf-8"));
+  } catch (err: unknown) {
+    console.warn(
+      "[skill-registry] Failed to load registry data:",
+      err instanceof Error ? err.message : String(err),
+    );
     return { skills: [] };
   }
 }
 
-function saveRegistryData(homePath: string, data: RegistryData): void {
+async function saveRegistryData(homePath: string, data: RegistryData): Promise<void> {
   const dir = join(homePath, "system");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(registryPath(homePath), JSON.stringify(data, null, 2), "utf-8");
+  await mkdir(dir, { recursive: true });
+  await writeFile(registryPath(homePath), JSON.stringify(data, null, 2), "utf-8");
 }
 
 function hashContent(content: string): string {
@@ -57,17 +77,25 @@ function bumpPatch(version: string): string {
 }
 
 export function createSkillRegistry(homePath: string): SkillRegistry {
-  let data = loadRegistryData(homePath);
+  let dataPromise: Promise<RegistryData> | null = null;
+
+  async function getData(): Promise<RegistryData> {
+    if (!dataPromise) {
+      dataPromise = loadRegistryData(homePath);
+    }
+    return dataPromise;
+  }
 
   return {
-    publish(skillName: string): SkillRegistryEntry {
+    async publish(skillName: string): Promise<SkillRegistryEntry> {
+      const data = await getData();
       const skillsDir = join(homePath, "agents", "skills");
       const filePath = join(skillsDir, `${skillName}.md`);
-      if (!existsSync(filePath)) {
+      if (!(await pathExists(filePath))) {
         throw new Error(`Skill file not found: ${filePath}`);
       }
 
-      const content = readFileSync(filePath, "utf-8");
+      const content = await readFile(filePath, "utf-8");
       const { frontmatter } = parseFrontmatter(content);
       const contentHash = hashContent(content);
 
@@ -77,8 +105,8 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
         name: frontmatter.name ?? skillName,
         description: frontmatter.description ?? "",
         version: existing ? bumpPatch(existing.version) : "1.0.0",
-        author: frontmatter.author ?? "local",
-        category: frontmatter.category ?? "utility",
+        author: typeof frontmatter.author === "string" ? frontmatter.author : "local",
+        category: typeof frontmatter.category === "string" ? frontmatter.category : "utility",
         contentHash,
         publishedAt: new Date().toISOString(),
         downloads: existing?.downloads ?? 0,
@@ -91,11 +119,12 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
         data.skills.push(entry);
       }
 
-      saveRegistryData(homePath, data);
+      await saveRegistryData(homePath, data);
       return entry;
     },
 
-    install(skillName: string): { installed: boolean; reason?: string } {
+    async install(skillName: string): Promise<{ installed: boolean; reason?: string }> {
+      const data = await getData();
       const entry = data.skills.find((s) => s.name === skillName);
       if (!entry) {
         return { installed: false, reason: "Skill not found in registry" };
@@ -103,34 +132,34 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
 
       const skillsDir = join(homePath, "agents", "skills");
       const targetPath = join(skillsDir, `${skillName}.md`);
-      if (existsSync(targetPath)) {
+      if (await pathExists(targetPath)) {
         return { installed: false, reason: "Skill already installed locally" };
       }
 
-      if (!existsSync(skillsDir)) {
-        mkdirSync(skillsDir, { recursive: true });
-      }
+      await mkdir(skillsDir, { recursive: true });
 
       const registryContent = entry.description
         ? `---\nname: ${entry.name}\ndescription: ${entry.description}\ntriggers: []\ncategory: ${entry.category}\ntools_needed: []\nchannel_hints:\n  - any\nexamples: []\ncomposable_with: []\n---\n\n# ${entry.name}\n\nInstalled from skill registry v${entry.version}.\n`
         : `---\nname: ${entry.name}\ndescription: Skill from registry\ntriggers: []\ncategory: ${entry.category}\ntools_needed: []\nchannel_hints:\n  - any\nexamples: []\ncomposable_with: []\n---\n\n# ${entry.name}\n\nInstalled from skill registry v${entry.version}.\n`;
 
-      writeFileSync(targetPath, registryContent, "utf-8");
+      await writeFile(targetPath, registryContent, "utf-8");
 
       entry.downloads += 1;
-      saveRegistryData(homePath, data);
+      await saveRegistryData(homePath, data);
 
       return { installed: true };
     },
 
-    list(category?: string): SkillRegistryEntry[] {
+    async list(category?: string): Promise<SkillRegistryEntry[]> {
+      const data = await getData();
       if (category) {
         return data.skills.filter((s) => s.category === category);
       }
       return [...data.skills];
     },
 
-    get(name: string): SkillRegistryEntry | null {
+    async get(name: string): Promise<SkillRegistryEntry | null> {
+      const data = await getData();
       return data.skills.find((s) => s.name === name) ?? null;
     },
   };

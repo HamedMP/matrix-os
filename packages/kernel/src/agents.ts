@@ -5,8 +5,6 @@ import { parse as parseYaml } from "./yaml.js";
 export interface AgentFrontmatter {
   name?: string;
   description?: string;
-  author?: string;
-  category?: string;
   model?: "opus" | "sonnet" | "haiku" | "inherit";
   tools?: string[];
   maxTurns?: number;
