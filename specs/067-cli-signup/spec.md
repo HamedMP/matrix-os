@@ -131,7 +131,7 @@ signup`, the CLI polls `POST /api/signup/verify` with the 6-digit code that
 landed in the inbox. Scripts must either pipe the code in with `--code` (for
 fully automated flows against a test inbox) or present the prompt to a human.
 For CI, `MATRIXOS_SIGNUP_TEST_CODE` bypass is ONLY honored when
-`NODE_ENV=test` server-side.
+`NODE_ENV=test` and `SIGNUP_TEST_MODE=true` server-side.
 
 ### Edge Cases
 
@@ -173,8 +173,8 @@ deployment plan).
 
 ### `POST /api/signup`
 
-Creates the pending signup row, rate-limits, sends verification email. Public
-(no auth), CAPTCHA-gated.
+Verifies Turnstile, creates the pending signup row, rate-limits, and sends the
+verification email. Public (no auth), CAPTCHA-gated.
 
 **Request (Zod 4)**
 
@@ -286,8 +286,13 @@ Lightweight availability check for the interactive flow.
 ```typescript
 const CheckHandleSchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
+  turnstileToken: z.string().min(1).max(2048).optional(),
 });
 ```
+
+If `turnstileToken` is present, the platform validates it and may require it
+adaptively once the per-IP limiter starts seeing abuse. The default happy path
+keeps handle checks lightweight and rate-limit-only.
 
 **Response 200**
 
@@ -315,7 +320,7 @@ payload shape.
 | `/api/signup` | POST | Turnstile + client fingerprint | Public | 3/hour/IP, 5/hour/email, 100/hour global |
 | `/api/signup/verify` | POST | signupId + 6-digit code | Public | 5 wrong codes = 10min lockout per signupId |
 | `/api/signup/resend` | POST | signupId + Turnstile | Public | 60s cooldown, 5 resends per signup |
-| `/api/signup/check-handle` | POST | Turnstile (optional, light) | Public | 30/min/IP |
+| `/api/signup/check-handle` | POST | Rate limit, plus optional Turnstile under abuse | Public | 30/min/IP |
 | `/api/packages/catalog` | GET | None (ETag-cached CDN) | Public | Cached 60s upstream |
 
 No existing admin bearer is needed. These are the FIRST public write endpoints
@@ -474,10 +479,11 @@ tarball for `registry`-type packages.
 
 ### CSRF
 
-All three POST endpoints are JSON + Turnstile-gated. No cookie-based auth, so
-traditional CSRF doesn't apply. Browsers that might host signup (future "quick
-signup" web form) use Clerk's built-in CSRF via `same-origin` fetch from
-`matrix-os.com`.
+All four POST endpoints are JSON; `signup` and `resend` always require
+Turnstile, and `check-handle` can require it adaptively under abuse. No
+cookie-based auth, so traditional CSRF doesn't apply. Browsers that might host
+signup (future "quick signup" web form) use Clerk's built-in CSRF via
+`same-origin` fetch from `matrix-os.com`.
 
 ---
 
@@ -506,8 +512,11 @@ Rate-limit responses always include `Retry-After` in seconds.
   pending` in a browser, solve the challenge, paste the resulting token back
   into the terminal. Same UX pattern as `matrix login` today.
 - For the fully automated non-interactive case, `--turnstile-token` accepts a
-  pre-solved token. Test environments set `NODE_ENV=test` server-side to
-  bypass; never bypassed in production.
+  pre-solved token. `POST /api/signup/check-handle` may also accept an
+  optional token when the platform decides to challenge suspicious callers.
+- Test environments set `NODE_ENV=test` and `SIGNUP_TEST_MODE=true`
+  server-side to enable the `MATRIXOS_SIGNUP_TEST_CODE` bypass; either flag
+  missing keeps the bypass disabled.
 - Validation: server-side `POST https://challenges.cloudflare.com/turnstile/
   v0/siteverify` with 5s timeout. Fail-closed — any error path treats the
   token as invalid (403).
@@ -589,6 +598,9 @@ See the full table under "Platform Endpoint Design → Auth Matrix" above.
   URLs / logs. Log entries use handle, not display name.
 - Turnstile token is length-capped (2048) to prevent "megabyte of JSON eaten
   by Zod before rejection" class of DoS.
+- Every signup POST route applies Hono `bodyLimit` before `c.req.json()`,
+  including `/api/signup`, `/api/signup/verify`, `/api/signup/resend`, and
+  `/api/signup/check-handle`.
 
 ### Error Handling
 
@@ -635,8 +647,8 @@ Failure points along the path, with recovery behaviour:
 
 | Step | Failure handling |
 |---|---|
-| 1. Signup row INSERT | Postgres constraint errors → 500. No side effects. |
-| 2. Turnstile verify | Fail → 403, signup row already written (status = `captcha_failed`). Reaped by TTL. |
+| 1. Turnstile verify | Fail → 403. No signup row persisted; caller can retry immediately. |
+| 2. Signup row INSERT | Postgres constraint errors → 500. No external side effects. |
 | 3. Email send (Clerk backend) | Retry 3× with jitter. If still fails → mark `email_send_failed`, return 502. User can resend. |
 | 4. Verify code match | Wrong code → counter increment. Right code → proceed. |
 | 5. Clerk user create | If errors → signup row marked `clerk_failed`. User retries with same email. If Clerk says email exists → check whether it maps to an existing `containers` row; if yes, "already signed up"; if no, it's a dangling Clerk user → link instead. |
@@ -694,9 +706,9 @@ logs enough to correlate in Sentry / Grafana.
 ### Concurrent Access
 
 - `POST /api/signup` for the same email from two clients simultaneously:
-  first INSERT wins via a UNIQUE constraint on `signups(email) WHERE
-  status != 'ready'`; second gets `email_taken`. Avoids the TOCTOU
-  race of "check-then-insert".
+  first INSERT wins via a UNIQUE constraint on active signup rows
+  (`WHERE status NOT IN ('ready', 'expired')`); second gets `email_taken`.
+  Avoids the TOCTOU race of "check-then-insert".
 - Handle race: `containers.handle` UNIQUE constraint. `POST /api/signup/
   verify` catches the violation and returns `handle_taken` — the user
   re-runs onboard with a different handle. Rare; `check-handle` eliminates
@@ -754,7 +766,9 @@ routes wire-up:
 3. Construct `createSignupEmail({ clerkBackend })` using the existing Clerk
    `@clerk/backend` import.
 4. Construct `createSignupRoutes({ store, turnstile, email, orchestrator,
-   platformJwtSecret })`.
+   platformJwtSecret })`, and have the route module apply `bodyLimit` to
+   `/api/signup`, `/api/signup/verify`, `/api/signup/resend`, and
+   `/api/signup/check-handle` before reading JSON.
 5. Mount at `app.route('/', createSignupRoutes(...))` BEFORE the
    `app.use('*', app-domain proxy)` middleware so `/api/signup*` and
    `/api/packages/catalog` never get dispatched into a user container.
@@ -837,7 +851,6 @@ export const signups = sqliteTable('signups', {
   provisionAttempts: integer('provision_attempts').notNull().default(0),
   status: text('status').notNull().$type<
     | 'pending'
-    | 'captcha_failed'
     | 'email_sent'
     | 'email_verified'
     | 'clerk_created'
@@ -856,7 +869,7 @@ export const signups = sqliteTable('signups', {
   expiresAt: integer('expires_at').notNull(),         // 24h after createdAt
 });
 
-// indexes: (email WHERE status != 'ready'), (expires_at), (handle WHERE status != 'expired')
+// indexes: (email WHERE status NOT IN ('ready', 'expired')), (expires_at), (handle WHERE status != 'expired')
 ```
 
 TTL sweeper: `reconcile-signups.ts` deletes rows past `expiresAt`, deletes
@@ -882,11 +895,11 @@ Per the constitution (Principle IX — TDD is non-negotiable).
 ### Integration
 
 - `tests/integration/signup-e2e.test.ts` — against a real Clerk test tenant
-  (cost-controlled, runs on `NODE_ENV=test` with seeded Turnstile). Uses
-  Haiku for any agent-spawned steps. Full path: `POST /api/signup` →
-  inspect signup row → `POST /api/signup/verify` with the right code →
-  `GET /api/me` with the returned JWT returns the expected handle +
-  gatewayUrl. Budget ≤ $0.10 per run.
+  (cost-controlled, runs on `NODE_ENV=test` with `SIGNUP_TEST_MODE=true`
+  and seeded Turnstile). Uses Haiku for any agent-spawned steps. Full path:
+  `POST /api/signup` → inspect signup row → `POST /api/signup/verify` with
+  the right code → `GET /api/me` with the returned JWT returns the expected
+  handle + gatewayUrl. Budget ≤ $0.10 per run.
 - `tests/integration/signup-idempotency.test.ts` — retry same email after
   `provision_failed`, assert single final container.
 
@@ -922,10 +935,10 @@ enumerates the manual test matrix:
    signup from CLI? — defer.
 2. **Do we hold the `handle` during email verification?** A malicious user
    could burn through a popular handle by starting signups and never
-   verifying. Decision for v1: YES, we reserve the handle from step 1
-   until `expiresAt` or explicit expiry. This means a 24h reservation
-   window per attempt; combined with per-email and per-IP rate limits,
-   the practical window is small.
+   verifying. Decision for v1: YES, we reserve the handle from the
+   successful signup-row insert until `expiresAt` or explicit expiry. This
+   means a 24h reservation window per attempt; combined with per-email and
+   per-IP rate limits, the practical window is small.
 3. **Package catalog hosting.** Start checked-in JSON at `packages/
    platform/data/packages/catalog.json`. Follow-up: move to a versioned
    registry with its own review process when external contributors start
