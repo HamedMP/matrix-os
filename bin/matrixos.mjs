@@ -14,18 +14,40 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const tsxLoader = resolve(here, '..', 'node_modules', 'tsx', 'dist', 'loader.mjs');
 
-if (!existsSync(tsxLoader)) {
+// Walk up from this file looking for tsx. Works whether the launcher is
+// the repo-root `bin/matrixos.mjs` (tsx in `<repo>/node_modules`), invoked
+// via `pnpm link --global` from any cwd, or via a packaged install where
+// tsx may be hoisted one or two levels up.
+function findTsxLoader(start) {
+  let dir = start;
+  for (let i = 0; i < 6; i += 1) {
+    const candidate = resolve(dir, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+    if (existsSync(candidate)) return candidate;
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return null;
+}
+
+const tsxLoader = findTsxLoader(here);
+if (!tsxLoader) {
   console.error(
-    `tsx loader not found at ${tsxLoader}. Run \`pnpm install\` in the matrix-os repo before invoking the matrix CLI.`,
+    'matrix CLI: tsx loader not found. Run `pnpm install` in the matrix-os repo before invoking the matrix CLI.',
   );
+  process.exit(1);
+}
+
+const cliEntry = resolve(here, 'matrixos.ts');
+if (!existsSync(cliEntry)) {
+  console.error(`matrix CLI: entry not found at ${cliEntry}.`);
   process.exit(1);
 }
 
 const child = spawn(
   process.execPath,
-  ['--import', pathToFileURL(tsxLoader).href, resolve(here, 'matrixos.ts'), ...process.argv.slice(2)],
+  ['--import', pathToFileURL(tsxLoader).href, cliEntry, ...process.argv.slice(2)],
   {
     stdio: 'inherit',
     env: process.env,
