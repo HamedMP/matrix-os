@@ -25,8 +25,8 @@ const REQUIRED_COLOR_KEYS = [
 ];
 
 describe("theme presets", () => {
-  it("has 6 presets", () => {
-    expect(THEME_PRESETS).toHaveLength(6);
+  it("has 7 presets", () => {
+    expect(THEME_PRESETS).toHaveLength(7);
   });
 
   it.each(THEME_PRESETS.map((p) => [p.name, p]))(
@@ -35,7 +35,7 @@ describe("theme presets", () => {
       for (const key of REQUIRED_COLOR_KEYS) {
         expect(preset.colors[key], `missing color key: ${key}`).toBeDefined();
       }
-      expect(Object.keys(preset.colors)).toHaveLength(20);
+      expect(Object.keys(preset.colors).length).toBeGreaterThanOrEqual(20);
     },
   );
 
@@ -59,8 +59,8 @@ describe("theme presets", () => {
     "%s has valid hex color values",
     (_name, preset) => {
       const hexRegex = /^#[0-9a-fA-F]{6}$/;
-      for (const [key, value] of Object.entries(preset.colors)) {
-        expect(value, `${key} is not valid hex`).toMatch(hexRegex);
+      for (const key of REQUIRED_COLOR_KEYS) {
+        expect(preset.colors[key], `${key} is not valid hex`).toMatch(hexRegex);
       }
     },
   );

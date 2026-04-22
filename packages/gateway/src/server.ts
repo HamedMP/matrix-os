@@ -1,8 +1,10 @@
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
+import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
@@ -47,7 +49,11 @@ import {
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
-import { authMiddleware } from "./auth.js";
+import {
+  authMiddleware,
+  getUserIdFromContext,
+  MissingSyncUserIdentityError,
+} from "./auth.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -56,7 +62,7 @@ import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel"
 import { listApps } from "./apps.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
@@ -80,6 +86,17 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
+import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
+import { createPlatformR2Client } from "./sync/platform-r2-client.js";
+import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
+import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
+import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
+import { createSharingService, type SharingService } from "./sync/sharing.js";
+import { sanitizePeerId } from "./sync/peer-id.js";
+import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
+import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import type { WSContext } from "hono/ws";
@@ -104,6 +121,8 @@ const BridgeCallBodySchema = z.object({
   label: z.string().trim().min(1).max(100).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
+
+const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 
 export interface GatewayConfig {
   homePath: string;
@@ -132,7 +151,13 @@ export type ServerMessage =
   | { type: "integration:connected"; service: string; accountLabel: string }
   | { type: "integration:disconnected"; service: string; id: string }
   | { type: "integration:expired"; service: string; id: string; accountLabel: string }
-  | { type: "pong" };
+  | { type: "pong" }
+  | { type: "sync:change"; files: Array<{ path: string; hash: string; size: number; action: string }>; peerId: string; manifestVersion: number }
+  | { type: "sync:conflict"; path: string; localHash: string; remoteHash: string; remotePeerId: string; conflictPath: string }
+  | { type: "sync:peer-join"; peerId: string; hostname: string; platform: string }
+  | { type: "sync:peer-leave"; peerId: string }
+  | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
+  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
@@ -196,11 +221,13 @@ export async function createGateway(config: GatewayConfig) {
   let queryEngine: QueryEngine | null = null;
   let kvStore: KvStore | null = null;
   let appRegistry: AppRegistry | null = null;
+  let kyselyInstance: Kysely<any> | null = null;
 
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
       appDb = db;
+      kyselyInstance = kysely;
       await appDb.bootstrap();
       queryEngine = createQueryEngine(appDb);
       kvStore = createKvStore(kysely);
@@ -269,13 +296,222 @@ export async function createGateway(config: GatewayConfig) {
     }
   }
 
+  // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
+  let syncR2: R2Client | null = null;
+  let syncPeerRegistry: PeerRegistry | null = null;
+  let syncSharing: SharingService | null = null;
+  let syncDeps: SyncRouteDeps | null = null;
+
+  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
+  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
+  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
+  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
+  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
+
+  const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
+  const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalHandle = process.env.MATRIX_HANDLE;
+
+  if (((s3AccessKey && s3SecretKey) || (internalPlatformUrl && internalPlatformToken && internalHandle)) && kyselyInstance) {
+    try {
+      if (s3AccessKey && s3SecretKey) {
+        const r2Config: R2ClientConfig = {
+          accessKeyId: s3AccessKey,
+          secretAccessKey: s3SecretKey,
+          bucket: s3Bucket,
+          endpoint: s3Endpoint,
+          publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
+          accountId: process.env.R2_ACCOUNT_ID,
+          forcePathStyle: s3ForcePathStyle,
+        };
+        syncR2 = createR2Client(r2Config);
+      } else {
+        syncR2 = createPlatformR2Client({
+          baseUrl: internalPlatformUrl!,
+          handle: internalHandle!,
+          token: internalPlatformToken!,
+        });
+      }
+
+      await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
+
+      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
+      syncPeerRegistry = createPeerRegistry();
+      const sharingDb = createKyselySharingDb(kyselyInstance as Kysely<SyncDatabase>);
+      syncSharing = createSharingService({ db: sharingDb, peerRegistry: syncPeerRegistry });
+
+      syncDeps = {
+        r2: syncR2,
+        db: manifestDb,
+        peerRegistry: syncPeerRegistry,
+        sharing: syncSharing,
+        // Resolve userId per-request from the JWT's `sub` claim (Clerk
+        // userId); falls back to MATRIX_HANDLE only when no JWT is present
+        // (legacy bearer / dev mode).
+        getUserId: (c) => getUserIdFromContext(c),
+        getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
+      };
+
+      console.log("[sync] Sync API initialized (storage:", s3AccessKey && s3SecretKey ? (s3Endpoint ?? "R2") : "platform-internal", ")");
+    } catch (err) {
+      console.error("[sync] Failed to initialize sync:", (err as Error).message);
+      syncR2 = null;
+      syncPeerRegistry = null;
+      syncSharing = null;
+      syncDeps = null;
+    }
+  } else {
+    console.log("[sync] No trusted sync storage configured, sync API disabled");
+  }
+
+  // Container-side home mirror: watches the user's home directory and
+  // pushes changes to the same R2 bucket the user's local daemon reads.
+  // Off by default; enable with MATRIX_HOME_MIRROR=true.
+  let homeMirror: HomeMirror | null = null;
+  let homeMirrorStart: Promise<void> | null = null;
+  const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
+  if (homeMirrorEnabled && syncR2 && kyselyInstance) {
+    // Loud fail-fast in production: if the orchestrator didn't inject
+    // MATRIX_USER_ID, the mirror would fall back to MATRIX_HANDLE (or
+    // worse, "default") and publish every user's home directory under a
+    // single shared R2 prefix. Refuse to start rather than corrupt state.
+    if (
+      process.env.NODE_ENV === "production" &&
+      !process.env.MATRIX_USER_ID
+    ) {
+      throw new Error(
+        "[home-mirror] MATRIX_USER_ID is required in production when MATRIX_HOME_MIRROR=true. Check that the platform orchestrator injected it.",
+      );
+    }
+    try {
+      // Keep home-mirror's R2 prefix aligned with what authenticated
+      // HTTP/WS routes use (Clerk userId via claims.sub). The orchestrator
+      // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
+      // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
+      // identity is plumbed through.
+      const userId =
+        process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
+      if (!process.env.MATRIX_USER_ID) {
+        console.warn(
+          "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
+        );
+      }
+      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
+      homeMirror = createHomeMirror({
+        r2: syncR2,
+        manifestDb,
+        homeRoot: homePath,
+        userId,
+        peerId: `gateway-${userId}`,
+        // Subscribe to sync:change broadcasts from other peers so the
+        // container's /home/matrixos/home/ stays in sync with what laptops
+        // commit. Without this the mirror is push-only (container -> R2)
+        // and the three-way loop is broken.
+        peerRegistry: syncPeerRegistry ?? undefined,
+        logger: {
+          info: (msg, ...rest) => console.log(`[home-mirror] ${msg}`, ...rest),
+          error: (msg, ...rest) => console.error(`[home-mirror] ${msg}`, ...rest),
+        },
+      });
+      // Start asynchronously so server boot isn't blocked by the initial pull.
+      homeMirrorStart = homeMirror.start().catch((err) => {
+        console.error("[home-mirror] start failed:", (err as Error).message);
+      });
+    } catch (err) {
+      console.error("[home-mirror] init failed:", (err as Error).message);
+      homeMirror = null;
+    }
+  }
+
+  const internalIntegrationBaseUrl =
+    internalPlatformUrl && internalHandle
+      ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
+      : null;
+
+  function buildIntegrationProxyUrl(c: Context, targetBase: string): string {
+    const targetUrl = new URL(targetBase);
+    const suffix = c.req.path.replace("/api/integrations", "") || "";
+    const decodedSuffix = decodeURIComponent(suffix);
+    if (decodedSuffix.split("/").some((segment) => segment === "..")) {
+      throw new Error("Invalid integration proxy path");
+    }
+
+    const basePath = targetUrl.pathname.endsWith("/")
+      ? targetUrl.pathname.slice(0, -1)
+      : targetUrl.pathname;
+    targetUrl.pathname = suffix ? `${basePath}${suffix}` : basePath;
+    targetUrl.search = new URL(c.req.url).search;
+    return targetUrl.toString();
+  }
+
+  function logBestEffortFailure(context: string, err: unknown): void {
+    console.warn(
+      `[gateway] ${context}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  function logUnexpectedJsonParseFailure(context: string, err: unknown): void {
+    if (!(err instanceof SyntaxError)) {
+      logBestEffortFailure(context, err);
+    }
+  }
+
+  function logUnexpectedWsSendFailure(context: string, err: unknown): void {
+    if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
+      logBestEffortFailure(context, err);
+    }
+  }
+
+  function toStatusCode(status: number): ContentfulStatusCode {
+    return status as ContentfulStatusCode;
+  }
+
+  async function proxyIntegrationRequest(
+    c: Context,
+    targetBase: string,
+    includeInternalAuth: boolean,
+  ): Promise<Response> {
+    let upstreamUrl: string;
+    try {
+      upstreamUrl = buildIntegrationProxyUrl(c, targetBase);
+    } catch (err: unknown) {
+      console.warn(
+        "[integrations] rejected proxy path:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Bad request" }, 400);
+    }
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(c.req.header())) {
+      if (key !== "host" && key !== "authorization" && value) {
+        headers.set(key, value);
+      }
+    }
+    if (includeInternalAuth && internalPlatformToken) {
+      headers.set("authorization", `Bearer ${internalPlatformToken}`);
+    }
+
+    const upstream = await fetch(upstreamUrl, {
+      method: c.req.method,
+      headers,
+      redirect: "manual",
+      signal: AbortSignal.timeout(30_000),
+      body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
+    });
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: upstream.headers,
+    });
+  }
+
   // Platform DB + Integrations (Pipedream Connect)
   let platformDb: PlatformDb | null = null;
   let pipedreamClient: PipedreamConnectClient | null = null;
   let integrationRoutes: Hono | null = null;
   let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
-  const platformDbUrl = process.env.PLATFORM_DATABASE_URL
-    || (process.env.DATABASE_URL?.startsWith("postgres") ? process.env.DATABASE_URL : undefined);
+  const platformDbUrl = process.env.PLATFORM_DATABASE_URL;
   if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
     try {
       platformDb = createPlatformDb(platformDbUrl);
@@ -425,7 +661,13 @@ export async function createGateway(config: GatewayConfig) {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] [heal] ${message}\n`;
     const logPath = join(homePath, "system/activity.log");
-    try { appendFileSync(logPath, line); } catch { /* log dir may not exist yet */ }
+    appendFileAsync(logPath, line).catch((err: unknown) => {
+      if (err instanceof Error) {
+        console.warn("[heal] failed to append activity log:", err.message);
+      } else {
+        console.warn("[heal] failed to append activity log:", String(err));
+      }
+    });
   }
 
   function broadcast(msg: ServerMessage) {
@@ -462,22 +704,30 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const conv = conversations.get(sid);
       if (conv && conv.messages.length > 0) {
-        const summary = summarizeConversation({ id: conv.id, messages: conv.messages });
+        const summaryMessages = conv.messages
+          .filter((message) => message.role !== "system")
+          .map((message) => ({
+            role: message.role as "user" | "assistant",
+            content: message.content,
+          }));
+        const summary = summarizeConversation({ id: conv.id, messages: summaryMessages });
         if (summary) saveSummary(homePath, sid, summary);
 
-        const candidates = extractMemoriesLocal(
-          conv.messages.map((m) => ({ role: m.role, content: m.content })),
-        );
+        const candidates = extractMemoriesLocal(summaryMessages);
         if (candidates.length > 0) {
           try {
             const memStore = createMemoryStore(dispatcher.db);
             for (const c of candidates) {
               memStore.remember(c.content, { source: sid, category: c.category });
             }
-          } catch { /* memory extraction is best-effort */ }
+          } catch (err: unknown) {
+            logBestEffortFailure("Memory extraction failed", err);
+          }
         }
       }
-    } catch { /* summary is best-effort */ }
+    } catch (err: unknown) {
+      logBestEffortFailure(`Summary finalization failed for session ${sid}`, err);
+    }
   }
 
   const heartbeat: Heartbeat = createHeartbeat({
@@ -536,7 +786,9 @@ export async function createGateway(config: GatewayConfig) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       channelsConfig = cfg.channels ?? {};
     }
-  } catch { /* no channel config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load channel config", err);
+  }
 
   const outboundQueue = createOutboundQueue(homePath);
 
@@ -572,6 +824,7 @@ export async function createGateway(config: GatewayConfig) {
           stream.startTyping();
 
           const text = msg.text.startsWith("/") ? msg.text.slice(1) : msg.text;
+          let lastToolName: string | undefined;
 
           dispatcher
             .dispatch(text, existingSessionId, (event) => {
@@ -587,11 +840,12 @@ export async function createGateway(config: GatewayConfig) {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.appendAssistantText(sid, event.text);
               } else if (event.type === "tool_start") {
+                lastToolName = event.tool;
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.addToolStart(sid, event.tool);
               } else if (event.type === "tool_end") {
                 const sid = channelSessions.get(sessionKey);
-                if (sid) conversations.addToolEnd(sid, event.tool, event.input);
+                if (sid) conversations.addToolEnd(sid, lastToolName ?? "unknown", event.input);
               } else if (event.type === "result") {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) finalizeWithSummary(sid);
@@ -618,6 +872,7 @@ export async function createGateway(config: GatewayConfig) {
 
       // Default path for non-telegram channels (or telegram without bot)
       let responseText = "";
+      let lastToolName: string | undefined;
 
       dispatcher
         .dispatch(msg.text, existingSessionId, (event) => {
@@ -633,11 +888,12 @@ export async function createGateway(config: GatewayConfig) {
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.appendAssistantText(sid, event.text);
           } else if (event.type === "tool_start") {
+            lastToolName = event.tool;
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.addToolStart(sid, event.tool);
           } else if (event.type === "tool_end") {
             const sid = channelSessions.get(sessionKey);
-            if (sid) conversations.addToolEnd(sid, event.tool, event.input);
+            if (sid) conversations.addToolEnd(sid, lastToolName ?? "unknown", event.input);
           } else if (event.type === "result") {
             const sid = channelSessions.get(sessionKey);
             if (sid) finalizeWithSummary(sid);
@@ -669,7 +925,9 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   channelManager.start().then(() => {
-    channelManager.replay().catch(() => {});
+    channelManager.replay().catch((err: unknown) => {
+      logBestEffortFailure("Failed to replay queued channel messages", err);
+    });
 
     // Register skills as Telegram slash commands
     const bot = telegramAdapter.getBot();
@@ -690,10 +948,14 @@ export async function createGateway(config: GatewayConfig) {
             }
           }
           if (commands.length > 0) {
-            bot.setMyCommands(commands.slice(0, 100)).catch(() => {});
+            bot.setMyCommands(commands.slice(0, 100)).catch((err: unknown) => {
+              logBestEffortFailure("Failed to set Telegram commands", err);
+            });
           }
         }
-      } catch { /* best-effort */ }
+      } catch (err: unknown) {
+        logBestEffortFailure("Failed to register Telegram commands", err);
+      }
     }
   });
 
@@ -721,7 +983,9 @@ export async function createGateway(config: GatewayConfig) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       heartbeatConfig = cfg.heartbeat ?? {};
     }
-  } catch { /* no heartbeat config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load heartbeat config", err);
+  }
 
   const proactiveHeartbeat: HeartbeatRunner = createHeartbeatRunner({
     homePath,
@@ -740,7 +1004,9 @@ export async function createGateway(config: GatewayConfig) {
         approvalPolicy = { ...DEFAULT_APPROVAL_POLICY, ...cfg.approval };
       }
     }
-  } catch { /* no approval config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load approval config", err);
+  }
 
   const interactionLogger: InteractionLogger = createInteractionLogger(homePath);
 
@@ -755,7 +1021,9 @@ export async function createGateway(config: GatewayConfig) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       pluginsConfig = cfg.plugins ?? {};
     }
-  } catch { /* no plugins config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load plugin config", err);
+  }
 
   const provisioner = createProvisioner({
     homePath,
@@ -791,6 +1059,20 @@ export async function createGateway(config: GatewayConfig) {
   if (integrationRoutes) {
     app.route("/api/integrations", integrationRoutes);
     console.log("[platform-db] Integration routes mounted (after auth)");
+  } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
+    app.all("/api/integrations", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) =>
+      proxyIntegrationRequest(c, internalIntegrationBaseUrl, true),
+    );
+    app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
+      const isPublic =
+        c.req.path === "/api/integrations/available" ||
+        c.req.path.startsWith("/api/integrations/webhook/");
+      const targetBase = isPublic
+        ? `${internalPlatformUrl}/api/integrations`
+        : internalIntegrationBaseUrl;
+      return proxyIntegrationRequest(c, targetBase, !isPublic);
+    });
+    console.log("[platform-db] Integration routes proxied via platform internal API");
   }
 
   app.use("*", async (c, next) => {
@@ -813,7 +1095,30 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get(
     "/ws",
-    upgradeWebSocket(() => {
+    upgradeWebSocket((c) => {
+      // Capture the authenticated sync userId (Clerk userId from JWT
+      // claims.sub when present, else MATRIX_HANDLE) at upgrade time so
+      // the sync:subscribe branch below keys peers off the same identity
+      // the HTTP sync routes use. authMiddleware ran on the upgrade
+      // request and stashed claims if a JWT was presented.
+      let syncPeerLifecycle = null;
+      let syncPeerSocket: WSContext | null = null;
+      try {
+        const wsSyncUserId = getUserIdFromContext(c);
+        syncPeerLifecycle = syncPeerRegistry
+          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
+              send: (data: string) => syncPeerSocket?.send(data),
+              get readyState() {
+                return syncPeerSocket?.readyState ?? 3;
+              },
+            })
+          : null;
+      } catch (err) {
+        if (!(err instanceof MissingSyncUserIdentityError)) {
+          throw err;
+        }
+        console.warn("[sync/ws] Missing sync user identity on websocket upgrade");
+      }
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
       let approvalBridge: ApprovalBridge | undefined;
@@ -874,6 +1179,7 @@ export async function createGateway(config: GatewayConfig) {
 
       return {
         onOpen(_evt, ws) {
+          syncPeerSocket = ws;
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
           wsConnectionsActive.inc();
@@ -898,7 +1204,8 @@ export async function createGateway(config: GatewayConfig) {
             rawMessage = JSON.parse(
               typeof evt.data === "string" ? evt.data : "",
             );
-          } catch {
+          } catch (err: unknown) {
+            logUnexpectedJsonParseFailure("Failed to parse main WebSocket message", err);
             send(ws, { type: "kernel:error", message: "Invalid JSON" });
             return;
           }
@@ -953,6 +1260,16 @@ export async function createGateway(config: GatewayConfig) {
 
           if (parsed.type === "approval_response" && approvalBridge) {
             approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
+            return;
+          }
+
+          if (parsed.type === "sync:subscribe" && syncPeerRegistry) {
+            syncPeerLifecycle?.subscribe({
+              peerId: parsed.peerId,
+              hostname: parsed.hostname,
+              platform: parsed.platform,
+              clientVersion: parsed.clientVersion,
+            });
             return;
           }
 
@@ -1021,6 +1338,8 @@ export async function createGateway(config: GatewayConfig) {
 
         onClose(_evt, ws) {
           clearConversationRunAttachment();
+          syncPeerLifecycle?.close();
+          syncPeerSocket = null;
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }
@@ -1054,7 +1373,11 @@ export async function createGateway(config: GatewayConfig) {
       return {
         onOpen(_evt, ws) {
           const sendJson = (msg: PtyServerMessage) => {
-            try { ws.send(JSON.stringify(msg)); } catch { /* ws closed */ }
+            try {
+              ws.send(JSON.stringify(msg));
+            } catch (err: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
+            }
           };
 
           // Backward compat: auto-create session if no attach message within 100ms
@@ -1094,7 +1417,10 @@ export async function createGateway(config: GatewayConfig) {
         onMessage(evt, ws) {
           const raw = typeof evt.data === "string" ? evt.data : "";
           let parsed: unknown;
-          try { parsed = JSON.parse(raw); } catch {
+          try {
+            parsed = JSON.parse(raw);
+          } catch (err: unknown) {
+            logUnexpectedJsonParseFailure("Failed to parse terminal WebSocket message", err);
             ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
             return;
           }
@@ -1107,7 +1433,11 @@ export async function createGateway(config: GatewayConfig) {
 
           const msg = result.data;
           const sendJson = (m: PtyServerMessage) => {
-            try { ws.send(JSON.stringify(m)); } catch { /* ws closed */ }
+            try {
+              ws.send(JSON.stringify(m));
+            } catch (err: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
+            }
           };
 
           switch (msg.type) {
@@ -1247,9 +1577,29 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+  const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
+  const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
+  const conversationBodyLimit = bodyLimit({ maxSize: 4096 });
+  const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
+  const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
+  const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
+  const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
+  const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
+  const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
 
   async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
-    try { return await c.req.json<T>(); } catch { return null; }
+    try {
+      return await c.req.json<T>();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return null;
+      }
+      console.error("[gateway] Unexpected request JSON parse failure:", err);
+      throw err;
+    }
   }
 
   app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
@@ -1263,35 +1613,35 @@ export async function createGateway(config: GatewayConfig) {
     const body = await parseJson<{ path: string; content?: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/rename", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/copy", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDelete(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.get("/api/files/trash", async (c) => {
@@ -1303,7 +1653,7 @@ export async function createGateway(config: GatewayConfig) {
     const body = await parseJson<{ trashPath: string }>(c);
     if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
     const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
@@ -1317,7 +1667,8 @@ export async function createGateway(config: GatewayConfig) {
       const { readFile } = await import("node:fs/promises");
       const data = await readFile(layoutPath, "utf-8");
       return c.json(JSON.parse(data));
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read terminal layout", err);
       return c.json({});
     }
   });
@@ -1327,7 +1678,12 @@ export async function createGateway(config: GatewayConfig) {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     const raw = await c.req.text();
     let body: unknown;
-    try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+    try {
+      body = JSON.parse(raw);
+    } catch (err: unknown) {
+      logUnexpectedJsonParseFailure("Failed to parse terminal layout payload", err);
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
     if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {
       return c.json({ error: "Invalid layout schema" }, 400);
     }
@@ -1336,7 +1692,8 @@ export async function createGateway(config: GatewayConfig) {
       await mkdir(dirname(layoutPath), { recursive: true });
       await writeFile(layoutPath, JSON.stringify(body, null, 2));
       return c.json({ ok: true });
-    } catch {
+    } catch (err: unknown) {
+      console.error("[gateway] Failed to save terminal layout:", err);
       return c.json({ error: "Failed to save layout" }, 500);
     }
   });
@@ -1366,7 +1723,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/message", async (c) => {
+  app.post("/api/message", apiMessageBodyLimit, async (c) => {
     const body = await c.req.json<{
       text: string;
       sessionId?: string;
@@ -1457,13 +1814,13 @@ export async function createGateway(config: GatewayConfig) {
     if (!fullPath) return c.text("Invalid path", 403);
     const content = await c.req.text();
     const dir = dirname(fullPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(fullPath, content, "utf-8");
+    await mkdirAsync(dir, { recursive: true });
+    await writeFileAsync(fullPath, content, "utf-8");
     return c.json({ ok: true });
   });
 
   // Structured query API (Postgres-backed)
-  app.post("/api/bridge/query", async (c) => {
+  app.post("/api/bridge/query", bridgeQueryBodyLimit, async (c) => {
     if (!queryEngine || !appRegistry) {
       return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
     }
@@ -1471,8 +1828,12 @@ export async function createGateway(config: GatewayConfig) {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON body" }, 400);
+      }
+      console.error("[bridge/query] Failed to read request body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
     }
 
     const rawSlug = body.app as string;
@@ -1537,7 +1898,7 @@ export async function createGateway(config: GatewayConfig) {
       switch (action) {
         case "find":
           return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter as Record<string, unknown> | undefined,
+            filter: body.filter as Record<string, FilterValue> | undefined,
             orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
             limit: body.limit as number | undefined,
             offset: body.offset as number | undefined,
@@ -1560,7 +1921,7 @@ export async function createGateway(config: GatewayConfig) {
           return c.json({ ok: true });
         }
         case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, unknown> | undefined) });
+          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, FilterValue> | undefined) });
         case "schema":
           return c.json(await appRegistry.getSchema(appSlug));
         case "listApps":
@@ -1606,16 +1967,22 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const parsed = JSON.parse(content);
       if (typeof parsed === "string") value = parsed;
-    } catch { /* raw content */ }
+    } catch (err: unknown) {
+      logUnexpectedJsonParseFailure("Failed to parse stored bridge value", err);
+    }
     return c.json({ value });
   });
 
-  app.post("/api/bridge/data", async (c) => {
+  app.post("/api/bridge/data", bridgeDataBodyLimit, async (c) => {
     let body: { action: "read" | "write"; app: string; key: string; value?: string };
     try {
       body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON body" }, 400);
+      }
+      console.error("[bridge/data] Failed to read request body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
     }
 
     if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
@@ -1662,15 +2029,15 @@ export async function createGateway(config: GatewayConfig) {
         if (typeof parsed === "string") {
           value = parsed;
         }
-      } catch {
-        // Not JSON, return raw content as-is
+      } catch (err: unknown) {
+        logUnexpectedJsonParseFailure("Failed to parse stored bridge data", err);
       }
       return c.json({ value });
     }
 
-    mkdirSync(dataDir, { recursive: true });
+    await mkdirAsync(dataDir, { recursive: true });
     const raw = body.value ?? "";
-    writeFileSync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
+    await writeFileAsync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
   });
@@ -1711,8 +2078,12 @@ export async function createGateway(config: GatewayConfig) {
     let parsedJson: unknown;
     try {
       parsedJson = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+      console.error("[bridge/service] Failed to read request body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
     }
     const parsed = BridgeCallBodySchema.safeParse(parsedJson);
     if (!parsed.success) {
@@ -1797,8 +2168,15 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(conversations.list());
   });
 
-  app.post("/api/conversations", async (c) => {
-    const body = await c.req.json<{ channel?: string }>().catch((): { channel?: string } => ({}));
+  app.post("/api/conversations", conversationBodyLimit, async (c) => {
+    let body: { channel?: string } = {};
+    try {
+      body = await c.req.json<{ channel?: string }>();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.error("[gateway] Failed to read conversation create body:", err);
+      }
+    }
     const id = conversations.create(body.channel);
     return c.json({ id }, 201);
   });
@@ -1826,18 +2204,20 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const data = JSON.parse(readFileSync(layoutPath, "utf-8"));
       return c.json(data);
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read layout", err);
       return c.json({});
     }
   });
 
-  app.put("/api/layout", async (c) => {
+  app.put("/api/layout", layoutBodyLimit, async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     if (!body || typeof body !== "object" || !Array.isArray(body.windows)) {
       return c.json({ error: "Invalid layout: requires windows array" }, 400);
     }
     const layoutPath = join(homePath, "system/layout.json");
-    writeFileSync(layoutPath, JSON.stringify(body, null, 2));
+    await mkdirAsync(dirname(layoutPath), { recursive: true });
+    await writeFileAsync(layoutPath, JSON.stringify(body, null, 2));
     return c.json({ ok: true });
   });
 
@@ -1849,18 +2229,20 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const data = JSON.parse(readFileSync(canvasPath, "utf-8"));
       return c.json(data);
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read canvas", err);
       return c.json({});
     }
   });
 
-  app.put("/api/canvas", async (c) => {
+  app.put("/api/canvas", canvasBodyLimit, async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     if (!body || typeof body !== "object" || !body.transform) {
       return c.json({ error: "Invalid canvas data: requires transform object" }, 400);
     }
     const canvasPath = join(homePath, "system/canvas.json");
-    writeFileSync(canvasPath, JSON.stringify(body, null, 2));
+    await mkdirAsync(dirname(canvasPath), { recursive: true });
+    await writeFileAsync(canvasPath, JSON.stringify(body, null, 2));
     return c.json({ ok: true });
   });
 
@@ -1898,6 +2280,7 @@ export async function createGateway(config: GatewayConfig) {
     const res = await fetch(targetUrl, {
       method: c.req.method,
       headers: c.req.raw.headers,
+      signal: AbortSignal.timeout(30_000),
       body: c.req.method !== "GET" && c.req.method !== "HEAD"
         ? c.req.raw.body
         : undefined,
@@ -1915,7 +2298,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(tasks);
   });
 
-  app.post("/api/tasks", async (c) => {
+  app.post("/api/tasks", taskBodyLimit, async (c) => {
     const body = await c.req.json<{ type?: string; input: string; priority?: number }>();
     if (!body.input || typeof body.input !== "string") {
       return c.json({ error: "input is required" }, 400);
@@ -1943,7 +2326,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(listApps(homePath));
   });
 
-  app.put("/api/apps/:slug/rename", async (c) => {
+  app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     const { name } = await c.req.json<{ name: string }>();
     const result = renameApp(homePath, slug, name);
@@ -1964,7 +2347,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/apps/:slug/icon", async (c) => {
+  app.post("/api/apps/:slug/icon", appIconBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
       return c.json({ error: "Invalid slug" }, 400);
@@ -1975,14 +2358,23 @@ export async function createGateway(config: GatewayConfig) {
     }
     try {
       let body: { style?: string } = {};
-      try { body = await c.req.json(); } catch { /* no body is fine */ }
+      try {
+        body = await c.req.json();
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) {
+          console.error("[gateway] Failed to parse icon generation body:", err);
+          return c.json({ error: "Failed to read request body" }, 500);
+        }
+      }
 
       let iconStyle = body.style ?? "";
       if (!iconStyle) {
         try {
           const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
           iconStyle = desktop.iconStyle ?? "";
-        } catch { /* ignore */ }
+        } catch (err: unknown) {
+          logBestEffortFailure("Failed to read desktop icon style", err);
+        }
       }
       if (!iconStyle) {
         iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
@@ -2009,7 +2401,7 @@ export async function createGateway(config: GatewayConfig) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error(`Icon generation failed for "${slug}":`, message);
-      return c.json({ error: message }, 500);
+      return c.json({ error: "Icon generation failed" }, 500);
     }
   });
 
@@ -2023,7 +2415,9 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
       iconStyle = desktop.iconStyle ?? "";
-    } catch { /* ignore */ }
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read desktop icon style", err);
+    }
     if (!iconStyle) {
       iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
     }
@@ -2063,7 +2457,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(cronService.listJobs());
   });
 
-  app.post("/api/cron", async (c) => {
+  app.post("/api/cron", cronBodyLimit, async (c) => {
     const body = await c.req.json<{
       name: string;
       message: string;
@@ -2142,7 +2536,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
-  app.post("/api/system/upgrade", async (c) => {
+  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
     const handle = process.env.MATRIX_HANDLE;
     const token = process.env.UPGRADE_TOKEN;
     const platformUrl = process.env.PLATFORM_INTERNAL_URL;
@@ -2155,15 +2549,27 @@ export async function createGateway(config: GatewayConfig) {
       const res = await fetch(`${platformUrl}/containers/${handle}/self-upgrade`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+        let data: unknown = {};
+        try {
+          data = await res.json();
+        } catch (err: unknown) {
+          if (!(err instanceof SyntaxError)) {
+            console.warn("[system/upgrade] Failed to parse platform error response:", err);
+          }
+        }
         return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status as 400);
       }
 
       return c.json({ ok: true });
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        console.error("[system/upgrade] Platform self-upgrade request timed out");
+        return c.json({ error: "Upgrade timed out" }, 504);
+      }
       // Connection drop likely means the container is being replaced
       return c.json({ ok: true });
     }
@@ -2181,12 +2587,13 @@ export async function createGateway(config: GatewayConfig) {
         return c.json(usageTracker.getMonthly(month));
       }
       return c.json(usageTracker.getDaily(date));
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read usage stats", err);
       return c.json({ total: 0, byAction: {} });
     }
   });
 
-  app.post("/api/push/register", async (c) => {
+  app.post("/api/push/register", pushRegistrationBodyLimit, async (c) => {
     const body = await c.req.json<{ token: string; platform: string }>();
     if (!body.token || !body.platform) {
       return c.json({ error: "token and platform are required" }, 400);
@@ -2195,7 +2602,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.delete("/api/push/register", async (c) => {
+  app.delete("/api/push/register", pushRegistrationBodyLimit, async (c) => {
     const body = await c.req.json<{ token: string }>();
     if (!body.token) {
       return c.json({ error: "token is required" }, 400);
@@ -2207,6 +2614,13 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
+
+  // 066: Sync API routes
+  if (syncDeps) {
+    app.route("/api/sync", createSyncRoutes(syncDeps));
+  } else {
+    app.route("/api/sync", syncApp);
+  }
 
   // T2030-T2037: Social API routes
   const getCurrentUser = () => {
@@ -2317,12 +2731,21 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       // T939: Fire gateway_stop hook
-      await hookRunner.fireVoidHook("gateway_stop", {}).catch(() => {});
+      await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
+        logBestEffortFailure("gateway_stop hook failed", err);
+      });
 
       // T945: Stop services in reverse order
       const services = pluginRegistry.getServices();
       for (let i = services.length - 1; i >= 0; i--) {
-        try { await services[i].stop(); } catch { /* ignore */ }
+        try {
+          await services[i].stop();
+        } catch (err: unknown) {
+          logBestEffortFailure(
+            `Failed to stop plugin service ${services[i].pluginId}/${services[i].name}`,
+            err,
+          );
+        }
       }
 
       heartbeat.stop();
@@ -2332,6 +2755,11 @@ export async function createGateway(config: GatewayConfig) {
       await channelManager.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
+      await homeMirror?.stop();
+      await homeMirrorStart?.catch((err: unknown) => {
+        logBestEffortFailure("Home mirror startup failed during shutdown", err);
+      });
+      syncR2?.destroy();
       await appDb?.destroy();
       server.close();
     },

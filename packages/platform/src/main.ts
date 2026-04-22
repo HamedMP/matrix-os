@@ -1,9 +1,11 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
 import { createConnection } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import Dockerode from 'dockerode';
+import { z } from 'zod/v4';
 import {
   createPlatformDb,
   type PlatformDB,
@@ -21,14 +23,191 @@ import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provisioning.js';
 import { metricsRegistry } from './metrics.js';
 import { createStatsCollector } from './stats-collector.js';
+import { createAuthRoutes } from './auth-routes.js';
+import { verifySyncJwt } from './sync-jwt.js';
+import { isSafeWebSocketUpgradePath } from './ws-upgrade.js';
+import {
+  buildPlatformVerificationToken,
+  timingSafeTokenEquals,
+} from './platform-token.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
+const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
+const DEV_PLATFORM_SECRET = 'dev-secret';
+const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
+const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
+const ADMIN_BODY_LIMIT = 64 * 1024;
+const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 
-function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
-  const otherMode = mode === 'sign-in' ? 'sign-up' : 'sign-in';
-  const otherLabel = mode === 'sign-in' ? 'Sign up' : 'Sign in';
+const ProvisionBodySchema = z.object({
+  handle: z.string().regex(HANDLE_PATTERN),
+  clerkUserId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(100).optional(),
+});
+
+const SocialSendBodySchema = z.object({
+  text: z.string().min(1).max(10_000),
+  from: z.object({
+    handle: z.string().regex(HANDLE_PATTERN),
+    displayName: z.string().min(1).max(100).optional(),
+  }),
+});
+
+function isMissingContainerError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith('No container for handle:');
+}
+
+function logPlatformRouteError(route: string, err: unknown): void {
+  console.error(
+    `[platform] ${route} failed:`,
+    err instanceof Error ? err.message : String(err),
+  );
+}
+
+function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {
+  if (!authHeader?.startsWith('Bearer ')) {
+    return false;
+  }
+  return timingSafeTokenEquals(authHeader.slice(7), expected);
+}
+
+function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
+  const handleToken = buildPlatformVerificationToken(handle, platformSecret);
+  return createHmac('sha256', handleToken).update(userId).digest('hex');
+}
+
+function requireValidHandle(handle: string): string {
+  if (!HANDLE_PATTERN.test(handle)) {
+    throw new Error('Invalid handle');
+  }
+  return handle;
+}
+
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("'", "&#39;");
+}
+
+function applyAuthPageHeaders(
+  c: import('hono').Context,
+  scriptNonce: string,
+): void {
+  c.header('X-Frame-Options', 'DENY');
+  c.header(
+    'Content-Security-Policy',
+    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN}; object-src 'none'; base-uri 'none'`,
+  );
+}
+
+export function checkUnsafeDefaultSecrets(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.error,
+): string[] {
+  if (env.NODE_ENV !== 'production') return [];
+  const problems: string[] = [];
+
+  if (!env.PLATFORM_SECRET || env.PLATFORM_SECRET === DEV_PLATFORM_SECRET) {
+    problems.push('PLATFORM_SECRET');
+  }
+
+  if (
+    !env.PLATFORM_JWT_SECRET ||
+    env.PLATFORM_JWT_SECRET === DEV_PLATFORM_JWT_SECRET
+  ) {
+    problems.push('PLATFORM_JWT_SECRET');
+  }
+
+  if (problems.length > 0) {
+    log(
+      `[platform] Refusing to start in production with missing or unsafe default secrets: ${problems.join(', ')}.`,
+    );
+  }
+
+  return problems;
+}
+
+interface AppDomainIdentity {
+  handle: string;
+  userId: string;
+}
+
+function isSyncJwtAuthError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.name.startsWith("JWT") ||
+    err.name.startsWith("JWS") ||
+    err.message === "Invalid sync JWT claims" ||
+    err.message.startsWith("JWT handle ")
+  );
+}
+
+async function resolveAppDomainIdentity(opts: {
+  authHeader: string | undefined;
+  cookieHeader: string | undefined;
+  clerkAuth?: ClerkAuth;
+  db: PlatformDB;
+  platformJwtSecret: string;
+}): Promise<AppDomainIdentity | null> {
+  const bearerToken = opts.authHeader?.startsWith('Bearer ')
+    ? opts.authHeader.slice(7)
+    : null;
+
+  if (bearerToken && opts.platformJwtSecret) {
+    try {
+      const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
+      const record = getContainer(opts.db, claims.handle);
+      if (record?.clerkUserId !== claims.sub) {
+        return null;
+      }
+      return {
+        handle: record.handle,
+        userId: record.clerkUserId,
+      };
+    } catch (err: unknown) {
+      if (!isSyncJwtAuthError(err)) {
+        throw err;
+      }
+      // Fall through to Clerk session auth.
+    }
+  }
+
+  if (!opts.clerkAuth) {
+    return null;
+  }
+
+  const token = opts.clerkAuth.extractToken(opts.authHeader, opts.cookieHeader);
+  if (!token) {
+    return null;
+  }
+
+  const result = await opts.clerkAuth.verify(token);
+  if (!result.authenticated || !result.userId) {
+    return null;
+  }
+
+  const record = getContainerByClerkId(opts.db, result.userId);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    handle: record.handle,
+    userId: result.userId,
+  };
+}
+
+function getAuthPage(
+  publishableKey: string,
+  mode: 'sign-in' | 'sign-up',
+  scriptNonce: string,
+) {
+  const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -45,14 +224,15 @@ function getAuthPage(publishableKey: string, mode: 'sign-in' | 'sign-up') {
 <body>
   <div id="auth"><span class="loading">Loading...</span></div>
   <script
+    nonce="${scriptNonce}"
     async
     crossorigin="anonymous"
-    data-clerk-publishable-key="${publishableKey}"
-    src="https://clerk.matrix-os.com/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+    data-clerk-publishable-key="${escapedPublishableKey}"
+    src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
     type="text/javascript"
     onload="initClerk()"
   ></script>
-  <script>
+  <script nonce="${scriptNonce}">
     function initClerk() {
       window.Clerk.load({ signInUrl: '/sign-in', signUpUrl: '/sign-up' }).then(function() {
         if (window.Clerk.user) {
@@ -91,6 +271,8 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
     const upstream = await fetch(targetUrl, {
       method: c.req.method,
       headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30_000),
       body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
     });
 
@@ -98,7 +280,8 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
       status: upstream.status,
       headers: upstream.headers,
     });
-  } catch {
+  } catch (err: unknown) {
+    logPlatformRouteError('proxyToShell', err);
     return new Response('Auth service unavailable', { status: 502 });
   }
 }
@@ -129,9 +312,67 @@ function getNoContainerPage() {
 </html>`;
 }
 
-export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; clerkAuth?: ClerkAuth; matrixProvisioner?: MatrixProvisioner }) {
+/**
+ * Startup assertion for the trusted-sync architecture: user containers no
+ * longer receive raw S3 credentials. When MATRIX_HOME_MIRROR=true, the
+ * container gateway reaches storage through the platform's internal sync API,
+ * so the platform itself must hold the trusted storage config plus the
+ * PLATFORM_SECRET used for per-container HMAC auth. Warn loudly at startup
+ * instead of discovering silent sync failure after deploy.
+ *
+ * Returns the list of missing logical requirements (empty if all is well or
+ * home-mirror is disabled). Exposed for tests; callers typically just discard
+ * the return value after logging.
+ */
+export function checkHomeMirrorS3Env(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.warn,
+): string[] {
+  if (env.MATRIX_HOME_MIRROR !== 'true') return [];
+  const missing: string[] = [];
+  if (!(env.S3_ENDPOINT || env.R2_ENDPOINT || env.R2_ACCOUNT_ID)) {
+    missing.push('S3_ENDPOINT/R2_ENDPOINT or R2_ACCOUNT_ID');
+  }
+  if (!(env.S3_ACCESS_KEY_ID || env.R2_ACCESS_KEY_ID)) {
+    missing.push('S3_ACCESS_KEY_ID/R2_ACCESS_KEY_ID');
+  }
+  if (!(env.S3_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY)) {
+    missing.push('S3_SECRET_ACCESS_KEY/R2_SECRET_ACCESS_KEY');
+  }
+  if (!(env.S3_BUCKET || env.R2_BUCKET)) {
+    missing.push('S3_BUCKET/R2_BUCKET');
+  }
+  if (!env.PLATFORM_SECRET) {
+    missing.push('PLATFORM_SECRET');
+  }
+  if (missing.length > 0) {
+    log(
+      `[platform] MATRIX_HOME_MIRROR=true but trusted sync storage is incomplete; user containers no longer receive raw S3 credentials and must proxy sync storage through the platform. Missing: ${missing.join(', ')}.`,
+    );
+  }
+  return missing;
+}
+
+export function createApp(deps: {
+  db: PlatformDB;
+  orchestrator: Orchestrator;
+  clerkAuth?: ClerkAuth;
+  matrixProvisioner?: MatrixProvisioner;
+  platformSecret?: string;
+  integrationRoutes?: Hono<any>;
+  internalIntegrationRoutes?: Hono<any>;
+  internalSyncRoutes?: Hono<any>;
+}) {
   const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
-  const app = new Hono();
+  const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
+  const app = new Hono<{
+    Variables: {
+      platformUserId: string;
+      platformHandle: string;
+      internalContainerHandle: string;
+      internalContainerClerkUserId: string;
+    };
+  }>();
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -155,20 +396,64 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     });
   });
 
+  // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing
+  // so the CLI's poll/code endpoints work regardless of which subdomain hits
+  // the platform. Public endpoints; admin Bearer middleware below skips them.
+  const platformJwtSecret = process.env.PLATFORM_JWT_SECRET ?? '';
+  if (platformJwtSecret) {
+    const platformPublicUrl =
+      process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${process.env.PLATFORM_PORT ?? 9000}`;
+    app.route(
+      '/',
+      createAuthRoutes({
+        db,
+        clerkAuth,
+        jwtSecret: platformJwtSecret,
+        platformUrl: platformPublicUrl,
+        gatewayUrlForHandle: (handle) => {
+          // Single-domain production: every handle hits https://app.matrix-os.com,
+          // where the platform middleware resolves the Clerk session and proxies
+          // to the right container. Per-handle subdomains are deprecated.
+          // Dev override via GATEWAY_URL_TEMPLATE='http://localhost:4000' (single-tenant)
+          // or 'http://matrixos-{handle}:4000' for in-cluster Docker routing.
+          const safeHandle = requireValidHandle(handle);
+          const tmpl = process.env.GATEWAY_URL_TEMPLATE;
+          if (tmpl) return tmpl.replace('{handle}', safeHandle);
+          return 'https://app.matrix-os.com';
+        },
+      }),
+    );
+  }
+
   // Session-based routing: app.matrix-os.com -> Clerk session -> container
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? '';
     const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
     if (!isAppDomain) return next();
 
-    if (!clerkAuth) {
-      return c.text('Clerk not configured', 500);
+    // Device-flow paths are served directly by the platform's auth-routes.ts
+    // (registered above). In normal dispatch they never reach this middleware,
+    // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
+    // a future refactor can't accidentally proxy them into a user container.
+    const reqPath = c.req.path;
+    if (
+      reqPath === '/auth/device' ||
+      reqPath.startsWith('/auth/device/') ||
+      reqPath.startsWith('/api/auth/device/')
+    ) {
+      return next();
+    }
+    const isPublicIntegrationPath =
+      reqPath === '/api/integrations/available' ||
+      reqPath.startsWith('/api/integrations/webhook/');
+    const isIntegrationPath =
+      reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
+    if (isPublicIntegrationPath) {
+      return next();
     }
 
-    const token = clerkAuth.extractToken(
-      c.req.header('authorization'),
-      c.req.header('cookie'),
-    );
+    const authHeader = c.req.header('authorization');
+    const cookieHeader = c.req.header('cookie');
 
     const path = c.req.path;
     const isGatewayPath =
@@ -180,40 +465,45 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
 
-    // No session -- serve Clerk auth directly from the platform.
-    if (!token) {
+    const identity = await resolveAppDomainIdentity({
+      authHeader,
+      cookieHeader,
+      clerkAuth,
+      db,
+      platformJwtSecret,
+    });
+
+    // No session/JWT -- serve Clerk auth directly from the platform.
+    if (!identity) {
       console.log(`[app] no token path=${path}`);
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      if (!publishableKey) {
+      if (!publishableKey || !clerkAuth) {
         return c.text('Clerk publishable key not configured', 500);
       }
-      return c.html(getAuthPage(publishableKey, authMode));
+      const scriptNonce = randomBytes(16).toString('base64');
+      applyAuthPageHeaders(c, scriptNonce);
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce));
     }
 
-    const result = await clerkAuth.verify(token);
-    if (!result.authenticated || !result.userId) {
-      console.log(`[app] verify failed: ${result.error}, path=${path}`);
-      if (isGatewayPath) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-      if (!publishableKey) {
-        return c.text('Clerk publishable key not configured', 500);
-      }
-      return c.html(getAuthPage(publishableKey, authMode));
-    }
-
-    console.log(`[app] verified userId=${result.userId} path=${path}`);
-    const record = getContainerByClerkId(db, result.userId);
+    console.log(`[app] verified request path=${path}`);
+    const record = getContainer(db, identity.handle);
     if (!record) {
       return c.html(getNoContainerPage());
+    }
+
+    if (isIntegrationPath) {
+      c.set('platformUserId', identity.userId);
+      c.set('platformHandle', record.handle);
+      return next();
     }
 
     if (record.status === 'stopped') {
       try {
         await orchestrator.start(record.handle);
-      } catch {
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain container start', err);
         return c.json({ error: 'Failed to wake container' }, 503);
       }
     }
@@ -227,17 +517,23 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     try {
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && value) headers.set(key, value);
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
       }
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
-      // Platform already verified Clerk session -- tell user shell to skip re-verification
-      headers.set('x-platform-verified', PLATFORM_SECRET);
-      headers.set('x-platform-user-id', result.userId);
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
+        headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
+      }
+      headers.set('x-platform-user-id', identity.userId);
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
         headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(30_000),
         body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
       });
 
@@ -245,86 +541,63 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
         status: upstream.status,
         headers: upstream.headers,
       });
-    } catch {
+    } catch (err: unknown) {
+      logPlatformRouteError('app-domain proxy', err);
       return c.json({ error: 'Container unreachable' }, 502);
     }
   });
 
-  // Subdomain proxy: {handle}.matrix-os.com -> user container (before auth)
-  app.use('*', async (c, next) => {
-    const host = c.req.header('host') ?? '';
-    const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
-    if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') return next();
-
-    const handle = match[1];
-    const record = getContainer(db, handle);
-    if (!record) return c.json({ error: 'Unknown instance' }, 404);
-
-    // Clerk JWT verification -- disabled until Clerk cookie domain is configured
-    // to share sessions across subdomains (.matrix-os.com).
-    // TODO: re-enable once Clerk Dashboard -> Domains has matrix-os.com as primary
-    // and cookies are set with Domain=.matrix-os.com
-    // if (clerkAuth && !clerkAuth.isPublicPath(c.req.path) && record.clerkUserId) {
-    //   const token = clerkAuth.extractToken(
-    //     c.req.header('authorization'),
-    //     c.req.header('cookie'),
-    //   );
-    //   if (!token) {
-    //     return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-    //   }
-    //   const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
-    //   if (!result.authenticated) {
-    //     return c.redirect(`https://matrix-os.com/login?redirect=${encodeURIComponent(c.req.url)}`);
-    //   }
-    // }
-
-    if (record.status === 'stopped') {
-      try {
-        await orchestrator.start(handle);
-      } catch {
-        return c.json({ error: 'Failed to wake container' }, 503);
+  if (deps.integrationRoutes) {
+    app.route('/api/integrations', deps.integrationRoutes);
+  }
+  if (deps.internalIntegrationRoutes) {
+    const internalIntegrationApp = new Hono<{
+      Variables: {
+        internalContainerHandle: string;
+        internalContainerClerkUserId: string;
+      };
+    }>();
+    internalIntegrationApp.use('*', async (c, next) => {
+      const handle = c.req.param('handle');
+      if (!handle) {
+        return c.json({ error: 'Missing handle' }, 400);
       }
-    }
-
-    updateLastActive(db, handle);
-
-    const path = c.req.path;
-    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const isGatewayPath = path.startsWith('/api/') || path.startsWith('/ws') || path.startsWith('/files/') || path.startsWith('/modules/') || path === '/health';
-    const targetPort = isGatewayPath ? 4000 : 3000;
-    const targetUrl = `http://matrixos-${handle}:${targetPort}${path}${qs}`;
-
-    try {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && value) headers.set(key, value);
+      if (!platformSecret) {
+        return c.json({ error: 'Internal integrations not configured' }, 503);
       }
-      headers.set('x-forwarded-host', host);
-      headers.set('x-forwarded-proto', 'https');
+      const auth = c.req.header('authorization');
+      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+      const expected = buildPlatformVerificationToken(handle, platformSecret);
+      if (!timingSafeTokenEquals(token, expected)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
 
-      const upstream = await fetch(targetUrl, {
-        method: c.req.method,
-        headers,
-        body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-      });
+      const record = getContainer(db, handle);
+      if (!record?.clerkUserId) {
+        return c.json({ error: 'Unknown handle' }, 404);
+      }
 
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers: upstream.headers,
-      });
-    } catch {
-      return c.json({ error: 'Container unreachable' }, 502);
-    }
-  });
+      c.set('internalContainerHandle', handle);
+      c.set('internalContainerClerkUserId', record.clerkUserId);
+      return next();
+    });
+    internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
+    app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
+  }
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
 
   // Auth middleware for admin API routes below
   app.use('*', async (c, next) => {
     if (c.req.path === '/health') return next();
     if (c.req.path === '/metrics') return next();
     if (c.req.path.endsWith('/self-upgrade') && c.req.method === 'POST') return next();
-    if (!PLATFORM_SECRET) return next();
+    if (!platformSecret) {
+      return c.json({ error: 'Platform admin not configured' }, 503);
+    }
     const auth = c.req.header('authorization');
-    if (auth !== `Bearer ${PLATFORM_SECRET}`) {
+    if (!bearerTokenEquals(auth, platformSecret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     return next();
@@ -332,8 +605,27 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
   // --- Container management ---
 
-  app.post('/containers/provision', async (c) => {
-    const { handle, clerkUserId, displayName } = await c.req.json<{ handle: string; clerkUserId: string; displayName?: string }>();
+  app.post('/containers/provision', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/containers/provision parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = ProvisionBodySchema.safeParse(body);
+    if (!parsed.success) {
+      const data = body as { handle?: unknown; clerkUserId?: unknown } | null;
+      if (!data || typeof data !== 'object' || data.handle === undefined || data.clerkUserId === undefined) {
+        return c.json({ error: 'handle and clerkUserId required' }, 400);
+      }
+      if (typeof data.handle !== 'string' || !HANDLE_PATTERN.test(data.handle)) {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { handle, clerkUserId, displayName } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
@@ -350,59 +642,90 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       }
 
       return c.json(record, 201);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 409);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.startsWith('Container already exists for handle:')) {
+        return c.json({ error: 'Container already exists' }, 409);
+      }
+      logPlatformRouteError('/containers/provision', e);
+      return c.json({ error: 'Provision failed' }, 500);
     }
   });
 
   app.post('/containers/:handle/start', async (c) => {
     try {
-      await orchestrator.start(c.req.param('handle'));
+      await orchestrator.start(requireValidHandle(c.req.param('handle')));
       return c.json({ ok: true });
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle/start', e);
+      return c.json({ error: 'Failed to start container' }, 500);
     }
   });
 
   app.post('/containers/:handle/stop', async (c) => {
     try {
-      await orchestrator.stop(c.req.param('handle'));
+      await orchestrator.stop(requireValidHandle(c.req.param('handle')));
       return c.json({ ok: true });
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle/stop', e);
+      return c.json({ error: 'Failed to stop container' }, 500);
     }
   });
 
   app.post('/containers/:handle/upgrade', async (c) => {
     try {
-      const record = await orchestrator.upgrade(c.req.param('handle'));
+      const record = await orchestrator.upgrade(requireValidHandle(c.req.param('handle')));
       return c.json(record);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle/upgrade', e);
+      return c.json({ error: 'Upgrade failed' }, 500);
     }
   });
 
-  app.post('/containers/:handle/self-upgrade', async (c) => {
-    if (!PLATFORM_SECRET) {
+  app.post('/containers/:handle/self-upgrade', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    if (!platformSecret) {
       return c.json({ error: 'Self-upgrade not configured' }, 503);
     }
-    const handle = c.req.param('handle');
+    let handle: string;
+    try {
+      handle = requireValidHandle(c.req.param('handle'));
+    } catch (err: unknown) {
+      if (!(err instanceof Error && err.message === 'Invalid handle')) {
+        console.error('[platform] Unexpected self-upgrade handle validation failure:', err);
+      }
+      return c.json({ error: 'Invalid handle' }, 400);
+    }
     const auth = c.req.header('authorization');
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : '';
 
-    const expected = createHmac('sha256', PLATFORM_SECRET).update(handle).digest('hex');
-    const tokenBuf = Buffer.from(token);
-    const expectedBuf = Buffer.from(expected);
-
-    if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+    const expected = buildPlatformVerificationToken(handle, platformSecret);
+    if (!timingSafeTokenEquals(token, expected)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
     try {
       const record = await orchestrator.upgrade(handle);
       return c.json(record);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 500);
+    } catch (e: unknown) {
+      logPlatformRouteError('/containers/:handle/self-upgrade', e);
+      return c.json({ error: 'Upgrade failed' }, 500);
     }
   });
 
@@ -413,10 +736,17 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
   app.delete('/containers/:handle', async (c) => {
     try {
-      await orchestrator.destroy(c.req.param('handle'));
+      await orchestrator.destroy(requireValidHandle(c.req.param('handle')));
       return c.json({ ok: true });
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'Invalid handle') {
+        return c.json({ error: 'Invalid handle' }, 400);
+      }
+      if (isMissingContainerError(e)) {
+        return c.json({ error: 'Container not found' }, 404);
+      }
+      logPlatformRouteError('/containers/:handle', e);
+      return c.json({ error: 'Failed to destroy container' }, 500);
     }
   });
 
@@ -451,23 +781,29 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
         const base = `http://matrixos-${r.handle}:4000`;
         const timeout = 3000;
 
-        const fetchJson = async (url: string) => {
+        const fetchJson = async (url: string, label: string) => {
           try {
-            const ac = new AbortController();
-            const timer = setTimeout(() => ac.abort(), timeout);
-            const res = await fetch(url, { signal: ac.signal });
-            clearTimeout(timer);
-            if (!res.ok) return null;
+            const res = await fetch(url, {
+              signal: AbortSignal.timeout(timeout),
+            });
+            if (!res.ok) {
+              console.warn(`[platform] ${label} returned ${res.status}`);
+              return null;
+            }
             return await res.json();
-          } catch {
+          } catch (err: unknown) {
+            console.warn(
+              `[platform] ${label} failed:`,
+              err instanceof Error ? err.message : String(err),
+            );
             return null;
           }
         };
 
         const [health, systemInfo, conversations] = await Promise.all([
-          fetchJson(`${base}/health`),
-          fetchJson(`${base}/api/system/info`),
-          fetchJson(`${base}/api/conversations`),
+          fetchJson(`${base}/health`, `${r.handle} health check`),
+          fetchJson(`${base}/api/system/info`, `${r.handle} system info`),
+          fetchJson(`${base}/api/conversations`, `${r.handle} conversations`),
         ]);
 
         return {
@@ -483,12 +819,17 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
     let usageSummary = null;
     try {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 3000);
-      const res = await fetch('http://proxy:8080/usage/summary', { signal: ac.signal });
-      clearTimeout(timer);
+      const res = await fetch('http://proxy:8080/usage/summary', {
+        signal: AbortSignal.timeout(3000),
+      });
       if (res.ok) usageSummary = await res.json();
-    } catch { /* proxy may not be reachable */ }
+      else console.warn(`[platform] usage summary returned ${res.status}`);
+    } catch (err: unknown) {
+      console.warn(
+        '[platform] usage summary fetch failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
 
     return c.json({
       timestamp: new Date().toISOString(),
@@ -535,13 +876,26 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     return c.json(profile);
   });
 
-  app.post('/social/send/:handle', async (c) => {
-    const { text, from } = await c.req.json<{ text: string; from: { handle: string; displayName?: string } }>();
+  app.post('/social/send/:handle', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/social/send/:handle parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = SocialSendBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { text, from } = parsed.data;
     try {
       const result = await social.sendMessage(c.req.param('handle'), text, from);
       return c.json(result);
-    } catch (e: any) {
-      return c.json({ error: e.message }, 404);
+    } catch (e: unknown) {
+      logPlatformRouteError('/social/send/:handle', e);
+      return c.json({ error: 'Message delivery failed' }, 404);
     }
   });
 
@@ -555,7 +909,8 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
     if (record.status === 'stopped') {
       try {
         await orchestrator.start(handle);
-      } catch {
+      } catch (err: unknown) {
+        logPlatformRouteError('/proxy/:handle/* start', err);
         return c.json({ error: 'Failed to wake container' }, 503);
       }
     }
@@ -577,6 +932,8 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
         headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(30_000),
         body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
       });
 
@@ -584,7 +941,8 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
         status: upstream.status,
         headers: upstream.headers,
       });
-    } catch {
+    } catch (err: unknown) {
+      logPlatformRouteError('/proxy/:handle/*', err);
       return c.json({ error: 'Container unreachable' }, 502);
     }
   });
@@ -594,6 +952,9 @@ export function createApp(deps: { db: PlatformDB; orchestrator: Orchestrator; cl
 
 // Start server when run directly
 if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')) {
+  if (checkUnsafeDefaultSecrets().length > 0) {
+    process.exit(1);
+  }
   const db = createPlatformDb(DB_PATH);
   const docker = new Dockerode();
   const extraEnv: string[] = [];
@@ -604,14 +965,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     extraEnv.push(`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`);
   }
   for (const key of [
-    'PIPEDREAM_CLIENT_ID',
-    'PIPEDREAM_CLIENT_SECRET',
-    'PIPEDREAM_PROJECT_ID',
-    'PIPEDREAM_ENVIRONMENT',
-    'PIPEDREAM_WEBHOOK_SECRET',
+    'MATRIX_HOME_MIRROR',
   ]) {
     if (process.env[key]) extraEnv.push(`${key}=${process.env[key]}`);
   }
+
+  checkHomeMirrorS3Env();
 
   const orchestrator = createOrchestrator({
     db,
@@ -662,7 +1021,93 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     console.log(`[matrix] Provisioner enabled (${conduitUrl})`);
   }
 
-  const app = createApp({ db, orchestrator, clerkAuth, matrixProvisioner });
+  let integrationRoutes: Hono | undefined;
+  let internalIntegrationRoutes: Hono | undefined;
+  if (
+    process.env.POSTGRES_URL &&
+    process.env.PIPEDREAM_CLIENT_ID &&
+    process.env.PIPEDREAM_CLIENT_SECRET &&
+    process.env.PIPEDREAM_PROJECT_ID
+  ) {
+    const [
+      { createIntegrationRoutes },
+      { createPipedreamClient },
+      { createPlatformDb: createGatewayPlatformDb },
+    ] = await Promise.all([
+      import('../../gateway/src/integrations/routes.js'),
+      import('../../gateway/src/integrations/pipedream.js'),
+      import('../../gateway/src/platform-db.js'),
+    ]);
+
+    const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
+    await trustedPlatformDb.migrate();
+    const pipedream = createPipedreamClient({
+      clientId: process.env.PIPEDREAM_CLIENT_ID,
+      clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
+      projectId: process.env.PIPEDREAM_PROJECT_ID,
+      environment: process.env.PIPEDREAM_ENVIRONMENT ?? 'production',
+    });
+    const webhookSecret = process.env.PIPEDREAM_WEBHOOK_SECRET ?? '';
+    integrationRoutes = createIntegrationRoutes({
+      db: trustedPlatformDb,
+      pipedream,
+      webhookSecret,
+      resolveUserId: async (c) => {
+        const clerkUserId = c.get('platformUserId') as string | undefined;
+        if (!clerkUserId) return null;
+        const user = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
+        return user?.id ?? null;
+      },
+    });
+    internalIntegrationRoutes = createIntegrationRoutes({
+      db: trustedPlatformDb,
+      pipedream,
+      webhookSecret,
+      resolveUserId: async (c) => {
+        const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
+        if (!clerkUserId) return null;
+        const user = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
+        return user?.id ?? null;
+      },
+    });
+  }
+
+  let internalSyncRoutes: Hono | undefined;
+  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
+  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
+  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
+  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
+  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+  if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
+    const [{ createR2Client }, { createInternalSyncRoutes }] = await Promise.all([
+      import('../../gateway/src/sync/r2-client.js'),
+      import('./internal-sync-routes.js'),
+    ]);
+    const r2 = createR2Client({
+      accessKeyId: s3AccessKey,
+      secretAccessKey: s3SecretKey,
+      bucket: s3Bucket,
+      endpoint: s3Endpoint,
+      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
+      accountId: process.env.R2_ACCOUNT_ID,
+      forcePathStyle: s3ForcePathStyle,
+    });
+    internalSyncRoutes = createInternalSyncRoutes({
+      db,
+      r2,
+      platformSecret: PLATFORM_SECRET,
+    });
+  }
+
+  const app = createApp({
+    db,
+    orchestrator,
+    clerkAuth,
+    matrixProvisioner,
+    integrationRoutes,
+    internalIntegrationRoutes,
+    internalSyncRoutes,
+  });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
@@ -674,24 +1119,38 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     // Session-based WebSocket routing for app.matrix-os.com
     const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
-    if (isAppDomain && clerkAuth) {
-      const token = clerkAuth.extractToken(
-        req.headers.authorization as string | undefined,
-        req.headers.cookie,
-      );
-      if (!token) { socket.destroy(); return; }
+    if (isAppDomain) {
+      const identity = await resolveAppDomainIdentity({
+        authHeader: req.headers.authorization as string | undefined,
+        cookieHeader: req.headers.cookie,
+        clerkAuth,
+        db,
+        platformJwtSecret: PLATFORM_JWT_SECRET,
+      });
+      if (!identity) { socket.destroy(); return; }
 
-      const result = await clerkAuth.verify(token);
-      if (!result.authenticated || !result.userId) { socket.destroy(); return; }
-
-      const record = getContainerByClerkId(db, result.userId);
+      const record = getContainer(db, identity.handle);
       if (!record) { socket.destroy(); return; }
 
       const upstream = createConnection({ host: `matrixos-${record.handle}`, port: 4000 }, () => {
         const path = req.url ?? '/';
+        if (!isSafeWebSocketUpgradePath(path)) {
+          socket.destroy();
+          upstream.destroy();
+          return;
+        }
         const headers = Object.entries(req.headers)
-          .filter(([k]) => k !== 'host')
+          .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
           .map(([k, v]) => `${k}: ${v}`)
+          .concat(
+            PLATFORM_SECRET
+              ? [
+                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
+                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
+                  `x-platform-user-id: ${identity.userId}`,
+                ]
+              : [],
+          )
           .join('\r\n');
 
         upstream.write(
@@ -708,56 +1167,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       return;
     }
 
-    // Subdomain-based WebSocket routing
-    const match = host.match(/^([a-z0-9][a-z0-9-]*)\.matrix-os\.com$/i);
-    if (!match || match[1] === 'api' || match[1] === 'www' || match[1] === 'app') {
-      socket.destroy();
-      return;
-    }
-
-    const handle = match[1];
-    const record = getContainer(db, handle);
-    if (!record) {
-      socket.destroy();
-      return;
-    }
-
-    // Verify Clerk JWT for WebSocket connections -- disabled until cookie domain configured
-    // TODO: re-enable with subdomain cookie sharing
-    // if (clerkAuth && record.clerkUserId) {
-    //   const token = clerkAuth.extractToken(
-    //     req.headers.authorization,
-    //     req.headers.cookie,
-    //   );
-    //   if (!token) {
-    //     socket.destroy();
-    //     return;
-    //   }
-    //   const result = await clerkAuth.verifyAndMatchOwner(token, record.clerkUserId);
-    //   if (!result.authenticated) {
-    //     socket.destroy();
-    //     return;
-    //   }
-    // }
-
-    // Proxy WebSocket upgrade to the user container's gateway (port 4000)
-    const upstream = createConnection({ host: `matrixos-${handle}`, port: 4000 }, () => {
-      const path = req.url ?? '/';
-      const headers = Object.entries(req.headers)
-        .filter(([k]) => k !== 'host')
-        .map(([k, v]) => `${k}: ${v}`)
-        .join('\r\n');
-
-      upstream.write(
-        `${req.method} ${path} HTTP/1.1\r\nHost: matrixos-${handle}:4000\r\n${headers}\r\n\r\n`
-      );
-      if (head.length > 0) upstream.write(head);
-
-      upstream.pipe(socket);
-      socket.pipe(upstream);
-    });
-
-    upstream.on('error', () => socket.destroy());
-    socket.on('error', () => upstream.destroy());
+    // Unknown host -- legacy {handle}.matrix-os.com subdomain routing retired;
+    // only app.matrix-os.com is supported for WebSocket upgrades.
+    socket.destroy();
   });
 }

@@ -1,6 +1,73 @@
 import { timingSafeEqual } from "node:crypto";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
+import {
+  looksLikeJwt,
+  readJwtKeyConfig,
+  validateSyncJwt,
+  type SyncJwtClaims,
+} from "./auth-jwt.js";
+
+// Hono context key for a validated sync JWT's claims. Routes that need the
+// authenticated Clerk userId read `c.get("jwtClaims")?.sub`. See
+// `getUserIdFromContext` below for the canonical helper.
+export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
+
+export class MissingSyncUserIdentityError extends Error {
+  constructor() {
+    super("Missing authenticated sync user identity");
+    this.name = "MissingSyncUserIdentityError";
+  }
+}
+
+/**
+ * Canonical resolver for the "who is this request for?" question used by
+ * sync routes. Prefers the Clerk userId embedded in a validated JWT's
+ * `sub` claim; falls back to `MATRIX_USER_ID` / `MATRIX_HANDLE` so the
+ * container-side home-mirror and legacy bearer-token (dev) mode stay aligned,
+ * then `"default"` as a last resort.
+ *
+ * MUST be used by every sync code path (manifest, presign, commit,
+ * resolve-conflict, share, WS `sync:subscribe`) so they all key off the
+ * same identity. Do not read `process.env.MATRIX_HANDLE` directly from
+ * sync handlers.
+ */
+let warnedDefaultUserIdOnce = false;
+
+function allowDefaultSyncUserIdFallback(): boolean {
+  return !process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production";
+}
+
+export function getUserIdFromContext(c: Context): string {
+  const claims = c.get(JWT_CLAIMS_CONTEXT_KEY) as SyncJwtClaims | undefined;
+  if (claims && typeof claims.sub === "string" && claims.sub.length > 0) {
+    return claims.sub;
+  }
+  const matrixUserId = process.env.MATRIX_USER_ID;
+  if (matrixUserId && matrixUserId.length > 0) {
+    return matrixUserId;
+  }
+  const handle = process.env.MATRIX_HANDLE;
+  if (handle && handle.length > 0) {
+    return handle;
+  }
+  if (!allowDefaultSyncUserIdFallback()) {
+    if (!warnedDefaultUserIdOnce) {
+      warnedDefaultUserIdOnce = true;
+      console.error(
+        "[auth] No JWT claims and no MATRIX_HANDLE env var — refusing to fall back to userId='default' while sync auth is enabled.",
+      );
+    }
+    throw new MissingSyncUserIdentityError();
+  }
+  if (!warnedDefaultUserIdOnce) {
+    warnedDefaultUserIdOnce = true;
+    console.warn(
+      "[auth] No JWT claims and no MATRIX_HANDLE env var — falling back to userId='default' in open local-dev mode only.",
+    );
+  }
+  return "default";
+}
 
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
@@ -56,7 +123,13 @@ const webhookRateLimiter = createRateLimiter({
 });
 
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
-  return c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "127.0.0.1";
+  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  return (
+    c.req.header("cf-connecting-ip")?.trim() ||
+    c.req.header("x-real-ip")?.trim() ||
+    forwardedFor ||
+    "127.0.0.1"
+  );
 }
 
 export function authMiddleware(
@@ -66,15 +139,20 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
+    // Original semantics: no MATRIX_AUTH_TOKEN means the gateway runs in
+    // open mode (dev convenience). PLATFORM_JWT_SECRET on its own does NOT
+    // enforce auth -- it just enables the JWT acceptance path WHEN auth is
+    // already required by MATRIX_AUTH_TOKEN. To enforce auth in dev, set
+    // MATRIX_AUTH_TOKEN to any value (and optionally PLATFORM_JWT_SECRET to
+    // also accept platform-issued JWTs).
     if (!token) return next();
 
-    let decodedPath: string;
-    try {
-      decodedPath = decodeURIComponent(c.req.path);
-    } catch {
-      return c.json({ error: "Bad request" }, 400);
-    }
-    const normalizedPath = new URL(decodedPath, "http://localhost").pathname;
+    // Read JWT config + handle per-call so env-var changes during tests
+    // are picked up without recreating the middleware.
+    const jwtKey = await readJwtKeyConfig();
+    const expectedHandle = process.env.MATRIX_HANDLE;
+
+    const normalizedPath = c.req.path;
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       return next();
@@ -98,7 +176,7 @@ export function authMiddleware(
     // registered and active. Uses the stricter "failed auth" rate limiter
     // because the provider allowlist is narrow and a hit from an unknown
     // provider is already suspicious.
-    const webhookMatch = c.req.path.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
+    const webhookMatch = normalizedPath.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
     const isWebhook = webhookMatch && webhookProviders.has(webhookMatch[1]);
     if (isWebhook) {
       const ip = getClientIp(c);
@@ -109,7 +187,7 @@ export function authMiddleware(
     }
 
     const authHeader = c.req.header("Authorization");
-    const isWsUpgrade = WS_QUERY_TOKEN_PATHS.some((p) => c.req.path === p);
+    const isWsUpgrade = WS_QUERY_TOKEN_PATHS.some((p) => normalizedPath === p);
 
     // Only accept query param token for WebSocket upgrades (browsers can't set
     // Authorization headers on WS connections). REST endpoints must use headers.
@@ -117,16 +195,56 @@ export function authMiddleware(
     if (isWsUpgrade) {
       try {
         queryToken = new URL(c.req.url).searchParams.get("token");
-      } catch {
-        // URL parsing may fail in some contexts
+      } catch (err: unknown) {
+        if (!(err instanceof TypeError)) {
+          console.error("[auth] Unexpected error parsing WS URL:", err);
+        }
       }
     }
 
-    const authenticated =
-      (authHeader && timingSafeCompare(authHeader, `Bearer ${token}`)) ||
-      (isWsUpgrade && queryToken && timingSafeCompare(queryToken, token));
+    const presentedToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : isWsUpgrade && queryToken
+        ? queryToken
+        : null;
 
-    if (authenticated) {
+    // JWT path: if the bearer looks like a JWT and we have a JWT key, treat
+    // JWT validation as terminal. Falling back to the legacy shared-secret
+    // path would let an attacker reuse a JWT-shaped token string as the
+    // legacy bearer and bypass the JWT verifier entirely.
+    if (presentedToken && jwtKey && looksLikeJwt(presentedToken)) {
+      try {
+        const claims = await validateSyncJwt(presentedToken, {
+          ...jwtKey,
+          expectedHandle,
+        });
+        // Stash claims on the Hono context so downstream handlers can
+        // resolve the authenticated Clerk userId via getUserIdFromContext.
+        c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
+        return next();
+      } catch (err) {
+        // Fall through. We don't expose JWT failure reasons to the client,
+        // but a debug log here prevents a misconfigured PLATFORM_JWT_SECRET
+        // from silently locking out every platform-issued token with zero
+        // operator signal.
+        console.warn(
+          "[auth] JWT validation failed:",
+          (err as Error).message,
+        );
+        const ip = getClientIp(c);
+        if (!rateLimiter.check(ip)) {
+          return c.json({ error: "Too many requests" }, 429);
+        }
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+    }
+
+    const legacyHeaderOk =
+      token && authHeader && timingSafeCompare(authHeader, `Bearer ${token}`);
+    const legacyQueryOk =
+      token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
+
+    if (legacyHeaderOk || legacyQueryOk) {
       return next();
     }
 

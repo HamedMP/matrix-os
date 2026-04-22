@@ -219,15 +219,11 @@ export function listApps(db: PlatformDB, options: ListAppsOptions): ListAppsResu
     .get();
   const total = countResult?.count ?? 0;
 
-  let query = db.select().from(appsRegistry).where(where);
-
-  if (sort === 'popular') {
-    query = query.orderBy(desc(appsRegistry.installs));
-  } else if (sort === 'rated') {
-    query = query.orderBy(desc(appsRegistry.rating));
-  } else {
-    query = query.orderBy(desc(appsRegistry.createdAt));
-  }
+  const query = sort === 'popular'
+    ? db.select().from(appsRegistry).where(where).orderBy(desc(appsRegistry.installs))
+    : sort === 'rated'
+      ? db.select().from(appsRegistry).where(where).orderBy(desc(appsRegistry.rating))
+      : db.select().from(appsRegistry).where(where).orderBy(desc(appsRegistry.createdAt));
 
   const apps = query.limit(limit).offset(offset).all();
 

@@ -1,0 +1,34 @@
+{
+  "name": "@matrixos/sync-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/daemon/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.0",
+    "citty": "^0.1.6",
+    "node-diff3": "^3.2.0",
+    "picomatch": "^4.0.2",
+    "pino": "^9.6.0",
+    "pino-roll": "^2.1.0",
+    "ws": "^8.19.0",
+    "zod": "^4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/picomatch": "^4.0.0",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

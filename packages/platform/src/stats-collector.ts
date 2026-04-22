@@ -15,7 +15,7 @@ export interface ContainerStats {
 
 interface RunningContainer {
   handle: string;
-  containerId: string;
+  containerId: string | null;
   status: string;
 }
 
@@ -58,7 +58,7 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
 
       try {
         const container = docker.getContainer(row.containerId);
-        const raw = await container.stats({ stream: false } as any);
+        const raw = await container.stats({ stream: false } as any) as any;
 
         const cpuPercent = parseCpuPercent(raw);
         const memUsage = raw.memory_stats?.usage ?? 0;
@@ -77,8 +77,11 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
         containerMemoryLimit.set({ handle: row.handle }, memLimit);
 
         results.push(entry);
-      } catch {
-        // Container disappeared or stats unavailable -- skip
+      } catch (err: unknown) {
+        console.warn(
+          `[stats-collector] Failed to collect stats for ${row.handle}:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
 
@@ -91,7 +94,12 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
     start() {
       if (timer) return;
       timer = setInterval(() => {
-        collectOnce().catch(() => {});
+        collectOnce().catch((err: unknown) => {
+          console.warn(
+            "[stats-collector] Periodic collection failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
       }, intervalMs);
     },
 

@@ -11,8 +11,11 @@ import {
   updateContainerStatus,
   listContainers,
   deleteContainer,
+  runInPlatformTransaction,
 } from './db.js';
 import { provisionDuration } from './metrics.js';
+
+const POSTGRES_CONNECT_TIMEOUT_MS = 10_000;
 
 export interface OrchestratorConfig {
   db: PlatformDB;
@@ -73,6 +76,12 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     return `matrixos_${handle.replace(/[^a-z0-9_]/g, '_')}`;
   }
 
+  function assertSafeDbIdentifier(dbName: string): void {
+    if (!/^[a-z0-9_]+$/.test(dbName)) {
+      throw new Error(`Unsafe database identifier: ${dbName}`);
+    }
+  }
+
   function databaseUrlForHandle(handle: string): string | undefined {
     if (!postgresUrl) return undefined;
     return `${postgresUrl}/${dbNameForHandle(handle)}`;
@@ -81,7 +90,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   async function createUserDatabase(handle: string): Promise<void> {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
-    const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
+    assertSafeDbIdentifier(dbName);
+    const client = new pg.Client({
+      connectionString: `${postgresUrl}/matrixos`,
+      connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
+    });
     try {
       await client.connect();
       const exists = await client.query(
@@ -100,7 +113,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
   async function dropUserDatabase(handle: string): Promise<void> {
     if (!postgresUrl) return;
     const dbName = dbNameForHandle(handle);
-    const client = new pg.Client({ connectionString: `${postgresUrl}/matrixos` });
+    assertSafeDbIdentifier(dbName);
+    const client = new pg.Client({
+      connectionString: `${postgresUrl}/matrixos`,
+      connectionTimeoutMillis: POSTGRES_CONNECT_TIMEOUT_MS,
+    });
     try {
       await client.connect();
       await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
@@ -143,7 +160,30 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     }
   }
 
-  function buildEnv(handle: string, displayName?: string): string[] {
+  async function safeStopAndRemoveContainer(
+    container: { stop: () => Promise<unknown>; remove: (opts: { force: true }) => Promise<unknown> },
+    handle: string,
+  ): Promise<void> {
+    try {
+      await container.stop();
+    } catch (err) {
+      console.warn(
+        `[orchestrator] Failed to stop container for ${handle}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    try {
+      await container.remove({ force: true });
+    } catch (err) {
+      console.warn(
+        `[orchestrator] Failed to remove container for ${handle}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  function buildEnv(handle: string, displayName?: string, clerkUserId?: string): string[] {
     const containerName = `matrixos-${handle}`;
     const env = [
       `MATRIX_HANDLE=${handle}`,
@@ -157,18 +197,26 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `SHELL_PORT=3000`,
       ...extraEnv,
     ];
+    // MATRIX_USER_ID is the immutable Clerk userId; gateway + home-mirror
+    // key R2 prefixes off it so renaming the handle never orphans files.
+    // Only emit when we have it; buildEnv is also called from upgrade /
+    // rollingRestart paths where the DB record supplies it.
+    if (clerkUserId) {
+      env.push(`MATRIX_USER_ID=${clerkUserId}`);
+    }
     const dbUrl = databaseUrlForHandle(handle);
     if (dbUrl) {
       env.push(`DATABASE_URL=${dbUrl}`);
     }
-    if (postgresUrl) {
-      env.push(`PLATFORM_DATABASE_URL=${postgresUrl}/matrixos_platform`);
-    }
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);
+      // The platform terminates sync JWTs on the single-domain app entrypoint
+      // and re-proxies to the container with this HMAC bearer. Containers do
+      // not need PLATFORM_JWT_SECRET unless we intentionally enable direct
+      // JWT validation in the gateway.
+      env.push(`MATRIX_AUTH_TOKEN=${token}`);
       env.push(`PLATFORM_INTERNAL_URL=http://distro-platform-1:9000`);
-      env.push(`PLATFORM_SECRET=${platformSecret}`);
     }
     return env;
   }
@@ -183,43 +231,63 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       await ensureNetwork();
       await createUserDatabase(handle);
 
-      const gatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
-      const shellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
+      const { gatewayPort, shellPort } = runInPlatformTransaction(db, () => {
+        const nextGatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
+        const nextShellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
+        insertContainer(db, {
+          handle,
+          clerkUserId,
+          containerId: null,
+          port: nextGatewayPort,
+          shellPort: nextShellPort,
+          status: 'provisioning',
+        });
+        return {
+          gatewayPort: nextGatewayPort,
+          shellPort: nextShellPort,
+        };
+      });
 
       const containerName = `matrixos-${handle}`;
-
-      const container = await docker.createContainer({
-        Image: image,
-        name: containerName,
-        Env: buildEnv(handle, displayName),
-        HostConfig: {
-          Memory: memoryLimit,
-          CpuQuota: cpuQuota,
-          PortBindings: {
-            '4000/tcp': [{ HostPort: String(gatewayPort) }],
-            '3000/tcp': [{ HostPort: String(shellPort) }],
+      let container: Dockerode.Container | null = null;
+      try {
+        container = await docker.createContainer({
+          Image: image,
+          name: containerName,
+          Env: buildEnv(handle, displayName, clerkUserId),
+          HostConfig: {
+            Memory: memoryLimit,
+            CpuQuota: cpuQuota,
+            PortBindings: {
+              '4000/tcp': [{ HostPort: String(gatewayPort) }],
+              '3000/tcp': [{ HostPort: String(shellPort) }],
+            },
+            Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
+            NetworkMode: network,
+            RestartPolicy: { Name: 'unless-stopped' },
+            Init: true,
           },
-          Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
-          NetworkMode: network,
-          RestartPolicy: { Name: 'unless-stopped' },
-          Init: true,
-        },
-        ExposedPorts: {
-          '4000/tcp': {},
-          '3000/tcp': {},
-        },
-      });
+          ExposedPorts: {
+            '4000/tcp': {},
+            '3000/tcp': {},
+          },
+        });
 
-      await container.start();
+        updateContainerStatus(db, handle, 'provisioning', container.id);
+        await container.start();
 
-      insertContainer(db, {
-        handle,
-        clerkUserId,
-        containerId: container.id,
-        port: gatewayPort,
-        shellPort,
-        status: 'running',
-      });
+        updateContainerStatus(db, handle, 'running', container.id);
+      } catch (err) {
+        runInPlatformTransaction(db, () => {
+          releasePort(db, `${handle}-gw`);
+          releasePort(db, `${handle}-sh`);
+          deleteContainer(db, handle);
+        });
+        if (container) {
+          await safeStopAndRemoveContainer(container, handle);
+        }
+        throw err;
+      }
 
       end();
 
@@ -256,24 +324,33 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       if (record.containerId) {
         const container = docker.getContainer(record.containerId);
-        try { await container.stop(); } catch {}
-        try { await container.remove({ force: true }); } catch {}
+        await safeStopAndRemoveContainer(container, handle);
       }
 
-      releasePort(db, `${handle}-gw`);
-      releasePort(db, `${handle}-sh`);
-      deleteContainer(db, handle);
+      runInPlatformTransaction(db, () => {
+        releasePort(db, `${handle}-gw`);
+        releasePort(db, `${handle}-sh`);
+        deleteContainer(db, handle);
+      });
       await dropUserDatabase(handle);
     },
 
     async upgrade(handle) {
       const record = getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
+      // Silent-failure #12: buildEnv silently drops MATRIX_USER_ID when
+      // clerkUserId is falsy, so the re-provisioned container would boot
+      // with a handle-prefixed R2 key and split the bucket. Refuse early
+      // with a clear operator message before touching Docker.
+      if (typeof record.clerkUserId !== 'string' || record.clerkUserId.length === 0) {
+        throw new Error(
+          `No clerkUserId in container record for handle '${handle}'. Cannot safely provision — run \`orch destroy\` and re-provision with a Clerk userId.`,
+        );
+      }
 
       if (record.containerId) {
         const old = docker.getContainer(record.containerId);
-        try { await old.stop(); } catch {}
-        try { await old.remove({ force: true }); } catch {}
+        await safeStopAndRemoveContainer(old, handle);
       }
 
       await pullImageIfRemote(image);
@@ -284,7 +361,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const container = await docker.createContainer({
         Image: image,
         name: containerName,
-        Env: buildEnv(handle),
+        Env: buildEnv(handle, undefined, record.clerkUserId),
         HostConfig: {
           Memory: memoryLimit,
           CpuQuota: cpuQuota,
@@ -303,6 +380,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         },
       });
 
+      updateContainerStatus(db, handle, 'provisioning', container.id);
       await container.start();
       updateContainerStatus(db, handle, 'running', container.id);
 
@@ -331,19 +409,26 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       const results: RollingRestartResult['results'] = [];
       for (const record of running) {
         try {
+          // Silent-failure #12: same reason as upgrade() above -- refuse to
+          // recreate a container whose DB row has no clerkUserId, since the
+          // new container would boot with a handle-prefixed R2 key.
+          if (typeof record.clerkUserId !== 'string' || record.clerkUserId.length === 0) {
+            throw new Error(
+              `No clerkUserId in container record for handle '${record.handle}'. Cannot safely provision — run \`orch destroy\` and re-provision with a Clerk userId.`,
+            );
+          }
           await createUserDatabase(record.handle);
 
           if (record.containerId) {
             const old = docker.getContainer(record.containerId);
-            try { await old.stop(); } catch {}
-            try { await old.remove({ force: true }); } catch {}
+            await safeStopAndRemoveContainer(old, record.handle);
           }
 
           const containerName = `matrixos-${record.handle}`;
           const container = await docker.createContainer({
             Image: image,
             name: containerName,
-            Env: buildEnv(record.handle),
+            Env: buildEnv(record.handle, undefined, record.clerkUserId),
             HostConfig: {
               Memory: memoryLimit,
               CpuQuota: cpuQuota,
@@ -362,6 +447,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
             },
           });
 
+          updateContainerStatus(db, record.handle, 'provisioning', container.id);
           await container.start();
           updateContainerStatus(db, record.handle, 'running', container.id);
           results.push({ handle: record.handle, status: 'upgraded' });
@@ -406,7 +492,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           if (actual !== record.status) {
             updateContainerStatus(db, record.handle, actual);
           }
-        } catch {
+        } catch (err) {
+          console.warn(
+            `[orchestrator] Failed to inspect container ${record.handle}:`,
+            err instanceof Error ? err.message : String(err),
+          );
           if (record.status !== 'stopped') {
             updateContainerStatus(db, record.handle, 'stopped');
           }
