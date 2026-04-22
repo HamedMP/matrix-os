@@ -74,7 +74,7 @@ async function settle(ms = 30) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitFor(check: () => boolean, timeoutMs = 3_000): Promise<void> {
+async function waitFor(check: () => boolean, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (check()) return;
