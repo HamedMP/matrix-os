@@ -118,7 +118,7 @@ describe("device flow: polling", () => {
     expect(result.token).toBe("jwt-for-user_alice");
   });
 
-  it("keeps the approved device code until token issuance succeeds", async () => {
+  it("consumes the approved device code before token issuance succeeds", async () => {
     let resolveIssue: (() => void) | null = null;
     flow = createDeviceFlow({
       db,
@@ -145,7 +145,7 @@ describe("device flow: polling", () => {
       const row = (db as any).$client
         .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
         .get(issued.deviceCode);
-      expect(row).toBeTruthy();
+      expect(row).toBeUndefined();
     });
 
     resolveIssue?.();
@@ -297,7 +297,7 @@ describe("device flow: polling", () => {
     });
   });
 
-  it("does not consume the device code when token issuance fails", async () => {
+  it("consumes the device code when token issuance fails", async () => {
     flow = createDeviceFlow({
       db,
       now: () => now,
@@ -315,9 +315,9 @@ describe("device flow: polling", () => {
       "token issuance failed",
     );
 
-    await expect(flow.pollDeviceCode(issued.deviceCode)).rejects.toThrow(
-      "token issuance failed",
-    );
+    await expect(flow.pollDeviceCode(issued.deviceCode)).resolves.toEqual({
+      status: "expired",
+    });
   });
 
   it("times out hung token issuance and frees the in-flight slot", async () => {
@@ -349,6 +349,9 @@ describe("device flow: polling", () => {
 
       await vi.advanceTimersByTimeAsync(1_000);
       await firstPollAssertion;
+      await expect(flow.pollDeviceCode(first.deviceCode)).resolves.toEqual({
+        status: "expired",
+      });
 
       const second = await flow.createDeviceCode();
       await flow.approveDeviceCode(second.userCode, "user_bob");

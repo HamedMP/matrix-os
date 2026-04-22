@@ -24,8 +24,9 @@ export const portAssignments = sqliteTable('port_assignments', {
 });
 
 // OAuth 2.0 Device Authorization Grant (RFC 8628). Codes are short-lived
-// (15 min). Approved rows carry the Clerk user ID until polled, then they're
-// deleted. Expired rows are GC'd lazily on poll.
+// (15 min). Approval stores the Clerk user ID. The first approved poll claims
+// and deletes the row before token issuance so timeouts/crashes cannot issue a
+// second token for the same device code. Expired rows are GC'd lazily on poll.
 export const deviceCodes = sqliteTable(
   'device_codes',
   {

@@ -157,6 +157,11 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
 
     async pollDeviceCode(deviceCode: string): Promise<DevicePollResult> {
       const ts = now();
+      const existingPoll = inFlightPolls.get(deviceCode);
+      if (existingPoll) {
+        return existingPoll;
+      }
+
       const claimed = sqliteClient(config.db).transaction(() => {
         const row = config.db
           .select()
@@ -197,11 +202,6 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
         return claimed;
       }
 
-      const existingPoll = inFlightPolls.get(deviceCode);
-      if (existingPoll) {
-        return existingPoll;
-      }
-
       // Fail closed when the dedupe map is saturated. Evicting another
       // approved device code's in-flight promise would allow a later poll
       // for that code to issue a duplicate token.
@@ -219,6 +219,40 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
 
       void (async () => {
         try {
+          const consumeResult = sqliteClient(config.db).transaction(() => {
+            const row = config.db
+              .select()
+              .from(deviceCodes)
+              .where(eq(deviceCodes.deviceCode, deviceCode))
+              .get();
+
+            if (!row || row.expiresAt < ts) {
+              if (row) {
+                config.db
+                  .delete(deviceCodes)
+                  .where(eq(deviceCodes.deviceCode, deviceCode))
+                  .run();
+              }
+              return { status: 'expired' } as DevicePollResult;
+            }
+
+            if (row.clerkUserId !== claimed.clerkUserId) {
+              return { status: 'expired' } as DevicePollResult;
+            }
+
+            config.db
+              .delete(deviceCodes)
+              .where(eq(deviceCodes.deviceCode, deviceCode))
+              .run();
+
+            return null;
+          })();
+
+          if (consumeResult) {
+            resolveIssue(consumeResult);
+            return;
+          }
+
           const issued = await new Promise<IssuedToken>((resolve, reject) => {
             const timer = setTimeout(() => {
               reject(new Error('issueToken timeout'));
@@ -234,11 +268,6 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
               },
             );
           });
-
-          config.db
-            .delete(deviceCodes)
-            .where(eq(deviceCodes.deviceCode, deviceCode))
-            .run();
 
           resolveIssue({
             status: 'approved',
