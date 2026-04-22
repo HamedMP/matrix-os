@@ -46,6 +46,24 @@ function parseCpuPercent(stats: any): number {
   return (cpuDelta / systemDelta) * numCpus * 100;
 }
 
+function buildAndRecordEntry(handle: string, raw: any): ContainerStats {
+  const cpuPercent = parseCpuPercent(raw);
+  const memoryUsage = raw.memory_stats?.usage ?? 0;
+  const memoryLimit = raw.memory_stats?.limit ?? 0;
+
+  containerCpuUsage.set({ handle }, cpuPercent);
+  containerMemoryUsage.set({ handle }, memoryUsage);
+  containerMemoryLimit.set({ handle }, memoryLimit);
+
+  return {
+    handle,
+    cpuPercent,
+    memoryUsage,
+    memoryLimit,
+    timestamp: Date.now(),
+  };
+}
+
 export function createStatsCollector(config: StatsCollectorConfig): StatsCollector {
   const { docker, listRunning, onResolvedContainerId, intervalMs = 15_000 } = config;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -60,24 +78,7 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
       let container = docker.getContainer(row.containerId);
       try {
         const raw = await container.stats({ stream: false } as any) as any;
-
-        const cpuPercent = parseCpuPercent(raw);
-        const memUsage = raw.memory_stats?.usage ?? 0;
-        const memLimit = raw.memory_stats?.limit ?? 0;
-
-        const entry: ContainerStats = {
-          handle: row.handle,
-          cpuPercent,
-          memoryUsage: memUsage,
-          memoryLimit: memLimit,
-          timestamp: Date.now(),
-        };
-
-        containerCpuUsage.set({ handle: row.handle }, cpuPercent);
-        containerMemoryUsage.set({ handle: row.handle }, memUsage);
-        containerMemoryLimit.set({ handle: row.handle }, memLimit);
-
-        results.push(entry);
+        results.push(buildAndRecordEntry(row.handle, raw));
       } catch (err: unknown) {
         if (err instanceof Error && err.message.includes('No such container')) {
           try {
@@ -85,23 +86,7 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
             const inspect = await container.inspect();
             onResolvedContainerId?.(row.handle, inspect.Id);
             const raw = await container.stats({ stream: false } as any) as any;
-
-            const cpuPercent = parseCpuPercent(raw);
-            const memUsage = raw.memory_stats?.usage ?? 0;
-            const memLimit = raw.memory_stats?.limit ?? 0;
-
-            const entry: ContainerStats = {
-              handle: row.handle,
-              cpuPercent,
-              memoryUsage: memUsage,
-              memoryLimit: memLimit,
-              timestamp: Date.now(),
-            };
-
-            containerCpuUsage.set({ handle: row.handle }, cpuPercent);
-            containerMemoryUsage.set({ handle: row.handle }, memUsage);
-            containerMemoryLimit.set({ handle: row.handle }, memLimit);
-            results.push(entry);
+            results.push(buildAndRecordEntry(row.handle, raw));
             continue;
           } catch (_fallbackErr: unknown) {
             // Fall through to the warning below.

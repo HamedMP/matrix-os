@@ -1322,7 +1322,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         });
       };
 
-      void connectUpstream(0);
+      void connectUpstream(0).catch((err) => {
+        console.error('[platform] websocket upstream fatal error:', describeError(err));
+        socket.destroy();
+      });
       return;
     }
 
