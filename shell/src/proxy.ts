@@ -40,10 +40,21 @@ function getPublicOrigin(request: NextRequest) {
 const withClerk = clerkMiddleware(async (auth, request) => {
   const { pathname } = request.nextUrl;
 
-  // Platform already verified the Clerk session -- skip re-verification
-  const platformVerified = request.headers.get("x-platform-verified");
-  if (platformUpgradeToken && platformVerified === platformUpgradeToken) {
-    // Proxy gateway API and file requests
+  // Platform already verified the Clerk session -- skip re-verification.
+  // The platform signs the proxy with `Authorization: Bearer <UPGRADE_TOKEN>`
+  // (HMAC(handle, PLATFORM_SECRET)) and sets x-platform-user-id to the
+  // Clerk userId it resolved. Trust that bearer + enforce the owner pin.
+  const platformAuthHeader = request.headers.get("authorization");
+  const platformBearer = platformAuthHeader?.startsWith("Bearer ")
+    ? platformAuthHeader.slice(7)
+    : null;
+  const platformUserId = request.headers.get("x-platform-user-id");
+  if (platformUpgradeToken && platformBearer === platformUpgradeToken) {
+    if (expectedClerkUserId && platformUserId !== expectedClerkUserId) {
+      return new NextResponse("Forbidden: you do not own this instance", {
+        status: 403,
+      });
+    }
     if (isGatewayProxy(request)) {
       const target = pathname.startsWith("/gateway/")
         ? pathname.replace("/gateway", "")

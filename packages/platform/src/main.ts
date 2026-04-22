@@ -224,13 +224,13 @@ function getAuthPage(
 <body>
   <div id="auth"><span class="loading">Loading...</span></div>
   <script
+    id="clerk-script"
     nonce="${scriptNonce}"
     async
     crossorigin="anonymous"
     data-clerk-publishable-key="${escapedPublishableKey}"
     src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
     type="text/javascript"
-    onload="initClerk()"
   ></script>
   <script nonce="${scriptNonce}">
     function initClerk() {
@@ -247,6 +247,11 @@ function getAuthPage(
           window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', afterSignInUrl: '/' });
         }
       });
+    }
+    if (window.Clerk) {
+      initClerk();
+    } else {
+      document.getElementById('clerk-script').addEventListener('load', initClerk);
     }
   </script>
 </body>
