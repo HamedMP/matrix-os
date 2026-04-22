@@ -38,6 +38,7 @@ services:
   conduit:
     image: matrixconduit/matrix-conduit:latest
     environment:
+      - CONDUIT_CONFIG=/etc/matrix-conduit/conduit.toml
       - CONDUIT_SERVER_NAME=matrix-os.com
       - CONDUIT_DATABASE_PATH=/var/lib/matrix-conduit
       - CONDUIT_DATABASE_BACKEND=rocksdb
@@ -48,11 +49,7 @@ services:
       - CONDUIT_TRUSTED_SERVERS=["matrix.org"]
     volumes:
       - conduit-data:/var/lib/matrix-conduit
-    healthcheck:
-      test: wget -qO- http://localhost:6167/_matrix/client/versions || exit 1
-      interval: 10s
-      timeout: 3s
-      start_period: 10s
+      - ./conduit.toml:/etc/matrix-conduit/conduit.toml:ro
     restart: unless-stopped
     networks:
       - matrixos-net
