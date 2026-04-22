@@ -1,17 +1,17 @@
-# @matrix-os/cli
+# @finnaai/matrix
 
 Command-line client for [Matrix OS](https://matrix-os.com).
 
 ## Install
 
 ```bash
-npm install -g @matrix-os/cli
-```
+# Homebrew (macOS/Linux)
+brew install finnaai/tap/matrix
 
-Or run the platform-detecting installer which fetches the signed macOS `.pkg`
-when appropriate:
+# npm
+npm install -g @finnaai/matrix
 
-```bash
+# curl (auto-detects platform)
 curl -sL get.matrix-os.com | sh
 ```
 
@@ -24,7 +24,7 @@ matrix peers              # list connected peers
 matrix logout             # clear local credentials
 ```
 
-Both `matrix` and `matrixos` bin entries are installed.
+All three bin entries are installed: `matrix`, `matrixos`, `mos`.
 
 ## Requirements
 

@@ -1,10 +1,10 @@
 # Homebrew formula for the Matrix OS CLI.
 #
 # Lives here for version control during bootstrap; the CI release workflow
-# mirrors it into the matrix-os/homebrew-tap repository and bumps url/sha256
+# mirrors it into the FinnaAI/homebrew-tap repository and bumps url/sha256
 # on each tag push.
 #
-# Install: brew install matrix-os/tap/matrix
+# Install: brew install finnaai/tap/matrix
 
 class Matrix < Formula
   desc "Matrix OS command-line client (sync, login, peer management)"
@@ -13,7 +13,7 @@ class Matrix < Formula
   # `url` and `sha256` are rewritten by .github/workflows/release.yml against
   # the npm tarball after each publish. Until the first release job rewrites
   # this staging copy, the placeholder sha256 is intentionally non-installable.
-  url "https://registry.npmjs.org/@matrix-os/cli/-/cli-0.2.0.tgz"
+  url "https://registry.npmjs.org/@finnaai/matrix/-/matrix-0.2.0.tgz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   version "0.2.0"
 
