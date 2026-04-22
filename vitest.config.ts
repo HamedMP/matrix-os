@@ -13,6 +13,10 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // CI runners are sometimes slow under load; tests that rely on async
+    // waitFor polling can exceed the 5s vitest default.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {

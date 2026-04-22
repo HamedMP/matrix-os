@@ -74,7 +74,7 @@ async function settle(ms = 30) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitFor(check: () => boolean, timeoutMs = 3_000): Promise<void> {
+async function waitFor(check: () => boolean, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (check()) return;
@@ -736,10 +736,13 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       // Drop a file in the container's home -- mirror should upload AND
-      // broadcast. Chokidar + awaitWriteFinish (250ms) + macOS fsevents
-      // startup latency needs ~1.5s in CI.
+      // broadcast. Chokidar + awaitWriteFinish (250ms) + fsevents startup
+      // latency is ~1.5s locally but variable on CI, so poll rather than
+      // sleep a fixed interval.
       await writeFile(join(tmpRoot, "new.md"), "container wrote this");
-      await settle(1500);
+      await waitFor(() =>
+        laptopSends.some((s) => s.includes('"sync:change"') && s.includes("new.md")),
+      );
 
       const syncChanges = laptopSends.filter((s) => s.includes('"sync:change"'));
       expect(syncChanges.length).toBeGreaterThan(0);
