@@ -20,6 +20,15 @@ MATRIX_VERSION="${MATRIX_VERSION:-latest}"
 MATRIX_CHANNEL="${MATRIX_CHANNEL:-stable}"
 MATRIX_REPO="${MATRIX_REPO:-HamedMP/matrix-os}"
 
+# Validate env overrides before they reach URLs or sudo commands.
+case "$MATRIX_REPO" in
+  *[!A-Za-z0-9._/-]*) die "MATRIX_REPO contains invalid characters (expected owner/repo)" ;;
+esac
+case "$MATRIX_VERSION" in
+  latest) ;; # ok
+  *[!A-Za-z0-9._-]*) die "MATRIX_VERSION contains invalid characters (expected semver tag)" ;;
+esac
+
 die() {
   printf 'error: %s\n' "$1" >&2
   exit 1
@@ -61,13 +70,16 @@ resolve_version() {
 install_macos() {
   echo "==> Matrix OS installer (macOS)"
   need sudo
-  VERSION="$(resolve_version)"
+  TAG="$(resolve_version)"
+  # Release tags are v-prefixed (v0.2.0) but the .pkg asset strips the v
+  # (MatrixSync-0.2.0.pkg). Normalize both for URL construction.
+  VERSION="${TAG#v}"
   echo "    version: $VERSION"
 
   TMPDIR="$(mktemp -d)"
   trap 'rm -rf "$TMPDIR"' EXIT
 
-  PKG_URL="https://github.com/$MATRIX_REPO/releases/download/$VERSION/MatrixSync-$VERSION.pkg"
+  PKG_URL="https://github.com/$MATRIX_REPO/releases/download/$TAG/MatrixSync-$VERSION.pkg"
   PKG_PATH="$TMPDIR/MatrixSync.pkg"
 
   echo "==> Downloading $PKG_URL"

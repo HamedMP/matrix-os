@@ -40,6 +40,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Type check
+        run: bun run typecheck
+
       - name: Unit tests
         run: bun run test
 

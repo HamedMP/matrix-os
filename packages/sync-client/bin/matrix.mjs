@@ -12,24 +12,10 @@ import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
+import { findTsxLoader } from '../src/lib/find-tsx-loader.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, '..');
-
-// Walk up from the bin directory looking for a tsx loader. When installed
-// globally via npm, tsx lives under the package's own node_modules. When
-// installed via pnpm, it may be hoisted one or two levels up.
-function findTsxLoader(start) {
-  let dir = start;
-  for (let i = 0; i < 6; i += 1) {
-    const candidate = resolve(dir, 'node_modules', 'tsx', 'dist', 'loader.mjs');
-    if (existsSync(candidate)) return candidate;
-    const up = dirname(dir);
-    if (up === dir) break;
-    dir = up;
-  }
-  return null;
-}
 
 const tsxLoader = findTsxLoader(pkgRoot);
 if (!tsxLoader) {
