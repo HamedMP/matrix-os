@@ -736,10 +736,13 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       // Drop a file in the container's home -- mirror should upload AND
-      // broadcast. Chokidar + awaitWriteFinish (250ms) + macOS fsevents
-      // startup latency needs ~1.5s in CI.
+      // broadcast. Chokidar + awaitWriteFinish (250ms) + fsevents startup
+      // latency is ~1.5s locally but variable on CI, so poll rather than
+      // sleep a fixed interval.
       await writeFile(join(tmpRoot, "new.md"), "container wrote this");
-      await settle(1500);
+      await waitFor(() =>
+        laptopSends.some((s) => s.includes('"sync:change"') && s.includes("new.md")),
+      );
 
       const syncChanges = laptopSends.filter((s) => s.includes('"sync:change"'));
       expect(syncChanges.length).toBeGreaterThan(0);
