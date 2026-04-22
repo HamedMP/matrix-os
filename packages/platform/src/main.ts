@@ -1315,7 +1315,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
             `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
           );
           if (!connected && attempt === 0 && !socket.destroyed) {
-            void connectUpstream(attempt + 1);
+            void connectUpstream(attempt + 1).catch((retryErr) => {
+              console.error('[platform] websocket upstream retry fatal error:', describeError(retryErr));
+              socket.destroy();
+            });
             return;
           }
           socket.destroy();
