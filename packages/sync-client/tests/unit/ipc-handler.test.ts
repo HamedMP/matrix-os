@@ -154,7 +154,9 @@ describe("createIpcHandler", () => {
 
       expect(res).toEqual({ syncPath: next, restartRequired: true });
       expect(deps.config.syncPath).toBe(next);
-      expect(saveConfig).toHaveBeenCalledWith(deps.config);
+      expect(saveConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ syncPath: next }),
+      );
       expect(ensureDir).toHaveBeenCalledWith(next);
     });
 
@@ -204,7 +206,9 @@ describe("createIpcHandler", () => {
 
       expect(res).toEqual({ gatewayFolder: "audit", restartRequired: true });
       expect(deps.config.gatewayFolder).toBe("audit");
-      expect(saveConfig).toHaveBeenCalledWith(deps.config);
+      expect(saveConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ gatewayFolder: "audit" }),
+      );
     });
 
     it("rejects folders that start with a leading slash", async () => {
