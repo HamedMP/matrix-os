@@ -1,5 +1,5 @@
 {
-  "name": "@matrix-os/cli",
+  "name": "@finnaai/matrix",
   "version": "0.2.0",
   "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
@@ -25,7 +25,8 @@
   },
   "bin": {
     "matrix": "./bin/matrix.mjs",
-    "matrixos": "./bin/matrix.mjs"
+    "matrixos": "./bin/matrix.mjs",
+    "mos": "./bin/matrix.mjs"
   },
   "exports": {
     ".": "./src/index.ts"

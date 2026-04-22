@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds a signed macOS .pkg installer bundling:
-#   - the matrix CLI (npm package @matrix-os/cli)
+#   - the matrix CLI (npm package @finnaai/matrix)
 #   - MatrixSync.app (menu bar + FinderSync extension)
 #
 # The .pkg is signed with a Developer ID Installer certificate and is

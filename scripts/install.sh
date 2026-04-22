@@ -4,7 +4,7 @@
 # Platform detection:
 #   macOS   -> downloads the signed .pkg from the GitHub release and runs
 #              `installer -pkg`. Needs sudo for /Applications + /usr/local.
-#   Linux   -> `npm i -g @matrix-os/cli` (stop-gap until a standalone binary).
+#   Linux   -> `npm i -g @finnaai/matrix` (stop-gap until a standalone binary).
 #   Windows -> print a PowerShell install hint.
 #
 # Usage:
@@ -120,8 +120,8 @@ install_linux() {
 
   VERSION="${MATRIX_VERSION#v}"
   case "$MATRIX_VERSION" in
-    latest) NPM_SPEC="@matrix-os/cli" ;;
-    *)      NPM_SPEC="@matrix-os/cli@$VERSION" ;;
+    latest) NPM_SPEC="@finnaai/matrix" ;;
+    *)      NPM_SPEC="@finnaai/matrix@$VERSION" ;;
   esac
 
   # Prefer an unprivileged install when the user has npm prefix configured for
@@ -146,7 +146,7 @@ install_windows() {
 Windows installer is not available yet.
 
 Temporary workaround (PowerShell):
-  npm install -g @matrix-os/cli
+  npm install -g @finnaai/matrix
 
 Requires Node.js 24+ from https://nodejs.org.
 WIN

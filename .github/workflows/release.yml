@@ -1,8 +1,9 @@
 name: Release
 
-# Triggered by pushing a semver tag. Runs tests, builds + signs + notarises
-# the macOS installer, publishes @matrix-os/cli to npm, uploads artefacts to
-# the GitHub release, and refreshes the Homebrew formula.
+# Triggered by pushing a semver tag. Runs tests, publishes @finnaai/matrix
+# to npm, builds + signs + notarises the macOS installer (when enabled via
+# ENABLE_MACOS_PKG), uploads artefacts to the GitHub release, and refreshes
+# the Homebrew formula in FinnaAI/homebrew-tap.
 #
 # Security note: workflow inputs we consume are $GITHUB_REF_NAME (constrained
 # by the `v*.*.*` tag filter above — so it's always of form `vX.Y.Z[...]`)
@@ -52,6 +53,10 @@ jobs:
   build-macos:
     name: Build macOS .pkg
     needs: test
+    # Only runs when Apple Developer ID certs are configured. Until those
+    # secrets are set, the macOS job skips and the npm/homebrew release
+    # pipeline continues unblocked.
+    if: ${{ vars.ENABLE_MACOS_PKG == 'true' }}
     runs-on: macos-14
     timeout-minutes: 45
     outputs:
@@ -141,6 +146,10 @@ jobs:
   publish-npm:
     name: Publish npm
     needs: [test, build-macos]
+    # Skipped jobs report as "skipped" in needs.build-macos.result; we want
+    # npm publish to continue even when the macOS pkg is disabled, but fail
+    # fast if it actually failed.
+    if: ${{ !cancelled() && needs.test.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -174,12 +183,15 @@ jobs:
   github-release:
     name: GitHub release
     needs: [build-macos, publish-npm]
+    if: ${{ !cancelled() && needs.publish-npm.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download macOS pkg (if built)
+        if: ${{ needs.build-macos.result == 'success' }}
+        uses: actions/download-artifact@v4
         with:
           name: macos-pkg
           path: dist/macos
@@ -193,16 +205,18 @@ jobs:
           files: |
             dist/macos/*.pkg
             scripts/install.sh
+          fail_on_unmatched_files: false
 
   homebrew:
     name: Update Homebrew tap
     needs: github-release
+    if: ${{ !cancelled() && needs.github-release.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: matrix-os/homebrew-tap
+          repository: FinnaAI/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
@@ -213,7 +227,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
-          TARBALL="https://registry.npmjs.org/@matrix-os/cli/-/cli-${VERSION}.tgz"
+          TARBALL="https://registry.npmjs.org/@finnaai/matrix/-/matrix-${VERSION}.tgz"
 
           # Wait up to 5 min for npm to publish — publish-npm just finished.
           for _ in $(seq 1 30); do
