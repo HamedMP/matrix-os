@@ -11,8 +11,8 @@ class Matrix < Formula
   homepage "https://matrix-os.com"
 
   # `url` and `sha256` are rewritten by .github/workflows/release.yml against
-  # the npm tarball after each publish. Keep them valid for `brew install` to
-  # work off main while the release pipeline sleeps.
+  # the npm tarball after each publish. Until the first release job rewrites
+  # this staging copy, the placeholder sha256 is intentionally non-installable.
   url "https://registry.npmjs.org/@matrix-os/cli/-/cli-0.2.0.tgz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   version "0.2.0"
