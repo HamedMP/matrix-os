@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getGatewayWs } from "@/lib/gateway";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
 import { useConnectionHealth } from "./useConnectionHealth";
 
@@ -24,7 +25,6 @@ export type ServerMessage =
 
 type MessageHandler = (msg: ServerMessage) => void;
 
-const GATEWAY_WS = getGatewayWs();
 const PING_INTERVAL = 30_000;
 const PONG_TIMEOUT = 5_000;
 const MAX_RECONNECT_ATTEMPTS = 60;
@@ -71,45 +71,59 @@ function connect() {
   if (globalSocket?.readyState === WebSocket.CONNECTING) return;
 
   setConnectionState("reconnecting");
-  globalSocket = new WebSocket(GATEWAY_WS);
-
-  globalSocket.onopen = () => {
-    reconnectAttempt = 0;
-    setConnectionState("connected");
-    heartbeat.start();
-    drainQueue();
-  };
-
-  globalSocket.onmessage = (evt) => {
-    try {
-      const msg = JSON.parse(evt.data) as ServerMessage;
-      if (msg.type === "pong") {
-        heartbeat.receivedPong();
+  void buildAuthenticatedWebSocketUrl("/ws")
+    .catch((err: unknown) => {
+      console.warn(
+        "[useSocket] Falling back to unauthenticated websocket URL:",
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    })
+    .then((wsUrl) => {
+      if (globalSocket?.readyState === WebSocket.OPEN || globalSocket?.readyState === WebSocket.CONNECTING) {
         return;
       }
-      for (const handler of handlers) {
-        handler(msg);
-      }
-    } catch {
-      // ignore malformed messages
-    }
-  };
 
-  globalSocket.onclose = () => {
-    heartbeat.stop();
-    if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
-      setConnectionState("disconnected");
-      return;
-    }
-    setConnectionState("reconnecting");
-    const delay = reconnectDelay(reconnectAttempt);
-    reconnectAttempt++;
-    reconnectTimer = setTimeout(connect, delay);
-  };
+      globalSocket = new WebSocket(wsUrl ?? getGatewayWs());
 
-  globalSocket.onerror = () => {
-    globalSocket?.close();
-  };
+      globalSocket.onopen = () => {
+        reconnectAttempt = 0;
+        setConnectionState("connected");
+        heartbeat.start();
+        drainQueue();
+      };
+
+      globalSocket.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data) as ServerMessage;
+          if (msg.type === "pong") {
+            heartbeat.receivedPong();
+            return;
+          }
+          for (const handler of handlers) {
+            handler(msg);
+          }
+        } catch (_err: unknown) {
+          // ignore malformed messages
+        }
+      };
+
+      globalSocket.onclose = () => {
+        heartbeat.stop();
+        if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+          setConnectionState("disconnected");
+          return;
+        }
+        setConnectionState("reconnecting");
+        const delay = reconnectDelay(reconnectAttempt);
+        reconnectAttempt++;
+        reconnectTimer = setTimeout(connect, delay);
+      };
+
+      globalSocket.onerror = () => {
+        globalSocket?.close();
+      };
+    });
 }
 
 export function ensureConnected() {

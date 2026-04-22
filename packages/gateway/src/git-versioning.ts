@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { GIT_ENV } from "./git-env.js";
 
 const execAsync = promisify(execFile);
 
@@ -63,15 +64,6 @@ export interface FileHistory {
   restore(path: string, commit: string): Promise<RestoreResult>;
 }
 
-// Ensure git has a committer identity even when the host lacks global config
-// (e.g. ephemeral CI runners, fresh containers). Overridable via env.
-const GIT_ENV = {
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "Matrix OS",
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "matrix-os@users.noreply.github.com",
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "Matrix OS",
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "matrix-os@users.noreply.github.com",
-};
-
 async function git(homePath: string, ...args: string[]): Promise<string> {
   const { stdout } = await execAsync("git", args, {
     cwd: homePath,
@@ -110,7 +102,12 @@ export function createGitAutoCommit(config: GitAutoCommitConfig): GitAutoCommit 
   return {
     start() {
       timer = setInterval(() => {
-        commitIfChanged().catch(() => {});
+        commitIfChanged().catch((err) => {
+          console.warn(
+            "[git-versioning] Auto-commit failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
       }, intervalMs);
     },
     stop() {
@@ -151,7 +148,11 @@ export function createSnapshotManager(homePath: string): SnapshotManager {
           "snapshot/*",
           "--format=%(refname:short)|%(objectname:short)|%(*objectname:short)|%(creatordate:iso-strict)",
         );
-      } catch {
+      } catch (err) {
+        console.warn(
+          "[git-versioning] Failed to list snapshots:",
+          err instanceof Error ? err.message : String(err),
+        );
         return [];
       }
 
@@ -201,7 +202,7 @@ export function createFileHistory(homePath: string): FileHistory {
       try {
         const content = await git(homePath, "show", `${commit}:${path}`);
         const fullPath = join(homePath, path);
-        writeFileSync(fullPath, content, "utf-8");
+        await writeFile(fullPath, content, "utf-8");
 
         await git(homePath, "add", path);
         await git(

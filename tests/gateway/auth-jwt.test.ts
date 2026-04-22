@@ -33,12 +33,12 @@ function signHs256Jwt(
   return `${signingInput}.${base64UrlEncode(signature)}`;
 }
 
-function mockContext(path: string, authHeader?: string, ip?: string) {
+function mockContext(path: string, authHeader?: string, ip?: string, url?: string) {
   const store = new Map<string, unknown>();
   return {
     req: {
       path,
-      url: `http://localhost:4000${path}`,
+      url: url ?? `http://localhost:4000${path}`,
       header: (name: string) => {
         if (name === "Authorization") return authHeader;
         if (name === "X-Forwarded-For" && ip) return ip;
@@ -184,6 +184,30 @@ describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
     let nextCalled = false;
     await mw(
       mockContext("/api/message", `Bearer ${issued.token}`),
+      async () => {
+        nextCalled = true;
+      },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
+  it("accepts a valid sync JWT in the websocket query string", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://app.matrix-os.com",
+    });
+
+    const mw = authMiddleware("legacy-shared-secret");
+    let nextCalled = false;
+    await mw(
+      mockContext(
+        "/ws/terminal",
+        undefined,
+        undefined,
+        `http://localhost:4000/ws/terminal?token=${encodeURIComponent(issued.token)}&cwd=projects`,
+      ),
       async () => {
         nextCalled = true;
       },

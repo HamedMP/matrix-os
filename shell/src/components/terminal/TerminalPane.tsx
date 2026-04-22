@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
+import { createSocketHealth } from "@/lib/socket-health";
+import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
+import { useTerminalSettings } from "@/stores/terminal-settings";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
@@ -9,8 +13,7 @@ import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
-import { createSocketHealth } from "@/lib/socket-health";
-import { useTerminalSettings } from "@/stores/terminal-settings";
+import { closeStaleCachedSocket, getCachedTerminalRestorePlan } from "./terminal-restore";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: import("@/stores/terminal-settings").TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -133,6 +136,32 @@ function extractTrustedClaudeAuthUrl(raw: string): string | null {
   }
 }
 
+function terminalDebug(event: string, details: Record<string, unknown>): void {
+  if (!isTerminalDebugEnabled()) {
+    return;
+  }
+  console.info("[terminal-debug][pane]", event, details);
+}
+
+function describeReadyState(ws: WebSocket | null): string {
+  if (!ws) {
+    return "null";
+  }
+
+  switch (ws.readyState) {
+    case WebSocket.CONNECTING:
+      return "CONNECTING";
+    case WebSocket.OPEN:
+      return "OPEN";
+    case WebSocket.CLOSING:
+      return "CLOSING";
+    case WebSocket.CLOSED:
+      return "CLOSED";
+    default:
+      return `UNKNOWN(${String((ws as { readyState?: unknown }).readyState)})`;
+  }
+}
+
 interface TerminalPaneProps {
   paneId: string;
   cwd: string;
@@ -144,6 +173,7 @@ interface TerminalPaneProps {
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   isClosing?: boolean;
   shouldCacheOnUnmount?: (paneId: string) => boolean;
+  shouldDestroyOnUnmount?: (paneId: string) => boolean;
 }
 
 export function TerminalPane({
@@ -157,6 +187,7 @@ export function TerminalPane({
   onSessionAttached,
   isClosing,
   shouldCacheOnUnmount,
+  shouldDestroyOnUnmount,
 }: TerminalPaneProps) {
   const terminalThemeId = useTerminalSettings((s) => s.themeId);
   const terminalFontSize = useTerminalSettings((s) => s.fontSize);
@@ -172,6 +203,7 @@ export function TerminalPane({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
+  const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
   const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
@@ -185,6 +217,7 @@ export function TerminalPane({
 
   onSessionAttachedRef.current = onSessionAttached;
   shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
+  shouldDestroyOnUnmountRef.current = shouldDestroyOnUnmount;
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
@@ -204,6 +237,17 @@ export function TerminalPane({
     let disposed = false;
 
     async function init() {
+      const log = (event: string, details: Record<string, unknown> = {}) => {
+        terminalDebug(event, {
+          paneId,
+          cwd,
+          sessionId: sessionIdRef.current,
+          lastSeq: lastSeqRef.current,
+          wsState: describeReadyState(wsRef.current),
+          ...details,
+        });
+      };
+
       const clearAuthDetectTimer = () => {
         if (authDetectTimerRef.current) {
           clearTimeout(authDetectTimerRef.current);
@@ -232,11 +276,17 @@ export function TerminalPane({
       }
 
       // Check cache first — instant tab switch
-      const cached = getCached(paneId);
-      const canReuseCached = Boolean(
-        cached &&
-        (cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING),
-      );
+      const cachedRestore = getCachedTerminalRestorePlan(getCached(paneId));
+      const cached = cachedRestore.cached;
+      const canReuseCachedTerminal = cachedRestore.reuseTerminal;
+      const canReuseCachedSocket = cachedRestore.reuseSocket;
+      log("init", {
+        cached: !!cached,
+        reuseTerminal: canReuseCachedTerminal,
+        reuseSocket: canReuseCachedSocket,
+        cachedSessionId: cachedRestore.sessionId,
+        cachedLastSeq: cachedRestore.lastSeq,
+      });
 
       let term: Terminal;
       let fitAddon: FitAddon;
@@ -279,7 +329,7 @@ export function TerminalPane({
         canvas.addEventListener("webglcontextlost", onWebglContextLost);
       };
 
-      if (canReuseCached && cached) {
+      if (canReuseCachedTerminal && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
         if (termElement) {
           container.appendChild(termElement);
@@ -293,18 +343,9 @@ export function TerminalPane({
         fitAddonRef.current = cached.fitAddon;
         searchAddonRef.current = cached.searchAddon;
         wsRef.current = cached.ws;
-        sessionIdRef.current = cached.sessionId;
-        lastSeqRef.current = cached.lastSeq;
+        sessionIdRef.current = cachedRestore.sessionId;
+        lastSeqRef.current = cachedRestore.lastSeq;
       } else {
-        if (cached) {
-          removeCached(paneId);
-          try {
-            cached.terminal.dispose();
-          } catch (err: unknown) {
-            console.warn("Failed to dispose stale terminal cache:", err instanceof Error ? err.message : err);
-          }
-        }
-
         // Cache miss — create fresh terminal
         const { Terminal: XTerm } = await import("@xterm/xterm");
         const { FitAddon } = await import("@xterm/addon-fit");
@@ -367,8 +408,18 @@ export function TerminalPane({
 
       function bindWs(ws: WebSocket, attachOnOpen: boolean) {
         wsRef.current = ws;
+        log("bind-ws", {
+          attachOnOpen,
+          boundWsState: describeReadyState(ws),
+        });
 
         const sendAttach = () => {
+          const attachMode = sessionIdRef.current ? "reattach" : "create";
+          log("send-attach", {
+            attachMode,
+            attachSessionId: sessionIdRef.current,
+            fromSeq: lastSeqRef.current,
+          });
           if (sessionIdRef.current) {
             ws.send(JSON.stringify({
               type: "attach",
@@ -393,6 +444,7 @@ export function TerminalPane({
         ws.onopen = () => {
           reconnectAttemptRef.current = 0;
           clearReconnectTimer();
+          log("ws-open", { attachOnOpen });
 
           // Start heartbeat
           if (heartbeatRef.current) heartbeatRef.current.stop();
@@ -414,6 +466,7 @@ export function TerminalPane({
         };
 
         ws.onerror = () => {
+          log("ws-error");
           if (!sessionIdRef.current) {
             term.write("\r\n\x1b[31mConnection error. Is the gateway running?\x1b[0m\r\n");
           }
@@ -421,6 +474,11 @@ export function TerminalPane({
 
         ws.onclose = () => {
           heartbeatRef.current?.stop();
+          log("ws-close", {
+            disposed,
+            isClosing: isClosingRef.current,
+            reconnectAttempt: reconnectAttemptRef.current,
+          });
           if (disposed || isClosingRef.current) return;
 
           // Attempt reconnection with exponential backoff
@@ -429,10 +487,12 @@ export function TerminalPane({
             clearReconnectTimer();
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
             reconnectAttemptRef.current = attempt + 1;
+            log("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
             reconnectTimerRef.current = setTimeout(() => {
               reconnectTimerRef.current = null;
               if (!disposed && !isClosingRef.current) {
+                log("run-reconnect");
                 connectWs();
               }
             }, delay);
@@ -461,6 +521,11 @@ export function TerminalPane({
 
           switch (msg.type) {
             case "attached":
+              log("attached", {
+                attachedSessionId: msg.sessionId,
+                state: msg.state,
+                exitCode: msg.exitCode ?? null,
+              });
               sessionIdRef.current = msg.sessionId;
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
               if (msg.state === "exited") {
@@ -510,10 +575,13 @@ export function TerminalPane({
 
             case "error": {
               const safeMsg = stripTerminalControls(msg.message);
+              log("server-error", { message: safeMsg });
               if (safeMsg === "Session not found" && sessionIdRef.current) {
+                log("session-not-found-reset");
                 sessionIdRef.current = null;
                 lastSeqRef.current = 0;
                 term.write("\r\n\x1b[33m[Session expired, starting new session...]\x1b[0m\r\n");
+                log("fallback-create-after-session-not-found");
                 ws.send(JSON.stringify({ type: "attach", cwd }));
               } else {
                 term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
@@ -529,27 +597,59 @@ export function TerminalPane({
       }
 
       function connectWs() {
-        const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
-        const wsUrl = cwd ? `${baseWs}?cwd=${encodeURIComponent(cwd)}` : baseWs;
-        const ws = new WebSocket(wsUrl);
-        bindWs(ws, true);
+        const query =
+          sessionIdRef.current || !cwd
+            ? undefined
+            : { cwd };
+        log("connect-ws", {
+          queryCwd: query?.cwd ?? null,
+          reconnectAttempt: reconnectAttemptRef.current,
+        });
+
+        void buildAuthenticatedWebSocketUrl("/ws/terminal", {
+          cwd: query?.cwd,
+        })
+          .catch((err: unknown) => {
+            console.warn(
+              "[terminal] Falling back to unauthenticated terminal websocket URL:",
+              err instanceof Error ? err.message : err,
+            );
+            const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
+            return query?.cwd ? `${baseWs}?cwd=${encodeURIComponent(query.cwd)}` : baseWs;
+          })
+          .then((wsUrl) => {
+            if (disposed || isClosingRef.current) {
+              log("connect-ws-abort", { reason: disposed ? "disposed" : "closing" });
+              return;
+            }
+            log("connect-ws-url", {
+              urlIncludesCwd: wsUrl.includes("cwd="),
+              urlIncludesToken: wsUrl.includes("token="),
+            });
+            const ws = new WebSocket(wsUrl);
+            bindWs(ws, true);
+          });
       }
 
-      if (canReuseCached && cached) {
+      if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING);
       } else {
+        closeStaleCachedSocket(cached);
         connectWs();
       }
 
       const onVisibilityChange = () => {
+        log("visibilitychange", { visibilityState: document.visibilityState });
         if (document.visibilityState === "visible") {
           const ws = wsRef.current;
           if (ws?.readyState === WebSocket.OPEN) {
+            log("visibility-ping-now");
             heartbeatRef.current?.pingNow();
           } else if (!disposed && !isClosingRef.current && sessionIdRef.current) {
             // Disconnected while hidden, reconnect now
             reconnectAttemptRef.current = 0;
             clearReconnectTimer();
+            log("visibility-reconnect-now");
             connectWs();
           }
         }
@@ -629,33 +729,34 @@ export function TerminalPane({
         onResizeDisposableRef.current?.dispose();
         onResizeDisposableRef.current = null;
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
+        const shouldDestroy = shouldDestroyOnUnmountRef.current?.(paneId) ?? false;
+        log("cleanup", {
+          shouldCache,
+          shouldDestroy,
+          isClosing: isClosingRef.current,
+          paneStillInTree: shouldCacheOnUnmountRef.current?.(paneId) ?? true,
+        });
 
         if (!shouldCache) {
-          // Pane is being closed — destroy the backend session so it doesn't leak.
+          // Plain unmounts should not destroy the session. Explicit pane/tab close
+          // may still need to destroy a just-created session before layout state
+          // has been updated with its session id.
           const ws = wsRef.current;
-          const sid = sessionIdRef.current;
           if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "destroy" }));
-          } else if (sid) {
-            // WS is CONNECTING/CLOSING/CLOSED so we can't send over it. Fall
-            // back to the REST endpoint so an existing session still gets
-            // killed (otherwise it'd leak until eviction).
-            void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sid)}`, {
-              method: "DELETE",
-              keepalive: true,
-              signal: AbortSignal.timeout(5_000),
-            }).catch((err: unknown) => {
-              console.warn(
-                "Failed to destroy terminal session on close:",
-                err instanceof Error ? err.message : err,
-              );
-            });
+            if (shouldDestroy) {
+              log("cleanup-destroy-via-ws");
+              ws.send(JSON.stringify({ type: "destroy" }));
+            } else {
+              log("cleanup-detach-via-ws");
+              ws.send(JSON.stringify({ type: "detach" }));
+            }
           }
           ws?.close();
           removeCached(paneId);
           term.dispose();
         } else if (wsRef.current) {
           // Tab switch — cache the terminal for instant restore
+          log("cleanup-cache-terminal");
           const termElement = (term as { element?: HTMLElement }).element;
           if (termElement?.parentNode) {
             termElement.parentNode.removeChild(termElement);
@@ -672,6 +773,7 @@ export function TerminalPane({
           });
         } else {
           // WS never established — dispose, don't cache
+          log("cleanup-dispose-no-ws");
           term.dispose();
         }
       };
