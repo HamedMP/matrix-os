@@ -38,14 +38,18 @@ const DetachSchema = z.object({
   type: z.literal("detach"),
 });
 
+const DestroySchema = z.object({
+  type: z.literal("destroy"),
+});
+
 const PingSchema = z.object({
   type: z.literal("ping"),
 });
 
-export const ClientMessageSchema = z.union([AttachSchema, InputSchema, ResizeSchema, DetachSchema, PingSchema]);
+export const ClientMessageSchema = z.union([AttachSchema, InputSchema, ResizeSchema, DetachSchema, DestroySchema, PingSchema]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
-export { AttachSchema, AttachNewSchema, AttachExistingSchema, InputSchema, ResizeSchema, DetachSchema, PingSchema, UUID_REGEX };
+export { AttachSchema, AttachNewSchema, AttachExistingSchema, InputSchema, ResizeSchema, DetachSchema, DestroySchema, PingSchema, UUID_REGEX };
 
 export interface SessionInfo {
   sessionId: string;

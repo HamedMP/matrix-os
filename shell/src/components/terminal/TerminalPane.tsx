@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState } from "react";
-import { getGatewayWs } from "@/lib/gateway";
+import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import type { Theme } from "@/hooks/useTheme";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
@@ -56,7 +56,7 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (_err: unknown) {
     return null;
   }
 
@@ -128,7 +128,7 @@ function extractTrustedClaudeAuthUrl(raw: string): string | null {
       return null;
     }
     return url.toString();
-  } catch {
+  } catch (_err: unknown) {
     return null;
   }
 }
@@ -174,6 +174,8 @@ export function TerminalPane({
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
+  const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
@@ -449,7 +451,7 @@ export function TerminalPane({
                 heartbeatRef.current?.receivedPong();
                 return;
               }
-            } catch { /* fall through to normal parse */ }
+            } catch (_err: unknown) { /* fall through to normal parse */ }
           }
 
           const msg = parseTerminalServerMessage(raw);
@@ -555,14 +557,16 @@ export function TerminalPane({
 
       document.addEventListener("visibilitychange", onVisibilityChange);
 
-      term.onData((data: string) => {
+      onDataDisposableRef.current?.dispose();
+      onDataDisposableRef.current = term.onData((data: string) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "input", data }));
         }
       });
 
-      term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+      onResizeDisposableRef.current?.dispose();
+      onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "resize", cols, rows }));
@@ -620,17 +624,34 @@ export function TerminalPane({
         clearReconnectTimer();
         heartbeatRef.current?.stop();
         detachWebglContextLostHandler();
+        onDataDisposableRef.current?.dispose();
+        onDataDisposableRef.current = null;
+        onResizeDisposableRef.current?.dispose();
+        onResizeDisposableRef.current = null;
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
 
         if (!shouldCache) {
-          // Pane is being closed — clean up everything
+          // Pane is being closed — destroy the backend session so it doesn't leak.
           const ws = wsRef.current;
-          if (ws) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "detach" }));
-            }
-            ws.close();
+          const sid = sessionIdRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "destroy" }));
+          } else if (sid) {
+            // WS is CONNECTING/CLOSING/CLOSED so we can't send over it. Fall
+            // back to the REST endpoint so an existing session still gets
+            // killed (otherwise it'd leak until eviction).
+            void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sid)}`, {
+              method: "DELETE",
+              keepalive: true,
+              signal: AbortSignal.timeout(5_000),
+            }).catch((err: unknown) => {
+              console.warn(
+                "Failed to destroy terminal session on close:",
+                err instanceof Error ? err.message : err,
+              );
+            });
           }
+          ws?.close();
           removeCached(paneId);
           term.dispose();
         } else if (wsRef.current) {
@@ -748,7 +769,7 @@ export function TerminalPane({
           </button>
           <button
             onClick={() => {
-              navigator.clipboard.writeText(authUrl).catch(() => {
+              navigator.clipboard.writeText(authUrl).catch((_err: unknown) => {
                 // Fallback for insecure contexts / iframe restrictions
                 const ta = document.createElement("textarea");
                 ta.value = authUrl;

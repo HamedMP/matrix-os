@@ -1517,6 +1517,17 @@ export async function createGateway(config: GatewayConfig) {
                 handle = null;
               }
               break;
+            case "destroy":
+              if (handle) {
+                const sid = handle.sessionId;
+                handle.detach();
+                handle = null;
+                sessionRegistry.destroy(sid);
+                if (autoCreatedSessionId === sid) {
+                  autoCreatedSessionId = null;
+                }
+              }
+              break;
           }
         },
 
