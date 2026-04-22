@@ -609,7 +609,11 @@ export function TerminalPane({
         void buildAuthenticatedWebSocketUrl("/ws/terminal", {
           cwd: query?.cwd,
         })
-          .catch(() => {
+          .catch((err: unknown) => {
+            console.warn(
+              "[terminal] Falling back to unauthenticated terminal websocket URL:",
+              err instanceof Error ? err.message : err,
+            );
             const baseWs = getGatewayWs().replace("/ws", "/ws/terminal");
             return query?.cwd ? `${baseWs}?cwd=${encodeURIComponent(query.cwd)}` : baseWs;
           })

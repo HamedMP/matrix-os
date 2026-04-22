@@ -13,6 +13,8 @@ export function getWebSocketUpgradeHost(
   hostHeader: string | string[] | undefined,
   forwardedHostHeader: string | string[] | undefined,
 ): string {
+  // The platform is expected to sit behind Cloudflare/nginx-style proxies that
+  // set x-forwarded-host to the externally requested host.
   const forwarded = normalizeHeaderValue(forwardedHostHeader)
     .split(",")
     .map((part) => part.trim())

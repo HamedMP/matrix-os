@@ -40,7 +40,13 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
   const getWsUrl = useCallback(async () => {
     if (opts?.wsUrl) return opts.wsUrl;
     return buildAuthenticatedWebSocketUrl("/ws/voice")
-      .catch(() => getGatewayWs().replace(/\/ws$/, "/ws/voice"));
+      .catch((err: unknown) => {
+        console.warn(
+          "[useVoice] Falling back to unauthenticated voice websocket URL:",
+          err instanceof Error ? err.message : err,
+        );
+        return getGatewayWs().replace(/\/ws$/, "/ws/voice");
+      });
   }, [opts?.wsUrl]);
 
   const connectWs = useCallback(async () => {
@@ -69,7 +75,12 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
             setIsTranscribing(false);
             opts?.onError?.(msg.message);
           }
-        } catch (_err: unknown) {}
+        } catch (_err: unknown) {
+          console.warn(
+            "[useVoice] malformed ws message:",
+            _err instanceof Error ? _err.message : _err,
+          );
+        }
       } else if (event.data instanceof Blob) {
         event.data.arrayBuffer().then((buffer) => playAudio(buffer));
       }
@@ -170,7 +181,12 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
         mediaRecorderRef.current.stop();
       }
       if (audioContextRef.current) {
-        audioContextRef.current.close().catch((_err: unknown) => {});
+        audioContextRef.current.close().catch((_err: unknown) => {
+          console.warn(
+            "[useVoice] AudioContext close failed:",
+            _err instanceof Error ? _err.message : _err,
+          );
+        });
         audioContextRef.current = null;
       }
     };

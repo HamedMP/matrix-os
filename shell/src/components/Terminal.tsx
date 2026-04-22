@@ -41,7 +41,13 @@ export function Terminal() {
       termRef.current = term;
 
       const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/terminal")
-        .catch(() => getGatewayWs().replace("/ws", "/ws/terminal"));
+        .catch((err: unknown) => {
+          console.warn(
+            "[Terminal] Falling back to unauthenticated terminal websocket URL:",
+            err instanceof Error ? err.message : err,
+          );
+          return getGatewayWs().replace("/ws", "/ws/terminal");
+        });
       if (disposed) {
         term.dispose();
         return;

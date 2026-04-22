@@ -212,7 +212,13 @@ export function IntegrationsSection() {
     let ws: WebSocket | null = null;
     let disposed = false;
     void buildAuthenticatedWebSocketUrl("/ws")
-      .catch(() => getGatewayWs())
+      .catch((err: unknown) => {
+        console.warn(
+          "[integrations] Falling back to unauthenticated websocket URL:",
+          err instanceof Error ? err.message : err,
+        );
+        return getGatewayWs();
+      })
       .then((wsUrl) => {
         if (disposed) {
           return;

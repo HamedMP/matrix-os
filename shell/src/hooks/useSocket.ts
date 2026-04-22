@@ -72,7 +72,13 @@ function connect() {
 
   setConnectionState("reconnecting");
   void buildAuthenticatedWebSocketUrl("/ws")
-    .catch(() => null)
+    .catch((err: unknown) => {
+      console.warn(
+        "[useSocket] Falling back to unauthenticated websocket URL:",
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    })
     .then((wsUrl) => {
       if (globalSocket?.readyState === WebSocket.OPEN || globalSocket?.readyState === WebSocket.CONNECTING) {
         return;
