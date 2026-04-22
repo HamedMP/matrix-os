@@ -624,7 +624,7 @@ check`) per existing project conventions.
 - `CLERK_SECRET_KEY` is NOT forwarded into user containers (trusted-sync
   architecture — see `checkHomeMirrorS3Env` in `main.ts:327-354`).
 - Email verification codes are stored as bcrypt hashes on the signup row
-  (cost 10), not plaintext. Constant-time comparison via `timingSafeEqual`.
+  (cost 10), not plaintext. Verification uses `bcrypt.compare(...)`.
 
 ### Logging & Observability
 
