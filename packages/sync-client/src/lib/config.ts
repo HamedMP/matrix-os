@@ -8,8 +8,9 @@ import { writeUtf8FileAtomic } from "./atomic-write.js";
 export const SyncConfigSchema = z.object({
   // platformUrl owns identity: device-flow login, JWT issuance, /api/me.
   // gatewayUrl is the per-user data plane (sync API + WS). They differ in
-  // production (https://platform.matrix-os.com vs https://alice.matrix-os.com)
-  // and may be the same host in single-tenant dev.
+  // production (both terminate at https://app.matrix-os.com since spec 066
+  // PR 1; the platform dispatches HTTP + WS to the right per-user container
+  // based on the Clerk session) and may be the same host in single-tenant dev.
   platformUrl: z.url().optional(),
   gatewayUrl: z.url(),
   syncPath: z.string().min(1),
@@ -30,8 +31,19 @@ export type SyncConfig = z.infer<typeof SyncConfigSchema>;
 const MAX_GATEWAY_FOLDER_LENGTH = 1024;
 const DOUBLE_DOT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
 
+// Single rollout domain: all platform + gateway traffic terminates at
+// app.matrix-os.com. The legacy platform.matrix-os.com host was retired in
+// spec 066 PR 1 -- do not reintroduce it without updating the platform's
+// session-routing middleware at the same time.
+export const DEFAULT_PLATFORM_URL = "https://app.matrix-os.com";
+export const DEFAULT_GATEWAY_URL = "https://app.matrix-os.com";
+
 export function defaultPlatformUrl(): string {
-  return process.env.MATRIXOS_PLATFORM_URL ?? "https://platform.matrix-os.com";
+  return process.env.MATRIXOS_PLATFORM_URL ?? DEFAULT_PLATFORM_URL;
+}
+
+export function defaultGatewayUrl(): string {
+  return process.env.MATRIXOS_GATEWAY_URL ?? DEFAULT_GATEWAY_URL;
 }
 
 function configDir(): string {

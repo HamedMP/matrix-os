@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { login } from "../../auth/oauth.js";
 import { clearAuth, saveAuth } from "../../auth/token-store.js";
 import {
+  defaultGatewayUrl,
   defaultPlatformUrl,
   defaultSyncPath,
   generatePeerId,
@@ -21,7 +22,7 @@ export const loginCommand = defineCommand({
     },
     platform: {
       type: "string",
-      description: "Override platform URL (default: from config or platform.matrix-os.com)",
+      description: "Override platform URL (default: from config or app.matrix-os.com)",
     },
   },
   run: async (ctx) => {
@@ -125,7 +126,11 @@ export const loginCommand = defineCommand({
 
     const next: SyncConfig = {
       platformUrl,
-      gatewayUrl: gatewayUrl ?? existing?.gatewayUrl ?? platformUrl,
+      // Prefer the server-supplied gatewayUrl (PR 1 always returns
+      // app.matrix-os.com); fall back to the client's known default
+      // before ever reusing platformUrl, because a dev override of
+      // `--platform http://localhost:9000` must NOT become the gatewayUrl.
+      gatewayUrl: gatewayUrl ?? existing?.gatewayUrl ?? defaultGatewayUrl(),
       syncPath: existing?.syncPath ?? defaultSyncPath(),
       gatewayFolder: existing?.gatewayFolder ?? "",
       peerId: existing?.peerId ?? generatePeerId(),
