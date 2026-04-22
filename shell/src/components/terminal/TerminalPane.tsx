@@ -174,6 +174,8 @@ export function TerminalPane({
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
+  const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
@@ -555,14 +557,16 @@ export function TerminalPane({
 
       document.addEventListener("visibilitychange", onVisibilityChange);
 
-      term.onData((data: string) => {
+      onDataDisposableRef.current?.dispose();
+      onDataDisposableRef.current = term.onData((data: string) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "input", data }));
         }
       });
 
-      term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+      onResizeDisposableRef.current?.dispose();
+      onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "resize", cols, rows }));
@@ -620,14 +624,18 @@ export function TerminalPane({
         clearReconnectTimer();
         heartbeatRef.current?.stop();
         detachWebglContextLostHandler();
+        onDataDisposableRef.current?.dispose();
+        onDataDisposableRef.current = null;
+        onResizeDisposableRef.current?.dispose();
+        onResizeDisposableRef.current = null;
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
 
         if (!shouldCache) {
-          // Pane is being closed — clean up everything
+          // Pane is being closed — destroy the backend session so it doesn't leak
           const ws = wsRef.current;
           if (ws) {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "detach" }));
+              ws.send(JSON.stringify({ type: "destroy" }));
             }
             ws.close();
           }
