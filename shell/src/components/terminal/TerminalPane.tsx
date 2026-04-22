@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState } from "react";
-import { getGatewayWs } from "@/lib/gateway";
+import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import type { Theme } from "@/hooks/useTheme";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
@@ -56,7 +56,7 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (_err: unknown) {
     return null;
   }
 
@@ -128,7 +128,7 @@ function extractTrustedClaudeAuthUrl(raw: string): string | null {
       return null;
     }
     return url.toString();
-  } catch {
+  } catch (_err: unknown) {
     return null;
   }
 }
@@ -451,7 +451,7 @@ export function TerminalPane({
                 heartbeatRef.current?.receivedPong();
                 return;
               }
-            } catch { /* fall through to normal parse */ }
+            } catch (_err: unknown) { /* fall through to normal parse */ }
           }
 
           const msg = parseTerminalServerMessage(raw);
@@ -631,14 +631,27 @@ export function TerminalPane({
         const shouldCache = !isClosingRef.current && (shouldCacheOnUnmountRef.current?.(paneId) ?? true);
 
         if (!shouldCache) {
-          // Pane is being closed — destroy the backend session so it doesn't leak
+          // Pane is being closed — destroy the backend session so it doesn't leak.
           const ws = wsRef.current;
-          if (ws) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "destroy" }));
-            }
-            ws.close();
+          const sid = sessionIdRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "destroy" }));
+          } else if (sid) {
+            // WS is CONNECTING/CLOSING/CLOSED so we can't send over it. Fall
+            // back to the REST endpoint so an existing session still gets
+            // killed (otherwise it'd leak until eviction).
+            void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sid)}`, {
+              method: "DELETE",
+              keepalive: true,
+              signal: AbortSignal.timeout(5_000),
+            }).catch((err: unknown) => {
+              console.warn(
+                "Failed to destroy terminal session on close:",
+                err instanceof Error ? err.message : err,
+              );
+            });
           }
+          ws?.close();
           removeCached(paneId);
           term.dispose();
         } else if (wsRef.current) {
@@ -756,7 +769,7 @@ export function TerminalPane({
           </button>
           <button
             onClick={() => {
-              navigator.clipboard.writeText(authUrl).catch(() => {
+              navigator.clipboard.writeText(authUrl).catch((_err: unknown) => {
                 // Fallback for insecure contexts / iframe restrictions
                 const ta = document.createElement("textarea");
                 ta.value = authUrl;
