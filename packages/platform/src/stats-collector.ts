@@ -88,8 +88,11 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
             const raw = await container.stats({ stream: false } as any) as any;
             results.push(buildAndRecordEntry(row.handle, raw));
             continue;
-          } catch (_fallbackErr: unknown) {
-            // Fall through to the warning below.
+          } catch (fallbackErr: unknown) {
+            console.warn(
+              `[stats-collector] Name-based fallback also failed for ${row.handle}:`,
+              fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+            );
           }
         }
         console.warn(
