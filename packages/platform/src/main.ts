@@ -46,6 +46,7 @@ const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -177,7 +178,12 @@ async function inspectLiveContainer(
 
   for (const candidate of candidates) {
     try {
-      const info = await docker.getContainer(candidate.target).inspect();
+      const info = await Promise.race([
+        docker.getContainer(candidate.target).inspect(),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`Docker inspect timeout after ${DOCKER_INSPECT_TIMEOUT_MS}ms`)), DOCKER_INSPECT_TIMEOUT_MS);
+        }),
+      ]);
       return { info, source: candidate.source };
     } catch (err: unknown) {
       if (!isDockerNotFoundError(err)) {
@@ -1339,6 +1345,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       });
 
       upstream.on('error', (err) => {
+        upstream.destroy();
         console.warn(
           `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
         );
