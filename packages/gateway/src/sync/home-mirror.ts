@@ -924,28 +924,36 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       // GitHub Actions runners), where the watches aren't installed yet.
       // Resolve on `close` too, so a concurrent stop() can't strand us
       // waiting for a `ready` event that will never fire on a closed watcher.
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => {
-          watcher?.off("ready", onReady);
-          watcher?.off("error", onError);
-          watcher?.off("close", onClose);
-        };
-        const onReady = () => {
-          cleanup();
-          resolve();
-        };
-        const onError = (err: unknown) => {
-          cleanup();
-          reject(err instanceof Error ? err : new Error(String(err)));
-        };
-        const onClose = () => {
-          cleanup();
-          resolve();
-        };
-        watcher!.once("ready", onReady);
-        watcher!.once("error", onError);
-        watcher!.once("close", onClose);
-      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            watcher?.off("ready", onReady);
+            watcher?.off("error", onError);
+            watcher?.off("close", onClose);
+          };
+          const onReady = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = (err: unknown) => {
+            cleanup();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          };
+          const onClose = () => {
+            cleanup();
+            resolve();
+          };
+          watcher!.once("ready", onReady);
+          watcher!.once("error", onError);
+          watcher!.once("close", onClose);
+        });
+      } catch (err: unknown) {
+        // Watcher errored before reaching ready -- close it (and any
+        // other resources start() acquired) so we don't leak inotify
+        // watches when start() throws.
+        await releaseResources();
+        throw err;
+      }
 
       if (stopRequested) {
         await releaseResources();
