@@ -64,7 +64,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     baseGatewayPort = 4001,
     baseShellPort = 3001,
     proxyUrl = 'http://proxy:8080',
-    memoryLimit = 1024 * 1024 * 1024,
+    memoryLimit = 2 * 1024 * 1024 * 1024,
     cpuQuota = 50000,
     dataDir = '/data/users',
     platformSecret = '',
@@ -257,6 +257,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           Env: buildEnv(handle, displayName, clerkUserId),
           HostConfig: {
             Memory: memoryLimit,
+            MemorySwap: memoryLimit * 2,
             CpuQuota: cpuQuota,
             PortBindings: {
               '4000/tcp': [{ HostPort: String(gatewayPort) }],
@@ -364,6 +365,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         Env: buildEnv(handle, undefined, record.clerkUserId),
         HostConfig: {
           Memory: memoryLimit,
+          MemorySwap: memoryLimit * 2,
           CpuQuota: cpuQuota,
           PortBindings: {
             '4000/tcp': [{ HostPort: String(record.port) }],
@@ -431,6 +433,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
             Env: buildEnv(record.handle, undefined, record.clerkUserId),
             HostConfig: {
               Memory: memoryLimit,
+              MemorySwap: memoryLimit * 2,
               CpuQuota: cpuQuota,
               PortBindings: {
                 '4000/tcp': [{ HostPort: String(record.port) }],
