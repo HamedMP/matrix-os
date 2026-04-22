@@ -579,6 +579,13 @@ export class ProcessManager {
       const idleShutdownMs = (result.manifest.serve?.idleShutdown ?? 300) * 1000;
       if (now - record.lastUsedAt > idleShutdownMs) {
         await this.stopProcess(record);
+        // Drop the record entirely. stopProcess only flips state to "idle";
+        // leaving the entry behind would hide the slot from the maxProcesses
+        // cap because ensureRunning's `!this.processes.has(slug)` guard skips
+        // the eviction path when a reaped record is re-accessed, letting a
+        // fresh "starting" record push runningCount() past maxProcesses.
+        // Mirrors evictLRU's stop-then-delete pattern.
+        this.processes.delete(slug);
       }
     }
   }

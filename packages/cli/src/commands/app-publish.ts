@@ -72,10 +72,38 @@ async function hashDirectory(dirPath: string): Promise<string> {
   return hash.digest("hex");
 }
 
-function signBundle(manifestJson: string): string {
+async function hashFile(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update(await readFile(filePath));
+  return hash.digest("hex");
+}
+
+interface BundleSigningInput {
+  manifestJson: string;
+  sourceTarHash: string;
+  distTarHash?: string;
+}
+
+// Canonical, newline-delimited form so tamperers can't move bytes between
+// fields (e.g. append to manifestJson to cancel a hash change). The verifier
+// MUST reconstruct the same layout in the same order.
+function serializeSigningInput(input: BundleSigningInput): string {
+  return [
+    `manifest:${input.manifestJson}`,
+    `source-tar:${input.sourceTarHash}`,
+    `dist-tar:${input.distTarHash ?? ""}`,
+  ].join("\n");
+}
+
+function signBundle(input: BundleSigningInput): string {
   // Publishers must supply MATRIX_PUBLISH_KEY. Shipping a hardcoded fallback
   // would mean anyone who reads this repo can forge signatures accepted by
   // installVerifiedApp's trusted path.
+  //
+  // The signature binds manifest + source.tar.gz hash + dist.tar.gz hash so
+  // an attacker who intercepts a bundle cannot swap either tarball while
+  // leaving the manifest + signature untouched -- the verifier recomputes
+  // the tarball hashes and re-derives the HMAC input before comparing.
   const key = process.env.MATRIX_PUBLISH_KEY;
   if (!key || key.length < 32) {
     throw new Error(
@@ -83,7 +111,7 @@ function signBundle(manifestJson: string): string {
     );
   }
   const hmac = createHmac("sha256", key);
-  hmac.update(manifestJson);
+  hmac.update(serializeSigningInput(input));
   return hmac.digest("hex");
 }
 
@@ -163,8 +191,17 @@ export async function publishApp(opts: PublishOptions): Promise<PublishResult> {
       }
     }
 
-    // Sign the bundle
-    const signature = signBundle(rawJson);
+    // Hash the tarballs so the signature binds the actual shipped bytes,
+    // not just the manifest metadata. Reading source.tar.gz and dist.tar.gz
+    // after tar finishes avoids racing writes.
+    const sourceTarHash = await hashFile(sourceTar);
+    const distTarHash = distTar ? await hashFile(distTar) : undefined;
+
+    const signature = signBundle({
+      manifestJson: rawJson,
+      sourceTarHash,
+      distTarHash,
+    });
 
     // Write manifest to store
     const manifestPath = join(bundleDir, "matrix.json");
