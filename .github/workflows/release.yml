@@ -1,0 +1,259 @@
+name: Release
+
+# Triggered by pushing a semver tag. Runs tests, builds + signs + notarises
+# the macOS installer, publishes @matrix-os/cli to npm, uploads artefacts to
+# the GitHub release, and refreshes the Homebrew formula.
+#
+# Security note: workflow inputs we consume are $GITHUB_REF_NAME (constrained
+# by the `v*.*.*` tag filter above — so it's always of form `vX.Y.Z[...]`)
+# and secrets. No issue/PR bodies or commit messages are interpolated into
+# run: steps, avoiding the standard script-injection vectors.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: bun run test
+
+      - name: Pattern scan
+        run: ./scripts/review/check-patterns.sh
+
+  build-macos:
+    name: Build macOS .pkg
+    needs: test
+    runs-on: macos-14
+    timeout-minutes: 45
+    outputs:
+      pkg_path: ${{ steps.build.outputs.pkg_path }}
+      pkg_name: ${{ steps.build.outputs.pkg_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Resolve version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Import Developer ID certs
+        env:
+          APPLE_DEV_ID_APP_P12_BASE64: ${{ secrets.APPLE_DEV_ID_APP_P12_BASE64 }}
+          APPLE_DEV_ID_INSTALLER_P12_BASE64: ${{ secrets.APPLE_DEV_ID_INSTALLER_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$APPLE_DEV_ID_APP_P12_BASE64" | base64 -d > "$RUNNER_TEMP/app.p12"
+          echo "$APPLE_DEV_ID_INSTALLER_P12_BASE64" | base64 -d > "$RUNNER_TEMP/installer.p12"
+
+          security import "$RUNNER_TEMP/app.p12" \
+            -k "$KEYCHAIN" -P "$APPLE_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security import "$RUNNER_TEMP/installer.p12" \
+            -k "$KEYCHAIN" -P "$APPLE_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          rm -f "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
+
+      - name: Build installer
+        id: build
+        env:
+          APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
+          APPLE_DEV_ID_INSTALLER: ${{ secrets.APPLE_DEV_ID_INSTALLER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./scripts/build-macos-pkg.sh
+          PKG_PATH="dist/macos/MatrixSync-${VERSION}.pkg"
+          echo "pkg_path=${PKG_PATH}" >> "$GITHUB_OUTPUT"
+          echo "pkg_name=MatrixSync-${VERSION}.pkg" >> "$GITHUB_OUTPUT"
+
+      - name: Notarise installer
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          PKG_PATH: ${{ steps.build.outputs.pkg_path }}
+        run: ./scripts/notarise-macos.sh "$PKG_PATH"
+
+      - name: Upload pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-pkg
+          path: ${{ steps.build.outputs.pkg_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-npm:
+    name: Publish npm
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Align package version with tag
+        working-directory: packages/sync-client
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish
+        working-directory: packages/sync-client
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  github-release:
+    name: GitHub release
+    needs: [build-macos, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-pkg
+          path: dist/macos
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/macos/*.pkg
+            scripts/install.sh
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: matrix-os/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Compute formula update
+        id: formula
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          TARBALL="https://registry.npmjs.org/@matrix-os/cli/-/cli-${VERSION}.tgz"
+
+          # Wait up to 5 min for npm to publish — publish-npm just finished.
+          for _ in $(seq 1 30); do
+            if curl -fsIL --max-time 15 "$TARBALL" >/dev/null; then break; fi
+            sleep 10
+          done
+
+          SHA256="$(curl -fsSL --max-time 60 "$TARBALL" | shasum -a 256 | awk '{print $1}')"
+          {
+            echo "version=${VERSION}"
+            echo "tarball=${TARBALL}"
+            echo "sha256=${SHA256}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply formula update
+        working-directory: tap
+        env:
+          VERSION: ${{ steps.formula.outputs.version }}
+          TARBALL: ${{ steps.formula.outputs.tarball }}
+          SHA256: ${{ steps.formula.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          FORMULA="Formula/matrix.rb"
+          if [ ! -f "$FORMULA" ]; then
+            echo "formula $FORMULA missing in tap repo; bootstrap it first." >&2
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os, re, pathlib
+          path = pathlib.Path("Formula/matrix.rb")
+          tarball = os.environ["TARBALL"]
+          sha = os.environ["SHA256"]
+          version = os.environ["VERSION"]
+          text = path.read_text()
+          text = re.sub(r'url\s+".*"', f'url "{tarball}"', text, count=1)
+          text = re.sub(r'sha256\s+".*"', f'sha256 "{sha}"', text, count=1)
+          text = re.sub(r'version\s+".*"', f'version "{version}"', text, count=1)
+          path.write_text(text)
+          PY
+
+          git config user.name "matrix-os-bot"
+          git config user.email "bot@matrix-os.com"
+          git add "$FORMULA"
+          git commit -m "matrix ${VERSION}"
+          git push
