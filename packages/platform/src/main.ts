@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server';
 import { createConnection } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import Dockerode from 'dockerode';
+import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
   createPlatformDb,
@@ -12,17 +13,15 @@ import {
   getContainer,
   getContainerByClerkId,
   updateLastActive,
+  updateContainerStatus,
   listContainers,
 } from './db.js';
-import { createOrchestrator, type Orchestrator } from './orchestrator.js';
-import { createLifecycleManager, type LifecycleManager } from './lifecycle.js';
+import type { Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
 import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
-import { createMatrixProvisioner, type MatrixProvisioner } from './matrix-provisioning.js';
-import { metricsRegistry } from './metrics.js';
-import { createStatsCollector } from './stats-collector.js';
+import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { verifySyncJwt } from './sync-jwt.js';
 import { isSafeWebSocketUpgradePath } from './ws-upgrade.js';
@@ -40,6 +39,16 @@ const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
+const PROXY_TIMEOUT_MS = 30_000;
+
+// User containers churn frequently, so keep proxy connections short-lived
+// instead of letting long-lived pooled upstream state go stale.
+const containerProxyDispatcher = new Agent({
+  pipelining: 0,
+  keepAliveTimeout: 1,
+  keepAliveMaxTimeout: 1,
+  connections: 64,
+});
 
 const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
@@ -135,6 +144,94 @@ export function checkUnsafeDefaultSecrets(
 interface AppDomainIdentity {
   handle: string;
   userId: string;
+}
+
+interface ResolvedContainerEndpoint {
+  containerId: string | null;
+  host: string;
+  source: 'record' | 'docker-id' | 'docker-name';
+}
+
+function isDockerNotFoundError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('No such container') || message.includes('404');
+}
+
+async function inspectLiveContainer(
+  docker: Dockerode,
+  handle: string,
+  containerId?: string | null,
+): Promise<{ info: Dockerode.ContainerInspectInfo; source: 'docker-id' | 'docker-name' } | null> {
+  const candidates: Array<{ target: string; source: 'docker-id' | 'docker-name' }> = [];
+  if (containerId) {
+    candidates.push({ target: containerId, source: 'docker-id' });
+  }
+  candidates.push({ target: `matrixos-${handle}`, source: 'docker-name' });
+
+  for (const candidate of candidates) {
+    try {
+      const info = await docker.getContainer(candidate.target).inspect();
+      return { info, source: candidate.source };
+    } catch (err: unknown) {
+      if (!isDockerNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getContainerHostFromInspect(
+  info: Dockerode.ContainerInspectInfo,
+  handle: string,
+): string {
+  const networks = info.NetworkSettings?.Networks
+    ? Object.values(info.NetworkSettings.Networks)
+    : [];
+  const ip = networks.find(
+    (network) => typeof network?.IPAddress === 'string' && network.IPAddress.length > 0,
+  )?.IPAddress;
+  return ip || `matrixos-${handle}`;
+}
+
+async function resolveContainerEndpoint(
+  docker: Dockerode | undefined,
+  db: PlatformDB,
+  handle: string,
+  containerId?: string | null,
+): Promise<ResolvedContainerEndpoint | null> {
+  if (!docker) {
+    return {
+      containerId: containerId ?? null,
+      host: `matrixos-${handle}`,
+      source: 'record',
+    };
+  }
+
+  const inspected = await inspectLiveContainer(docker, handle, containerId);
+  if (!inspected) {
+    return null;
+  }
+
+  const { info, source } = inspected;
+  if (info.Id && info.Id !== containerId) {
+    updateContainerStatus(db, handle, info.State?.Running ? 'running' : 'stopped', info.Id);
+  }
+
+  return {
+    containerId: info.Id ?? containerId ?? null,
+    host: getContainerHostFromInspect(info, handle),
+    source,
+  };
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    const code = (err as Error & { code?: string }).code;
+    return code ? `${code}: ${err.message}` : err.message;
+  }
+  return String(err);
 }
 
 function isSyncJwtAuthError(err: unknown): boolean {
@@ -360,6 +457,7 @@ export function checkHomeMirrorS3Env(
 
 export function createApp(deps: {
   db: PlatformDB;
+  docker?: Dockerode;
   orchestrator: Orchestrator;
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
@@ -368,7 +466,7 @@ export function createApp(deps: {
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
 }) {
-  const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
+  const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
   const app = new Hono<{
     Variables: {
@@ -395,6 +493,7 @@ export function createApp(deps: {
 
   // Prometheus metrics (unauthenticated for scraping)
   app.get('/metrics', async (c) => {
+    const { metricsRegistry } = await import('./metrics.js');
     const metrics = await metricsRegistry.metrics();
     return c.text(metrics, 200, {
       'Content-Type': metricsRegistry.contentType,
@@ -517,39 +616,57 @@ export function createApp(deps: {
 
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
     const targetPort = isGatewayPath ? 4000 : 3000;
-    const targetUrl = `http://matrixos-${record.handle}:${targetPort}${path}${qs}`;
-
-    try {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
-          headers.set(key, value);
-        }
+    const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(c.req.header())) {
+      if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        headers.set(key, value);
       }
-      headers.set('x-forwarded-host', host);
-      headers.set('x-forwarded-proto', 'https');
-      if (platformSecret) {
-        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
-        headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
-      }
-      headers.set('x-platform-user-id', identity.userId);
-
-      const upstream = await fetch(targetUrl, {
-        method: c.req.method,
-        headers,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(30_000),
-        body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-      });
-
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers: upstream.headers,
-      });
-    } catch (err: unknown) {
-      logPlatformRouteError('app-domain proxy', err);
-      return c.json({ error: 'Container unreachable' }, 502);
     }
+    headers.set('x-forwarded-host', host);
+    headers.set('x-forwarded-proto', 'https');
+    headers.set('connection', 'close');
+    if (platformSecret) {
+      headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
+      headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
+    }
+    headers.set('x-platform-user-id', identity.userId);
+
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
+      if (!endpoint) {
+        console.warn(
+          `[platform] app-domain proxy unresolved handle=${record.handle} attempt=${attempt + 1} path=${path} targetPort=${targetPort}`,
+        );
+        return c.json({ error: 'Container unreachable' }, 502);
+      }
+
+      const targetUrl = `http://${endpoint.host}:${targetPort}${path}${qs}`;
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body,
+          dispatcher: containerProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: upstream.headers,
+        });
+      } catch (err: unknown) {
+        lastErr = err;
+        console.warn(
+          `[platform] app-domain proxy retry attempt=${attempt + 1} handle=${record.handle} target=${targetUrl} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+        );
+      }
+    }
+
+    logPlatformRouteError('app-domain proxy', lastErr);
+    return c.json({ error: 'Container unreachable' }, 502);
   });
 
   if (deps.integrationRoutes) {
@@ -977,6 +1094,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   checkHomeMirrorS3Env();
 
+  const [{ createOrchestrator }, { createLifecycleManager }] = await Promise.all([
+    import('./orchestrator.js'),
+    import('./lifecycle.js'),
+  ]);
   const orchestrator = createOrchestrator({
     db,
     docker,
@@ -991,9 +1112,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
   lifecycle.start();
 
+  const { createStatsCollector } = await import('./stats-collector.js');
   const statsCollector = createStatsCollector({
     docker,
     listRunning: () => listContainers(db, 'running'),
+    onResolvedContainerId: (handle, containerId) => {
+      updateContainerStatus(db, handle, 'running', containerId);
+    },
   });
   statsCollector.start();
 
@@ -1018,6 +1143,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     process.exit(1);
   }
   if (conduitUrl) {
+    const { createMatrixProvisioner } = await import('./matrix-provisioning.js');
     matrixProvisioner = createMatrixProvisioner({
       db,
       homeserverUrl: conduitUrl,
@@ -1106,6 +1232,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   const app = createApp({
     db,
+    docker,
     orchestrator,
     clerkAuth,
     matrixProvisioner,
@@ -1136,39 +1263,72 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
       const record = getContainer(db, identity.handle);
       if (!record) { socket.destroy(); return; }
+      const path = req.url ?? '/';
+      let activeUpstream: ReturnType<typeof createConnection> | null = null;
+      const onSocketError = () => activeUpstream?.destroy();
+      socket.on('error', onSocketError);
 
-      const upstream = createConnection({ host: `matrixos-${record.handle}`, port: 4000 }, () => {
-        const path = req.url ?? '/';
-        if (!isSafeWebSocketUpgradePath(path)) {
+      const connectUpstream = async (attempt: number): Promise<void> => {
+        const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
+        if (!endpoint) {
+          console.warn(
+            `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} path=${path}`,
+          );
           socket.destroy();
-          upstream.destroy();
           return;
         }
-        const headers = Object.entries(req.headers)
-          .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
-          .map(([k, v]) => `${k}: ${v}`)
-          .concat(
-            PLATFORM_SECRET
-              ? [
-                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
-                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
-                  `x-platform-user-id: ${identity.userId}`,
-                ]
-              : [],
-          )
-          .join('\r\n');
 
-        upstream.write(
-          `${req.method} ${path} HTTP/1.1\r\nHost: matrixos-${record.handle}:4000\r\n${headers}\r\n\r\n`
-        );
-        if (head.length > 0) upstream.write(head);
+        let connected = false;
+        const upstream = createConnection({ host: endpoint.host, port: 4000 }, () => {
+          connected = true;
+          activeUpstream = upstream;
+          if (!isSafeWebSocketUpgradePath(path)) {
+            socket.destroy();
+            upstream.destroy();
+            return;
+          }
+          const headers = Object.entries(req.headers)
+            .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
+            .map(([k, v]) => `${k}: ${v}`)
+            .concat(
+              PLATFORM_SECRET
+                ? [
+                    `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
+                    `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
+                    `x-platform-user-id: ${identity.userId}`,
+                  ]
+                : [],
+            )
+            .join('\r\n');
 
-        upstream.pipe(socket);
-        socket.pipe(upstream);
+          upstream.write(
+            `${req.method} ${path} HTTP/1.1\r\nHost: ${endpoint.host}:4000\r\n${headers}\r\n\r\n`
+          );
+          if (head.length > 0) upstream.write(head);
+
+          upstream.pipe(socket);
+          socket.pipe(upstream);
+        });
+
+        upstream.on('error', (err) => {
+          console.warn(
+            `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+          );
+          if (!connected && attempt === 0 && !socket.destroyed) {
+            void connectUpstream(attempt + 1).catch((retryErr) => {
+              console.error('[platform] websocket upstream retry fatal error:', describeError(retryErr));
+              socket.destroy();
+            });
+            return;
+          }
+          socket.destroy();
+        });
+      };
+
+      void connectUpstream(0).catch((err) => {
+        console.error('[platform] websocket upstream fatal error:', describeError(err));
+        socket.destroy();
       });
-
-      upstream.on('error', () => socket.destroy());
-      socket.on('error', () => upstream.destroy());
       return;
     }
 
