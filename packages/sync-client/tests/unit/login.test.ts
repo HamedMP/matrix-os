@@ -19,6 +19,7 @@ vi.mock("../../src/auth/oauth.js", () => ({
 
 vi.mock("../../src/lib/config.js", () => ({
   defaultPlatformUrl: () => "https://platform.example",
+  defaultGatewayUrl: () => "https://gateway.example",
   defaultSyncPath: () => "/tmp/syncpath",
   generatePeerId: () => "peer-test",
   loadConfig: loadConfigMock,
@@ -108,6 +109,25 @@ describe("loginCommand /api/me handling", () => {
 
     expect(clearAuthMock).not.toHaveBeenCalled();
     expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to defaultGatewayUrl when /api/me returns 200 without one", async () => {
+    // Regression: earlier impl fell back to `platformUrl`, which was wrong
+    // when --platform pointed at a dev override (`http://localhost:9000`).
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ userId: "user_test", handle: "alice" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runLogin();
+
+    expect(saveConfigMock).toHaveBeenCalledTimes(1);
+    const written = saveConfigMock.mock.calls[0]![0];
+    expect(written.gatewayUrl).toBe("https://gateway.example");
+    expect(written.platformUrl).toBe(PLATFORM_URL);
   });
 
   it("saves config with the server-supplied gatewayUrl on 200", async () => {

@@ -2,10 +2,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { chmod, mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type IpcHandler = (
-  command: string,
-  args: Record<string, unknown>,
-) => Promise<Record<string, unknown>>;
+import type { IpcHandler } from "./ipc-handler.js";
+export type { IpcHandler };
 
 export interface IpcServerOptions {
   socketPath: string;
