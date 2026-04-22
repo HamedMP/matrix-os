@@ -14,6 +14,8 @@ import type { SyncState } from "./types.js";
 
 export interface IpcHandlerLogger {
   info: (msg: string) => void;
+  warn?: (msg: string) => void;
+  error?: (msg: string) => void;
 }
 
 export interface IpcHandlerDeps {
