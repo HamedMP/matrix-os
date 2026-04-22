@@ -5,13 +5,15 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createGitSync, createAutoSync, type GitSync, type AutoSync } from "../../packages/gateway/src/git-sync.js";
 
+const GIT_ID = ["-c", "user.email=ci@matrix-os.test", "-c", "user.name=Test"];
+
 function tmpGitRepo(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "git-sync-")));
   mkdirSync(join(dir, "system"), { recursive: true });
   writeFileSync(join(dir, "system", "state.md"), "initial");
   execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
   execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
-  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", [...GIT_ID, "commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
   return dir;
 }
 
@@ -101,7 +103,7 @@ describe("T220: GitSync", () => {
     execFileSync("git", ["clone", remote, clone], { stdio: "ignore" });
     writeFileSync(join(clone, "new-file.txt"), "from clone");
     execFileSync("git", ["add", "."], { cwd: clone, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "remote change"], { cwd: clone, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "remote change"], { cwd: clone, stdio: "ignore" });
     execFileSync("git", ["push"], { cwd: clone, stdio: "ignore" });
 
     // Pull into original
