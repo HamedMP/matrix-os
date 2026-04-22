@@ -10,7 +10,10 @@ export async function requestAckToken(
   });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
+    const body = await res.json().catch((err) => {
+      console.warn("[app-session] error-body parse failed", err);
+      return {} as const;
+    });
     throw new Error(`Failed to request ack token: ${res.status} ${(body as { error?: string }).error ?? ""}`);
   }
 
@@ -35,7 +38,10 @@ export async function openAppSession(
   });
 
   if (!res.ok) {
-    const responseBody = await res.json().catch(() => ({}));
+    const responseBody = await res.json().catch((err) => {
+      console.warn("[app-session] error-body parse failed", err);
+      return {} as const;
+    });
     throw new Error(
       `Failed to open session: ${res.status} ${(responseBody as { error?: string }).error ?? ""}`,
     );

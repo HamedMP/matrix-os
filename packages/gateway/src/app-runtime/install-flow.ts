@@ -130,7 +130,8 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
-  } catch {
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
     return {
       ok: false,
       error: new ManifestError("invalid_manifest", "invalid JSON in source matrix.json"),
@@ -187,9 +188,15 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
   }
 
   const rollback = async () => {
-    await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    // Rollback is best-effort: the primary operation has already failed and
+    // we surface that error. Log but don't re-throw cleanup failures.
+    await rm(targetDir, { recursive: true, force: true }).catch((err) => {
+      console.warn(`[install-flow] rollback rm(${targetDir}) failed:`, err);
+    });
     if (backupDir) {
-      await rename(backupDir, targetDir).catch(() => {});
+      await rename(backupDir, targetDir).catch((err) => {
+        console.warn(`[install-flow] rollback rename(${backupDir} -> ${targetDir}) failed:`, err);
+      });
     }
   };
 
@@ -213,7 +220,9 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
     }
 
     if (backupDir) {
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+      await rm(backupDir, { recursive: true, force: true }).catch((err) => {
+        console.warn(`[install-flow] backup cleanup rm(${backupDir}) failed:`, err);
+      });
     }
     return { ok: true, manifest };
   } catch (err: unknown) {
@@ -280,7 +289,8 @@ export async function installVerifiedApp(
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
-  } catch {
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
     return {
       ok: false,
       error: new ManifestError("invalid_manifest", "invalid JSON in source matrix.json"),
@@ -336,9 +346,13 @@ export async function installVerifiedApp(
   }
 
   const rollback = async () => {
-    await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    await rm(targetDir, { recursive: true, force: true }).catch((err) => {
+      console.warn(`[install-flow] rollback rm(${targetDir}) failed:`, err);
+    });
     if (backupDir) {
-      await rename(backupDir, targetDir).catch(() => {});
+      await rename(backupDir, targetDir).catch((err) => {
+        console.warn(`[install-flow] rollback rename(${backupDir} -> ${targetDir}) failed:`, err);
+      });
     }
   };
 
@@ -387,7 +401,9 @@ export async function installVerifiedApp(
     }
 
     if (backupDir) {
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+      await rm(backupDir, { recursive: true, force: true }).catch((err) => {
+        console.warn(`[install-flow] backup cleanup rm(${backupDir}) failed:`, err);
+      });
     }
     return { ok: true, manifest };
   } catch (err: unknown) {

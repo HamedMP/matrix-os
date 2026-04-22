@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -1070,6 +1071,25 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
+  // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
+  // is the source. When it is absent (local dev, .env.example default) we mint an
+  // ephemeral process-scoped secret so the HKDF input is never predictable — an
+  // empty master secret combined with the public info string would otherwise let
+  // anyone forge matrix_app_session cookies for any installed slug. The trade-off
+  // is that app-session cookies do not survive a gateway restart in dev mode.
+  const envMasterSecret = process.env.MATRIX_AUTH_TOKEN;
+  const appSessionMasterSecret = envMasterSecret && envMasterSecret.length >= 16
+    ? envMasterSecret
+    : (() => {
+        const reason = !envMasterSecret
+          ? "MATRIX_AUTH_TOKEN not set"
+          : "MATRIX_AUTH_TOKEN too short (<16 bytes)";
+        console.warn(
+          `[gateway] ${reason}; using ephemeral app-session master secret (app-session cookies will not survive gateway restart).`,
+        );
+        return randomBytes(32).toString("hex");
+      })();
+
   // Deferred route mounts -- must come AFTER auth middleware
   if (integrationRoutes) {
     app.route("/api/integrations", integrationRoutes);
@@ -1177,16 +1197,22 @@ export async function createGateway(config: GatewayConfig) {
       let body: { ack?: string } = {};
       try {
         body = await c.req.json();
-      } catch {
-        // No body or invalid JSON
+      } catch (err) {
+        // Hono throws SyntaxError / BodyLimitError when the body is missing
+        // or malformed. Either case reduces to "no ack supplied" below; we
+        // only swallow parse-shape errors and re-throw anything else.
+        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+          throw err;
+        }
       }
       if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
         return c.json({ error: "install_gated" }, 409);
       }
     }
-    // Sign session cookie
-    const gatewayToken = process.env.MATRIX_AUTH_TOKEN ?? "";
-    const key = deriveAppSessionKey(gatewayToken, slug);
+    // Sign session cookie (uses process-scoped master secret computed above;
+    // never reads MATRIX_AUTH_TOKEN directly so empty/short env values can't
+    // produce a predictable HKDF key).
+    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
     const nowSec = Math.floor(Date.now() / 1000);
     const maxAge = 600; // 10 minutes
     const payload = {
@@ -1211,7 +1237,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use(
     "/apps/:slug/*",
     appSessionMiddleware((slug) =>
-      deriveAppSessionKey(process.env.MATRIX_AUTH_TOKEN ?? "", slug),
+      deriveAppSessionKey(appSessionMasterSecret, slug),
     ),
   );
 

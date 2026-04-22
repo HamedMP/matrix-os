@@ -160,13 +160,13 @@ export class BuildOrchestrator {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), timeoutMs);
 
-      const parts = command.split(/\s+/);
-      const bin = parts[0];
-      const args = parts.slice(1);
-
       const env = safeBuildEnv({ storeDir: this.storeDir });
 
-      const child = spawn(bin, args, {
+      // Invoke the manifest command through `sh -c` so quoted/embedded args
+      // (e.g. `pnpm run "build:prod"`) are parsed by the shell rather than
+      // naively split on whitespace. Process-manager uses the same pattern
+      // for the serve command.
+      const child = spawn("sh", ["-c", command], {
         cwd,
         env,
         stdio: ["ignore", "pipe", "pipe"],
@@ -195,7 +195,11 @@ export class BuildOrchestrator {
         clearTimeout(timer);
         const isAbort = ac.signal.aborted;
         const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
-        writeFile(logPath, Buffer.concat(chunks).toString("utf8").slice(0, MAX_LOG_SIZE)).catch(() => {});
+        // Log writes are best-effort — the build has already failed and we
+        // surface that result below. Warn if the log write itself errors.
+        writeFile(logPath, Buffer.concat(chunks).toString("utf8").slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
+          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
+        });
         resolve({
           ok: false,
           error: new BuildError(
@@ -212,8 +216,11 @@ export class BuildOrchestrator {
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
 
-        // Write log (truncated to MAX_LOG_SIZE)
-        writeFile(logPath, output.slice(0, MAX_LOG_SIZE)).catch(() => {});
+        // Write log (truncated to MAX_LOG_SIZE). Best-effort: a missing log
+        // is recoverable; we still resolve the build result below.
+        writeFile(logPath, output.slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
+          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
+        });
 
         if (code !== 0) {
           resolve({

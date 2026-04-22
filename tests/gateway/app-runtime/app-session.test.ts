@@ -105,6 +105,17 @@ describe("app-session crypto", () => {
     const k2 = deriveAppSessionKey(masterSecret, slug);
     expect(k1.equals(k2)).toBe(true);
   });
+
+  // Security: empty/short master secrets combined with the public HKDF info
+  // string would yield a deterministic key that anyone could reproduce, so
+  // deriveAppSessionKey must refuse them instead of silently accepting.
+  it("throws on empty master secret", () => {
+    expect(() => deriveAppSessionKey("", slug)).toThrow(/master ?secret/i);
+  });
+
+  it("throws on master secret shorter than 16 bytes", () => {
+    expect(() => deriveAppSessionKey("short-15bytes!!", slug)).toThrow(/16 bytes/);
+  });
 });
 
 describe("buildSetCookie", () => {

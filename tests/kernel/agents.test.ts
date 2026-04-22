@@ -101,9 +101,13 @@ describe("getCoreAgents", () => {
 
   it("replaces ~/ with the provided homePath", () => {
     const agents = getCoreAgents(homePath);
-    expect(agents.builder.prompt).toContain("/test/matrixos/modules/");
+    // Spec 063 moved the builder prompt from the legacy ~/modules tree to
+    // the app-runtime ~/apps tree; deployer/healer still reference the
+    // module registry. Assert path substitution on whichever agent owns
+    // each reference.
     expect(agents.builder.prompt).toContain("/test/matrixos/apps/");
-    expect(agents.builder.prompt).toContain(
+    expect(agents.deployer.prompt).toContain("/test/matrixos/modules/");
+    expect(agents.deployer.prompt).toContain(
       "/test/matrixos/system/modules.json",
     );
   });

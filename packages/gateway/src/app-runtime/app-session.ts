@@ -15,8 +15,17 @@ export type AppSessionPayloadType = z.infer<typeof AppSessionPayload>;
 const HKDF_HASH = "sha256";
 const HKDF_SALT = Buffer.alloc(32, 0);
 const HKDF_KEY_LENGTH = 32;
+const MIN_MASTER_SECRET_BYTES = 16;
 
+// The HKDF info string is public (derived from the slug). If masterSecret is
+// empty or too short, any caller can reproduce the derived key and forge
+// session cookies for any slug. Callers MUST supply a high-entropy secret.
 export function deriveAppSessionKey(masterSecret: string, slug: string): Buffer {
+  if (masterSecret.length < MIN_MASTER_SECRET_BYTES) {
+    throw new Error(
+      `deriveAppSessionKey: masterSecret must be at least ${MIN_MASTER_SECRET_BYTES} bytes. Empty or short secrets produce a predictable HKDF key that an attacker can reproduce from the public info string.`,
+    );
+  }
   const info = `matrix-os/app-session/v1/${slug}`;
   return Buffer.from(
     hkdfSync(HKDF_HASH, masterSecret, HKDF_SALT, info, HKDF_KEY_LENGTH),
@@ -56,8 +65,9 @@ export function verifyAppSession(
   let rawPayload: unknown;
   try {
     rawPayload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
-  } catch {
-    return null;
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
   }
 
   const parsed = AppSessionPayload.safeParse(rawPayload);

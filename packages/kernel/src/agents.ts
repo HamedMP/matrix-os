@@ -54,7 +54,14 @@ export function loadCustomAgents(
 
   try {
     files = readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
-  } catch {
+  } catch (err) {
+    // Missing or inaccessible agent dir -> no custom agents. Any other
+    // failure (EACCES, EIO) is worth surfacing in the log so operators
+    // know the custom-agent pipeline is degraded.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
+      console.warn(`[kernel/agents] readdirSync(${agentsDir}) failed:`, err);
+    }
     return {};
   }
 

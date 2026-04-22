@@ -58,7 +58,9 @@ export class ProcessManager {
     const reaperMs = opts.reaperIntervalMs ?? 30_000;
     if (reaperMs > 0) {
       this.reaperInterval = setInterval(() => {
-        this.reap().catch(() => {});
+        this.reap().catch((err) => {
+          console.warn("[process-manager] reaper pass failed:", err);
+        });
       }, reaperMs);
       // Don't keep the process alive for the reaper
       if (this.reaperInterval.unref) {
@@ -311,8 +313,7 @@ export class ProcessManager {
       throw new SpawnError("spawn_failed", `Failed to start "${slug}": ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Healthy -> running
-    record.state = "healthy";
+    // Health check passed; transition to running.
     record.state = "running";
     record.lastUsedAt = Date.now();
 
@@ -359,8 +360,12 @@ export class ProcessManager {
         if (res.ok) {
           return; // Health check passed
         }
-      } catch {
-        // Connection refused or timeout — keep polling
+      } catch (err) {
+        // Expected during startup: the child may not yet be listening
+        // (ECONNREFUSED) or the probe may have timed out. Either way,
+        // keep polling until the deadline; any non-transient failure
+        // will surface when the deadline expires.
+        void err;
       }
 
       await new Promise((r) => setTimeout(r, HEALTH_CHECK_POLL_INTERVAL));
@@ -491,8 +496,12 @@ export class ProcessManager {
         try {
           if (pid) process.kill(-pid, "SIGKILL");
           else child.kill("SIGKILL");
-        } catch {
-          // Process may already be dead
+        } catch (err) {
+          // ESRCH means the process is already gone, which is the desired
+          // end state. Anything else is unexpected.
+          if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+            console.warn("[process-manager] SIGKILL after grace failed:", err);
+          }
         }
       }, SIGTERM_GRACE_MS);
 
@@ -514,23 +523,33 @@ export class ProcessManager {
         // Kill the process group so shell + child both get the signal
         if (pid) process.kill(-pid, "SIGTERM");
         else child.kill("SIGTERM");
-      } catch {
-        // Process may already be dead
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+          console.warn("[process-manager] SIGTERM failed:", err);
+        }
+        // Process may already be dead — fall through to cleanup
         cleanup();
       }
     });
   }
 
   private killChild(record: ProcessRecord): void {
+    const warnUnexpected = (err: unknown, ctx: string) => {
+      if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+        console.warn(`[process-manager] ${ctx} failed:`, err);
+      }
+    };
+
     if (record.child && record.pid) {
       try {
         // Kill the entire process group (detached processes)
         process.kill(-record.pid, "SIGKILL");
-      } catch {
+      } catch (groupErr) {
+        warnUnexpected(groupErr, "process.kill(-pid, SIGKILL)");
         try {
           record.child.kill("SIGKILL");
-        } catch {
-          // Process may already be dead
+        } catch (childErr) {
+          warnUnexpected(childErr, "child.kill(SIGKILL) fallback");
         }
       }
       record.child = null;
@@ -538,8 +557,8 @@ export class ProcessManager {
     } else if (record.child) {
       try {
         record.child.kill("SIGKILL");
-      } catch {
-        // Process may already be dead
+      } catch (err) {
+        warnUnexpected(err, "child.kill(SIGKILL)");
       }
       record.child = null;
       record.pid = null;

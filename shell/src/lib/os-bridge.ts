@@ -215,7 +215,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         return fetch("/api/bridge/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10000)
         }).then(function(r) { return r.json(); });
       },
 
@@ -223,7 +224,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         return fetch("/api/bridge/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "findOne", table: table, id: id })
+          body: JSON.stringify({ app: app, action: "findOne", table: table, id: id }),
+          signal: AbortSignal.timeout(10000)
         }).then(function(r) { return r.json(); });
       },
 
@@ -231,7 +233,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         return fetch("/api/bridge/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "insert", table: table, data: data })
+          body: JSON.stringify({ app: app, action: "insert", table: table, data: data }),
+          signal: AbortSignal.timeout(10000)
         }).then(function(r) { return r.json(); });
       },
 
@@ -239,7 +242,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         return fetch("/api/bridge/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
+          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data }),
+          signal: AbortSignal.timeout(10000)
         }).then(function(r) { return r.json(); });
       },
 
@@ -247,7 +251,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         return fetch("/api/bridge/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "delete", table: table, id: id })
+          body: JSON.stringify({ app: app, action: "delete", table: table, id: id }),
+          signal: AbortSignal.timeout(10000)
         }).then(function(r) { return r.json(); });
       },
 
@@ -255,7 +260,8 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
         return fetch("/api/bridge/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: app, action: "count", table: table, filter: filter })
+          body: JSON.stringify({ app: app, action: "count", table: table, filter: filter }),
+          signal: AbortSignal.timeout(10000)
         }).then(function(r) { return r.json(); }).then(function(d) { return d.count; });
       },
 

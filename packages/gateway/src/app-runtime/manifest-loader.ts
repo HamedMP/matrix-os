@@ -63,7 +63,8 @@ export async function loadManifest(
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
-  } catch {
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
     return {
       ok: false,
       error: new ManifestError("invalid_manifest", `invalid JSON in ${manifestPath}`),

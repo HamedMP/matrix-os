@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useDesktopConfigStore, type DockConfig } from "../../shell/src/stores/desktop-config";
 import {
-  MESH_GRADIENT,
+  buildMeshGradient,
   saveDesktopConfig,
   type DesktopConfig,
 } from "../../shell/src/hooks/useDesktopConfig";
@@ -53,9 +53,10 @@ describe("Desktop config", () => {
     expect(configs).toHaveLength(4);
   });
 
-  it("MESH_GRADIENT is a valid CSS background value", () => {
-    expect(MESH_GRADIENT).toMatch(/radial-gradient/);
-    expect(MESH_GRADIENT).toMatch(/linear-gradient/);
+  it("buildMeshGradient returns a CSS background value", () => {
+    const gradient = buildMeshGradient();
+    expect(gradient).toMatch(/radial-gradient/);
+    expect(gradient).toContain("var(--gradient-");
   });
 
   it("saveDesktopConfig calls fetch with PUT method", async () => {
@@ -76,7 +77,7 @@ describe("Desktop config", () => {
 
   it("hook exports are defined", () => {
     expect(saveDesktopConfig).toBeTypeOf("function");
-    expect(MESH_GRADIENT).toBeTypeOf("string");
+    expect(buildMeshGradient).toBeTypeOf("function");
   });
 
   it("default pinnedApps is empty array", () => {

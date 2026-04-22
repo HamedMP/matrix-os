@@ -79,8 +79,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           el.textContent = script + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`;
           doc.head.appendChild(el);
         }
-      } catch {
-        // cross-origin restriction, bridge won't be available
+      } catch (err) {
+        // Cross-origin iframe -- bridge injection isn't possible.
+        // SecurityError is expected; anything else worth logging.
+        if (!(err instanceof DOMException) || err.name !== "SecurityError") {
+          console.warn("[AppViewer] bridge injection failed", err);
+        }
       }
     };
 
@@ -100,8 +104,11 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           { type: "os:theme-update", payload: themeVars },
           "*",
         );
-      } catch {
-        // cross-origin restriction
+      } catch (err) {
+        // Cross-origin postMessage can reject when the iframe is unloading.
+        if (!(err instanceof DOMException)) {
+          console.warn("[AppViewer] theme-update postMessage failed", err);
+        }
       }
     });
 
@@ -124,6 +131,9 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action, app, key, value }),
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => {
+          console.warn("[AppViewer] bridge fetch failed", err);
         });
       },
       openApp: onOpenApp,
@@ -151,8 +161,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
               { type: "os:data-change", payload: { app: msgApp, key: msgKey } },
               "*",
             );
-          } catch {
-            // cross-origin restriction
+          } catch (err) {
+            if (!(err instanceof DOMException)) {
+              console.warn("[AppViewer] data-change postMessage failed", err);
+            }
           }
         }
       }

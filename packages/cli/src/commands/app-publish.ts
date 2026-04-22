@@ -115,7 +115,8 @@ export async function publishApp(opts: PublishOptions): Promise<PublishResult> {
   let manifest: Manifest;
   try {
     manifest = JSON.parse(rawJson) as Manifest;
-  } catch {
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
     return { ok: false, error: new Error("invalid JSON in matrix.json") };
   }
 
@@ -155,7 +156,9 @@ export async function publishApp(opts: PublishOptions): Promise<PublishResult> {
           // Hash the dist directory
           distHash = await hashDirectory(distDir);
         }
-      } catch {
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
         // No dist directory -- that's okay for some apps
       }
     }
