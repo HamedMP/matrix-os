@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { defineCommand, runMain } from "citty";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
@@ -6,10 +7,13 @@ import { peersCommand } from "./commands/peers.js";
 import { keysCommand } from "./commands/keys.js";
 import { sshCommand } from "./commands/ssh.js";
 
+const require = createRequire(import.meta.url);
+const pkg = require("../../package.json") as { version: string };
+
 const main = defineCommand({
   meta: {
     name: "matrixos",
-    version: "0.0.1",
+    version: pkg.version,
     description: "Matrix OS CLI — file sync, sharing, and remote access",
   },
   subCommands: {
