@@ -1,6 +1,8 @@
-import { writeFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join, dirname, extname, basename } from "node:path";
 import { merge } from "node-diff3";
+import { randomUUID } from "node:crypto";
+import { rename, unlink, writeFile } from "node:fs/promises";
 
 const TEXT_EXTENSIONS = new Set([
   ".md", ".ts", ".tsx", ".js", ".jsx", ".json", ".txt",
@@ -87,7 +89,23 @@ export async function resolveBinaryConflict(
 
   const fullPath = join(options.syncRoot, conflictPath);
   await mkdir(dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, options.remoteContent);
+  const tmpPath = `${fullPath}.matrixos-${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmpPath, options.remoteContent, { flag: "wx" });
+    await rename(tmpPath, fullPath);
+  } catch (err: unknown) {
+    await unlink(tmpPath).catch((cleanupErr: unknown) => {
+      if (
+        cleanupErr instanceof Error &&
+        "code" in cleanupErr &&
+        (cleanupErr as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return;
+      }
+      throw cleanupErr;
+    });
+    throw err;
+  }
 
   return { merged: false, content: "", conflictPath };
 }

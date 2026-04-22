@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 const args = parseArgs(process.argv.slice(2));
+const CLI_FETCH_TIMEOUT_MS = 10_000;
 
 // Auto-pick the saved auth token from `matrix login` so commands like
 // `matrix status` work without an explicit --token. Explicit --token wins.
@@ -16,15 +17,29 @@ if (!args.token) {
   try {
     const raw = JSON.parse(readFileSync(authPath, "utf-8")) as { accessToken?: string };
     if (raw.accessToken) args.token = raw.accessToken;
-  } catch {
-    // No saved auth -- that's fine; commands that need a token will fail clearly.
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      // No saved auth -- that's fine; commands that need a token will fail clearly.
+    } else {
+      console.warn(
+        "[matrixos] Failed to load saved auth:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 }
 
 async function fetchJSON(url: string, token?: string): Promise<unknown> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(CLI_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -86,6 +101,7 @@ async function runSend(args: { gateway: string; message?: string; token?: string
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(CLI_FETCH_TIMEOUT_MS),
     });
 
     if (!res.ok) {
@@ -104,8 +120,8 @@ async function runSend(args: { gateway: string; message?: string; token?: string
       }
     }
     console.log();
-  } catch (err) {
-    console.error(`Failed to send: ${(err as Error).message}`);
+  } catch (err: unknown) {
+    console.error(`Failed to send: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 }
@@ -119,8 +135,8 @@ async function runStatus(args: { gateway: string; token?: string }) {
     info.channels = await fetchJSON(`${args.gateway}/api/channels/status`, args.token) as StatusInfo["channels"];
     info.cronJobs = await fetchJSON(`${args.gateway}/api/cron`, args.token) as StatusInfo["cronJobs"];
     info.healthy = true;
-  } catch (err) {
-    info.error = (err as Error).message;
+  } catch (err: unknown) {
+    info.error = err instanceof Error ? err.message : String(err);
   }
 
   console.log(formatStatus(info));
@@ -144,11 +160,11 @@ async function runDoctor(args: { gateway: string; token?: string }) {
   try {
     const pnpmVersion = execFileSync("pnpm", ["--version"], { encoding: "utf-8" }).trim();
     checks.push({ name: "pnpm installed", passed: true, detail: pnpmVersion });
-  } catch {
+  } catch (err: unknown) {
     checks.push({
       name: "pnpm installed",
       passed: false,
-      detail: "Not found",
+      detail: err instanceof Error ? err.message : "Not found",
       fix: "corepack enable && corepack prepare pnpm@latest --activate",
     });
   }
@@ -166,11 +182,11 @@ async function runDoctor(args: { gateway: string; token?: string }) {
   try {
     await fetchJSON(`${args.gateway}/health`, args.token);
     checks.push({ name: "Gateway reachable", passed: true, detail: args.gateway });
-  } catch {
+  } catch (err: unknown) {
     checks.push({
       name: "Gateway reachable",
       passed: false,
-      detail: "Not running",
+      detail: err instanceof Error ? err.message : "Not running",
       fix: "matrixos start",
     });
   }
@@ -192,8 +208,12 @@ async function runDoctor(args: { gateway: string; token?: string }) {
     const parts = lastLine.split(/\s+/);
     const available = parts[3] ?? "unknown";
     checks.push({ name: "Disk space", passed: true, detail: `${available} available` });
-  } catch {
-    checks.push({ name: "Disk space", passed: true, detail: "Unable to check" });
+  } catch (err: unknown) {
+    checks.push({
+      name: "Disk space",
+      passed: true,
+      detail: err instanceof Error ? `Unable to check (${err.message})` : "Unable to check",
+    });
   }
 
   console.log(formatDoctor(checks));
@@ -258,7 +278,7 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err.message);
+main().catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

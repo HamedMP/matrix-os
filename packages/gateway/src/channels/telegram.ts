@@ -14,7 +14,7 @@ export interface TelegramBot {
   editMessageText(text: string, options?: Record<string, unknown>): Promise<unknown>;
   sendChatAction(chatId: string | number, action: string): Promise<unknown>;
   setMyCommands?(commands: Array<{ command: string; description: string }>): Promise<unknown>;
-  getFile?(fileId: string): Promise<{ file_path: string }>;
+  getFile?(fileId: string): Promise<{ file_path?: string }>;
   getFileStream?(fileId: string): import("node:stream").Readable;
 }
 
@@ -67,10 +67,11 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
         bot = botFactory(config.token, { polling: true });
       } else {
         const TelegramBotApi = (await import("node-telegram-bot-api")).default;
-        bot = new TelegramBotApi(config.token, { polling: true });
+        bot = new TelegramBotApi(config.token, { polling: true }) as unknown as TelegramBot;
       }
 
-      bot.on("message", (msg: TelegramMessage) => {
+      const activeBot = bot;
+      activeBot.on("message", (msg: TelegramMessage) => {
         if (!msg.from) return;
 
         const senderId = String(msg.from.id);
@@ -81,9 +82,9 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
 
         const voiceFile = msg.voice ?? msg.audio;
         if (voiceFile) {
-          if (!voiceCtx || !bot) return;
+          if (!voiceCtx) return;
 
-          const currentBot = bot;
+          const currentBot = activeBot;
           const ctx = voiceCtx;
 
           (async () => {
@@ -98,7 +99,12 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
               const filePath = fileInfo.file_path;
               if (!filePath || /\.\./.test(filePath) || /[^a-zA-Z0-9_./-]/.test(filePath)) {
                 console.warn("[telegram] Invalid file_path from Telegram API");
-                return { transcript: null, filePath: null };
+                return {
+                  transcript: null,
+                  filePath: "",
+                  durationMs: 0,
+                  error: "Invalid Telegram file path",
+                };
               } else {
                 try {
                   const resp = await fetch(

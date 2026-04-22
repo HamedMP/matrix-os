@@ -87,7 +87,8 @@ export async function validateSyncJwt(
   return payload as SyncJwtClaims;
 }
 
-const publicKeyCache = new Map<string, Promise<CryptoKey>>();
+const PUBLIC_KEY_CACHE_TTL_MS = 5 * 60_000;
+const publicKeyCache = new Map<string, { key: Promise<CryptoKey>; expiresAt: number }>();
 
 /**
  * Reads the JWT key configuration from environment variables. Prefers
@@ -100,16 +101,28 @@ export async function readJwtKeyConfig(
 ): Promise<JwtKeyConfig | null> {
   const pub = env.PLATFORM_JWT_PUBLIC_KEY;
   if (pub) {
-    let cached = publicKeyCache.get(pub);
+    const now = Date.now();
+    const cachedEntry = publicKeyCache.get(pub);
+    let cached =
+      cachedEntry && cachedEntry.expiresAt > now
+        ? cachedEntry.key
+        : undefined;
     if (!cached) {
       publicKeyCache.clear();
       cached = importSPKI(pub, "RS256");
-      cached.catch(() => {
-        if (publicKeyCache.get(pub) === cached) {
+      cached.catch((err: unknown) => {
+        if (publicKeyCache.get(pub)?.key === cached) {
           publicKeyCache.delete(pub);
         }
+        console.warn(
+          "[auth-jwt] Failed to import PLATFORM_JWT_PUBLIC_KEY:",
+          err instanceof Error ? err.message : String(err),
+        );
       });
-      publicKeyCache.set(pub, cached);
+      publicKeyCache.set(pub, {
+        key: cached,
+        expiresAt: now + PUBLIC_KEY_CACHE_TTL_MS,
+      });
     }
     return { publicKey: await cached };
   }

@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
@@ -61,7 +62,7 @@ import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel"
 import { listApps } from "./apps.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
@@ -443,6 +444,29 @@ export async function createGateway(config: GatewayConfig) {
     return targetUrl.toString();
   }
 
+  function logBestEffortFailure(context: string, err: unknown): void {
+    console.warn(
+      `[gateway] ${context}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  function logUnexpectedJsonParseFailure(context: string, err: unknown): void {
+    if (!(err instanceof SyntaxError)) {
+      logBestEffortFailure(context, err);
+    }
+  }
+
+  function logUnexpectedWsSendFailure(context: string, err: unknown): void {
+    if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
+      logBestEffortFailure(context, err);
+    }
+  }
+
+  function toStatusCode(status: number): ContentfulStatusCode {
+    return status as ContentfulStatusCode;
+  }
+
   async function proxyIntegrationRequest(
     c: Context,
     targetBase: string,
@@ -680,22 +704,30 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const conv = conversations.get(sid);
       if (conv && conv.messages.length > 0) {
-        const summary = summarizeConversation({ id: conv.id, messages: conv.messages });
+        const summaryMessages = conv.messages
+          .filter((message) => message.role !== "system")
+          .map((message) => ({
+            role: message.role as "user" | "assistant",
+            content: message.content,
+          }));
+        const summary = summarizeConversation({ id: conv.id, messages: summaryMessages });
         if (summary) saveSummary(homePath, sid, summary);
 
-        const candidates = extractMemoriesLocal(
-          conv.messages.map((m) => ({ role: m.role, content: m.content })),
-        );
+        const candidates = extractMemoriesLocal(summaryMessages);
         if (candidates.length > 0) {
           try {
             const memStore = createMemoryStore(dispatcher.db);
             for (const c of candidates) {
               memStore.remember(c.content, { source: sid, category: c.category });
             }
-          } catch { /* memory extraction is best-effort */ }
+          } catch (err: unknown) {
+            logBestEffortFailure("Memory extraction failed", err);
+          }
         }
       }
-    } catch { /* summary is best-effort */ }
+    } catch (err: unknown) {
+      logBestEffortFailure(`Summary finalization failed for session ${sid}`, err);
+    }
   }
 
   const heartbeat: Heartbeat = createHeartbeat({
@@ -754,7 +786,9 @@ export async function createGateway(config: GatewayConfig) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       channelsConfig = cfg.channels ?? {};
     }
-  } catch { /* no channel config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load channel config", err);
+  }
 
   const outboundQueue = createOutboundQueue(homePath);
 
@@ -790,6 +824,7 @@ export async function createGateway(config: GatewayConfig) {
           stream.startTyping();
 
           const text = msg.text.startsWith("/") ? msg.text.slice(1) : msg.text;
+          let lastToolName: string | undefined;
 
           dispatcher
             .dispatch(text, existingSessionId, (event) => {
@@ -805,11 +840,12 @@ export async function createGateway(config: GatewayConfig) {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.appendAssistantText(sid, event.text);
               } else if (event.type === "tool_start") {
+                lastToolName = event.tool;
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.addToolStart(sid, event.tool);
               } else if (event.type === "tool_end") {
                 const sid = channelSessions.get(sessionKey);
-                if (sid) conversations.addToolEnd(sid, event.tool, event.input);
+                if (sid) conversations.addToolEnd(sid, lastToolName ?? "unknown", event.input);
               } else if (event.type === "result") {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) finalizeWithSummary(sid);
@@ -836,6 +872,7 @@ export async function createGateway(config: GatewayConfig) {
 
       // Default path for non-telegram channels (or telegram without bot)
       let responseText = "";
+      let lastToolName: string | undefined;
 
       dispatcher
         .dispatch(msg.text, existingSessionId, (event) => {
@@ -851,11 +888,12 @@ export async function createGateway(config: GatewayConfig) {
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.appendAssistantText(sid, event.text);
           } else if (event.type === "tool_start") {
+            lastToolName = event.tool;
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.addToolStart(sid, event.tool);
           } else if (event.type === "tool_end") {
             const sid = channelSessions.get(sessionKey);
-            if (sid) conversations.addToolEnd(sid, event.tool, event.input);
+            if (sid) conversations.addToolEnd(sid, lastToolName ?? "unknown", event.input);
           } else if (event.type === "result") {
             const sid = channelSessions.get(sessionKey);
             if (sid) finalizeWithSummary(sid);
@@ -887,7 +925,9 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   channelManager.start().then(() => {
-    channelManager.replay().catch(() => {});
+    channelManager.replay().catch((err: unknown) => {
+      logBestEffortFailure("Failed to replay queued channel messages", err);
+    });
 
     // Register skills as Telegram slash commands
     const bot = telegramAdapter.getBot();
@@ -908,10 +948,14 @@ export async function createGateway(config: GatewayConfig) {
             }
           }
           if (commands.length > 0) {
-            bot.setMyCommands(commands.slice(0, 100)).catch(() => {});
+            bot.setMyCommands(commands.slice(0, 100)).catch((err: unknown) => {
+              logBestEffortFailure("Failed to set Telegram commands", err);
+            });
           }
         }
-      } catch { /* best-effort */ }
+      } catch (err: unknown) {
+        logBestEffortFailure("Failed to register Telegram commands", err);
+      }
     }
   });
 
@@ -939,7 +983,9 @@ export async function createGateway(config: GatewayConfig) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       heartbeatConfig = cfg.heartbeat ?? {};
     }
-  } catch { /* no heartbeat config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load heartbeat config", err);
+  }
 
   const proactiveHeartbeat: HeartbeatRunner = createHeartbeatRunner({
     homePath,
@@ -958,7 +1004,9 @@ export async function createGateway(config: GatewayConfig) {
         approvalPolicy = { ...DEFAULT_APPROVAL_POLICY, ...cfg.approval };
       }
     }
-  } catch { /* no approval config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load approval config", err);
+  }
 
   const interactionLogger: InteractionLogger = createInteractionLogger(homePath);
 
@@ -973,7 +1021,9 @@ export async function createGateway(config: GatewayConfig) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       pluginsConfig = cfg.plugins ?? {};
     }
-  } catch { /* no plugins config */ }
+  } catch (err: unknown) {
+    logBestEffortFailure("Failed to load plugin config", err);
+  }
 
   const provisioner = createProvisioner({
     homePath,
@@ -1154,7 +1204,8 @@ export async function createGateway(config: GatewayConfig) {
             rawMessage = JSON.parse(
               typeof evt.data === "string" ? evt.data : "",
             );
-          } catch {
+          } catch (err: unknown) {
+            logUnexpectedJsonParseFailure("Failed to parse main WebSocket message", err);
             send(ws, { type: "kernel:error", message: "Invalid JSON" });
             return;
           }
@@ -1322,7 +1373,11 @@ export async function createGateway(config: GatewayConfig) {
       return {
         onOpen(_evt, ws) {
           const sendJson = (msg: PtyServerMessage) => {
-            try { ws.send(JSON.stringify(msg)); } catch { /* ws closed */ }
+            try {
+              ws.send(JSON.stringify(msg));
+            } catch (err: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
+            }
           };
 
           // Backward compat: auto-create session if no attach message within 100ms
@@ -1362,7 +1417,10 @@ export async function createGateway(config: GatewayConfig) {
         onMessage(evt, ws) {
           const raw = typeof evt.data === "string" ? evt.data : "";
           let parsed: unknown;
-          try { parsed = JSON.parse(raw); } catch {
+          try {
+            parsed = JSON.parse(raw);
+          } catch (err: unknown) {
+            logUnexpectedJsonParseFailure("Failed to parse terminal WebSocket message", err);
             ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
             return;
           }
@@ -1375,7 +1433,11 @@ export async function createGateway(config: GatewayConfig) {
 
           const msg = result.data;
           const sendJson = (m: PtyServerMessage) => {
-            try { ws.send(JSON.stringify(m)); } catch { /* ws closed */ }
+            try {
+              ws.send(JSON.stringify(m));
+            } catch (err: unknown) {
+              logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
+            }
           };
 
           switch (msg.type) {
@@ -1529,7 +1591,15 @@ export async function createGateway(config: GatewayConfig) {
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
 
   async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
-    try { return await c.req.json<T>(); } catch { return null; }
+    try {
+      return await c.req.json<T>();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return null;
+      }
+      console.error("[gateway] Unexpected request JSON parse failure:", err);
+      throw err;
+    }
   }
 
   app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
@@ -1543,35 +1613,35 @@ export async function createGateway(config: GatewayConfig) {
     const body = await parseJson<{ path: string; content?: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/rename", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/copy", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDelete(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.get("/api/files/trash", async (c) => {
@@ -1583,7 +1653,7 @@ export async function createGateway(config: GatewayConfig) {
     const body = await parseJson<{ trashPath: string }>(c);
     if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
     const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
   });
 
   app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
@@ -1597,7 +1667,8 @@ export async function createGateway(config: GatewayConfig) {
       const { readFile } = await import("node:fs/promises");
       const data = await readFile(layoutPath, "utf-8");
       return c.json(JSON.parse(data));
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read terminal layout", err);
       return c.json({});
     }
   });
@@ -1607,7 +1678,12 @@ export async function createGateway(config: GatewayConfig) {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     const raw = await c.req.text();
     let body: unknown;
-    try { body = JSON.parse(raw); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+    try {
+      body = JSON.parse(raw);
+    } catch (err: unknown) {
+      logUnexpectedJsonParseFailure("Failed to parse terminal layout payload", err);
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
     if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {
       return c.json({ error: "Invalid layout schema" }, 400);
     }
@@ -1616,7 +1692,8 @@ export async function createGateway(config: GatewayConfig) {
       await mkdir(dirname(layoutPath), { recursive: true });
       await writeFile(layoutPath, JSON.stringify(body, null, 2));
       return c.json({ ok: true });
-    } catch {
+    } catch (err: unknown) {
+      console.error("[gateway] Failed to save terminal layout:", err);
       return c.json({ error: "Failed to save layout" }, 500);
     }
   });
@@ -1751,8 +1828,12 @@ export async function createGateway(config: GatewayConfig) {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON body" }, 400);
+      }
+      console.error("[bridge/query] Failed to read request body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
     }
 
     const rawSlug = body.app as string;
@@ -1817,7 +1898,7 @@ export async function createGateway(config: GatewayConfig) {
       switch (action) {
         case "find":
           return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter as Record<string, unknown> | undefined,
+            filter: body.filter as Record<string, FilterValue> | undefined,
             orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
             limit: body.limit as number | undefined,
             offset: body.offset as number | undefined,
@@ -1840,7 +1921,7 @@ export async function createGateway(config: GatewayConfig) {
           return c.json({ ok: true });
         }
         case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, unknown> | undefined) });
+          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, FilterValue> | undefined) });
         case "schema":
           return c.json(await appRegistry.getSchema(appSlug));
         case "listApps":
@@ -1886,7 +1967,9 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const parsed = JSON.parse(content);
       if (typeof parsed === "string") value = parsed;
-    } catch { /* raw content */ }
+    } catch (err: unknown) {
+      logUnexpectedJsonParseFailure("Failed to parse stored bridge value", err);
+    }
     return c.json({ value });
   });
 
@@ -1894,8 +1977,12 @@ export async function createGateway(config: GatewayConfig) {
     let body: { action: "read" | "write"; app: string; key: string; value?: string };
     try {
       body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON body" }, 400);
+      }
+      console.error("[bridge/data] Failed to read request body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
     }
 
     if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
@@ -1942,8 +2029,8 @@ export async function createGateway(config: GatewayConfig) {
         if (typeof parsed === "string") {
           value = parsed;
         }
-      } catch {
-        // Not JSON, return raw content as-is
+      } catch (err: unknown) {
+        logUnexpectedJsonParseFailure("Failed to parse stored bridge data", err);
       }
       return c.json({ value });
     }
@@ -1991,8 +2078,12 @@ export async function createGateway(config: GatewayConfig) {
     let parsedJson: unknown;
     try {
       parsedJson = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+      console.error("[bridge/service] Failed to read request body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
     }
     const parsed = BridgeCallBodySchema.safeParse(parsedJson);
     if (!parsed.success) {
@@ -2078,7 +2169,14 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/conversations", conversationBodyLimit, async (c) => {
-    const body = await c.req.json<{ channel?: string }>().catch((): { channel?: string } => ({}));
+    let body: { channel?: string } = {};
+    try {
+      body = await c.req.json<{ channel?: string }>();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.error("[gateway] Failed to read conversation create body:", err);
+      }
+    }
     const id = conversations.create(body.channel);
     return c.json({ id }, 201);
   });
@@ -2106,7 +2204,8 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const data = JSON.parse(readFileSync(layoutPath, "utf-8"));
       return c.json(data);
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read layout", err);
       return c.json({});
     }
   });
@@ -2130,7 +2229,8 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const data = JSON.parse(readFileSync(canvasPath, "utf-8"));
       return c.json(data);
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read canvas", err);
       return c.json({});
     }
   });
@@ -2258,14 +2358,23 @@ export async function createGateway(config: GatewayConfig) {
     }
     try {
       let body: { style?: string } = {};
-      try { body = await c.req.json(); } catch { /* no body is fine */ }
+      try {
+        body = await c.req.json();
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) {
+          console.error("[gateway] Failed to parse icon generation body:", err);
+          return c.json({ error: "Failed to read request body" }, 500);
+        }
+      }
 
       let iconStyle = body.style ?? "";
       if (!iconStyle) {
         try {
           const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
           iconStyle = desktop.iconStyle ?? "";
-        } catch { /* ignore */ }
+        } catch (err: unknown) {
+          logBestEffortFailure("Failed to read desktop icon style", err);
+        }
       }
       if (!iconStyle) {
         iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
@@ -2306,7 +2415,9 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
       iconStyle = desktop.iconStyle ?? "";
-    } catch { /* ignore */ }
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read desktop icon style", err);
+    }
     if (!iconStyle) {
       iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
     }
@@ -2442,7 +2553,14 @@ export async function createGateway(config: GatewayConfig) {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+        let data: unknown = {};
+        try {
+          data = await res.json();
+        } catch (err: unknown) {
+          if (!(err instanceof SyntaxError)) {
+            console.warn("[system/upgrade] Failed to parse platform error response:", err);
+          }
+        }
         return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status as 400);
       }
 
@@ -2469,7 +2587,8 @@ export async function createGateway(config: GatewayConfig) {
         return c.json(usageTracker.getMonthly(month));
       }
       return c.json(usageTracker.getDaily(date));
-    } catch {
+    } catch (err: unknown) {
+      logBestEffortFailure("Failed to read usage stats", err);
       return c.json({ total: 0, byAction: {} });
     }
   });
@@ -2612,12 +2731,21 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       // T939: Fire gateway_stop hook
-      await hookRunner.fireVoidHook("gateway_stop", {}).catch(() => {});
+      await hookRunner.fireVoidHook("gateway_stop", {}).catch((err: unknown) => {
+        logBestEffortFailure("gateway_stop hook failed", err);
+      });
 
       // T945: Stop services in reverse order
       const services = pluginRegistry.getServices();
       for (let i = services.length - 1; i >= 0; i--) {
-        try { await services[i].stop(); } catch { /* ignore */ }
+        try {
+          await services[i].stop();
+        } catch (err: unknown) {
+          logBestEffortFailure(
+            `Failed to stop plugin service ${services[i].pluginId}/${services[i].name}`,
+            err,
+          );
+        }
       }
 
       heartbeat.stop();
@@ -2628,7 +2756,9 @@ export async function createGateway(config: GatewayConfig) {
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();
-      await homeMirrorStart?.catch(() => {});
+      await homeMirrorStart?.catch((err: unknown) => {
+        logBestEffortFailure("Home mirror startup failed during shutdown", err);
+      });
       syncR2?.destroy();
       await appDb?.destroy();
       server.close();

@@ -1,4 +1,5 @@
 import { sql, type Insertable, type Kysely, type Transaction } from "kysely";
+import { randomUUID } from "node:crypto";
 import type { ManifestDb, ManifestDbExecutor, ManifestMeta } from "./manifest.js";
 import type { SharingDb, ShareRow } from "./sharing.js";
 import type { ShareRole } from "./types.js";
@@ -101,6 +102,7 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
         expires_at?: string;
       }): Promise<ShareRow> {
         const values: Insertable<SyncDatabase["sync_shares"]> = {
+          id: randomUUID(),
           owner_id: input.owner_id,
           path: input.path,
           grantee_id: input.grantee_id,

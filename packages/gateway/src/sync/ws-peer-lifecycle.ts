@@ -27,12 +27,22 @@ export function createSyncPeerLifecycle(
 
   return {
     subscribe(params) {
-      if (activePeerId && activePeerId !== params.peerId) {
-        registry.removePeer(userId, activePeerId);
+      const previousPeerId = activePeerId;
+      try {
+        const info = registry.registerPeer(userId, params, connection);
+        if (previousPeerId && previousPeerId !== params.peerId) {
+          registry.removePeer(userId, previousPeerId);
+        }
+        activePeerId = params.peerId;
+        return info;
+      } catch (err: unknown) {
+        if (previousPeerId && previousPeerId !== params.peerId) {
+          activePeerId = previousPeerId;
+        } else if (!previousPeerId) {
+          activePeerId = null;
+        }
+        throw err;
       }
-      const info = registry.registerPeer(userId, params, connection);
-      activePeerId = params.peerId;
-      return info;
     },
     close() {
       if (!activePeerId) {

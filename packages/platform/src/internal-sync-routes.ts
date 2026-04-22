@@ -149,8 +149,8 @@ export function createInternalSyncRoutes(opts: {
   db: PlatformDB;
   r2: R2Client;
   platformSecret: string;
-}): Hono {
-  const app = new Hono();
+}): Hono<any> {
+  const app = new Hono<{ Variables: { internalSyncUserId: string } }>();
 
   app.use("*", async (c, next) => {
     const handle = c.req.param("handle");
@@ -176,8 +176,11 @@ export function createInternalSyncRoutes(opts: {
     return next();
   });
 
-  function requireAllowedKey(c: Parameters<Hono["request"]>[0] extends never ? never : any, key: string): string | Response {
-    const userId = c.get("internalSyncUserId") as string;
+  function requireAllowedKey(
+    c: { get: (key: "internalSyncUserId") => string; json: (body: unknown, status?: number) => Response },
+    key: string,
+  ): string | Response {
+    const userId = c.get("internalSyncUserId");
     if (!keyAllowedForUser(key, userId)) {
       return c.json({ error: "Forbidden key" }, 403);
     }

@@ -450,14 +450,14 @@ export async function startDaemon(): Promise<void> {
           return;
         }
 
-        syncState.files[remotePath] = {
+        const nextState = {
           hash: event.hash,
           mtime: event.mtime,
           size: event.size,
           lastSyncedHash: existing?.lastSyncedHash,
         };
+        syncState.files[remotePath] = nextState;
         capSyncStateFiles(syncState);
-        await saveSyncState(stateFile, syncState);
 
         try {
           const urls = await requestPresignedUrls(gatewayClient, [
@@ -476,6 +476,11 @@ export async function startDaemon(): Promise<void> {
             await saveSyncState(stateFile, syncState);
           }
         } catch (err) {
+          if (existing) {
+            syncState.files[remotePath] = existing;
+          } else {
+            delete syncState.files[remotePath];
+          }
           if (exitOnAuthFailure(err, logger)) return;
           await adoptRemoteManifestVersion(syncState, err, async () => {
             await saveSyncState(stateFile, syncState);
@@ -787,7 +792,13 @@ const isEntrypoint = (() => {
   if (!entry) return false;
   try {
     return fileURLToPath(import.meta.url) === entry;
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn(
+        "[sync/daemon] Failed to compare entrypoint path:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     return false;
   }
 })();

@@ -1,4 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
@@ -99,9 +100,9 @@ export async function listDirectory(
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return null;
 
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent<string>[];
   try {
-    entries = await readdir(resolved, { withFileTypes: true });
+    entries = await readdir(resolved, { withFileTypes: true, encoding: "utf8" });
   } catch {
     return null;
   }
@@ -130,7 +131,7 @@ export async function listDirectory(
       try {
         const [dirStat, childEntries] = await Promise.all([
           stat(fullPath),
-          readdir(fullPath),
+          readdir(fullPath, { encoding: "utf8" }),
         ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
         children = childEntries.filter((c) => !c.startsWith(".")).length;

@@ -34,6 +34,7 @@ import {
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
+const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
 const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
@@ -358,13 +359,20 @@ export function createApp(deps: {
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
   platformSecret?: string;
-  integrationRoutes?: Hono;
-  internalIntegrationRoutes?: Hono;
-  internalSyncRoutes?: Hono;
+  integrationRoutes?: Hono<any>;
+  internalIntegrationRoutes?: Hono<any>;
+  internalSyncRoutes?: Hono<any>;
 }) {
   const { db, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
-  const app = new Hono();
+  const app = new Hono<{
+    Variables: {
+      platformUserId: string;
+      platformHandle: string;
+      internalContainerHandle: string;
+      internalContainerClerkUserId: string;
+    };
+  }>();
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -543,7 +551,12 @@ export function createApp(deps: {
     app.route('/api/integrations', deps.integrationRoutes);
   }
   if (deps.internalIntegrationRoutes) {
-    const internalIntegrationApp = new Hono();
+    const internalIntegrationApp = new Hono<{
+      Variables: {
+        internalContainerHandle: string;
+        internalContainerClerkUserId: string;
+      };
+    }>();
     internalIntegrationApp.use('*', async (c, next) => {
       const handle = c.req.param('handle');
       if (!handle) {
@@ -693,7 +706,10 @@ export function createApp(deps: {
     let handle: string;
     try {
       handle = requireValidHandle(c.req.param('handle'));
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof Error && err.message === 'Invalid handle')) {
+        console.error('[platform] Unexpected self-upgrade handle validation failure:', err);
+      }
       return c.json({ error: 'Invalid handle' }, 400);
     }
     const auth = c.req.header('authorization');
@@ -1062,7 +1078,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
   const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
-  if (s3AccessKey && s3SecretKey && platformSecret) {
+  if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
     const [{ createR2Client }, { createInternalSyncRoutes }] = await Promise.all([
       import('../../gateway/src/sync/r2-client.js'),
       import('./internal-sync-routes.js'),
@@ -1079,7 +1095,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     internalSyncRoutes = createInternalSyncRoutes({
       db,
       r2,
-      platformSecret,
+      platformSecret: PLATFORM_SECRET,
     });
   }
 
@@ -1109,7 +1125,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         cookieHeader: req.headers.cookie,
         clerkAuth,
         db,
-        platformJwtSecret,
+        platformJwtSecret: PLATFORM_JWT_SECRET,
       });
       if (!identity) { socket.destroy(); return; }
 
@@ -1127,10 +1143,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
           .map(([k, v]) => `${k}: ${v}`)
           .concat(
-            platformSecret
+            PLATFORM_SECRET
               ? [
-                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`,
-                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, platformSecret)}`,
+                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
+                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
                   `x-platform-user-id: ${identity.userId}`,
                 ]
               : [],

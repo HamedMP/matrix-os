@@ -41,7 +41,7 @@ export class WhisperSttProvider implements SttProvider {
 
     const { mimeType, ext } = detectAudioFormat(audio);
     const formData = new FormData();
-    const blob = new Blob([audio], { type: mimeType });
+    const blob = new Blob([new Uint8Array(audio)], { type: mimeType });
     formData.append("file", blob, `audio.${ext}`);
     formData.append("model", options?.model || this.defaultModel);
     if (options?.language) {

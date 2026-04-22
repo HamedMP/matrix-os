@@ -83,7 +83,12 @@ rg_scan() {
   local pattern="$1"
   shift
   if [[ -n "$FILE_ARGS" ]]; then
-    echo "$FILE_ARGS" | xargs rg -n "$pattern" "$@" 2>/dev/null || true
+    local filtered_files
+    filtered_files=$(echo "$FILE_ARGS" | grep -Ev '(\.test\.ts|\.spec\.ts)$|/node_modules/|/dist/' || true)
+    if [[ -z "$filtered_files" ]]; then
+      return
+    fi
+    echo "$filtered_files" | xargs rg -n "$pattern" "$@" 2>/dev/null || true
   else
     rg -n "$pattern" "$@" $SCAN_PATHS 2>/dev/null || true
   fi
@@ -99,19 +104,19 @@ echo ""
 
 header "1. Error Handling — bare/empty catch blocks"
 
-MATCHES=$(rg_scan 'catch\s*\{' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan 'catch\s*\{' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   violation "Bare catch {} blocks (CLAUDE.md: every catch must check error type)"
   echo "$MATCHES" | head -20
 fi
 
-MATCHES=$(rg_scan '\.catch\(\s*\(\s*\)\s*=>' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan '\.catch\(\s*\(\s*\)\s*=>' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   violation "Empty .catch(() => ...) — error param ignored (CLAUDE.md: no bare catch)"
   echo "$MATCHES" | head -20
 fi
 
-MATCHES=$(rg_scan '\.catch\(\s*\(\s*_\w*\s*\)\s*=>' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan '\.catch\(\s*\(\s*_\w*\s*\)\s*=>' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Catch with explicitly unused param (_err) — verify error is logged"
   echo "$MATCHES" | head -10
@@ -119,13 +124,17 @@ fi
 
 header "2. External Calls — fetch() without AbortSignal.timeout"
 
-MATCHES=$(rg_scan 'fetch\(' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan 'fetch\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
-  # Check each fetch call for a signal
+  # Check a short source window for each fetch call so multiline options
+  # objects with `signal:` on a later line are recognized correctly.
   MISSING_SIGNAL=""
   while IFS= read -r line; do
-    file_line=$(echo "$line" | cut -d: -f1-2)
-    if ! echo "$line" | grep -q 'signal'; then
+    file=$(echo "$line" | cut -d: -f1)
+    line_no=$(echo "$line" | cut -d: -f2)
+    window_end=$((line_no + 12))
+    call_window=$(sed -n "${line_no},${window_end}p" "$file" 2>/dev/null || true)
+    if ! echo "$call_window" | grep -Eq 'signal\s*:'; then
       MISSING_SIGNAL+="$line"$'\n'
     fi
   done <<< "$MATCHES"
@@ -137,7 +146,7 @@ fi
 
 header "3. Input Validation — missing bodyLimit on mutating endpoints"
 
-MATCHES=$(rg_scan 'c\.req\.(json|text|blob|arrayBuffer)\(' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan 'c\.req\.(json|text|blob|arrayBuffer)\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Body consumption calls — verify bodyLimit middleware is applied to each route"
   echo "$MATCHES" | head -20
@@ -145,13 +154,13 @@ fi
 
 header "4. Resource Management — unbounded in-memory structures"
 
-MATCHES=$(rg_scan 'new (Map|Set)\(' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan 'new (Map|Set)\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Map/Set creation — verify each has a size cap and eviction policy"
   echo "$MATCHES" | head -20
 fi
 
-MATCHES=$(rg_scan 'buffer \+=' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan 'buffer \+=' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Buffer concatenation — verify bounded with a size cap"
   echo "$MATCHES" | head -10
@@ -159,7 +168,7 @@ fi
 
 header "5. Resource Management — writeFileSync/appendFileSync in handlers"
 
-MATCHES=$(rg_scan '(writeFileSync|appendFileSync)' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan '(writeFileSync|appendFileSync)' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   violation "Sync file I/O (CLAUDE.md: banned in request handlers, use fs/promises)"
   echo "$MATCHES" | head -10
@@ -171,7 +180,7 @@ fi
 
 header "6. Trust Boundaries — path operations on external input"
 
-MATCHES=$(rg_scan '(join|resolve|realpath|rename|unlink)\(' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+MATCHES=$(rg_scan '(join|resolve|realpath|rename|unlink)\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Path operations — verify input is validated via resolveWithinPrefix or equivalent"
   echo "$MATCHES" | head -30
@@ -179,7 +188,7 @@ fi
 
 header "7. Trust Boundaries — headers and identifiers from external sources"
 
-MATCHES=$(rg_scan '(X-Forwarded-For|X-Peer-Id|X-Real-Ip|peerId|userId)' --glob '*.ts' --glob '!*.test.ts' --glob '!*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**' -i)
+MATCHES=$(rg_scan '(X-Forwarded-For|X-Peer-Id|X-Real-Ip|peerId|userId)' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**' -i)
 if [[ -n "$MATCHES" ]]; then
   warning "External headers/identifiers — verify validated before use in keys, paths, or SQL"
   echo "$MATCHES" | head -20

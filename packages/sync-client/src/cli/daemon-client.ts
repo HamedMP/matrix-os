@@ -72,8 +72,12 @@ export async function sendCommand(
           } else {
             resolve(msg.result ?? {});
           }
-        } catch {
-          reject(new Error("Invalid response from daemon"));
+        } catch (err: unknown) {
+          if (err instanceof SyntaxError) {
+            reject(new Error("Invalid response from daemon"));
+          } else {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
         }
       }
     });

@@ -273,6 +273,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           },
         });
 
+        updateContainerStatus(db, handle, 'provisioning', container.id);
         await container.start();
 
         updateContainerStatus(db, handle, 'running', container.id);
@@ -379,6 +380,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         },
       });
 
+      updateContainerStatus(db, handle, 'provisioning', container.id);
       await container.start();
       updateContainerStatus(db, handle, 'running', container.id);
 
@@ -445,6 +447,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
             },
           });
 
+          updateContainerStatus(db, record.handle, 'provisioning', container.id);
           await container.start();
           updateContainerStatus(db, record.handle, 'running', container.id);
           results.push({ handle: record.handle, status: 'upgraded' });

@@ -1,8 +1,9 @@
-import { writeFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { execFile } from "node:child_process";
+import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
 
 function execFileAsync(cmd: string, args: string[]): Promise<void> {
   return new Promise((res, reject) => {
@@ -91,7 +92,7 @@ export async function installService(daemonPath: string): Promise<string> {
     const plistDir = join(homedir(), "Library", "LaunchAgents");
     await mkdir(plistDir, { recursive: true });
     const plistPath = join(plistDir, `${LABEL}.plist`);
-    await writeFile(plistPath, launchdPlist(daemonPath, logDir, workDir));
+    await writeUtf8FileAtomic(plistPath, launchdPlist(daemonPath, logDir, workDir));
     return plistPath;
   }
 
@@ -104,7 +105,7 @@ export async function installService(daemonPath: string): Promise<string> {
     );
     await mkdir(unitDir, { recursive: true });
     const unitPath = join(unitDir, "matrixos-sync.service");
-    await writeFile(unitPath, systemdUnit(daemonPath, workDir));
+    await writeUtf8FileAtomic(unitPath, systemdUnit(daemonPath, workDir));
     return unitPath;
   }
 
@@ -118,13 +119,23 @@ export async function startService(): Promise<void> {
   if (os === "darwin") {
     // Unload first so an updated plist actually takes effect; ignore failure
     // since the agent may not be loaded yet.
-    await execFileAsync("launchctl", ["unload", plistPath]).catch(() => {});
+    await execFileAsync("launchctl", ["unload", plistPath]).catch((err: unknown) => {
+      console.warn(
+        "[sync/service] launchctl unload failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
     await execFileAsync("launchctl", ["load", "-w", plistPath]);
     return;
   }
 
   if (os === "linux") {
-    await execFileAsync("systemctl", ["--user", "daemon-reload"]).catch(() => {});
+    await execFileAsync("systemctl", ["--user", "daemon-reload"]).catch((err: unknown) => {
+      console.warn(
+        "[sync/service] systemctl daemon-reload failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
     await execFileAsync("systemctl", [
       "--user",
       "enable",

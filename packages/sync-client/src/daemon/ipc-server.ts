@@ -119,11 +119,14 @@ export class IpcServer {
     let msg: { id?: string; command?: string; args?: Record<string, unknown> };
     try {
       msg = JSON.parse(raw) as typeof msg;
-    } catch {
-      socket.write(
-        JSON.stringify({ error: "Invalid JSON" }) + "\n",
-      );
-      return;
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        socket.write(
+          JSON.stringify({ error: "Invalid JSON" }) + "\n",
+        );
+        return;
+      }
+      throw err;
     }
 
     try {
