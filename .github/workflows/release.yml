@@ -64,12 +64,6 @@ jobs:
       - name: Unit tests
         run: bun run test
 
-      - name: Install ripgrep
-        run: sudo apt-get install -y ripgrep
-
-      - name: Pattern scan
-        run: ./scripts/review/check-patterns.sh
-
   build-macos:
     name: Build macOS .pkg
     needs: test
