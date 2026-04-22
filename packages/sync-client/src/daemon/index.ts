@@ -108,10 +108,11 @@ export async function waitForManifest(
         opts.logger.warn(
           `Manifest poll attempt ${attempt} failed (unexpected non-Error talking to ${opts.gatewayUrl})`,
         );
+      } else {
+        opts.logger.warn(
+          `Manifest poll attempt ${attempt} failed (network error talking to ${opts.gatewayUrl})`,
+        );
       }
-      opts.logger.warn(
-        `Manifest poll attempt ${attempt} failed (network error talking to ${opts.gatewayUrl})`,
-      );
       await sleep(intervalMs);
       continue;
     }

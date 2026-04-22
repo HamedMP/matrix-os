@@ -1,8 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  DEFAULT_GATEWAY_URL,
+  DEFAULT_PLATFORM_URL,
+  defaultGatewayUrl,
+  defaultPlatformUrl,
   generatePeerId,
   normalizeGatewayFolder,
   resolveSyncPathWithinHome,
@@ -37,6 +41,38 @@ describe("saveConfig", () => {
     );
     expect((await stat(join(tempDir, "private"))).mode & 0o777).toBe(0o700);
     expect((await stat(configPath)).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("default URL constants and functions", () => {
+  afterEach(() => {
+    delete process.env.MATRIXOS_PLATFORM_URL;
+    delete process.env.MATRIXOS_GATEWAY_URL;
+  });
+
+  it("DEFAULT_PLATFORM_URL and DEFAULT_GATEWAY_URL are app.matrix-os.com", () => {
+    expect(DEFAULT_PLATFORM_URL).toBe("https://app.matrix-os.com");
+    expect(DEFAULT_GATEWAY_URL).toBe("https://app.matrix-os.com");
+  });
+
+  it("defaultPlatformUrl returns the constant when env is unset", () => {
+    delete process.env.MATRIXOS_PLATFORM_URL;
+    expect(defaultPlatformUrl()).toBe(DEFAULT_PLATFORM_URL);
+  });
+
+  it("defaultPlatformUrl returns the env override when set", () => {
+    process.env.MATRIXOS_PLATFORM_URL = "http://localhost:9000";
+    expect(defaultPlatformUrl()).toBe("http://localhost:9000");
+  });
+
+  it("defaultGatewayUrl returns the constant when env is unset", () => {
+    delete process.env.MATRIXOS_GATEWAY_URL;
+    expect(defaultGatewayUrl()).toBe(DEFAULT_GATEWAY_URL);
+  });
+
+  it("defaultGatewayUrl returns the env override when set", () => {
+    process.env.MATRIXOS_GATEWAY_URL = "http://localhost:4000";
+    expect(defaultGatewayUrl()).toBe("http://localhost:4000");
   });
 });
 

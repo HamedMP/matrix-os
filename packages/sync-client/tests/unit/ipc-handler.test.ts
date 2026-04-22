@@ -275,11 +275,12 @@ describe("createIpcHandler", () => {
   });
 
   describe("unknown command", () => {
-    it("rejects with a descriptive error", async () => {
+    it("rejects without exposing the command name", async () => {
       const { deps } = createDeps();
       const handler = createIpcHandler(deps);
 
-      await expect(handler("nope", {})).rejects.toThrow(/Unknown command/);
+      await expect(handler("nope", {})).rejects.toThrow(/Unknown IPC command/);
+      await expect(handler("nope", {})).rejects.not.toThrow(/nope/);
     });
   });
 
@@ -294,6 +295,31 @@ describe("createIpcHandler", () => {
       const res = await handler("getConfig", {});
 
       expect(res.gatewayFolder).toBe("notes");
+    });
+  });
+
+  describe("setSyncPath does not mutate config if saveConfig fails", () => {
+    it("preserves the original syncPath on persist failure", async () => {
+      const originalPath = join(homedir(), "matrixos");
+      const { deps, saveConfig } = createDeps();
+      saveConfig.mockRejectedValueOnce(new Error("disk full"));
+      const handler = createIpcHandler(deps);
+      const next = join(homedir(), "matrixos-new");
+
+      await expect(handler("setSyncPath", { syncPath: next })).rejects.toThrow("disk full");
+      expect(deps.config.syncPath).toBe(originalPath);
+    });
+  });
+
+  describe("setGatewayFolder does not mutate config if saveConfig fails", () => {
+    it("preserves the original folder on persist failure", async () => {
+      const { deps, saveConfig } = createDeps();
+      deps.config.gatewayFolder = "original";
+      saveConfig.mockRejectedValueOnce(new Error("disk full"));
+      const handler = createIpcHandler(deps);
+
+      await expect(handler("setGatewayFolder", { gatewayFolder: "new-folder" })).rejects.toThrow("disk full");
+      expect(deps.config.gatewayFolder).toBe("original");
     });
   });
 

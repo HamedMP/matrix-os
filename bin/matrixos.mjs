@@ -12,24 +12,9 @@ import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
+import { findTsxLoader } from '../packages/sync-client/src/lib/find-tsx-loader.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-// Walk up from this file looking for tsx. Works whether the launcher is
-// the repo-root `bin/matrixos.mjs` (tsx in `<repo>/node_modules`), invoked
-// via `pnpm link --global` from any cwd, or via a packaged install where
-// tsx may be hoisted one or two levels up.
-function findTsxLoader(start) {
-  let dir = start;
-  for (let i = 0; i < 6; i += 1) {
-    const candidate = resolve(dir, 'node_modules', 'tsx', 'dist', 'loader.mjs');
-    if (existsSync(candidate)) return candidate;
-    const up = dirname(dir);
-    if (up === dir) break;
-    dir = up;
-  }
-  return null;
-}
 
 const tsxLoader = findTsxLoader(here);
 if (!tsxLoader) {

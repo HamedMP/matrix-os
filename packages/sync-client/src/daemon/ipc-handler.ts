@@ -83,15 +83,17 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
         const raw = typeof args.syncPath === "string" ? args.syncPath : "";
         const newPath = resolveSyncPathWithinHome(raw);
         await ensureDir(newPath);
+        const nextSyncPath = { ...deps.config, syncPath: newPath };
+        await deps.saveConfig(nextSyncPath);
         deps.config.syncPath = newPath;
-        await deps.saveConfig(deps.config);
         return { syncPath: newPath, restartRequired: true };
       }
       case "setGatewayFolder": {
         const folder = typeof args.gatewayFolder === "string" ? args.gatewayFolder : "";
         const normalizedFolder = normalizeGatewayFolder(folder);
+        const nextFolder = { ...deps.config, gatewayFolder: normalizedFolder };
+        await deps.saveConfig(nextFolder);
         deps.config.gatewayFolder = normalizedFolder;
-        await deps.saveConfig(deps.config);
         return { gatewayFolder: normalizedFolder, restartRequired: true };
       }
       case "restart":
@@ -112,7 +114,7 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
         }, DEFAULT_EXIT_DELAY_MS);
         return { loggedOut: true };
       default:
-        throw new Error(`Unknown command: ${command}`);
+        throw new Error("Unknown IPC command");
     }
   };
 }

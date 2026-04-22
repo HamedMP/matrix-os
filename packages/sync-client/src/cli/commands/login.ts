@@ -141,6 +141,6 @@ export const loginCommand = defineCommand({
     await saveConfig(next);
 
     console.log(`Logged in as @${auth.handle}`);
-    if (gatewayUrl) console.log(`Gateway: ${gatewayUrl}`);
+    console.log(`Gateway: ${next.gatewayUrl}${gatewayUrl ? "" : " (default)"}`);
   },
 });
