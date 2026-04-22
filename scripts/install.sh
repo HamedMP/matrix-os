@@ -20,6 +20,11 @@ MATRIX_VERSION="${MATRIX_VERSION:-latest}"
 MATRIX_CHANNEL="${MATRIX_CHANNEL:-stable}"
 MATRIX_REPO="${MATRIX_REPO:-HamedMP/matrix-os}"
 
+die() {
+  printf 'error: %s\n' "$1" >&2
+  exit 1
+}
+
 # Validate env overrides before they reach URLs or sudo commands.
 case "$MATRIX_REPO" in
   *[!A-Za-z0-9._/-]*) die "MATRIX_REPO contains invalid characters (expected owner/repo)" ;;
@@ -28,11 +33,6 @@ case "$MATRIX_VERSION" in
   latest) ;; # ok
   *[!A-Za-z0-9._-]*) die "MATRIX_VERSION contains invalid characters (expected semver tag)" ;;
 esac
-
-die() {
-  printf 'error: %s\n' "$1" >&2
-  exit 1
-}
 
 need() {
   command -v "$1" >/dev/null 2>&1 || die "required command '$1' not found"
@@ -76,11 +76,11 @@ install_macos() {
   VERSION="${TAG#v}"
   echo "    version: $VERSION"
 
-  TMPDIR="$(mktemp -d)"
-  trap 'rm -rf "$TMPDIR"' EXIT
+  INSTALL_TMPDIR="$(mktemp -d)"
+  trap 'rm -rf "$INSTALL_TMPDIR"' EXIT
 
   PKG_URL="https://github.com/$MATRIX_REPO/releases/download/$TAG/MatrixSync-$VERSION.pkg"
-  PKG_PATH="$TMPDIR/MatrixSync.pkg"
+  PKG_PATH="$INSTALL_TMPDIR/MatrixSync.pkg"
 
   echo "==> Downloading $PKG_URL"
   fetch "$PKG_URL" "$PKG_PATH" || die "download failed. Check that $VERSION has a .pkg artefact."
@@ -118,9 +118,10 @@ install_linux() {
     die "Node.js 24 or newer required (detected $NODE_MAJOR). Upgrade at https://nodejs.org"
   fi
 
+  VERSION="${MATRIX_VERSION#v}"
   case "$MATRIX_VERSION" in
     latest) NPM_SPEC="@matrix-os/cli" ;;
-    *)      NPM_SPEC="@matrix-os/cli@$MATRIX_VERSION" ;;
+    *)      NPM_SPEC="@matrix-os/cli@$VERSION" ;;
   esac
 
   # Prefer an unprivileged install when the user has npm prefix configured for
