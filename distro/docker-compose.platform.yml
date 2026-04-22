@@ -82,6 +82,7 @@ services:
       - PLATFORM_PORT=9000
       - PLATFORM_DB_PATH=/data/platform.db
       - PLATFORM_SECRET=${PLATFORM_SECRET}
+      - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET}
       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - POSTGRES_URL=postgresql://matrixos:${POSTGRES_PASSWORD:-matrixos}@postgres:5432
