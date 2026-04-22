@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GIT_ENV } from "./git-env.js";
 
@@ -102,7 +102,12 @@ export function createGitAutoCommit(config: GitAutoCommitConfig): GitAutoCommit 
   return {
     start() {
       timer = setInterval(() => {
-        commitIfChanged().catch(() => {});
+        commitIfChanged().catch((err) => {
+          console.warn(
+            "[git-versioning] Auto-commit failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
       }, intervalMs);
     },
     stop() {
@@ -143,7 +148,11 @@ export function createSnapshotManager(homePath: string): SnapshotManager {
           "snapshot/*",
           "--format=%(refname:short)|%(objectname:short)|%(*objectname:short)|%(creatordate:iso-strict)",
         );
-      } catch {
+      } catch (err) {
+        console.warn(
+          "[git-versioning] Failed to list snapshots:",
+          err instanceof Error ? err.message : String(err),
+        );
         return [];
       }
 
@@ -193,7 +202,7 @@ export function createFileHistory(homePath: string): FileHistory {
       try {
         const content = await git(homePath, "show", `${commit}:${path}`);
         const fullPath = join(homePath, path);
-        writeFileSync(fullPath, content, "utf-8");
+        await writeFile(fullPath, content, "utf-8");
 
         await git(homePath, "add", path);
         await git(
