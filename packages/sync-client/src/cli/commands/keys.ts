@@ -1,7 +1,8 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { defineCommand } from "citty";
+import { writeUtf8FileAtomic } from "../../lib/atomic-write.js";
 
 const SUPPORTED_KEY_TYPES = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"] as const;
 type KeyType = (typeof SUPPORTED_KEY_TYPES)[number];
@@ -87,7 +88,7 @@ export async function addKeyToAuthorizedKeys(
   }
 
   lines.push(entry);
-  await writeFile(filePath, lines.join("\n") + "\n", { mode: 0o600 });
+  await writeUtf8FileAtomic(filePath, lines.join("\n") + "\n", 0o600);
 }
 
 const addKeyCommand = defineCommand({

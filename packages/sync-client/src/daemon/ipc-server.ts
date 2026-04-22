@@ -22,7 +22,12 @@ export class IpcServer {
 
   async start(): Promise<void> {
     await mkdir(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
-    await chmod(dirname(this.options.socketPath), 0o700).catch(() => {});
+    await chmod(dirname(this.options.socketPath), 0o700).catch((err: unknown) => {
+      console.warn(
+        "[sync/ipc] Failed to chmod socket directory:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
     try {
       await unlink(this.options.socketPath);
     } catch (err: unknown) {
@@ -89,8 +94,11 @@ export class IpcServer {
 
       for (const line of lines) {
         if (!line.trim()) continue;
-        this.processMessage(socket, line).catch(() => {
-          // Error already sent as response
+        this.processMessage(socket, line).catch((err: unknown) => {
+          console.warn(
+            "[sync/ipc] processMessage failed:",
+            err instanceof Error ? err.message : String(err),
+          );
         });
       }
     });
