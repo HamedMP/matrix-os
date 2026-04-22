@@ -53,10 +53,10 @@ describe("Desktop config", () => {
     expect(configs).toHaveLength(4);
   });
 
-  it("buildMeshGradient returns a CSS background value", () => {
+  it("buildMeshGradient returns a valid CSS background value", () => {
     const gradient = buildMeshGradient();
     expect(gradient).toMatch(/radial-gradient/);
-    expect(gradient).toContain("var(--gradient-");
+    expect(gradient).toMatch(/var\(--gradient-/);
   });
 
   it("saveDesktopConfig calls fetch with PUT method", async () => {
