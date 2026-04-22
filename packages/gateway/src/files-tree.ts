@@ -74,7 +74,11 @@ async function getGitStatusMap(dirPath: string): Promise<{ map: Map<string, stri
     }
     cacheMap.set(gitRoot, { map, timestamp: Date.now(), gitRoot });
     return { map, gitRoot };
-  } catch {
+  } catch (err) {
+    // Not a git repo, git missing, or command timed out -- treat as no git status.
+    if (err instanceof Error && process.env.DEBUG_FILES_TREE) {
+      console.debug("[files-tree] git status unavailable:", err.message);
+    }
     return null;
   }
 }
@@ -103,8 +107,12 @@ export async function listDirectory(
   let entries: Dirent<string>[];
   try {
     entries = await readdir(resolved, { withFileTypes: true, encoding: "utf8" });
-  } catch {
-    return null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") {
+      return null;
+    }
+    throw err;
   }
 
   const gitResult = await getGitStatusMap(resolved);
@@ -135,8 +143,11 @@ export async function listDirectory(
         ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
         children = childEntries.filter((c) => !c.startsWith(".")).length;
-      } catch {
-        // ignore
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES") {
+          console.warn(`[files-tree] stat directory failed for ${fullPath}:`, err);
+        }
       }
 
       return {
@@ -167,8 +178,11 @@ export async function listDirectory(
         size = fileStat.size;
         modified = new Date(fileStat.mtimeMs).toISOString();
         created = new Date(fileStat.birthtimeMs).toISOString();
-      } catch {
-        // ignore
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES") {
+          console.warn(`[files-tree] stat file failed for ${fullPath}:`, err);
+        }
       }
 
       return {

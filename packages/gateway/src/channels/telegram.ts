@@ -145,7 +145,11 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
             };
 
             adapter.onMessage(channelMessage);
-          }).catch(() => {
+          }).catch((err: unknown) => {
+            console.warn(
+              "[telegram] voice transcription pipeline failed:",
+              err instanceof Error ? err.message : String(err),
+            );
             const channelMessage: ChannelMessage = {
               source: "telegram",
               senderId,

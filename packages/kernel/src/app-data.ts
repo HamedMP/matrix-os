@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 
 interface AppDataParams {
@@ -26,12 +26,18 @@ export async function appDataHandler(
   const dataDir = join(homePath, "data", safeApp);
 
   if (params.action === "list") {
-    if (!existsSync(dataDir)) {
-      return { content: [{ type: "text", text: JSON.stringify([]) }] };
+    let files: string[];
+    try {
+      const entries = await readdir(dataDir);
+      files = entries
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => f.replace(/\.json$/, ""));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
+      throw err;
     }
-    const files = readdirSync(dataDir)
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => f.replace(/\.json$/, ""));
     return { content: [{ type: "text", text: JSON.stringify(files) }] };
   }
 
@@ -50,15 +56,19 @@ export async function appDataHandler(
   }
 
   if (params.action === "read") {
-    if (!existsSync(filePath)) {
-      return {
-        content: [
-          { type: "text", text: `No data found for app "${safeApp}" key "${safeKey}"` },
-        ],
-      };
+    try {
+      const content = await readFile(filePath, "utf-8");
+      return { content: [{ type: "text", text: content }] };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return {
+          content: [
+            { type: "text", text: `No data found for app "${safeApp}" key "${safeKey}"` },
+          ],
+        };
+      }
+      throw err;
     }
-    const content = readFileSync(filePath, "utf-8");
-    return { content: [{ type: "text", text: content }] };
   }
 
   // write
@@ -68,8 +78,8 @@ export async function appDataHandler(
     };
   }
 
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(filePath, params.value, "utf-8");
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(filePath, params.value, "utf-8");
   return {
     content: [
       { type: "text", text: `Written ${safeKey} for app "${safeApp}" (${params.value.length} bytes)` },

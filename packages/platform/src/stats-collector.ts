@@ -77,8 +77,10 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
         containerMemoryLimit.set({ handle: row.handle }, memLimit);
 
         results.push(entry);
-      } catch {
-        // Container disappeared or stats unavailable -- skip
+      } catch (err) {
+        // Container disappeared or stats unavailable -- log and skip
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[stats-collector] stats unavailable for ${row.handle}:`, msg);
       }
     }
 
@@ -91,7 +93,10 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
     start() {
       if (timer) return;
       timer = setInterval(() => {
-        collectOnce().catch(() => {});
+        collectOnce().catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn("[stats-collector] collectOnce failed:", msg);
+        });
       }, intervalMs);
     },
 

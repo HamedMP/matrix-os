@@ -64,7 +64,13 @@ export class WhisperSttProvider implements SttProvider {
 
     if (!response.ok) {
       const status = response.status;
-      const body = await response.text().catch(() => "");
+      const body = await response.text().catch((readErr: unknown) => {
+        console.warn(
+          "[whisper] failed to read error body:",
+          readErr instanceof Error ? readErr.message : String(readErr),
+        );
+        return "";
+      });
       if (status === 401)
         throw new Error("Whisper STT auth error: invalid API key");
       if (status === 429)
