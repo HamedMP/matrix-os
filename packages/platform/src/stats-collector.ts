@@ -77,8 +77,11 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
         containerMemoryLimit.set({ handle: row.handle }, memLimit);
 
         results.push(entry);
-      } catch {
-        // Container disappeared or stats unavailable -- skip
+      } catch (err: unknown) {
+        console.warn(
+          `[stats-collector] Failed to collect stats for ${row.handle}:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
 
@@ -91,7 +94,12 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
     start() {
       if (timer) return;
       timer = setInterval(() => {
-        collectOnce().catch(() => {});
+        collectOnce().catch((err: unknown) => {
+          console.warn(
+            "[stats-collector] Periodic collection failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
       }, intervalMs);
     },
 

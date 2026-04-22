@@ -74,7 +74,11 @@ async function getGitStatusMap(dirPath: string): Promise<{ map: Map<string, stri
     }
     cacheMap.set(gitRoot, { map, timestamp: Date.now(), gitRoot });
     return { map, gitRoot };
-  } catch {
+  } catch (err: unknown) {
+    console.warn(
+      "[files-tree] Failed to read git status:",
+      err instanceof Error ? err.message : String(err),
+    );
     return null;
   }
 }
@@ -103,7 +107,11 @@ export async function listDirectory(
   let entries: Dirent<string>[];
   try {
     entries = await readdir(resolved, { withFileTypes: true, encoding: "utf8" });
-  } catch {
+  } catch (err: unknown) {
+    console.warn(
+      "[files-tree] Failed to read directory:",
+      err instanceof Error ? err.message : String(err),
+    );
     return null;
   }
 
@@ -135,8 +143,11 @@ export async function listDirectory(
         ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
         children = childEntries.filter((c) => !c.startsWith(".")).length;
-      } catch {
-        // ignore
+      } catch (err: unknown) {
+        console.warn(
+          `[files-tree] Failed to inspect directory ${entry.name}:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
 
       return {
@@ -167,8 +178,11 @@ export async function listDirectory(
         size = fileStat.size;
         modified = new Date(fileStat.mtimeMs).toISOString();
         created = new Date(fileStat.birthtimeMs).toISOString();
-      } catch {
-        // ignore
+      } catch (err: unknown) {
+        console.warn(
+          `[files-tree] Failed to stat file ${entry.name}:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
 
       return {
