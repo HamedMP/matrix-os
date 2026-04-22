@@ -30,6 +30,8 @@
     "docker:logs": "docker compose -f docker-compose.dev.yml logs -f dev",
     "docker:shell": "docker compose -f docker-compose.dev.yml exec -u matrixos dev sh",
     "docker:build": "docker compose -f docker-compose.dev.yml build --no-cache",
+    "build:cli": "node --import tsx scripts/build-cli.ts",
+    "pack:cli": "node --import tsx scripts/build-cli.ts --pack",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",

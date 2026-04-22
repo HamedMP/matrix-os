@@ -1,0 +1,88 @@
+name: Release CLI
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.9.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + pack CLI tarball
+        run: pnpm pack:cli
+
+      - name: Read version
+        id: meta
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tarball=dist/cli/matrix-cli-${version}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sha=$(awk '{print $1}' dist/cli/matrix-cli-${version}.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release upload "$tag" \
+            "${{ steps.meta.outputs.tarball }}" \
+            "${{ steps.meta.outputs.tarball }}.sha256" \
+            --clobber
+
+      - name: Bump Homebrew tap
+        if: ${{ secrets.TAP_PUSH_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHA256: ${{ steps.meta.outputs.sha }}
+        run: |
+          set -eu
+          ver_v="v${VERSION}"
+          work="$(mktemp -d)"
+          gh repo clone finnaai/homebrew-tap "$work" -- --depth=1
+          cd "$work"
+          git config user.name "matrix-os-bot"
+          git config user.email "bot@matrix-os.com"
+          mkdir -p Formula
+          sed -e "s|^  url .*|  url \"https://github.com/hamedmp/matrix-os/releases/download/${ver_v}/matrix-cli-${VERSION}.tar.gz\"|" \
+              -e "s|^  sha256 .*|  sha256 \"${SHA256}\"|" \
+              -e "s|^  version .*|  version \"${VERSION}\"|" \
+              Formula/matrix.rb > Formula/matrix.rb.new || true
+          if [ ! -s Formula/matrix.rb.new ]; then
+            cp "${GITHUB_WORKSPACE}/distro/homebrew/matrix.rb" Formula/matrix.rb.new
+            sed -i \
+              -e "s|releases/download/v[0-9.]*/matrix-cli-[0-9.]*\\.tar\\.gz|releases/download/${ver_v}/matrix-cli-${VERSION}.tar.gz|" \
+              -e "s|sha256 \"[0-9a-f]*\"|sha256 \"${SHA256}\"|" \
+              -e "s|version \"[0-9.]*\"|version \"${VERSION}\"|" \
+              Formula/matrix.rb.new
+          fi
+          mv Formula/matrix.rb.new Formula/matrix.rb
+          git add Formula/matrix.rb
+          if git diff --cached --quiet; then
+            echo "no tap changes"
+            exit 0
+          fi
+          git commit -m "matrix ${VERSION}"
+          git push origin HEAD:main
