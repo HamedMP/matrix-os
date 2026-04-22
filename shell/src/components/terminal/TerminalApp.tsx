@@ -5,6 +5,7 @@ import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from 
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
+import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 
 const DEFAULT_CWD = "projects";
 
@@ -86,26 +87,6 @@ function getSessionIds(node: PaneNode): string[] {
     return node.sessionId ? [node.sessionId] : [];
   }
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
-}
-
-function isTerminalDebugEnabled(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    if (window.localStorage.getItem("matrix-terminal-debug") === "1") {
-      return true;
-    }
-  } catch (_err: unknown) {
-    // Ignore storage access failures.
-  }
-
-  try {
-    return new URLSearchParams(window.location.search).get("terminalDebug") === "1";
-  } catch (_err: unknown) {
-    return false;
-  }
 }
 
 function terminalAppDebug(event: string, details: Record<string, unknown>): void {

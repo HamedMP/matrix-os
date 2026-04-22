@@ -27,6 +27,7 @@ import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
+  isAppDomainHost,
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from './ws-upgrade.js';
@@ -239,11 +240,6 @@ function describeError(err: unknown): string {
   }
   return String(err);
 }
-
-function isAppDomainHost(host: string): boolean {
-  return /^app\.matrix-os\.com(?::\d+)?$/i.test(host) || /^app\.localhost(?::\d+)?$/i.test(host);
-}
-
 function isSyncJwtAuthError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return (

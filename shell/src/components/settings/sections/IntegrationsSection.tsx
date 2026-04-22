@@ -210,9 +210,13 @@ export function IntegrationsSection() {
   // WebSocket listener for real-time connection updates
   useEffect(() => {
     let ws: WebSocket | null = null;
+    let disposed = false;
     void buildAuthenticatedWebSocketUrl("/ws")
       .catch(() => getGatewayWs())
       .then((wsUrl) => {
+        if (disposed) {
+          return;
+        }
         try {
           ws = new WebSocket(wsUrl);
           ws.onmessage = (event) => {
@@ -233,6 +237,7 @@ export function IntegrationsSection() {
         }
       });
     return () => {
+      disposed = true;
       ws?.close();
     };
   }, [loadData]);

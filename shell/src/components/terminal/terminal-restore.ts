@@ -29,3 +29,11 @@ export function getCachedTerminalRestorePlan(cached: CachedTerminal | null): Cac
     lastSeq: cached.lastSeq,
   };
 }
+
+export function closeStaleCachedSocket(cached: CachedTerminal | null): void {
+  if (!cached || cached.ws.readyState === WebSocket.CLOSED) {
+    return;
+  }
+
+  cached.ws.close();
+}

@@ -1,5 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 
 export interface CachedTerminal {
   terminal: Terminal;
@@ -13,26 +14,6 @@ export interface CachedTerminal {
 
 const MAX_CACHED = 20;
 const cache = new Map<string, CachedTerminal>();
-
-function isTerminalDebugEnabled(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    if (window.localStorage.getItem("matrix-terminal-debug") === "1") {
-      return true;
-    }
-  } catch (_err: unknown) {
-    // Ignore storage access failures.
-  }
-
-  try {
-    return new URLSearchParams(window.location.search).get("terminalDebug") === "1";
-  } catch (_err: unknown) {
-    return false;
-  }
-}
 
 function terminalCacheDebug(event: string, details: Record<string, unknown>): void {
   if (!isTerminalDebugEnabled()) {

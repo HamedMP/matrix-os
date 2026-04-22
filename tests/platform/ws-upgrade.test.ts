@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
+  isAppDomainHost,
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from "../../packages/platform/src/ws-upgrade.js";
@@ -34,5 +35,12 @@ describe("isSafeWebSocketUpgradePath", () => {
 
   it("falls back to host when x-forwarded-host is absent", () => {
     expect(getWebSocketUpgradeHost("app.matrix-os.com", undefined)).toBe("app.matrix-os.com");
+  });
+
+  it("accepts only app-domain websocket hosts", () => {
+    expect(isAppDomainHost("app.matrix-os.com")).toBe(true);
+    expect(isAppDomainHost("app.localhost:3000")).toBe(true);
+    expect(isAppDomainHost("legacy.matrix-os.com")).toBe(false);
+    expect(isAppDomainHost("malicious.example.com")).toBe(false);
   });
 });

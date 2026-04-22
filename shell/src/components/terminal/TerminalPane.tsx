@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
+import { createSocketHealth } from "@/lib/socket-health";
+import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
+import { useTerminalSettings } from "@/stores/terminal-settings";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
 import type { FitAddon } from "@xterm/addon-fit";
@@ -10,9 +13,7 @@ import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
-import { getCachedTerminalRestorePlan } from "./terminal-restore";
-import { createSocketHealth } from "@/lib/socket-health";
-import { useTerminalSettings } from "@/stores/terminal-settings";
+import { closeStaleCachedSocket, getCachedTerminalRestorePlan } from "./terminal-restore";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: import("@/stores/terminal-settings").TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -132,26 +133,6 @@ function extractTrustedClaudeAuthUrl(raw: string): string | null {
     return url.toString();
   } catch (_err: unknown) {
     return null;
-  }
-}
-
-function isTerminalDebugEnabled(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    if (window.localStorage.getItem("matrix-terminal-debug") === "1") {
-      return true;
-    }
-  } catch (_err: unknown) {
-    // Ignore storage access failures.
-  }
-
-  try {
-    return new URLSearchParams(window.location.search).get("terminalDebug") === "1";
-  } catch (_err: unknown) {
-    return false;
   }
 }
 
@@ -649,6 +630,7 @@ export function TerminalPane({
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING);
       } else {
+        closeStaleCachedSocket(cached);
         connectWs();
       }
 

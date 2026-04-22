@@ -25,6 +25,10 @@ export function getWebSocketUpgradeHost(
   return normalizeHeaderValue(hostHeader).trim();
 }
 
+export function isAppDomainHost(host: string): boolean {
+  return /^app\.matrix-os\.com(?::\d+)?$/i.test(host) || /^app\.localhost(?::\d+)?$/i.test(host);
+}
+
 function parseWebSocketUpgradeUrl(path: string): URL | null {
   try {
     return new URL(path, "http://platform.invalid");
