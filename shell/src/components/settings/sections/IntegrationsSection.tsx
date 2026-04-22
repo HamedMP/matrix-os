@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 
 const GATEWAY = getGatewayUrl();
 
@@ -84,7 +85,7 @@ function formatDate(iso: string): string {
       month: "short",
       day: "numeric",
     });
-  } catch {
+  } catch (_err: unknown) {
     return iso;
   }
 }
@@ -209,24 +210,28 @@ export function IntegrationsSection() {
   // WebSocket listener for real-time connection updates
   useEffect(() => {
     let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(getGatewayWs());
-      ws.onmessage = (event) => {
+    void buildAuthenticatedWebSocketUrl("/ws")
+      .catch(() => getGatewayWs())
+      .then((wsUrl) => {
         try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "integration:connected" || msg.type === "integration:disconnected") {
-            loadData();
-          }
-        } catch {
-          // not JSON, ignore
+          ws = new WebSocket(wsUrl);
+          ws.onmessage = (event) => {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.type === "integration:connected" || msg.type === "integration:disconnected") {
+                loadData();
+              }
+            } catch (_err: unknown) {
+              // not JSON, ignore
+            }
+          };
+          ws.onerror = () => {
+            // WebSocket errors are non-fatal; polling fallback handles it
+          };
+        } catch (_err: unknown) {
+          // WebSocket not available, rely on polling during connect
         }
-      };
-      ws.onerror = () => {
-        // WebSocket errors are non-fatal; polling fallback handles it
-      };
-    } catch {
-      // WebSocket not available, rely on polling during connect
-    }
+      });
     return () => {
       ws?.close();
     };

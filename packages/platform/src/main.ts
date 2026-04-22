@@ -23,8 +23,13 @@ import { createSocialFeedApi } from './social-api.js';
 import { createClerkAuth, type ClerkAuth } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
-import { verifySyncJwt } from './sync-jwt.js';
-import { isSafeWebSocketUpgradePath } from './ws-upgrade.js';
+import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
+import {
+  getWebSocketUpgradeHost,
+  getWebSocketUpgradeToken,
+  isSafeWebSocketUpgradePath,
+  stripWebSocketUpgradeToken,
+} from './ws-upgrade.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -49,6 +54,7 @@ const containerProxyDispatcher = new Agent({
   keepAliveMaxTimeout: 1,
   connections: 64,
 });
+const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
 
 const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
@@ -234,6 +240,10 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
+function isAppDomainHost(host: string): boolean {
+  return /^app\.matrix-os\.com(?::\d+)?$/i.test(host) || /^app\.localhost(?::\d+)?$/i.test(host);
+}
+
 function isSyncJwtAuthError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return (
@@ -250,10 +260,12 @@ async function resolveAppDomainIdentity(opts: {
   clerkAuth?: ClerkAuth;
   db: PlatformDB;
   platformJwtSecret: string;
+  wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
-  const bearerToken = opts.authHeader?.startsWith('Bearer ')
-    ? opts.authHeader.slice(7)
-    : null;
+  const bearerToken =
+    opts.authHeader?.startsWith('Bearer ')
+      ? opts.authHeader.slice(7)
+      : opts.wsToken ?? null;
 
   if (bearerToken && opts.platformJwtSecret) {
     try {
@@ -297,6 +309,15 @@ async function resolveAppDomainIdentity(opts: {
     handle: record.handle,
     userId: result.userId,
   };
+}
+
+function getGatewayUrlForHandle(handle: string): string {
+  const safeHandle = requireValidHandle(handle);
+  const tmpl = process.env.GATEWAY_URL_TEMPLATE;
+  if (tmpl) {
+    return tmpl.replace('{handle}', safeHandle);
+  }
+  return 'https://app.matrix-os.com';
 }
 
 function getAuthPage(
@@ -514,17 +535,7 @@ export function createApp(deps: {
         clerkAuth,
         jwtSecret: platformJwtSecret,
         platformUrl: platformPublicUrl,
-        gatewayUrlForHandle: (handle) => {
-          // Single-domain production: every handle hits https://app.matrix-os.com,
-          // where the platform middleware resolves the Clerk session and proxies
-          // to the right container. Per-handle subdomains are deprecated.
-          // Dev override via GATEWAY_URL_TEMPLATE='http://localhost:4000' (single-tenant)
-          // or 'http://matrixos-{handle}:4000' for in-cluster Docker routing.
-          const safeHandle = requireValidHandle(handle);
-          const tmpl = process.env.GATEWAY_URL_TEMPLATE;
-          if (tmpl) return tmpl.replace('{handle}', safeHandle);
-          return 'https://app.matrix-os.com';
-        },
+        gatewayUrlForHandle: getGatewayUrlForHandle,
       }),
     );
   }
@@ -532,7 +543,7 @@ export function createApp(deps: {
   // Session-based routing: app.matrix-os.com -> Clerk session -> container
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? '';
-    const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
+    const isAppDomain = isAppDomainHost(host);
     if (!isAppDomain) return next();
 
     // Device-flow paths are served directly by the platform's auth-routes.ts
@@ -601,6 +612,23 @@ export function createApp(deps: {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', record.handle);
       return next();
+    }
+
+    if (path === '/api/auth/ws-token') {
+      if (!platformJwtSecret) {
+        return c.json({ error: 'WebSocket auth unavailable' }, 503);
+      }
+      const issued = await issueSyncJwt({
+        secret: platformJwtSecret,
+        clerkUserId: identity.userId,
+        handle: record.handle,
+        gatewayUrl: getGatewayUrlForHandle(record.handle),
+        expiresInSec: WS_TOKEN_EXPIRES_IN_SEC,
+      });
+      return c.json({
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+      });
     }
 
     if (record.status === 'stopped') {
@@ -1247,93 +1275,91 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   // WebSocket upgrade handler
   (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
-    const host = req.headers.host ?? '';
-
-    // Session-based WebSocket routing for app.matrix-os.com
-    const isAppDomain = /^app\.matrix-os\.com$/i.test(host) || /^app\.localhost/i.test(host);
-    if (isAppDomain) {
-      const identity = await resolveAppDomainIdentity({
-        authHeader: req.headers.authorization as string | undefined,
-        cookieHeader: req.headers.cookie,
-        clerkAuth,
-        db,
-        platformJwtSecret: PLATFORM_JWT_SECRET,
-      });
-      if (!identity) { socket.destroy(); return; }
-
-      const record = getContainer(db, identity.handle);
-      if (!record) { socket.destroy(); return; }
-      const path = req.url ?? '/';
-      let activeUpstream: ReturnType<typeof createConnection> | null = null;
-      const onSocketError = () => activeUpstream?.destroy();
-      socket.on('error', onSocketError);
-
-      const connectUpstream = async (attempt: number): Promise<void> => {
-        const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
-        if (!endpoint) {
-          console.warn(
-            `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} path=${path}`,
-          );
-          socket.destroy();
-          return;
-        }
-
-        let connected = false;
-        const upstream = createConnection({ host: endpoint.host, port: 4000 }, () => {
-          connected = true;
-          activeUpstream = upstream;
-          if (!isSafeWebSocketUpgradePath(path)) {
-            socket.destroy();
-            upstream.destroy();
-            return;
-          }
-          const headers = Object.entries(req.headers)
-            .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
-            .map(([k, v]) => `${k}: ${v}`)
-            .concat(
-              PLATFORM_SECRET
-                ? [
-                    `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
-                    `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
-                    `x-platform-user-id: ${identity.userId}`,
-                  ]
-                : [],
-            )
-            .join('\r\n');
-
-          upstream.write(
-            `${req.method} ${path} HTTP/1.1\r\nHost: ${endpoint.host}:4000\r\n${headers}\r\n\r\n`
-          );
-          if (head.length > 0) upstream.write(head);
-
-          upstream.pipe(socket);
-          socket.pipe(upstream);
-        });
-
-        upstream.on('error', (err) => {
-          console.warn(
-            `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
-          );
-          if (!connected && attempt === 0 && !socket.destroyed) {
-            void connectUpstream(attempt + 1).catch((retryErr) => {
-              console.error('[platform] websocket upstream retry fatal error:', describeError(retryErr));
-              socket.destroy();
-            });
-            return;
-          }
-          socket.destroy();
-        });
-      };
-
-      void connectUpstream(0).catch((err) => {
-        console.error('[platform] websocket upstream fatal error:', describeError(err));
-        socket.destroy();
-      });
+    const host = getWebSocketUpgradeHost(req.headers.host, req.headers['x-forwarded-host']);
+    if (!isAppDomainHost(host)) {
+      socket.destroy();
       return;
     }
 
-    // Unknown host -- legacy {handle}.matrix-os.com subdomain routing retired;
-    // only app.matrix-os.com is supported for WebSocket upgrades.
-    socket.destroy();
+    const path = req.url ?? '/';
+    const wsToken = getWebSocketUpgradeToken(path);
+    const identity = await resolveAppDomainIdentity({
+      authHeader: req.headers.authorization as string | undefined,
+      cookieHeader: req.headers.cookie,
+      clerkAuth,
+      db,
+      platformJwtSecret: PLATFORM_JWT_SECRET,
+      wsToken,
+    });
+    if (!identity) { socket.destroy(); return; }
+
+    const record = getContainer(db, identity.handle);
+    if (!record) { socket.destroy(); return; }
+    let activeUpstream: ReturnType<typeof createConnection> | null = null;
+    const onSocketError = () => activeUpstream?.destroy();
+    socket.on('error', onSocketError);
+
+    const connectUpstream = async (attempt: number): Promise<void> => {
+      const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
+      if (!endpoint) {
+        console.warn(
+          `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} path=${path}`,
+        );
+        socket.destroy();
+        return;
+      }
+
+      let connected = false;
+      const upstream = createConnection({ host: endpoint.host, port: 4000 }, () => {
+        connected = true;
+        activeUpstream = upstream;
+        if (!isSafeWebSocketUpgradePath(path)) {
+          socket.destroy();
+          upstream.destroy();
+          return;
+        }
+        const upstreamPath = stripWebSocketUpgradeToken(path);
+        const headers = Object.entries(req.headers)
+          .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
+          .map(([k, v]) => `${k}: ${v}`)
+          .concat(
+            PLATFORM_SECRET
+              ? [
+                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
+                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
+                  `x-platform-user-id: ${identity.userId}`,
+                ]
+              : [],
+          )
+          .join('\r\n');
+
+        upstream.write(
+          `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${endpoint.host}:4000\r\n${headers}\r\n\r\n`
+        );
+        if (head.length > 0) upstream.write(head);
+
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+
+      upstream.on('error', (err) => {
+        console.warn(
+          `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+        );
+        if (!connected && attempt === 0 && !socket.destroyed) {
+          void connectUpstream(attempt + 1).catch((retryErr) => {
+            console.error('[platform] websocket upstream retry fatal error:', describeError(retryErr));
+            socket.destroy();
+          });
+          return;
+        }
+        socket.destroy();
+      });
+    };
+
+    void connectUpstream(0).catch((err) => {
+      console.error('[platform] websocket upstream fatal error:', describeError(err));
+      socket.destroy();
+    });
   });
 }

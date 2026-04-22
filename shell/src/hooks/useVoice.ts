@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { getGatewayWs } from "../lib/gateway";
+import { buildAuthenticatedWebSocketUrl } from "../lib/websocket-auth";
 
 interface UseVoiceOptions {
   wsUrl?: string;
@@ -36,15 +37,16 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  const getWsUrl = useCallback(() => {
+  const getWsUrl = useCallback(async () => {
     if (opts?.wsUrl) return opts.wsUrl;
-    return getGatewayWs().replace(/\/ws$/, "/ws/voice");
+    return buildAuthenticatedWebSocketUrl("/ws/voice")
+      .catch(() => getGatewayWs().replace(/\/ws$/, "/ws/voice"));
   }, [opts?.wsUrl]);
 
-  const connectWs = useCallback(() => {
+  const connectWs = useCallback(async () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return wsRef.current;
 
-    const ws = new WebSocket(getWsUrl());
+    const ws = new WebSocket(await getWsUrl());
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -56,20 +58,18 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
             opts.onTranscription(msg.text);
           }
           if (msg.type === "voice_audio" && msg.audio) {
-            const MIME_MAP: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", opus: "audio/opus", webm: "audio/webm", flac: "audio/flac" };
-            const mime = MIME_MAP[msg.format] ?? "audio/mpeg";
             try {
               const binary = atob(msg.audio);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
               playAudio(bytes.buffer);
-            } catch { /* decode error */ }
+            } catch (_err: unknown) { /* decode error */ }
           }
           if (msg.type === "voice_error") {
             setIsTranscribing(false);
             opts?.onError?.(msg.message);
           }
-        } catch {}
+        } catch (_err: unknown) {}
       } else if (event.data instanceof Blob) {
         event.data.arrayBuffer().then((buffer) => playAudio(buffer));
       }
@@ -107,20 +107,24 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
 
         setIsTranscribing(true);
 
-        const ws = connectWs();
-        const sendAudio = () => {
-          ws.send(JSON.stringify({ type: "audio_start" }));
-          blob.arrayBuffer().then((buffer) => {
-            ws.send(buffer);
-            ws.send(JSON.stringify({ type: "audio_end" }));
-          });
-        };
+        void connectWs().then((ws) => {
+          const sendAudio = () => {
+            ws.send(JSON.stringify({ type: "audio_start" }));
+            blob.arrayBuffer().then((buffer) => {
+              ws.send(buffer);
+              ws.send(JSON.stringify({ type: "audio_end" }));
+            });
+          };
 
-        if (ws.readyState === WebSocket.OPEN) {
-          sendAudio();
-        } else {
-          ws.addEventListener("open", sendAudio, { once: true });
-        }
+          if (ws.readyState === WebSocket.OPEN) {
+            sendAudio();
+          } else {
+            ws.addEventListener("open", sendAudio, { once: true });
+          }
+        }).catch(() => {
+          setIsTranscribing(false);
+          opts?.onError?.("Voice WebSocket connection failed");
+        });
       };
 
       mediaRecorderRef.current = recorder;
@@ -166,7 +170,7 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
         mediaRecorderRef.current.stop();
       }
       if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current.close().catch((_err: unknown) => {});
         audioContextRef.current = null;
       }
     };

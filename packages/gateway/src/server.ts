@@ -122,6 +122,15 @@ const BridgeCallBodySchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
+
+function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
+  if (!TERMINAL_DEBUG_ENABLED) {
+    return;
+  }
+  console.info("[terminal-debug][gateway]", event, details);
+}
+
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 
 export interface GatewayConfig {
@@ -1356,15 +1365,20 @@ export async function createGateway(config: GatewayConfig) {
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
-      const cleanupAutoCreatedSession = () => {
+      const cleanupAutoCreatedSession = (destroyAutoCreated = true) => {
+        logTerminalDebug("ws-cleanup", {
+          destroyAutoCreated,
+          handleSessionId: handle?.sessionId ?? null,
+          autoCreatedSessionId,
+        });
         if (handle) {
           const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
           handle.detach();
           handle = null;
-          if (shouldDestroyAutoCreated && autoCreatedSessionId) {
+          if (destroyAutoCreated && shouldDestroyAutoCreated && autoCreatedSessionId) {
             sessionRegistry.destroy(autoCreatedSessionId);
           }
-        } else if (autoCreatedSessionId) {
+        } else if (destroyAutoCreated && autoCreatedSessionId) {
           sessionRegistry.destroy(autoCreatedSessionId);
         }
         autoCreatedSessionId = null;
@@ -1372,6 +1386,9 @@ export async function createGateway(config: GatewayConfig) {
 
       return {
         onOpen(_evt, ws) {
+          logTerminalDebug("ws-open", {
+            cwdParam: cwdParam ?? null,
+          });
           const sendJson = (msg: PtyServerMessage) => {
             try {
               ws.send(JSON.stringify(msg));
@@ -1388,6 +1405,7 @@ export async function createGateway(config: GatewayConfig) {
               let sessionId: string | null = null;
               try {
                 sessionId = sessionRegistry.create(cwdParam);
+                logTerminalDebug("auto-create-session", { cwd: cwdParam, sessionId });
                 autoCreatedSessionId = sessionId;
                 handle = sessionRegistry.attach(sessionId);
                 if (handle) {
@@ -1445,6 +1463,12 @@ export async function createGateway(config: GatewayConfig) {
               ws.send(JSON.stringify({ type: "pong" }));
               break;
             case "attach": {
+              logTerminalDebug("ws-attach-request", {
+                mode: "cwd" in msg ? "create" : "reattach",
+                cwd: "cwd" in msg ? msg.cwd : null,
+                sessionId: "sessionId" in msg ? msg.sessionId : null,
+                fromSeq: "fromSeq" in msg ? (msg.fromSeq ?? 0) : null,
+              });
               if (autoCreateTimer) {
                 clearTimeout(autoCreateTimer);
                 autoCreateTimer = null;
@@ -1457,6 +1481,11 @@ export async function createGateway(config: GatewayConfig) {
                 let sessionId: string | null = null;
                 try {
                   sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                  logTerminalDebug("create-session", {
+                    cwd: msg.cwd,
+                    shell: msg.shell ?? null,
+                    sessionId,
+                  });
                   autoCreatedSessionId = null;
                   handle = sessionRegistry.attach(sessionId);
                   if (handle) {
@@ -1481,6 +1510,7 @@ export async function createGateway(config: GatewayConfig) {
                 try {
                   handle = sessionRegistry.attach(msg.sessionId);
                   if (handle) {
+                    logTerminalDebug("attach-existing-success", { sessionId: msg.sessionId });
                     const info = sessionRegistry.getSession(msg.sessionId);
                     autoCreatedSessionId = null;
                     handle.subscribe(sendJson);
@@ -1492,6 +1522,7 @@ export async function createGateway(config: GatewayConfig) {
                     });
                     handle.replay(msg.fromSeq ?? 0);
                   } else {
+                    logTerminalDebug("attach-existing-miss", { sessionId: msg.sessionId });
                     sendJson({ type: "error", message: "Session not found" });
                   }
                 } catch (err: unknown) {
@@ -1513,17 +1544,19 @@ export async function createGateway(config: GatewayConfig) {
               break;
             case "detach":
               if (handle) {
+                logTerminalDebug("ws-detach", { sessionId: handle.sessionId });
                 handle.detach();
                 handle = null;
               }
               break;
             case "destroy":
               if (handle) {
-                const sid = handle.sessionId;
+                const sessionId = handle.sessionId;
+                logTerminalDebug("ws-destroy", { sessionId });
                 handle.detach();
                 handle = null;
-                sessionRegistry.destroy(sid);
-                if (autoCreatedSessionId === sid) {
+                sessionRegistry.destroy(sessionId);
+                if (autoCreatedSessionId === sessionId) {
                   autoCreatedSessionId = null;
                 }
               }
@@ -1532,11 +1565,15 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose() {
+          logTerminalDebug("ws-close", {
+            handleSessionId: handle?.sessionId ?? null,
+            autoCreatedSessionId,
+          });
           if (autoCreateTimer) {
             clearTimeout(autoCreateTimer);
             autoCreateTimer = null;
           }
-          cleanupAutoCreatedSession();
+          cleanupAutoCreatedSession(false);
         },
       };
     }),
@@ -1727,6 +1764,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.delete("/api/terminal/sessions/:id", (c) => {
     const id = c.req.param("id");
+    logTerminalDebug("rest-destroy-request", { sessionId: id });
     if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
     const session = sessionRegistry.getSession(id);
     if (!session) return c.json({ error: "Session not found" }, 404);
@@ -1753,9 +1791,33 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ events });
   });
 
+  function resolveServedFilePath(filePath: string): string | null {
+    const fullPath = resolveWithinHome(homePath, filePath);
+    if (!fullPath) {
+      return null;
+    }
+    if (existsSync(fullPath)) {
+      return fullPath;
+    }
+
+    if (!filePath.endsWith("/manifest.json")) {
+      return fullPath;
+    }
+
+    const dirPath = dirname(fullPath);
+    const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
+    for (const candidate of fallbackCandidates) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return fullPath;
+  }
+
   app.on("HEAD", "/files/*", (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveServedFilePath(filePath);
     if (!fullPath) return c.text("Forbidden", 403);
     if (!existsSync(fullPath)) return c.text("Not found", 404);
     if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
@@ -1764,7 +1826,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/files/*", (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveServedFilePath(filePath);
 
     if (!fullPath) {
       return c.text("Forbidden", 403);

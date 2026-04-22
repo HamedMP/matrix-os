@@ -160,7 +160,7 @@ describe("useSocket message protocol", () => {
     ws.onmessage = (evt) => {
       try {
         received.push(JSON.parse(evt.data));
-      } catch {
+      } catch (_err: unknown) {
         // Ignored, matching hook behavior
       }
     };
@@ -174,10 +174,18 @@ describe("useSocket heartbeat and resilience", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     MockWebSocket.instances = [];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      token: "ws-token",
+      expiresAt: Date.now() + 60_000,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("sends ping every 30 seconds when connected", async () => {
@@ -192,6 +200,7 @@ describe("useSocket heartbeat and resilience", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const ws = MockWebSocket.instances[0];
+    expect(ws.url).toContain("token=ws-token");
 
     // Advance 30s for first ping
     vi.advanceTimersByTime(30_000);

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { act, render } from "@testing-library/react";
+import React from "react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const paneGridSpy = vi.fn();
@@ -141,5 +142,32 @@ describe("TerminalApp", () => {
         },
       ],
     });
+  });
+
+  it("destroys a just-attached session when the tab closes before layout state catches up", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; id: string };
+      onSessionAttached: (paneId: string, sessionId: string) => void;
+    };
+
+    act(() => {
+      props.onSessionAttached(props.paneTree.id, "session-pending-close");
+    });
+
+    fireEvent.click(screen.getByText("x"));
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const deleteCalls = fetchMock.mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/session-pending-close") && init?.method === "DELETE"
+    ));
+
+    expect(deleteCalls.length).toBe(1);
   });
 });

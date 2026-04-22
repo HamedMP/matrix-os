@@ -74,6 +74,47 @@ function hasPaneId(node: PaneNode, paneId: string): boolean {
   return hasPaneId(node.children[0], paneId) || hasPaneId(node.children[1], paneId);
 }
 
+function getPaneSessionId(node: PaneNode, paneId: string): string | null {
+  if (node.type === "pane") {
+    return node.id === paneId ? node.sessionId ?? null : null;
+  }
+  return getPaneSessionId(node.children[0], paneId) ?? getPaneSessionId(node.children[1], paneId);
+}
+
+function getSessionIds(node: PaneNode): string[] {
+  if (node.type === "pane") {
+    return node.sessionId ? [node.sessionId] : [];
+  }
+  return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
+}
+
+function isTerminalDebugEnabled(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    if (window.localStorage.getItem("matrix-terminal-debug") === "1") {
+      return true;
+    }
+  } catch (_err: unknown) {
+    // Ignore storage access failures.
+  }
+
+  try {
+    return new URLSearchParams(window.location.search).get("terminalDebug") === "1";
+  } catch (_err: unknown) {
+    return false;
+  }
+}
+
+function terminalAppDebug(event: string, details: Record<string, unknown>): void {
+  if (!isTerminalDebugEnabled()) {
+    return;
+  }
+  console.info("[terminal-debug][app]", event, details);
+}
+
 const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
@@ -97,7 +138,17 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   activeTabIdRef.current = activeTabId;
   const sidebarOpenRef = useRef(sidebarOpen);
   sidebarOpenRef.current = sidebarOpen;
+  const pendingPaneSessionsRef = useRef<Map<string, string>>(new Map());
+  const closingPaneIdsRef = useRef<Set<string>>(new Set());
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
+    terminalAppDebug(event, {
+      activeTabId: activeTabIdRef.current,
+      focusedPaneId,
+      tabIds: tabsRef.current.map((tab) => tab.id),
+      ...details,
+    });
+  }, [focusedPaneId]);
 
   const persistLayoutNow = useCallback(() => {
     const layout: TerminalLayout = {
@@ -115,6 +166,44 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
     }).catch((err: unknown) => {
       console.warn("Failed to save terminal layout:", err instanceof Error ? err.message : err);
     });
+  }, []);
+
+  const destroyTerminalSessions = useCallback((sessionIds: string[]) => {
+    const uniqueIds = Array.from(new Set(sessionIds.filter((sessionId) => sessionId.length > 0)));
+    for (const sessionId of uniqueIds) {
+      void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+        keepalive: true,
+        signal: AbortSignal.timeout(5_000),
+      }).catch((err: unknown) => {
+        console.warn(
+          `Failed to destroy terminal session "${sessionId}" on explicit close:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+    }
+  }, []);
+
+  const getPendingSessionIds = useCallback((paneIds: string[]) => {
+    const seen = new Set<string>();
+    for (const paneId of paneIds) {
+      const sessionId = pendingPaneSessionsRef.current.get(paneId);
+      if (sessionId) {
+        seen.add(sessionId);
+      }
+    }
+    return Array.from(seen);
+  }, []);
+
+  const markPanesClosing = useCallback((paneIds: string[]) => {
+    for (const paneId of paneIds) {
+      closingPaneIdsRef.current.add(paneId);
+    }
+    setTimeout(() => {
+      for (const paneId of paneIds) {
+        closingPaneIdsRef.current.delete(paneId);
+      }
+    }, 0);
   }, []);
 
   const addTab = useCallback((cwd: string, label?: string, claude?: boolean) => {
@@ -226,6 +315,19 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   }, [sidebarOpen]);
 
   const closeTab = useCallback((tabId: string) => {
+    const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
+    if (closingTab) {
+      const paneIds = getAllPaneIds(closingTab.paneTree);
+      destroyTerminalSessions([
+        ...getSessionIds(closingTab.paneTree),
+        ...getPendingSessionIds(paneIds),
+      ]);
+      markPanesClosing(paneIds);
+    }
+    log("close-tab", {
+      tabId,
+      paneIds: tabsRef.current.find((tab) => tab.id === tabId)?.paneTree ? getAllPaneIds(tabsRef.current.find((tab) => tab.id === tabId)!.paneTree) : [],
+    });
     setTabs(prev => {
       const next = prev.filter(t => t.id !== tabId);
       setActiveTabId(curr => {
@@ -235,7 +337,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
       });
       return next;
     });
-  }, []);
+  }, [destroyTerminalSessions, getPendingSessionIds, log, markPanesClosing]);
 
   const splitPane = useCallback((paneId: string, dir: "horizontal" | "vertical") => {
     setTabs(prev => prev.map(t => {
@@ -245,6 +347,15 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   }, [activeTabId]);
 
   const closePane = useCallback((paneId: string) => {
+    const activeTabRecord = tabsRef.current.find((tab) => tab.id === activeTabId);
+    const closingSessionIds = new Set<string>();
+    const closingSessionId = activeTabRecord ? getPaneSessionId(activeTabRecord.paneTree, paneId) : null;
+    if (closingSessionId) closingSessionIds.add(closingSessionId);
+    const pendingSessionId = pendingPaneSessionsRef.current.get(paneId);
+    if (pendingSessionId) closingSessionIds.add(pendingSessionId);
+    destroyTerminalSessions(Array.from(closingSessionIds));
+    markPanesClosing([paneId]);
+    log("close-pane", { paneId });
     setTabs(prev => {
       const tab = prev.find(t => t.id === activeTabId);
       if (!tab) return prev;
@@ -258,7 +369,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
       setFocusedPaneId(getFirstPaneId(newTree));
       return prev.map(t => t.id === activeTabId ? { ...t, paneTree: newTree } : t);
     });
-  }, [activeTabId]);
+  }, [activeTabId, destroyTerminalSessions, log, markPanesClosing]);
 
   const renameTab = useCallback((tabId: string, label: string) => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label } : t));
@@ -276,6 +387,8 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   const getCwd = useCallback(() => sidebarSelectedPath ?? DEFAULT_CWD, [sidebarSelectedPath]);
 
   const handleSessionAttached = useCallback((paneId: string, sessionId: string) => {
+    log("session-attached", { paneId, sessionId });
+    pendingPaneSessionsRef.current.set(paneId, sessionId);
     setTabs((prev) => {
       const nextTabs = prev.map((tab) => {
         const nextTree = setPaneSessionId(tab.paneTree, paneId, sessionId);
@@ -284,11 +397,45 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
       tabsRef.current = nextTabs;
       return nextTabs;
     });
-  }, []);
+  }, [log]);
 
   const shouldCachePane = useCallback((paneId: string) => {
-    return tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
+    const keep = !closingPaneIdsRef.current.has(paneId) && tabsRef.current.some((tab) => hasPaneId(tab.paneTree, paneId));
+    log("should-cache-pane", {
+      paneId,
+      keep,
+      tabs: tabsRef.current.map((tab) => ({
+        tabId: tab.id,
+        paneIds: getAllPaneIds(tab.paneTree),
+      })),
+    });
+    return keep;
+  }, [log]);
+
+  const shouldDestroyPane = useCallback((paneId: string) => {
+    return closingPaneIdsRef.current.has(paneId);
   }, []);
+
+  useEffect(() => {
+    const livePaneIds = new Set<string>();
+    for (const tab of tabs) {
+      for (const paneId of getAllPaneIds(tab.paneTree)) {
+        livePaneIds.add(paneId);
+      }
+    }
+    for (const paneId of Array.from(pendingPaneSessionsRef.current.keys())) {
+      if (!livePaneIds.has(paneId)) {
+        pendingPaneSessionsRef.current.delete(paneId);
+      }
+    }
+
+    log("tabs-changed", {
+      tabs: tabs.map((tab) => ({
+        tabId: tab.id,
+        paneIds: getAllPaneIds(tab.paneTree),
+      })),
+    });
+  }, [log, tabs]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
@@ -331,6 +478,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
               onFocusPane={setFocusedPaneId}
               onSessionAttached={handleSessionAttached}
               shouldCachePane={shouldCachePane}
+              shouldDestroyPane={shouldDestroyPane}
             />
           ) : !initialized ? (
             <div className="flex-1" style={{ background: "var(--background)" }} />
