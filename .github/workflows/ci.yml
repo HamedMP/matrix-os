@@ -52,7 +52,17 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
           else
-            ./scripts/review/check-patterns.sh
+            # On push: only scan files changed in this push range.
+            # github.event.before is the pre-push tip; on force-push or first
+            # push it may be 000... — fall back to HEAD^ in that case.
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              BEFORE="HEAD^"
+            fi
+            if ! git rev-parse --verify "$BEFORE" >/dev/null 2>&1; then
+              BEFORE="HEAD^"
+            fi
+            ./scripts/review/check-patterns.sh --diff "$BEFORE"
           fi
 
   # ── Gate 2: Tests ──
