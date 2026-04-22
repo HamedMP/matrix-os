@@ -27,7 +27,7 @@ if (!tsxLoader) {
 
 const cliEntry = resolve(pkgRoot, 'src', 'cli', 'index.ts');
 if (!existsSync(cliEntry)) {
-  console.error(`matrix CLI: entry not found at ${cliEntry}. Reinstall with \`npm i -g @matrix-os/cli\`.`);
+  console.error('matrix CLI: entry not found. Reinstall with `npm i -g @matrix-os/cli`.');
   process.exit(1);
 }
 
