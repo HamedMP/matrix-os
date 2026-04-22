@@ -1,30 +1,47 @@
 name: Release
 
-# Triggered by pushing a semver tag. Runs tests, publishes @finnaai/matrix
-# to npm, builds + signs + notarises the macOS installer (when enabled via
-# ENABLE_MACOS_PKG), uploads artefacts to the GitHub release, and refreshes
-# the Homebrew formula in FinnaAI/homebrew-tap.
+# Manually dispatched. Runs tests, publishes @finnaai/matrix to npm, builds +
+# signs + notarises the macOS installer (when enabled via ENABLE_MACOS_PKG),
+# creates a GitHub release tagged cli-v<version>, and refreshes the Homebrew
+# formula in FinnaAI/homebrew-tap.
 #
-# Security note: workflow inputs we consume are $GITHUB_REF_NAME (constrained
-# by the `v*.*.*` tag filter above — so it's always of form `vX.Y.Z[...]`)
-# and secrets. No issue/PR bodies or commit messages are interpolated into
-# run: steps, avoiding the standard script-injection vectors.
+# Security note: the only user-controlled input is `version`, validated against
+# a strict semver regex below before it's interpolated into run: steps.
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (semver, no leading v — e.g. 0.2.4)"
+        required: true
+        type: string
 
 permissions:
   contents: write
   id-token: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-cli
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check semver format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version '$VERSION' is not valid semver (expected X.Y.Z or X.Y.Z-prerelease)" >&2
+            exit 1
+          fi
+
   test:
     name: Test
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -75,10 +92,10 @@ jobs:
       - name: Resolve version
         id: version
         env:
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
@@ -165,13 +182,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Align package version with tag
+      - name: Align package version with input
         working-directory: packages/sync-client
         env:
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Publish
@@ -199,8 +215,9 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: cli-v${{ inputs.version }}
+          name: cli-v${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: |
             dist/macos/*.pkg
@@ -223,10 +240,9 @@ jobs:
       - name: Compute formula update
         id: formula
         env:
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
           TARBALL="https://registry.npmjs.org/@finnaai/matrix/-/matrix-${VERSION}.tgz"
 
           # Wait up to 5 min for npm to publish — publish-npm just finished.
