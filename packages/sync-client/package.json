@@ -1,16 +1,51 @@
 {
-  "name": "@matrixos/sync-client",
-  "version": "0.0.1",
-  "private": true,
+  "name": "@matrix-os/cli",
+  "version": "0.2.0",
+  "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://matrix-os.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HamedMP/matrix-os.git",
+    "directory": "packages/sync-client"
+  },
+  "bugs": {
+    "url": "https://github.com/HamedMP/matrix-os/issues"
+  },
+  "keywords": [
+    "matrix-os",
+    "sync",
+    "cli",
+    "file-sync",
+    "matrixos"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "matrix": "./bin/matrix.mjs",
+    "matrixos": "./bin/matrix.mjs"
+  },
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "dev": "tsx watch src/daemon/index.ts",
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "node ./scripts/check-publish.mjs"
   },
   "dependencies": {
     "chokidar": "^4.0.0",
@@ -19,6 +54,7 @@
     "picomatch": "^4.0.2",
     "pino": "^9.6.0",
     "pino-roll": "^2.1.0",
+    "tsx": "^4.21.0",
     "ws": "^8.19.0",
     "zod": "^4.0"
   },
@@ -27,7 +63,6 @@
     "@types/picomatch": "^4.0.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }
