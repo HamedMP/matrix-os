@@ -1,13 +1,11 @@
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile, unlink, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, unlink, stat } from "node:fs/promises";
 import pino from "pino";
 import {
   loadConfig,
   saveConfig,
   getConfigDir,
-  normalizeGatewayFolder,
-  resolveSyncPathWithinHome,
   type SyncConfig,
 } from "../lib/config.js";
 import { clearAuth, isExpired, loadAuth } from "../auth/token-store.js";
@@ -17,6 +15,7 @@ import { loadSyncState, saveSyncState } from "./manifest-cache.js";
 import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
+import { createIpcHandler } from "./ipc-handler.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
 import {
   requestPresignedUrls,
@@ -586,85 +585,16 @@ export async function startDaemon(): Promise<void> {
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
-  const ipcServer = new IpcServer({
-    socketPath,
-    handler: async (command, args) => {
-      switch (command) {
-        case "status":
-          return {
-            syncing: !config.pauseSync,
-            manifestVersion: syncState.manifestVersion,
-            lastSyncAt: syncState.lastSyncAt,
-            fileCount: Object.keys(syncState.files).length,
-            syncPath: config.syncPath,
-            gatewayFolder: config.gatewayFolder ?? "",
-            gatewayUrl: config.gatewayUrl,
-            platformUrl: config.platformUrl,
-            peerId: config.peerId,
-          };
-        case "pause":
-          await persistPauseState(config, true);
-          return { paused: true };
-        case "resume":
-          await persistPauseState(config, false);
-          return { paused: false };
-        case "getConfig":
-          // Exposes the full persisted config (without auth tokens) so the
-          // menu bar app can render a Settings view. Token lives in auth.json
-          // and is fetched separately via /me on the platform.
-          return {
-            syncPath: config.syncPath,
-            gatewayFolder: config.gatewayFolder ?? "",
-            gatewayUrl: config.gatewayUrl,
-            platformUrl: config.platformUrl,
-            peerId: config.peerId,
-            pauseSync: config.pauseSync,
-          };
-        case "setSyncPath": {
-          // Writes the new path to config.json and asks the caller to
-          // restart the daemon. Changing syncPath live would require tearing
-          // down the FileWatcher + restarting the initial-pull, which is
-          // exactly what a daemon restart does -- so we stop short of that
-          // here and let the client call `restart` next.
-          const raw = typeof args.syncPath === "string" ? args.syncPath : "";
-          const newPath = resolveSyncPathWithinHome(raw);
-          await mkdir(newPath, { recursive: true });
-          const updated = { ...config, syncPath: newPath };
-          await saveConfig(updated);
-          return { syncPath: newPath, restartRequired: true };
-        }
-        case "setGatewayFolder": {
-          // Same semantics as setSyncPath -- persist, caller restarts.
-          const folder = typeof args.gatewayFolder === "string" ? args.gatewayFolder : "";
-          const normalizedFolder = normalizeGatewayFolder(folder);
-          const updated = { ...config, gatewayFolder: normalizedFolder };
-          await saveConfig(updated);
-          return { gatewayFolder: normalizedFolder, restartRequired: true };
-        }
-        case "restart":
-          // Exit with a distinct code; launchd's KeepAlive will restart us.
-          // Schedule after the IPC response is flushed so the client sees
-          // "restarting" before the socket closes.
-          setTimeout(() => {
-            logger.info("Restart requested via IPC");
-            process.exit(3);
-          }, 50);
-          return { restarting: true };
-        case "logout":
-          // Wipe the auth token and exit. Next launch will fail the
-          // loadAuth() guard and the daemon stays down until the user runs
-          // `matrix login` again.
-          await clearAuth();
-          setTimeout(() => {
-            logger.info("Logout requested via IPC");
-            process.exit(0);
-          }, 50);
-          return { loggedOut: true };
-        default:
-          throw new Error(`Unknown command: ${command}`);
-      }
-    },
+  const ipcHandler = createIpcHandler({
+    config,
+    syncState,
+    logger: { info: (msg) => logger.info(msg) },
+    saveConfig: (next) => saveConfig(next),
+    persistPauseState,
+    clearAuth,
+    exit: (code) => process.exit(code),
   });
+  const ipcServer = new IpcServer({ socketPath, handler: ipcHandler });
 
   const shutdown = async () => {
     logger.info("Shutting down daemon");
