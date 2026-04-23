@@ -34,7 +34,8 @@ function loadRegistryData(homePath: string): RegistryData {
   if (!existsSync(path)) return { skills: [] };
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.warn("[skill-registry] failed to read registry:", err);
     return { skills: [] };
   }
 }
@@ -56,6 +57,15 @@ function bumpPatch(version: string): string {
   return `${parts[0]}.${parts[1]}.${patch + 1}`;
 }
 
+function frontmatterString(
+  frontmatter: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
+  const value = frontmatter[key];
+  return typeof value === "string" ? value : fallback;
+}
+
 export function createSkillRegistry(homePath: string): SkillRegistry {
   let data = loadRegistryData(homePath);
 
@@ -74,11 +84,11 @@ export function createSkillRegistry(homePath: string): SkillRegistry {
       const existing = data.skills.find((s) => s.name === skillName);
 
       const entry: SkillRegistryEntry = {
-        name: frontmatter.name ?? skillName,
-        description: frontmatter.description ?? "",
+        name: frontmatterString(frontmatter, "name", skillName),
+        description: frontmatterString(frontmatter, "description", ""),
         version: existing ? bumpPatch(existing.version) : "1.0.0",
-        author: frontmatter.author ?? "local",
-        category: frontmatter.category ?? "utility",
+        author: frontmatterString(frontmatter, "author", "local"),
+        category: frontmatterString(frontmatter, "category", "utility"),
         contentHash,
         publishedAt: new Date().toISOString(),
         downloads: existing?.downloads ?? 0,

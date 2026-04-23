@@ -14,7 +14,7 @@ export interface TelegramBot {
   editMessageText(text: string, options?: Record<string, unknown>): Promise<unknown>;
   sendChatAction(chatId: string | number, action: string): Promise<unknown>;
   setMyCommands?(commands: Array<{ command: string; description: string }>): Promise<unknown>;
-  getFile?(fileId: string): Promise<{ file_path: string }>;
+  getFile?(fileId: string): Promise<{ file_path?: string }>;
   getFileStream?(fileId: string): import("node:stream").Readable;
 }
 
@@ -67,10 +67,11 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
         bot = botFactory(config.token, { polling: true });
       } else {
         const TelegramBotApi = (await import("node-telegram-bot-api")).default;
-        bot = new TelegramBotApi(config.token, { polling: true });
+        bot = new TelegramBotApi(config.token, { polling: true }) as TelegramBot;
       }
 
-      bot.on("message", (msg: TelegramMessage) => {
+      const activeBot = bot;
+      activeBot.on("message", (msg: TelegramMessage) => {
         if (!msg.from) return;
 
         const senderId = String(msg.from.id);
@@ -127,7 +128,6 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
               source: "voice",
               audioPath: `/files/data/audio/${audioFileName}`,
             };
-            if (result.error) metadata.error = "Transcription unavailable";
 
             const channelMessage: ChannelMessage = {
               source: "telegram",
@@ -139,7 +139,8 @@ export function createTelegramAdapter(botFactory?: TelegramBotFactory): Telegram
             };
 
             adapter.onMessage(channelMessage);
-          }).catch(() => {
+          }).catch((err) => {
+            console.warn("[telegram] Voice note handling failed:", err);
             const channelMessage: ChannelMessage = {
               source: "telegram",
               senderId,

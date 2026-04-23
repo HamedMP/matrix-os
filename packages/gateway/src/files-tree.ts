@@ -1,4 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { execFile } from "node:child_process";
 import { join, relative, extname } from "node:path";
 import { promisify } from "node:util";
@@ -73,7 +74,8 @@ async function getGitStatusMap(dirPath: string): Promise<{ map: Map<string, stri
     }
     cacheMap.set(gitRoot, { map, timestamp: Date.now(), gitRoot });
     return { map, gitRoot };
-  } catch {
+  } catch (err) {
+    console.warn("[files-tree] failed to read git status:", err);
     return null;
   }
 }
@@ -99,10 +101,11 @@ export async function listDirectory(
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return null;
 
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent<string>[];
   try {
     entries = await readdir(resolved, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.warn("[files-tree] failed to read directory:", err);
     return null;
   }
 
@@ -134,8 +137,8 @@ export async function listDirectory(
         ]);
         modified = new Date(dirStat.mtimeMs).toISOString();
         children = childEntries.filter((c) => !c.startsWith(".")).length;
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn("[files-tree] failed to read child directory metadata:", err);
       }
 
       return {
@@ -166,8 +169,8 @@ export async function listDirectory(
         size = fileStat.size;
         modified = new Date(fileStat.mtimeMs).toISOString();
         created = new Date(fileStat.birthtimeMs).toISOString();
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn("[files-tree] failed to read file metadata:", err);
       }
 
       return {

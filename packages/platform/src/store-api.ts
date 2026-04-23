@@ -120,7 +120,10 @@ export function createStoreApi(db: PlatformDB): Hono {
 
   api.post('/apps/:id/install', async (c) => {
     const appId = c.req.param('id');
-    const body = await c.req.json<{ userId?: string }>().catch(() => ({}));
+    const body = await c.req.json<{ userId?: string }>().catch((err): { userId?: string } => {
+      console.warn('[store-api] invalid install body:', err);
+      return {};
+    });
 
     if (body.userId) {
       recordInstall(db, appId, body.userId);

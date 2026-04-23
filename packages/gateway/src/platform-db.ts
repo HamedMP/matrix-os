@@ -1,12 +1,12 @@
-import { Kysely, PostgresDialect, sql } from "kysely";
+import { Kysely, PostgresDialect, sql, type Generated, type Selectable } from "kysely";
 import pg from "pg";
 
 // ---------------------------------------------------------------------------
 // Kysely table types
 // ---------------------------------------------------------------------------
 
-export interface UsersTable {
-  id: string;
+interface UsersTableSchema {
+  id: Generated<string>;
   clerk_id: string;
   handle: string;
   display_name: string;
@@ -14,64 +14,74 @@ export interface UsersTable {
   container_id: string;
   container_version: string | null;
   plan: string;
-  status: string;
+  status: Generated<string>;
   pipedream_external_id: string | null;
-  created_at: Date;
-  updated_at: Date;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
+
+export type UsersTable = Selectable<UsersTableSchema>;
 
 export type ServiceStatus = "active" | "revoked" | "expired";
 
-export interface ConnectedServicesTable {
-  id: string;
+interface ConnectedServicesTableSchema {
+  id: Generated<string>;
   user_id: string;
   service: string;
   pipedream_account_id: string;
   account_label: string;
   account_email: string | null;
   scopes: string[];
-  status: ServiceStatus;
-  connected_at: Date;
-  last_used_at: Date | null;
+  status: Generated<ServiceStatus>;
+  connected_at: Generated<Date>;
+  last_used_at: Generated<Date | null>;
 }
 
-export interface UserAppsTable {
-  id: string;
+export type ConnectedServicesTable = Selectable<ConnectedServicesTableSchema>;
+
+interface UserAppsTableSchema {
+  id: Generated<string>;
   user_id: string;
   name: string;
   slug: string;
   description: string | null;
   services_used: string[];
-  created_at: Date;
-  updated_at: Date;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
-export interface EventSubscriptionsTable {
-  id: string;
+export type UserAppsTable = Selectable<UserAppsTableSchema>;
+
+interface EventSubscriptionsTableSchema {
+  id: Generated<string>;
   user_id: string;
   service: string;
   event_type: string;
-  status: string;
-  created_at: Date;
+  status: Generated<string>;
+  created_at: Generated<Date>;
 }
 
-export interface BillingTable {
-  id: string;
+export type EventSubscriptionsTable = Selectable<EventSubscriptionsTableSchema>;
+
+interface BillingTableSchema {
+  id: Generated<string>;
   user_id: string;
   stripe_customer_id: string | null;
-  plan: string;
-  connected_services_count: number;
-  period_start: Date | null;
-  period_end: Date | null;
-  status: string;
+  plan: Generated<string>;
+  connected_services_count: Generated<number>;
+  period_start: Generated<Date | null>;
+  period_end: Generated<Date | null>;
+  status: Generated<string>;
 }
 
+export type BillingTable = Selectable<BillingTableSchema>;
+
 export interface PlatformDatabase {
-  users: UsersTable;
-  connected_services: ConnectedServicesTable;
-  user_apps: UserAppsTable;
-  event_subscriptions: EventSubscriptionsTable;
-  billing: BillingTable;
+  users: UsersTableSchema;
+  connected_services: ConnectedServicesTableSchema;
+  user_apps: UserAppsTableSchema;
+  event_subscriptions: EventSubscriptionsTableSchema;
+  billing: BillingTableSchema;
 }
 
 // ---------------------------------------------------------------------------

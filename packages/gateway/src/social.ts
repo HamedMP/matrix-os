@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppDb } from "./app-db.js";
-import type { QueryEngine } from "./app-db-query.js";
+import type { FilterValue, QueryEngine } from "./app-db-query.js";
 
 // --- Types ---
 
@@ -106,7 +106,7 @@ export async function getPost(
 ): Promise<SocialPost | null> {
   try {
     const row = await engine.findOne(SCHEMA, "posts", id);
-    return row as SocialPost | null;
+    return row as unknown as SocialPost | null;
   } catch (e) {
     if ((e as any).code === "22P02") return null; // invalid UUID syntax
     throw e;
@@ -153,7 +153,7 @@ export async function listPosts(
   engine: QueryEngine,
   opts?: { authorId?: string; type?: string; limit?: number; offset?: number },
 ): Promise<SocialPost[]> {
-  const filter: Record<string, unknown> = { parent_id: null };
+  const filter: Record<string, FilterValue> = { parent_id: null };
   if (opts?.authorId) filter.author_id = opts.authorId;
   if (opts?.type) filter.type = opts.type;
 
@@ -163,7 +163,7 @@ export async function listPosts(
     limit: opts?.limit ?? 20,
     offset: opts?.offset ?? 0,
   });
-  return rows as SocialPost[];
+  return rows as unknown as SocialPost[];
 }
 
 // --- Feed ---
@@ -207,7 +207,7 @@ export async function listFeed(
   q += ` ORDER BY created_at DESC, id DESC LIMIT $${params.length}`;
 
   const result = await db.raw(q, params);
-  const rows = result.rows as SocialPost[];
+  const rows = result.rows as unknown as SocialPost[];
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
 
@@ -227,7 +227,7 @@ export async function listTrendingPosts(
     orderBy: { likes_count: "desc" },
     limit,
   });
-  return rows as SocialPost[];
+  return rows as unknown as SocialPost[];
 }
 
 // --- Likes ---
@@ -275,7 +275,7 @@ export async function unlikePost(
   });
   if (existing.length === 0) return false;
 
-  const likeId = (existing[0] as SocialLike).id;
+  const likeId = (existing[0] as unknown as SocialLike).id;
   await db.raw("BEGIN");
   try {
     await engine.delete(SCHEMA, "likes", likeId);
@@ -349,7 +349,7 @@ export async function listComments(
     filter: { parent_id: postId },
     orderBy: { created_at: "asc" },
   });
-  return rows as SocialPost[];
+  return rows as unknown as SocialPost[];
 }
 
 // --- Follows ---
@@ -388,7 +388,7 @@ export async function unfollowUser(
   });
   if (existing.length === 0) return false;
 
-  const followId = (existing[0] as SocialFollow).id;
+  const followId = (existing[0] as unknown as SocialFollow).id;
   await engine.delete(SCHEMA, "follows", followId);
   return true;
 }
@@ -402,7 +402,7 @@ export async function getFollowers(
     orderBy: { created_at: "desc" },
     limit: 1000,
   });
-  return rows as SocialFollow[];
+  return rows as unknown as SocialFollow[];
 }
 
 export async function getFollowing(
@@ -414,7 +414,7 @@ export async function getFollowing(
     orderBy: { created_at: "desc" },
     limit: 1000,
   });
-  return rows as SocialFollow[];
+  return rows as unknown as SocialFollow[];
 }
 
 export async function getFollowCounts(

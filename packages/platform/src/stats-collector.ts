@@ -15,8 +15,24 @@ export interface ContainerStats {
 
 interface RunningContainer {
   handle: string;
-  containerId: string;
+  containerId: string | null;
   status: string;
+}
+
+interface DockerStatsSnapshot {
+  cpu_stats: {
+    cpu_usage: { total_usage: number };
+    system_cpu_usage: number;
+    online_cpus?: number;
+  };
+  precpu_stats: {
+    cpu_usage: { total_usage: number };
+    system_cpu_usage: number;
+  };
+  memory_stats?: {
+    usage?: number;
+    limit?: number;
+  };
 }
 
 export interface StatsCollectorConfig {
@@ -31,7 +47,7 @@ export interface StatsCollector {
   stop(): void;
 }
 
-function parseCpuPercent(stats: any): number {
+function parseCpuPercent(stats: DockerStatsSnapshot): number {
   const cpuDelta =
     stats.cpu_stats.cpu_usage.total_usage -
     stats.precpu_stats.cpu_usage.total_usage;
@@ -58,7 +74,7 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
 
       try {
         const container = docker.getContainer(row.containerId);
-        const raw = await container.stats({ stream: false } as any);
+        const raw = await container.stats({ stream: false } as any) as unknown as DockerStatsSnapshot;
 
         const cpuPercent = parseCpuPercent(raw);
         const memUsage = raw.memory_stats?.usage ?? 0;
@@ -77,8 +93,8 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
         containerMemoryLimit.set({ handle: row.handle }, memLimit);
 
         results.push(entry);
-      } catch {
-        // Container disappeared or stats unavailable -- skip
+      } catch (err) {
+        console.warn('[stats-collector] container stats unavailable:', err);
       }
     }
 
@@ -91,7 +107,9 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
     start() {
       if (timer) return;
       timer = setInterval(() => {
-        collectOnce().catch(() => {});
+        collectOnce().catch((err) => {
+          console.warn('[stats-collector] collection failed:', err);
+        });
       }, intervalMs);
     },
 

@@ -219,17 +219,21 @@ export function listApps(db: PlatformDB, options: ListAppsOptions): ListAppsResu
     .get();
   const total = countResult?.count ?? 0;
 
-  let query = db.select().from(appsRegistry).where(where);
+  const orderBy =
+    sort === 'popular'
+      ? desc(appsRegistry.installs)
+      : sort === 'rated'
+        ? desc(appsRegistry.rating)
+        : desc(appsRegistry.createdAt);
 
-  if (sort === 'popular') {
-    query = query.orderBy(desc(appsRegistry.installs));
-  } else if (sort === 'rated') {
-    query = query.orderBy(desc(appsRegistry.rating));
-  } else {
-    query = query.orderBy(desc(appsRegistry.createdAt));
-  }
-
-  const apps = query.limit(limit).offset(offset).all();
+  const apps = db
+    .select()
+    .from(appsRegistry)
+    .where(where)
+    .orderBy(orderBy)
+    .limit(limit)
+    .offset(offset)
+    .all();
 
   return {
     apps,

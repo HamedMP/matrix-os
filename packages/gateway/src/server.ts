@@ -71,7 +71,7 @@ import {
 } from "./app-runtime/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
@@ -161,6 +161,28 @@ function kernelEventToServerMessage(event: KernelEvent, requestId?: string): Ser
       return { type: "kernel:tool_end", input: event.input, requestId };
     case "result":
       return { type: "kernel:result", data: event.data, requestId };
+  }
+}
+
+function visibleConversationMessages(messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) {
+  return messages
+    .filter((m): m is { role: "user" | "assistant"; content: string } =>
+      m.role === "user" || m.role === "assistant",
+    )
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
+function fileStatus(result: { ok: boolean; status?: number }): 200 | 400 | 403 | 404 | 409 | 413 | 500 {
+  if (result.ok) return 200;
+  switch (result.status) {
+    case 403:
+    case 404:
+    case 409:
+    case 413:
+    case 500:
+      return result.status;
+    default:
+      return 400;
   }
 }
 
@@ -477,7 +499,7 @@ export async function createGateway(config: GatewayConfig) {
     try {
       const conv = conversations.get(sid);
       if (conv && conv.messages.length > 0) {
-        const summary = summarizeConversation({ id: conv.id, messages: conv.messages });
+        const summary = summarizeConversation({ id: conv.id, messages: visibleConversationMessages(conv.messages) });
         if (summary) saveSummary(homePath, sid, summary);
 
         const candidates = extractMemoriesLocal(
@@ -584,12 +606,13 @@ export async function createGateway(config: GatewayConfig) {
             maxChars: 4096,
           });
 
-          stream.startTyping();
+              stream.startTyping();
 
-          const text = msg.text.startsWith("/") ? msg.text.slice(1) : msg.text;
+              const text = msg.text.startsWith("/") ? msg.text.slice(1) : msg.text;
+              let activeToolName: string | null = null;
 
-          dispatcher
-            .dispatch(text, existingSessionId, (event) => {
+              dispatcher
+                .dispatch(text, existingSessionId, (event) => {
               if (event.type === "init") {
                 channelSessions.set(sessionKey, event.sessionId, {
                   channel: msg.source, senderId: msg.senderId,
@@ -601,12 +624,13 @@ export async function createGateway(config: GatewayConfig) {
                 stream.append(event.text);
                 const sid = channelSessions.get(sessionKey);
                 if (sid) conversations.appendAssistantText(sid, event.text);
-              } else if (event.type === "tool_start") {
-                const sid = channelSessions.get(sessionKey);
-                if (sid) conversations.addToolStart(sid, event.tool);
-              } else if (event.type === "tool_end") {
-                const sid = channelSessions.get(sessionKey);
-                if (sid) conversations.addToolEnd(sid, event.tool, event.input);
+                  } else if (event.type === "tool_start") {
+                    activeToolName = event.tool;
+                    const sid = channelSessions.get(sessionKey);
+                    if (sid) conversations.addToolStart(sid, event.tool);
+                  } else if (event.type === "tool_end") {
+                    const sid = channelSessions.get(sessionKey);
+                    if (sid) conversations.addToolEnd(sid, activeToolName ?? "unknown", event.input);
               } else if (event.type === "result") {
                 const sid = channelSessions.get(sessionKey);
                 if (sid) finalizeWithSummary(sid);
@@ -633,6 +657,7 @@ export async function createGateway(config: GatewayConfig) {
 
       // Default path for non-telegram channels (or telegram without bot)
       let responseText = "";
+      let activeToolName: string | null = null;
 
       dispatcher
         .dispatch(msg.text, existingSessionId, (event) => {
@@ -648,11 +673,12 @@ export async function createGateway(config: GatewayConfig) {
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.appendAssistantText(sid, event.text);
           } else if (event.type === "tool_start") {
+            activeToolName = event.tool;
             const sid = channelSessions.get(sessionKey);
             if (sid) conversations.addToolStart(sid, event.tool);
           } else if (event.type === "tool_end") {
             const sid = channelSessions.get(sessionKey);
-            if (sid) conversations.addToolEnd(sid, event.tool, event.input);
+            if (sid) conversations.addToolEnd(sid, activeToolName ?? "unknown", event.input);
           } else if (event.type === "result") {
             const sid = channelSessions.get(sessionKey);
             if (sid) finalizeWithSummary(sid);
@@ -1410,42 +1436,42 @@ export async function createGateway(config: GatewayConfig) {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileMkdir(homePath, body.path);
-    return c.json(result, result.ok ? 200 : 400);
+    return c.json(result, fileStatus(result));
   });
 
   app.post("/api/files/touch", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string; content?: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, fileStatus(result));
   });
 
   app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, fileStatus(result));
   });
 
   app.post("/api/files/rename", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, fileStatus(result));
   });
 
   app.post("/api/files/copy", fileBodyLimit, async (c) => {
     const body = await parseJson<{ from: string; to: string }>(c);
     if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
     const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, fileStatus(result));
   });
 
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
     const result = await fileDelete(homePath, body.path);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, fileStatus(result));
   });
 
   app.get("/api/files/trash", async (c) => {
@@ -1457,7 +1483,7 @@ export async function createGateway(config: GatewayConfig) {
     const body = await parseJson<{ trashPath: string }>(c);
     if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
     const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, result.ok ? 200 : (result.status ?? 400));
+    return c.json(result, fileStatus(result));
   });
 
   app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
@@ -1691,7 +1717,7 @@ export async function createGateway(config: GatewayConfig) {
       switch (action) {
         case "find":
           return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter as Record<string, unknown> | undefined,
+            filter: body.filter as Record<string, FilterValue> | undefined,
             orderBy: body.orderBy as Record<string, "asc" | "desc"> | undefined,
             limit: body.limit as number | undefined,
             offset: body.offset as number | undefined,
@@ -1714,7 +1740,7 @@ export async function createGateway(config: GatewayConfig) {
           return c.json({ ok: true });
         }
         case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, unknown> | undefined) });
+          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter as Record<string, FilterValue> | undefined) });
         case "schema":
           return c.json(await appRegistry.getSchema(appSlug));
         case "listApps":
