@@ -20,8 +20,24 @@ RUN npm install -g \
 # QMD semantic search (BM25 + optional vector search)
 RUN npm install -g @tobilu/qmd
 
+# GitHub CLI (release binary; alpine's github-cli package trails a few versions).
+# GH_SHA256 must match the upstream gh_${GH_VERSION}_checksums.txt entry for
+# gh_${GH_VERSION}_linux_amd64.tar.gz -- bump both values together.
+ARG GH_VERSION=2.86.0
+ARG GH_SHA256=f3b08bd6a28420cc2229b0a1a687fa25f2b838d3f04b297414c1041ca68103c7
+RUN set -eux; \
+    wget -qO /tmp/gh.tgz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"; \
+    echo "${GH_SHA256}  /tmp/gh.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/gh.tgz -C /tmp; \
+    mv "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_amd64"
+
 # Non-root user (Agent SDK refuses bypassPermissions as root)
 RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos -s /bin/zsh
+
+# Give matrixos write access to global npm so claude/codex/opencode
+# can auto-update themselves from inside the container.
+RUN chown -R matrixos:matrixos /usr/local/lib/node_modules /usr/local/bin
 
 # Powerlevel10k + pinned zsh plugins
 RUN mkdir -p /home/matrixos/.zsh/themes /home/matrixos/.zsh/plugins && \
