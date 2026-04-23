@@ -448,8 +448,12 @@ export function TerminalPane({
           if (reconnectLinesWrittenRef.current > 0) {
             // Erase the "[Reconnecting in Ns...]" lines we appended while
             // disconnected so the scrollback stays clean after recovery.
+            // Each banner is `\r\n[text]\r\n` -- the leading \r\n moves onto
+            // a fresh line, so we only need to move up (lines - 1) to land
+            // on the first banner row without clobbering the content row
+            // that was there before the disconnect.
             const lines = reconnectLinesWrittenRef.current;
-            term.write(`\x1b[${lines}A\r\x1b[0J`);
+            term.write(`\x1b[${lines - 1}A\r\x1b[0J`);
             reconnectLinesWrittenRef.current = 0;
           }
           log("ws-open", { attachOnOpen });
