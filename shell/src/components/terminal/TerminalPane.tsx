@@ -201,6 +201,7 @@ export function TerminalPane({
   const lastSeqRef = useRef<number>(0);
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectLinesWrittenRef = useRef<number>(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
@@ -444,6 +445,13 @@ export function TerminalPane({
         ws.onopen = () => {
           reconnectAttemptRef.current = 0;
           clearReconnectTimer();
+          if (reconnectLinesWrittenRef.current > 0) {
+            // Erase the "[Reconnecting in Ns...]" lines we appended while
+            // disconnected so the scrollback stays clean after recovery.
+            const lines = reconnectLinesWrittenRef.current;
+            term.write(`\x1b[${lines}A\r\x1b[0J`);
+            reconnectLinesWrittenRef.current = 0;
+          }
           log("ws-open", { attachOnOpen });
 
           // Start heartbeat
@@ -489,6 +497,7 @@ export function TerminalPane({
             reconnectAttemptRef.current = attempt + 1;
             log("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             term.write(`\r\n\x1b[33m[Reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
+            reconnectLinesWrittenRef.current += 2;
             reconnectTimerRef.current = setTimeout(() => {
               reconnectTimerRef.current = null;
               if (!disposed && !isClosingRef.current) {
@@ -498,6 +507,9 @@ export function TerminalPane({
             }, delay);
           } else {
             term.write("\r\n\x1b[90m[Disconnected]\x1b[0m\r\n");
+            // Give up cleaning the "[Reconnecting...]" banners - leave them
+            // as context for why we disconnected.
+            reconnectLinesWrittenRef.current = 0;
           }
         };
 

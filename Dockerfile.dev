@@ -20,8 +20,19 @@ RUN npm install -g \
 # QMD semantic search (BM25 + optional vector search)
 RUN npm install -g @tobilu/qmd
 
+# GitHub CLI (release binary; alpine's github-cli package trails a few versions)
+ARG GH_VERSION=2.86.0
+RUN wget -qO- "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar -xz -C /tmp && \
+    mv "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh && \
+    rm -rf "/tmp/gh_${GH_VERSION}_linux_amd64"
+
 # Non-root user (Agent SDK refuses bypassPermissions as root)
 RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos -s /bin/zsh
+
+# Give matrixos write access to global npm so claude/codex/opencode
+# can auto-update themselves from inside the container.
+RUN chown -R matrixos:matrixos /usr/local/lib/node_modules /usr/local/bin
 
 # Powerlevel10k + pinned zsh plugins
 RUN mkdir -p /home/matrixos/.zsh/themes /home/matrixos/.zsh/plugins && \

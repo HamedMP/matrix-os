@@ -53,10 +53,21 @@ RUN npm install -g \
     @openai/codex@0.118.0 \
     opencode-ai@1.3.13
 
+# GitHub CLI (release binary; alpine's github-cli package trails a few versions)
+ARG GH_VERSION=2.86.0
+RUN wget -qO- "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar -xz -C /tmp && \
+    mv "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh && \
+    rm -rf "/tmp/gh_${GH_VERSION}_linux_amd64"
+
 # Non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
 RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
     su-exec matrixos git config --global user.name "Matrix OS" && \
     su-exec matrixos git config --global user.email "os@matrix-os.com"
+
+# Give matrixos write access to global npm so claude/codex/opencode
+# can auto-update themselves from inside the container.
+RUN chown -R matrixos:matrixos /usr/local/lib/node_modules /usr/local/bin
 
 WORKDIR /app
 
