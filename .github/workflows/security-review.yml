@@ -32,30 +32,73 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           use_sticky_comment: true
           prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            Security-focused review for Matrix OS. Read CLAUDE.md first.
 
-            Perform a security-focused review of this PR. Check for:
+            ## Scope
 
-            ## OWASP Top 10
-            - SQL Injection (we use Drizzle ORM - check for raw queries)
-            - Cross-Site Scripting (XSS) in shell components
-            - Broken Authentication (auth middleware, MATRIX_AUTH_TOKEN)
-            - Sensitive Data Exposure (API keys, tokens in logs)
-            - Broken Access Control (file path traversal, IPC tool access)
-            - Server-Side Request Forgery (SSRF) in gateway proxy/fetch
-            - Security Misconfiguration (permissive CORS, missing headers)
+            Only review changed files. Focus exclusively on security — not code style,
+            performance, or conventions (the code review workflow handles those).
 
-            ## Project-Specific
-            - Agent SDK tool restrictions (bypassPermissions, allowedTools)
-            - File system access outside home directory
-            - Channel adapter input sanitization (Telegram, Discord, etc.)
-            - WebSocket message validation
-            - GitHub Actions workflow injection
+            ## Pass 1: Trust Boundary Audit
 
-            Rate findings as CRITICAL, HIGH, MEDIUM, or LOW.
-            Only report real issues, not theoretical concerns.
-            Use inline comments on the specific lines.
+            For every changed file, identify ALL trust boundaries — points where
+            untrusted data enters the system. Then verify each one:
+
+            **HTTP request data** (headers, params, body, query):
+            - Validated with Zod schema before any use?
+            - Path params checked against safe regex (SAFE_SLUG)?
+            - Headers (X-Forwarded-For, X-Peer-Id, etc.) validated for length/format?
+            - Error responses free of internal details (no raw errors, no stack traces)?
+
+            **Filesystem paths** (any join/resolve/readFile/writeFile/unlink):
+            - Passed through resolveWithinPrefix or equivalent containment check?
+            - Symlink-safe? (lstat check before write/delete)
+            - Intermediate dirs checked after mkdir? (symlink-race TOCTOU)
+
+            **WebSocket/IPC messages**:
+            - Parsed with Zod schema, not bare `as` cast?
+            - Size-capped before buffering?
+
+            **Inter-service calls** (platform-to-container, gateway-to-R2):
+            - Authenticated (HMAC, JWT, bearer)?
+            - Env vars not leaking secrets to user containers?
+
+            ## Pass 2: Auth Boundary Verification
+
+            Trace the auth middleware mounting order in every changed router file:
+            - Is auth middleware mounted BEFORE the routes it should protect?
+            - Are public/exempt routes explicitly listed (not implicit by mount order)?
+            - Rate limiters: applied before or after auth? (should be before)
+            - Rate limiter keying: uses trusted IP source? (cf-connecting-ip > x-real-ip > x-forwarded-for)
+
+            ## Pass 3: Atomicity Under Adversarial Conditions
+
+            For every multi-step operation in changed files:
+            - **Concurrent access**: What happens with 2 simultaneous requests?
+              Is there a lock/transaction? What does the lock actually cover?
+            - **Partial failure**: If step 2 of 3 fails, is there orphaned state?
+              (orphaned R2 blobs, DB records without corresponding files, etc.)
+            - **Timing attacks**: Any comparison that leaks information via timing?
+              (Must use timingSafeEqual with proper length padding)
+
+            ## Pass 4: Container/Platform Security
+
+            If orchestrator, Docker, or container env files are changed:
+            - No secrets forwarded to user containers (PLATFORM_SECRET, DB URLs)
+            - Container isolation: no shared credentials for per-user resources
+            - Docker socket not exposed to user containers
+
+            ## Output
+
+            Rate each finding: CRITICAL, HIGH, MEDIUM, LOW.
+
+            CRITICAL = exploitable now (path traversal, auth bypass, secret leak).
+            HIGH = exploitable with specific conditions.
+            MEDIUM = defense-in-depth gap.
+            LOW = theoretical or requires internal access.
+
+            Post ONE summary comment + inline comments for CRITICAL/HIGH only.
+            Maximum 15 inline comments.
           claude_args: |
             --model claude-opus-4-6
             --max-turns 25

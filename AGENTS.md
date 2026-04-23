@@ -114,9 +114,28 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 
 ```bash
 bun run test              # unit tests
-bun run dev               # gateway (:4000) + shell (:3000)
+bun run test:watch        # Vitest watch mode
+bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
+bun run test:coverage     # coverage report
+bun run test:e2e          # end-to-end tests
+
+bun run dev               # local dev: gateway + proxy + shell
+bun run dev:gateway       # gateway only
+bun run dev:shell         # shell only
+bun run dev:proxy         # proxy only
+bun run dev:platform      # platform only
+bun run dev:www           # matrix-os.com website only
+bun run dev:kernel        # kernel package only
+
 bun run docker            # Docker dev (primary, requires OrbStack on macOS)
 bun run docker:full       # + proxy, platform, conduit
+bun run docker:all        # + observability stack
+bun run docker:multi      # + alice & bob multi-user
+bun run docker:stop       # stop containers, preserve volumes
+bun run docker:restart    # restart dev container
+bun run docker:logs       # tail dev container logs
+bun run docker:shell      # shell into container as matrixos user
+bun run docker:build      # full rebuild (no cache)
 ```
 
 **IMPORTANT**: Never `docker compose down -v` unless explicitly resetting. Volumes hold OS state, node_modules, and .next cache.
@@ -146,29 +165,60 @@ Read `specs/ux-guide.md`. Key rules:
 
 Every spec with endpoints/WebSockets/IPC/file I/O must include: security architecture (auth matrix, input validation, error policy), integration wiring (startup sequence, cross-package comms), failure modes (timeouts, concurrent access, crash recovery), resource management (buffer limits, file cleanup). Full checklist: `specs/quality-gates.md`
 
-## Code Review Essentials
+## Code Review Pipeline
 
-Check failure modes, not just happy paths:
+Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line-by-line review.
 
-- **Error handling**: typed catch blocks (not bare `catch { return null }`), async `.catch()`, no leaking internals
-- **Atomicity**: 3+ sequential DB writes need transactions, no TOCTOU races
-- **API contract**: response field names match frontend, no dead code paths
-- **Type safety**: no unchecked `as` casts, sync/async signature matches
+### Pre-PR Checklist (mandatory)
 
-### Review Sweeps
+```bash
+bun run typecheck           # tsc --noEmit for all packages
+bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
+bun run test                # unit tests
+```
 
-For every PR review, run these targeted sweeps on touched files:
+### Three Review Passes
 
-- **Fetch timeout sweep**: inspect every new `fetch(` call in backend, shell, injected bridge scripts, and tests/mocks that mirror production code. Real calls must include `signal: AbortSignal.timeout(...)`.
-- **Empty catch sweep**: grep for `catch {}`, `catch { return ... }`, and `.catch(() => {})`. Every catch must log or explicitly handle the failure mode.
-- **Parity sweep for mirrored routes**: if logic exists in both a public route and a bridge/dev/proxy route, verify they share one helper or match behavior exactly (validation, verb dispatch, fallback behavior, errors, timeouts).
-- **Bridge/API argument sweep**: when shell bridge helpers call backend routes, confirm they expose every backend disambiguator the feature depends on (`label`, IDs, paging, etc.), not just the "happy path" arguments.
-- **Review grep commands**: at minimum run `rg -n 'fetch\\(' packages shell` and `rg -n 'catch\\s*\\{|\\.catch\\(\\(\\) => \\{\\s*\\}\\)' packages shell tests` before finalizing a review.
+1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
+
+2. **Trust-boundary sweep**: For each changed file, classify it (route handler, filesystem, database, WS/IPC) and apply the matching checklist from `docs/dev/review-pipeline.md`. Trace external input from entry to use.
+
+3. **Atomicity/failure-mode review**: For each subsystem touched, answer: What is the source of truth? What is inside the lock/transaction? What happens on partial failure? What happens on shutdown? What is explicitly deferred?
+
+### PR Size Limits
+
+- **> 3000 additions or > 50 files**: split the PR
+- Split along: gateway, platform, sync-client, shell, docs/deploy
+
+### PR Body: Mandatory Invariants
+
+Every backend PR must include an "Invariants" section:
+
+- **Source of truth**: which store is canonical, how divergence is reconciled
+- **Lock/transaction scope**: what is inside the critical section, are network calls inside or outside
+- **Acceptable orphan states**: what happens if step N+1 fails after step N succeeds
+- **Auth source of truth**: primary auth mechanism, fallback behavior
+- **Deferred scope**: what is explicitly NOT in scope -- say so, don't leave dead code
+
+### Branch Freeze
+
+Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
+
+### Hard Rules (never violate)
+
+- No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
+- No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
+- No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
+- No unbounded `Map`/`Set` without size cap and eviction
+- No `path.join()` on unvalidated external input -- use `resolveWithinPrefix`
+- No raw error messages or Zod `.issues` in client responses
+- No PR larger than 3000 additions or 50 files without splitting
 
 ## Reference Docs
 
 Read these on demand, not every session:
 
+- `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues

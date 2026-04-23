@@ -5,8 +5,9 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "bin": {
-    "matrixos": "./bin/matrixos.ts",
-    "mos": "./bin/matrixos.ts"
+    "matrixos": "./bin/matrixos.mjs",
+    "matrix": "./bin/matrixos.mjs",
+    "mos": "./bin/matrixos.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -34,7 +35,11 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "typecheck": "pnpm --filter '@matrix-os/kernel' exec tsc --noEmit && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit",
+    "check:patterns": "./scripts/review/check-patterns.sh",
+    "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
+    "lint": "bun run --filter './shell' lint"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

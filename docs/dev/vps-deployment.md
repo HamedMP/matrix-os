@@ -191,8 +191,94 @@ EOF
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Docker image | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
 | `GEMINI_API_KEY` | platform + user containers | runtime | Google Gemini API key for image/icon generation |
 | `POSTGRES_PASSWORD` | postgres + platform | runtime | PostgreSQL password (default: `matrixos`) |
+| `S3_ENDPOINT` | user containers | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
+| `S3_PUBLIC_ENDPOINT` | user containers | runtime | Same as `S3_ENDPOINT` for Cloudflare R2; different for MinIO |
+| `S3_ACCESS_KEY_ID` | user containers | runtime | R2 API token access key |
+| `S3_SECRET_ACCESS_KEY` | user containers | runtime | R2 API token secret key |
+| `S3_BUCKET` | user containers | runtime | R2 bucket name, default `matrixos-sync` |
+| `S3_FORCE_PATH_STYLE` | user containers | runtime | `false` for R2, `true` for MinIO |
+| `MATRIX_HOME_MIRROR` | user containers | runtime | `true` enables three-way sync (container ↔ R2 ↔ peer) |
 
 **Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available as Docker build args. All other vars are passed at container runtime via `docker-compose.platform.yml` environment section and the orchestrator's `extraEnv` mechanism.
+
+### Sync Storage (Cloudflare R2)
+
+The file-sync subsystem (spec 066) uses S3-compatible object storage. In prod the target is Cloudflare R2, one shared bucket, prefix-isolated per user at the gateway level.
+
+#### One-time: provision R2
+
+1. Cloudflare dashboard → **R2** → **Create bucket**.
+   - Name: `matrixos-sync`
+   - Location: auto (Cloudflare picks closest region)
+   - Storage class: Standard
+2. Still in R2 → **Manage R2 API Tokens** → **Create API Token**.
+   - Permissions: *Object Read & Write*
+   - Specify bucket: `matrixos-sync` (scope the token to this bucket only)
+   - TTL: leave empty (never expires) unless you rotate regularly
+3. Copy three values from the token modal before closing it:
+   - `Access Key ID`
+   - `Secret Access Key`
+   - `S3 API` endpoint — looks like `https://<account-id>.r2.cloudflarestorage.com`
+
+#### Append to `.env` on the VPS
+
+```bash
+cat >> /root/matrix-os/.env << 'EOF'
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_PUBLIC_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_ACCESS_KEY_ID=<access-key-from-step-3>
+S3_SECRET_ACCESS_KEY=<secret-key-from-step-3>
+S3_BUCKET=matrixos-sync
+S3_FORCE_PATH_STYLE=false
+MATRIX_HOME_MIRROR=true
+EOF
+```
+
+Replace the placeholders with the real values. `S3_ENDPOINT` and `S3_PUBLIC_ENDPOINT` are the same URL in prod — the split exists for dev where gateway reaches MinIO at `minio:9000` internally but presigned URLs need `localhost:9100` (see `docs/dev/sync-testing.md`).
+
+#### How the env vars reach user containers
+
+The Platform orchestrator reads these vars from its own process env and forwards them into every per-user container via `extraEnv`. Code path: `packages/platform/src/main.ts:626–641` builds the `extraEnv` array; `packages/platform/src/orchestrator.ts:146–173` (`buildEnv`) appends it to each container's env. The gateway inside the container then reads `S3_ENDPOINT` etc. at `packages/gateway/src/server.ts:294–311` and boots the R2 client.
+
+After editing `.env`, restart the platform + roll every user container so the new env is in effect:
+
+```bash
+docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build platform
+curl -X POST http://localhost:9000/containers/rolling-restart \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+Verify one container has the vars:
+
+```bash
+CANARY=$(docker ps --filter "name=matrixos-" --format "{{.Names}}" | head -1)
+docker exec $CANARY env | grep -E '^(S3_|MATRIX_HOME_MIRROR)='
+# Expect all six S3_* vars + MATRIX_HOME_MIRROR=true
+```
+
+#### Verify R2 upload round-trip
+
+```bash
+# Inside a running user container, force home-mirror to push a file:
+docker exec $CANARY sh -c 'echo test > /home/matrixos/home/r2-smoke.md'
+sleep 5
+
+# The manifest should list it:
+docker exec $CANARY sh -c 'wget -qO- http://localhost:4000/api/sync/manifest \
+  -H "Authorization: Bearer $MATRIX_AUTH_TOKEN"' | grep r2-smoke
+
+# And the object should exist in Cloudflare:
+# Open dashboard → R2 → matrixos-sync → Objects → search "r2-smoke"
+```
+
+If manifest shows the file but R2 dashboard doesn't, check gateway logs for `SignatureDoesNotMatch` (bad key) or `NoSuchBucket` (wrong bucket name / typo in `S3_BUCKET`).
+
+#### Rotating R2 credentials
+
+1. Cloudflare → R2 → API Tokens → create a new token.
+2. Update `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` in `.env`.
+3. Restart platform + rolling-restart containers (same commands as above).
+4. Revoke the old token in the Cloudflare dashboard.
 
 ## Step 4: Start the Platform
 

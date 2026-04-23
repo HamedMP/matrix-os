@@ -1,0 +1,77 @@
+# Publishing & Audit API
+# Mount: /api/store (platform) + /api/apps (gateway)
+# Auth: All endpoints require authentication
+
+endpoints:
+  POST /api/apps/:slug/publish:
+    description: Submit an app for gallery publication
+    auth: authenticated (must be app owner)
+    location: gateway (has access to user's app files)
+    body:
+      description: string (required)
+      longDescription: string (optional)
+      category: string (required)
+      tags: string[] (optional)
+      screenshots: string[] (optional, paths to screenshot files)
+      visibility: "public" | "organization" | "unlisted" (default "public")
+      orgId: uuid (required if visibility = "organization")
+      version: string (required, semver)
+      changelog: string (optional, required for updates)
+    response:
+      201:
+        listingId: uuid
+        versionId: uuid
+        auditStatus: "pending" | "passed" | "failed"
+        auditFindings: AuditFinding[] (if failed)
+        storeUrl: string (/store/{author}/{slug})
+      400: error (validation failure)
+      403: error (not app owner, or no publish permission for org)
+      409: error (slug already taken)
+    flow:
+      1. Validate manifest (app-manifest.ts)
+      2. Validate for publish (app-publish.ts -- size check, required fields)
+      3. Create or update app_listings record (platform)
+      4. Create app_versions record (platform)
+      5. Run security audit (synchronous, 3 layers)
+      6. If audit passes: set version as current, listing as active
+      7. If audit fails: return findings, version stays non-current
+
+  GET /api/store/apps/:id/audit:
+    description: Get latest audit results for a listing
+    auth: authenticated (must be listing author)
+    location: platform
+    response:
+      200: SecurityAudit
+      403: error (not author)
+      404: error (no audit found)
+
+  POST /api/apps/:slug/publish/resubmit:
+    description: Resubmit after fixing audit failures
+    auth: authenticated (must be app owner)
+    location: gateway
+    body:
+      versionId: uuid (the failed version to re-audit)
+    response:
+      200:
+        auditStatus: "pending" | "passed" | "failed"
+        auditFindings: AuditFinding[]
+    notes: Re-runs audit on same version after developer fixes code
+
+types:
+  AuditFinding:
+    layer: "manifest" | "static" | "sandbox"
+    severity: "error" | "warning"
+    rule: string (e.g., "no-path-traversal", "permission-mismatch")
+    message: string
+    file: string | null (for static analysis)
+    line: integer | null
+
+  SecurityAudit:
+    id: uuid
+    versionId: uuid
+    status: "pending" | "passed" | "failed"
+    manifestFindings: AuditFinding[]
+    staticFindings: AuditFinding[]
+    sandboxFindings: AuditFinding[]
+    startedAt: string
+    completedAt: string | null

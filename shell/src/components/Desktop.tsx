@@ -492,6 +492,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const iconVersion = useId().replace(/:/g, "");
+  const focusedWindow = windows
+    .filter((w) => !w.minimized)
+    .sort((a, b) => b.zIndex - a.zIndex)[0];
 
   useEffect(() => {
     const timers = minimizeTimers.current;
@@ -1222,7 +1225,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     <TooltipProvider delayDuration={300}>
       {!showSetup && (
         <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
-          {desktopMode === "canvas" && <CanvasToolbar />}
+          {desktopMode === "canvas" ? (
+            <CanvasToolbar />
+          ) : null}
         </MenuBar>
       )}
       {showSetup && (

@@ -17,9 +17,18 @@ logs/
 # Local platform data
 packages/platform/data/
 
-# Playwright
+# Test artifacts
+shell/test-results/
 shell/e2e/test-results/
 shell/e2e/playwright-report/
+shell/test-results/
+shell/playwright-report/
+
+# Next.js generated types
+www/next-env.d.ts
+
+# Next.js auto-generated
+**/next-env.d.ts
 
 # AI tool configs (various agents/IDEs)
 .adal/
@@ -57,6 +66,13 @@ skills-lock.json
 !home/agents/skills/**
 !home/.agents/skills/
 !home/.agents/skills/**
+
+# Xcode per-user state (do NOT track these -- they contain local paths
+# and window positions, and constantly show up as noise in diffs)
+**/xcuserdata/
+**/xcshareddata/
+**/project.xcworkspace/
+**/*.xcuserstate
 
 # LaTeX build artifacts
 paper/*.aux

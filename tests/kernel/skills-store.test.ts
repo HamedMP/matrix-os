@@ -78,14 +78,14 @@ describe("T1450-T1454: Skill registry", () => {
 
   it("list returns empty array when no skills published", () => {
     const registry = createSkillRegistry(TEST_HOME);
-    expect(registry.list()).toEqual([]);
+    return expect(registry.list()).resolves.toEqual([]);
   });
 
   describe("publish_skill", () => {
-    it("publishes a local skill file to registry", () => {
+    it("publishes a local skill file to registry", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      const entry = registry.publish("test-skill");
+      const entry = await registry.publish("test-skill");
       expect(entry.name).toBe("test-skill");
       expect(entry.description).toBe("A test skill");
       expect(entry.version).toBe("1.0.0");
@@ -93,61 +93,61 @@ describe("T1450-T1454: Skill registry", () => {
       expect(entry.category).toBe("utility");
     });
 
-    it("persists registry to disk as JSON", () => {
+    it("persists registry to disk as JSON", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
+      await registry.publish("test-skill");
       expect(existsSync(REGISTRY_PATH)).toBe(true);
       const data = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
       expect(data.skills).toHaveLength(1);
       expect(data.skills[0].name).toBe("test-skill");
     });
 
-    it("updates existing entry when republished", () => {
+    it("updates existing entry when republished", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
-      registry.publish("test-skill");
-      expect(registry.list()).toHaveLength(1);
+      await registry.publish("test-skill");
+      await registry.publish("test-skill");
+      await expect(registry.list()).resolves.toHaveLength(1);
     });
 
-    it("increments version on republish", () => {
+    it("increments version on republish", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      const first = registry.publish("test-skill");
+      const first = await registry.publish("test-skill");
       expect(first.version).toBe("1.0.0");
-      const second = registry.publish("test-skill");
+      const second = await registry.publish("test-skill");
       expect(second.version).toBe("1.0.1");
     });
 
-    it("throws if skill file not found", () => {
+    it("throws if skill file not found", async () => {
       const registry = createSkillRegistry(TEST_HOME);
-      expect(() => registry.publish("nonexistent")).toThrow(/not found/i);
+      await expect(registry.publish("nonexistent")).rejects.toThrow(/not found/i);
     });
 
-    it("stores content hash", () => {
+    it("stores content hash", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      const entry = registry.publish("test-skill");
+      const entry = await registry.publish("test-skill");
       expect(entry.contentHash).toBeDefined();
       expect(entry.contentHash.length).toBeGreaterThan(0);
     });
 
-    it("publishes multiple skills", () => {
+    it("publishes multiple skills", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       writeSkillFile("another-skill", ANOTHER_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
-      registry.publish("another-skill");
-      expect(registry.list()).toHaveLength(2);
+      await registry.publish("test-skill");
+      await registry.publish("another-skill");
+      await expect(registry.list()).resolves.toHaveLength(2);
     });
   });
 
   describe("install_skill", () => {
-    it("installs skill from registry to skills dir", () => {
+    it("installs skill from registry to skills dir", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const sourceRegistry = createSkillRegistry(TEST_HOME);
-      sourceRegistry.publish("test-skill");
+      await sourceRegistry.publish("test-skill");
 
       // Simulate install target (different home with no skill file)
       const targetHome = join(tmpdir(), `matrix-target-${Date.now()}`);
@@ -163,90 +163,90 @@ describe("T1450-T1454: Skill registry", () => {
       );
 
       const targetRegistry = createSkillRegistry(targetHome);
-      const result = targetRegistry.install("test-skill");
+      const result = await targetRegistry.install("test-skill");
       expect(result.installed).toBe(true);
       expect(existsSync(join(targetSkills, "test-skill.md"))).toBe(true);
 
       rmSync(targetHome, { recursive: true, force: true });
     });
 
-    it("returns installed=false for unknown skill", () => {
+    it("returns installed=false for unknown skill", async () => {
       const registry = createSkillRegistry(TEST_HOME);
-      const result = registry.install("nonexistent");
+      const result = await registry.install("nonexistent");
       expect(result.installed).toBe(false);
       expect(result.reason).toMatch(/not found/i);
     });
 
-    it("detects duplicate install", () => {
+    it("detects duplicate install", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
-      const result = registry.install("test-skill");
+      await registry.publish("test-skill");
+      const result = await registry.install("test-skill");
       expect(result.installed).toBe(false);
       expect(result.reason).toMatch(/already installed/i);
     });
   });
 
   describe("get", () => {
-    it("returns entry by name", () => {
+    it("returns entry by name", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
-      const entry = registry.get("test-skill");
+      await registry.publish("test-skill");
+      const entry = await registry.get("test-skill");
       expect(entry).toBeDefined();
       expect(entry!.name).toBe("test-skill");
     });
 
-    it("returns null for unknown skill", () => {
+    it("returns null for unknown skill", async () => {
       const registry = createSkillRegistry(TEST_HOME);
-      expect(registry.get("nonexistent")).toBeNull();
+      await expect(registry.get("nonexistent")).resolves.toBeNull();
     });
   });
 
   describe("list", () => {
-    it("returns all published skills", () => {
+    it("returns all published skills", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       writeSkillFile("another-skill", ANOTHER_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
-      registry.publish("another-skill");
-      const list = registry.list();
+      await registry.publish("test-skill");
+      await registry.publish("another-skill");
+      const list = await registry.list();
       expect(list).toHaveLength(2);
       expect(list.map((s) => s.name).sort()).toEqual(["another-skill", "test-skill"]);
     });
 
-    it("filters by category", () => {
+    it("filters by category", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       writeSkillFile("another-skill", ANOTHER_SKILL);
       const registry = createSkillRegistry(TEST_HOME);
-      registry.publish("test-skill");
-      registry.publish("another-skill");
-      const builders = registry.list("builder");
+      await registry.publish("test-skill");
+      await registry.publish("another-skill");
+      const builders = await registry.list("builder");
       expect(builders).toHaveLength(1);
       expect(builders[0].name).toBe("another-skill");
     });
   });
 
   describe("persistence", () => {
-    it("loads registry from disk on init", () => {
+    it("loads registry from disk on init", async () => {
       writeSkillFile("test-skill", SAMPLE_SKILL);
       const r1 = createSkillRegistry(TEST_HOME);
-      r1.publish("test-skill");
+      await r1.publish("test-skill");
 
       const r2 = createSkillRegistry(TEST_HOME);
-      expect(r2.list()).toHaveLength(1);
-      expect(r2.get("test-skill")!.name).toBe("test-skill");
+      await expect(r2.list()).resolves.toHaveLength(1);
+      await expect(r2.get("test-skill")).resolves.toMatchObject({ name: "test-skill" });
     });
 
-    it("handles missing registry file gracefully", () => {
+    it("handles missing registry file gracefully", async () => {
       const registry = createSkillRegistry(TEST_HOME);
-      expect(registry.list()).toEqual([]);
+      await expect(registry.list()).resolves.toEqual([]);
     });
 
-    it("handles corrupt registry file gracefully", () => {
+    it("handles corrupt registry file gracefully", async () => {
       writeFileSync(REGISTRY_PATH, "not json");
       const registry = createSkillRegistry(TEST_HOME);
-      expect(registry.list()).toEqual([]);
+      await expect(registry.list()).resolves.toEqual([]);
     });
   });
 });

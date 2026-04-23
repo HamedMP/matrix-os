@@ -40,10 +40,15 @@ Phase 1 must land on `main` before Wave 2 agents in spec 060 start. Phase 2 can 
 | `packages/gateway/src/app-runtime/port-pool.ts` | **NEW** — 40000-49999 allocation/release |
 | `packages/gateway/src/app-runtime/safe-env.ts` | **NEW** — env whitelist for child processes |
 | `packages/gateway/src/app-runtime/process-manager.ts` | **NEW** — ProcessRecord, spawn, health check, idle shutdown, crash retry, LRU eviction, startupPromise dedup |
-| `packages/gateway/src/app-runtime/reverse-proxy.ts` | **NEW** — Hono middleware for `/apps/{slug}/*`, HTTP + WebSocket |
+| `packages/gateway/src/app-runtime/dispatcher.ts` | **NEW** — single Hono handler for `/apps/{slug}/*` that dispatches to static-file, vite-dist, or reverse-proxy branches based on manifest `runtime`; handles HTTP + WebSocket upgrades |
+| `packages/gateway/src/app-runtime/serve-static.ts` | **NEW** — thin wrapper reusing `server.ts` file-serving helpers, scoped via `resolveWithinHome` |
+| `packages/gateway/src/app-runtime/app-session.ts` | **NEW** — HMAC signer/verifier, HKDF key derivation, `buildSetCookie` with `Path=/apps/{slug}/` |
+| `packages/gateway/src/app-runtime/app-session-middleware.ts` | **NEW** — Hono middleware on `/apps/:slug/*` verifying the signed cookie |
+| `packages/gateway/src/app-runtime/distribution-policy.ts` | **NEW** — `computeDistributionStatus(listingTrust, sandboxCapabilities())` |
+| `packages/gateway/src/app-runtime/runtime-state.ts` | **NEW** — maps build-stamp + process-record state to the manifest API envelope |
 | `packages/gateway/src/app-runtime/errors.ts` | **NEW** — typed errors (BuildError, SpawnError, HealthCheckError, ProxyError, ManifestError) |
 | `packages/gateway/src/app-runtime/index.ts` | **NEW** — public API exports + gateway integration |
-| `packages/gateway/src/server.ts` | **MODIFY** — mount manifest API + reverse-proxy middleware; graceful shutdown hook |
+| `packages/gateway/src/server.ts` | **MODIFY** — mount manifest API + app-session middleware + app-runtime dispatcher; graceful shutdown hook |
 | `shell/src/lib/app-manifest-cache.ts` | **NEW** — client-side 60s TTL cache |
 | `shell/src/components/AppViewer.tsx` | **MODIFY** — three-mode iframe src decision |
 | `home/apps/_template-vite/` | **NEW** — Vite React scaffold (package.json, vite.config.ts, src/, matrix.json, index.html, tsconfig.json, src/matrix-os.d.ts) |
@@ -61,7 +66,10 @@ Phase 1 must land on `main` before Wave 2 agents in spec 060 start. Phase 2 can 
 | `tests/gateway/app-runtime/port-pool.test.ts` | **NEW** |
 | `tests/gateway/app-runtime/safe-env.test.ts` | **NEW** |
 | `tests/gateway/app-runtime/process-manager.test.ts` | **NEW** |
-| `tests/gateway/app-runtime/reverse-proxy.test.ts` | **NEW** |
+| `tests/gateway/app-runtime/dispatcher.test.ts` | **NEW** — static / vite / node branches + header sanitization |
+| `tests/gateway/app-runtime/app-session.test.ts` | **NEW** — signer/verifier round-trip, version rejection, expiry |
+| `tests/gateway/app-runtime/app-session-middleware.test.ts` | **NEW** — cookie path assertion, cross-slug rejection, ack token flow |
+| `tests/gateway/app-runtime/distribution-policy.test.ts` | **NEW** — trust-tier policy table |
 | `tests/gateway/app-runtime-phase1.test.ts` | **NEW** — end-to-end static + vite |
 | `tests/gateway/app-runtime-phase2.test.ts` | **NEW** — end-to-end node spawn + proxy |
 | `tests/shell/app-manifest-cache.test.ts` | **NEW** |
@@ -615,17 +623,45 @@ git commit -m "feat(gateway): add install flow trusted path"
 - Create: `tests/shell/app-manifest-cache.test.ts`
 - Create: `tests/gateway/app-manifest-api.test.ts`
 
+**Response envelope (matches spec §Shell Changes "Failure display" and §Authorization):**
+
+```typescript
+type ManifestResponse = {
+  manifest: AppManifest;                                        // parsed matrix.json (no distributionStatus)
+  runtimeState:
+    | { status: "ready" }                                       // static/vite: dist exists and is fresh
+    | { status: "needs_build" }                                 // vite/node: source present, no .build-stamp yet
+    | { status: "build_failed"; stage: "install" | "build"; exitCode: number; stderrTail: string }
+    | { status: "process_idle" }                                // node: manifest ok, process not spawned yet
+    | { status: "process_failed"; lastError: { code: string; stderrTail: string }; restartCount: number };
+  distributionStatus: "installable" | "gated" | "blocked";      // computed server-side on every read
+};
+```
+
+Shell reads `runtimeState` to decide between rendering the iframe and rendering an error card, and reads `distributionStatus` to decide whether to show the ack UI. The gateway composes `runtimeState` from `buildCache.readStamp(slug)` and `processManager.inspect(slug)`, and computes `distributionStatus` from `computeDistributionStatus(manifest.listingTrust, sandboxCapabilities())` — **never** reads it from the stored manifest.
+
+**Manifest schema invariant:** `packages/gateway/src/app-runtime/manifest-schema.ts` MUST reject a `distributionStatus` field if present in the input file (Zod `z.strictObject(...).refine(m => !("distributionStatus" in m), ...)`). A malicious publisher setting `distributionStatus: "installable"` in their own `matrix.json` must fail install with `ManifestError.code = "computed_field_not_authored"`.
+
 - [ ] **Step 1: Write failing tests**
 
 Gateway side:
-- `GET /api/apps/notes/manifest` → 200 with manifest body
+- `GET /api/apps/notes/manifest` → 200 with `{ manifest, runtimeState: { status: "ready" }, distributionStatus: "installable" }` when `dist/` is fresh and app is `listingTrust: "first_party"`
+- `GET /api/apps/notes/manifest` → 200 with `runtimeState.status = "needs_build"` when `.build-stamp` is missing
+- `GET /api/apps/notes/manifest` → 200 with `runtimeState.status = "build_failed"` when the last build stamp records a failure
+- `GET /api/apps/hello-next/manifest` → 200 with `runtimeState.status = "process_failed"` when the process manager has a failed record
+- `GET /api/apps/community-app/manifest` → 200 with `distributionStatus: "blocked"` when the app has `listingTrust: "community"` and `ALLOW_COMMUNITY_INSTALLS` is unset (production default — no ack UI must be shown)
+- `GET /api/apps/community-app/manifest` → 200 with `distributionStatus: "gated"` when `ALLOW_COMMUNITY_INSTALLS=1` and sandbox capabilities absent (ack unlocks)
+- `GET /api/apps/community-app/manifest` → 200 with `distributionStatus: "installable"` when the simulated sandbox capability flag is set (future-proofing for spec 025)
+- `GET /api/apps/bad-manifest/manifest` → 500 with `ManifestError.code = "computed_field_not_authored"` when the on-disk `matrix.json` tries to set `distributionStatus`
 - `GET /api/apps/missing/manifest` → 404
 - `GET /api/apps/../etc/passwd/manifest` → 400 (slug regex rejects)
 - Does not leak filesystem errors (generic 500 with correlation id)
+- `stderrTail` is capped at 2 KB and stripped of any bearer token substrings
 
 Shell side:
-- `fetchAppManifest("notes")` hits network once, second call uses cache
+- `fetchAppManifest("notes")` returns `{ manifest, runtimeState }` on first call and caches the envelope
 - `fetchAppManifest("notes")` re-fetches after 60s TTL expires
+- `fetchAppManifest("notes")` re-fetches immediately when `runtimeState.status !== "ready"` (so the UI recovers after a retry-build) — implemented as a short (2s) TTL on non-ready envelopes
 - Cache is LRU-capped at 32 entries
 - `invalidateManifest("notes")` forces re-fetch
 
@@ -641,15 +677,25 @@ app.get("/api/apps/:slug/manifest", async (c) => {
     return c.json({ error: "invalid slug" }, 400);
   }
   const appDir = resolveWithinHome(`apps/${slug}`);
-  const result = await loadManifest(appDir);
+  const result = await loadManifest(appDir);   // Zod rejects distributionStatus if present in file
   if (!result.ok) {
     if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
     c.get("logger").error({ error: result.error }, "manifest load failed");
     return c.json({ error: "internal", correlationId: c.get("requestId") }, 500);
   }
-  return c.json(result.manifest);
+  const runtimeState = await computeRuntimeState(result.manifest, {
+    buildCache,
+    processManager,
+  });
+  const distributionStatus = computeDistributionStatus(
+    result.manifest.listingTrust,
+    sandboxCapabilities(),   // reads env flags, future: reads spec 025 enforcement hooks
+  );
+  return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
 });
 ```
+
+`computeRuntimeState` lives in `packages/gateway/src/app-runtime/runtime-state.ts` (new file). `computeDistributionStatus` lives in `packages/gateway/src/app-runtime/distribution-policy.ts` (new file). Both are single-source helpers so the shell never has to re-derive anything, and the distribution policy is the one place to patch when spec 025 lands.
 
 - [ ] **Step 4: Implement `app-manifest-cache.ts`**
 
@@ -682,23 +728,78 @@ import { AppViewer } from "../../shell/src/components/AppViewer.js";
 vi.mock("../../shell/src/lib/app-manifest-cache.js", () => ({
   fetchAppManifest: vi.fn(),
 }));
+vi.mock("../../shell/src/lib/app-session.js", () => ({
+  openAppSession: vi.fn(),
+}));
 
-describe("AppViewer runtime modes", () => {
-  it("uses /files/apps/{slug}/index.html for static runtime", async () => {
+describe("AppViewer unified /apps/:slug/ navigation", () => {
+  it("uses /apps/{slug}/ for static runtime", async () => {
     vi.mocked(fetchAppManifest).mockResolvedValue({
-      slug: "calculator", runtime: "static", /* ... */
+      manifest: { slug: "calculator", runtime: "static", /* ... */ },
+      runtimeState: { status: "ready" },
+      distributionStatus: "installable",
     });
-    const { container } = render(<AppViewer path="apps/calculator" />);
+    vi.mocked(openAppSession).mockResolvedValue({ expiresAt: Date.now() + 600_000 });
+    const { container } = render(<AppViewer slug="calculator" />);
     await waitFor(() => {
       const iframe = container.querySelector("iframe");
-      expect(iframe?.src).toContain("/files/apps/calculator/index.html");
+      expect(iframe?.src).toMatch(/\/apps\/calculator\/$/);
+    });
+    expect(openAppSession).toHaveBeenCalledWith("calculator");
+  });
+
+  it("uses the SAME /apps/{slug}/ for vite runtime — no /files/apps/ path", async () => {
+    // assert iframe.src === `/apps/${slug}/` and does NOT contain "/files/apps/"
+  });
+  it("uses the SAME /apps/{slug}/ for node runtime", async () => { /* ... */ });
+  it("does NOT call openAppSession before the iframe src is assigned — ordering is session-then-src", async () => { /* ... */ });
+  it("renders ack UI instead of iframe when distributionStatus === 'gated'", async () => { /* ... */ });
+  it("renders read-only card when distributionStatus === 'blocked' and never calls openAppSession", async () => { /* ... */ });
+  it("renders error card when manifest load fails", async () => { /* ... */ });
+  it("renders build-failed card when runtimeState.status === 'build_failed'", async () => { /* ... */ });
+  it("refreshes session and reloads iframe on matrix-os:session-expired postMessage from the interstitial", async () => {
+    // Simulate: iframe navigation got the gateway's 401 interstitial, which posts to window.parent.
+    // Send the message on the window where AppViewer is mounted and assert the recovery path runs.
+    vi.mocked(openAppSession)
+      .mockResolvedValueOnce({ expiresAt: Date.now() + 600_000 })  // initial mount
+      .mockResolvedValueOnce({ expiresAt: Date.now() + 600_000 }); // refresh after expiry
+
+    const { container, rerender } = render(<AppViewer slug="notes" />);
+    await waitFor(() => {
+      expect(container.querySelector("iframe")?.src).toMatch(/\/apps\/notes\/$/);
+    });
+
+    const iframe = container.querySelector("iframe")!;
+    // Dispatch a message that SHOULD trigger the refresh path
+    window.dispatchEvent(new MessageEvent("message", {
+      data: { type: "matrix-os:session-expired", slug: "notes" },
+      origin: window.location.origin,
+      source: iframe.contentWindow,
+    }));
+
+    await waitFor(() => {
+      expect(openAppSession).toHaveBeenCalledTimes(2);
     });
   });
 
-  it("uses /files/apps/{slug}/dist/index.html for vite runtime", async () => { /* ... */ });
-  it("uses /apps/{slug}/ for node runtime", async () => { /* ... */ });
-  it("renders error card when manifest load fails", async () => { /* ... */ });
-  it("renders build-failed card when runtime state is build_failed", async () => { /* ... */ });
+  it("ignores matrix-os:session-expired from a different event.source (spoofing defense)", async () => {
+    // Dispatch a message with event.source = some other window
+    // Assert openAppSession was NOT called a second time
+  });
+
+  it("ignores matrix-os:session-expired from a different event.origin", async () => { /* ... */ });
+
+  it("ignores matrix-os:session-expired naming a different slug than this viewer owns", async () => { /* ... */ });
+
+  it("debounces two session-expired messages within 2 seconds — openAppSession called exactly once", async () => {
+    vi.useFakeTimers();
+    // dispatch twice within 500ms, advance time, assert single refresh
+    vi.useRealTimers();
+  });
+
+  it("does NOT observe iframe.onload as a failure probe (the only refresh signal is postMessage)", () => {
+    // ensure there is no onload-based refresh path; this is a code-review test
+  });
 });
 ```
 
@@ -706,7 +807,51 @@ describe("AppViewer runtime modes", () => {
 
 - [ ] **Step 3: Modify `AppViewer.tsx`**
 
-Add state for manifest mode, replace hard-coded `/files/${path}` src with mode-dependent URL, show error cards on failure. Keep bridge script injection unchanged — it applies to all three modes since they all run same-origin.
+Replace the hard-coded `/files/${path}` src with:
+
+```typescript
+// --- mount ---
+const { manifest, runtimeState, distributionStatus } = await fetchAppManifest(slug);
+if (distributionStatus === "blocked") return <BlockedCard manifest={manifest} />;
+if (distributionStatus === "gated") {
+  const ack = await showAckDialog({ slug, listingTrust: manifest.listingTrust, permissions: manifest.permissions });
+  if (!ack) return <DismissedCard />;
+  await openAppSession(slug, { ack });
+} else {
+  await openAppSession(slug);
+}
+if (runtimeState.status === "build_failed") return <BuildFailedCard ... />;
+if (runtimeState.status === "process_failed") return <ProcessFailedCard ... />;
+if (runtimeState.status === "needs_build") return <NeedsBuildCard onBuild={...} />;
+iframe.src = `/apps/${slug}/`;   // SAME shape for static, vite, node
+
+// --- session refresh on expiry (the only recovery signal is postMessage) ---
+let refreshInFlight = false;
+let lastRefreshAt = 0;
+useEffect(() => {
+  const handler = async (event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return;
+    if (event.source !== iframeRef.current?.contentWindow) return;
+    if (event.data?.type !== "matrix-os:session-expired") return;
+    if (event.data?.slug !== slug) return;
+    if (refreshInFlight) return;
+    if (Date.now() - lastRefreshAt < 2000) return;  // debounce duplicates
+    refreshInFlight = true;
+    try {
+      await openAppSession(slug);
+      lastRefreshAt = Date.now();
+      // Reassign to same URL to trigger the browser to reload the iframe with the new cookie
+      iframeRef.current!.src = `/apps/${slug}/`;
+    } finally {
+      refreshInFlight = false;
+    }
+  };
+  window.addEventListener("message", handler);
+  return () => window.removeEventListener("message", handler);
+}, [slug]);
+```
+
+Keep bridge script injection unchanged — it applies to all three modes since they all run same-origin under the same `/apps/{slug}/` path. No mode-specific URL construction anywhere in AppViewer. **Do not add an `iframe.onload` observer** for session expiry — onload fires on the 401 HTML body too, so it is not a reliable failure probe. The postMessage from the gateway's interstitial is the only recovery signal.
 
 - [ ] **Step 4: Green**
 
@@ -752,6 +897,203 @@ Key points:
 ```
 git commit -m "feat(apps): add Vite React template for app authoring"
 ```
+
+---
+
+### Task 8b: App Session Middleware + POST /api/apps/:slug/session
+
+**Why this task exists:** the app-runtime dispatcher (Task 17) is the single handler for `/apps/:slug/*` across all runtime modes, and it depends on the signed-cookie verifier. Shipping the verifier here, before Task 9/10, means Phase 1 integration tests can exercise the full cookie path on static + vite apps before Phase 2 lands the node reverse-proxy branch.
+
+**Files:**
+- Create: `packages/gateway/src/app-runtime/app-session.ts` — HMAC signer + verifier, Zod schema for payload v1, HKDF key derivation from gateway token
+- Create: `packages/gateway/src/app-runtime/app-session-middleware.ts` — Hono middleware that parses the `matrix_app_session__{slug}` cookie, verifies HMAC + version + slug match + expiry + scope, injects `c.set("appSession", verified)` on success, or on failure returns **one of two** 401 shapes via content negotiation on `Accept`: (a) HTML interstitial for navigation requests (see spec §Authorization "401 interstitial"), (b) JSON `401` with `Matrix-Session-Refresh` header for XHR/fetch requests. The HTML body is loaded from a fixed constant at module load time — no per-request templating, no slug interpolation into HTML — so the body is byte-identical across slugs.
+- Create: `packages/gateway/src/app-runtime/session-interstitial.html` — the exact static HTML served on 401 navigation responses. Byte-for-byte identical every time. Checked in as a fixture and loaded at module init.
+- Create: `packages/gateway/src/app-runtime/distribution-policy.ts` — pure `computeDistributionStatus(listingTrust, caps)` (no side effects, no env reads), plus a separate `sandboxCapabilities()` helper that reads `ALLOW_COMMUNITY_INSTALLS` env and the (stubbed, false in this spec) spec-025 `sandboxEnforced` flag and returns a `{ sandboxEnforced, allowCommunityInstalls }` object. Every caller (manifest API, session endpoint, install endpoint) invokes both helpers; the policy function is the single source of truth so they can never drift.
+- Modify: `packages/gateway/src/server.ts` — register `POST /api/apps/:slug/session` (uses `authMiddleware`) and mount `appSessionMiddleware` before the `/apps/:slug/*` dispatcher
+- Modify: `packages/gateway/src/auth.ts` — add `APP_IFRAME_PREFIXES = ["/apps/"]` that `authMiddleware` delegates to `appSessionMiddleware` instead of requiring bearer auth. **Single prefix** — no `/files/apps/` entry, because this spec unifies runtime access under `/apps/:slug/*` (see spec §Architecture Overview).
+- Create: `tests/gateway/app-runtime/app-session.test.ts`
+- Create: `tests/gateway/app-runtime/app-session-middleware.test.ts`
+- Create: `tests/gateway/app-runtime/distribution-policy.test.ts`
+- Modify: `shell/src/components/AppViewer.tsx` (Task 7 code path) — before setting iframe src, `await openAppSession(slug, { ack? })` which calls `POST /api/apps/:slug/session`; install a `window.addEventListener("message", ...)` that listens for `{ type: "matrix-os:session-expired", slug }` posted by the gateway's 401 HTML interstitial, verifies `event.origin === window.location.origin` and `event.source === iframeRef.current?.contentWindow` and `data.slug === this.slug`, debounces duplicate messages within 2s, calls `openAppSession(slug)`, then reassigns `iframe.src` to trigger reload. Remove the `iframe.onload` failure probe from earlier drafts — it is unreliable and the postMessage path is the only recovery signal.
+- Create: `shell/src/lib/app-session.ts` — the `openAppSession` client wrapper
+
+**Cookie payload (v1):**
+
+```typescript
+// packages/gateway/src/app-runtime/app-session.ts
+import { z } from "zod/v4";
+
+export const AppSessionPayload = z.object({
+  v: z.literal(1),
+  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  principal: z.literal("gateway-owner"), // spec 062 promotes this to a Matrix handle in v2
+  scope: z.literal("personal"),          // spec 062 adds "shared" in v2
+  expiresAt: z.number().int().positive(),
+});
+export type AppSessionPayload = z.infer<typeof AppSessionPayload>;
+
+// HKDF-SHA256(gatewayToken, info="matrix-os/app-session/v1") -> Buffer
+export function deriveAppSessionKey(gatewayToken: string): Buffer { /* ... */ }
+
+export function signAppSession(payload: AppSessionPayload, key: Buffer): string { /* HMAC-SHA256 */ }
+export function verifyAppSession(cookie: string, key: Buffer, now: number): AppSessionPayload | null { /* ... */ }
+
+// Serializes the full Set-Cookie header with path scoping. Called by POST /api/apps/:slug/session.
+export function buildSetCookie(slug: string, cookieValue: string, opts: { maxAge: number; secure: boolean }): string {
+  return [
+    `matrix_app_session__${slug}=${cookieValue}`,
+    `Path=/apps/${slug}/`,                 // <-- path-scoped, NOT "/"
+    "HttpOnly",
+    "SameSite=Strict",
+    opts.secure ? "Secure" : null,
+    `Max-Age=${opts.maxAge}`,
+  ].filter(Boolean).join("; ");
+}
+```
+
+- [ ] **Step 1: Write failing tests**
+
+```typescript
+// app-session.test.ts
+it("round-trips a v1 payload", () => { /* sign -> verify -> same payload */ });
+it("rejects a tampered payload", () => { /* flip one byte in the signature */ });
+it("rejects an expired payload", () => { /* now > expiresAt */ });
+it("rejects unknown version", () => { /* v2 cookie in a v1-only verifier */ });
+it("verify is constant-time", () => { /* exercise timingSafeEqual path */ });
+```
+
+```typescript
+// app-session-middleware.test.ts
+it("401 without cookie + Accept: text/html → HTML interstitial body with postMessage script", async () => {
+  const res = await app.request("/apps/notes/", { headers: { Accept: "text/html" }});
+  expect(res.status).toBe(401);
+  expect(res.headers.get("content-type")).toContain("text/html");
+  const body = await res.text();
+  expect(body).toContain("matrix-os:session-expired");
+  expect(body).toContain("window.parent.postMessage");
+  expect(res.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+  expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'self'");
+  expect(res.headers.get("matrix-session-refresh")).toBe("/api/apps/notes/session");
+});
+it("401 without cookie + Accept: application/json → JSON body with session_expired + refresh header", async () => { /* ... */ });
+it("interstitial body is byte-identical across slugs (no server-side string interpolation)", async () => {
+  const a = await (await app.request("/apps/notes/", { headers: { Accept: "text/html" }})).text();
+  const b = await (await app.request("/apps/calendar/", { headers: { Accept: "text/html" }})).text();
+  expect(a).toBe(b);
+});
+it("interstitial script only posts message when in an iframe (window.parent !== window)", async () => { /* load in jsdom top-level, expect silence */ });
+it("interstitial script derives slug from location.pathname, not from server", async () => { /* ... */ });
+it("401 without cookie + Accept: text/html → also includes Matrix-Session-Refresh header for test observability", async () => { /* ... */ });
+it("401 when cookie signed for another slug", async () => { /* ... */ });
+it("401 when cookie version is unknown (no silent downgrade)", async () => { /* ... */ });
+it("401 when cookie expired", async () => { /* ... */ });
+it("200 and populates c.get('appSession') when cookie valid", async () => { /* ... */ });
+it("POST /api/apps/:slug/session returns 409 scope_mismatch for shared-scope app", async () => { /* ... */ });
+it("POST /api/apps/:slug/session returns 409 install_gated for community-tier app without ack", async () => { /* ... */ });
+it("POST /api/apps/:slug/session returns 403 install_blocked_by_policy for blocked app", async () => { /* ... */ });
+it("POST /api/apps/:slug/session sets Path=/apps/{slug}/ (NOT Path=/)", async () => {
+  const res = await app.request(`/api/apps/notes/session`, { method: "POST", headers: { Authorization: `Bearer ${token}` }});
+  const cookieHeader = res.headers.get("set-cookie")!;
+  expect(cookieHeader).toContain("Path=/apps/notes/");
+  expect(cookieHeader).not.toContain("Path=/;");
+  expect(cookieHeader).not.toContain("Path=/,");
+  expect(cookieHeader).toContain("HttpOnly");
+  expect(cookieHeader).toContain("SameSite=Strict");
+});
+it("POST /api/apps/:slug/session recomputes distributionStatus server-side and ignores any client hint", async () => {
+  // send the POST with a body claiming {distributionStatus: "installable"} for a community app
+  // assert server responds 409 install_gated anyway
+});
+it("cookie name embeds slug to allow multiple concurrent open apps", async () => { /* ... */ });
+it("browser cookie jar: cookie for /apps/notes/ is NOT sent to /apps/calendar/ (path-scoping correctness)", async () => {
+  // use tough-cookie (or manual Cookie header simulation) to verify path-scoping is enforced by the jar,
+  // not just by our middleware
+});
+```
+
+```typescript
+// distribution-policy.test.ts
+it("first_party -> installable (independent of env flags)", () => { /* ... */ });
+it("verified_partner -> installable (independent of env flags)", () => { /* ... */ });
+it("community + no flags (production default) -> blocked (no ack UI)", () => {
+  expect(computeDistributionStatus("community", { sandboxEnforced: false, allowCommunityInstalls: false }))
+    .toBe("blocked");
+});
+it("community + ALLOW_COMMUNITY_INSTALLS=1 -> gated (ack will unlock)", () => {
+  expect(computeDistributionStatus("community", { sandboxEnforced: false, allowCommunityInstalls: true }))
+    .toBe("gated");
+});
+it("community + sandboxEnforced -> installable (post-025 case, flag irrelevant)", () => {
+  expect(computeDistributionStatus("community", { sandboxEnforced: true, allowCommunityInstalls: false }))
+    .toBe("installable");
+});
+it("unknown listingTrust -> blocked (fail-closed default)", () => { /* ... */ });
+it("is pure and deterministic (same inputs -> same output)", () => { /* property test */ });
+
+// The contract invariant that ties it all together:
+it("INVARIANT: every 'gated' result from the policy function must be unlockable by an ack at the session endpoint", () => {
+  // For every (listingTrust, caps) combination that returns "gated", assert that
+  // POST /api/apps/:slug/session with a valid ack token returns 200 (not 403/409).
+  // This is the "no confirm UI that can't succeed" guarantee.
+  for (const listingTrust of ALL_LISTING_TRUSTS) {
+    for (const caps of ALL_CAPS_COMBINATIONS) {
+      if (computeDistributionStatus(listingTrust, caps) === "gated") {
+        // simulate the session endpoint with this env and a valid ack — must succeed
+      }
+    }
+  }
+});
+```
+
+- [ ] **Step 2: Red**
+
+- [ ] **Step 3: Implement**
+
+Key points:
+- Signing key is derived from the existing gateway token via `HKDF-SHA256(gatewayToken, "matrix-os/app-session/v1")` so we do not reuse the bearer token as a raw HMAC key
+- `appSessionMiddleware` MUST run before the app-runtime dispatcher (Task 17). Mount order in `server.ts`: `authMiddleware` (which delegates to `appSessionMiddleware` for `/apps/*`) → `appSessionMiddleware` → `appRuntimeDispatcher`.
+- `authMiddleware` in `auth.ts` recognizes `APP_IFRAME_PREFIXES = ["/apps/"]` and hands off to `appSessionMiddleware` instead of rejecting the request for missing `Authorization` header. **This is a single prefix** — `/files/apps/` is NOT in the list because iframe navigation never uses `/files/apps/` after this spec.
+- On 401, the middleware picks between the HTML interstitial (navigation) and JSON (XHR) via `Accept` header content negotiation:
+  ```typescript
+  function sessionExpiredResponse(c, slug, correlationId) {
+    const accept = c.req.header("accept") ?? "";
+    const wantsHtml = accept.includes("text/html");
+    const headers = {
+      "WWW-Authenticate": "MatrixAppSession",
+      "Matrix-Session-Refresh": `/api/apps/${slug}/session`,
+      "Cache-Control": "no-store",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'self'",
+    };
+    if (wantsHtml) {
+      return new Response(SESSION_INTERSTITIAL_HTML, {
+        status: 401,
+        headers: { ...headers, "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+    return c.json({ error: "session_expired", correlationId }, 401, headers);
+  }
+  ```
+- `SESSION_INTERSTITIAL_HTML` is loaded once at module init from `session-interstitial.html`. No per-request string building — that is the byte-identical-body invariant.
+- `session-interstitial.html` runs a fixed 6-line IIFE that reads `location.pathname`, matches `/^\/apps\/([a-z0-9][a-z0-9-]{0,63})\//`, and if in an iframe posts `{ type: "matrix-os:session-expired", slug: match[1] }` to `window.parent` with `targetOrigin = window.location.origin`. No slug interpolation from the server — the script derives it from the browser's own URL so the HTML body never varies.
+- `POST /api/apps/:slug/session` is a normal bearer-authenticated route; it calls `loadManifest`, asserts `scope === "personal"`, **re-computes `distributionStatus` server-side** by calling the same `computeDistributionStatus(manifest.listingTrust, sandboxCapabilities())` used by the manifest API (never trusts a client-supplied value in the request body), signs a fresh payload, emits `Set-Cookie` via `buildSetCookie(slug, ...)` with `Path=/apps/{slug}/`, and returns `200 { expiresAt }`
+- The `distributionStatus` gate runs inside this route: `installable` → issue cookie; `gated` → require valid `ack` in request body (and a valid ack MUST succeed — this is the invariant from §Trust tiers) OR return `409 install_gated`; `blocked` → return `403 install_blocked_by_policy` (race-defense; shell is expected to not render an ack UI for `blocked` apps, so this code path is hit only if the env flag flipped between manifest fetch and session POST)
+- Ack tokens for gated installs are opaque, one-time, 5-minute TTL, stored in a bounded in-memory map (cap 32, LRU) keyed by slug. Issued by a separate `POST /api/apps/:slug/ack` route (documented in Task 8b step 3, tests in `app-session-middleware.test.ts`)
+
+- [ ] **Step 4: Green**
+
+- [ ] **Step 5: Commit**
+
+```
+git commit -m "feat(gateway): add app-session cookie middleware for iframe auth"
+```
+
+**Locked-in design decisions (from the confirmed auth call):**
+- Per-slug HMAC-signed cookie. `AppSessionPayload` is the v1 schema above.
+- `Path=/apps/{slug}/` — not `Path=/`. `buildSetCookie` is the single place this is constructed; grep for it.
+- `HttpOnly` + `SameSite=Strict` + `Secure` under TLS.
+- `APP_IFRAME_PREFIXES = ["/apps/"]` — single prefix, no `/files/apps/` entry.
+- `distributionStatus` is never trusted from client or from the on-disk manifest. `computeDistributionStatus` in `distribution-policy.ts` is the only writer.
 
 ---
 
@@ -812,27 +1154,45 @@ afterEach(async () => {
 });
 
 describe("phase 1: static + vite runtime", () => {
-  it("installs and serves a static app", async () => {
+  it("installs and serves a static app via the unified /apps/:slug/ dispatcher", async () => {
     await gateway.installAppFromFixture("calculator-static");
-    const res = await fetch(`${gateway.url}/files/apps/calculator/index.html`);
+    const cookie = await gateway.openAppSession("calculator-static");
+    const res = await fetch(`${gateway.url}/apps/calculator-static/`, { headers: { Cookie: cookie }});
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("Calculator");
   });
 
-  it("installs, builds, and serves a Vite app", async () => {
+  it("serving an app without the session cookie returns 401", async () => {
+    await gateway.installAppFromFixture("calculator-static");
+    const res = await fetch(`${gateway.url}/apps/calculator-static/`);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("matrix-session-refresh")).toBe("/api/apps/calculator-static/session");
+  });
+
+  it("installs, builds, and serves a Vite app through the same /apps/:slug/ route", async () => {
     await gateway.installAppFromFixture("hello-vite");
-    const res = await fetch(`${gateway.url}/files/apps/hello-vite/dist/index.html`);
+    const cookie = await gateway.openAppSession("hello-vite");
+    const res = await fetch(`${gateway.url}/apps/hello-vite/`, { headers: { Cookie: cookie }});
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<html");
     expect(html).toMatch(/<script[^>]*src="[^"]*\.js"/);
   }, 180_000);
 
-  it("manifest API returns the expected runtime mode", async () => {
+  it("session cookie issued for 'calculator-static' is rejected on /apps/hello-vite/ (path scoping)", async () => {
+    const cookieA = await gateway.openAppSession("calculator-static");
+    const res = await fetch(`${gateway.url}/apps/hello-vite/`, { headers: { Cookie: cookieA }});
+    expect(res.status).toBe(401);
+  });
+
+  it("manifest API returns the expected runtime mode and distributionStatus", async () => {
     await gateway.installAppFromFixture("hello-vite");
-    const res = await fetch(`${gateway.url}/api/apps/hello-vite/manifest`);
-    const m = await res.json();
-    expect(m.runtime).toBe("vite");
+    const res = await fetch(`${gateway.url}/api/apps/hello-vite/manifest`, {
+      headers: { Authorization: `Bearer ${gateway.token}` },
+    });
+    const body = await res.json();
+    expect(body.manifest.runtime).toBe("vite");
+    expect(body.distributionStatus).toBe("installable"); // first_party fixture
   });
 
   it("rebuild after source change reflects in served asset", async () => { /* ... */ }, 180_000);
@@ -1158,118 +1518,207 @@ git commit -m "feat(gateway): crash recovery with exponential backoff"
 
 ---
 
-### Task 17: Reverse Proxy — HTTP
+### Task 17: App-Runtime Dispatcher (static + vite + node)
+
+**Rename note:** originally scoped as "Reverse Proxy HTTP" — now covers all three runtime modes behind a single `/apps/:slug/*` handler, because spec §Architecture Overview unifies the URL prefix. File moves from `reverse-proxy.ts` to `dispatcher.ts`; the upstream-fetch code for node mode stays but is wrapped in a mode switch.
 
 **Files:**
-- Create: `packages/gateway/src/app-runtime/reverse-proxy.ts`
-- Create: `tests/gateway/app-runtime/reverse-proxy.test.ts`
+- Create: `packages/gateway/src/app-runtime/dispatcher.ts`
+- Create: `tests/gateway/app-runtime/dispatcher.test.ts`
+- The file-serving branches reuse the existing `resolveWithinHome` + streaming-file helpers from `server.ts`; do NOT reinvent static file serving.
 
 - [ ] **Step 1: Write failing tests**
 
 ```typescript
-describe("reverseProxy", () => {
-  it("forwards GET to child process", async () => {
-    await pm.ensureRunning("hello-next");
-    const res = await fetch(`${gateway.url}/apps/hello-next/api/hello`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("hello");
+describe("app-runtime dispatcher", () => {
+  describe("static mode", () => {
+    it("GET /apps/calculator/ serves ~/apps/calculator/index.html", async () => { /* ... */ });
+    it("GET /apps/calculator/style.css serves ~/apps/calculator/style.css", async () => { /* ... */ });
+    it("rejects path traversal (/apps/calculator/../../etc/passwd) with 400", async () => { /* ... */ });
+    it("does NOT spawn a child process for static apps", async () => {
+      // assert processManager.inspect(slug) is undefined after the request
+    });
+    it("returns 400 on WebSocket upgrade attempt in static mode", async () => { /* ... */ });
   });
 
-  it("forwards POST with body", async () => { /* ... */ });
-  it("forwards headers (minus hop-by-hop)", async () => { /* ... */ });
-  it("strips Server and X-Powered-By from response", async () => { /* ... */ });
-  it("returns 502 with correlation id on backend error", async () => { /* ... */ });
-  it("returns 503 when app is in failed state", async () => { /* ... */ });
-  it("returns 504 on backend timeout (30s)", async () => { /* ... */ });
-  it("respects bodyLimit 10MB", async () => { /* ... */ });
-  it("rejects invalid slug with 400", async () => { /* ... */ });
-  it("awaits startupPromise when process is starting", async () => { /* ... */ });
+  describe("vite mode", () => {
+    it("GET /apps/notes/ serves ~/apps/notes/dist/index.html", async () => { /* ... */ });
+    it("GET /apps/notes/assets/main.js serves ~/apps/notes/dist/assets/main.js", async () => { /* ... */ });
+    it("returns 503 needs_build when dist/ is missing", async () => { /* ... */ });
+    it("does NOT spawn a child process for vite apps", async () => { /* ... */ });
+  });
+
+  describe("node mode", () => {
+    it("forwards GET to child process", async () => {
+      const res = await fetch(`${gateway.url}/apps/hello-next/api/hello`, { headers: { Cookie: validCookie("hello-next") }});
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("hello");
+    });
+    it("forwards POST with body", async () => { /* ... */ });
+    it("forwards headers (minus hop-by-hop)", async () => { /* ... */ });
+    it("strips Server and X-Powered-By from response", async () => { /* ... */ });
+    it("replaces client-supplied X-Forwarded-Host with canonical gateway host", async () => {
+      // send a request with a poisoned Host header and X-Forwarded-Host, assert
+      // the upstream child sees cfg.publicHost (not "evil.example"). Exercises
+      // the CLIENT_CONTROLLED_FORWARDED strip list.
+    });
+    it("strips X-Real-IP and Forwarded headers from inbound requests", async () => { /* ... */ });
+    it("rejects inbound X-Matrix-App-Slug and sets its own", async () => { /* ... */ });
+    it("returns 502 with correlation id on backend error", async () => { /* ... */ });
+    it("returns 503 when app is in failed state", async () => { /* ... */ });
+    it("returns 504 on backend timeout (30s)", async () => { /* ... */ });
+    it("respects bodyLimit 10MB", async () => { /* ... */ });
+    it("awaits startupPromise when process is starting", async () => { /* ... */ });
+  });
+
+  describe("dispatch invariants", () => {
+    it("rejects invalid slug with 400 (before touching the filesystem or process manager)", async () => { /* ... */ });
+    it("returns 404 when manifest is missing", async () => { /* ... */ });
+    it("dispatches to static for `runtime: \"static\"`, vite for `runtime: \"vite\"`, node for `runtime: \"node\"`", async () => { /* ... */ });
+    it("mode choice re-reads the manifest on every request (supports live mode migration without restart)", async () => { /* ... */ });
+  });
 });
 ```
 
 - [ ] **Step 2: Red**
 
-- [ ] **Step 3: Implement Hono middleware**
+- [ ] **Step 3: Implement dispatcher**
 
 ```typescript
-// packages/gateway/src/app-runtime/reverse-proxy.ts
+// packages/gateway/src/app-runtime/dispatcher.ts
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { ProcessManager } from "./process-manager.js";
+import { loadManifest } from "./manifest-loader.js";
+import { serveStaticFileWithin } from "./serve-static.js"; // thin wrapper over existing helpers
 import { ProxyError } from "./errors.js";
+import { resolveWithinHome } from "../fs-helpers.js";
 
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailers", "transfer-encoding", "upgrade",
 ]);
+// Client-controlled forwarded headers MUST NOT be trusted. We strip every
+// inbound occurrence and rewrite canonical values from gateway config before
+// forwarding upstream. This blocks host-header injection, spoofed client IPs,
+// and poisoned absolute URL generation in the child (Next.js, etc).
+const CLIENT_CONTROLLED_FORWARDED = new Set([
+  "forwarded",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-forwarded-port",
+  "x-real-ip",
+  "x-matrix-app-slug", // never honor an inbound claim about which app this is
+]);
 const STRIPPED_RESPONSE = new Set(["server", "x-powered-by"]);
 
-export function mountReverseProxy(app: Hono, pm: ProcessManager) {
+export function mountAppRuntimeDispatcher(
+  app: Hono,
+  pm: ProcessManager,
+  cfg: { publicHost: string },
+) {
   app.use("/apps/:slug/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
   app.all("/apps/:slug/*", async (c) => {
     const slug = c.req.param("slug");
     if (!SAFE_SLUG.test(slug)) return c.json({ error: "invalid slug" }, 400);
 
-    let record;
-    try {
-      record = await pm.ensureRunning(slug);
-    } catch (err) {
-      c.get("logger").error({ err, slug }, "failed to start app");
-      return c.json({ error: "app failed to start", correlationId: c.get("requestId") }, 503);
+    // appSessionMiddleware has already verified the signed cookie by the time
+    // we get here — mount order is `appSessionMiddleware` → `mountAppRuntimeDispatcher`
+    // in server.ts. See spec §Authorization.
+
+    const manifestResult = await loadManifest(resolveWithinHome(`apps/${slug}`));
+    if (!manifestResult.ok) {
+      if (manifestResult.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      c.get("logger").error({ err: manifestResult.error, slug }, "manifest load failed");
+      return c.json({ error: "internal", correlationId: c.get("requestId") }, 500);
     }
-
+    const manifest = manifestResult.manifest;
     const rest = c.req.path.replace(`/apps/${slug}`, "") || "/";
-    const upstreamUrl = `http://127.0.0.1:${record.port}${rest}${new URL(c.req.url).search}`;
 
-    const reqHeaders = new Headers(c.req.raw.headers);
-    HOP_BY_HOP.forEach((h) => reqHeaders.delete(h));
-    reqHeaders.set("X-Forwarded-Host", c.req.header("host") ?? "");
-    reqHeaders.set("X-Forwarded-Proto", "http");
-    reqHeaders.set("X-Matrix-App-Slug", slug);
+    switch (manifest.runtime) {
+      case "static":
+        if (c.req.header("upgrade") === "websocket") return c.json({ error: "ws not supported for static runtime" }, 400);
+        return serveStaticFileWithin(c, `apps/${slug}`, rest === "/" ? "/index.html" : rest);
 
-    try {
-      const upstream = await fetch(upstreamUrl, {
-        method: c.req.method,
-        headers: reqHeaders,
-        body: c.req.raw.body,
-        signal: AbortSignal.timeout(30_000),
-        // @ts-expect-error duplex for streaming body
-        duplex: "half",
-      });
-      pm.markUsed(slug);
-      const resHeaders = new Headers(upstream.headers);
-      HOP_BY_HOP.forEach((h) => resHeaders.delete(h));
-      STRIPPED_RESPONSE.forEach((h) => resHeaders.delete(h));
-      return new Response(upstream.body, { status: upstream.status, headers: resHeaders });
-    } catch (err) {
-      const correlationId = c.get("requestId") ?? crypto.randomUUID();
-      const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
-      c.get("logger").error({ err, slug, correlationId }, "proxy error");
-      return c.json(
-        { error: "upstream error", correlationId },
-        isTimeout ? 504 : 502,
-      );
+      case "vite":
+        if (c.req.header("upgrade") === "websocket") return c.json({ error: "ws not supported for vite runtime" }, 400);
+        return serveStaticFileWithin(c, `apps/${slug}/dist`, rest === "/" ? "/index.html" : rest);
+
+      case "node":
+        return dispatchNode(c, slug, rest, pm, cfg);
+
+      default:
+        return c.json({ error: "unknown runtime" }, 500);
     }
   });
 }
+
+async function dispatchNode(c, slug: string, rest: string, pm: ProcessManager, cfg: { publicHost: string }) {
+  let record;
+  try {
+    record = await pm.ensureRunning(slug);
+  } catch (err) {
+    c.get("logger").error({ err, slug }, "failed to start app");
+    return c.json({ error: "app failed to start", correlationId: c.get("requestId") }, 503);
+  }
+
+  const upstreamUrl = `http://127.0.0.1:${record.port}${rest}${new URL(c.req.url).search}`;
+
+  const reqHeaders = new Headers(c.req.raw.headers);
+  HOP_BY_HOP.forEach((h) => reqHeaders.delete(h));
+  // Strip ALL client-supplied forwarded headers before setting canonical ones.
+  // Reading c.req.header("host") is NOT safe — it is user-controlled.
+  CLIENT_CONTROLLED_FORWARDED.forEach((h) => reqHeaders.delete(h));
+  reqHeaders.set("X-Forwarded-Host", cfg.publicHost);    // canonical, from gateway config
+  reqHeaders.set("X-Forwarded-Proto", "https");          // gateway terminates TLS in prod
+  reqHeaders.set("X-Forwarded-Prefix", `/apps/${slug}`); // for Next.js basePath reconstruction
+  reqHeaders.set("X-Matrix-App-Slug", slug);             // set AFTER delete — our claim wins
+
+  try {
+    const upstream = await fetch(upstreamUrl, {
+      method: c.req.method,
+      headers: reqHeaders,
+      body: c.req.raw.body,
+      signal: AbortSignal.timeout(30_000),
+      // @ts-expect-error duplex for streaming body
+      duplex: "half",
+    });
+    pm.markUsed(slug);
+    const resHeaders = new Headers(upstream.headers);
+    HOP_BY_HOP.forEach((h) => resHeaders.delete(h));
+    STRIPPED_RESPONSE.forEach((h) => resHeaders.delete(h));
+    return new Response(upstream.body, { status: upstream.status, headers: resHeaders });
+  } catch (err) {
+    const correlationId = c.get("requestId") ?? crypto.randomUUID();
+    const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
+    c.get("logger").error({ err, slug, correlationId }, "proxy error");
+    return c.json(
+      { error: "upstream error", correlationId },
+      isTimeout ? 504 : 502,
+    );
+  }
+}
 ```
+
+`serveStaticFileWithin` is a thin wrapper that calls the existing `/files/*` handler logic in `server.ts` with a fixed base directory and `resolveWithinHome` on every read. Do NOT reimplement content-type sniffing, range requests, or ETag handling — reuse what `server.ts:1388-1397` already does.
 
 - [ ] **Step 4: Green**
 
 - [ ] **Step 5: Commit**
 
 ```
-git commit -m "feat(gateway): add http reverse proxy for node apps"
+git commit -m "feat(gateway): add app-runtime dispatcher for /apps/:slug/*"
 ```
 
 ---
 
-### Task 18: Reverse Proxy — WebSocket Upgrade
+### Task 18: Dispatcher — WebSocket Upgrade (node mode only)
 
 **Files:**
-- Extend: `packages/gateway/src/app-runtime/reverse-proxy.ts`
-- Extend: `tests/gateway/app-runtime/reverse-proxy.test.ts`
+- Extend: `packages/gateway/src/app-runtime/dispatcher.ts`
+- Extend: `tests/gateway/app-runtime/dispatcher.test.ts`
 
 - [ ] **Step 1: Write failing test** using a fixture Next.js app that echoes WebSocket frames
 
@@ -1277,14 +1726,18 @@ git commit -m "feat(gateway): add http reverse proxy for node apps"
 
 - [ ] **Step 3: Implement WS upgrade**
 
-Uses `@hono/node-ws` upgrade callback. On upgrade request for `/apps/{slug}/*`, dials `ws://127.0.0.1:{port}{rest}` with `ws` library, pipes frames both directions, closes downstream on upstream close and vice versa. Enforces 60s idle timeout.
+Uses `@hono/node-ws` upgrade callback. On upgrade request for `/apps/{slug}/*`:
+1. `appSessionMiddleware` already verified the cookie (cookies are attached to WS handshakes)
+2. Load manifest; if `runtime !== "node"`, reject with `400 ws_not_supported` (static and vite never proxy websockets — keeps the attack surface tight)
+3. `pm.ensureRunning(slug)`, dial `ws://127.0.0.1:{port}{rest}` with `ws` library, pipe frames both directions, close downstream on upstream close and vice versa
+4. Enforce 60s idle timeout
 
 - [ ] **Step 4: Green**
 
 - [ ] **Step 5: Commit**
 
 ```
-git commit -m "feat(gateway): add websocket upgrade to reverse proxy"
+git commit -m "feat(gateway): add websocket upgrade to dispatcher (node mode)"
 ```
 
 ---
@@ -1465,6 +1918,106 @@ Scoped out of this spec. Placeholder task:
 
 ---
 
+## Phase 3b — Prerequisites for Spec 064 (App Import)
+
+Spec 064 (App Import) depends on three small additions to the install-flow / shared-state modules that are not needed by spec 063 on its own. They ship as an extension to 063's Phase 3 module — same files, narrow surface — so they land with 063 rather than as a surprise dependency when 064 implementation starts. Without these, spec 064 cannot begin Phase 1.
+
+### Task 25: `installFromStagingDir` parallel entry point
+
+**Files:**
+- Modify: `packages/gateway/src/app-runtime/install-flow.ts`
+- Extend: `tests/gateway/app-runtime/install-flow.test.ts`
+
+- [ ] **Step 1: Extract helpers from the existing `installFlow.install()` so both entry points can share them.** Pull out `validateManifestOnDisk`, `atomicRenameIntoApps`, `runBuildPipeline`, `writeBuildStamp`, `registerInCatalog` into module-private functions that both callers consume. No behavior change.
+- [ ] **Step 2: Add the new entry point with this exact signature (imports from 064 depend on this shape):**
+
+```typescript
+export async function installFromStagingDir(opts: {
+  stagingDir: string;                // /tmp/matrix-import/{uuid}/app, fully prepared
+  resolvedSlug: string;              // slug reservation held by caller via shared table
+  listingTrust: "first_party" | "community";
+  ackToken?: string;                 // required for community; undefined for first_party
+  principalUserId: string;
+}): Promise<{ slug: string; distributionStatus: "installable" }>;
+```
+
+- [ ] **Step 3: Implement the entry point:**
+  1. Re-read `matrix.json` from `stagingDir/matrix.json` via the existing loader; fail on schema mismatch or if declared `slug` / `listingTrust` do not match `opts`.
+  2. For `listingTrust === "community"`, call `verifyAckToken({ token: opts.ackToken!, correlationId: basename(stagingDir), principalUserId: opts.principalUserId })` from 058's verifier module. Fail with `InstallError("invalid_ack" | "ack_already_consumed" | "ack_expired")`.
+  3. Compute `distributionStatus` via the existing policy function. If `gated` and no ack, this is a bug path — log at error and fail closed.
+  4. `atomicRenameIntoApps(stagingDir, opts.resolvedSlug)`; on `EEXIST`, fail with `InstallError("slug_race")`.
+  5. Run the shared build pipeline (pnpm install --frozen-lockfile, pnpm build, build-stamp, catalog registration) exactly as `install()` does.
+  6. On any failure after the rename, clean up `~/apps/{slug}/` and release the slug reservation.
+
+- [ ] **Step 4: Tests for the new entry point.** Happy path (first_party staging dir → installed), community with valid ack, community with wrong-principal ack rejected, community with consumed ack rejected, slug-race failure path, schema drift between `opts` and on-disk manifest rejected.
+
+- [ ] **Step 5: Commit**
+
+```
+git commit -m "feat(gateway): add installFromStagingDir entry point for 064 app import"
+```
+
+### Task 26: Shared slug reservation table
+
+**Files:**
+- Create: `packages/gateway/src/app-runtime/slug-reservation-table.ts`
+- Modify: `packages/gateway/src/app-runtime/install-flow.ts` (consult the table in both entry points)
+- Create: `tests/gateway/app-runtime/slug-reservation-table.test.ts`
+
+- [ ] **Step 1:** Define the module-scoped singleton:
+
+```typescript
+export interface SlugReservationTable {
+  tryReserve(slug: string, owner: string): { ok: true; release: () => void } | { ok: false; heldBy: string };
+  isReserved(slug: string): boolean;
+  // For tests + startup reconciliation only:
+  _entries(): ReadonlyMap<string, { owner: string; reservedAt: number }>;
+}
+```
+
+- [ ] **Step 2:** Both `installFlow.install()` and `installFlow.installFromStagingDir()` must consult the table before their own `fs.rename` step. The check is: `isReserved(slug) || directoryExists(~/apps/{slug})`. The atomic rename happens under the reservation; the reservation is released after successful catalog registration or on failure cleanup.
+- [ ] **Step 3:** Startup reconciliation — on gateway boot, clear any stale reservations (they are in-memory, so a restart naturally drops them). The table is NOT persisted to disk.
+- [ ] **Step 4:** Tests: concurrent `tryReserve` for the same slug, one wins and one fails with `heldBy`; `release()` frees it; `isReserved` reflects state; wrong-owner release is a no-op.
+- [ ] **Step 5: Commit**
+
+```
+git commit -m "feat(gateway): shared slug reservation table for install-flow + 064 import"
+```
+
+### Task 27: 058 ack-token verifier module boundary
+
+**Files:**
+- Modify: `packages/gateway/src/app-runtime/install-flow.ts` (import from 058)
+- Coordinate: spec 058 exposes `verifyAckToken({ token, correlationId, principalUserId })`
+
+- [ ] **Step 1:** Settle the module path and signature with spec 058's author. Target shape:
+
+```typescript
+// packages/gateway/src/app-gallery/ack-token-verifier.ts (owned by 058)
+export function verifyAckToken(opts: {
+  token: string;
+  correlationId: string;
+  principalUserId: string;
+}): { ok: true } | { ok: false; code: "invalid" | "already_consumed" | "expired" | "principal_mismatch" };
+```
+
+- [ ] **Step 2:** Import it from `install-flow.ts::installFromStagingDir`. No new logic in 063 — just the module boundary. If spec 058 has not landed the verifier by the time Phase 3b starts, 063 stubs it with a function that always returns `{ ok: false, code: "invalid" }` and logs a `TODO(058)` warning. This lets Phase 3b land on time; the stub is swapped for the real verifier when 058 is ready.
+- [ ] **Step 3:** Integration test: community import via `installFromStagingDir` rejects without a valid ack token under either the stub or the real verifier.
+- [ ] **Step 4: Commit**
+
+```
+git commit -m "feat(gateway): wire 058 ack-token verifier into install-flow for community imports"
+```
+
+**Phase 3b done criteria:**
+- [ ] All three tasks merged, tests green
+- [ ] `installFromStagingDir` exports publicly from `packages/gateway/src/app-runtime/install-flow.ts`
+- [ ] Slug reservation table is consulted by both install-flow entry points
+- [ ] 058 verifier boundary is settled (stub or real)
+- [ ] Spec 064 can import these from the gateway package without further changes to 063
+
+---
+
 ## Global Done Criteria
 
 - [ ] All phases 1-3 merged to main
@@ -1499,7 +2052,7 @@ Scoped out of this spec. Placeholder task:
 - `zod` (already in package.json, v4)
 - `hono` (already in)
 - `@hono/node-ws` (already in)
-- `ws` (for reverse-proxy WebSocket client — add to gateway package)
+- `ws` (for dispatcher node-mode WebSocket client — add to gateway package)
 - `semver` (add to gateway package)
 - `glob` (add for source glob matching in build-cache)
 

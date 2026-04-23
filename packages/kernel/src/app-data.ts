@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 
 interface AppDataParams {
@@ -9,6 +9,7 @@ interface AppDataParams {
 }
 
 interface ToolResult {
+  [key: string]: unknown;
   content: Array<{ type: "text"; text: string }>;
 }
 
@@ -25,13 +26,26 @@ export async function appDataHandler(
   const dataDir = join(homePath, "data", safeApp);
 
   if (params.action === "list") {
-    if (!existsSync(dataDir)) {
+    let files: string[];
+    try {
+      files = await readdir(dataDir);
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
+      throw err;
+    }
+    if (files.length === 0) {
       return { content: [{ type: "text", text: JSON.stringify([]) }] };
     }
-    const files = readdirSync(dataDir)
+    const keys = files
       .filter((f) => f.endsWith(".json"))
       .map((f) => f.replace(/\.json$/, ""));
-    return { content: [{ type: "text", text: JSON.stringify(files) }] };
+    return { content: [{ type: "text", text: JSON.stringify(keys) }] };
   }
 
   if (!params.key) {
@@ -49,14 +63,23 @@ export async function appDataHandler(
   }
 
   if (params.action === "read") {
-    if (!existsSync(filePath)) {
-      return {
-        content: [
-          { type: "text", text: `No data found for app "${safeApp}" key "${safeKey}"` },
-        ],
-      };
+    let content: string;
+    try {
+      content = await readFile(filePath, "utf-8");
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return {
+          content: [
+            { type: "text", text: `No data found for app "${safeApp}" key "${safeKey}"` },
+          ],
+        };
+      }
+      throw err;
     }
-    const content = readFileSync(filePath, "utf-8");
     return { content: [{ type: "text", text: content }] };
   }
 
@@ -67,8 +90,8 @@ export async function appDataHandler(
     };
   }
 
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(filePath, params.value, "utf-8");
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(filePath, params.value, "utf-8");
   return {
     content: [
       { type: "text", text: `Written ${safeKey} for app "${safeApp}" (${params.value.length} bytes)` },

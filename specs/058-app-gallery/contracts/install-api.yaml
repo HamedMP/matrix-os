@@ -1,0 +1,117 @@
+# Installation Lifecycle API
+# Mount: /api/apps (gateway) + /api/store (platform)
+# Auth: All endpoints require authentication
+
+endpoints:
+  POST /api/apps/install:
+    description: Install an app from the gallery
+    auth: authenticated
+    location: gateway (copies files to user home)
+    body:
+      listingId: uuid (required)
+      target: "personal" | "organization" (default "personal")
+      orgId: uuid (required if target = "organization")
+      approvedPermissions: string[] (required -- user-approved permissions)
+    response:
+      201:
+        installationId: uuid
+        slug: string
+        status: "active" | "setup-required"
+        appUrl: string (/a/{slug} or /o/{orgSlug}/a/{slug})
+        missingIntegrations: string[] (if status = "setup-required")
+      400: error (validation failure)
+      403: error (org member check failed, or insufficient role)
+      409: error (already installed)
+    flow:
+      1. Validate listing exists and is active
+      2. Check not already installed (same user + listing + org context)
+      3. If org target: verify user has member+ role in org
+      4. Copy app files to user's ~/apps/{slug}/
+      5. Provision app database schema (app-db.ts)
+      6. Create app_installations record (platform)
+      7. Increment listing installs_count
+      8. Check required integrations -> set status
+      9. Return installation details
+
+  POST /api/apps/:slug/update:
+    description: Update an installed app to latest version
+    auth: authenticated
+    location: gateway
+    body:
+      installationId: uuid (required)
+    response:
+      200:
+        previousVersion: string
+        newVersion: string
+        status: "active"
+        dataPreserved: boolean
+      400: error (no update available)
+      404: error (installation not found)
+    flow:
+      1. Find installation record
+      2. Check listing has newer current_version
+      3. Snapshot pre-update data
+      4. Copy new version files to ~/apps/{slug}/
+      5. Run database migrations (if storage schema changed)
+      6. Update installation record (version_id, updated_at)
+      7. Return result
+
+  POST /api/apps/:slug/rollback:
+    description: Roll back to previous version
+    auth: authenticated
+    location: gateway
+    body:
+      installationId: uuid (required)
+    response:
+      200:
+        rolledBackTo: string (version string)
+        dataRestored: boolean
+      400: error (no previous version to roll back to)
+      404: error (installation not found)
+    flow:
+      1. Find installation and its previous version
+      2. Restore pre-update data snapshot
+      3. Copy previous version files
+      4. Update installation record
+      5. Return result
+
+  DELETE /api/apps/:slug/uninstall:
+    description: Uninstall an app
+    auth: authenticated
+    location: gateway
+    body:
+      installationId: uuid (required)
+      preserveData: boolean (default false)
+    response:
+      200:
+        uninstalled: true
+        dataPreserved: boolean
+    flow:
+      1. Remove app files from ~/apps/{slug}/
+      2. If !preserveData: drop app database schema
+      3. Delete installation record
+      4. Decrement listing installs_count
+
+  GET /api/store/installations:
+    description: List user's installations (with update status)
+    auth: authenticated
+    location: platform
+    query:
+      orgId: uuid (optional -- filter to org installs)
+    response:
+      200:
+        installations: Installation[]
+    notes: Compares installed version to listing current_version to flag updates
+
+types:
+  Installation:
+    id: uuid
+    listing: { id: uuid, slug: string, name: string, iconUrl: string | null, author: string }
+    installedVersion: string
+    currentVersion: string
+    hasUpdate: boolean
+    installTarget: "personal" | "organization"
+    orgSlug: string | null
+    status: string
+    installedAt: string
+    appUrl: string

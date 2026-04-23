@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./app-publish": "./src/app-publish.ts",
     "./app-fork": "./src/app-fork.ts",
-    "./app-manifest": "./src/app-manifest.ts"
+    "./app-manifest": "./src/app-manifest.ts",
+    "./sync/types": "./src/sync/types.ts"
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
@@ -25,6 +26,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1001.0",
+    "@aws-sdk/s3-request-presigner": "^3.1001.0",
     "@hono/node-server": "^1.19.9",
     "@hono/node-ws": "^1.3.0",
     "@matrix-os/kernel": "workspace:*",
@@ -32,8 +34,10 @@
     "@types/node-cron": "^3.0.11",
     "chokidar": "^4.0.0",
     "hono": "^4.11.9",
+    "jose": "^6.1.3",
     "kysely": "^0.28.13",
     "node-cron": "^4.2.1",
+    "node-diff3": "^3.2.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "node-telegram-bot-api": "^0.67.0",

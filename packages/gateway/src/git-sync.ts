@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { GIT_ENV } from "./git-env.js";
 
 const execAsync = promisify(execFile);
 
@@ -79,7 +80,10 @@ export function createAutoSync(sync: GitSync, options: AutoSyncOptions = {}): Au
 
 export function createGitSync(homePath: string): GitSync {
   async function git(...args: string[]): Promise<string> {
-    const { stdout } = await execAsync("git", args, { cwd: homePath });
+    const { stdout } = await execAsync("git", args, {
+      cwd: homePath,
+      env: { ...process.env, ...GIT_ENV },
+    });
     return stdout.trim();
   }
 
@@ -91,7 +95,12 @@ export function createGitSync(homePath: string): GitSync {
       let branch = "main";
       try {
         branch = await git("rev-parse", "--abbrev-ref", "HEAD");
-      } catch {}
+      } catch (err) {
+        console.warn(
+          "[git-sync] Failed to resolve current branch, defaulting to main:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
 
       let ahead = 0;
       let behind = 0;
@@ -110,7 +119,12 @@ export function createGitSync(homePath: string): GitSync {
             ahead = a;
           }
         }
-      } catch {}
+      } catch (err) {
+        console.warn(
+          "[git-sync] Failed to resolve remote tracking status:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
 
       return { clean, ahead, behind, branch, hasRemote };
     },

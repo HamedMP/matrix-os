@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import pg from 'pg';
 import { createPlatformDb, type PlatformDB, getContainer } from '../../packages/platform/src/db.js';
 import { createOrchestrator, type Orchestrator } from '../../packages/platform/src/orchestrator.js';
 
@@ -51,7 +52,111 @@ describe('platform/orchestrator', () => {
     expect(docker.createContainer).toHaveBeenCalledOnce();
     const createArgs = docker.createContainer.mock.calls[0][0];
     expect(createArgs.Env).toContain('MATRIX_HANDLE=alice');
+    expect(createArgs.Env).toContain('MATRIX_USER_ID=clerk_1');
     expect(createArgs.name).toBe('matrixos-alice');
+  });
+
+  it('uses platform internal auth helpers instead of injecting PLATFORM_DATABASE_URL', async () => {
+    const { docker } = createMockDocker();
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockResolvedValue({ rows: [{ 1: 1 }] }),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://postgres@db:5432',
+      platformSecret: 'platform-secret-123',
+    });
+
+    await orch.provision('alice', 'clerk_1');
+
+    const createArgs = docker.createContainer.mock.calls[0][0];
+    expect(createArgs.Env).toContain('DATABASE_URL=postgres://postgres@db:5432/matrixos_alice');
+    expect(createArgs.Env).toContain('PLATFORM_INTERNAL_URL=http://distro-platform-1:9000');
+    expect(createArgs.Env.some((value: string) => value.startsWith('UPGRADE_TOKEN='))).toBe(true);
+    expect(createArgs.Env.some((value: string) => value.startsWith('MATRIX_AUTH_TOKEN='))).toBe(true);
+    expect(createArgs.Env.some((value: string) => value.startsWith('PLATFORM_DATABASE_URL='))).toBe(false);
+    clientSpy.mockRestore();
+  });
+
+  it('passes MATRIX_USER_ID on upgrade so home-mirror keeps its R2 prefix', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('bob', 'user_2abc');
+    docker.createContainer.mockClear();
+    mockContainer.start.mockClear();
+
+    await orch.upgrade('bob');
+
+    expect(docker.createContainer).toHaveBeenCalledOnce();
+    const upgradeArgs = docker.createContainer.mock.calls[0][0];
+    expect(upgradeArgs.Env).toContain('MATRIX_USER_ID=user_2abc');
+    expect(upgradeArgs.Env).toContain('MATRIX_HANDLE=bob');
+  });
+
+  it('passes MATRIX_USER_ID on rolling restart', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('carol', 'user_2def');
+    docker.createContainer.mockClear();
+
+    await orch.rollingRestart();
+
+    expect(docker.createContainer).toHaveBeenCalledOnce();
+    const restartArgs = docker.createContainer.mock.calls[0][0];
+    expect(restartArgs.Env).toContain('MATRIX_USER_ID=user_2def');
+    expect(restartArgs.Env).toContain('MATRIX_HANDLE=carol');
+  });
+
+  // Silent-failure #12: a missing clerkUserId on the DB record would
+  // cause buildEnv to drop MATRIX_USER_ID, regressing e5b72dc (home-mirror
+  // would fall back to the handle-prefixed R2 key). upgrade must refuse.
+  it('upgrade throws if the container record has no clerkUserId', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('dan', 'user_2ghi');
+    // Simulate legacy DB row: blank out clerkUserId directly in the DB
+    // bypassing the type-safe insert path.
+    const { getDb } = await import('../../packages/platform/src/db.js');
+    // Cheap hack via raw SQL on the underlying sqlite: the drizzle handle
+    // wraps a sqlite.prepare-capable client.
+    // (Use the same db instance to keep the test self-contained.)
+    (db as any).$client.prepare("UPDATE containers SET clerk_user_id = '' WHERE handle = 'dan'").run();
+
+    await expect(orch.upgrade('dan')).rejects.toThrow(
+      /No clerkUserId in container record for handle 'dan'/,
+    );
+    // Also sanity: no container was recreated.
+    expect(docker.createContainer).toHaveBeenCalledOnce(); // the provision call
+  });
+
+  it('rollingRestart skips-with-failure for a record missing clerkUserId', async () => {
+    const { docker } = createMockDocker();
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('erin', 'user_2jkl');
+    await orch.provision('frank', 'user_2mno');
+    // Corrupt one record to simulate partial-failure state.
+    (db as any).$client.prepare("UPDATE containers SET clerk_user_id = '' WHERE handle = 'erin'").run();
+    docker.createContainer.mockClear();
+
+    const result = await orch.rollingRestart();
+
+    // The good record should still be restarted; the bad one reported as failed.
+    expect(result.total).toBe(2);
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(1);
+    const failure = result.results.find((r) => r.status === 'failed');
+    expect(failure?.handle).toBe('erin');
+    expect(failure?.error).toMatch(/No clerkUserId in container record for handle 'erin'/);
   });
 
   it('rejects duplicate handles', async () => {
@@ -62,6 +167,54 @@ describe('platform/orchestrator', () => {
     await expect(orch.provision('alice', 'clerk_2')).rejects.toThrow('already exists');
   });
 
+  it('releases allocated ports when container creation fails', async () => {
+    const { docker } = createMockDocker();
+    docker.createContainer.mockRejectedValueOnce(new Error('create failed'));
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await expect(orch.provision('alice', 'clerk_1')).rejects.toThrow('create failed');
+    expect(getContainer(db, 'alice')).toBeUndefined();
+
+    const record = await orch.provision('bob', 'clerk_2');
+    expect(record.port).toBe(4001);
+    expect(record.shellPort).toBe(4002);
+  });
+
+  it('releases reserved ports and avoids starting a container when the initial DB insert fails', async () => {
+    const firstContainer = {
+      id: 'container-1',
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    const secondContainer = {
+      id: 'container-2',
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    const { docker } = createMockDocker();
+    docker.createContainer
+      .mockResolvedValueOnce(firstContainer)
+      .mockResolvedValueOnce(secondContainer)
+      .mockResolvedValueOnce({
+        id: 'container-3',
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+      });
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+    await expect(orch.provision('bob', 'clerk_1')).rejects.toThrow();
+    expect(secondContainer.start).not.toHaveBeenCalled();
+    expect(secondContainer.remove).not.toHaveBeenCalled();
+
+    const record = await orch.provision('carol', 'clerk_3');
+    expect(record.port).toBe(4003);
+    expect(record.shellPort).toBe(4004);
+  });
+
   it('creates network if not exists', async () => {
     const { docker } = createMockDocker();
     docker.listNetworks.mockResolvedValue([]);
@@ -69,6 +222,72 @@ describe('platform/orchestrator', () => {
 
     await orch.provision('alice', 'clerk_1');
     expect(docker.createNetwork).toHaveBeenCalledWith({ Name: 'matrixos-net', Driver: 'bridge' });
+  });
+
+  it('uses a sanitized database identifier for per-user Postgres databases', async () => {
+    const { docker } = createMockDocker();
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({}),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://postgres@db:5432',
+    });
+
+    await orch.provision('alice-admin.prod', 'clerk_1');
+
+    expect(clientSpy).toHaveBeenCalledWith({
+      connectionString: 'postgres://postgres@db:5432/matrixos',
+      connectionTimeoutMillis: 10_000,
+    });
+
+    expect(mockClient.query).toHaveBeenNthCalledWith(
+      1,
+      'SELECT 1 FROM pg_database WHERE datname = $1',
+      ['matrixos_alice_admin_prod'],
+    );
+    expect(mockClient.query).toHaveBeenNthCalledWith(
+      2,
+      'CREATE DATABASE "matrixos_alice_admin_prod"',
+    );
+
+    clientSpy.mockRestore();
+  });
+
+  it('uses a Postgres connection timeout when dropping a user database', async () => {
+    const { docker } = createMockDocker();
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn().mockResolvedValue({ rows: [{ 1: 1 }] }),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const clientSpy = vi.spyOn(pg, 'Client').mockImplementation(function MockClient() {
+      return mockClient as any;
+    } as unknown as typeof pg.Client);
+    const orch = createOrchestrator({
+      db,
+      docker: docker as any,
+      postgresUrl: 'postgres://postgres@db:5432',
+    });
+
+    await orch.provision('alice', 'clerk_1');
+    await orch.destroy('alice');
+
+    expect(clientSpy).toHaveBeenCalledWith({
+      connectionString: 'postgres://postgres@db:5432/matrixos',
+      connectionTimeoutMillis: 10_000,
+    });
+    expect(mockClient.query).toHaveBeenCalledWith('DROP DATABASE IF EXISTS "matrixos_alice"');
+
+    clientSpy.mockRestore();
   });
 
   it('starts a stopped container', async () => {
@@ -114,6 +333,27 @@ describe('platform/orchestrator', () => {
     await orch.destroy('alice');
 
     expect(mockContainer.remove).toHaveBeenCalledWith({ force: true });
+    expect(orch.getInfo('alice')).toBeUndefined();
+  });
+
+  it('logs cleanup failures during destroy instead of swallowing them', async () => {
+    const { docker, mockContainer } = createMockDocker();
+    mockContainer.stop.mockRejectedValueOnce(new Error('stop failed'));
+    mockContainer.remove.mockRejectedValueOnce(new Error('remove failed'));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const orch = createOrchestrator({ db, docker: docker as any });
+
+    await orch.provision('alice', 'clerk_1');
+    await orch.destroy('alice');
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[orchestrator] Failed to stop container for alice:',
+      'stop failed',
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[orchestrator] Failed to remove container for alice:',
+      'remove failed',
+    );
     expect(orch.getInfo('alice')).toBeUndefined();
   });
 

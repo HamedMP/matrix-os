@@ -45,6 +45,8 @@ These map to `docker compose -f docker-compose.dev.yml` with the appropriate pro
 |---------|-----|------|---------|
 | Shell (desktop) | http://localhost:3000 | 3000 | default |
 | Gateway (API) | http://localhost:4000 | 4000 | default |
+| MinIO (S3 API) | http://localhost:9100 | 9100 | default |
+| MinIO (console) | http://localhost:9101 | 9101 | default |
 | Proxy | http://localhost:8080 | 8080 | full |
 | Platform | http://localhost:9000 | 9000 | full |
 | Conduit (Matrix) | http://localhost:6167 | 6167 | full |
@@ -57,6 +59,7 @@ These map to `docker compose -f docker-compose.dev.yml` with the appropriate pro
 | Bob (gateway) | http://localhost:4002 | 4002 | multi |
 
 Grafana default credentials: `admin` / `matrixos`
+MinIO console credentials: `matrixos` / `matrixos123`
 
 ## Common Operations
 
@@ -151,6 +154,21 @@ All env vars are loaded from `.env.docker` (via `env_file` in compose). The comp
 | `PLATFORM_SECRET` | No | `dev-secret` | Platform JWT secret |
 | `DATABASE_URL` | No | auto-set | PostgreSQL connection string for app data layer |
 | `GRAFANA_ADMIN_PASSWORD` | No | `matrixos` | Grafana admin password |
+| `S3_ENDPOINT` | No | `http://minio:9000` | S3 endpoint the gateway uses internally |
+| `S3_PUBLIC_ENDPOINT` | No | `http://localhost:9100` | S3 endpoint baked into presigned URLs (must be reachable by clients) |
+| `S3_ACCESS_KEY_ID` | No | `matrixos` | S3 access key |
+| `S3_SECRET_ACCESS_KEY` | No | `matrixos123` | S3 secret key |
+| `S3_BUCKET` | No | `matrixos-sync` | Bucket name |
+| `S3_FORCE_PATH_STYLE` | No | `true` | Use path-style URLs (required for MinIO) |
+| `MATRIX_AUTH_TOKEN` | No | - | Legacy bearer token for service-to-service auth. Coexists with `PLATFORM_JWT_SECRET`. |
+| `PLATFORM_JWT_SECRET` | No | - | HS256 secret used to verify sync JWTs issued by the platform. Set the **same value** on the platform service so issued tokens validate. Min 32 chars. Dev only. |
+| `PLATFORM_JWT_PUBLIC_KEY` | No | - | RS256 public key (PEM) for verifying platform-issued sync JWTs in production. Takes precedence over `PLATFORM_JWT_SECRET` when set. |
+| `GATEWAY_URL_TEMPLATE` | No | `https://{handle}.matrix-os.com` | Platform-only. Template for the gateway URL embedded in issued sync JWTs and returned by `/api/me`. Use `http://localhost:4000` for single-tenant dev or `http://matrixos-{handle}:4000` for in-cluster Docker routing. |
+| `PLATFORM_PUBLIC_URL` | No | `http://localhost:9000` | Platform-only. Base URL the CLI's browser should hit for `/auth/device?user_code=...`. |
+
+**Pointing at Cloudflare R2 instead of MinIO**: set `S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com` (or `R2_ACCOUNT_ID=<id>`), unset `S3_PUBLIC_ENDPOINT`, and set real credentials. R2 is virtual-host style, so `S3_FORCE_PATH_STYLE=false`.
+
+**Sync JWT auth (Phase 9)**: The gateway accepts both the legacy `MATRIX_AUTH_TOKEN` shared secret AND platform-issued JWTs in the same `Authorization: Bearer ...` header. Tokens that look like a JWT (3 base64url segments) are validated against `PLATFORM_JWT_SECRET`/`PLATFORM_JWT_PUBLIC_KEY`; everything else falls through to the legacy timing-safe compare. Both can coexist -- shared secret for service-to-service, JWT for the user's CLI/Mac app.
 
 ## Architecture Notes
 

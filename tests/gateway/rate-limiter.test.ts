@@ -59,4 +59,19 @@ describe("T826: Rate limiter", () => {
 
     expect(limiter.check("2.2.2.2")).toBe(true);
   });
+
+  it("evicts the least-recently-used IP bucket when maxKeys is exceeded", () => {
+    const limiter = createRateLimiter({
+      maxAttempts: 1,
+      windowMs: 60_000,
+      lockoutMs: 0,
+      maxKeys: 2,
+    });
+
+    expect(limiter.check("1.1.1.1")).toBe(true);
+    expect(limiter.check("2.2.2.2")).toBe(true);
+    expect(limiter.check("1.1.1.1")).toBe(false); // refresh 1.1.1.1 as most recently used
+    expect(limiter.check("3.3.3.3")).toBe(true); // evicts 2.2.2.2
+    expect(limiter.check("2.2.2.2")).toBe(true); // brand-new bucket again
+  });
 });

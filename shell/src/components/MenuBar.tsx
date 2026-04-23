@@ -4,6 +4,19 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { UserButton as ClerkUserButton, useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { SearchIcon, UserIcon } from "lucide-react";
+import { AppSettingsDialog } from "./AppSettingsDialog";
+
+const FALLBACK_APP_ICON = "/icon-192.png";
+
+function getBaseAppPath(path: string | null | undefined): string | null {
+  if (!path) {
+    return null;
+  }
+  if (path.startsWith("__") && path.includes(":")) {
+    return path.split(":")[0] ?? path;
+  }
+  return path;
+}
 
 function formatMenuBarClock(date: Date): string {
   const day = date.toLocaleDateString("en-US", { weekday: "short" });
@@ -150,20 +163,31 @@ function MenuDropdown({
 
 export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, children }: { onOpenCommandPalette: () => void; onNewWindow: () => void; onMinimizeWindow?: (id: string) => void; children?: React.ReactNode }) {
   const windows = useWindowManager((s) => s.windows);
+  const apps = useWindowManager((s) => s.apps);
   const closeWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimize = useWindowManager((s) => s.minimizeWindow);
   const minimizeWindow = onMinimizeWindow ?? wmMinimize;
   const focusedWindow = windows
     .filter((w) => !w.minimized)
     .sort((a, b) => b.zIndex - a.zIndex)[0];
-
-  const activeAppName = focusedWindow?.title ?? "Matrix OS";
+  const focusedAppPath = getBaseAppPath(focusedWindow?.path);
+  const focusedApp = apps.find((app) => app.path === focusedAppPath);
+  const activeAppName = focusedApp?.name ?? focusedWindow?.title ?? "Matrix OS";
+  const activeAppIconUrl = focusedApp?.iconUrl ?? FALLBACK_APP_ICON;
 
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const closeMenu = useCallback(() => setOpenMenu(null), []);
   const toggleMenu = useCallback((name: string) => {
     setOpenMenu((prev) => (prev === name ? null : name));
   }, []);
+  const openAppSettings = useCallback(() => {
+    setAppSettingsOpen(true);
+  }, []);
+
+  const appItems: MenuEntry[] = [
+    { label: "Settings…", shortcut: "⌘,", action: openAppSettings },
+  ];
 
   const fileItems: MenuEntry[] = [
     { label: "New Window", shortcut: "⌘N", action: onNewWindow },
@@ -208,41 +232,59 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   ];
 
   return (
-    <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-7 items-center px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
-      {/* Left: Logo + active app name + menus */}
-      <div className="flex items-center gap-0.5">
-        <button className="flex items-center px-2 py-0.5 rounded hover:bg-foreground/10">
-          <img src="/logo.png" alt="" className="size-4 rounded-[3px]" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-        </button>
-        <span className="px-1.5 py-0.5 font-semibold text-foreground/90 truncate max-w-[200px]">
-          {activeAppName}
-        </span>
-        <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
-        <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
-        <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
-      </div>
-
-      {/* Center: contextual toolbar controls — always centered via grid */}
-      <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
-        {children}
-      </div>
-
-      {/* Right: Search + clock + user */}
-      <div className="flex items-center gap-1 justify-end">
-        <button
-          className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
-          onClick={onOpenCommandPalette}
-          title="Search (Cmd+K)"
-        >
-          <SearchIcon className="size-3.5 text-foreground/70" />
-        </button>
-        <button className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
-          <MenuBarClock />
-        </button>
-        <div className="pl-0.5">
-          <MenuBarUser />
+    <>
+      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-7 items-center px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
+        {/* Left: app icon + app menu + global menus */}
+        <div className="flex items-center gap-0.5">
+          <div className="flex items-center px-2 py-0.5 rounded">
+            <img
+              key={activeAppIconUrl}
+              src={activeAppIconUrl}
+              alt=""
+              className="size-4 rounded-[4px] object-cover"
+              onError={(event) => {
+                const img = event.currentTarget;
+                img.onerror = null;
+                img.src = FALLBACK_APP_ICON;
+              }}
+            />
+          </div>
+          <MenuDropdown label={activeAppName} items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} />
+          <div className="mx-1 h-3 w-px bg-border/40" />
+          <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
+          <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
+          <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
         </div>
-      </div>
-    </header>
+
+        {/* Center: contextual toolbar controls — always centered via grid */}
+        <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+          {children}
+        </div>
+
+        {/* Right: Search + clock + user */}
+        <div className="flex items-center gap-1 justify-end">
+          <button
+            className="px-1.5 py-0.5 rounded hover:bg-foreground/10"
+            onClick={onOpenCommandPalette}
+            title="Search (Cmd+K)"
+          >
+            <SearchIcon className="size-3.5 text-foreground/70" />
+          </button>
+          <button className="px-2 py-0.5 rounded hover:bg-foreground/10 text-foreground/80">
+            <MenuBarClock />
+          </button>
+          <div className="pl-0.5">
+            <MenuBarUser />
+          </div>
+        </div>
+      </header>
+      <AppSettingsDialog
+        open={appSettingsOpen}
+        onOpenChange={setAppSettingsOpen}
+        appName={activeAppName}
+        appPath={focusedAppPath}
+        iconUrl={activeAppIconUrl}
+      />
+    </>
   );
 }

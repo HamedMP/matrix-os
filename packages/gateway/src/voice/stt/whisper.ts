@@ -41,7 +41,7 @@ export class WhisperSttProvider implements SttProvider {
 
     const { mimeType, ext } = detectAudioFormat(audio);
     const formData = new FormData();
-    const blob = new Blob([audio], { type: mimeType });
+    const blob = new Blob([new Uint8Array(audio)], { type: mimeType });
     formData.append("file", blob, `audio.${ext}`);
     formData.append("model", options?.model || this.defaultModel);
     if (options?.language) {
@@ -64,7 +64,15 @@ export class WhisperSttProvider implements SttProvider {
 
     if (!response.ok) {
       const status = response.status;
-      const body = await response.text().catch(() => "");
+      let body = "";
+      try {
+        body = await response.text();
+      } catch (err: unknown) {
+        console.warn(
+          "[whisper] Failed to read error response body:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       if (status === 401)
         throw new Error("Whisper STT auth error: invalid API key");
       if (status === 429)

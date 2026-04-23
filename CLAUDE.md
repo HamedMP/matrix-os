@@ -122,19 +122,60 @@ Read `specs/ux-guide.md`. Key rules:
 
 Every spec with endpoints/WebSockets/IPC/file I/O must include: security architecture (auth matrix, input validation, error policy), integration wiring (startup sequence, cross-package comms), failure modes (timeouts, concurrent access, crash recovery), resource management (buffer limits, file cleanup). Full checklist: `specs/quality-gates.md`
 
-## Code Review Essentials
+## Code Review Pipeline
 
-Check failure modes, not just happy paths:
+Full guide: `docs/dev/review-pipeline.md`. Three-pass structure, not line-by-line.
 
-- **Error handling**: typed catch blocks (not bare `catch { return null }`), async `.catch()`, no leaking internals
-- **Atomicity**: 3+ sequential DB writes need transactions, no TOCTOU races
-- **API contract**: response field names match frontend, no dead code paths
-- **Type safety**: no unchecked `as` casts, sync/async signature matches
+### Pre-PR Checklist
+
+Before opening any PR, run:
+
+```bash
+bun run typecheck           # tsc --noEmit for all packages
+bun run check:patterns      # CLAUDE.md pattern scanner
+bun run test                # unit tests
+```
+
+### Three Review Passes
+
+1. **Mechanical CLAUDE.md sweep**: bare catch, fetch without signal, missing bodyLimit, unbounded Map/Set, sync file I/O. Mostly automated by `scripts/review/check-patterns.sh`.
+2. **Trust-boundary sweep**: trace external input through route handlers, filesystem ops, DB queries, WS/IPC handlers. Apply per-file-type checklists.
+3. **Atomicity/failure-mode review**: source of truth, lock scope, partial failure, shutdown cleanup, deferred scope.
+
+### PR Size Limits
+
+- **> 3000 additions or > 50 files**: split the PR
+- Split boundaries: gateway, platform, sync-client, shell, docs/deploy
+
+### PR Body: Mandatory Invariants
+
+Every backend PR must include an "Invariants" section:
+
+- **Source of truth**: which store is canonical, how divergence is reconciled
+- **Lock/transaction scope**: what is inside the critical section, are network calls inside or outside
+- **Acceptable orphan states**: what happens if step N+1 fails after step N succeeds
+- **Auth source of truth**: primary auth mechanism, fallback behavior
+- **Deferred scope**: what is explicitly NOT in scope -- say so, don't leave dead code
+
+### Branch Freeze
+
+Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
+
+### Hard Rules (never violate)
+
+- No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
+- No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
+- No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
+- No unbounded `Map`/`Set` without size cap and eviction
+- No `path.join()` on unvalidated external input -- use `resolveWithinPrefix`
+- No raw error messages or Zod `.issues` in client responses
+- No PR larger than 3000 additions or 50 files without splitting
 
 ## Reference Docs
 
 Read these on demand, not every session:
 
+- `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS

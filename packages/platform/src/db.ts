@@ -30,6 +30,19 @@ export function createPlatformDb(path: string = DB_PATH) {
   return db;
 }
 
+type BetterSqliteClient = InstanceType<typeof Database>;
+
+function sqliteClient(db: PlatformDB): BetterSqliteClient {
+  return (db as { $client: BetterSqliteClient }).$client;
+}
+
+export function runInPlatformTransaction<T>(
+  db: PlatformDB,
+  fn: () => T,
+): T {
+  return sqliteClient(db).transaction(fn)();
+}
+
 export function getDb(dbPath?: string): PlatformDB {
   if (!_db) {
     _sqlite = new Database(dbPath ?? DB_PATH);
@@ -78,6 +91,23 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
       handle TEXT
     )
   `).run();
+
+  sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS device_codes (
+      device_code TEXT PRIMARY KEY,
+      user_code TEXT NOT NULL UNIQUE,
+      clerk_user_id TEXT,
+      expires_at INTEGER NOT NULL,
+      last_polled_at INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  `).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_device_codes_user_code ON device_codes(user_code)'
+  ).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at ON device_codes(expires_at)'
+  ).run();
 
   runAppRegistryMigrations(sqlite);
   runMatrixUserMigrations(sqlite);
@@ -135,20 +165,22 @@ export function deleteContainer(db: PlatformDB, handle: string): void {
 }
 
 export function allocatePort(db: PlatformDB, basePort: number, handle: string): number {
-  const existing = db.select({ port: portAssignments.port })
-    .from(portAssignments)
-    .where(eq(portAssignments.handle, handle))
-    .get();
-  if (existing) return existing.port;
+  return runInPlatformTransaction(db, () => {
+    const existing = db.select({ port: portAssignments.port })
+      .from(portAssignments)
+      .where(eq(portAssignments.handle, handle))
+      .get();
+    if (existing) return existing.port;
 
-  const result = db.select({ maxPort: max(portAssignments.port) })
-    .from(portAssignments)
-    .get();
+    const result = db.select({ maxPort: max(portAssignments.port) })
+      .from(portAssignments)
+      .get();
 
-  const nextPort = result?.maxPort ? result.maxPort + 1 : basePort;
+    const nextPort = result?.maxPort ? result.maxPort + 1 : basePort;
 
-  db.insert(portAssignments).values({ port: nextPort, handle }).run();
-  return nextPort;
+    db.insert(portAssignments).values({ port: nextPort, handle }).run();
+    return nextPort;
+  });
 }
 
 export function releasePort(db: PlatformDB, handle: string): void {

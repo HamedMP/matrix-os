@@ -1,5 +1,6 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Kysely table types
@@ -256,6 +257,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       const result = await kysely
         .insertInto("users")
         .values({
+          id: randomUUID(),
           clerk_id: input.clerkId,
           handle: input.handle,
           display_name: input.displayName,
@@ -263,7 +265,10 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           container_id: input.containerId,
           container_version: input.containerVersion ?? null,
           plan: input.plan ?? "free",
+          status: "active",
           pipedream_external_id: input.pipedreamExternalId ?? null,
+          created_at: sql`now()`,
+          updated_at: sql`now()`,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -404,11 +409,14 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       const result = await kysely
         .insertInto("user_apps")
         .values({
+          id: randomUUID(),
           user_id: input.userId,
           name: input.name,
           slug: input.slug,
           description: input.description ?? null,
           services_used: input.servicesUsed,
+          created_at: sql`now()`,
+          updated_at: sql`now()`,
         })
         .onConflict((oc) =>
           oc.columns(["user_id", "slug"]).doUpdateSet({
@@ -445,9 +453,12 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       const result = await kysely
         .insertInto("event_subscriptions")
         .values({
+          id: randomUUID(),
           user_id: input.userId,
           service: input.service,
           event_type: input.eventType,
+          status: "active",
+          created_at: sql`now()`,
         })
         .returningAll()
         .executeTakeFirstOrThrow();

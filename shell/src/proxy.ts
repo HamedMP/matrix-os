@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
-const platformSecret = process.env.PLATFORM_SECRET;
+const platformUpgradeToken = process.env.UPGRADE_TOKEN;
 
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
@@ -48,10 +48,21 @@ function getPublicOrigin(request: NextRequest) {
 const withClerk = clerkMiddleware(async (auth, request) => {
   const { pathname } = request.nextUrl;
 
-  // Platform already verified the Clerk session -- skip re-verification
-  const platformVerified = request.headers.get("x-platform-verified");
-  if (platformSecret && platformVerified === platformSecret) {
-    // Proxy gateway API and file requests
+  // Platform already verified the Clerk session -- skip re-verification.
+  // The platform signs the proxy with `Authorization: Bearer <UPGRADE_TOKEN>`
+  // (HMAC(handle, PLATFORM_SECRET)) and sets x-platform-user-id to the
+  // Clerk userId it resolved. Trust that bearer + enforce the owner pin.
+  const platformAuthHeader = request.headers.get("authorization");
+  const platformBearer = platformAuthHeader?.startsWith("Bearer ")
+    ? platformAuthHeader.slice(7)
+    : null;
+  const platformUserId = request.headers.get("x-platform-user-id");
+  if (platformUpgradeToken && platformBearer === platformUpgradeToken) {
+    if (expectedClerkUserId && platformUserId !== expectedClerkUserId) {
+      return new NextResponse("Forbidden: you do not own this instance", {
+        status: 403,
+      });
+    }
     if (isGatewayProxy(request)) {
       const target = pathname.startsWith("/gateway/")
         ? pathname.replace("/gateway", "")

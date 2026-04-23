@@ -12,8 +12,9 @@ function mockContext(path: string, authHeader?: string, queryToken?: string, ip?
       path,
       url,
       header: (name: string) => {
+        const lower = name.toLowerCase();
         if (name === "Authorization") return authHeader;
-        if (name === "X-Forwarded-For" && ip) return ip;
+        if ((name === "X-Forwarded-For" || lower === "x-forwarded-for") && ip) return ip;
         return undefined;
       },
     },
@@ -213,5 +214,35 @@ describe("T133: Auth token middleware", () => {
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);
+  });
+
+  it("falls back to x-forwarded-for when proxy IP headers are absent", async () => {
+    const mw = authMiddleware("secret-token");
+    const noisyIp = "198.51.100.10";
+    for (let i = 0; i < 120; i++) {
+      await mw(
+        mockContext("/api/integrations/webhook/connected", undefined, undefined, noisyIp),
+        async () => {},
+      );
+    }
+
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/integrations/webhook/connected", undefined, undefined, "198.51.100.11"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
+  it("does not double-decode already-decoded public paths", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+
+    await mw(
+      mockContext("/voice/webhook/%2e%2e"),
+      async () => { nextCalled = true; },
+    );
+
+    expect(nextCalled).toBe(false);
   });
 });

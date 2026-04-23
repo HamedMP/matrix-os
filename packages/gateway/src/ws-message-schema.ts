@@ -20,6 +20,13 @@ export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("ping"),
   }),
   z.object({
+    type: z.literal("sync:subscribe"),
+    peerId: z.string().min(1).max(128),
+    hostname: z.string().max(256),
+    platform: z.enum(["darwin", "linux", "win32"]),
+    clientVersion: z.string().max(64),
+  }),
+  z.object({
     type: z.literal("abort"),
     requestId: z.string().min(1).max(256),
   }),
