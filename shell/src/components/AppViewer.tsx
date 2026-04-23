@@ -15,6 +15,8 @@ import { openAppSession } from "@/lib/app-session";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
+const LEGACY_APP_SANDBOX = "allow-scripts allow-forms allow-popups allow-same-origin";
+const RUNTIME_APP_SANDBOX = "allow-scripts allow-popups";
 
 interface AppViewerProps {
   path: string;
@@ -38,6 +40,23 @@ export function extractSlug(path: string): string | null {
   // parent app's index.html instead of the requested file.
   const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
   return match ? match[1] : null;
+}
+
+export function getIframeSandbox(slug: string | null): string {
+  // Runtime apps are served from /apps/:slug on the shell origin. Keeping
+  // allow-same-origin together with allow-scripts would let installable app
+  // code make authenticated same-origin calls to shell/gateway APIs. Forms are
+  // also blocked for runtime apps to avoid blind same-site POSTs. Legacy /files
+  // apps keep the old same-origin bridge path until they migrate.
+  return slug ? RUNTIME_APP_SANDBOX : LEGACY_APP_SANDBOX;
+}
+
+function isMessageFromCurrentIframe(
+  event: MessageEvent,
+  iframe: HTMLIFrameElement | null,
+): boolean {
+  if (event.source !== iframe?.contentWindow) return false;
+  return event.origin === window.location.origin || event.origin === "null";
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -79,8 +98,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           el.textContent = script + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`;
           doc.head.appendChild(el);
         }
-      } catch {
-        // cross-origin restriction, bridge won't be available
+      } catch (err) {
+        // Cross-origin iframe -- bridge injection isn't possible.
+        // SecurityError is expected; anything else worth logging.
+        if (!(err instanceof DOMException) || err.name !== "SecurityError") {
+          console.warn("[AppViewer] bridge injection failed", err);
+        }
       }
     };
 
@@ -100,8 +123,11 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           { type: "os:theme-update", payload: themeVars },
           "*",
         );
-      } catch {
-        // cross-origin restriction
+      } catch (err) {
+        // Cross-origin postMessage can reject when the iframe is unloading.
+        if (!(err instanceof DOMException)) {
+          console.warn("[AppViewer] theme-update postMessage failed", err);
+        }
       }
     });
 
@@ -124,12 +150,16 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action, app, key, value }),
+          signal: AbortSignal.timeout(10_000),
+        }).catch((err) => {
+          console.warn("[AppViewer] bridge fetch failed", err);
         });
       },
       openApp: onOpenApp,
     };
 
     const onMessage = (event: MessageEvent) => {
+      if (!isMessageFromCurrentIframe(event, iframeRef.current)) return;
       handleBridgeMessage(event, handler);
     };
 
@@ -151,8 +181,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
               { type: "os:data-change", payload: { app: msgApp, key: msgKey } },
               "*",
             );
-          } catch {
-            // cross-origin restriction
+          } catch (err) {
+            if (!(err instanceof DOMException)) {
+              console.warn("[AppViewer] data-change postMessage failed", err);
+            }
           }
         }
       }
@@ -195,8 +227,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     if (!slug) return;
 
     const handler = async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (!isMessageFromCurrentIframe(event, iframeRef.current)) return;
       if (event.data?.type !== "matrix-os:session-expired") return;
       if (event.data?.slug !== slug) return;
       if (refreshInFlightRef.current) return;
@@ -227,6 +258,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     : sessionReady
       ? `/apps/${slug}/`
       : "about:blank";
+  const iframeSandbox = getIframeSandbox(slug);
 
   return (
     <iframe
@@ -234,7 +266,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       key={refreshKey}
       src={iframeSrc}
       className="h-full w-full border-0"
-      sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+      sandbox={iframeSandbox}
       title={path}
     />
   );

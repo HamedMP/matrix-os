@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
-const platformSecret = process.env.PLATFORM_SECRET;
+const platformUpgradeToken = process.env.UPGRADE_TOKEN;
 
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
@@ -32,6 +32,28 @@ function isGatewayProxy(request: NextRequest): boolean {
   );
 }
 
+function isOpaqueOriginRequest(request: NextRequest): boolean {
+  return request.headers.get("origin") === "null";
+}
+
+function isAppRuntimePath(request: NextRequest): boolean {
+  return request.nextUrl.pathname.startsWith("/apps/");
+}
+
+function rejectOpaqueOriginGatewayRequest(request: NextRequest): NextResponse | null {
+  // Sandboxed runtime apps intentionally use an opaque "null" origin. They may
+  // load their own /apps/:slug assets and APIs, but must not use the shell
+  // proxy as an authenticated ambient-authority bridge to /api, /files, etc.
+  if (
+    isGatewayProxy(request) &&
+    isOpaqueOriginRequest(request) &&
+    !isAppRuntimePath(request)
+  ) {
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+  return null;
+}
+
 function getPublicOrigin(request: NextRequest) {
   const host =
     request.headers.get("x-forwarded-host") ??
@@ -51,9 +73,12 @@ const withClerk = clerkMiddleware(async (auth, request) => {
 
   // Platform already verified the Clerk session -- skip re-verification
   const platformVerified = request.headers.get("x-platform-verified");
-  if (platformSecret && platformVerified === platformSecret) {
+  if (platformUpgradeToken && platformVerified === platformUpgradeToken) {
     // Proxy gateway API and file requests
     if (isGatewayProxy(request)) {
+      const blocked = rejectOpaqueOriginGatewayRequest(request);
+      if (blocked) return blocked;
+
       const target = pathname.startsWith("/gateway/")
         ? pathname.replace("/gateway", "")
         : pathname;
@@ -94,6 +119,9 @@ const withClerk = clerkMiddleware(async (auth, request) => {
 
   // Proxy gateway API and file requests
   if (isGatewayProxy(request)) {
+    const blocked = rejectOpaqueOriginGatewayRequest(request);
+    if (blocked) return blocked;
+
     const target = pathname.startsWith("/gateway/")
       ? pathname.replace("/gateway", "")
       : pathname;

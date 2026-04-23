@@ -10,9 +10,37 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+const MANIFEST_CACHE_CAP = 128;
 
 export function invalidateManifestCache(): void {
   cache.clear();
+}
+
+function cacheKey(homeDir: string, slug: string): string {
+  return `${homeDir}:${slug}`;
+}
+
+function getCachedManifest(key: string, mtimeMs: number): AppManifest | null {
+  const cached = cache.get(key);
+  if (!cached || cached.mtimeMs !== mtimeMs) return null;
+
+  // Refresh insertion order for LRU eviction.
+  cache.delete(key);
+  cache.set(key, cached);
+  return cached.manifest;
+}
+
+function setCachedManifest(key: string, entry: CacheEntry): void {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, entry);
+
+  while (cache.size > MANIFEST_CACHE_CAP) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
 export async function loadManifest(
@@ -45,9 +73,10 @@ export async function loadManifest(
     };
   }
 
-  const cached = cache.get(slug);
-  if (cached && cached.mtimeMs === fileStat.mtimeMs) {
-    return { ok: true, manifest: cached.manifest };
+  const key = cacheKey(homeDir, slug);
+  const cached = getCachedManifest(key, fileStat.mtimeMs);
+  if (cached) {
+    return { ok: true, manifest: cached };
   }
 
   let rawJson: string;
@@ -63,7 +92,8 @@ export async function loadManifest(
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
-  } catch {
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
     return {
       ok: false,
       error: new ManifestError("invalid_manifest", `invalid JSON in ${manifestPath}`),
@@ -86,7 +116,7 @@ export async function loadManifest(
     };
   }
 
-  cache.set(slug, { mtimeMs: fileStat.mtimeMs, manifest: result.manifest });
+  setCachedManifest(key, { mtimeMs: fileStat.mtimeMs, manifest: result.manifest });
 
   return { ok: true, manifest: result.manifest };
 }

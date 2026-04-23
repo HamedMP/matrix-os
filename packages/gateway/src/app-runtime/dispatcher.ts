@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolveWithinHome } from "../path-security.js";
 import { SAFE_SLUG } from "./manifest-schema.js";
@@ -47,7 +47,7 @@ export function sanitizeCookieHeader(value: string): string | null {
   return kept.length > 0 ? kept.join("; ") : null;
 }
 
-const STRIPPED_RESPONSE = new Set(["server", "x-powered-by"]);
+const STRIPPED_RESPONSE = new Set(["server", "x-powered-by", "set-cookie"]);
 
 export interface DispatcherConfig {
   publicHost?: string;
@@ -118,7 +118,11 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
           return c.json({ error: "invalid path" }, 400);
         }
         const distDir = join(appDir, "dist");
-        if (!existsSync(distDir)) {
+        const distStat = await stat(distDir).catch((err: NodeJS.ErrnoException) => {
+          if (err.code === "ENOENT" || err.code === "ENOTDIR") return null;
+          throw err;
+        });
+        if (!distStat || !distStat.isDirectory()) {
           return c.json({ error: "needs_build", status: "needs_build" }, 503);
         }
         return await serveStaticFileWithin(distDir, subPath, c);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, mkdir, rm, cp } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, cp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -133,6 +133,25 @@ describe("App Runtime Dispatcher", () => {
       const res = await app.request("/apps/nonexistent/");
       expect(res.status).toBe(404);
     });
+
+    it("rejects symlinked app assets", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      await writeFile(join(homeDir, "system-secret.txt"), "secret");
+      await symlink(join(homeDir, "system-secret.txt"), join(appDir, "secret.txt"));
+
+      const res = await app.request("/apps/calculator/secret.txt");
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects static assets over the per-request size cap", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      await writeFile(join(appDir, "large.bin"), Buffer.alloc(10 * 1024 * 1024 + 1));
+
+      const res = await app.request("/apps/calculator/large.bin");
+      expect(res.status).toBe(413);
+    });
   });
 
   describe("WebSocket", () => {
@@ -218,6 +237,13 @@ describe("App Runtime Dispatcher", () => {
       await installNodeApp("hello-next");
       const res = await nodeApp.request("/apps/hello-next/api/hello");
       expect(res.headers.get("x-powered-by")).toBeNull();
+    }, 15_000);
+
+    it("strips Set-Cookie from upstream node app responses", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/cookie");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("set-cookie")).toBeNull();
     }, 15_000);
 
     it("returns 502 or 503 on backend error", async () => {

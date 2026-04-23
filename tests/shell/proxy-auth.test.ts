@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
  */
 
 const PUBLIC_PATHS = ["/health", "/manifest.json", "/og.png", "/favicon.ico"];
-const GATEWAY_PREFIXES = ["/gateway/", "/api/", "/files/", "/modules/", "/ws"];
+const GATEWAY_PREFIXES = ["/gateway/", "/api/", "/files/", "/modules/", "/apps/", "/ws"];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.includes(pathname);
@@ -35,6 +35,13 @@ function shouldInjectAuthToken(
   authToken: string | undefined,
 ): boolean {
   return isGatewayProxy(pathname) && !!authToken;
+}
+
+function shouldRejectOpaqueOriginGatewayRequest(
+  pathname: string,
+  origin: string | null,
+): boolean {
+  return isGatewayProxy(pathname) && origin === "null" && !pathname.startsWith("/apps/");
 }
 
 function isOwnerMatch(
@@ -66,6 +73,7 @@ describe("proxy auth: route classification", () => {
     expect(isGatewayProxy("/api/identity")).toBe(true);
     expect(isGatewayProxy("/files/apps/todo/index.html")).toBe(true);
     expect(isGatewayProxy("/modules/weather")).toBe(true);
+    expect(isGatewayProxy("/apps/calculator/")).toBe(true);
     expect(isGatewayProxy("/ws")).toBe(true);
     expect(isGatewayProxy("/ws/terminal")).toBe(true);
     expect(isGatewayProxy("/gateway/health")).toBe(true);
@@ -75,6 +83,25 @@ describe("proxy auth: route classification", () => {
     expect(isGatewayProxy("/")).toBe(false);
     expect(isGatewayProxy("/settings")).toBe(false);
     expect(isGatewayProxy("/health")).toBe(false);
+  });
+});
+
+describe("proxy auth: opaque app-origin requests", () => {
+  it("rejects sandboxed app requests to ambient gateway paths", () => {
+    expect(shouldRejectOpaqueOriginGatewayRequest("/api/message", "null")).toBe(true);
+    expect(shouldRejectOpaqueOriginGatewayRequest("/files/system/config.json", "null")).toBe(true);
+    expect(shouldRejectOpaqueOriginGatewayRequest("/modules/weather", "null")).toBe(true);
+    expect(shouldRejectOpaqueOriginGatewayRequest("/gateway/api/message", "null")).toBe(true);
+  });
+
+  it("allows sandboxed app requests only to app-runtime paths", () => {
+    expect(shouldRejectOpaqueOriginGatewayRequest("/apps/calculator/", "null")).toBe(false);
+    expect(shouldRejectOpaqueOriginGatewayRequest("/apps/calculator/assets/app.js", "null")).toBe(false);
+  });
+
+  it("does not reject normal same-origin shell requests", () => {
+    expect(shouldRejectOpaqueOriginGatewayRequest("/api/message", "https://app.example.com")).toBe(false);
+    expect(shouldRejectOpaqueOriginGatewayRequest("/api/message", null)).toBe(false);
   });
 });
 

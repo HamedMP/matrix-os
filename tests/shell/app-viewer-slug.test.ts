@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractSlug } from "../../shell/src/components/AppViewer.js";
+import { extractSlug, getIframeSandbox } from "../../shell/src/components/AppViewer.js";
 
 describe("AppViewer extractSlug (spec 063 regression)", () => {
   it("extracts slug from top-level app paths", () => {
@@ -29,5 +29,15 @@ describe("AppViewer extractSlug (spec 063 regression)", () => {
     expect(extractSlug("apps/-leading-dash")).toBeNull();
     expect(extractSlug("apps/with_underscore")).toBeNull();
     expect(extractSlug("apps/with.dot")).toBeNull();
+  });
+
+  it("does not grant same-origin privileges to runtime apps", () => {
+    expect(getIframeSandbox("notes")).toBe("allow-scripts allow-popups");
+    expect(getIframeSandbox("notes")).not.toContain("allow-same-origin");
+    expect(getIframeSandbox("notes")).not.toContain("allow-forms");
+  });
+
+  it("keeps same-origin only for legacy /files apps", () => {
+    expect(getIframeSandbox(null)).toContain("allow-same-origin");
   });
 });

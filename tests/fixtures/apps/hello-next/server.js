@@ -15,6 +15,15 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if (req.url === "/api/cookie") {
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Set-Cookie": "__session=evil; Path=/",
+    });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (req.url === "/") {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end("<html><body>Hello Next</body></html>");
