@@ -1,9 +1,18 @@
 import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "../onboarding/gemini-live.js";
 import { VOCAL_SYSTEM_INSTRUCTION } from "./prompt.js";
 import { loadProfile, appendFact, renderProfileForPrompt } from "./profile.js";
+import { z } from "zod/v4";
 
 // Caps runaway LLM output before it reaches the kernel.
 const MAX_DESCRIPTION_LEN = 2000;
+const MAX_AUDIO_CHUNK_BYTES = 256 * 1024;
+const MAX_AUDIO_CHUNK_BASE64_CHARS = Math.ceil(MAX_AUDIO_CHUNK_BYTES / 3) * 4;
+const MAX_AUDIO_SESSION_BYTES = 50 * 1024 * 1024;
+const MAX_WS_MESSAGE_BYTES = MAX_AUDIO_CHUNK_BASE64_CHARS + 2_048;
+const MAX_TEXT_INPUT_CHARS = 10_000;
+const MAX_APP_NAME_LEN = 120;
+const MAX_STATUS_ACTION_LEN = 500;
+const MAX_ERROR_MESSAGE_LEN = 2_000;
 
 export type VocalExecute =
   | { type: "execute"; kind: "create_app"; description: string }
@@ -20,13 +29,34 @@ export type VocalOutbound =
   | { type: "show_build_progress"; description: string; elapsedSec: number; estimatedTotalSec: number; currentAction: string; stage: string }
   | { type: "error"; message: string; retryable: boolean };
 
-export type VocalInbound =
-  | { type: "start"; audioFormat: "pcm16" | "text" }
-  | { type: "audio"; data: string }
-  | { type: "text_input"; text: string }
-  | { type: "delegation_status"; description: string; stage: "pending" | "running" | "done"; elapsedSec: number; currentAction: string }
-  | { type: "delegation_complete"; kind: "create_app"; description: string; success: boolean; newAppName?: string; errorMessage?: string }
-  | { type: "execute_result"; kind: "open_app"; name: string; success: boolean; resolvedName?: string };
+const VocalInboundSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start"), audioFormat: z.enum(["pcm16", "text"]) }),
+  z.object({ type: z.literal("audio"), data: z.string().max(MAX_AUDIO_CHUNK_BASE64_CHARS) }),
+  z.object({ type: z.literal("text_input"), text: z.string().max(MAX_TEXT_INPUT_CHARS) }),
+  z.object({
+    type: z.literal("delegation_status"),
+    description: z.string().max(MAX_DESCRIPTION_LEN),
+    stage: z.enum(["pending", "running", "done"]),
+    elapsedSec: z.number().int().min(0).max(86_400),
+    currentAction: z.string().max(MAX_STATUS_ACTION_LEN),
+  }),
+  z.object({
+    type: z.literal("delegation_complete"),
+    kind: z.literal("create_app"),
+    description: z.string().max(MAX_DESCRIPTION_LEN),
+    success: z.boolean(),
+    newAppName: z.string().max(MAX_APP_NAME_LEN).optional(),
+    errorMessage: z.string().max(MAX_ERROR_MESSAGE_LEN).optional(),
+  }),
+  z.object({
+    type: z.literal("execute_result"),
+    kind: z.literal("open_app"),
+    name: z.string().max(MAX_APP_NAME_LEN),
+    success: z.boolean(),
+    resolvedName: z.string().max(MAX_APP_NAME_LEN).optional(),
+  }),
+]);
+export type VocalInbound = z.infer<typeof VocalInboundSchema>;
 
 // Snapshot the shell pushes during an active delegation so
 // `check_build_status` can answer synchronously. Cleared on completion.
@@ -115,6 +145,7 @@ export function createVocalHandler(deps: VocalDeps) {
   let gemini: GeminiLiveClient | null = null;
   let sendToClient: SendFn | null = null;
   let audioMode = false;
+  let audioBytesReceived = 0;
   let lastDelegation: DelegationSnapshot | null = null;
   // open_app blocks the Gemini tool response until the shell reports
   // match success/failure. Timeout fallback below guards against lost
@@ -131,6 +162,11 @@ export function createVocalHandler(deps: VocalDeps) {
 
   function send(msg: VocalOutbound) {
     sendToClient?.(msg);
+  }
+
+  function estimateBase64DecodedBytes(value: string): number {
+    const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
   }
 
   function deriveBuildStage(currentAction: string): string {
@@ -339,6 +375,7 @@ export function createVocalHandler(deps: VocalDeps) {
 
   async function handleStart(audioFormat: "pcm16" | "text") {
     audioMode = audioFormat === "pcm16";
+    audioBytesReceived = 0;
 
     if (!deps.geminiApiKey) {
       send({ type: "error", message: "Voice unavailable", retryable: false });
@@ -382,19 +419,40 @@ export function createVocalHandler(deps: VocalDeps) {
   }
 
   async function handleMessage(raw: string | Buffer) {
-    let data: VocalInbound;
+    const rawBytes = typeof raw === "string" ? Buffer.byteLength(raw) : raw.length;
+    if (rawBytes > MAX_WS_MESSAGE_BYTES) {
+      console.warn("[vocal] inbound message exceeded size cap:", rawBytes);
+      send({ type: "error", message: "Voice message too large", retryable: false });
+      return;
+    }
+
+    let rawData: unknown;
     try {
-      data = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as VocalInbound;
+      rawData = JSON.parse(typeof raw === "string" ? raw : raw.toString());
     } catch (err) {
       console.warn("[vocal] inbound JSON parse failed:", err instanceof Error ? err.message : String(err));
       return;
     }
+
+    const parsed = VocalInboundSchema.safeParse(rawData);
+    if (!parsed.success) {
+      console.warn("[vocal] invalid inbound message");
+      send({ type: "error", message: "Invalid voice message", retryable: false });
+      return;
+    }
+
+    const data = parsed.data;
 
     switch (data.type) {
       case "start":
         await handleStart(data.audioFormat);
         break;
       case "audio":
+        audioBytesReceived += estimateBase64DecodedBytes(data.data);
+        if (audioBytesReceived > MAX_AUDIO_SESSION_BYTES) {
+          send({ type: "error", message: "Audio session limit exceeded", retryable: false });
+          break;
+        }
         gemini?.sendAudio(data.data);
         break;
       case "text_input":
@@ -473,6 +531,7 @@ export function createVocalHandler(deps: VocalDeps) {
         clearTimeout(pendingOpenApp.timeout);
         pendingOpenApp = null;
       }
+      audioBytesReceived = 0;
       gemini?.close();
       gemini = null;
       sendToClient = null;

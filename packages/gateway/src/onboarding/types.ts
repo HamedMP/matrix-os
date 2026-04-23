@@ -23,13 +23,20 @@ export const ERROR_CODES = [
   "connection_limit", "audio_error",
 ] as const;
 
+export const MAX_AUDIO_CHUNK_BYTES = 256 * 1024;
+export const MAX_AUDIO_CHUNK_BASE64_CHARS = Math.ceil(MAX_AUDIO_CHUNK_BYTES / 3) * 4;
+export const MAX_AUDIO_SESSION_BYTES = 50 * 1024 * 1024;
+export const MAX_TEXT_INPUT_CHARS = 10_000;
+export const MAX_API_KEY_CHARS = 4_096;
+export const MAX_WS_MESSAGE_BYTES = MAX_AUDIO_CHUNK_BASE64_CHARS + 2_048;
+
 // Shell -> Gateway messages
 export const ShellToGatewaySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("start"), audioFormat: z.enum(["pcm16", "text"]) }),
-  z.object({ type: z.literal("audio"), data: z.string() }),
-  z.object({ type: z.literal("text_input"), text: z.string() }),
+  z.object({ type: z.literal("audio"), data: z.string().max(MAX_AUDIO_CHUNK_BASE64_CHARS) }),
+  z.object({ type: z.literal("text_input"), text: z.string().max(MAX_TEXT_INPUT_CHARS) }),
   z.object({ type: z.literal("choose_activation"), path: z.enum(ACTIVATION_PATHS) }),
-  z.object({ type: z.literal("set_api_key"), apiKey: z.string() }),
+  z.object({ type: z.literal("set_api_key"), apiKey: z.string().max(MAX_API_KEY_CHARS) }),
   z.object({
     type: z.literal("confirm_apps"),
     apps: z.array(z.string()).max(10),

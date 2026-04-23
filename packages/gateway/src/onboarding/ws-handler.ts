@@ -4,7 +4,15 @@ import { join } from "node:path";
 import { createStateMachine, type StateMachineSnapshot } from "./state-machine.js";
 import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "./gemini-live.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey } from "./api-key.js";
-import { ShellToGatewaySchema, type GatewayToShell, type ContextualContent, type OnboardingStage, type OnboardingState } from "./types.js";
+import {
+  MAX_AUDIO_SESSION_BYTES,
+  MAX_WS_MESSAGE_BYTES,
+  ShellToGatewaySchema,
+  type GatewayToShell,
+  type ContextualContent,
+  type OnboardingStage,
+  type OnboardingState,
+} from "./types.js";
 import { createProfileBuilder } from "./keyword-detector.js";
 
 export interface OnboardingDeps {
@@ -34,6 +42,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   let sendToClient: SendFn | null = null;
   let audioMode = false;
   let toolCallThisTurn = false;
+  let audioBytesReceived = 0;
   const profileBuilder = createProfileBuilder();
 
   async function isOnboardingComplete(): Promise<boolean> {
@@ -76,6 +85,11 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
 
   function send(msg: GatewayToShell) {
     sendToClient?.(msg);
+  }
+
+  function estimateBase64DecodedBytes(value: string): number {
+    const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
   }
 
   // Walk to "done" silently, without surfacing intermediate stages to
@@ -157,7 +171,8 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
 
     gemini.on("error", (evt: unknown) => {
       const e = evt as GeminiEvent & { type: "error" };
-      send({ type: "error", code: "gemini_unavailable", stage: sm.current, message: e.message, retryable: true });
+      console.error("[onboarding] gemini error:", e.message);
+      send({ type: "error", code: "gemini_unavailable", stage: sm.current, message: "Voice unavailable", retryable: true });
     });
 
     gemini.on("disconnected", () => {
@@ -171,6 +186,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   async function handleStart(audioFormat: "pcm16" | "text") {
     console.log("[onboarding] handleStart called with format:", audioFormat);
     audioMode = audioFormat === "pcm16";
+    audioBytesReceived = 0;
 
     // Try to resume state
     const snapshot = await loadState();
@@ -214,6 +230,13 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   }
 
   async function handleMessage(raw: string | Buffer) {
+    const rawBytes = typeof raw === "string" ? Buffer.byteLength(raw) : raw.length;
+    if (rawBytes > MAX_WS_MESSAGE_BYTES) {
+      console.warn("[onboarding] inbound message exceeded size cap:", rawBytes);
+      send({ type: "error", code: "audio_error", stage: sm.current, message: "Voice message too large", retryable: false });
+      return;
+    }
+
     let data: unknown;
     try {
       data = JSON.parse(typeof raw === "string" ? raw : raw.toString());
@@ -224,7 +247,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
 
     const parsed = ShellToGatewaySchema.safeParse(data);
     if (!parsed.success) {
-      console.log("[onboarding] Invalid message:", JSON.stringify(data).slice(0, 200));
+      console.log("[onboarding] Invalid message");
       return;
     }
 
@@ -236,6 +259,11 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         break;
 
       case "audio":
+        audioBytesReceived += estimateBase64DecodedBytes(msg.data);
+        if (audioBytesReceived > MAX_AUDIO_SESSION_BYTES) {
+          send({ type: "error", code: "audio_error", stage: sm.current, message: "Audio session limit exceeded", retryable: false });
+          break;
+        }
         gemini?.sendAudio(msg.data);
         break;
 
@@ -322,6 +350,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       gemini?.close();
       gemini = null;
       sm.clearTimer();
+      audioBytesReceived = 0;
       active = false;
       sendToClient = null;
     },
