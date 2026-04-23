@@ -42,8 +42,9 @@ RUN cd shell && node ../node_modules/next/dist/bin/next build
 # --------------------------------------------------
 FROM node:24-alpine AS runtime
 
-# Runtime: git (home dir init + self-healing), build tools (node-pty native addon)
-RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec
+# Runtime: git (home dir init + self-healing), build tools (node-pty native addon),
+# bubblewrap (bwrap) for codex's per-command sandbox
+RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec bubblewrap
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 

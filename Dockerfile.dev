@@ -4,9 +4,10 @@
 
 FROM node:24-alpine
 
-# System deps for native addons (node-pty, better-sqlite3, sqlite-vec)
+# System deps for native addons (node-pty, better-sqlite3, sqlite-vec) and
+# bubblewrap (bwrap) for codex's per-command sandbox
 RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake \
-    zsh curl shadow
+    zsh curl shadow bubblewrap
 
 # pnpm via corepack (Agent SDK bundles its own claude runtime)
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
