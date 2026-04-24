@@ -10,6 +10,20 @@ import { ElevenLabsTtsProvider } from "../../../../packages/gateway/src/voice/tt
 import { OpenAiTtsProvider } from "../../../../packages/gateway/src/voice/tts/openai.js";
 import { EdgeTtsProvider } from "../../../../packages/gateway/src/voice/tts/edge-tts.js";
 
+const edgeTtsMock = vi.hoisted(() => ({
+  constructorArgs: [] as Record<string, unknown>[],
+  ttsPromise: vi.fn(),
+}));
+
+vi.mock("node-edge-tts", () => ({
+  EdgeTTS: class {
+    ttsPromise = edgeTtsMock.ttsPromise;
+    constructor(opts?: Record<string, unknown>) {
+      if (opts) edgeTtsMock.constructorArgs.push(opts);
+    }
+  },
+}));
+
 function makeMockProvider(
   name: string,
   opts: {
@@ -475,30 +489,16 @@ describe("OpenAiTtsProvider", () => {
 });
 
 describe("EdgeTtsProvider", () => {
-  const constructorArgs: Record<string, unknown>[] = [];
-  const mockTtsPromise = vi.fn();
-
   beforeEach(async () => {
-    constructorArgs.length = 0;
-    mockTtsPromise.mockReset();
-    mockTtsPromise.mockImplementation(async (_text: string, path: string) => {
+    edgeTtsMock.constructorArgs.length = 0;
+    edgeTtsMock.ttsPromise.mockReset();
+    edgeTtsMock.ttsPromise.mockImplementation(async (_text: string, path: string) => {
       const { writeFileSync } = await import("node:fs");
       writeFileSync(path, Buffer.from("fake-audio-data"));
     });
-
-    vi.doMock("node-edge-tts", () => ({
-      EdgeTTS: class {
-        ttsPromise = mockTtsPromise;
-        constructor(opts?: Record<string, unknown>) {
-          if (opts) constructorArgs.push(opts);
-        }
-      },
-    }));
   });
 
   afterEach(() => {
-    vi.doUnmock("node-edge-tts");
-    vi.resetModules();
     vi.restoreAllMocks();
   });
 
@@ -517,26 +517,14 @@ describe("EdgeTtsProvider", () => {
     expect(result.audio).toBeInstanceOf(Buffer);
     expect(result.format).toBe("mp3");
     expect(result.provider).toBe("edge");
-    expect(mockTtsPromise).toHaveBeenCalledWith("Hello", expect.any(String));
+    expect(edgeTtsMock.ttsPromise).toHaveBeenCalledWith("Hello", expect.any(String));
   });
 
   it("uses default voice en-US-AriaNeural", async () => {
-    vi.resetModules();
-    vi.doMock("node-edge-tts", () => ({
-      EdgeTTS: class {
-        ttsPromise = mockTtsPromise;
-        constructor(opts?: Record<string, unknown>) {
-          if (opts) constructorArgs.push(opts);
-        }
-      },
-    }));
-    const { EdgeTtsProvider: MockedEdgeTts } = await import(
-      "../../../../packages/gateway/src/voice/tts/edge-tts.js"
-    );
-    const provider = new MockedEdgeTts();
+    const provider = new EdgeTtsProvider();
     await provider.synthesize("test");
 
-    expect(constructorArgs[0]).toEqual(
+    expect(edgeTtsMock.constructorArgs[0]).toEqual(
       expect.objectContaining({ voice: "en-US-AriaNeural" }),
     );
   });
