@@ -25,6 +25,9 @@ COPY shell/package.json shell/
 # Hoist packages so next binary is accessible from shell/
 RUN echo "shamefully-hoist=true" > .npmrc
 
+# Copy postinstall helper before install (package.json postinstall references it)
+COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
+
 RUN pnpm install --frozen-lockfile
 
 # Copy source
