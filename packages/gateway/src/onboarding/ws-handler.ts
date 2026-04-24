@@ -131,15 +131,15 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     send({ type: "stage", stage: "done" });
   }
 
-  function setupGeminiHandlers() {
-    if (!gemini) return;
-
-    gemini.on("audio", (evt: unknown) => {
+  function setupGeminiHandlers(client: GeminiLiveClient) {
+    client.on("audio", (evt: unknown) => {
+      if (gemini !== client) return;
       const e = evt as GeminiEvent & { type: "audio" };
       send({ type: "audio", data: e.data });
     });
 
-    gemini.on("input_transcript", (evt: unknown) => {
+    client.on("input_transcript", (evt: unknown) => {
+      if (gemini !== client) return;
       const e = evt as GeminiEvent & { type: "input_transcript" };
       send({ type: "transcript", text: e.text, speaker: "user" });
 
@@ -148,7 +148,8 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       if (content) send({ type: "contextual_content", content });
     });
 
-    gemini.on("output_transcript", (evt: unknown) => {
+    client.on("output_transcript", (evt: unknown) => {
+      if (gemini !== client) return;
       const e = evt as GeminiEvent & { type: "output_transcript" };
       send({ type: "transcript", text: e.text, speaker: "ai" });
 
@@ -159,17 +160,18 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       }
     });
 
-    gemini.on("tool_call", (evt: unknown) => {
+    client.on("tool_call", (evt: unknown) => {
+      if (gemini !== client) return;
       const e = evt as GeminiEvent & { type: "tool_call" };
       if (e.name === "show_content") {
         toolCallThisTurn = true;
         const content = mapToolArgsToContent(e.args);
         if (content) send({ type: "contextual_content", content });
-        gemini!.sendToolResponse(e.id, { success: true });
+        client.sendToolResponse(e.id, { success: true });
         return;
       }
       if (e.name === "finish_onboarding") {
-        gemini!.sendToolResponse(e.id, { success: true });
+        client.sendToolResponse(e.id, { success: true });
         void finishOnboarding().catch((err: unknown) => {
           console.error("[onboarding] finishOnboarding failed:", err instanceof Error ? err.message : String(err));
           send({ type: "error", code: "audio_error", stage: sm.current, message: "Onboarding could not finish", retryable: true });
@@ -177,12 +179,14 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       }
     });
 
-    gemini.on("interrupted", () => {
+    client.on("interrupted", () => {
+      if (gemini !== client) return;
       // User started speaking — tell client to stop audio playback
       send({ type: "interrupted" });
     });
 
-    gemini.on("turn_complete", () => {
+    client.on("turn_complete", () => {
+      if (gemini !== client) return;
       toolCallThisTurn = false;
       send({ type: "turn_complete" });
 
@@ -200,13 +204,15 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       }
     });
 
-    gemini.on("error", (evt: unknown) => {
+    client.on("error", (evt: unknown) => {
+      if (gemini !== client) return;
       const e = evt as GeminiEvent & { type: "error" };
       console.error("[onboarding] gemini error:", e.message);
       send({ type: "error", code: "gemini_unavailable", stage: sm.current, message: "Voice unavailable", retryable: true });
     });
 
-    gemini.on("disconnected", () => {
+    client.on("disconnected", () => {
+      if (gemini !== client) return;
       if (sm.current !== "done") {
         send({ type: "mode_change", mode: "text" });
         audioMode = false;
@@ -216,6 +222,10 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
 
   async function handleStart(audioFormat: "pcm16" | "text") {
     console.log("[onboarding] handleStart called with format:", audioFormat);
+    if (gemini) {
+      gemini.close();
+      gemini = null;
+    }
     audioMode = audioFormat === "pcm16";
     audioBytesReceived = 0;
 
@@ -240,16 +250,24 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     send({ type: "stage", stage: sm.current, audioSource: audioMode ? "gemini_live" : undefined });
 
     if (audioMode && deps.geminiApiKey) {
+      let client: GeminiLiveClient | null = null;
       try {
         console.log("[onboarding] Connecting to Gemini Live...");
-        gemini = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel);
-        setupGeminiHandlers();
-        await gemini.connect();
+        client = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel);
+        gemini = client;
+        setupGeminiHandlers(client);
+        await client.connect();
+        if (gemini !== client) {
+          client.close();
+          return;
+        }
         console.log("[onboarding] Gemini Live connected! Sending greeting prompt...");
         sm.startTimer();
-        gemini.sendText("Go ahead, say hi to them. Keep it super short.");
+        client.sendText("Go ahead, say hi to them. Keep it super short.");
       } catch (err) {
         console.error("[onboarding] Gemini Live connection FAILED:", err instanceof Error ? err.message : String(err));
+        if (gemini !== client) return;
+        gemini = null;
         send({ type: "mode_change", mode: "text" });
         audioMode = false;
       }

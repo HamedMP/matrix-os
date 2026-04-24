@@ -245,10 +245,9 @@ export function useOnboarding(): OnboardingHook {
       streamRef.current = null;
       micCtxRef.current = null;
       if (mountedRef.current) {
-        // Mic denied — fall back to text mode
         setIsVoiceMode(false);
-        send({ type: "start", audioFormat: "text" });
       }
+      throw err;
     }
   }, [send]);
 
@@ -382,8 +381,23 @@ export function useOnboarding(): OnboardingHook {
     const checkOpen = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         clearInterval(checkOpen);
-        send({ type: "start", audioFormat: useVoice ? "pcm16" : "text" });
-        if (useVoice) startMic();
+        if (!useVoice) {
+          send({ type: "start", audioFormat: "text" });
+          return;
+        }
+        void startMic()
+          .then(() => {
+            if (mountedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+              send({ type: "start", audioFormat: "pcm16" });
+            }
+          })
+          .catch((err: unknown) => {
+            console.warn("[onboarding] voice mic unavailable, falling back to text:", err instanceof Error ? err.message : String(err));
+            if (mountedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+              setIsVoiceMode(false);
+              send({ type: "start", audioFormat: "text" });
+            }
+          });
       }
     }, 50);
     // Clear after 5s if never opens

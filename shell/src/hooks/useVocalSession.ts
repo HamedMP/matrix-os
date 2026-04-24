@@ -238,6 +238,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
         console.warn("[vocal] mic init failed:", err instanceof Error ? err.message : String(err));
         setError("Microphone access denied");
       }
+      throw err;
     }
   }, [send]);
 
@@ -324,7 +325,7 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       setConnected(true);
       void startMic()
         .then(() => {
-          if (ws.readyState === WebSocket.OPEN) {
+          if (mountedRef.current && ws.readyState === WebSocket.OPEN) {
             send({ type: "start", audioFormat: "pcm16" });
           }
         })
