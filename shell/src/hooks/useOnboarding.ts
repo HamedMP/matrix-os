@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getGatewayUrl } from "@/lib/gateway";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 
 export type OnboardingStage =
   | "connecting"
@@ -337,17 +337,8 @@ export function useOnboarding(): OnboardingHook {
     }
   }, [playAudio]);
 
-  // Connect WebSocket — bypass Next.js proxy (can't handle WS upgrades)
-  const connect = useCallback(() => {
-    const gatewayUrl = getGatewayUrl();
-    // In dev, getGatewayUrl returns the shell origin (localhost:3000).
-    // WebSocket must go directly to the gateway. Use getGatewayWs() pattern
-    // or fall back to port 4000 for local dev.
-    const isLocalDev = typeof window !== "undefined" && window.location.hostname === "localhost";
-    const wsBase = isLocalDev
-      ? `ws://localhost:4000`
-      : gatewayUrl.replace(/^http/, "ws");
-    const wsUrl = `${wsBase}/ws/onboarding`;
+  const connect = useCallback(async () => {
+    const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -374,7 +365,10 @@ export function useOnboarding(): OnboardingHook {
 
   // Public API
   const start = useCallback((useVoice: boolean) => {
-    connect();
+    void connect().catch((err: unknown) => {
+      console.warn("[onboarding] connect failed:", err instanceof Error ? err.message : String(err));
+      setError("Connection failed");
+    });
     setIsVoiceMode(useVoice);
 
     // Wait for WS open, then send start message
