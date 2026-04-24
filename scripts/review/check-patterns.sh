@@ -124,6 +124,26 @@ fi
 
 header "2. External Calls — fetch() without AbortSignal.timeout"
 
+# Matches inside template literals are usually documentation (agent
+# prompts, iframe-injected bridge scripts, etc.) rather than runtime
+# code paths on the gateway. Skip them by tracking backtick parity from
+# the file start through the match line: an odd count means the match
+# sits inside an unclosed template literal. Escaped backticks (`\``) are
+# stripped before counting.
+is_in_template_literal() {
+  local file="$1" target_line="$2"
+  awk -v target="$target_line" '
+    NR > target { exit }
+    {
+      line = $0
+      gsub(/\\`/, "", line)
+      n = gsub(/`/, "&", line)
+      count += n
+    }
+    END { exit (count % 2 == 0 ? 1 : 0) }
+  ' "$file"
+}
+
 MATCHES=$(rg_scan 'fetch\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   # Check a short source window for each fetch call so multiline options
@@ -132,6 +152,10 @@ if [[ -n "$MATCHES" ]]; then
   while IFS= read -r line; do
     file=$(echo "$line" | cut -d: -f1)
     line_no=$(echo "$line" | cut -d: -f2)
+    # Documentation strings inside template literals aren't real fetch calls.
+    if is_in_template_literal "$file" "$line_no"; then
+      continue
+    fi
     window_end=$((line_no + 12))
     call_window=$(sed -n "${line_no},${window_end}p" "$file" 2>/dev/null || true)
     if ! echo "$call_window" | grep -Eq 'signal\s*:'; then

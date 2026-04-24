@@ -17,7 +17,8 @@ const isPublicRoute = createRouteMatcher([
 
 // Direct path check instead of Clerk's createRouteMatcher -- in Next 16's
 // proxy.ts runtime, createRouteMatcher has been observed to return false for
-// paths it should match, causing gateway-bound requests (/api/*, /files/*)
+// paths it should match, causing gateway-bound requests (/api/*, /files/*,
+// /apps/*)
 // to fall through to the 404 page instead of being rewritten to the gateway.
 function isGatewayProxy(request: NextRequest): boolean {
   const p = request.nextUrl.pathname;
@@ -26,6 +27,7 @@ function isGatewayProxy(request: NextRequest): boolean {
     p.startsWith("/api/") ||
     p.startsWith("/files/") ||
     p.startsWith("/modules/") ||
+    p.startsWith("/apps/") ||
     p === "/ws" ||
     p.startsWith("/ws/")
   );
@@ -131,25 +133,11 @@ export function proxy(
   if (process.env.E2E_TEST_BYPASS === "1") {
     return NextResponse.next();
   }
-
-  // Gateway proxy paths are backend-to-backend rewrites and must not be
-  // gated by Clerk -- Clerk would redirect unauthenticated requests to
-  // /sign-in, but these paths are fetched from client code that already
-  // assumes the shell origin is authenticated. Rewriting here also lets
-  // us skip the Clerk middleware roundtrip entirely for API/file calls.
-  if (isGatewayProxy(request)) {
-    const { pathname } = request.nextUrl;
-    const target = pathname.startsWith("/gateway/")
-      ? pathname.replace("/gateway", "")
-      : pathname;
-    const url = new URL(target + request.nextUrl.search, gatewayUrl);
-    const headers = new Headers(request.headers);
-    if (authToken) {
-      headers.set("Authorization", `Bearer ${authToken}`);
-    }
-    return NextResponse.rewrite(url, { request: { headers } });
-  }
-
+  // All requests — including gateway-proxy paths — flow through Clerk so the
+  // admin bearer token is never injected onto an unauthenticated request. The
+  // platform-verified fast-path inside withClerk covers the pre-authenticated
+  // backend-to-backend case; unauthenticated XHRs get redirected to /sign-in,
+  // which is the correct outcome (client must reauthenticate).
   return withClerk(request, event);
 }
 
@@ -158,6 +146,7 @@ export const config = {
     "/gateway/:path*",
     "/files/:path*",
     "/modules/:path*",
+    "/apps/:path*",
     "/ws/:path*",
     "/(api|trpc)(.*)",
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",

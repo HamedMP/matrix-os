@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { Hono } from "hono";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 
 const WEBHOOK_PROVIDERS = new Set(["twilio", "mock"]);
+const TEST_TOKEN = "test-bearer-token-for-auth-tests";
 
 function mockContext(path: string, authHeader?: string, queryToken?: string, ip?: string) {
   const url = queryToken
@@ -20,6 +22,24 @@ function mockContext(path: string, authHeader?: string, queryToken?: string, ip?
     },
     json: (body: unknown, status?: number) => ({ body, status: status ?? 200 }),
   } as any;
+}
+
+function createTestApp() {
+  const app = new Hono();
+  app.use("*", authMiddleware(TEST_TOKEN));
+
+  // Protected API route
+  app.get("/api/apps/:slug/manifest", (c) => c.json({ ok: true }));
+  app.post("/api/apps/:slug/session", (c) => c.json({ ok: true }));
+  app.post("/api/apps/:slug/ack", (c) => c.json({ ok: true }));
+
+  // App iframe route (should be exempted)
+  app.get("/apps/:slug/*", (c) => c.json({ ok: true, slug: c.req.param("slug") }));
+
+  // Regular protected route
+  app.get("/api/conversations", (c) => c.json({ ok: true }));
+
+  return app;
 }
 
 describe("T133: Auth token middleware", () => {
@@ -244,5 +264,70 @@ describe("T133: Auth token middleware", () => {
     );
 
     expect(nextCalled).toBe(false);
+  });
+});
+
+// Integration tests share the module-level failed-auth rate limiter with the
+// unit tests above (both resolve to the default 127.0.0.1 bucket when no IP
+// header is set). Each negative-path test here pins a unique X-Forwarded-For
+// so 401s here don't accumulate against 127.0.0.1 and flip to 429.
+describe("authMiddleware app iframe exemption", () => {
+  it("exempts /apps/* from bearer auth (calls next without principal)", async () => {
+    const app = createTestApp();
+    const res = await app.request("/apps/notes/index.html");
+    expect(res.status).toBe(200);
+  });
+
+  it("exempts /apps/:slug/ root path", async () => {
+    const app = createTestApp();
+    const res = await app.request("/apps/calculator/");
+    expect(res.status).toBe(200);
+  });
+
+  it("still requires bearer auth for /api/apps/:slug/manifest", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/apps/notes/manifest", {
+      headers: { "X-Forwarded-For": "203.0.113.10" },
+    });
+    expect(res.status).toBe(401);
+
+    const authedRes = await app.request("/api/apps/notes/manifest", {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(authedRes.status).toBe(200);
+  });
+
+  it("still requires bearer auth for /api/apps/:slug/session", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/apps/notes/session", {
+      method: "POST",
+      headers: { "X-Forwarded-For": "203.0.113.11" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("still requires bearer auth for /api/apps/:slug/ack", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/apps/notes/ack", {
+      method: "POST",
+      headers: { "X-Forwarded-For": "203.0.113.12" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("still requires bearer auth for non-/apps/* routes", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/conversations", {
+      headers: { "X-Forwarded-For": "203.0.113.13" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("does not accidentally exempt /api/apps/ (only /apps/ prefix)", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/apps/notes/manifest", {
+      headers: { "X-Forwarded-For": "203.0.113.14" },
+    });
+    expect(res.status).toBe(401);
   });
 });

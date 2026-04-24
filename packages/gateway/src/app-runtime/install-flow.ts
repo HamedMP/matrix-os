@@ -1,0 +1,419 @@
+/**
+ * App install flow with verified path and trust gate.
+ *
+ * ack-store contract:
+ * - Session endpoint (POST /api/apps/:slug/session) uses peekAck
+ *   (non-consuming) to validate the ack token before issuing a signed
+ *   cookie.
+ * - assertInstallAllowed calls consumeAck (terminal) during the install
+ *   step -- the same ack token may have been peeked by the session
+ *   endpoint earlier in the user flow.
+ *
+ * NOTE (T081): the public install endpoint that wires assertInstallAllowed
+ * into an HTTP handler is not yet mounted in server.ts. IPC installs still
+ * route through the legacy packages/gateway/src/app-fork.ts path. Until
+ * that wiring lands, assertInstallAllowed / installVerifiedApp are exercised
+ * only by tests -- any new install entry point MUST call assertInstallAllowed
+ * before installVerifiedApp, or gated-tier apps will bypass the ack check.
+ */
+
+import { readFile, mkdir, cp, rm, rename } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { join, basename } from "node:path";
+import { existsSync } from "node:fs";
+import { satisfies } from "semver";
+import { resolveWithinHome } from "../path-security.js";
+import { ManifestError, BuildError } from "./errors.js";
+import { parseManifest, type AppManifest } from "./manifest-schema.js";
+import { BuildOrchestrator } from "./build-orchestrator.js";
+import { hashSources } from "./build-cache.js";
+import {
+  computeDistributionStatus,
+  sandboxCapabilities,
+} from "./distribution-policy.js";
+import type { AckStore } from "./ack-store.js";
+
+export const RUNTIME_VERSION = "1.0.0";
+
+export type InstallResult =
+  | { ok: true; manifest: AppManifest }
+  | { ok: false; error: ManifestError | BuildError };
+
+export interface InstallOptions {
+  sourceDir: string;
+  homeDir: string;
+  storeDir?: string;
+}
+
+export interface VerifiedInstallOptions extends InstallOptions {
+  listingTrust: string;
+  declaredDistHash?: string;
+}
+
+export interface TrustGateInput {
+  listingTrust: string;
+  slug: string;
+  principal: string;
+  ack: string | undefined;
+  ackStore: AckStore;
+}
+
+const TRUSTED_TIERS = new Set(["first_party", "verified_partner"]);
+
+/**
+ * Install-time trust gate (spec Install Flow step 6).
+ *
+ * Calls computeDistributionStatus as the single source of truth for
+ * the install/gated/blocked decision. Consumes the ack token via
+ * consumeAck (terminal) -- the same token may have been peeked by
+ * the session endpoint earlier in the user flow.
+ *
+ * @throws ManifestError with code "install_blocked_by_policy" if blocked
+ * @throws ManifestError with code "install_gated" if gated without valid ack
+ */
+export function assertInstallAllowed(input: TrustGateInput): void {
+  const { listingTrust, slug, principal, ack, ackStore } = input;
+  const caps = sandboxCapabilities();
+  const status = computeDistributionStatus(listingTrust, caps);
+
+  if (status === "installable") {
+    return;
+  }
+
+  if (status === "blocked") {
+    throw new ManifestError(
+      "install_blocked_by_policy",
+      `app install blocked by policy for listingTrust "${listingTrust}"`,
+    );
+  }
+
+  // status === "gated": require a valid ack token
+  if (!ack) {
+    throw new ManifestError(
+      "install_gated",
+      `app install requires acknowledgment for listingTrust "${listingTrust}"`,
+    );
+  }
+
+  // consumeAck is terminal -- this is the single consumer
+  const record = ackStore.consumeAck(slug, principal, ack);
+  if (!record) {
+    throw new ManifestError(
+      "install_gated",
+      `invalid or expired ack token for "${slug}"`,
+    );
+  }
+}
+
+/**
+ * Trusted install path: installs an app from a source directory.
+ * Used for first_party and verified_partner apps where the pre-built
+ * dist is trusted.
+ */
+export async function installApp(opts: InstallOptions): Promise<InstallResult> {
+  const { sourceDir, homeDir, storeDir } = opts;
+
+  // Read and validate manifest from source
+  let rawJson: string;
+  try {
+    rawJson = await readFile(join(sourceDir, "matrix.json"), "utf8");
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "not_found",
+        `matrix.json not found in source: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+    return {
+      ok: false,
+      error: new ManifestError("invalid_manifest", "invalid JSON in source matrix.json"),
+    };
+  }
+
+  const result = await parseManifest(parsed);
+  if (!result.ok) {
+    return result;
+  }
+  const manifest = result.manifest;
+
+  // Verify slug matches directory name
+  const dirName = basename(sourceDir);
+  if (manifest.slug !== dirName) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "slug_mismatch",
+        `manifest slug "${manifest.slug}" does not match directory name "${dirName}"`,
+      ),
+    };
+  }
+
+  // Check runtime version compatibility
+  if (!satisfies(RUNTIME_VERSION, manifest.runtimeVersion)) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "runtime_version_mismatch",
+        `app requires runtimeVersion ${manifest.runtimeVersion} but runtime is ${RUNTIME_VERSION}`,
+      ),
+    };
+  }
+
+  // Resolve target directory
+  const appsDir = join(homeDir, "apps");
+  const targetDir = resolveWithinHome(appsDir, manifest.slug);
+  if (targetDir === null) {
+    return {
+      ok: false,
+      error: new ManifestError("not_found", `slug "${manifest.slug}" escapes apps directory`),
+    };
+  }
+
+  // Rename any existing install aside so a failed reinstall can roll back.
+  // Same filesystem as targetDir, so rename is atomic; cp-then-swap would
+  // leave a window where the app is partially written.
+  const backupDir = existsSync(targetDir)
+    ? `${targetDir}.backup-${randomBytes(8).toString("hex")}`
+    : null;
+  if (backupDir) {
+    await rename(targetDir, backupDir);
+  }
+
+  const rollback = async () => {
+    // Rollback is best-effort: the primary operation has already failed and
+    // we surface that error. Log but don't re-throw cleanup failures.
+    await rm(targetDir, { recursive: true, force: true }).catch((err) => {
+      console.warn(`[install-flow] rollback rm(${targetDir}) failed:`, err);
+    });
+    if (backupDir) {
+      await rename(backupDir, targetDir).catch((err) => {
+        console.warn(`[install-flow] rollback rename(${backupDir} -> ${targetDir}) failed:`, err);
+      });
+    }
+  };
+
+  try {
+    // Copy source to target
+    await mkdir(targetDir, { recursive: true });
+    await cp(sourceDir, targetDir, { recursive: true });
+
+    // Build if needed
+    if (manifest.runtime !== "static" && manifest.build) {
+      const orchestrator = new BuildOrchestrator({
+        concurrency: 2,
+        storeDir,
+      });
+
+      const buildResult = await orchestrator.build(manifest.slug, targetDir);
+      if (!buildResult.ok) {
+        await rollback();
+        return buildResult;
+      }
+    }
+
+    if (backupDir) {
+      await rm(backupDir, { recursive: true, force: true }).catch((err) => {
+        console.warn(`[install-flow] backup cleanup rm(${backupDir}) failed:`, err);
+      });
+    }
+    return { ok: true, manifest };
+  } catch (err: unknown) {
+    await rollback();
+    return {
+      ok: false,
+      error: new ManifestError(
+        "invalid_manifest",
+        `install failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    };
+  }
+}
+
+/**
+ * Verified install path for gallery-delivered apps.
+ *
+ * For first_party/verified_partner: trusts the pre-built dist and
+ * uses the standard install path.
+ *
+ * For community: discards any shipped dist/, rebuilds from source via
+ * BuildOrchestrator, hashes the output, and compares to the publisher's
+ * declared hash. Fails with BuildError.code = "hash_mismatch" on divergence.
+ */
+export async function installVerifiedApp(
+  opts: VerifiedInstallOptions,
+): Promise<InstallResult> {
+  const { sourceDir, homeDir, storeDir, listingTrust, declaredDistHash } = opts;
+
+  // For trusted tiers, use the standard install path
+  if (TRUSTED_TIERS.has(listingTrust)) {
+    return installApp({ sourceDir, homeDir, storeDir });
+  }
+
+  // Community tier is fail-closed: we refuse to install without an
+  // attested hash to compare the rebuild against. Without it the
+  // `verified` path degrades to an unverified rebuild, which would
+  // break the contract advertised to callers.
+  if (!declaredDistHash) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "invalid_manifest",
+        `community-tier install requires declaredDistHash`,
+      ),
+    };
+  }
+
+  // Community tier: rebuild from source and verify hash
+  // First, read and validate the manifest
+  let rawJson: string;
+  try {
+    rawJson = await readFile(join(sourceDir, "matrix.json"), "utf8");
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "not_found",
+        `matrix.json not found in source: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+    return {
+      ok: false,
+      error: new ManifestError("invalid_manifest", "invalid JSON in source matrix.json"),
+    };
+  }
+
+  const parseResult = await parseManifest(parsed);
+  if (!parseResult.ok) {
+    return parseResult;
+  }
+  const manifest = parseResult.manifest;
+
+  // Verify slug matches directory name
+  const dirName = basename(sourceDir);
+  if (manifest.slug !== dirName) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "slug_mismatch",
+        `manifest slug "${manifest.slug}" does not match directory name "${dirName}"`,
+      ),
+    };
+  }
+
+  // Check runtime version compatibility
+  if (!satisfies(RUNTIME_VERSION, manifest.runtimeVersion)) {
+    return {
+      ok: false,
+      error: new ManifestError(
+        "runtime_version_mismatch",
+        `app requires runtimeVersion ${manifest.runtimeVersion} but runtime is ${RUNTIME_VERSION}`,
+      ),
+    };
+  }
+
+  // Resolve target directory
+  const appsDir = join(homeDir, "apps");
+  const targetDir = resolveWithinHome(appsDir, manifest.slug);
+  if (targetDir === null) {
+    return {
+      ok: false,
+      error: new ManifestError("not_found", `slug "${manifest.slug}" escapes apps directory`),
+    };
+  }
+
+  // Rename any existing install aside so a failed reinstall can roll back.
+  // See installApp for rationale.
+  const backupDir = existsSync(targetDir)
+    ? `${targetDir}.backup-${randomBytes(8).toString("hex")}`
+    : null;
+  if (backupDir) {
+    await rename(targetDir, backupDir);
+  }
+
+  const rollback = async () => {
+    await rm(targetDir, { recursive: true, force: true }).catch((err) => {
+      console.warn(`[install-flow] rollback rm(${targetDir}) failed:`, err);
+    });
+    if (backupDir) {
+      await rename(backupDir, targetDir).catch((err) => {
+        console.warn(`[install-flow] rollback rename(${backupDir} -> ${targetDir}) failed:`, err);
+      });
+    }
+  };
+
+  try {
+    // Copy source to target
+    await mkdir(targetDir, { recursive: true });
+    await cp(sourceDir, targetDir, { recursive: true });
+
+    // Discard any shipped dist/ -- we rebuild from source for community tier
+    const distDir = join(targetDir, manifest.build?.output ?? "dist");
+    if (existsSync(distDir)) {
+      await rm(distDir, { recursive: true, force: true });
+    }
+
+    // Rebuild from source
+    if (manifest.build) {
+      const orchestrator = new BuildOrchestrator({
+        concurrency: 2,
+        storeDir,
+      });
+
+      const buildResult = await orchestrator.build(manifest.slug, targetDir);
+      if (!buildResult.ok) {
+        await rollback();
+        return buildResult;
+      }
+
+      // Hash the rebuilt output and compare to the declared hash.
+      // declaredDistHash is guaranteed non-empty above; we verify unconditionally.
+      const outputDir = join(targetDir, manifest.build.output);
+      const sourceGlobs = ["**/*"];
+      const rebuiltHash = await hashSources(outputDir, sourceGlobs);
+
+      if (rebuiltHash !== declaredDistHash) {
+        await rollback();
+        return {
+          ok: false,
+          error: new BuildError(
+            "hash_mismatch",
+            "build",
+            0,
+            `rebuilt dist hash ${rebuiltHash} does not match declared hash ${declaredDistHash}`,
+          ),
+        };
+      }
+    }
+
+    if (backupDir) {
+      await rm(backupDir, { recursive: true, force: true }).catch((err) => {
+        console.warn(`[install-flow] backup cleanup rm(${backupDir}) failed:`, err);
+      });
+    }
+    return { ok: true, manifest };
+  } catch (err: unknown) {
+    await rollback();
+    return {
+      ok: false,
+      error: new ManifestError(
+        "invalid_manifest",
+        `verified install failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    };
+  }
+}

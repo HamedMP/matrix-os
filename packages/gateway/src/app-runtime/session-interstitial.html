@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session Required</title>
+<style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;color:#666}p{text-align:center}</style>
+</head>
+<body>
+<p>Refreshing session...</p>
+<script>(function(){if(window.parent===window)return;var m=location.pathname.match(/^\/apps\/([a-z0-9][a-z0-9-]{0,63})\//);if(!m)return;window.parent.postMessage({type:"matrix-os:session-expired",slug:m[1]},window.location.origin)})()</script>
+</body>
+</html>

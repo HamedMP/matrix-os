@@ -1,0 +1,14 @@
+{
+  "name": "Hello Vite",
+  "slug": "hello-vite",
+  "version": "1.0.0",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "install": "pnpm install",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 120
+  }
+}

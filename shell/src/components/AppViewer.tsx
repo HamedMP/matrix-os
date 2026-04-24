@@ -11,8 +11,10 @@ import {
   type ThemeVars,
 } from "@/lib/os-bridge";
 import { getGatewayUrl } from "@/lib/gateway";
+import { openAppSession } from "@/lib/app-session";
 
 const GATEWAY_URL = getGatewayUrl();
+const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppViewerProps {
@@ -26,6 +28,17 @@ function appNameFromPath(path: string): string {
     return path.split("/")[1];
   }
   return path.replace("apps/", "").replace(/\/index\.html$/, "").replace(".html", "");
+}
+
+export function extractSlug(path: string): string | null {
+  // Only treat a path as a slug-route when it targets the top-level app
+  // directory: "apps/{slug}", "apps/{slug}/", or "apps/{slug}/index.html".
+  // Nested paths like "apps/games/2048/index.html" must fall back to the
+  // legacy /files/ route -- they share a parent slug but are not runtime-
+  // managed apps, so routing them through /apps/:slug/ would serve the
+  // parent app's index.html instead of the requested file.
+  const match = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
+  return match ? match[1] : null;
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -73,7 +86,11 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           doc.head.appendChild(el);
         }
       } catch (err) {
-        console.warn("[app-viewer] bridge injection failed:", err instanceof Error ? err.message : String(err));
+        // Cross-origin iframe -- bridge injection isn't possible.
+        // SecurityError is expected; anything else worth logging.
+        if (!(err instanceof DOMException) || err.name !== "SecurityError") {
+          console.warn("[app-viewer] bridge injection failed:", err instanceof Error ? err.message : String(err));
+        }
       }
     };
 
@@ -94,7 +111,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           "*",
         );
       } catch (err) {
-        console.warn("[app-viewer] theme update failed:", err instanceof Error ? err.message : String(err));
+        // Cross-origin postMessage can reject when the iframe is unloading.
+        if (!(err instanceof DOMException)) {
+          console.warn("[app-viewer] theme update failed:", err instanceof Error ? err.message : String(err));
+        }
       }
     });
 
@@ -148,20 +168,91 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
               "*",
             );
           } catch (err) {
-            console.warn("[app-viewer] data change postMessage failed:", err instanceof Error ? err.message : String(err));
+            if (!(err instanceof DOMException)) {
+              console.warn("[app-viewer] data change postMessage failed:", err instanceof Error ? err.message : String(err));
+            }
           }
         }
       }
     });
   }, [subscribe, appName]);
 
+  const slug = extractSlug(path);
+  const [sessionReady, setSessionReady] = useState(!slug);
+  const lastRefreshAtRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
+
+  // Spec 063 session bootstrap: set the matrix_app_session__{slug} cookie
+  // before the iframe ever navigates to /apps/{slug}/. Skipping this step
+  // forces the browser to load the 401 interstitial first and recover via
+  // postMessage, which races React's useEffect listener registration and
+  // leaves the iframe stuck on "Refreshing session..." when the race loses.
+  useEffect(() => {
+    if (!slug) return;
+    setSessionReady(false);
+    let cancelled = false;
+    openAppSession(slug, { gatewayUrl: GATEWAY_URL })
+      .catch((err: unknown) => {
+        // Log so failures are visible; the interstitial fallback path will
+        // still retry via the session-expired postMessage handler below.
+        console.warn("[app-viewer] session bootstrap failed:", slug, err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setSessionReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  // Cookie-expiry recovery: listen for matrix-os:session-expired from the
+  // gateway's 401 interstitial HTML. Bumping refreshKey remounts the iframe
+  // with a fresh DOM element so the browser issues a clean navigation that
+  // picks up the new cookie (reassigning .src to the same URL is not reliable).
+  useEffect(() => {
+    if (!slug) return;
+
+    const handler = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin && event.origin !== "null") return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type !== "matrix-os:session-expired") return;
+      if (event.data?.slug !== slug) return;
+      if (refreshInFlightRef.current) return;
+      if (Date.now() - lastRefreshAtRef.current < SESSION_REFRESH_DEBOUNCE_MS) return;
+
+      refreshInFlightRef.current = true;
+      // Stamp the debounce BEFORE awaiting — otherwise a persistently failing
+      // refresh (gateway down) would let every incoming session-expired event
+      // through and flood the gateway with retries.
+      lastRefreshAtRef.current = Date.now();
+      try {
+        await openAppSession(slug, { gatewayUrl: GATEWAY_URL });
+        setRefreshKey((k) => k + 1);
+      } catch (err: unknown) {
+        console.warn("[app-viewer] session refresh failed:", slug, err instanceof Error ? err.message : String(err));
+      } finally {
+        refreshInFlightRef.current = false;
+      }
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [slug]);
+
+  // Hold the iframe on about:blank until the session cookie is minted.
+  const iframeSrc = !slug
+    ? `/files/${path}`
+    : sessionReady
+      ? `/apps/${slug}/`
+      : "about:blank";
+
   return (
     <iframe
       ref={iframeRef}
       key={refreshKey}
-      src={`/files/${path}`}
+      src={iframeSrc}
       className="h-full w-full border-0"
-      sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+      sandbox="allow-scripts allow-forms allow-popups"
       title={path}
     />
   );

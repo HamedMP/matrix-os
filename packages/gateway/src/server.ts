@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -62,6 +63,21 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
+import {
+  createAppDispatcher,
+  appSessionMiddleware,
+  loadManifest,
+  computeDistributionStatus,
+  sandboxCapabilities,
+  computeRuntimeState,
+  deriveAppSessionKey,
+  signAppSession,
+  buildSetCookie,
+  AckStore,
+  SAFE_SLUG,
+  ProcessManager,
+  PortPool,
+} from "./app-runtime/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
@@ -1069,6 +1085,25 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
 
+  // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
+  // is the source. When it is absent (local dev, .env.example default) we mint an
+  // ephemeral process-scoped secret so the HKDF input is never predictable — an
+  // empty master secret combined with the public info string would otherwise let
+  // anyone forge matrix_app_session cookies for any installed slug. The trade-off
+  // is that app-session cookies do not survive a gateway restart in dev mode.
+  const envMasterSecret = process.env.MATRIX_AUTH_TOKEN;
+  const appSessionMasterSecret = envMasterSecret && envMasterSecret.length >= 16
+    ? envMasterSecret
+    : (() => {
+        const reason = !envMasterSecret
+          ? "MATRIX_AUTH_TOKEN not set"
+          : "MATRIX_AUTH_TOKEN too short (<16 bytes)";
+        console.warn(
+          `[gateway] ${reason}; using ephemeral app-session master secret (app-session cookies will not survive gateway restart).`,
+        );
+        return randomBytes(32).toString("hex");
+      })();
+
   // Deferred route mounts -- must come AFTER auth middleware
   if (integrationRoutes) {
     app.route("/api/integrations", integrationRoutes);
@@ -1088,6 +1123,153 @@ export async function createGateway(config: GatewayConfig) {
     });
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
+
+  // --- App Runtime (spec 063) ---
+  // Ack-token store: bounded LRU (cap 32, 5min TTL)
+  const ackStore = new AckStore();
+
+  // GET /api/apps/:slug/manifest — bearer-authed manifest + runtime state + distribution status
+  app.get("/api/apps/:slug/manifest", async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const appDir = join(appsDir, slug);
+    const runtimeState = await computeRuntimeState(result.manifest, appDir);
+    const distributionStatus = computeDistributionStatus(
+      result.manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
+  });
+
+  const appSessionBodyLimit = bodyLimit({ maxSize: 4096 });
+
+  // POST /api/apps/:slug/ack — bearer-authed, issues ack token for gated installs
+  app.post("/api/apps/:slug/ack", appSessionBodyLimit, async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const manifest = result.manifest;
+    if (manifest.scope !== "personal") {
+      return c.json({ error: "scope_mismatch" }, 409);
+    }
+    const distributionStatus = computeDistributionStatus(
+      manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    if (distributionStatus === "blocked") {
+      return c.json({ error: "install_blocked_by_policy" }, 403);
+    }
+    if (distributionStatus === "installable") {
+      return c.json({ error: "ack_not_applicable" }, 400);
+    }
+    // gated: mint ack token
+    const { ack, expiresAt } = ackStore.mint(slug, "gateway-owner");
+    return c.json({ ack, expiresAt });
+  });
+
+  // POST /api/apps/:slug/session — bearer-authed, issues signed session cookie
+  app.post("/api/apps/:slug/session", appSessionBodyLimit, async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const manifest = result.manifest;
+    if (manifest.scope !== "personal") {
+      return c.json({ error: "scope_mismatch" }, 409);
+    }
+    // Re-compute distributionStatus server-side (ignore any client hint)
+    const distributionStatus = computeDistributionStatus(
+      manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    if (distributionStatus === "blocked") {
+      return c.json({ error: "install_blocked_by_policy" }, 403);
+    }
+    if (distributionStatus === "gated") {
+      // Require valid ack token
+      let body: { ack?: string } = {};
+      try {
+        body = await c.req.json();
+      } catch (err) {
+        // Hono throws SyntaxError / BodyLimitError when the body is missing
+        // or malformed. Either case reduces to "no ack supplied" below; we
+        // only swallow parse-shape errors and re-throw anything else.
+        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+          throw err;
+        }
+      }
+      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
+        return c.json({ error: "install_gated" }, 409);
+      }
+    }
+    // Sign session cookie (uses process-scoped master secret computed above;
+    // never reads MATRIX_AUTH_TOKEN directly so empty/short env values can't
+    // produce a predictable HKDF key).
+    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const maxAge = 600; // 10 minutes
+    const payload = {
+      v: 1 as const,
+      slug,
+      principal: "gateway-owner" as const,
+      scope: "personal" as const,
+      iat: nowSec,
+      exp: nowSec + maxAge,
+    };
+    const token = signAppSession(key, payload);
+    const cookie = buildSetCookie(slug, token, {
+      maxAge,
+      secure: c.req.url.startsWith("https"),
+    });
+    return c.json({ expiresAt: payload.exp * 1000 }, 200, {
+      "Set-Cookie": cookie,
+    });
+  });
+
+  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie)
+  app.use(
+    "/apps/:slug/*",
+    appSessionMiddleware((slug) =>
+      deriveAppSessionKey(appSessionMasterSecret, slug),
+    ),
+  );
+
+  // Create process manager for node-runtime apps
+  const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
+  const processManager = new ProcessManager({
+    homeDir: homePath,
+    portPool,
+    maxProcesses: 10,
+    reaperIntervalMs: 30_000,
+  });
+
+  // Mount app dispatcher on /apps/:slug (static + vite + node branches)
+  const appDispatcher = createAppDispatcher(homePath, {
+    processManager,
+    publicHost: process.env.PUBLIC_HOST ?? "localhost",
+  });
+  app.route("/apps/:slug", appDispatcher);
 
   app.use("*", async (c, next) => {
     const start = performance.now();
@@ -2984,6 +3166,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await channelManager.stop();
+      await processManager.shutdownAll();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

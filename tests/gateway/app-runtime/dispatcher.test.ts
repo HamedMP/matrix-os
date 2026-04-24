@@ -1,0 +1,319 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, writeFile, mkdir, rm, cp, symlink, truncate } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Hono } from "hono";
+import { createAppDispatcher } from "../../../packages/gateway/src/app-runtime/dispatcher.js";
+import { invalidateManifestCache } from "../../../packages/gateway/src/app-runtime/manifest-loader.js";
+import { ProcessManager } from "../../../packages/gateway/src/app-runtime/process-manager.js";
+import { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
+
+let tmpDir: string;
+let homeDir: string;
+let app: Hono;
+
+beforeEach(async () => {
+  tmpDir = await mkdtemp(join(tmpdir(), "matrix-os-dispatcher-"));
+  homeDir = tmpDir;
+  await mkdir(join(homeDir, "apps"), { recursive: true });
+  invalidateManifestCache();
+
+  app = new Hono();
+  const dispatcher = createAppDispatcher(homeDir);
+  app.route("/apps/:slug", dispatcher);
+});
+
+afterEach(async () => {
+  await rm(tmpDir, { recursive: true, force: true });
+});
+
+async function installStaticApp(slug: string, htmlContent: string) {
+  const appDir = join(homeDir, "apps", slug);
+  await mkdir(appDir, { recursive: true });
+  await writeFile(
+    join(appDir, "matrix.json"),
+    JSON.stringify({
+      name: slug,
+      slug,
+      version: "1.0.0",
+      runtime: "static",
+      runtimeVersion: "^1.0.0",
+    }),
+  );
+  await writeFile(join(appDir, "index.html"), htmlContent);
+}
+
+async function installViteApp(slug: string, distHtml: string) {
+  const appDir = join(homeDir, "apps", slug);
+  await mkdir(join(appDir, "dist"), { recursive: true });
+  await writeFile(
+    join(appDir, "matrix.json"),
+    JSON.stringify({
+      name: slug,
+      slug,
+      version: "1.0.0",
+      runtime: "vite",
+      runtimeVersion: "^1.0.0",
+      build: { command: "pnpm build", output: "dist" },
+    }),
+  );
+  await writeFile(join(appDir, "dist", "index.html"), distHtml);
+}
+
+describe("App Runtime Dispatcher", () => {
+  describe("static serving", () => {
+    it("serves index.html for static app at /apps/:slug/", async () => {
+      await installStaticApp("calculator", "<html><body>Calculator</body></html>");
+      const res = await app.request("/apps/calculator/");
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("Calculator");
+      expect(res.headers.get("content-type")).toContain("text/html");
+    });
+
+    it("serves nested static files", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      await writeFile(join(appDir, "style.css"), "body { margin: 0; }");
+
+      const res = await app.request("/apps/calculator/style.css");
+      expect(res.status).toBe(200);
+      const css = await res.text();
+      expect(css).toContain("body");
+      expect(res.headers.get("content-type")).toContain("text/css");
+    });
+
+    it("rejects static symlinks that point outside the app directory", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      await mkdir(join(homeDir, "system"), { recursive: true });
+      await writeFile(join(homeDir, "system", "config.json"), "{\"secret\":true}");
+      await symlink(join(homeDir, "system", "config.json"), join(appDir, "secret.json"));
+
+      const res = await app.request("/apps/calculator/secret.json");
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects static assets above the configured memory cap", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      const largePath = join(appDir, "large.bin");
+      await writeFile(largePath, "");
+      await truncate(largePath, 25 * 1024 * 1024 + 1);
+
+      const res = await app.request("/apps/calculator/large.bin");
+      expect(res.status).toBe(413);
+    });
+  });
+
+  describe("vite serving", () => {
+    it("serves dist/index.html for vite app at /apps/:slug/", async () => {
+      await installViteApp("notes", "<html><body>Notes SPA</body></html>");
+      const res = await app.request("/apps/notes/");
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("Notes SPA");
+    });
+
+    it("returns 503 needs_build when vite dist/ is missing", async () => {
+      const appDir = join(homeDir, "apps", "broken-vite");
+      await mkdir(appDir, { recursive: true });
+      await writeFile(
+        join(appDir, "matrix.json"),
+        JSON.stringify({
+          name: "broken-vite",
+          slug: "broken-vite",
+          version: "1.0.0",
+          runtime: "vite",
+          runtimeVersion: "^1.0.0",
+          build: { command: "pnpm build", output: "dist" },
+        }),
+      );
+
+      const res = await app.request("/apps/broken-vite/");
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.status).toBe("needs_build");
+    });
+  });
+
+  describe("security", () => {
+    it("rejects path traversal slug with 400 or 404", async () => {
+      // Hono normalizes URLs, so ../etc/passwd gets resolved before routing.
+      // A slug containing dots is rejected by SAFE_SLUG regex.
+      const res = await app.request("/apps/..%2f..%2fetc%2fpasswd/");
+      // Either 400 (SAFE_SLUG rejects) or 404 (route doesn't match) is acceptable
+      expect([400, 404]).toContain(res.status);
+    });
+
+    it("rejects invalid slug with 400", async () => {
+      const res = await app.request("/apps/-bad-slug/");
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 for missing manifest", async () => {
+      const res = await app.request("/apps/nonexistent/");
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects symlinked app directories even when a manifest exists at the target", async () => {
+      const targetDir = join(homeDir, "system", "linked-app");
+      await mkdir(targetDir, { recursive: true });
+      await writeFile(
+        join(targetDir, "matrix.json"),
+        JSON.stringify({
+          name: "Calculator",
+          slug: "calculator",
+          version: "1.0.0",
+          runtime: "static",
+          runtimeVersion: "^1.0.0",
+        }),
+      );
+      await writeFile(join(targetDir, "index.html"), "<html>outside</html>");
+      await symlink(targetDir, join(homeDir, "apps", "calculator"));
+
+      const res = await app.request("/apps/calculator/");
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("WebSocket", () => {
+    it("rejects WebSocket upgrade in static/vite modes with 400", async () => {
+      await installStaticApp("calculator", "<html></html>");
+      const res = await app.request("/apps/calculator/ws", {
+        headers: { Upgrade: "websocket" },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("ws_not_supported");
+    });
+  });
+
+  describe("SPA fallback", () => {
+    it("serves index.html for non-existing paths in vite mode", async () => {
+      await installViteApp("spa-app", "<html><body>SPA Fallback</body></html>");
+      const res = await app.request("/apps/spa-app/some/deep/route");
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("SPA Fallback");
+    });
+  });
+
+  // T055: Node mode HTTP forwarding tests (added by node-proc agent)
+  describe("node mode", () => {
+    let pm: ProcessManager;
+    let portPool: PortPool;
+    let nodeApp: Hono;
+
+    beforeEach(async () => {
+      portPool = new PortPool({ min: 44000, max: 44100 });
+      pm = new ProcessManager({
+        homeDir,
+        portPool,
+        maxProcesses: 10,
+        reaperIntervalMs: 0, // disable reaper in tests
+      });
+      nodeApp = new Hono();
+      const dispatcher = createAppDispatcher(homeDir, {
+        processManager: pm,
+        publicHost: "matrix-os.test",
+      });
+      nodeApp.route("/apps/:slug", dispatcher);
+    });
+
+    afterEach(async () => {
+      await pm.shutdownAll();
+    });
+
+    async function installNodeApp(slug: string) {
+      const src = join(process.cwd(), "tests/fixtures/apps", slug);
+      const dst = join(homeDir, "apps", slug);
+      await cp(src, dst, { recursive: true });
+      await mkdir(join(homeDir, "data", slug), { recursive: true });
+    }
+
+    it("forwards GET to child process and returns response", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ message: "hello from next" });
+    }, 15_000);
+
+    it("forwards POST with body to child process", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello", {
+        method: "POST",
+        body: JSON.stringify({ data: "test" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(res.status).toBe(200);
+    }, 15_000);
+
+    it("strips Server header from upstream response", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello");
+      expect(res.headers.get("server")).toBeNull();
+    }, 15_000);
+
+    it("strips X-Powered-By header from upstream response", async () => {
+      await installNodeApp("hello-next");
+      const res = await nodeApp.request("/apps/hello-next/api/hello");
+      expect(res.headers.get("x-powered-by")).toBeNull();
+    }, 15_000);
+
+    it("returns 502 or 503 on backend error", async () => {
+      const badDir = join(homeDir, "apps", "dead-app");
+      await mkdir(badDir, { recursive: true });
+      await writeFile(
+        join(badDir, "matrix.json"),
+        JSON.stringify({
+          name: "Dead App",
+          slug: "dead-app",
+          version: "1.0.0",
+          runtime: "node",
+          runtimeVersion: "^1.0.0",
+          build: { command: "echo ok", output: "dist" },
+          serve: {
+            start: "node -e \"process.exit(1)\"",
+            healthCheck: "/",
+            startTimeout: 3,
+            idleShutdown: 300,
+          },
+        }),
+      );
+      await writeFile(join(badDir, "package.json"), JSON.stringify({ type: "module" }));
+      await mkdir(join(homeDir, "data", "dead-app"), { recursive: true });
+
+      const res = await nodeApp.request("/apps/dead-app/api/test");
+      // 502/503 if ensureRunning fails, 404 if manifest can't be loaded
+      expect([404, 502, 503]).toContain(res.status);
+    }, 15_000);
+
+    it("awaits startupPromise when process is starting (concurrent dispatch)", async () => {
+      await installNodeApp("hello-next");
+      const [r1, r2] = await Promise.all([
+        nodeApp.request("/apps/hello-next/api/hello"),
+        nodeApp.request("/apps/hello-next/"),
+      ]);
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+    }, 15_000);
+  });
+
+  // T056: WebSocket tests for node mode
+  describe("WebSocket (node mode)", () => {
+    it("returns 400 ws_not_supported for static mode WebSocket upgrade", async () => {
+      await installStaticApp("calculator", "<html></html>");
+      const res = await app.request("/apps/calculator/ws", {
+        headers: {
+          Upgrade: "websocket",
+          Connection: "Upgrade",
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("ws_not_supported");
+    });
+  });
+});

@@ -1,0 +1,10 @@
+{
+  "name": "hello-next",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo build-done",
+    "start": "node server.js"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "Hello Next",
+  "slug": "hello-next",
+  "version": "1.0.0",
+  "runtime": "node",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "command": "echo build-done",
+    "output": "dist"
+  },
+  "serve": {
+    "start": "node server.js",
+    "healthCheck": "/api/health",
+    "startTimeout": 10,
+    "idleShutdown": 300
+  },
+  "resources": {
+    "memoryMb": 256,
+    "cpuShares": 512,
+    "maxFileHandles": 128
+  }
+}

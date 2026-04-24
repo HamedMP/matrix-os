@@ -55,7 +55,14 @@ export function loadCustomAgents(
   try {
     files = readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
   } catch (err) {
-    console.warn("[agents] failed to read custom agents directory:", err instanceof Error ? err.message : String(err));
+    // Missing or inaccessible agent dir -> no custom agents. Any other
+    // failure (EACCES, EIO) is worth surfacing in the log so operators
+    // know the custom-agent pipeline is degraded.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[kernel/agents] failed to read custom agents directory: ${message}`);
+    }
     return {};
   }
 
@@ -150,11 +157,11 @@ DECISION GUIDE:
 - Multiple screens, state management, complex UI: React module
 - Calculator, clock, single widget: HTML app
 
-REACT MODULE SCAFFOLD (~/modules/<name>/):
-Write these files, then run: cd ~/modules/<name> && pnpm install --prefer-offline && pnpm build
+VITE REACT APP SCAFFOLD (~/apps/<slug>/):
+Write these files, then run: cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build
 
 package.json:
-{"name":"@matrixos/<name>","private":true,"type":"module","scripts":{"dev":"vite --port 3100","build":"vite build","preview":"vite preview"},"dependencies":{"react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"@types/react":"^19.0.0","@types/react-dom":"^19.0.0","@vitejs/plugin-react":"^4.4.0","typescript":"^5.7.0","vite":"^6.1.0"}}
+{"name":"@matrixos/<slug>","private":true,"type":"module","scripts":{"dev":"vite --port 3100","build":"vite build","preview":"vite preview"},"dependencies":{"react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"@types/react":"^19.0.0","@types/react-dom":"^19.0.0","@vitejs/plugin-react":"^4.4.0","typescript":"^5.7.0","vite":"^6.1.0"}}
 
 vite.config.ts:
 import{defineConfig}from"vite";import react from"@vitejs/plugin-react";export default defineConfig({plugins:[react()],base:"./",build:{outDir:"dist",emptyOutDir:true}});
@@ -168,12 +175,16 @@ index.html:
 src/main.tsx:
 import{StrictMode}from"react";import{createRoot}from"react-dom/client";import App from"./App";import"./App.css";createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);
 
-module.json: {"name":"<name>","description":"...","version":"1.0.0","entry":"dist/index.html"}
+matrix.json: {"name":"<name>","slug":"<slug>","description":"...","version":"1.0.0","runtime":"vite","runtimeVersion":"^1.0.0","listingTrust":"first_party","build":{"command":"pnpm build","output":"dist"}}
 
 Then write src/App.tsx and src/App.css with the actual app logic.
 
-HTML APP SCAFFOLD (~/apps/<name>.html):
-Single self-contained HTML file. CDN imports via esm.sh/unpkg. Inline CSS+JS. No build step.
+HTML APP SCAFFOLD (~/apps/<slug>/):
+Two files: matrix.json + index.html. No build step, served as-is.
+
+matrix.json: {"name":"<name>","slug":"<slug>","description":"...","version":"1.0.0","runtime":"static","runtimeVersion":"^1.0.0","listingTrust":"first_party"}
+
+index.html: single self-contained HTML file with inline CSS+JS. No CDN imports.
 
 THEME (both types):
 :root{--bg:#0a0a0a;--fg:#ededed;--accent:#6c5ce7;--surface:#1a1a2e;--border:#2a2a3a}
@@ -211,14 +222,14 @@ Available actions: gmail (list_messages, get_message, send_email, search, list_l
 IMPORTANT: Always check connection status first. status === "active" means connected. Show account_email to user.
 
 AFTER BUILDING:
-- Update ~/system/modules.json: add {name, type:"react-app"|"html-app", path, status:"active"}
-- Call complete_task with: {name, type, path, description}
+- The matrix.json written above IS the registration — no separate modules.json step needed (spec 063 app runtime auto-discovers apps under ~/apps/<slug>/).
+- Call complete_task with: {name, slug, runtime, path, description}
 
-SERVING: gateway at http://localhost:4000/files/<path>. Apps in sandboxed iframe.
+SERVING: gateway dispatches at /apps/<slug>/ with per-app session cookies. Apps run in sandboxed iframe on the shell origin.
 
-ERROR RECOVERY: If build fails, read error, fix, rebuild. Max 2 retries. If still failing, fall back to HTML app.
+ERROR RECOVERY: If build fails, read error, fix, rebuild. Max 2 retries. If still failing, fall back to HTML app (runtime:"static").
 
-VERIFICATION: Verify dist/index.html exists (React), read modules.json to confirm entry, report absolute paths.`;
+VERIFICATION: For vite apps, confirm dist/index.html exists; for static apps, confirm index.html at the app root. Read matrix.json to confirm slug and runtime, report absolute paths.`;
 
 const RESEARCHER_PROMPT = `You are the Matrix OS researcher agent. You find information and report back concisely.
 
