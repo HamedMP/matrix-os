@@ -184,38 +184,57 @@ export function createVocalHandler(deps: VocalDeps) {
     }
   }
 
-  function setupGeminiHandlers() {
-    if (!gemini) return;
+  function clearPendingOpenApp() {
+    if (pendingOpenApp) {
+      clearTimeout(pendingOpenApp.timeout);
+      pendingOpenApp = null;
+    }
+  }
 
-    gemini.on("audio", (evt: unknown) => {
+  function closeGemini() {
+    gemini?.close();
+    gemini = null;
+  }
+
+  function setupGeminiHandlers(client: GeminiLiveClient) {
+    const isCurrentClient = () => gemini === client;
+
+    client.on("audio", (evt: unknown) => {
+      if (!isCurrentClient()) return;
       const e = evt as GeminiEvent & { type: "audio" };
       send({ type: "audio", data: e.data });
     });
 
-    gemini.on("input_transcript", (evt: unknown) => {
+    client.on("input_transcript", (evt: unknown) => {
+      if (!isCurrentClient()) return;
       const e = evt as GeminiEvent & { type: "input_transcript" };
       send({ type: "transcript", text: e.text, speaker: "user" });
     });
 
-    gemini.on("output_transcript", (evt: unknown) => {
+    client.on("output_transcript", (evt: unknown) => {
+      if (!isCurrentClient()) return;
       const e = evt as GeminiEvent & { type: "output_transcript" };
       send({ type: "transcript", text: e.text, speaker: "ai" });
     });
 
-    gemini.on("tool_call", (evt: unknown) => {
+    client.on("tool_call", (evt: unknown) => {
+      if (!isCurrentClient()) return;
       const e = evt as GeminiEvent & { type: "tool_call" };
-      void handleToolCall(e);
+      void handleToolCall(client, e);
     });
 
-    gemini.on("interrupted", () => {
+    client.on("interrupted", () => {
+      if (!isCurrentClient()) return;
       send({ type: "interrupted" });
     });
 
-    gemini.on("turn_complete", () => {
+    client.on("turn_complete", () => {
+      if (!isCurrentClient()) return;
       send({ type: "turn_complete" });
     });
 
-    gemini.on("error", (evt: unknown) => {
+    client.on("error", (evt: unknown) => {
+      if (!isCurrentClient()) return;
       const e = evt as GeminiEvent & { type: "error" };
       // Never expose provider-specific error details to the client.
       console.error("[vocal] gemini error:", e.message);
@@ -223,8 +242,8 @@ export function createVocalHandler(deps: VocalDeps) {
     });
   }
 
-  async function handleToolCall(evt: GeminiEvent & { type: "tool_call" }) {
-    if (!gemini) return;
+  async function handleToolCall(client: GeminiLiveClient, evt: GeminiEvent & { type: "tool_call" }) {
+    if (gemini !== client) return;
 
     try {
       switch (evt.name) {
@@ -232,7 +251,7 @@ export function createVocalHandler(deps: VocalDeps) {
           const raw = typeof evt.args.description === "string" ? evt.args.description : "";
           const description = raw.trim().slice(0, MAX_DESCRIPTION_LEN);
           if (!description) {
-            gemini.sendToolResponse(evt.id, {
+            client.sendToolResponse(evt.id, {
               status: "error",
               message: "Description was empty. Ask the user what they want built.",
             });
@@ -244,7 +263,7 @@ export function createVocalHandler(deps: VocalDeps) {
           // completion; we tell Gemini the hand-off succeeded so Aoede can
           // move the conversation forward.
           send({ type: "execute", kind: "create_app", description });
-          gemini.sendToolResponse(evt.id, {
+          client.sendToolResponse(evt.id, {
             status: "dispatched",
             message:
               "The workspace is building it now. The user can watch it stream in their chat sidebar. Don't narrate the build — start asking refinement questions per your DURING-BUILD REFINEMENT rules.",
@@ -255,8 +274,8 @@ export function createVocalHandler(deps: VocalDeps) {
           if (refinementTimer) clearTimeout(refinementTimer);
           refinementTimer = setTimeout(() => {
             refinementTimer = null;
-            if (!gemini || !lastDelegation) return;
-            gemini.sendText(
+            if (gemini !== client || !lastDelegation) return;
+            client.sendText(
               `System note: The build for "${description.slice(0, 100)}" is still running. Ask ONE simple "this or that" refinement question about the app — something you didn't cover during shaping. Read the room: if they're talking about something else, skip it. Follow your DURING-BUILD REFINEMENT rules.`,
             );
           }, REFINEMENT_DELAY_MS);
@@ -267,7 +286,7 @@ export function createVocalHandler(deps: VocalDeps) {
           const rawName = typeof evt.args.name === "string" ? evt.args.name : "";
           const name = rawName.trim().slice(0, 120);
           if (!name) {
-            gemini.sendToolResponse(evt.id, {
+            client.sendToolResponse(evt.id, {
               status: "error",
               message: "No app name was provided. Ask the user which app they want to open.",
             });
@@ -278,7 +297,7 @@ export function createVocalHandler(deps: VocalDeps) {
           // time per session, and the new one supersedes.
           if (pendingOpenApp) {
             clearTimeout(pendingOpenApp.timeout);
-            gemini.sendToolResponse(pendingOpenApp.toolCallId, {
+            client.sendToolResponse(pendingOpenApp.toolCallId, {
               status: "superseded",
               message: "A newer open request replaced this one.",
             });
@@ -290,9 +309,9 @@ export function createVocalHandler(deps: VocalDeps) {
           send({ type: "execute", kind: "open_app", name });
           const toolCallId = evt.id;
           const timeout = setTimeout(() => {
-            if (pendingOpenApp?.toolCallId !== toolCallId) return;
+            if (gemini !== client || pendingOpenApp?.toolCallId !== toolCallId) return;
             pendingOpenApp = null;
-            gemini?.sendToolResponse(toolCallId, {
+            client.sendToolResponse(toolCallId, {
               status: "timeout",
               message:
                 "The open request was dispatched but the shell didn't confirm. Assume it worked unless the user says otherwise.",
@@ -304,7 +323,7 @@ export function createVocalHandler(deps: VocalDeps) {
 
         case "check_build_status": {
           if (!lastDelegation) {
-            gemini.sendToolResponse(evt.id, {
+            client.sendToolResponse(evt.id, {
               status: "idle",
               summary: "No build is currently running. If the user is asking about something that already finished, let them know it's done.",
             });
@@ -321,7 +340,7 @@ export function createVocalHandler(deps: VocalDeps) {
             ? lastDelegation.elapsedSec + 30
             : DEFAULT_BUILD_ESTIMATE_SEC;
           const remainingSec = estimatedTotalSec - lastDelegation.elapsedSec;
-          gemini.sendToolResponse(evt.id, {
+          client.sendToolResponse(evt.id, {
             status: lastDelegation.stage,
             description: lastDelegation.description,
             elapsedSec: lastDelegation.elapsedSec,
@@ -344,29 +363,31 @@ export function createVocalHandler(deps: VocalDeps) {
         case "remember": {
           const raw = typeof evt.args.fact === "string" ? evt.args.fact : "";
           const saved = await appendFact(deps.homePath, raw);
+          if (gemini !== client) return;
           if (saved) {
             send({ type: "fact_saved", fact: raw.slice(0, 200) });
-            gemini.sendToolResponse(evt.id, { status: "saved" });
+            client.sendToolResponse(evt.id, { status: "saved" });
           } else {
             // Either empty, duplicate, or write failed. Don't tell Gemini
             // which — she'd apologize and re-try. Just report success so
             // she moves on.
-            gemini.sendToolResponse(evt.id, { status: "saved" });
+            client.sendToolResponse(evt.id, { status: "saved" });
           }
           return;
         }
 
         default:
           console.warn("[vocal] unknown tool call:", evt.name);
-          gemini.sendToolResponse(evt.id, {
+          client.sendToolResponse(evt.id, {
             status: "error",
             message: "Unknown tool",
           });
       }
     } catch (err) {
       console.error("[vocal] tool_call handler failed:", err instanceof Error ? err.message : String(err));
+      if (gemini !== client) return;
       try {
-        gemini.sendToolResponse(evt.id, { status: "error", message: "Internal error" });
+        client.sendToolResponse(evt.id, { status: "error", message: "Internal error" });
       } catch (sendErr) {
         console.error("[vocal] failed to send error tool response:", sendErr);
       }
@@ -374,6 +395,8 @@ export function createVocalHandler(deps: VocalDeps) {
   }
 
   async function handleStart(audioFormat: "pcm16" | "text") {
+    closeGemini();
+    clearPendingOpenApp();
     audioMode = audioFormat === "pcm16";
     audioBytesReceived = 0;
 
@@ -392,13 +415,20 @@ export function createVocalHandler(deps: VocalDeps) {
     const profile = await loadProfile(deps.homePath);
     const systemInstruction = VOCAL_SYSTEM_INSTRUCTION + renderProfileForPrompt(profile);
 
+    let client: GeminiLiveClient | null = null;
     try {
-      gemini = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel, {
+      closeGemini();
+      client = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel, {
         systemInstruction,
         tools: VOCAL_TOOLS,
       });
-      setupGeminiHandlers();
-      await gemini.connect();
+      gemini = client;
+      setupGeminiHandlers(client);
+      await client.connect();
+      if (gemini !== client) {
+        client.close();
+        return;
+      }
       send({ type: "ready" });
 
       // Kick off the first turn. Gemini Live sits silent until it
@@ -411,9 +441,12 @@ export function createVocalHandler(deps: VocalDeps) {
       const nudge = knowsUser
         ? "The user just opened vocal mode. Greet them in ONE short, warm sentence — use their name if you know it, and riff lightly on what you know about them. Follow the OPENING rules in your instructions. Do not ask 'how can I help you'. After your greeting, stop and wait."
         : "The user just opened vocal mode for the first time. Greet them in ONE short, warm, human sentence — no self-introduction, no pitch, no 'how can I help'. Follow the OPENING rules in your instructions. After your greeting, stop and wait.";
-      gemini.sendText(nudge);
+      client.sendText(nudge);
     } catch (err) {
       console.error("[vocal] Gemini Live connection failed:", err instanceof Error ? err.message : String(err));
+      if (gemini !== client) return;
+      client?.close();
+      gemini = null;
       send({ type: "error", message: "Could not connect to voice service", retryable: true });
     }
   }
@@ -527,13 +560,9 @@ export function createVocalHandler(deps: VocalDeps) {
     },
     onClose() {
       clearRefinementTimer();
-      if (pendingOpenApp) {
-        clearTimeout(pendingOpenApp.timeout);
-        pendingOpenApp = null;
-      }
+      clearPendingOpenApp();
       audioBytesReceived = 0;
-      gemini?.close();
-      gemini = null;
+      closeGemini();
       sendToClient = null;
     },
   };
