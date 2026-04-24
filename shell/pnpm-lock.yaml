@@ -116,6 +116,9 @@ importers:
       shiki:
         specifier: ^3.22.0
         version: 3.22.0
+      siriwave:
+        specifier: ^2.4.0
+        version: 2.4.0
       streamdown:
         specifier: ^2.2.0
         version: 2.2.0(react@19.2.3)
@@ -4874,6 +4877,9 @@ packages:
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
+
+  siriwave@2.4.0:
+    resolution: {integrity: sha512-J9X/URPuwXw800mJnnTnEIaDn2n9ZXWEX827oRdIGMwOtFi2FF5Xet2ifQhXFLx7/SYmEQ2UOxtUZP6bUkNqeQ==}
 
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
@@ -11107,6 +11113,8 @@ snapshots:
   signal-exit@3.0.7: {}
 
   signal-exit@4.1.0: {}
+
+  siriwave@2.4.0: {}
 
   sisteransi@1.0.5: {}
 

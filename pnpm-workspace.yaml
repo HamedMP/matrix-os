@@ -3,3 +3,5 @@ packages:
   - "apps/*"
   - "shell"
   - "www"
+  - "marketing"
+  - "marketing/web"

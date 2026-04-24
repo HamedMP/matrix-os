@@ -19,11 +19,16 @@ interface WindowRect {
   height: number;
 }
 
+/** Maximum pan distance from origin in canvas units. Prevents getting lost. */
+const PAN_LIMIT = 8000;
+
 interface CanvasTransformState {
   zoom: number;
   panX: number;
   panY: number;
   isAnimating: boolean;
+  /** True while the user is actively scrolling/wheeling the canvas. */
+  isScrolling: boolean;
 }
 
 interface CanvasTransformActions {
@@ -34,6 +39,7 @@ interface CanvasTransformActions {
   zoomAtPoint: (newZoom: number, cx: number, cy: number) => void;
   setPan: (x: number, y: number) => void;
   panBy: (dx: number, dy: number) => void;
+  setIsScrolling: (v: boolean) => void;
   screenToCanvas: (sx: number, sy: number) => { x: number; y: number };
   canvasToScreen: (cx: number, cy: number) => { x: number; y: number };
   fitAll: (windows: WindowRect[], viewportW: number, viewportH: number) => void;
@@ -47,6 +53,7 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
     panX: 0,
     panY: 0,
     isAnimating: false,
+    isScrolling: false,
 
     setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
@@ -67,7 +74,12 @@ export const useCanvasTransform = create<CanvasTransformState & CanvasTransformA
 
     setPan: (x, y) => set({ panX: x, panY: y }),
 
-    panBy: (dx, dy) => set((s) => ({ panX: s.panX + dx, panY: s.panY + dy })),
+    panBy: (dx, dy) => set((s) => ({
+      panX: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panX + dx)),
+      panY: Math.max(-PAN_LIMIT, Math.min(PAN_LIMIT, s.panY + dy)),
+    })),
+
+    setIsScrolling: (v) => { if (get().isScrolling !== v) set({ isScrolling: v }); },
 
     screenToCanvas: (sx, sy) => {
       const { zoom, panX, panY } = get();

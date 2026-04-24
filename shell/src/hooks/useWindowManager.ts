@@ -33,6 +33,7 @@ export interface AppEntry {
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 const MAX_CLOSED_ENTRIES = 50;
+const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
 
 interface ClosedLayout {
   x: number;
@@ -47,6 +48,10 @@ interface WindowManagerState {
   closedPaths: Set<string>;
   closedLayouts: Map<string, ClosedLayout>;
   apps: AppEntry[];
+  /** Per-app last-launched timestamp (ms since epoch). Drives the dock's
+      default sort when the user hasn't manually reordered. In-memory only
+      for now -- survives navigation but not full reload. */
+  appLaunchTimes: Record<string, number>;
 }
 
 interface WindowManagerActions {
@@ -101,8 +106,11 @@ function debouncedSave(state: WindowManagerState) {
     fetch(`${gatewayUrl}/api/layout`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
       body: JSON.stringify({ windows: layoutWindows }),
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      console.warn("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
+    });
   }, 500);
 }
 
@@ -139,9 +147,11 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     closedPaths: new Set<string>(),
     closedLayouts: new Map<string, ClosedLayout>(),
     apps: [],
+    appLaunchTimes: {},
 
     openWindow: (name, path, dockXOffset) => {
       set((state) => {
+        const launchTimes = { ...state.appLaunchTimes, [path]: Date.now() };
         const existing = state.windows.find((w) => w.path === path);
         if (existing) {
           return {
@@ -151,6 +161,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
                 : w,
             ),
             nextZ: state.nextZ + 1,
+            appLaunchTimes: launchTimes,
           };
         }
 
@@ -172,6 +183,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             createWindowRecord(state, name, path, fallbackX, fallbackY),
           ],
           nextZ: state.nextZ + 1,
+          appLaunchTimes: launchTimes,
         };
       });
     },

@@ -9,7 +9,7 @@ vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise
 function resetStores() {
   useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), apps: [] });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
-  useDesktopMode.setState({ mode: "desktop", previousMode: null });
+  useDesktopMode.setState({ mode: "canvas", previousMode: null });
 }
 
 describe("Canvas Renderer Integration", () => {
@@ -71,7 +71,7 @@ describe("Canvas Renderer Integration", () => {
     const ids = modes.map((m) => m.id);
     expect(ids).toContain("canvas");
     const canvasIdx = ids.indexOf("canvas");
-    expect(canvasIdx).toBeGreaterThan(0); // after desktop
+    expect(canvasIdx).toBe(0);
   });
 
   it("drag movement in canvas accounts for zoom scale", () => {

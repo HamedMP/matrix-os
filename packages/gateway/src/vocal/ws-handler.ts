@@ -1,0 +1,569 @@
+import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "../onboarding/gemini-live.js";
+import { VOCAL_SYSTEM_INSTRUCTION } from "./prompt.js";
+import { loadProfile, appendFact, renderProfileForPrompt } from "./profile.js";
+import { z } from "zod/v4";
+
+// Caps runaway LLM output before it reaches the kernel.
+const MAX_DESCRIPTION_LEN = 2000;
+const MAX_AUDIO_CHUNK_BYTES = 256 * 1024;
+const MAX_AUDIO_CHUNK_BASE64_CHARS = Math.ceil(MAX_AUDIO_CHUNK_BYTES / 3) * 4;
+const MAX_AUDIO_SESSION_BYTES = 50 * 1024 * 1024;
+const MAX_WS_MESSAGE_BYTES = MAX_AUDIO_CHUNK_BASE64_CHARS + 2_048;
+const MAX_TEXT_INPUT_CHARS = 10_000;
+const MAX_APP_NAME_LEN = 120;
+const MAX_STATUS_ACTION_LEN = 500;
+const MAX_ERROR_MESSAGE_LEN = 2_000;
+
+export type VocalExecute =
+  | { type: "execute"; kind: "create_app"; description: string }
+  | { type: "execute"; kind: "open_app"; name: string };
+
+export type VocalOutbound =
+  | { type: "ready" }
+  | { type: "audio"; data: string }
+  | { type: "transcript"; speaker: "ai" | "user"; text: string }
+  | { type: "interrupted" }
+  | { type: "turn_complete" }
+  | VocalExecute
+  | { type: "fact_saved"; fact: string }
+  | { type: "show_build_progress"; description: string; elapsedSec: number; estimatedTotalSec: number; currentAction: string; stage: string }
+  | { type: "error"; message: string; retryable: boolean };
+
+const VocalInboundSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start"), audioFormat: z.enum(["pcm16", "text"]) }),
+  z.object({ type: z.literal("audio"), data: z.string().max(MAX_AUDIO_CHUNK_BASE64_CHARS) }),
+  z.object({ type: z.literal("text_input"), text: z.string().max(MAX_TEXT_INPUT_CHARS) }),
+  z.object({
+    type: z.literal("delegation_status"),
+    description: z.string().max(MAX_DESCRIPTION_LEN),
+    stage: z.enum(["pending", "running", "done"]),
+    elapsedSec: z.number().int().min(0).max(86_400),
+    currentAction: z.string().max(MAX_STATUS_ACTION_LEN),
+  }),
+  z.object({
+    type: z.literal("delegation_complete"),
+    kind: z.literal("create_app"),
+    description: z.string().max(MAX_DESCRIPTION_LEN),
+    success: z.boolean(),
+    newAppName: z.string().max(MAX_APP_NAME_LEN).optional(),
+    errorMessage: z.string().max(MAX_ERROR_MESSAGE_LEN).optional(),
+  }),
+  z.object({
+    type: z.literal("execute_result"),
+    kind: z.literal("open_app"),
+    name: z.string().max(MAX_APP_NAME_LEN),
+    success: z.boolean(),
+    resolvedName: z.string().max(MAX_APP_NAME_LEN).optional(),
+  }),
+]);
+export type VocalInbound = z.infer<typeof VocalInboundSchema>;
+
+// Snapshot the shell pushes during an active delegation so
+// `check_build_status` can answer synchronously. Cleared on completion.
+interface DelegationSnapshot {
+  description: string;
+  stage: "pending" | "running" | "done";
+  elapsedSec: number;
+  currentAction: string;
+}
+
+export interface VocalDeps {
+  homePath: string;
+  geminiApiKey: string;
+  geminiModel: string;
+}
+
+type SendFn = (msg: VocalOutbound) => void;
+
+// `googleSearch` is a built-in Gemini Live tool; grounding happens
+// inside the model, no custom handler required.
+const VOCAL_TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: "create_app",
+        description:
+          "Create a new app in the user's Matrix OS workspace. Call this whenever the user describes something they want built — a tracker, dashboard, notes app, game, CRM, tool, widget, anything. The description will be passed to the kernel's app builder as if the user had typed it in chat. Say ONE short verbal acknowledgment first (e.g. 'on it') before calling.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            description: {
+              type: "STRING",
+              description:
+                "A detailed natural-language brief for the app. Include features, style, purpose, and any constraints the user mentioned. Write it like a brief to a developer — specific, not vague.",
+            },
+          },
+          required: ["description"],
+        },
+      },
+      {
+        name: "remember",
+        description:
+          "Save a fact about the user to long-term memory so you remember it across future vocal sessions. Use for: name, role, preferences, what they're working on, important people or things in their life. Don't use for: trivia, temporary state, things said in passing.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            fact: {
+              type: "STRING",
+              description:
+                "One short sentence in third person. Example: 'User's name is Arian', 'User is a designer working on Matrix OS'.",
+            },
+          },
+          required: ["fact"],
+        },
+      },
+      {
+        name: "check_build_status",
+        description:
+          "Check the status of an app build the user delegated with create_app. Call this ONLY when the user explicitly asks about progress ('how's it going?', 'is it done yet?', 'what's happening?'). Don't call it on your own and don't call it on every turn. Returns a brief snapshot including elapsed time and the current action the kernel is running.",
+        parameters: { type: "OBJECT", properties: {} },
+      },
+      {
+        name: "open_app",
+        description:
+          "Open an existing app on the user's canvas. Use this when the user asks to open, show, launch, bring up, or pull up a specific app they already have installed — 'open the notes app', 'show me my habit tracker', 'bring up the pomodoro timer'. The `name` argument can be a fuzzy match; the shell resolves it to the best matching installed app. DO NOT call this for apps you just built via create_app — those open automatically when the build finishes, and calling open_app before the build is indexed will race. Only use this tool for apps the user already has.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: {
+              type: "STRING",
+              description:
+                "The name of the app to open. Fuzzy matches are fine — 'notes', 'habit tracker', 'pomodoro'. The shell picks the best match from installed apps.",
+            },
+          },
+          required: ["name"],
+        },
+      },
+    ],
+  },
+  // Built-in Google Search grounding — Gemini Live fetches current info
+  // automatically for factual/research questions. No client-side handling.
+  { googleSearch: {} },
+];
+
+export function createVocalHandler(deps: VocalDeps) {
+  let gemini: GeminiLiveClient | null = null;
+  let sendToClient: SendFn | null = null;
+  let audioMode = false;
+  let audioBytesReceived = 0;
+  let lastDelegation: DelegationSnapshot | null = null;
+  // open_app blocks the Gemini tool response until the shell reports
+  // match success/failure. Timeout fallback below guards against lost
+  // result messages hanging the model indefinitely.
+  let pendingOpenApp: { toolCallId: string; name: string; timeout: NodeJS.Timeout } | null = null;
+  const OPEN_APP_TIMEOUT_MS = 2500;
+  let refinementTimer: NodeJS.Timeout | null = null;
+  const REFINEMENT_DELAY_MS = 5000;
+  // App builds typically take 3-4 minutes (Opus generation + pnpm install +
+  // vite build). 210s = 3.5 min midpoint. The buffer-extension below covers
+  // the long tail. The voice agent translates the resulting snapshot into a
+  // casual sentence, so an honest estimate is more useful than a hopeful one.
+  const DEFAULT_BUILD_ESTIMATE_SEC = 210;
+
+  function send(msg: VocalOutbound) {
+    sendToClient?.(msg);
+  }
+
+  function estimateBase64DecodedBytes(value: string): number {
+    const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+  }
+
+  function deriveBuildStage(currentAction: string): string {
+    const lower = currentAction.toLowerCase();
+    if (lower.includes("getting started") || lower.includes("working on it")) return "Planning";
+    if (lower.includes("test")) return "Testing";
+    if (lower.includes("running")) return "Writing code";
+    return currentAction.slice(0, 40);
+  }
+
+  function clearRefinementTimer() {
+    if (refinementTimer) {
+      clearTimeout(refinementTimer);
+      refinementTimer = null;
+    }
+  }
+
+  function clearPendingOpenApp() {
+    if (pendingOpenApp) {
+      clearTimeout(pendingOpenApp.timeout);
+      pendingOpenApp = null;
+    }
+  }
+
+  function closeGemini() {
+    gemini?.close();
+    gemini = null;
+  }
+
+  function setupGeminiHandlers(client: GeminiLiveClient) {
+    const isCurrentClient = () => gemini === client;
+
+    client.on("audio", (evt: unknown) => {
+      if (!isCurrentClient()) return;
+      const e = evt as GeminiEvent & { type: "audio" };
+      send({ type: "audio", data: e.data });
+    });
+
+    client.on("input_transcript", (evt: unknown) => {
+      if (!isCurrentClient()) return;
+      const e = evt as GeminiEvent & { type: "input_transcript" };
+      send({ type: "transcript", text: e.text, speaker: "user" });
+    });
+
+    client.on("output_transcript", (evt: unknown) => {
+      if (!isCurrentClient()) return;
+      const e = evt as GeminiEvent & { type: "output_transcript" };
+      send({ type: "transcript", text: e.text, speaker: "ai" });
+    });
+
+    client.on("tool_call", (evt: unknown) => {
+      if (!isCurrentClient()) return;
+      const e = evt as GeminiEvent & { type: "tool_call" };
+      void handleToolCall(client, e);
+    });
+
+    client.on("interrupted", () => {
+      if (!isCurrentClient()) return;
+      send({ type: "interrupted" });
+    });
+
+    client.on("turn_complete", () => {
+      if (!isCurrentClient()) return;
+      send({ type: "turn_complete" });
+    });
+
+    client.on("error", (evt: unknown) => {
+      if (!isCurrentClient()) return;
+      const e = evt as GeminiEvent & { type: "error" };
+      // Never expose provider-specific error details to the client.
+      console.error("[vocal] gemini error:", e.message);
+      send({ type: "error", message: "Voice session error", retryable: true });
+    });
+  }
+
+  async function handleToolCall(client: GeminiLiveClient, evt: GeminiEvent & { type: "tool_call" }) {
+    if (gemini !== client) return;
+
+    try {
+      switch (evt.name) {
+        case "create_app": {
+          const raw = typeof evt.args.description === "string" ? evt.args.description : "";
+          const description = raw.trim().slice(0, MAX_DESCRIPTION_LEN);
+          if (!description) {
+            client.sendToolResponse(evt.id, {
+              status: "error",
+              message: "Description was empty. Ask the user what they want built.",
+            });
+            return;
+          }
+          // Relay the intent to the shell — the shell submits it as a
+          // regular chat message through its existing chat pipeline, which
+          // dispatches to the kernel's app builder. We don't block on
+          // completion; we tell Gemini the hand-off succeeded so Aoede can
+          // move the conversation forward.
+          send({ type: "execute", kind: "create_app", description });
+          client.sendToolResponse(evt.id, {
+            status: "dispatched",
+            message:
+              "The workspace is building it now. The user can watch it stream in their chat sidebar. Don't narrate the build — start asking refinement questions per your DURING-BUILD REFINEMENT rules.",
+          });
+
+          // Nudge Aoede to ask a refinement question after a short delay.
+          // Cleared if the build finishes before the timer fires.
+          if (refinementTimer) clearTimeout(refinementTimer);
+          refinementTimer = setTimeout(() => {
+            refinementTimer = null;
+            if (gemini !== client || !lastDelegation) return;
+            client.sendText(
+              `System note: The build for "${description.slice(0, 100)}" is still running. Ask ONE simple "this or that" refinement question about the app — something you didn't cover during shaping. Read the room: if they're talking about something else, skip it. Follow your DURING-BUILD REFINEMENT rules.`,
+            );
+          }, REFINEMENT_DELAY_MS);
+          return;
+        }
+
+        case "open_app": {
+          const rawName = typeof evt.args.name === "string" ? evt.args.name : "";
+          const name = rawName.trim().slice(0, 120);
+          if (!name) {
+            client.sendToolResponse(evt.id, {
+              status: "error",
+              message: "No app name was provided. Ask the user which app they want to open.",
+            });
+            return;
+          }
+
+          // Cancel any stale pending open — only one can be in flight at a
+          // time per session, and the new one supersedes.
+          if (pendingOpenApp) {
+            clearTimeout(pendingOpenApp.timeout);
+            client.sendToolResponse(pendingOpenApp.toolCallId, {
+              status: "superseded",
+              message: "A newer open request replaced this one.",
+            });
+            pendingOpenApp = null;
+          }
+
+          // Dispatch to the shell; wait for `execute_result` before
+          // telling Gemini whether it worked.
+          send({ type: "execute", kind: "open_app", name });
+          const toolCallId = evt.id;
+          const timeout = setTimeout(() => {
+            if (gemini !== client || pendingOpenApp?.toolCallId !== toolCallId) return;
+            pendingOpenApp = null;
+            client.sendToolResponse(toolCallId, {
+              status: "timeout",
+              message:
+                "The open request was dispatched but the shell didn't confirm. Assume it worked unless the user says otherwise.",
+            });
+          }, OPEN_APP_TIMEOUT_MS);
+          pendingOpenApp = { toolCallId, name, timeout };
+          return;
+        }
+
+        case "check_build_status": {
+          if (!lastDelegation) {
+            client.sendToolResponse(evt.id, {
+              status: "idle",
+              summary: "No build is currently running. If the user is asking about something that already finished, let them know it's done.",
+            });
+            return;
+          }
+          // Hand Aoede a compact structured snapshot. She'll translate it
+          // into one short conversational sentence per the prompt.
+          const stage = deriveBuildStage(lastDelegation.currentAction);
+          // If elapsed exceeds the default estimate, extend the estimate
+          // so the progress bar stays meaningful and remaining time doesn't
+          // show "~0s". Adds a 30s buffer beyond the current elapsed (was 15s
+          // when the default estimate was 45s -- scaled with the new 210s base).
+          const estimatedTotalSec = lastDelegation.elapsedSec >= DEFAULT_BUILD_ESTIMATE_SEC
+            ? lastDelegation.elapsedSec + 30
+            : DEFAULT_BUILD_ESTIMATE_SEC;
+          const remainingSec = estimatedTotalSec - lastDelegation.elapsedSec;
+          client.sendToolResponse(evt.id, {
+            status: lastDelegation.stage,
+            description: lastDelegation.description,
+            elapsedSec: lastDelegation.elapsedSec,
+            estimatedRemainingSec: remainingSec,
+            currentAction: lastDelegation.currentAction,
+            summary: `The app "${lastDelegation.description.slice(0, 80)}" has been building for about ${lastDelegation.elapsedSec} seconds. Currently: ${lastDelegation.currentAction}. Estimated ~${remainingSec}s remaining.`,
+          });
+          // Also push a visual progress notification to the shell
+          send({
+            type: "show_build_progress",
+            description: lastDelegation.description,
+            elapsedSec: lastDelegation.elapsedSec,
+            estimatedTotalSec,
+            currentAction: lastDelegation.currentAction,
+            stage,
+          });
+          return;
+        }
+
+        case "remember": {
+          const raw = typeof evt.args.fact === "string" ? evt.args.fact : "";
+          const saved = await appendFact(deps.homePath, raw);
+          if (gemini !== client) return;
+          if (saved) {
+            send({ type: "fact_saved", fact: raw.slice(0, 200) });
+            client.sendToolResponse(evt.id, { status: "saved" });
+          } else {
+            // Either empty, duplicate, or write failed. Don't tell Gemini
+            // which — she'd apologize and re-try. Just report success so
+            // she moves on.
+            client.sendToolResponse(evt.id, { status: "saved" });
+          }
+          return;
+        }
+
+        default:
+          console.warn("[vocal] unknown tool call:", evt.name);
+          client.sendToolResponse(evt.id, {
+            status: "error",
+            message: "Unknown tool",
+          });
+      }
+    } catch (err) {
+      console.error("[vocal] tool_call handler failed:", err instanceof Error ? err.message : String(err));
+      if (gemini !== client) return;
+      try {
+        client.sendToolResponse(evt.id, { status: "error", message: "Internal error" });
+      } catch (sendErr) {
+        console.error("[vocal] failed to send error tool response:", sendErr);
+      }
+    }
+  }
+
+  async function handleStart(audioFormat: "pcm16" | "text") {
+    closeGemini();
+    clearPendingOpenApp();
+    audioMode = audioFormat === "pcm16";
+    audioBytesReceived = 0;
+
+    if (!deps.geminiApiKey) {
+      send({ type: "error", message: "Voice unavailable", retryable: false });
+      return;
+    }
+
+    if (!audioMode) {
+      send({ type: "error", message: "Vocal mode requires audio", retryable: false });
+      return;
+    }
+
+    // Inject what we already know about the user into the system prompt
+    // so Aoede starts the session with context instead of a blank slate.
+    const profile = await loadProfile(deps.homePath);
+    const systemInstruction = VOCAL_SYSTEM_INSTRUCTION + renderProfileForPrompt(profile);
+
+    let client: GeminiLiveClient | null = null;
+    try {
+      closeGemini();
+      client = createGeminiLiveClient(deps.geminiApiKey, deps.geminiModel, {
+        systemInstruction,
+        tools: VOCAL_TOOLS,
+      });
+      gemini = client;
+      setupGeminiHandlers(client);
+      await client.connect();
+      if (gemini !== client) {
+        client.close();
+        return;
+      }
+      send({ type: "ready" });
+
+      // Kick off the first turn. Gemini Live sits silent until it
+      // receives either audio or text input — without this nudge, the
+      // user enters vocal mode and hears nothing until they speak first,
+      // which reads as broken. The nudge is a system-level instruction
+      // to open the conversation per the OPENING rules in the prompt;
+      // it's not shown to the user in the transcript.
+      const knowsUser = (profile?.facts.length ?? 0) > 0;
+      const nudge = knowsUser
+        ? "The user just opened vocal mode. Greet them in ONE short, warm sentence — use their name if you know it, and riff lightly on what you know about them. Follow the OPENING rules in your instructions. Do not ask 'how can I help you'. After your greeting, stop and wait."
+        : "The user just opened vocal mode for the first time. Greet them in ONE short, warm, human sentence — no self-introduction, no pitch, no 'how can I help'. Follow the OPENING rules in your instructions. After your greeting, stop and wait.";
+      client.sendText(nudge);
+    } catch (err) {
+      console.error("[vocal] Gemini Live connection failed:", err instanceof Error ? err.message : String(err));
+      if (gemini !== client) return;
+      client?.close();
+      gemini = null;
+      send({ type: "error", message: "Could not connect to voice service", retryable: true });
+    }
+  }
+
+  async function handleMessage(raw: string | Buffer) {
+    const rawBytes = typeof raw === "string" ? Buffer.byteLength(raw) : raw.length;
+    if (rawBytes > MAX_WS_MESSAGE_BYTES) {
+      console.warn("[vocal] inbound message exceeded size cap:", rawBytes);
+      send({ type: "error", message: "Voice message too large", retryable: false });
+      return;
+    }
+
+    let rawData: unknown;
+    try {
+      rawData = JSON.parse(typeof raw === "string" ? raw : raw.toString());
+    } catch (err) {
+      console.warn("[vocal] inbound JSON parse failed:", err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    const parsed = VocalInboundSchema.safeParse(rawData);
+    if (!parsed.success) {
+      console.warn("[vocal] invalid inbound message");
+      send({ type: "error", message: "Invalid voice message", retryable: false });
+      return;
+    }
+
+    const data = parsed.data;
+
+    switch (data.type) {
+      case "start":
+        await handleStart(data.audioFormat);
+        break;
+      case "audio":
+        audioBytesReceived += estimateBase64DecodedBytes(data.data);
+        if (audioBytesReceived > MAX_AUDIO_SESSION_BYTES) {
+          send({ type: "error", message: "Audio session limit exceeded", retryable: false });
+          break;
+        }
+        gemini?.sendAudio(data.data);
+        break;
+      case "text_input":
+        if (audioMode) gemini?.sendText(data.text);
+        break;
+      case "delegation_status":
+        lastDelegation = {
+          description: data.description,
+          stage: data.stage,
+          elapsedSec: data.elapsedSec,
+          currentAction: data.currentAction,
+        };
+        break;
+      case "execute_result": {
+        // Shell reported the result of an open_app dispatch. If we have a
+        // matching pending tool call, resolve it now so Aoede can narrate
+        // the outcome correctly.
+        if (!pendingOpenApp || !gemini) break;
+        if (data.kind !== "open_app") break;
+        const pid = pendingOpenApp.toolCallId;
+        clearTimeout(pendingOpenApp.timeout);
+        pendingOpenApp = null;
+
+        if (data.success) {
+          const resolved = data.resolvedName ?? data.name;
+          gemini.sendToolResponse(pid, {
+            status: "opened",
+            resolvedName: resolved,
+            message: `The app "${resolved}" is now visible on the user's canvas. In ONE short warm sentence, let them know it's up. Don't describe what it does.`,
+          });
+        } else {
+          gemini.sendToolResponse(pid, {
+            status: "not_found",
+            message: `No installed app matched "${data.name}". Apologize briefly and ask the user which app they meant — maybe suggest that you can list what's installed if they can't remember the name.`,
+          });
+        }
+        break;
+      }
+      case "delegation_complete": {
+        // The shell finished running a delegated intent through the chat
+        // pipeline. Nudge Aoede to narrate the completion so the user
+        // hears "alright, it's ready" instead of waiting in silence.
+        if (!gemini) break;
+        const truncated = data.description.slice(0, 200);
+        const nameRef = data.newAppName ? ` It's called "${data.newAppName}" and has been opened on their canvas so they can see it.` : "";
+        // Kernel errorMessage can contain absolute paths, pnpm stderr, or
+        // TSC diagnostics — none of which should be narrated back to the
+        // user. Tell Gemini that something went wrong and let it invent
+        // a plain-language phrasing without raw internals as context.
+        const errorCtx = !data.success ? " The build encountered an error." : "";
+        if (!data.success && data.errorMessage) {
+          console.warn("[vocal] delegated build failed:", data.errorMessage.slice(0, 500));
+        }
+        const nudge = data.success
+          ? `System note (not from the user): the workspace just finished building the app you delegated ("${truncated}").${nameRef} IMPORTANT: If you are currently speaking, finish your current sentence or thought first — don't cut yourself off. Then, in ONE short warm sentence, let the user know it's ready. Use the app name if you have it. Don't describe what it does. Just a brief "alright, the X is ready" style acknowledgment. Then stop.`
+          : `System note (not from the user): the workspace hit an error trying to build the app you delegated ("${truncated}").${errorCtx} IMPORTANT: If you are currently speaking, finish your current thought first. Then in ONE short sentence, let the user know what went wrong in plain language — no technical jargon, no error codes. If they ask for details, you can explain further. Offer to try again differently. Then stop.`;
+        gemini.sendText(nudge);
+        // Clear the snapshot and refinement timer — the build is over.
+        clearRefinementTimer();
+        lastDelegation = null;
+        break;
+      }
+    }
+  }
+
+  return {
+    onOpen(sendFn: SendFn) {
+      sendToClient = sendFn;
+    },
+    async onMessage(data: string | Buffer) {
+      await handleMessage(data);
+    },
+    onClose() {
+      clearRefinementTimer();
+      clearPendingOpenApp();
+      audioBytesReceived = 0;
+      closeGemini();
+      sendToClient = null;
+    },
+  };
+}

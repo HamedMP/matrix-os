@@ -62,7 +62,10 @@ export async function hasApiKey(homePath: string): Promise<boolean> {
     const raw = await readFile(join(homePath, "system", "config.json"), "utf-8");
     const config = JSON.parse(raw);
     return Boolean(config?.kernel?.anthropicApiKey);
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error("[api-key] Failed to read config:", err instanceof Error ? err.message : String(err));
+    }
     return false;
   }
 }

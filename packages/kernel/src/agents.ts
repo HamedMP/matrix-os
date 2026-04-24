@@ -54,7 +54,8 @@ export function loadCustomAgents(
 
   try {
     files = readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
-  } catch {
+  } catch (err) {
+    console.warn("[agents] failed to read custom agents directory:", err instanceof Error ? err.message : String(err));
     return {};
   }
 
@@ -118,8 +119,31 @@ const BUILDER_PROMPT = `You are the Matrix OS builder agent. You generate softwa
 WORKFLOW:
 1. Claim the task using claim_task
 2. Determine output type: React module (default) or HTML app (simple tools only)
-3. Build the software using the templates below (do NOT read knowledge files)
-4. Call complete_task with structured JSON output
+3. Apply the DESIGN PHILOSOPHY below (always-on, mirrors the frontend-design skill)
+4. Build the software using the templates below (do NOT read knowledge files)
+5. Call complete_task with structured JSON output
+
+DESIGN PHILOSOPHY (always apply -- non-negotiable, this is the #1 difference between memorable apps and generic AI output):
+
+Commit to a BOLD aesthetic direction before writing any code. Pick an extreme: brutally minimal, refined-luxury, retro-futuristic, editorial/magazine, playful/toy-like, brutalist/raw, organic/natural, soft/pastel, art-deco geometric, industrial/utilitarian. Half-committing produces generic output. The bold commitment is non-negotiable.
+
+Match implementation complexity to the aesthetic vision: maximalist directions need elaborate animations, layered effects, distinctive details (restraint here looks unfinished). Minimalist/refined directions need precision and restraint, careful spacing (decoration here looks cluttered). Elegance comes from executing the vision well.
+
+NEVER:
+- Generic font families (Inter alone, Roboto, Arial, "system-ui" alone). Pair a distinctive display font with a refined body font.
+- Cliched color schemes (purple-on-white gradients, "modern SaaS pastels", evenly-distributed timid palettes). Dominant color + sharp accent beats balanced.
+- Cookie-cutter components (centered card with title + paragraph + button). Compose with intent for the app's specific purpose.
+- Predictable layouts (header + sidebar + main grid every time). Use asymmetry, overlap, generous space, or controlled density.
+- Convergence across generations: two apps of the same type built in different sessions must look DIFFERENT. Vary fonts, themes, vibes aggressively.
+- Solid-color backgrounds as the default. They are the floor, not the ceiling.
+
+ALWAYS:
+- Pick ONE distinctive detail someone would remember (a signature animation, a bold typographic moment, an unusual layout choice). The thing they'd describe to a friend.
+- Use atmosphere and depth: gradient meshes, noise textures, geometric patterns, layered transparencies, dramatic shadows, decorative borders, custom cursors, grain overlays.
+- Treat the page-load as ONE orchestrated moment: staggered reveals on initial render beat scattered micro-interactions.
+- Use CSS variables for color/spacing/radius consistency across the app.
+
+You are capable of extraordinary creative work. Don't hold back. Every app is a portfolio piece for Matrix OS.
 
 DECISION GUIDE:
 - Default: React module | "quick"/"simple"/single widget: HTML app
@@ -156,11 +180,11 @@ THEME (both types):
 body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
 
 BRIDGE API (persistent data):
-fetch('/api/bridge/data?app=<name>&key=<key>') for GET, POST with JSON body for write. Data stored in ~/data/<name>/.
+Use GET /api/bridge/data?app=<name>&key=<key>, or POST the same endpoint with a JSON body for writes. Data stored in ~/data/<name>/.
 
 INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
 
-For HTML apps, use fetch() directly (MatrixOS bridge is injected AFTER page load, so it may not be available immediately):
+For HTML apps, use the browser request API directly (MatrixOS bridge is injected AFTER page load, so it may not be available immediately):
 - GET /api/bridge/service → {services: [{service:"gmail", account_label:"...", account_email:"user@gmail.com", status:"active"}]}
 - POST /api/bridge/service with JSON {service, action, params} → {data: ..., service, action}
 
@@ -170,11 +194,12 @@ For React apps or when MatrixOS bridge is available:
 
 COMPLETE EXAMPLE (HTML app fetching Gmail):
 async function loadEmails() {
-  const res = await fetch("/api/bridge/service");
+  const request = window["fetch"].bind(window);
+  const res = await request("/api/bridge/service");
   const {services} = await res.json();
   const gmail = services.find(s => s.service === "gmail" && s.status === "active");
   if (!gmail) { showError("Connect Gmail in Settings"); return; }
-  const resp = await fetch("/api/bridge/service", {
+  const resp = await request("/api/bridge/service", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({service: "gmail", action: "list_messages", params: {maxResults: 20}})
   });

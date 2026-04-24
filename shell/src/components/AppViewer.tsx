@@ -13,6 +13,7 @@ import {
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
+const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppViewerProps {
   path: string;
@@ -63,11 +64,16 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         const doc = iframe.contentDocument;
         if (doc) {
           const el = doc.createElement("script");
-          el.textContent = script + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`;
+          // Bridge + zoom forwarding in a single script injection.
+          // Pinch-to-zoom (ctrl+wheel) is forwarded to the parent canvas
+          // because iframes capture it in their own browsing context.
+          el.textContent = script
+            + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`
+            + `\n;window.addEventListener('wheel',function(e){if(e.ctrlKey||e.metaKey){e.preventDefault();parent.postMessage({type:'os:wheel-zoom',deltaX:e.deltaX,deltaY:e.deltaY,clientX:e.clientX,clientY:e.clientY},'*')}},{passive:false});`;
           doc.head.appendChild(el);
         }
-      } catch {
-        // cross-origin restriction, bridge won't be available
+      } catch (err) {
+        console.warn("[app-viewer] bridge injection failed:", err instanceof Error ? err.message : String(err));
       }
     };
 
@@ -87,8 +93,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
           { type: "os:theme-update", payload: themeVars },
           "*",
         );
-      } catch {
-        // cross-origin restriction
+      } catch (err) {
+        console.warn("[app-viewer] theme update failed:", err instanceof Error ? err.message : String(err));
       }
     });
 
@@ -110,7 +116,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         fetch(`${GATEWAY_URL}/api/bridge/data`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
           body: JSON.stringify({ action, app, key, value }),
+        }).catch((err: unknown) => {
+          console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
         });
       },
       openApp: onOpenApp,
@@ -138,8 +147,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
               { type: "os:data-change", payload: { app: msgApp, key: msgKey } },
               "*",
             );
-          } catch {
-            // cross-origin restriction
+          } catch (err) {
+            console.warn("[app-viewer] data change postMessage failed:", err instanceof Error ? err.message : String(err));
           }
         }
       }

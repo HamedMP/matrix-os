@@ -78,6 +78,24 @@ interface SettingsProps {
 export function Settings({ open, onOpenChange }: SettingsProps) {
   const [activeSection, setActiveSection] = useState<SectionId>("appearance");
 
+  // Delayed unmount so the exit animation has time to play. `visible`
+  // flips one frame after mount so the enter transition has a distinct
+  // "from" state to animate out of. Same pattern as VocalPanel.
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- delayed mount for enter animation
+      setMounted(true);
+      const t = setTimeout(() => setVisible(true), 20);
+      return () => clearTimeout(t);
+    }
+    setVisible(false);
+    const t = setTimeout(() => setMounted(false), 320);
+    return () => clearTimeout(t);
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(e: KeyboardEvent) {
@@ -91,23 +109,37 @@ export function Settings({ open, onOpenChange }: SettingsProps) {
 
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset section on close
       setActiveSection("appearance");
     }
   }, [open]);
 
-  if (!open) return null;
+  if (!mounted) return null;
+
+  const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
 
   return (
     <div className="fixed inset-0 z-[45]">
       <div
         className="absolute inset-0 bg-black/30 backdrop-blur-xl"
+        style={{
+          opacity: visible ? 1 : 0,
+          transition: `opacity 300ms ${transitionEase}`,
+        }}
         onClick={(e) => {
           if (e.target === e.currentTarget) onOpenChange(false);
         }}
       />
 
       <div className="relative flex items-center justify-center h-full z-10 overflow-hidden">
-        <div className="flex flex-col w-[880px] max-w-[92vw] h-[680px] max-h-[88vh] bg-card/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden">
+        <div
+          className="flex flex-col w-[880px] max-w-[92vw] h-[680px] max-h-[88vh] bg-card/95 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden"
+          style={{
+            opacity: visible ? 1 : 0,
+            transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
+            transition: `opacity 320ms ${transitionEase}, transform 320ms ${transitionEase}`,
+          }}
+        >
           <header className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none">
             <TrafficLights onClose={() => onOpenChange(false)} />
             <h1 className="text-xs font-medium text-center flex-1">Settings</h1>

@@ -14,6 +14,7 @@
   },
   "packageManager": "pnpm@10.6.2",
   "scripts": {
+    "postinstall": "node scripts/fix-node-pty-perms.mjs",
     "dev": "bun run --filter '@matrix-os/gateway' dev & bun run --filter '@matrix-os/proxy' dev & bun run --filter './shell' dev",
     "dev:kernel": "bun run --filter '@matrix-os/kernel' dev",
     "dev:gateway": "bun run --filter '@matrix-os/gateway' dev",

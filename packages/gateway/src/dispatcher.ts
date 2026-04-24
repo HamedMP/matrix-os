@@ -12,8 +12,7 @@ import {
   type MatrixDB,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
-import { appendFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
 import { createInteractionLogger } from "./logger.js";
@@ -60,6 +59,9 @@ export interface Dispatcher {
     sessionId: string | undefined,
     onEvent: (event: KernelEvent) => void,
     context?: DispatchContext,
+    /** Optional abort controller. Caller (gateway) passes this so it can
+        stop the in-flight kernel run on user request. */
+    abortController?: AbortController,
   ): Promise<void>;
   dispatchBatch(entries: BatchEntry[]): Promise<BatchResult[]>;
   readonly queueLength: number;
@@ -75,6 +77,7 @@ type InternalEntry =
       sessionId: string | undefined;
       onEvent: (event: KernelEvent) => void;
       context?: DispatchContext;
+      abortController?: AbortController;
       resolve: () => void;
       reject: (error: Error) => void;
     }
@@ -96,6 +99,10 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
   const queue: InternalEntry[] = [];
   let active = 0;
   let batchRunning = false;
+
+  function logNonFatal(label: string, err: unknown) {
+    console.warn(label, err instanceof Error ? err.message : String(err));
+  }
 
   function processQueue() {
     if (batchRunning) return;
@@ -133,7 +140,11 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           const ts = new Date().toISOString();
           const sender = entry.context.senderName ?? entry.context.senderId ?? "unknown";
           const line = `[${ts}] [security] Suspicious content from ${sender} via ${entry.context.channel}: ${detection.patterns.join(", ")}\n`;
-          try { appendFileSync(join(homePath, "system/activity.log"), line); } catch { /* log dir may not exist */ }
+          try {
+            await appendFile(join(homePath, "system/activity.log"), line);
+          } catch (err) {
+            logNonFatal("[dispatcher] failed to write suspicious content audit log:", err);
+          }
         }
         message = wrapExternalContent(entry.message, {
           source: "channel",
@@ -161,12 +172,14 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           process.env.ANTHROPIC_API_KEY = byokKey;
           didSetKey = true;
         }
-      } catch {
-        // No config or parse error -- use default env key
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          logNonFatal("[dispatcher] failed to read user API key config:", err);
+        }
       }
 
       try {
-        for await (const event of spawnFn(message, config)) {
+        for await (const event of spawnFn(message, config, entry.abortController)) {
           entry.onEvent(event);
           if (event.type === "init") {
             resultSessionId = event.sessionId;
@@ -218,7 +231,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           senderId: entry.context?.senderId,
           model: opts.model,
         });
-      } catch { /* logger failure must not break dispatch */ }
+      } catch (err) {
+        logNonFatal("[dispatcher] interaction logger failed:", err);
+      }
 
       const costUsd = resultData?.cost ?? 0;
       if (costUsd > 0) {
@@ -229,7 +244,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             tokensIn,
             tokensOut,
           });
-        } catch { /* usage tracker failure must not break dispatch */ }
+        } catch (err) {
+          logNonFatal("[dispatcher] usage tracker failed:", err);
+        }
       }
 
       entry.resolve();
@@ -259,7 +276,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             stack: err.stack,
           },
         });
-      } catch { /* logger failure must not break dispatch */ }
+      } catch (err) {
+        logNonFatal("[dispatcher] interaction logger failed:", err);
+      }
 
       failTask(db, processId, (error as Error).message);
       entry.reject(error as Error);
@@ -307,7 +326,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
               batchId,
               model: opts.model,
             });
-          } catch { /* logger failure must not break dispatch */ }
+          } catch (err) {
+            logNonFatal("[dispatcher] interaction logger failed:", err);
+          }
 
           const batchCost = batchResultData?.cost ?? 0;
           if (batchCost > 0) {
@@ -317,7 +338,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
                 tokensIn: batchResultData?.tokensIn ?? 0,
                 tokensOut: batchResultData?.tokensOut ?? 0,
               });
-            } catch { /* usage tracker failure must not break dispatch */ }
+            } catch (err) {
+              logNonFatal("[dispatcher] usage tracker failed:", err);
+            }
           }
         }),
       );
@@ -344,7 +367,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             model: opts.model,
             error: { name: err.name, message: err.message, stack: err.stack },
           });
-        } catch { /* logger failure must not break dispatch */ }
+        } catch (err) {
+          logNonFatal("[dispatcher] interaction logger failed:", err);
+        }
         return {
           taskId,
           status: "rejected" as const,
@@ -374,9 +399,18 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       return active;
     },
 
-    dispatch(message, sessionId, onEvent, context) {
+    dispatch(message, sessionId, onEvent, context, abortController) {
       return new Promise<void>((resolve, reject) => {
-        queue.push({ kind: "serial", message, sessionId, onEvent, context, resolve, reject });
+        queue.push({
+          kind: "serial",
+          message,
+          sessionId,
+          onEvent,
+          context,
+          abortController,
+          resolve,
+          reject,
+        });
         processQueue();
       });
     },

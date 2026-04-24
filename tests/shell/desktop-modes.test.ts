@@ -4,11 +4,11 @@ import { useDesktopMode, type DesktopMode } from "../../shell/src/stores/desktop
 
 describe("Desktop Mode Store", () => {
   beforeEach(() => {
-    useDesktopMode.setState({ mode: "desktop", previousMode: null });
+    useDesktopMode.setState({ mode: "canvas", previousMode: null });
   });
 
-  it("defaults to 'desktop' mode", () => {
-    expect(useDesktopMode.getState().mode).toBe("desktop");
+  it("defaults to 'canvas' mode", () => {
+    expect(useDesktopMode.getState().mode).toBe("canvas");
   });
 
   it("setMode changes the active mode", () => {
@@ -16,8 +16,8 @@ describe("Desktop Mode Store", () => {
     expect(useDesktopMode.getState().mode).toBe("ambient");
   });
 
-  it("supports all 5 modes", () => {
-    const modes: DesktopMode[] = ["desktop", "canvas", "ambient", "dev", "conversational"];
+  it("supports all 4 modes", () => {
+    const modes: DesktopMode[] = ["canvas", "desktop", "ambient", "dev"];
     for (const mode of modes) {
       useDesktopMode.getState().setMode(mode);
       expect(useDesktopMode.getState().mode).toBe(mode);
@@ -52,15 +52,6 @@ describe("Desktop Mode Store", () => {
     expect(config.terminalProminent).toBe(true);
   });
 
-  it("getModeConfig returns correct config for conversational mode", () => {
-    const config = useDesktopMode.getState().getModeConfig("conversational");
-    expect(config.label).toBe("Conversational");
-    expect(config.showDock).toBe(false);
-    expect(config.showWindows).toBe(false);
-    expect(config.showBottomPanel).toBe(false);
-    expect(config.chatPosition).toBe("center");
-  });
-
   it("getModeConfig returns correct config for canvas mode", () => {
     const config = useDesktopMode.getState().getModeConfig("canvas");
     expect(config.label).toBe("Canvas");
@@ -70,19 +61,24 @@ describe("Desktop Mode Store", () => {
     expect(config.chatPosition).toBe("sidebar");
   });
 
-  it("allModes returns all 5 modes", () => {
+  it("allModes returns all 4 modes with canvas first", () => {
     const modes = useDesktopMode.getState().allModes();
-    expect(modes).toHaveLength(5);
-    expect(modes.map((m) => m.id)).toEqual(["desktop", "canvas", "ambient", "dev", "conversational"]);
+    expect(modes).toHaveLength(4);
+    expect(modes.map((m) => m.id)).toEqual(["canvas", "desktop", "ambient", "dev"]);
+  });
+
+  it("visibleModes only returns canvas", () => {
+    const modes = useDesktopMode.getState().visibleModes();
+    expect(modes.map((m) => m.id)).toEqual(["canvas"]);
   });
 
   it("setMode tracks previousMode", () => {
     expect(useDesktopMode.getState().previousMode).toBeNull();
-    useDesktopMode.getState().setMode("canvas");
-    expect(useDesktopMode.getState().previousMode).toBe("desktop");
-    expect(useDesktopMode.getState().mode).toBe("canvas");
-    useDesktopMode.getState().setMode("ambient");
+    useDesktopMode.getState().setMode("desktop");
     expect(useDesktopMode.getState().previousMode).toBe("canvas");
+    expect(useDesktopMode.getState().mode).toBe("desktop");
+    useDesktopMode.getState().setMode("ambient");
+    expect(useDesktopMode.getState().previousMode).toBe("desktop");
     expect(useDesktopMode.getState().mode).toBe("ambient");
   });
 });

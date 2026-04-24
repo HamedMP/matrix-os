@@ -187,7 +187,10 @@ export function IntegrationsSection() {
         const data = await res.json();
         if (data?.services) setConnected(data.services);
       } else {
-        const body = await res.json().catch(() => ({}));
+        const body = await res.json().catch((err: unknown) => {
+          console.warn("[integrations] failed to parse refresh error body:", err instanceof Error ? err.message : String(err));
+          return {};
+        });
         setError(body.error ?? "Failed to refresh");
       }
     } catch (err) {
@@ -261,7 +264,10 @@ export function IntegrationsSection() {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+        const body = await res.json().catch((err: unknown) => {
+          console.warn("[integrations] failed to parse connect error body:", err instanceof Error ? err.message : String(err));
+          return {};
+        });
         setError(body.error ?? "Failed to start connection");
         setConnecting(null);
         return;
@@ -399,7 +405,10 @@ export function IntegrationsSection() {
         setRenamingId(null);
         setRenameDraft("");
       } else {
-        const body = await res.json().catch(() => ({}));
+        const body = await res.json().catch((err: unknown) => {
+          console.warn("[integrations] failed to parse rename error body:", err instanceof Error ? err.message : String(err));
+          return {};
+        });
         setError(body.error ?? "Failed to rename account");
       }
     } catch (err) {

@@ -23,6 +23,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
   const zoomOverlayRef = useRef<HTMLDivElement>(null);
   const transformRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPointer = useRef({ x: 0, y: 0 });
   const spaceDown = useRef(false);
   const [grabCursor, setGrabCursor] = useState(false);
@@ -31,16 +32,28 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
     (e: WheelEvent) => {
       e.preventDefault();
 
+      // Disable pointer events on children while scrolling so iframes/app
+      // windows don't capture the scroll mid-pan. Only write DOM on transition.
+      const state = useCanvasTransform.getState();
+      if (!state.isScrolling) {
+        if (transformRef.current) transformRef.current.style.pointerEvents = "none";
+        state.setIsScrolling(true);
+      }
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = setTimeout(() => {
+        useCanvasTransform.getState().setIsScrolling(false);
+        if (transformRef.current && !useCanvasTransform.getState().isAnimating) {
+          transformRef.current.style.pointerEvents = "auto";
+        }
+      }, 150);
+
       if (e.ctrlKey || e.metaKey) {
-        // Pinch-to-zoom on trackpad sends ctrlKey + wheel
         const delta = -e.deltaY * 0.01;
         const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom + delta));
         zoomAtPoint(newZoom, e.clientX, e.clientY);
       } else if (navMode === "scroll") {
-        // Scroll mode: two-finger scroll = pan (Figma-style)
         panBy(-e.deltaX / zoom, -e.deltaY / zoom);
       }
-      // Grab mode: scroll does nothing (pinch still works via ctrlKey path above)
     },
     [zoom, zoomAtPoint, panBy, navMode],
   );
@@ -54,9 +67,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      // Middle-click or Space+click to pan (always)
       const isMiddleOrSpace = e.button === 1 || (e.button === 0 && spaceDown.current);
-      // Grab mode: left-click on canvas background (container, overlay, or inner transform div -- not app windows)
       const isCanvasBackground =
         e.target === containerRef.current ||
         e.target === zoomOverlayRef.current ||
@@ -89,6 +100,31 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
     isPanning.current = false;
   }, []);
 
+  // Listen for zoom events forwarded from iframes via postMessage.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type !== "os:wheel-zoom") return;
+      const { deltaY, clientX, clientY } = e.data;
+      const iframes = document.querySelectorAll("iframe");
+      let parentX = clientX;
+      let parentY = clientY;
+      for (const iframe of iframes) {
+        if (iframe.contentWindow === e.source) {
+          const rect = iframe.getBoundingClientRect();
+          parentX = rect.left + clientX;
+          parentY = rect.top + clientY;
+          break;
+        }
+      }
+      const delta = -deltaY * 0.01;
+      const { zoom: z, zoomAtPoint: zap } = useCanvasTransform.getState();
+      const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta));
+      zap(newZoom, parentX, parentY);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
   // Track space (for pan) and ctrl/cmd (for zoom overlay over iframes)
   useEffect(() => {
     const overlay = zoomOverlayRef.current;
@@ -115,7 +151,6 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
       }
     };
 
-    // Reset overlay when tab becomes visible or window loses focus
     const resetOverlay = () => {
       spaceDown.current = false;
       setGrabCursor(false);
@@ -136,6 +171,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", resetOverlay);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     };
   }, []);
 
@@ -154,7 +190,6 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      {/* Transparent overlay: captures wheel events over iframes when ctrl/cmd held */}
       <div
         ref={zoomOverlayRef}
         className="absolute inset-0 z-50"

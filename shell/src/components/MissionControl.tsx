@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
+import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppTile } from "./AppTile";
 import {
   XIcon,
@@ -26,7 +29,7 @@ interface MissionControlProps {
   onTogglePin: (path: string) => void;
   onRegenerateIcon: (slug: string) => void;
   onRenameApp?: (slug: string, newName: string) => void;
-  onDeleteApp?: (slug: string) => void;
+  onRemoveFromCanvas?: (path: string) => void;
 }
 
 export function MissionControl({
@@ -39,7 +42,7 @@ export function MissionControl({
   onTogglePin,
   onRegenerateIcon,
   onRenameApp,
-  onDeleteApp,
+  onRemoveFromCanvas,
 }: MissionControlProps) {
   const { provision } = useTaskBoard();
   const [mounted, setMounted] = useState(false);
@@ -126,40 +129,143 @@ export function MissionControl({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto px-6 pb-6">
-          <div className="flex flex-wrap gap-1 justify-start">
-            {apps.map((app, index) => {
-              const slug = nameToSlug(app.name);
-              return (
-                <div
-                  key={app.path}
-                  className="transition-all duration-300 ease-out"
-                  style={{
-                    opacity: visible ? 1 : 0,
-                    transform: visible ? "translateY(0)" : "translateY(16px)",
-                    transitionDelay: closingRef.current ? "0ms" : `${50 + index * 20}ms`,
-                  }}
-                >
-                  <AppTile
-                    name={app.name}
-                    isOpen={openWindows.has(app.path)}
-                    onClick={() => {
-                      onOpenApp(app.name, app.path);
-                      onClose();
-                    }}
-                    pinned={pinnedApps.includes(app.path)}
-                    onTogglePin={() => onTogglePin(app.path)}
-                    iconUrl={app.iconUrl}
-                    onRegenerateIcon={() => onRegenerateIcon(slug)}
-                    onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
-                    onDelete={onDeleteApp ? () => onDeleteApp(slug) : undefined}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <LauncherGrid
+          apps={apps}
+          openWindows={openWindows}
+          pinnedApps={pinnedApps}
+          onOpenApp={onOpenApp}
+          onClose={onClose}
+          onTogglePin={onTogglePin}
+          onRegenerateIcon={onRegenerateIcon}
+          onRenameApp={onRenameApp}
+          onRemoveFromCanvas={onRemoveFromCanvas}
+          visible={visible}
+          closingRef={closingRef}
+        />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Splits the app grid into two sections separated by a hairline divider:
+ * "Main" (system apps -- Terminal, Files, Chat, Preview, etc) on top, and
+ * "Generated" (everything the agent has built) below. The animation
+ * stagger continues across both sections so the reveal still feels like
+ * one orchestrated moment.
+ */
+function LauncherGrid({
+  apps,
+  openWindows,
+  pinnedApps,
+  onOpenApp,
+  onClose,
+  onTogglePin,
+  onRegenerateIcon,
+  onRenameApp,
+  onRemoveFromCanvas,
+  visible,
+  closingRef,
+}: {
+  apps: AppEntry[];
+  openWindows: Set<string>;
+  pinnedApps: string[];
+  onOpenApp: (name: string, path: string) => void;
+  onClose: () => void;
+  onTogglePin: (path: string) => void;
+  onRegenerateIcon: (slug: string) => void;
+  onRenameApp?: (slug: string, newName: string) => void;
+  onRemoveFromCanvas?: (path: string) => void;
+  visible: boolean;
+  closingRef: React.RefObject<boolean>;
+}) {
+  // Share the dock's ordering so launcher and dock display in the same order.
+  // Reorder itself happens only in the dock (single-row, Reorder math stable).
+  const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
+  const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
+
+  const { mainApps, generatedApps } = useMemo(() => {
+    const main: AppEntry[] = [];
+    const gen: AppEntry[] = [];
+    for (const app of apps) {
+      if (isSystemApp(app.path)) main.push(app);
+      else gen.push(app);
+    }
+    return {
+      mainApps: applyOrder(main, dockOrder?.systemApps, appLaunchTimes),
+      generatedApps: applyOrder(gen, dockOrder?.userApps, appLaunchTimes),
+    };
+  }, [apps, dockOrder, appLaunchTimes]);
+
+  // Launcher is an overview — dock (Desktop.tsx) is the reorder surface, which
+  // uses a single-row flex layout where framer-motion Reorder's axis math works.
+  // A wrapped grid + Reorder.Group miscomputes neighbor indices across rows, so
+  // tiles here are plain divs.
+  const renderTile = (app: AppEntry, indexInAll: number) => {
+    const slug = nameToSlug(app.name);
+    return (
+      <div
+        key={app.path}
+        style={{
+          opacity: visible ? 1 : 0,
+          transform: visible ? "translateY(0)" : "translateY(16px)",
+          transition: "opacity 300ms ease-out, transform 300ms ease-out",
+          transitionDelay: closingRef.current ? "0ms" : `${50 + indexInAll * 20}ms`,
+        }}
+      >
+        <AppTile
+          name={app.name}
+          isOpen={openWindows.has(app.path)}
+          onClick={() => {
+            onOpenApp(app.name, app.path);
+            onClose();
+          }}
+          pinned={pinnedApps.includes(app.path)}
+          onTogglePin={() => onTogglePin(app.path)}
+          iconUrl={app.iconUrl}
+          onRegenerateIcon={() => onRegenerateIcon(slug)}
+          onRename={onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
+          onRemoveFromCanvas={onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
+        />
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto px-6 pb-6">
+      {mainApps.length > 0 && (
+        <>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+            Main
+          </div>
+          <div className="flex flex-wrap gap-1 justify-start">
+            {mainApps.map((app, i) => renderTile(app, i))}
+          </div>
+        </>
+      )}
+
+      {mainApps.length > 0 && generatedApps.length > 0 && (
+        <div
+          className="my-5 h-px w-full bg-white/15"
+          aria-hidden
+          style={{
+            opacity: visible ? 1 : 0,
+            transition: "opacity 300ms ease-out",
+            transitionDelay: closingRef.current ? "0ms" : `${50 + mainApps.length * 20}ms`,
+          }}
+        />
+      )}
+
+      {generatedApps.length > 0 && (
+        <>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
+            My Apps
+          </div>
+          <div className="flex flex-wrap gap-1 justify-start">
+            {generatedApps.map((app, i) => renderTile(app, mainApps.length + i))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
