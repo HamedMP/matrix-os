@@ -322,8 +322,16 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     ws.onopen = () => {
       if (!mountedRef.current) return;
       setConnected(true);
-      send({ type: "start", audioFormat: "pcm16" });
-      startMic();
+      void startMic()
+        .then(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            send({ type: "start", audioFormat: "pcm16" });
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn("[vocal] failed to start microphone:", err instanceof Error ? err.message : String(err));
+          ws.close();
+        });
     };
     ws.onmessage = handleMessage;
     ws.onerror = () => setError("Connection failed");
