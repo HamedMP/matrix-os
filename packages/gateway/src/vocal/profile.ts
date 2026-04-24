@@ -7,9 +7,16 @@ import { randomBytes } from "node:crypto";
 // races the first write and a fact gets lost (last-writer-wins). A single
 // Promise chain per homePath serializes all writers for that home.
 const writeLocks = new Map<string, Promise<unknown>>();
+const MAX_WRITE_LOCKS = 100;
 function withLock<T>(homePath: string, fn: () => Promise<T>): Promise<T> {
   const prev = writeLocks.get(homePath) ?? Promise.resolve();
-  const next = prev.catch(() => {}).then(fn);
+  const next = prev.catch((err: unknown) => {
+    console.warn("[vocal] previous profile write failed:", err instanceof Error ? err.message : String(err));
+  }).then(fn);
+  if (!writeLocks.has(homePath) && writeLocks.size >= MAX_WRITE_LOCKS) {
+    const oldest = writeLocks.keys().next().value;
+    if (oldest) writeLocks.delete(oldest);
+  }
   writeLocks.set(
     homePath,
     next.finally(() => {

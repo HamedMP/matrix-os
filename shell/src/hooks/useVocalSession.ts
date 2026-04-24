@@ -204,7 +204,9 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       await ctx.audioWorklet.addModule("/audio-worklet-processor.js");
       if (!mountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
-        ctx.close().catch(() => {});
+        ctx.close().catch((err: unknown) => {
+          console.warn("[vocal] failed to close abandoned mic context:", err instanceof Error ? err.message : String(err));
+        });
         streamRef.current = null;
         micCtxRef.current = null;
         return;
@@ -227,7 +229,9 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     } catch (err) {
       // Stop any stream/context we partially acquired before the error.
       stream?.getTracks().forEach((t) => t.stop());
-      ctx?.close().catch(() => {});
+      ctx?.close().catch((closeErr: unknown) => {
+        console.warn("[vocal] failed to close mic context after init error:", closeErr instanceof Error ? closeErr.message : String(closeErr));
+      });
       streamRef.current = null;
       micCtxRef.current = null;
       if (mountedRef.current) {
@@ -242,7 +246,9 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     streamRef.current = null;
     workletNodeRef.current?.disconnect();
     workletNodeRef.current = null;
-    micCtxRef.current?.close().catch(() => {});
+    micCtxRef.current?.close().catch((err: unknown) => {
+      console.warn("[vocal] failed to close mic context:", err instanceof Error ? err.message : String(err));
+    });
     micCtxRef.current = null;
   }, []);
 
@@ -268,7 +274,9 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       case "interrupted":
         isPlayingRef.current = false;
         nextStartTimeRef.current = 0;
-        playCtxRef.current?.close().catch(() => {});
+        playCtxRef.current?.close().catch((err: unknown) => {
+          console.warn("[vocal] failed to close playback context after interruption:", err instanceof Error ? err.message : String(err));
+        });
         playCtxRef.current = null;
         playGainRef.current = null;
         setVoiceState("listening");
@@ -328,7 +336,9 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
       mountedRef.current = false;
       ws.close();
       stopMic();
-      playCtxRef.current?.close().catch(() => {});
+      playCtxRef.current?.close().catch((err: unknown) => {
+        console.warn("[vocal] failed to close playback context:", err instanceof Error ? err.message : String(err));
+      });
       playCtxRef.current = null;
       playGainRef.current = null;
       if (revealIntervalRef.current) {

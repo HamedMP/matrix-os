@@ -33,6 +33,7 @@ export interface AppEntry {
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 const MAX_CLOSED_ENTRIES = 50;
+const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
 
 interface ClosedLayout {
   x: number;
@@ -105,8 +106,11 @@ function debouncedSave(state: WindowManagerState) {
     fetch(`${gatewayUrl}/api/layout`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(LAYOUT_FETCH_TIMEOUT_MS),
       body: JSON.stringify({ windows: layoutWindows }),
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      console.warn("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
+    });
   }, 500);
 }
 

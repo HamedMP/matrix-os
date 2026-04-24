@@ -259,8 +259,8 @@ export function createGeminiLiveClient(
 
             emitter.emit(event.type, event);
           }
-        } catch {
-          // malformed message
+        } catch (err) {
+          console.warn("[gemini-live] malformed message:", err instanceof Error ? err.message : String(err));
         }
       });
 

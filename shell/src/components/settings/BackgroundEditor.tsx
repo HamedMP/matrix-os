@@ -15,6 +15,7 @@ const BG_TYPES: { id: BgType; label: string }[] = [
   { id: "solid", label: "Solid" },
   { id: "pattern", label: "Mesh" },
 ];
+const WALLPAPER_FETCH_TIMEOUT_MS = 10_000;
 
 export function BackgroundEditor() {
   const config = useDesktopConfig();
@@ -44,13 +45,15 @@ export function BackgroundEditor() {
 
   async function fetchWallpapers() {
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/settings/wallpapers`);
+      const res = await fetch(`${getGatewayUrl()}/api/settings/wallpapers`, {
+        signal: AbortSignal.timeout(WALLPAPER_FETCH_TIMEOUT_MS),
+      });
       if (res.ok) {
         const data = await res.json();
         setWallpapers(data.wallpapers || []);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn("[background-editor] failed to fetch wallpapers:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -102,11 +105,12 @@ export function BackgroundEditor() {
         await fetch(`${getGatewayUrl()}/api/settings/wallpaper`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(WALLPAPER_FETCH_TIMEOUT_MS),
           body: JSON.stringify({ name: file.name, data: reader.result }),
         });
         await fetchWallpapers();
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn("[background-editor] failed to upload wallpaper:", err instanceof Error ? err.message : String(err));
       }
     };
     reader.readAsDataURL(file);
@@ -117,6 +121,7 @@ export function BackgroundEditor() {
     try {
       await fetch(`${getGatewayUrl()}/api/settings/wallpaper/${encodeURIComponent(name)}`, {
         method: "DELETE",
+        signal: AbortSignal.timeout(WALLPAPER_FETCH_TIMEOUT_MS),
       });
       await fetchWallpapers();
       if (selectedWallpaper === name) {
@@ -125,8 +130,8 @@ export function BackgroundEditor() {
         setBgType("wallpaper");
         await save({ type: "wallpaper", name: fallback });
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn("[background-editor] failed to delete wallpaper:", err instanceof Error ? err.message : String(err));
     }
   }
 

@@ -212,7 +212,9 @@ export function useOnboarding(): OnboardingHook {
       await ctx.audioWorklet.addModule("/audio-worklet-processor.js");
       if (!mountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
-        ctx.close().catch(() => {});
+        ctx.close().catch((err: unknown) => {
+          console.warn("[onboarding] failed to close abandoned audio context", err);
+        });
         streamRef.current = null;
         micCtxRef.current = null;
         return;
@@ -233,10 +235,13 @@ export function useOnboarding(): OnboardingHook {
       const source = ctx.createMediaStreamSource(stream);
       source.connect(worklet);
       setVoiceState("listening");
-    } catch {
+    } catch (err) {
+      console.warn("[onboarding] mic initialization failed", err);
       // Stop any stream/context we partially acquired before the error.
       stream?.getTracks().forEach((t) => t.stop());
-      ctx?.close().catch(() => {});
+      ctx?.close().catch((closeErr: unknown) => {
+        console.warn("[onboarding] failed to close audio context after mic error", closeErr);
+      });
       streamRef.current = null;
       micCtxRef.current = null;
       if (mountedRef.current) {
@@ -252,7 +257,8 @@ export function useOnboarding(): OnboardingHook {
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(evt.data);
-    } catch {
+    } catch (err) {
+      console.warn("[onboarding] invalid websocket message", err);
       return;
     }
 

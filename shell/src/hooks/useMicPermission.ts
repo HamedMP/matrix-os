@@ -17,7 +17,8 @@ export function useMicPermission() {
         permStatus.onchange = () => {
           setState(permStatus!.state as MicPermissionState);
         };
-      } catch {
+      } catch (err) {
+        console.warn("[mic] permission query failed:", err instanceof Error ? err.message : String(err));
         // Firefox doesn't support microphone permission query — assume "prompt"
         setState("prompt");
       }
@@ -36,7 +37,8 @@ export function useMicPermission() {
       stream.getTracks().forEach((t) => t.stop());
       setState("granted");
       return true;
-    } catch {
+    } catch (err) {
+      console.warn("[mic] access request failed:", err instanceof Error ? err.message : String(err));
       setState("denied");
       return false;
     }

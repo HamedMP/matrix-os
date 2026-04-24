@@ -12,8 +12,7 @@ import {
   type MatrixDB,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
-import { appendFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
 import { createInteractionLogger } from "./logger.js";
@@ -101,6 +100,10 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
   let active = 0;
   let batchRunning = false;
 
+  function logNonFatal(label: string, err: unknown) {
+    console.warn(label, err instanceof Error ? err.message : String(err));
+  }
+
   function processQueue() {
     if (batchRunning) return;
     while (active < maxConcurrency && queue.length > 0) {
@@ -137,7 +140,11 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           const ts = new Date().toISOString();
           const sender = entry.context.senderName ?? entry.context.senderId ?? "unknown";
           const line = `[${ts}] [security] Suspicious content from ${sender} via ${entry.context.channel}: ${detection.patterns.join(", ")}\n`;
-          try { appendFileSync(join(homePath, "system/activity.log"), line); } catch { /* log dir may not exist */ }
+          try {
+            await appendFile(join(homePath, "system/activity.log"), line);
+          } catch (err) {
+            logNonFatal("[dispatcher] failed to write suspicious content audit log:", err);
+          }
         }
         message = wrapExternalContent(entry.message, {
           source: "channel",
@@ -165,8 +172,10 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           process.env.ANTHROPIC_API_KEY = byokKey;
           didSetKey = true;
         }
-      } catch {
-        // No config or parse error -- use default env key
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          logNonFatal("[dispatcher] failed to read user API key config:", err);
+        }
       }
 
       try {
@@ -222,7 +231,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           senderId: entry.context?.senderId,
           model: opts.model,
         });
-      } catch { /* logger failure must not break dispatch */ }
+      } catch (err) {
+        logNonFatal("[dispatcher] interaction logger failed:", err);
+      }
 
       const costUsd = resultData?.cost ?? 0;
       if (costUsd > 0) {
@@ -233,7 +244,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             tokensIn,
             tokensOut,
           });
-        } catch { /* usage tracker failure must not break dispatch */ }
+        } catch (err) {
+          logNonFatal("[dispatcher] usage tracker failed:", err);
+        }
       }
 
       entry.resolve();
@@ -263,7 +276,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             stack: err.stack,
           },
         });
-      } catch { /* logger failure must not break dispatch */ }
+      } catch (err) {
+        logNonFatal("[dispatcher] interaction logger failed:", err);
+      }
 
       failTask(db, processId, (error as Error).message);
       entry.reject(error as Error);
@@ -311,7 +326,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
               batchId,
               model: opts.model,
             });
-          } catch { /* logger failure must not break dispatch */ }
+          } catch (err) {
+            logNonFatal("[dispatcher] interaction logger failed:", err);
+          }
 
           const batchCost = batchResultData?.cost ?? 0;
           if (batchCost > 0) {
@@ -321,7 +338,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
                 tokensIn: batchResultData?.tokensIn ?? 0,
                 tokensOut: batchResultData?.tokensOut ?? 0,
               });
-            } catch { /* usage tracker failure must not break dispatch */ }
+            } catch (err) {
+              logNonFatal("[dispatcher] usage tracker failed:", err);
+            }
           }
         }),
       );
@@ -348,7 +367,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             model: opts.model,
             error: { name: err.name, message: err.message, stack: err.stack },
           });
-        } catch { /* logger failure must not break dispatch */ }
+        } catch (err) {
+          logNonFatal("[dispatcher] interaction logger failed:", err);
+        }
         return {
           taskId,
           status: "rejected" as const,

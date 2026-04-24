@@ -77,7 +77,11 @@ export async function* spawnKernel(
         } else if (event.type === "content_block_stop" && activeTool) {
           let input: Record<string, unknown> | undefined;
           if (toolInputBuf) {
-            try { input = JSON.parse(toolInputBuf); } catch { /* partial JSON */ }
+            try {
+              input = JSON.parse(toolInputBuf);
+            } catch (err) {
+              console.warn("[kernel] failed to parse streamed tool input JSON:", err instanceof Error ? err.message : String(err));
+            }
           }
           yield { type: "tool_end", input };
           activeTool = null;

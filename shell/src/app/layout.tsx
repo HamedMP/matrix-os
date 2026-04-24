@@ -26,13 +26,17 @@ export async function generateMetadata(): Promise<Metadata> {
   let handle = "";
   let displayName = "";
   try {
-    const res = await fetch(`${gatewayUrl}/api/identity`, { next: { revalidate: 60 } });
+    const res = await fetch(`${gatewayUrl}/api/identity`, {
+      next: { revalidate: 60 },
+      signal: AbortSignal.timeout(10_000),
+    });
     if (res.ok) {
       const data = await res.json();
       handle = data.handle ?? "";
       displayName = data.displayName ?? "";
     }
-  } catch {
+  } catch (err) {
+    console.warn("[shell] identity metadata unavailable:", err instanceof Error ? err.message : String(err));
     // Gateway not available (build time or offline)
   }
 

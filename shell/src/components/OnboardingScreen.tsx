@@ -72,7 +72,9 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
 
     source.connect(gain);
     gain.connect(ctx.destination);
-    audio.play().catch(() => {});
+    audio.play().catch((err: unknown) => {
+      console.warn("[onboarding] ambient audio playback failed", err);
+    });
   }
 
   function handleStart(useVoice: boolean) {

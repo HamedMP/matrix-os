@@ -16,6 +16,7 @@ import { CanvasMinimap } from "./CanvasMinimap";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
+const CANVAS_FETCH_TIMEOUT_MS = 10_000;
 
 interface CanvasData {
   transform?: { zoom: number; panX: number; panY: number };
@@ -45,7 +46,9 @@ export function CanvasRenderer() {
     if (loadedRef.current) return;
     loadedRef.current = true;
 
-    fetch(`${GATEWAY_URL}/api/canvas`)
+    fetch(`${GATEWAY_URL}/api/canvas`, {
+      signal: AbortSignal.timeout(CANVAS_FETCH_TIMEOUT_MS),
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: CanvasData | null) => {
         if (data?.groups && data.groups.length > 0) {
@@ -72,7 +75,9 @@ export function CanvasRenderer() {
           setTransform(1, 0, 0);
         }
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[canvas] failed to load canvas state:", err instanceof Error ? err.message : String(err));
+      });
   }, [setTransform, fitAll, setGroups, setLabels, setNavMode, setShowTitles, windows]);
 
   const autoArrange = useCallback(
@@ -131,13 +136,16 @@ export function CanvasRenderer() {
         fetch(`${GATEWAY_URL}/api/canvas`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(CANVAS_FETCH_TIMEOUT_MS),
           body: JSON.stringify({
             transform,
             groups: currentGroups,
             labels: currentLabels,
             settings: { navMode, showTitles },
           }),
-        }).catch(() => {});
+        }).catch((err: unknown) => {
+          console.warn("[canvas] failed to save canvas state:", err instanceof Error ? err.message : String(err));
+        });
       }, 500);
     }
 

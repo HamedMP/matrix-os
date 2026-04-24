@@ -1634,7 +1634,8 @@ export async function createGateway(config: GatewayConfig) {
         onOpen(_evt, ws) {
           try {
             onboardingHandler.activate();
-          } catch {
+          } catch (err) {
+            console.warn("[onboarding] activate failed:", err instanceof Error ? err.message : String(err));
             ws.send(JSON.stringify({ type: "error", code: "connection_limit", stage: "greeting", message: "Another onboarding session is active", retryable: true }));
             ws.close();
             return;

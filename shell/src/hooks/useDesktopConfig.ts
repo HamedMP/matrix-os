@@ -26,6 +26,7 @@ export interface DesktopConfig {
 }
 
 const BUNDLED_WALLPAPERS = new Set(["moraine-lake.jpg"]);
+const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
 
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
@@ -127,15 +128,17 @@ export function useDesktopConfig() {
 
 async function fetchDesktopConfig(gatewayUrl: string): Promise<DesktopConfig> {
   try {
-    const res = await fetch(`${gatewayUrl}/api/settings/desktop`);
+    const res = await fetch(`${gatewayUrl}/api/settings/desktop`, {
+      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+    });
     if (res.ok) {
       const data = await res.json();
       const merged = { ...DEFAULT_DESKTOP_CONFIG, ...data };
       merged.dock = { ...merged.dock, autoHide: false };
       return merged;
     }
-  } catch {
-    // fall through
+  } catch (err) {
+    console.warn("[desktop-config] failed to load desktop config:", err instanceof Error ? err.message : String(err));
   }
   return DEFAULT_DESKTOP_CONFIG;
 }
@@ -145,6 +148,7 @@ export async function saveDesktopConfig(config: DesktopConfig): Promise<void> {
   await fetch(`${gatewayUrl}/api/settings/desktop`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
     body: JSON.stringify(config),
   });
 }

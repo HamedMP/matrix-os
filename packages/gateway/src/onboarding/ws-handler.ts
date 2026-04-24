@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createStateMachine, type StateMachineSnapshot } from "./state-machine.js";
 import { createGeminiLiveClient, type GeminiLiveClient, type GeminiEvent } from "./gemini-live.js";
-import { validateApiKeyFormat, validateApiKeyLive, storeApiKey } from "./api-key.js";
+import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "./api-key.js";
 import {
   MAX_AUDIO_SESSION_BYTES,
   MAX_WS_MESSAGE_BYTES,
@@ -35,6 +35,15 @@ const TAIL_TO_DONE: Record<OnboardingStage, OnboardingStage[]> = {
   done: [],
 };
 
+const TAIL_TO_API_KEY: Record<OnboardingStage, OnboardingStage[]> = {
+  greeting: ["interview", "extract_profile", "suggest_apps", "api_key"],
+  interview: ["extract_profile", "suggest_apps", "api_key"],
+  extract_profile: ["suggest_apps", "api_key"],
+  suggest_apps: ["api_key"],
+  api_key: [],
+  done: [],
+};
+
 export function createOnboardingHandler(deps: OnboardingDeps) {
   let active = false;
   let gemini: GeminiLiveClient | null = null;
@@ -51,7 +60,13 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
 
   async function writeComplete(): Promise<void> {
     const path = join(deps.homePath, ONBOARDING_COMPLETE_FILE);
-    await writeFile(path, JSON.stringify({ completedAt: new Date().toISOString() }) + "\n", { flag: "wx" }).catch(() => {});
+    try {
+      await writeFile(path, JSON.stringify({ completedAt: new Date().toISOString() }) + "\n", { flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return;
+      console.error("[onboarding] writeComplete failed:", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
   }
 
   async function saveState(): Promise<void> {
@@ -79,7 +94,11 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       if (state.currentStage && state.currentStage !== "done") {
         return { current: state.currentStage, completed: state.completedStages ?? [] };
       }
-    } catch { /* no state file */ }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn("[onboarding] loadState failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
     return null;
   }
 
@@ -96,6 +115,15 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
   // the shell. Intermediate transitions exist so the state machine stays
   // consistent if a resume lands mid-flow.
   async function finishOnboarding() {
+    const canComplete = await hasApiKey(deps.homePath);
+    if (!canComplete) {
+      for (const next of TAIL_TO_API_KEY[sm.current]) sm.transition(next);
+      sm.clearTimer();
+      await saveState();
+      send({ type: "stage", stage: "api_key" });
+      return;
+    }
+
     for (const next of TAIL_TO_DONE[sm.current]) sm.transition(next);
     sm.clearTimer();
     await writeComplete();
@@ -142,7 +170,10 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       }
       if (e.name === "finish_onboarding") {
         gemini!.sendToolResponse(e.id, { success: true });
-        void finishOnboarding();
+        void finishOnboarding().catch((err: unknown) => {
+          console.error("[onboarding] finishOnboarding failed:", err instanceof Error ? err.message : String(err));
+          send({ type: "error", code: "audio_error", stage: sm.current, message: "Onboarding could not finish", retryable: true });
+        });
       }
     });
 
@@ -278,9 +309,13 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         if (msg.path === "claude_code") {
           sm.transition("done");
           await writeComplete();
+          await saveState();
           send({ type: "stage", stage: "done" });
         } else {
-          // Continue to api_key stage
+          for (const next of TAIL_TO_API_KEY[sm.current]) sm.transition(next);
+          sm.startTimer();
+          await saveState();
+          send({ type: "stage", stage: "api_key" });
         }
         break;
 
@@ -299,6 +334,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         send({ type: "api_key_result", valid: true });
         sm.transition("done");
         await writeComplete();
+        await saveState();
         send({ type: "stage", stage: "done" });
         break;
       }

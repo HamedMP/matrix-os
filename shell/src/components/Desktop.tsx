@@ -474,7 +474,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       .then((data: { hasKey: boolean }) => {
         if (data.hasKey) setShowSetup(false);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        console.warn("[desktop] failed to check setup status:", err instanceof Error ? err.message : String(err));
         // Fetch failure: stay on onboarding (safer than exposing a half-
         // configured desktop).
       });
@@ -1241,7 +1242,9 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               background: { type: "wallpaper", name: "moraine-lake.jpg" },
               dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
               pinnedApps: [],
-            }).catch(() => {});
+            }).catch((err: unknown) => {
+              console.warn("[desktop] failed to persist onboarding completion desktop config:", err instanceof Error ? err.message : String(err));
+            });
             setShowSetup(false);
           }}
           onOpenTerminal={() => openWindow("Terminal", "__terminal__")}

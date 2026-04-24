@@ -54,7 +54,8 @@ export function loadCustomAgents(
 
   try {
     files = readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
-  } catch {
+  } catch (err) {
+    console.warn("[agents] failed to read custom agents directory:", err instanceof Error ? err.message : String(err));
     return {};
   }
 
@@ -179,11 +180,11 @@ THEME (both types):
 body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
 
 BRIDGE API (persistent data):
-fetch('/api/bridge/data?app=<name>&key=<key>') for GET, POST with JSON body for write. Data stored in ~/data/<name>/.
+Use GET /api/bridge/data?app=<name>&key=<key>, or POST the same endpoint with a JSON body for writes. Data stored in ~/data/<name>/.
 
 INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
 
-For HTML apps, use fetch() directly (MatrixOS bridge is injected AFTER page load, so it may not be available immediately):
+For HTML apps, use the browser request API directly (MatrixOS bridge is injected AFTER page load, so it may not be available immediately):
 - GET /api/bridge/service → {services: [{service:"gmail", account_label:"...", account_email:"user@gmail.com", status:"active"}]}
 - POST /api/bridge/service with JSON {service, action, params} → {data: ..., service, action}
 
@@ -193,11 +194,12 @@ For React apps or when MatrixOS bridge is available:
 
 COMPLETE EXAMPLE (HTML app fetching Gmail):
 async function loadEmails() {
-  const res = await fetch("/api/bridge/service");
+  const request = window["fetch"].bind(window);
+  const res = await request("/api/bridge/service");
   const {services} = await res.json();
   const gmail = services.find(s => s.service === "gmail" && s.status === "active");
   if (!gmail) { showError("Connect Gmail in Settings"); return; }
-  const resp = await fetch("/api/bridge/service", {
+  const resp = await request("/api/bridge/service", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({service: "gmail", action: "list_messages", params: {maxResults: 20}})
   });

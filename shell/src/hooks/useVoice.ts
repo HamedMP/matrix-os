@@ -132,7 +132,8 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
           } else {
             ws.addEventListener("open", sendAudio, { once: true });
           }
-        }).catch(() => {
+        }).catch((err: unknown) => {
+          console.warn("[voice] websocket connection failed:", err instanceof Error ? err.message : String(err));
           setIsTranscribing(false);
           opts?.onError?.("Voice WebSocket connection failed");
         });
@@ -167,7 +168,8 @@ export function useVoice(opts?: UseVoiceOptions): UseVoiceReturn {
       source.connect(ctx.destination);
       source.onended = () => setIsPlaying(false);
       source.start();
-    }).catch(() => {
+    }).catch((err: unknown) => {
+      console.warn("[voice] audio decode failed:", err instanceof Error ? err.message : String(err));
       setIsPlaying(false);
     });
   }, []);
