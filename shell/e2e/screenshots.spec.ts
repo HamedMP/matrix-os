@@ -3,18 +3,23 @@ import { test, expect } from "@playwright/test";
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
     // Mock gateway APIs so the shell renders without a running backend
-    await page.route("**/api/settings/**", (route) =>
-      route.fulfill({
+    await page.route("**/api/settings/**", (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      const body = pathname.endsWith("/onboarding-status")
+        ? { complete: true }
+        : {
+            background: { type: "pattern" },
+            dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+            pinnedApps: [],
+            hasKey: true,
+          };
+
+      return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          background: { type: "pattern" },
-          dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-          pinnedApps: [],
-          hasKey: true,
-        }),
-      }),
-    );
+        body: JSON.stringify(body),
+      });
+    });
     await page.route("**/api/identity", (route) =>
       route.fulfill({
         status: 200,

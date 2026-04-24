@@ -34,6 +34,7 @@ jobs:
       - name: Build shell
         run: cd shell && pnpm build
         env:
+          E2E_TEST_BYPASS: "1"
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
 
       - name: Install Playwright Chromium
