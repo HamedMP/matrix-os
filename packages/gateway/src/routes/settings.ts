@@ -235,6 +235,15 @@ export function createSettingsRoutes(opts: {
     return c.json({ hasKey });
   });
 
+  app.get("/onboarding-status", async (c) => {
+    try {
+      await access(join(homePath, "system", "onboarding-complete.json"));
+      return c.json({ complete: true });
+    } catch {
+      return c.json({ complete: false });
+    }
+  });
+
   app.post("/api-key", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: { apiKey: string };
     try {

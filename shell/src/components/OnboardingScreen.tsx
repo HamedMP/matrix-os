@@ -258,6 +258,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             onClick={() => {
               ob.chooseClaudeCode();
               onOpenTerminal();
+              onComplete();
             }}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-2"
           >
@@ -275,6 +276,7 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
             onSkip={() => {
               ob.chooseClaudeCode();
               onOpenTerminal();
+              onComplete();
             }}
           />
         </div>
