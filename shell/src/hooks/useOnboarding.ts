@@ -337,8 +337,10 @@ export function useOnboarding(): OnboardingHook {
     }
   }, [playAudio]);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (): Promise<WebSocket | null> => {
     const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/onboarding");
+    if (!mountedRef.current) return null;
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -348,6 +350,8 @@ export function useOnboarding(): OnboardingHook {
     ws.onclose = () => {
       wsRef.current = null;
     };
+
+    return ws;
   }, [handleMessage]);
 
   // Cleanup on unmount
@@ -365,37 +369,41 @@ export function useOnboarding(): OnboardingHook {
 
   // Public API
   const start = useCallback((useVoice: boolean) => {
-    void connect().catch((err: unknown) => {
-      console.warn("[onboarding] connect failed:", err instanceof Error ? err.message : String(err));
-      setError("Connection failed");
-    });
     setIsVoiceMode(useVoice);
 
-    // Wait for WS open, then send start message
-    const checkOpen = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        clearInterval(checkOpen);
-        if (!useVoice) {
-          send({ type: "start", audioFormat: "text" });
-          return;
-        }
-        void startMic()
-          .then(() => {
-            if (mountedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-              send({ type: "start", audioFormat: "pcm16" });
-            }
-          })
-          .catch((err: unknown) => {
-            console.warn("[onboarding] voice mic unavailable, falling back to text:", err instanceof Error ? err.message : String(err));
-            if (mountedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-              setIsVoiceMode(false);
+    void connect()
+      .then((ws) => {
+        if (!ws || !mountedRef.current) return;
+
+        // Wait for WS open, then send start message.
+        const checkOpen = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            clearInterval(checkOpen);
+            if (!useVoice) {
               send({ type: "start", audioFormat: "text" });
+              return;
             }
-          });
-      }
-    }, 50);
-    // Clear after 5s if never opens
-    setTimeout(() => clearInterval(checkOpen), 5000);
+            void startMic()
+              .then(() => {
+                if (mountedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+                  send({ type: "start", audioFormat: "pcm16" });
+                }
+              })
+              .catch((err: unknown) => {
+                console.warn("[onboarding] voice mic unavailable, falling back to text:", err instanceof Error ? err.message : String(err));
+                if (mountedRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+                  setIsVoiceMode(false);
+                  send({ type: "start", audioFormat: "text" });
+                }
+              });
+          }
+        }, 50);
+        setTimeout(() => clearInterval(checkOpen), 5000);
+      })
+      .catch((err: unknown) => {
+        console.warn("[onboarding] connect failed:", err instanceof Error ? err.message : String(err));
+        setError("Connection failed");
+      });
   }, [connect, send, startMic]);
 
   const sendText = useCallback((text: string) => {

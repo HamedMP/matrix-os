@@ -40,11 +40,18 @@ function isValidChannelId(channelId: string): channelId is ChannelId {
   return CHANNEL_IDS.has(channelId as ChannelId);
 }
 
+function isNotFoundError(err: unknown): boolean {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
-  } catch {
+  } catch (err) {
+    if (!isNotFoundError(err)) {
+      console.warn("[settings] Failed to check file existence:", err);
+    }
     return false;
   }
 }
@@ -99,7 +106,10 @@ export function createSettingsRoutes(opts: {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json<Record<string, unknown>>();
-    } catch {
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse channel config request:", err);
+      }
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -158,7 +168,10 @@ export function createSettingsRoutes(opts: {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json<Record<string, unknown>>();
-    } catch {
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse desktop config request:", err);
+      }
       return c.json({ error: "Invalid JSON" }, 400);
     }
     await writeJsonAtomic(desktopPath, body);
@@ -177,7 +190,10 @@ export function createSettingsRoutes(opts: {
     let body: Record<string, unknown>;
     try {
       body = await c.req.json<Record<string, unknown>>();
-    } catch {
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse theme config request:", err);
+      }
       return c.json({ error: "Invalid JSON" }, 400);
     }
     await writeJsonAtomic(themePath, body);
@@ -198,7 +214,10 @@ export function createSettingsRoutes(opts: {
     let body: { name: string; data: string };
     try {
       body = await c.req.json<{ name: string; data: string }>();
-    } catch {
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse wallpaper request:", err);
+      }
       return c.json({ error: "Invalid JSON" }, 400);
     }
     if (!body.name || !body.data) {
@@ -239,7 +258,10 @@ export function createSettingsRoutes(opts: {
     try {
       await access(join(homePath, "system", "onboarding-complete.json"));
       return c.json({ complete: true });
-    } catch {
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        console.warn("[settings] Failed to check onboarding status:", err);
+      }
       return c.json({ complete: false });
     }
   });
@@ -248,7 +270,10 @@ export function createSettingsRoutes(opts: {
     let body: { apiKey: string };
     try {
       body = await c.req.json<{ apiKey: string }>();
-    } catch {
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse API key request:", err);
+      }
       return c.json({ valid: false, error: "Invalid request" }, 400);
     }
 
