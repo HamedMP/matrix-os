@@ -653,6 +653,19 @@ export function createApp(deps: {
         headers.set(key, value);
       }
     }
+    // Forward only the app-session cookies (spec 063). Clerk and other
+    // cookies are stripped because gateway auth goes via the bearer token
+    // set below; forwarding them would leak the user's Clerk session into
+    // the container process.
+    const rawCookie = c.req.header('cookie');
+    if (rawCookie) {
+      const forwarded = rawCookie
+        .split(';')
+        .map((p) => p.trim())
+        .filter((p) => p.startsWith('matrix_app_session__'))
+        .join('; ');
+      if (forwarded) headers.set('cookie', forwarded);
+    }
     headers.set('x-forwarded-host', host);
     headers.set('x-forwarded-proto', 'https');
     headers.set('connection', 'close');
