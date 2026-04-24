@@ -69,10 +69,8 @@ describe("T054: Concurrent dispatch", () => {
   });
 
   it("errors in one dispatch do not affect others", async () => {
-    let callCount = 0;
-    const spawn = vi.fn<SpawnFn>(async function* (_message, _config) {
-      callCount++;
-      if (callCount === 1) throw new Error("kernel crash");
+    const spawn = vi.fn<SpawnFn>(async function* (message, _config) {
+      if (message === "will-fail") throw new Error("kernel crash");
       yield resultEvent("s2");
     });
 
