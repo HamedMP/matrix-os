@@ -9,5 +9,6 @@
     "command": "pnpm build",
     "output": "dist",
     "timeout": 120
-  }
+  },
+  "listingTrust": "first_party"
 }

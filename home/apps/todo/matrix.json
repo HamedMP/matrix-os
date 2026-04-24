@@ -15,8 +15,16 @@
           "category": "text",
           "priority": "text"
         },
-        "indexes": ["due", "category", "done"]
+        "indexes": [
+          "due",
+          "category",
+          "done"
+        ]
       }
     }
-  }
+  },
+  "runtime": "static",
+  "slug": "todo",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }

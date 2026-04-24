@@ -5,5 +5,8 @@
   "category": "utilities",
   "icon": "game-center",
   "author": "system",
-  "version": "2.0.0"
+  "version": "2.0.0",
+  "slug": "games",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }

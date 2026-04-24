@@ -5,5 +5,8 @@
   "category": "utility",
   "icon": "weather",
   "author": "system",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "slug": "weather",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }
