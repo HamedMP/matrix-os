@@ -9,10 +9,35 @@ interface CacheEntry {
   manifest: AppManifest;
 }
 
+const MAX_MANIFEST_CACHE_ENTRIES = 256;
 const cache = new Map<string, CacheEntry>();
 
 export function invalidateManifestCache(): void {
   cache.clear();
+}
+
+function getCacheKey(homeDir: string, slug: string): string {
+  return `${homeDir}\0${slug}`;
+}
+
+function getCachedManifest(cacheKey: string): CacheEntry | undefined {
+  const cached = cache.get(cacheKey);
+  if (!cached) return undefined;
+  cache.delete(cacheKey);
+  cache.set(cacheKey, cached);
+  return cached;
+}
+
+function setCachedManifest(cacheKey: string, entry: CacheEntry): void {
+  if (cache.has(cacheKey)) {
+    cache.delete(cacheKey);
+  }
+  cache.set(cacheKey, entry);
+  while (cache.size > MAX_MANIFEST_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
 export async function loadManifest(
@@ -45,7 +70,8 @@ export async function loadManifest(
     };
   }
 
-  const cached = cache.get(slug);
+  const cacheKey = getCacheKey(homeDir, slug);
+  const cached = getCachedManifest(cacheKey);
   if (cached && cached.mtimeMs === fileStat.mtimeMs) {
     return { ok: true, manifest: cached.manifest };
   }
@@ -87,7 +113,7 @@ export async function loadManifest(
     };
   }
 
-  cache.set(slug, { mtimeMs: fileStat.mtimeMs, manifest: result.manifest });
+  setCachedManifest(cacheKey, { mtimeMs: fileStat.mtimeMs, manifest: result.manifest });
 
   return { ok: true, manifest: result.manifest };
 }

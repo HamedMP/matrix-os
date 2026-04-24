@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Visualizer Showcase — Matrix OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #05070d;
+    --surface: #0b0f1a;
+    --border: rgba(255,255,255,0.06);
+    --text: #e8eaf0;
+    --muted: #5a6070;
+    --accent-cyan: #00d9c8;
+    --accent-violet: #7b5ea7;
+    --accent-amber: #f59e0b;
+    --accent-rose: #f43f5e;
+    --accent-emerald: #10b981;
+    --accent-indigo: #6366f1;
+    --card-radius: 16px;
+    --mono: "DM Mono", monospace;
+    --display: "Syne", sans-serif;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--display);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Grain overlay ── */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 999;
+    opacity: 0.4;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 48px 48px 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+  }
+
+  .header-left h1 {
+    font-size: clamp(28px, 4vw, 48px);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    background: linear-gradient(135deg, #fff 30%, var(--accent-cyan) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .header-left p {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .state-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .state-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .state-btn:hover { border-color: rgba(255,255,255,0.15); color: var(--text); }
+  .state-btn.active { background: rgba(0,217,200,0.1); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+
+  /* ── Grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 20px;
+    padding: 40px 48px 80px;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .card:hover {
+    border-color: rgba(255,255,255,0.12);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+  }
+
+  .viz-stage {
+    position: relative;
+    height: 200px;
+    background: #070a12;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .viz-stage canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .viz-stage svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .card-meta {
+    padding: 20px 24px 24px;
+    flex: 1;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .card-number {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+
+  .card-title {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+
+  .badge-easy { background: rgba(16,185,129,0.12); color: var(--accent-emerald); border: 1px solid rgba(16,185,129,0.2); }
+  .badge-medium { background: rgba(245,158,11,0.12); color: var(--accent-amber); border: 1px solid rgba(245,158,11,0.2); }
+  .badge-hard { background: rgba(244,63,94,0.12); color: var(--accent-rose); border: 1px solid rgba(244,63,94,0.2); }
+
+  .card-desc {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+
+  .card-link {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+  }
+
+  .link-pill {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--accent-cyan);
+    text-decoration: none;
+    background: rgba(0,217,200,0.06);
+    border: 1px solid rgba(0,217,200,0.15);
+    padding: 4px 10px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+  }
+
+  .link-pill:hover { background: rgba(0,217,200,0.12); border-color: rgba(0,217,200,0.3); }
+
+  /* ── Amplitude slider inside card ── */
+  .amp-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .amp-row label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    flex-shrink: 0;
+    width: 56px;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 2px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent-cyan);
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+
+  input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.3); }
+
+  /* ─────────────────────────────────────────
+     VISUALIZER 1 — Morphing Blob (CSS + SVG filter)
+  ───────────────────────────────────────── */
+  #blob-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at 50% 60%, #0d1428 0%, #070a12 100%);
+  }
+
+  .blob-wrap {
+    position: relative;
+    width: 140px;
+    height: 140px;
+  }
+
+  .blob-glow {
+    position: absolute;
+    inset: -30px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,217,200,0.18) 0%, transparent 70%);
+    animation: blob-breathe 3s ease-in-out infinite;
+  }
+
+  .blob-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    filter: url(#blob-filter);
+  }
+
+  .blob-core {
+    fill: url(#blob-grad);
+    animation: blob-morph 6s ease-in-out infinite;
+  }
+
+  @keyframes blob-morph {
+    0%   { d: path("M70,20 C95,20 120,45 120,70 C120,95 95,120 70,120 C45,120 20,95 20,70 C20,45 45,20 70,20 Z"); }
+    20%  { d: path("M70,15 C100,18 125,48 118,75 C111,102 88,128 60,122 C32,116 15,90 18,65 C21,40 40,12 70,15 Z"); }
+    40%  { d: path("M75,18 C105,25 128,55 122,80 C116,105 90,125 62,120 C34,115 12,88 16,60 C20,32 45,11 75,18 Z"); }
+    60%  { d: path("M65,22 C92,22 118,50 115,78 C112,106 86,126 58,118 C30,110 18,82 22,55 C26,28 38,22 65,22 Z"); }
+    80%  { d: path("M72,18 C99,22 122,52 118,80 C114,108 88,125 62,118 C36,111 16,84 20,58 C24,32 45,14 72,18 Z"); }
+    100% { d: path("M70,20 C95,20 120,45 120,70 C120,95 95,120 70,120 C45,120 20,95 20,70 C20,45 45,20 70,20 Z"); }
+  }
+
+  @keyframes blob-breathe {
+    0%, 100% { transform: scale(1); opacity: 0.6; }
+    50% { transform: scale(1.15); opacity: 0.9; }
+  }
+
+  /* ─────────────────────────────────────────
+     VISUALIZER 2 — Neon Frequency Bars
+  ───────────────────────────────────────── */
+  #bars-stage {
+    background: #060910;
+  }
+
+  /* ─────────────────────────────────────────
+     VISUALIZER 3 — Circular / Radial
+  ───────────────────────────────────────── */
+  #radial-stage {
+    background: radial-gradient(ellipse at 50% 50%, #09101f 0%, #05070d 100%);
+  }
+
+  /* ─────────────────────────────────────────
+     VISUALIZER 4 — Particle Dot Wave
+  ───────────────────────────────────────── */
+  #particle-stage {
+    background: #060a10;
+  }
+
+  /* ─────────────────────────────────────────
+     VISUALIZER 5 — Gradient Glow Line
+  ───────────────────────────────────────── */
+  #line-stage {
+    background: #06090f;
+  }
+
+  /* ─────────────────────────────────────────
+     VISUALIZER 6 — 3D Sphere (WebGL-lite via canvas)
+  ───────────────────────────────────────── */
+  #sphere-stage {
+    background: radial-gradient(ellipse at 50% 50%, #0a0c1e 0%, #05070d 100%);
+  }
+
+  /* ── Footer ── */
+  footer {
+    padding: 0 48px 60px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  footer a { color: var(--accent-cyan); text-decoration: none; }
+
+  /* ── Scan line effect on hover ── */
+  .viz-stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.06) 2px,
+      rgba(0,0,0,0.06) 4px
+    );
+    pointer-events: none;
+    z-index: 2;
+  }
+</style>
+</head>
+<body>
+
+<!-- SVG Filters (global) -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <filter id="blob-filter" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feColorMatrix in="blur" mode="matrix"
+        values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -11" result="goo"/>
+    </filter>
+    <linearGradient id="blob-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d9c8" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#6366f1" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#7b5ea7" stop-opacity="0.7"/>
+    </linearGradient>
+    <filter id="glow-filter">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+</svg>
+
+<header>
+  <div class="header-left">
+    <h1>Voice Visualizer<br>Showcase</h1>
+    <p>Matrix OS — 6 premium audio animation styles</p>
+  </div>
+  <div class="state-controls">
+    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:4px;">STATE</span>
+    <button class="state-btn" data-state="idle">Idle</button>
+    <button class="state-btn active" data-state="listening">Listening</button>
+    <button class="state-btn" data-state="thinking">Thinking</button>
+    <button class="state-btn" data-state="speaking">Speaking</button>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- ── CARD 1: Morphing Blob ── -->
+  <div class="card">
+    <div class="viz-stage" id="blob-stage">
+      <div class="blob-wrap" id="blob-wrap">
+        <div class="blob-glow" id="blob-glow"></div>
+        <svg class="blob-svg" viewBox="0 0 140 140">
+          <path class="blob-core" id="blob-path"
+            d="M70,20 C95,20 120,45 120,70 C120,95 95,120 70,120 C45,120 20,95 20,70 C20,45 45,20 70,20 Z"/>
+        </svg>
+      </div>
+      <!-- Outer orbit rings -->
+      <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:0.25" viewBox="0 0 400 200">
+        <ellipse cx="200" cy="100" rx="90" ry="90" fill="none" stroke="#00d9c8" stroke-width="0.5"
+          stroke-dasharray="4 8" style="animation:spin 12s linear infinite"/>
+        <ellipse cx="200" cy="100" rx="110" ry="110" fill="none" stroke="#6366f1" stroke-width="0.5"
+          stroke-dasharray="2 12" style="animation:spin 18s linear infinite reverse"/>
+      </svg>
+    </div>
+    <div class="card-meta">
+      <div class="card-header">
+        <span class="card-number">01</span>
+        <span class="card-title">Fluid Morphing Blob</span>
+        <span class="badge badge-medium">CSS+SVG</span>
+      </div>
+      <p class="card-desc">Organic gooey shape that pulses and distorts. Gradient fill shifts from cyan→indigo. Uses SVG feTurbulence + CSS keyframe path morphing. Closest to ChatGPT 4o / Apple Intelligence glow.</p>
+      <div class="amp-row">
+        <label>Amplitude</label>
+        <input type="range" min="0" max="100" value="50" data-viz="blob" id="blob-amp">
+      </div>
+      <div class="card-tags">
+        <span class="tag">SVG filter</span>
+        <span class="tag">CSS keyframes</span>
+        <span class="tag">path morphing</span>
+        <span class="tag">no WebGL</span>
+      </div>
+      <div class="card-link">
+        <a class="link-pill" href="https://codepen.io/tmpeixoto/pen/zYKbMNW" target="_blank">CodePen CSS Blob</a>
+        <a class="link-pill" href="https://github.com/jacobamobin/AppleIntelligenceGlowEffect" target="_blank">Apple Glow GH</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CARD 2: Neon Frequency Bars ── -->
+  <div class="card">
+    <div class="viz-stage" id="bars-stage">
+      <canvas id="bars-canvas"></canvas>
+    </div>
+    <div class="card-meta">
+      <div class="card-header">
+        <span class="card-number">02</span>
+        <span class="card-title">Neon Frequency Bars</span>
+        <span class="badge badge-easy">Canvas</span>
+      </div>
+      <p class="card-desc">Vertical bars with per-bar gradient (cyan→violet→rose at peak). Glow effect via shadow blur. Mirrored symmetry. Reactive to amplitude. Classic but executed with sharp sci-fi palette.</p>
+      <div class="amp-row">
+        <label>Amplitude</label>
+        <input type="range" min="0" max="100" value="50" data-viz="bars" id="bars-amp">
+      </div>
+      <div class="card-tags">
+        <span class="tag">Canvas 2D</span>
+        <span class="tag">Web Audio API</span>
+        <span class="tag">programmatic</span>
+        <span class="tag">neon glow</span>
+      </div>
+      <div class="card-link">
+        <a class="link-pill" href="https://codepen.io/DevBillyM/pen/dyaQeVm" target="_blank">Neon Visualizer</a>
+        <a class="link-pill" href="https://speckyboy.com/audio-visualization-code-snippets/" target="_blank">8 Snippets</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CARD 3: Circular Radial ── -->
+  <div class="card">
+    <div class="viz-stage" id="radial-stage">
+      <canvas id="radial-canvas"></canvas>
+    </div>
+    <div class="card-meta">
+      <div class="card-header">
+        <span class="card-number">03</span>
+        <span class="card-title">Radial Waveform</span>
+        <span class="badge badge-easy">Canvas</span>
+      </div>
+      <p class="card-desc">Audio visualized as a distorted circle — frequency data maps to radial displacement. Dual rings with rotation. Inner ring fills with glow. Satisfying and symmetrical. Great for "listening" states.</p>
+      <div class="amp-row">
+        <label>Amplitude</label>
+        <input type="range" min="0" max="100" value="50" data-viz="radial" id="radial-amp">
+      </div>
+      <div class="card-tags">
+        <span class="tag">Canvas 2D</span>
+        <span class="tag">polar coords</span>
+        <span class="tag">programmatic</span>
+        <span class="tag">dual ring</span>
+      </div>
+      <div class="card-link">
+        <a class="link-pill" href="https://codepen.io/MyXoToD/pen/JYJGvG" target="_blank">Radial Canvas</a>
+        <a class="link-pill" href="https://github.com/kelvinau/circular-audio-wave" target="_blank">circular-audio-wave</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CARD 4: Particle Dot Wave ── -->
+  <div class="card">
+    <div class="viz-stage" id="particle-stage">
+      <canvas id="particle-canvas"></canvas>
+    </div>
+    <div class="card-meta">
+      <div class="card-header">
+        <span class="card-number">04</span>
+        <span class="card-title">Particle Dot Matrix</span>
+        <span class="badge badge-medium">Canvas</span>
+      </div>
+      <p class="card-desc">Grid of dots displaced along a sine wave, amplitude-modulated. Each particle has independent phase offset and size jitter. Creates a shimmering curtain of light. Dreamy and cinematic.</p>
+      <div class="amp-row">
+        <label>Amplitude</label>
+        <input type="range" min="0" max="100" value="50" data-viz="particle" id="particle-amp">
+      </div>
+      <div class="card-tags">
+        <span class="tag">Canvas 2D</span>
+        <span class="tag">sine wave</span>
+        <span class="tag">particles</span>
+        <span class="tag">programmatic</span>
+      </div>
+      <div class="card-link">
+        <a class="link-pill" href="https://codepen.io/iondrimba/pen/KXypwx" target="_blank">Dot Waves</a>
+        <a class="link-pill" href="https://codepen.io/Hyperplexed/pen/MOoQyO" target="_blank">Particles+Audio</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CARD 5: Gradient Glow Line ── -->
+  <div class="card">
+    <div class="viz-stage" id="line-stage">
+      <canvas id="line-canvas"></canvas>
+    </div>
+    <div class="card-meta">
+      <div class="card-header">
+        <span class="card-number">05</span>
+        <span class="card-title">Gradient Glow Line</span>
+        <span class="badge badge-easy">Canvas</span>
+      </div>
+      <p class="card-desc">Single smooth bezier waveform with neon gradient stroke (cyan→indigo→violet). Multi-layered: thick blur pass + thin crisp line + trailing fade. More refined than SiriWave. Works perfectly for idle/thinking states.</p>
+      <div class="amp-row">
+        <label>Amplitude</label>
+        <input type="range" min="0" max="100" value="50" data-viz="line" id="line-amp">
+      </div>
+      <div class="card-tags">
+        <span class="tag">Canvas 2D</span>
+        <span class="tag">bezier spline</span>
+        <span class="tag">gradient stroke</span>
+        <span class="tag">glow blur</span>
+      </div>
+      <div class="card-link">
+        <a class="link-pill" href="https://codepen.io/iondrimba/pen/PJOPXY" target="_blank">Line Waves</a>
+        <a class="link-pill" href="https://codepen.io/bataimx/pen/abOEGyw" target="_blank">Audio Waveform</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CARD 6: 3D Sphere (WebGL-lite) ── -->
+  <div class="card">
+    <div class="viz-stage" id="sphere-stage">
+      <canvas id="sphere-canvas"></canvas>
+    </div>
+    <div class="card-meta">
+      <div class="card-header">
+        <span class="card-number">06</span>
+        <span class="card-title">3D Reactive Sphere</span>
+        <span class="badge badge-hard">WebGL / Three.js</span>
+      </div>
+      <p class="card-desc">Wireframe sphere with vertices displaced by amplitude. Rotation + vertex noise. Canvas 2D approximation shown here — full version uses Three.js with GLSL vertex shader. Most premium look, highest cost.</p>
+      <div class="amp-row">
+        <label>Amplitude</label>
+        <input type="range" min="0" max="100" value="50" data-viz="sphere" id="sphere-amp">
+      </div>
+      <div class="card-tags">
+        <span class="tag">Three.js</span>
+        <span class="tag">GLSL shader</span>
+        <span class="tag">WebGL</span>
+        <span class="tag">vertex noise</span>
+      </div>
+      <div class="card-link">
+        <a class="link-pill" href="https://github.com/dcyoung/r3f-audio-visualizer" target="_blank">r3f-audio-visualizer</a>
+        <a class="link-pill" href="https://tympanus.net/codrops/2025/06/18/coding-a-3d-audio-visualizer-with-three-js-gsap-web-audio-api/" target="_blank">Codrops 3D</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span>Matrix OS — Voice Visualizer Reference · 2026</span>
+  <span>All demos: programmatic amplitude control, no microphone required &mdash; <a href="https://github.com/hvianna/audioMotion-analyzer">audioMotion-analyzer</a> for production use</span>
+</footer>
+
+<style>
+@keyframes spin {
+  from { transform: rotate(0deg) translateX(0); transform-origin: 200px 100px; }
+  to   { transform: rotate(360deg); transform-origin: 200px 100px; }
+}
+</style>
+
+<script>
+// ── Global state ──────────────────────────────────────────────
+const STATES = {
+  idle:      { amplitude: 0.04, speed: 0.6 },
+  listening: { amplitude: 0.45, speed: 1.0 },
+  thinking:  { amplitude: 0.25, speed: 1.6 },
+  speaking:  { amplitude: 0.85, speed: 1.3 },
+};
+
+let currentState = "listening";
+let globalAmplitude = STATES[currentState].amplitude;
+let globalSpeed = STATES[currentState].speed;
+
+// Per-viz amplitude overrides (from sliders)
+const ampOverrides = { blob: 0.5, bars: 0.5, radial: 0.5, particle: 0.5, line: 0.5, sphere: 0.5 };
+
+function getAmp(viz) {
+  return globalAmplitude * ampOverrides[viz] * 2;
+}
+
+// ── State buttons ─────────────────────────────────────────────
+document.querySelectorAll(".state-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".state-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentState = btn.dataset.state;
+    globalAmplitude = STATES[currentState].amplitude;
+    globalSpeed = STATES[currentState].speed;
+  });
+});
+
+// ── Amplitude sliders ─────────────────────────────────────────
+document.querySelectorAll("input[type=range]").forEach(inp => {
+  inp.addEventListener("input", () => {
+    ampOverrides[inp.dataset.viz] = inp.value / 100;
+  });
+});
+
+// ──────────────────────────────────────────────────────────────
+// VIZ 1: Blob (CSS-driven, JS updates scale/animation speed)
+// ──────────────────────────────────────────────────────────────
+(function blobViz() {
+  const blobPath = document.getElementById("blob-path");
+  const blobGlow = document.getElementById("blob-glow");
+  if (!blobPath) return;
+
+  const PATHS = [
+    "M70,20 C95,20 120,45 120,70 C120,95 95,120 70,120 C45,120 20,95 20,70 C20,45 45,20 70,20 Z",
+    "M70,15 C102,15 128,48 120,78 C112,108 85,130 58,122 C31,114 12,85 18,58 C24,31 38,15 70,15 Z",
+    "M75,18 C108,22 132,60 125,88 C118,116 88,130 60,122 C32,114 8,84 14,56 C20,28 42,14 75,18 Z",
+    "M65,22 C95,22 122,52 118,82 C114,112 86,132 58,122 C30,112 10,80 16,52 C22,24 35,22 65,22 Z",
+  ];
+
+  let t = 0;
+  let pathIdx = 0;
+  let pathTimer = 0;
+
+  function tick() {
+    t += 0.016;
+    pathTimer += 0.016 * globalSpeed;
+
+    if (pathTimer > 1.8) {
+      pathTimer = 0;
+      pathIdx = (pathIdx + 1) % PATHS.length;
+      blobPath.setAttribute("d", PATHS[pathIdx]);
+    }
+
+    const amp = getAmp("blob");
+    const scale = 1 + amp * 0.12 * Math.sin(t * 2.3);
+    const glowScale = 1 + amp * 0.25 * Math.sin(t * 1.7);
+    const glowOp = 0.4 + amp * 0.5;
+
+    blobGlow.style.transform = `scale(${glowScale})`;
+    blobGlow.style.opacity = glowOp;
+
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+
+// ──────────────────────────────────────────────────────────────
+// VIZ 2: Neon Frequency Bars
+// ──────────────────────────────────────────────────────────────
+(function barsViz() {
+  const canvas = document.getElementById("bars-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const stage = document.getElementById("bars-stage");
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+  }
+  resize();
+  new ResizeObserver(resize).observe(stage);
+
+  const NUM_BARS = 48;
+  const phases = Array.from({ length: NUM_BARS }, (_, i) => Math.random() * Math.PI * 2);
+  const freqs = Array.from({ length: NUM_BARS }, (_, i) => 0.8 + (i / NUM_BARS) * 2.5);
+  let t = 0;
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const amp = getAmp("bars");
+    const speed = globalSpeed;
+    t += 0.016 * speed;
+
+    const barW = w / (NUM_BARS * 1.6);
+    const gap = (w - barW * NUM_BARS) / (NUM_BARS + 1);
+
+    for (let i = 0; i < NUM_BARS; i++) {
+      const noise = Math.sin(t * freqs[i] + phases[i]) * 0.5 +
+                    Math.sin(t * freqs[i] * 1.7 + phases[i] * 1.3) * 0.3 +
+                    Math.sin(t * freqs[i] * 0.6 + phases[i] * 0.7) * 0.2;
+      const barH = Math.max(3, (0.1 + (noise * 0.5 + 0.5)) * amp * h * 0.85);
+
+      const x = gap + i * (barW + gap);
+      const y = (h - barH) / 2;
+
+      // Color: cyan at low, violet mid, rose at peak
+      const peakRatio = barH / (h * 0.85);
+      const grad = ctx.createLinearGradient(0, y + barH, 0, y);
+      grad.addColorStop(0, `rgba(0,217,200,${0.6 + peakRatio * 0.4})`);
+      grad.addColorStop(0.5, `rgba(99,102,241,${0.7 + peakRatio * 0.3})`);
+      grad.addColorStop(1, `rgba(244,63,94,${peakRatio})`);
+
+      // Glow
+      ctx.shadowBlur = 12 + peakRatio * 20;
+      ctx.shadowColor = peakRatio > 0.7 ? "#f43f5e" : "#00d9c8";
+
+      ctx.fillStyle = grad;
+      const r = Math.min(barW / 2, 3);
+      ctx.beginPath();
+      ctx.roundRect(x, y, barW, barH, r);
+      ctx.fill();
+
+      // Top cap glow
+      if (peakRatio > 0.5) {
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = `rgba(244,63,94,${(peakRatio - 0.5) * 2})`;
+        ctx.beginPath();
+        ctx.roundRect(x, y, barW, 2, 1);
+        ctx.fill();
+      }
+    }
+    ctx.shadowBlur = 0;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ──────────────────────────────────────────────────────────────
+// VIZ 3: Radial / Circular Waveform
+// ──────────────────────────────────────────────────────────────
+(function radialViz() {
+  const canvas = document.getElementById("radial-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const stage = document.getElementById("radial-stage");
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+  }
+  resize();
+  new ResizeObserver(resize).observe(stage);
+
+  const NUM_POINTS = 120;
+  const phases = Array.from({ length: NUM_POINTS }, () => Math.random() * Math.PI * 2);
+  let t = 0;
+  let rotation = 0;
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const amp = getAmp("radial");
+    const speed = globalSpeed;
+    t += 0.016 * speed;
+    rotation += 0.004 * speed;
+
+    const cx = w / 2, cy = h / 2;
+    const baseR = Math.min(w, h) * 0.28;
+
+    // ── Outer ring ──
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rotation);
+
+    const outerGrad = ctx.createConicalGradient ? null : null;
+
+    // Draw outer displaced ring
+    ctx.beginPath();
+    for (let i = 0; i <= NUM_POINTS; i++) {
+      const idx = i % NUM_POINTS;
+      const angle = (idx / NUM_POINTS) * Math.PI * 2;
+      const noise = Math.sin(t * 2.1 + phases[idx] * 3) * 0.5 +
+                    Math.sin(t * 3.7 + phases[idx]) * 0.3 +
+                    Math.sin(t * 1.2 + phases[idx] * 2) * 0.2;
+      const r = baseR + noise * amp * baseR * 0.55;
+      const x = Math.cos(angle) * r;
+      const y = Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+
+    // Glow stroke
+    ctx.shadowBlur = 16 + amp * 20;
+    ctx.shadowColor = "#00d9c8";
+    const strokeGrad = ctx.createLinearGradient(-baseR, 0, baseR, 0);
+    strokeGrad.addColorStop(0, "#00d9c8");
+    strokeGrad.addColorStop(0.5, "#6366f1");
+    strokeGrad.addColorStop(1, "#00d9c8");
+    ctx.strokeStyle = strokeGrad;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Fill with low opacity
+    ctx.globalAlpha = 0.06 + amp * 0.06;
+    ctx.fillStyle = "#00d9c8";
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // ── Inner ring (counter-rotate) ──
+    ctx.rotate(-rotation * 2);
+    const innerR = baseR * 0.55;
+    ctx.beginPath();
+    for (let i = 0; i <= NUM_POINTS; i++) {
+      const idx = i % NUM_POINTS;
+      const angle = (idx / NUM_POINTS) * Math.PI * 2;
+      const noise = Math.sin(t * 3.2 + phases[idx]) * 0.5 + Math.sin(t * 1.8 + phases[idx] * 2) * 0.5;
+      const r = innerR + noise * amp * innerR * 0.5;
+      const x = Math.cos(angle) * r;
+      const y = Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.shadowBlur = 10 + amp * 14;
+    ctx.shadowColor = "#7b5ea7";
+    ctx.strokeStyle = `rgba(123,94,167,${0.6 + amp * 0.4})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Center dot
+    ctx.shadowBlur = 20 + amp * 30;
+    ctx.shadowColor = "#00d9c8";
+    ctx.beginPath();
+    ctx.arc(0, 0, 3 + amp * 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#00d9c8";
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ──────────────────────────────────────────────────────────────
+// VIZ 4: Particle Dot Matrix
+// ──────────────────────────────────────────────────────────────
+(function particleViz() {
+  const canvas = document.getElementById("particle-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const stage = document.getElementById("particle-stage");
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+  }
+  resize();
+  new ResizeObserver(resize).observe(stage);
+
+  const COLS = 50;
+  const ROWS = 12;
+
+  // Pre-compute per-particle random offsets
+  const particles = [];
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      particles.push({
+        col, row,
+        phaseX: Math.random() * Math.PI * 2,
+        phaseY: Math.random() * Math.PI * 2,
+        size: 1.2 + Math.random() * 1.4,
+        speed: 0.7 + Math.random() * 0.6,
+      });
+    }
+  }
+
+  let t = 0;
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const amp = getAmp("particle");
+    const speed = globalSpeed;
+    t += 0.016 * speed;
+
+    const colSpacing = w / (COLS + 1);
+    const rowSpacing = h / (ROWS + 1);
+
+    for (const p of particles) {
+      const baseX = (p.col + 1) * colSpacing;
+      const baseY = (p.row + 1) * rowSpacing;
+
+      // Wave displacement — vertical sine per column, modulated by row
+      const colPhase = (p.col / COLS) * Math.PI * 4;
+      const rowBlend = Math.sin((p.row / ROWS) * Math.PI); // peaks in middle rows
+      const waveY = Math.sin(t * p.speed + colPhase + p.phaseX) * amp * rowSpacing * 1.4 * rowBlend;
+      const waveX = Math.sin(t * p.speed * 0.4 + p.phaseY) * amp * colSpacing * 0.15;
+
+      const x = baseX + waveX;
+      const y = baseY + waveY;
+
+      // Brightness by displacement
+      const disp = Math.abs(waveY) / (amp * rowSpacing * 1.4 + 0.001);
+      const alpha = 0.15 + disp * 0.85;
+      const size = p.size * (1 + disp * 1.2);
+
+      // Color: cyan center cols, violet edges
+      const colCenter = Math.abs((p.col / COLS) - 0.5) * 2; // 0 at center, 1 at edges
+      const r = Math.round(colCenter * 123 + (1 - colCenter) * 0);
+      const g = Math.round(colCenter * 94 + (1 - colCenter) * 217);
+      const b = Math.round(colCenter * 167 + (1 - colCenter) * 200);
+
+      if (disp > 0.3) {
+        ctx.shadowBlur = 4 + disp * 10;
+        ctx.shadowColor = `rgba(${r},${g},${b},${alpha})`;
+      } else {
+        ctx.shadowBlur = 0;
+      }
+
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx.fill();
+    }
+
+    ctx.shadowBlur = 0;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ──────────────────────────────────────────────────────────────
+// VIZ 5: Gradient Glow Line
+// ──────────────────────────────────────────────────────────────
+(function lineViz() {
+  const canvas = document.getElementById("line-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const stage = document.getElementById("line-stage");
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+  }
+  resize();
+  new ResizeObserver(resize).observe(stage);
+
+  const NUM_WAVES = 3;
+  const waveParams = [
+    { freq: 1.0, phase: 0,       amp: 1.0, color0: "#00d9c8", color1: "#6366f1", width: 2.5, blur: 16, opacity: 0.9 },
+    { freq: 1.7, phase: Math.PI, amp: 0.5, color0: "#6366f1", color1: "#7b5ea7", width: 1.5, blur: 10, opacity: 0.5 },
+    { freq: 0.6, phase: 1.2,     amp: 0.3, color0: "#7b5ea7", color1: "#00d9c8", width: 1.0, blur: 6,  opacity: 0.3 },
+  ];
+
+  let t = 0;
+
+  function drawWave(w, h, params, amp) {
+    const cy = h / 2;
+    const N = 160;
+
+    // Thick glow pass
+    ctx.shadowBlur = params.blur + amp * 20;
+    ctx.shadowColor = params.color0;
+    ctx.globalAlpha = params.opacity;
+
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0,    "transparent");
+    grad.addColorStop(0.08, params.color0);
+    grad.addColorStop(0.5,  params.color1);
+    grad.addColorStop(0.92, params.color0);
+    grad.addColorStop(1,    "transparent");
+
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const x = (i / N) * w;
+      const progress = i / N;
+      // Fade at edges
+      const envelope = Math.sin(progress * Math.PI);
+      const y = cy + Math.sin(t * globalSpeed * params.freq + progress * Math.PI * 6 + params.phase) *
+                      amp * h * 0.38 * params.amp * envelope;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = params.width + amp * 1.5;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    // Trail effect
+    ctx.fillStyle = "rgba(6,9,15,0.25)";
+    ctx.fillRect(0, 0, w, h);
+
+    const amp = getAmp("line");
+    t += 0.016;
+
+    ctx.globalAlpha = 1;
+    for (const params of waveParams) {
+      drawWave(w, h, params, amp);
+    }
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ──────────────────────────────────────────────────────────────
+// VIZ 6: 3D Sphere (Canvas 2D approximation of Three.js effect)
+// ──────────────────────────────────────────────────────────────
+(function sphereViz() {
+  const canvas = document.getElementById("sphere-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const stage = document.getElementById("sphere-stage");
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+  }
+  resize();
+  new ResizeObserver(resize).observe(stage);
+
+  // Generate sphere wireframe vertices
+  const LAT_SEGS = 16;
+  const LON_SEGS = 24;
+  const edges = [];
+
+  function spherePoint(lat, lon, r) {
+    const phi = (lat / LAT_SEGS) * Math.PI;
+    const theta = (lon / LON_SEGS) * Math.PI * 2;
+    return {
+      x: r * Math.sin(phi) * Math.cos(theta),
+      y: r * Math.cos(phi),
+      z: r * Math.sin(phi) * Math.sin(theta),
+    };
+  }
+
+  // Latitude lines
+  for (let lat = 1; lat < LAT_SEGS; lat++) {
+    for (let lon = 0; lon < LON_SEGS; lon++) {
+      edges.push([
+        { lat, lon },
+        { lat, lon: (lon + 1) % LON_SEGS },
+      ]);
+    }
+  }
+  // Longitude lines
+  for (let lon = 0; lon < LON_SEGS; lon++) {
+    for (let lat = 0; lat < LAT_SEGS; lat++) {
+      edges.push([
+        { lat, lon },
+        { lat: lat + 1, lon },
+      ]);
+    }
+  }
+
+  let t = 0;
+  let rotX = 0.3;
+  let rotY = 0;
+
+  function project(pt, w, h, fov) {
+    // Rotate around Y
+    const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+    const x1 = pt.x * cosY - pt.z * sinY;
+    const z1 = pt.x * sinY + pt.z * cosY;
+    // Rotate around X
+    const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+    const y2 = pt.y * cosX - z1 * sinX;
+    const z2 = pt.y * sinX + z1 * cosX;
+    // Perspective
+    const d = fov / (fov + z2 + 3);
+    return { x: w / 2 + x1 * d * (w * 0.35), y: h / 2 + y2 * d * (h * 0.35), z: z2 };
+  }
+
+  function noiseSeed(lat, lon, t, amp) {
+    return 1 + Math.sin(lat * 0.8 + t * 2.1) * amp * 0.4 +
+               Math.sin(lon * 0.5 + t * 1.6) * amp * 0.3 +
+               Math.sin((lat + lon) * 0.3 + t * 3.0) * amp * 0.2;
+  }
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const amp = getAmp("sphere");
+    const speed = globalSpeed;
+    t += 0.016 * speed;
+    rotY += 0.008 * speed;
+
+    const baseR = Math.min(w, h) * 0.28;
+    const fov = 5;
+
+    for (const [a, b] of edges) {
+      const rA = baseR * noiseSeed(a.lat, a.lon, t, amp);
+      const rB = baseR * noiseSeed(b.lat, b.lon, t, amp);
+
+      const ptA = spherePoint(a.lat, a.lon, rA);
+      const ptB = spherePoint(b.lat, b.lon, rB);
+
+      const pA = project(ptA, w, h, fov);
+      const pB = project(ptB, w, h, fov);
+
+      // Depth-based alpha
+      const depth = ((pA.z + pB.z) / 2 + baseR) / (baseR * 2);
+      const alpha = 0.08 + depth * 0.5;
+
+      // Color varies with latitude and amplitude
+      const latRatio = (a.lat / LAT_SEGS);
+      const deform = Math.abs(noiseSeed(a.lat, a.lon, t, amp) - 1) / (amp * 0.9 + 0.001);
+
+      const r = Math.round(deform * 244 + (1-deform) * 99);
+      const g = Math.round(deform * 63 + (1-deform) * 102);
+      const b2 = Math.round(deform * 94 + (1-deform) * 241);
+
+      ctx.shadowBlur = deform > 0.5 ? 8 + deform * 14 : 0;
+      ctx.shadowColor = `rgba(${r},${g},${b2},${alpha})`;
+
+      ctx.beginPath();
+      ctx.moveTo(pA.x, pA.y);
+      ctx.lineTo(pB.x, pB.y);
+      ctx.strokeStyle = `rgba(${r},${g},${b2},${alpha})`;
+      ctx.lineWidth = 0.6 + deform * 1.2;
+      ctx.stroke();
+    }
+
+    // Center core
+    const cx = w/2, cy = h/2;
+    const coreR = 3 + amp * 6;
+    const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 3);
+    coreGrad.addColorStop(0, `rgba(99,102,241,${0.6 + amp * 0.4})`);
+    coreGrad.addColorStop(1, "transparent");
+    ctx.shadowBlur = 20 + amp * 30;
+    ctx.shadowColor = "#6366f1";
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+    ctx.fillStyle = coreGrad;
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+</script>
+
+</body>
+</html>

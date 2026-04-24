@@ -12,9 +12,10 @@ interface PaneGridProps {
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
+  shouldDestroyPane?: (paneId: string) => boolean;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <PaneNodeRenderer
@@ -24,6 +25,7 @@ export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessio
         onFocusPane={onFocusPane}
         onSessionAttached={onSessionAttached}
         shouldCachePane={shouldCachePane}
+        shouldDestroyPane={shouldDestroyPane}
       />
     </div>
   );
@@ -36,13 +38,15 @@ interface PaneNodeRendererProps {
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
+  shouldDestroyPane?: (paneId: string) => boolean;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     return (
-      <div className="h-full w-full min-h-0 min-w-0">
+      <div key={node.id} className="h-full w-full min-h-0 min-w-0">
         <TerminalPane
+          key={node.id}
           paneId={node.id}
           cwd={node.cwd}
           theme={theme}
@@ -52,6 +56,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
           onFocus={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCacheOnUnmount={shouldCachePane}
+          shouldDestroyOnUnmount={shouldDestroyPane}
         />
       </div>
     );
@@ -68,6 +73,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
       onFocusPane={onFocusPane}
       onSessionAttached={onSessionAttached}
       shouldCachePane={shouldCachePane}
+      shouldDestroyPane={shouldDestroyPane}
     />
   );
 }
@@ -82,9 +88,10 @@ interface SplitContainerProps {
   onFocusPane?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   shouldCachePane?: (paneId: string) => boolean;
+  shouldDestroyPane?: (paneId: string) => boolean;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentRatio, setCurrentRatio] = useState(ratio);
 
@@ -137,6 +144,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           onFocusPane={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCachePane={shouldCachePane}
+          shouldDestroyPane={shouldDestroyPane}
         />
       </div>
       <div
@@ -152,6 +160,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           onFocusPane={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCachePane={shouldCachePane}
+          shouldDestroyPane={shouldDestroyPane}
         />
       </div>
     </div>

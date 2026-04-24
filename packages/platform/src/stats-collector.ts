@@ -22,6 +22,7 @@ interface RunningContainer {
 export interface StatsCollectorConfig {
   docker: Dockerode;
   listRunning: () => RunningContainer[];
+  onResolvedContainerId?: (handle: string, containerId: string) => void;
   intervalMs?: number;
 }
 
@@ -45,8 +46,26 @@ function parseCpuPercent(stats: any): number {
   return (cpuDelta / systemDelta) * numCpus * 100;
 }
 
+function buildAndRecordEntry(handle: string, raw: any): ContainerStats {
+  const cpuPercent = parseCpuPercent(raw);
+  const memoryUsage = raw.memory_stats?.usage ?? 0;
+  const memoryLimit = raw.memory_stats?.limit ?? 0;
+
+  containerCpuUsage.set({ handle }, cpuPercent);
+  containerMemoryUsage.set({ handle }, memoryUsage);
+  containerMemoryLimit.set({ handle }, memoryLimit);
+
+  return {
+    handle,
+    cpuPercent,
+    memoryUsage,
+    memoryLimit,
+    timestamp: Date.now(),
+  };
+}
+
 export function createStatsCollector(config: StatsCollectorConfig): StatsCollector {
-  const { docker, listRunning, intervalMs = 15_000 } = config;
+  const { docker, listRunning, onResolvedContainerId, intervalMs = 15_000 } = config;
   let timer: ReturnType<typeof setInterval> | null = null;
 
   async function collectOnce(): Promise<ContainerStats[]> {
@@ -56,28 +75,26 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
     for (const row of containers) {
       if (!row.containerId) continue;
 
+      let container = docker.getContainer(row.containerId);
       try {
-        const container = docker.getContainer(row.containerId);
         const raw = await container.stats({ stream: false } as any) as any;
-
-        const cpuPercent = parseCpuPercent(raw);
-        const memUsage = raw.memory_stats?.usage ?? 0;
-        const memLimit = raw.memory_stats?.limit ?? 0;
-
-        const entry: ContainerStats = {
-          handle: row.handle,
-          cpuPercent,
-          memoryUsage: memUsage,
-          memoryLimit: memLimit,
-          timestamp: Date.now(),
-        };
-
-        containerCpuUsage.set({ handle: row.handle }, cpuPercent);
-        containerMemoryUsage.set({ handle: row.handle }, memUsage);
-        containerMemoryLimit.set({ handle: row.handle }, memLimit);
-
-        results.push(entry);
+        results.push(buildAndRecordEntry(row.handle, raw));
       } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('No such container')) {
+          try {
+            container = docker.getContainer(`matrixos-${row.handle}`);
+            const inspect = await container.inspect();
+            onResolvedContainerId?.(row.handle, inspect.Id);
+            const raw = await container.stats({ stream: false } as any) as any;
+            results.push(buildAndRecordEntry(row.handle, raw));
+            continue;
+          } catch (fallbackErr: unknown) {
+            console.warn(
+              `[stats-collector] Name-based fallback also failed for ${row.handle}:`,
+              fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+            );
+          }
+        }
         console.warn(
           `[stats-collector] Failed to collect stats for ${row.handle}:`,
           err instanceof Error ? err.message : String(err),

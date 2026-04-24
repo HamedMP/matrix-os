@@ -8,6 +8,14 @@ import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
+
+function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
+  if (!TERMINAL_DEBUG_ENABLED) {
+    return;
+  }
+  console.info("[terminal-debug][registry]", event, details);
+}
 
 const AttachNewSchema = z.object({
   type: z.literal("attach"),
@@ -38,14 +46,18 @@ const DetachSchema = z.object({
   type: z.literal("detach"),
 });
 
+const DestroySchema = z.object({
+  type: z.literal("destroy"),
+});
+
 const PingSchema = z.object({
   type: z.literal("ping"),
 });
 
-export const ClientMessageSchema = z.union([AttachSchema, InputSchema, ResizeSchema, DetachSchema, PingSchema]);
+export const ClientMessageSchema = z.union([AttachSchema, InputSchema, ResizeSchema, DetachSchema, DestroySchema, PingSchema]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
-export { AttachSchema, AttachNewSchema, AttachExistingSchema, InputSchema, ResizeSchema, DetachSchema, PingSchema, UUID_REGEX };
+export { AttachSchema, AttachNewSchema, AttachExistingSchema, InputSchema, ResizeSchema, DetachSchema, DestroySchema, PingSchema, UUID_REGEX };
 
 export interface SessionInfo {
   sessionId: string;
@@ -345,13 +357,28 @@ export class SessionRegistry {
     const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, resolvedShell);
     this.sessions.set(sessionId, session);
     this.schedulePersist();
+    logTerminalDebug("create", {
+      sessionId,
+      cwd: targetCwd,
+      shell: resolvedShell,
+      totalSessions: this.sessions.size,
+    });
 
     return sessionId;
   }
 
   attach(sessionId: string): SessionHandle | null {
     const session = this.sessions.get(sessionId);
-    if (!session) return null;
+    if (!session) {
+      logTerminalDebug("attach-miss", { sessionId, totalSessions: this.sessions.size });
+      return null;
+    }
+
+    logTerminalDebug("attach", {
+      sessionId,
+      attachedClients: session.attachedClients,
+      state: session.state,
+    });
 
     let subscriberFn: SubscriberFn | null = null;
     let detached = false;
@@ -406,6 +433,11 @@ export class SessionRegistry {
       detach() {
         if (detached) return;
         detached = true;
+        logTerminalDebug("detach", {
+          sessionId,
+          hadSubscriber: !!subscriberFn,
+          attachedClientsBefore: session.attachedClients,
+        });
         if (subscriberFn) {
           session.removeSubscriber(subscriberFn);
           session.decrementClients();
@@ -420,6 +452,12 @@ export class SessionRegistry {
   destroy(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    logTerminalDebug("destroy", {
+      sessionId,
+      attachedClients: session.attachedClients,
+      state: session.state,
+      totalSessionsBefore: this.sessions.size,
+    });
 
     try {
       session.kill();
@@ -469,6 +507,11 @@ export class SessionRegistry {
     }
 
     if (candidate) {
+      logTerminalDebug("evict", {
+        sessionId: candidate.sessionId,
+        state: candidate.state,
+        attachedClients: candidate.attachedClients,
+      });
       this.destroy(candidate.sessionId);
     }
   }

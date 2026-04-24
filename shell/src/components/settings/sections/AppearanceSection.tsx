@@ -233,9 +233,9 @@ export function AppearanceSection() {
         <div className="flex gap-1 rounded-lg bg-muted/50 p-1">
           {(
             [
+              { id: "image", label: "Image", icon: ImageIcon },
               { id: "pattern", label: "Gradient", icon: PaletteIcon },
               { id: "solid", label: "Solid", icon: PaletteIcon },
-              { id: "image", label: "Image", icon: ImageIcon },
             ] as const
           ).map((opt) => (
             <button

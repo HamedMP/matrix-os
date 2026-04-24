@@ -131,4 +131,28 @@ describe("loadManifest", () => {
       expect(r1.manifest).not.toBe(r2.manifest); // different reference after invalidation
     }
   });
+
+  it("evicts least recently used manifest entries when the cache reaches its cap", async () => {
+    const firstDir = join(tmpDir, "app-0");
+    await mkdir(firstDir, { recursive: true });
+    await writeFile(join(firstDir, "matrix.json"), validManifest("app-0"));
+
+    const first = await loadManifest(tmpDir, "app-0");
+    expect(first.ok).toBe(true);
+
+    for (let i = 1; i <= 256; i += 1) {
+      const slug = `app-${i}`;
+      const appDir = join(tmpDir, slug);
+      await mkdir(appDir, { recursive: true });
+      await writeFile(join(appDir, "matrix.json"), validManifest(slug));
+      const result = await loadManifest(tmpDir, slug);
+      expect(result.ok).toBe(true);
+    }
+
+    const reloaded = await loadManifest(tmpDir, "app-0");
+    expect(reloaded.ok).toBe(true);
+    if (first.ok && reloaded.ok) {
+      expect(reloaded.manifest).not.toBe(first.manifest);
+    }
+  });
 });

@@ -12,6 +12,8 @@ import {
   type FileHistory,
 } from "../../packages/gateway/src/git-versioning.js";
 
+const GIT_ID = ["-c", "user.email=ci@matrix-os.test", "-c", "user.name=Test"];
+
 function tmpGitRepo(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "git-ver-")));
   mkdirSync(join(dir, "system"), { recursive: true });
@@ -20,7 +22,7 @@ function tmpGitRepo(): string {
   writeFileSync(join(dir, ".gitignore"), "*.sqlite\nnode_modules/\n");
   execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
   execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
-  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", [...GIT_ID, "commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
   return dir;
 }
 
@@ -184,11 +186,11 @@ describe("T1512: File history API", () => {
     // Make some commits modifying the file
     writeFileSync(join(homePath, "system", "state.md"), "v2");
     execFileSync("git", ["add", "."], { cwd: homePath, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "update state to v2"], { cwd: homePath, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "update state to v2"], { cwd: homePath, stdio: "ignore" });
 
     writeFileSync(join(homePath, "system", "state.md"), "v3");
     execFileSync("git", ["add", "."], { cwd: homePath, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "update state to v3"], { cwd: homePath, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "update state to v3"], { cwd: homePath, stdio: "ignore" });
 
     const entries = await history.log("system/state.md");
     expect(entries.length).toBeGreaterThanOrEqual(2);
@@ -201,7 +203,7 @@ describe("T1512: File history API", () => {
     for (let i = 0; i < 5; i++) {
       writeFileSync(join(homePath, "system", "state.md"), `v${i + 2}`);
       execFileSync("git", ["add", "."], { cwd: homePath, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", `commit ${i + 2}`], { cwd: homePath, stdio: "ignore" });
+      execFileSync("git", [...GIT_ID, "commit", "-m", `commit ${i + 2}`], { cwd: homePath, stdio: "ignore" });
     }
 
     const page1 = await history.log("system/state.md", { limit: 2, offset: 0 });
@@ -217,7 +219,7 @@ describe("T1512: File history API", () => {
   it("returns diff for a specific commit", async () => {
     writeFileSync(join(homePath, "system", "state.md"), "changed content");
     execFileSync("git", ["add", "."], { cwd: homePath, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "change content"], { cwd: homePath, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "change content"], { cwd: homePath, stdio: "ignore" });
 
     const entries = await history.log("system/state.md");
     const diff = await history.diff("system/state.md", entries[0].commit);
@@ -246,7 +248,7 @@ describe("T1513: File restore", () => {
     // Modify the file
     writeFileSync(join(homePath, "system", "state.md"), "new content");
     execFileSync("git", ["add", "."], { cwd: homePath, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "modify state"], { cwd: homePath, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "modify state"], { cwd: homePath, stdio: "ignore" });
 
     // Restore from initial commit
     const result = await history.restore("system/state.md", initialCommit);
@@ -262,7 +264,7 @@ describe("T1513: File restore", () => {
 
     writeFileSync(join(homePath, "system", "state.md"), "new content");
     execFileSync("git", ["add", "."], { cwd: homePath, stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", "modify state"], { cwd: homePath, stdio: "ignore" });
+    execFileSync("git", [...GIT_ID, "commit", "-m", "modify state"], { cwd: homePath, stdio: "ignore" });
 
     await history.restore("system/state.md", initialCommit);
 

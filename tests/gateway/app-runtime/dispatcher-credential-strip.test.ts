@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeCookieHeader } from "../../../packages/gateway/src/app-runtime/dispatcher.js";
+import {
+  sanitizeAppResponseHeaders,
+  sanitizeCookieHeader,
+} from "../../../packages/gateway/src/app-runtime/dispatcher.js";
 
 describe("dispatcher credential stripping (spec 063 regression)", () => {
   describe("sanitizeCookieHeader", () => {
@@ -28,6 +31,20 @@ describe("dispatcher credential stripping (spec 063 regression)", () => {
     it("tolerates whitespace and empty entries", () => {
       const input = " ; theme=dark ;  matrix_app_session__x=y ; ";
       expect(sanitizeCookieHeader(input)).toBe("theme=dark");
+    });
+  });
+
+  describe("sanitizeAppResponseHeaders", () => {
+    it("drops shell-origin Set-Cookie headers from node app responses", () => {
+      const headers = sanitizeAppResponseHeaders(new Headers({
+        "Set-Cookie": "__session=attacker; Path=/",
+        "X-Powered-By": "node",
+        "Content-Type": "text/plain",
+      }));
+
+      expect(headers.get("set-cookie")).toBeNull();
+      expect(headers.get("x-powered-by")).toBeNull();
+      expect(headers.get("content-type")).toBe("text/plain");
     });
   });
 });

@@ -1,5 +1,11 @@
 import type { ServerMessage } from "@/hooks/useSocket";
 
+let msgSeq = 0;
+function newMsgId(): string {
+  msgSeq = (msgSeq + 1) & 0xffff;
+  return `msg-${Date.now()}-${msgSeq}`;
+}
+
 interface PersistedMessage {
   role: "user" | "assistant" | "system";
   content: string;
@@ -96,7 +102,7 @@ export function reduceChat(
         next[targetIdx] = { ...target, content: target.content + event.text };
       } else {
         next.push({
-          id: `msg-${Date.now()}`,
+          id: newMsgId(),
           role: "assistant",
           content: event.text,
           requestId: reqId,
@@ -107,7 +113,7 @@ export function reduceChat(
     }
     case "kernel:tool_start": {
       next.push({
-        id: `msg-${Date.now()}`,
+        id: newMsgId(),
         role: "system",
         content: `Using ${event.tool}...`,
         tool: event.tool,
@@ -131,9 +137,31 @@ export function reduceChat(
     }
     case "kernel:error": {
       next.push({
-        id: `msg-${Date.now()}`,
+        id: newMsgId(),
         role: "system",
         content: event.message,
+        requestId: reqId,
+        timestamp: Date.now(),
+      });
+      break;
+    }
+    case "kernel:aborted": {
+      // Mark any in-flight tool message as stopped so its spinner switches
+      // to the check icon. Without this, "Using X..." stays forever (the
+      // spinner is gated on that exact prefix in ChatPopover) because the
+      // server never emits a kernel:tool_end after an abort.
+      for (let i = next.length - 1; i >= 0; i--) {
+        const m = next[i];
+        if (m.tool && m.content.startsWith("Using ")) {
+          if (!reqId || m.requestId === reqId) {
+            next[i] = { ...m, content: `Stopped ${m.tool}` };
+          }
+        }
+      }
+      next.push({
+        id: newMsgId(),
+        role: "system",
+        content: "Stopped.",
         requestId: reqId,
         timestamp: Date.now(),
       });

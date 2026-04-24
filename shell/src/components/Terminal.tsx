@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayWs } from "@/lib/gateway";
-
-const TERMINAL_WS = getGatewayWs().replace("/ws", "/ws/terminal");
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 
 export function Terminal() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,7 +40,20 @@ export function Terminal() {
 
       termRef.current = term;
 
-      const ws = new WebSocket(TERMINAL_WS);
+      const wsUrl = await buildAuthenticatedWebSocketUrl("/ws/terminal")
+        .catch((err: unknown) => {
+          console.warn(
+            "[Terminal] Falling back to unauthenticated terminal websocket URL:",
+            err instanceof Error ? err.message : err,
+          );
+          return getGatewayWs().replace("/ws", "/ws/terminal");
+        });
+      if (disposed) {
+        term.dispose();
+        return;
+      }
+
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -63,7 +75,7 @@ export function Terminal() {
           } else if (msg.type === "exit") {
             term.write("\r\n[Process exited]\r\n");
           }
-        } catch {
+        } catch (_err: unknown) {
           // ignore malformed
         }
       };

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, mkdir, rm, cp } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, cp, symlink, truncate } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -82,6 +82,28 @@ describe("App Runtime Dispatcher", () => {
       expect(css).toContain("body");
       expect(res.headers.get("content-type")).toContain("text/css");
     });
+
+    it("rejects static symlinks that point outside the app directory", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      await mkdir(join(homeDir, "system"), { recursive: true });
+      await writeFile(join(homeDir, "system", "config.json"), "{\"secret\":true}");
+      await symlink(join(homeDir, "system", "config.json"), join(appDir, "secret.json"));
+
+      const res = await app.request("/apps/calculator/secret.json");
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects static assets above the configured memory cap", async () => {
+      const appDir = join(homeDir, "apps", "calculator");
+      await installStaticApp("calculator", "<html></html>");
+      const largePath = join(appDir, "large.bin");
+      await writeFile(largePath, "");
+      await truncate(largePath, 25 * 1024 * 1024 + 1);
+
+      const res = await app.request("/apps/calculator/large.bin");
+      expect(res.status).toBe(413);
+    });
   });
 
   describe("vite serving", () => {
@@ -132,6 +154,26 @@ describe("App Runtime Dispatcher", () => {
     it("returns 404 for missing manifest", async () => {
       const res = await app.request("/apps/nonexistent/");
       expect(res.status).toBe(404);
+    });
+
+    it("rejects symlinked app directories even when a manifest exists at the target", async () => {
+      const targetDir = join(homeDir, "system", "linked-app");
+      await mkdir(targetDir, { recursive: true });
+      await writeFile(
+        join(targetDir, "matrix.json"),
+        JSON.stringify({
+          name: "Calculator",
+          slug: "calculator",
+          version: "1.0.0",
+          runtime: "static",
+          runtimeVersion: "^1.0.0",
+        }),
+      );
+      await writeFile(join(targetDir, "index.html"), "<html>outside</html>");
+      await symlink(targetDir, join(homeDir, "apps", "calculator"));
+
+      const res = await app.request("/apps/calculator/");
+      expect(res.status).toBe(400);
     });
   });
 

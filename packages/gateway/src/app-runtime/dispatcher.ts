@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { join } from "node:path";
-import { stat } from "node:fs/promises";
+import { join, sep } from "node:path";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolveWithinHome } from "../path-security.js";
 import { SAFE_SLUG } from "./manifest-schema.js";
@@ -47,11 +47,38 @@ export function sanitizeCookieHeader(value: string): string | null {
   return kept.length > 0 ? kept.join("; ") : null;
 }
 
-const STRIPPED_RESPONSE = new Set(["server", "x-powered-by"]);
+const STRIPPED_RESPONSE = new Set(["server", "x-powered-by", "set-cookie", "set-cookie2"]);
+
+export function sanitizeAppResponseHeaders(headers: Headers): Headers {
+  const sanitized = new Headers(headers);
+  for (const h of HOP_BY_HOP) sanitized.delete(h);
+  for (const h of STRIPPED_RESPONSE) sanitized.delete(h);
+  return sanitized;
+}
 
 export interface DispatcherConfig {
   publicHost?: string;
   processManager?: ProcessManager;
+}
+
+function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
+  return candidateReal === baseReal || candidateReal.startsWith(`${baseReal}${sep}`);
+}
+
+async function resolveAppDirectory(appsDir: string, slug: string): Promise<string | null> {
+  const appDir = resolveWithinHome(appsDir, slug);
+  if (!appDir) return null;
+
+  const appStat = await lstat(appDir).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT" || err.code === "ENOTDIR") return null;
+    throw err;
+  });
+  if (!appStat || !appStat.isDirectory() || appStat.isSymbolicLink()) {
+    return null;
+  }
+
+  const [appsReal, appReal] = await Promise.all([realpath(appsDir), realpath(appDir)]);
+  return isWithinRealPath(appsReal, appReal) ? appDir : null;
 }
 
 /**
@@ -105,7 +132,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
 
     switch (manifest.runtime) {
       case "static": {
-        const appDir = resolveWithinHome(appsDir, slug);
+        const appDir = await resolveAppDirectory(appsDir, slug);
         if (!appDir) {
           return c.json({ error: "invalid path" }, 400);
         }
@@ -113,7 +140,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
       }
 
       case "vite": {
-        const appDir = resolveWithinHome(appsDir, slug);
+        const appDir = await resolveAppDirectory(appsDir, slug);
         if (!appDir) {
           return c.json({ error: "invalid path" }, 400);
         }
@@ -207,9 +234,7 @@ async function dispatchNode(
     pm.markUsed(slug);
 
     // Sanitize response headers
-    const resHeaders = new Headers(upstream.headers);
-    for (const h of HOP_BY_HOP) resHeaders.delete(h);
-    for (const h of STRIPPED_RESPONSE) resHeaders.delete(h);
+    const resHeaders = sanitizeAppResponseHeaders(upstream.headers);
 
     return new Response(upstream.body, {
       status: upstream.status,

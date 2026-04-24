@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "@xterm/xterm/css/xterm.css";
 import "./globals.css";
@@ -14,19 +14,29 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
+const cormorant = Cormorant_Garamond({
+  variable: "--font-serif",
+  subsets: ["latin"],
+  weight: ["300", "400", "500"],
+});
+
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 
 export async function generateMetadata(): Promise<Metadata> {
   let handle = "";
   let displayName = "";
   try {
-    const res = await fetch(`${gatewayUrl}/api/identity`, { next: { revalidate: 60 } });
+    const res = await fetch(`${gatewayUrl}/api/identity`, {
+      next: { revalidate: 60 },
+      signal: AbortSignal.timeout(10_000),
+    });
     if (res.ok) {
       const data = await res.json();
       handle = data.handle ?? "";
       displayName = data.displayName ?? "";
     }
-  } catch {
+  } catch (err) {
+    console.warn("[shell] identity metadata unavailable:", err instanceof Error ? err.message : String(err));
     // Gateway not available (build time or offline)
   }
 
@@ -75,7 +85,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={`${inter.variable} ${jetbrainsMono.variable}`}>
+        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable}`}>
           {children}
         </body>
       </html>

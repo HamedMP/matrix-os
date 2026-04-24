@@ -10,16 +10,17 @@ import { ChatProvider } from "@/stores/chat-context";
 
 import { Desktop } from "@/components/Desktop";
 import { CommandPalette } from "@/components/CommandPalette";
-import { ThoughtCard } from "@/components/ThoughtCard";
-import { ResponseOverlay } from "@/components/ResponseOverlay";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 
+// Chat lives as a popover triggered from the dock (see ChatPopover wired
+// into Desktop.tsx). The old floating ResponseOverlay was removed because
+// it competed with apps for screen space and felt heavier than chat
+// actually needs to be.
 export default function Home() {
   useTheme();
   useDesktopConfig();
 
   const chat = useChatState();
-  const [overlayDismissed, setOverlayDismissed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   useGlobalShortcuts(useCallback(() => setPaletteOpen(true), []));
@@ -41,14 +42,6 @@ export default function Home() {
     return () => unregister(["action:new-chat"]);
   }, [register, unregister, chat.newChat]);
 
-  const handleSubmit = useCallback(
-    (text: string) => {
-      setOverlayDismissed(false);
-      chat.submitMessage(text);
-    },
-    [chat.submitMessage],
-  );
-
   return (
     <ChatProvider value={chat}>
     <div className="flex h-screen w-screen overflow-hidden flex-col md:flex-row">
@@ -58,27 +51,17 @@ export default function Home() {
             onOpenCommandPalette={() => setPaletteOpen(true)}
             chat={chat}
           />
-
-          <div className="pointer-events-none absolute inset-0 flex flex-col p-2 md:p-4">
-            <div className="flex justify-end">
-              <ThoughtCard />
-            </div>
-          </div>
         </div>
       </div>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ApprovalDialog />
-
-      {!overlayDismissed && (
-        <ResponseOverlay
-          messages={chat.messages}
-          busy={chat.busy}
-          onDismiss={() => setOverlayDismissed(true)}
-          onSubmit={handleSubmit}
-        />
-      )}
-
+      {/* Build progress card lives inside VocalPanel today (gateway-side
+          delegation tracking). Chat does not yet have an equivalent
+          "is the agent building an app right now" signal -- adding it
+          would require gateway-side detection of app-creating tool runs.
+          Until then, the chat surface stays self-contained (header pill +
+          inline tool rows) without a top-center duplicate. */}
     </div>
     </ChatProvider>
   );

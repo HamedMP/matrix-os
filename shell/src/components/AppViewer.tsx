@@ -15,6 +15,7 @@ import { openAppSession } from "@/lib/app-session";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
+const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppViewerProps {
   path: string;
@@ -76,14 +77,19 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         const doc = iframe.contentDocument;
         if (doc) {
           const el = doc.createElement("script");
-          el.textContent = script + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`;
+          // Bridge + zoom forwarding in a single script injection.
+          // Pinch-to-zoom (ctrl+wheel) is forwarded to the parent canvas
+          // because iframes capture it in their own browsing context.
+          el.textContent = script
+            + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}`
+            + `\n;window.addEventListener('wheel',function(e){if(e.ctrlKey||e.metaKey){e.preventDefault();parent.postMessage({type:'os:wheel-zoom',deltaX:e.deltaX,deltaY:e.deltaY,clientX:e.clientX,clientY:e.clientY},'*')}},{passive:false});`;
           doc.head.appendChild(el);
         }
       } catch (err) {
         // Cross-origin iframe -- bridge injection isn't possible.
         // SecurityError is expected; anything else worth logging.
         if (!(err instanceof DOMException) || err.name !== "SecurityError") {
-          console.warn("[AppViewer] bridge injection failed", err);
+          console.warn("[app-viewer] bridge injection failed:", err instanceof Error ? err.message : String(err));
         }
       }
     };
@@ -107,7 +113,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       } catch (err) {
         // Cross-origin postMessage can reject when the iframe is unloading.
         if (!(err instanceof DOMException)) {
-          console.warn("[AppViewer] theme-update postMessage failed", err);
+          console.warn("[app-viewer] theme update failed:", err instanceof Error ? err.message : String(err));
         }
       }
     });
@@ -130,10 +136,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         fetch(`${GATEWAY_URL}/api/bridge/data`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
           body: JSON.stringify({ action, app, key, value }),
-          signal: AbortSignal.timeout(10_000),
-        }).catch((err) => {
-          console.warn("[AppViewer] bridge fetch failed", err);
+        }).catch((err: unknown) => {
+          console.warn("[app-viewer] bridge data fetch failed:", err instanceof Error ? err.message : String(err));
         });
       },
       openApp: onOpenApp,
@@ -163,7 +169,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
             );
           } catch (err) {
             if (!(err instanceof DOMException)) {
-              console.warn("[AppViewer] data-change postMessage failed", err);
+              console.warn("[app-viewer] data change postMessage failed:", err instanceof Error ? err.message : String(err));
             }
           }
         }
@@ -189,7 +195,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       .catch((err: unknown) => {
         // Log so failures are visible; the interstitial fallback path will
         // still retry via the session-expired postMessage handler below.
-        console.warn("[AppViewer] session bootstrap failed", slug, err);
+        console.warn("[app-viewer] session bootstrap failed:", slug, err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         if (!cancelled) setSessionReady(true);
@@ -207,7 +213,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     if (!slug) return;
 
     const handler = async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
+      if (event.origin !== window.location.origin && event.origin !== "null") return;
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (event.data?.type !== "matrix-os:session-expired") return;
       if (event.data?.slug !== slug) return;
@@ -223,7 +229,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         await openAppSession(slug, { gatewayUrl: GATEWAY_URL });
         setRefreshKey((k) => k + 1);
       } catch (err: unknown) {
-        console.warn("[AppViewer] session refresh failed", slug, err);
+        console.warn("[app-viewer] session refresh failed:", slug, err instanceof Error ? err.message : String(err));
       } finally {
         refreshInFlightRef.current = false;
       }
@@ -246,7 +252,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       key={refreshKey}
       src={iframeSrc}
       className="h-full w-full border-0"
-      sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
+      sandbox="allow-scripts allow-forms allow-popups"
       title={path}
     />
   );

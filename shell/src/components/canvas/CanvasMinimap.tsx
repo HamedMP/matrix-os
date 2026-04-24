@@ -48,7 +48,7 @@ export function CanvasMinimap() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDragging = useRef(false);
 
-  const dprRef = useRef(window.devicePixelRatio || 1);
+  const dprRef = useRef(1);
 
   // Set canvas dimensions once on mount
   useEffect(() => {

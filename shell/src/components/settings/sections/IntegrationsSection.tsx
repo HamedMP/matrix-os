@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 
 const GATEWAY = getGatewayUrl();
 
@@ -84,7 +85,7 @@ function formatDate(iso: string): string {
       month: "short",
       day: "numeric",
     });
-  } catch {
+  } catch (_err: unknown) {
     return iso;
   }
 }
@@ -186,7 +187,10 @@ export function IntegrationsSection() {
         const data = await res.json();
         if (data?.services) setConnected(data.services);
       } else {
-        const body = await res.json().catch(() => ({}));
+        const body = await res.json().catch((err: unknown) => {
+          console.warn("[integrations] failed to parse refresh error body:", err instanceof Error ? err.message : String(err));
+          return {};
+        });
         setError(body.error ?? "Failed to refresh");
       }
     } catch (err) {
@@ -209,25 +213,40 @@ export function IntegrationsSection() {
   // WebSocket listener for real-time connection updates
   useEffect(() => {
     let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(getGatewayWs());
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "integration:connected" || msg.type === "integration:disconnected") {
-            loadData();
-          }
-        } catch {
-          // not JSON, ignore
+    let disposed = false;
+    void buildAuthenticatedWebSocketUrl("/ws")
+      .catch((err: unknown) => {
+        console.warn(
+          "[integrations] Falling back to unauthenticated websocket URL:",
+          err instanceof Error ? err.message : err,
+        );
+        return getGatewayWs();
+      })
+      .then((wsUrl) => {
+        if (disposed) {
+          return;
         }
-      };
-      ws.onerror = () => {
-        // WebSocket errors are non-fatal; polling fallback handles it
-      };
-    } catch {
-      // WebSocket not available, rely on polling during connect
-    }
+        try {
+          ws = new WebSocket(wsUrl);
+          ws.onmessage = (event) => {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.type === "integration:connected" || msg.type === "integration:disconnected") {
+                loadData();
+              }
+            } catch (_err: unknown) {
+              // not JSON, ignore
+            }
+          };
+          ws.onerror = () => {
+            // WebSocket errors are non-fatal; polling fallback handles it
+          };
+        } catch (_err: unknown) {
+          // WebSocket not available, rely on polling during connect
+        }
+      });
     return () => {
+      disposed = true;
       ws?.close();
     };
   }, [loadData]);
@@ -245,7 +264,10 @@ export function IntegrationsSection() {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+        const body = await res.json().catch((err: unknown) => {
+          console.warn("[integrations] failed to parse connect error body:", err instanceof Error ? err.message : String(err));
+          return {};
+        });
         setError(body.error ?? "Failed to start connection");
         setConnecting(null);
         return;
@@ -383,7 +405,10 @@ export function IntegrationsSection() {
         setRenamingId(null);
         setRenameDraft("");
       } else {
-        const body = await res.json().catch(() => ({}));
+        const body = await res.json().catch((err: unknown) => {
+          console.warn("[integrations] failed to parse rename error body:", err instanceof Error ? err.message : String(err));
+          return {};
+        });
         setError(body.error ?? "Failed to rename account");
       }
     } catch (err) {

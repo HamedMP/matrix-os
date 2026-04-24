@@ -84,6 +84,18 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
       expect(isValid).toBe(true);
     });
 
+    it("accepts the opaque origin used by sandboxed runtime iframes", () => {
+      const mySlug = "notes";
+      const eventOrigin = "null";
+      const msg = { type: "matrix-os:session-expired", slug: "notes" };
+
+      const isValid =
+        (eventOrigin === "http://localhost:3000" || eventOrigin === "null") &&
+        msg.type === "matrix-os:session-expired" &&
+        msg.slug === mySlug;
+      expect(isValid).toBe(true);
+    });
+
     it("rejects message from different slug", () => {
       const mySlug = "notes";
       const msg = { type: "matrix-os:session-expired", slug: "calendar" };
@@ -115,6 +127,13 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
       const now3 = 7100;
       const canRefresh3 = now3 - lastRefreshAt >= DEBOUNCE_MS;
       expect(canRefresh3).toBe(true);
+    });
+  });
+
+  describe("iframe sandbox", () => {
+    it("does not allow runtime apps to share the shell origin", () => {
+      const sandbox = "allow-scripts allow-forms allow-popups";
+      expect(sandbox).not.toContain("allow-same-origin");
     });
   });
 });

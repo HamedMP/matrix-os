@@ -55,6 +55,8 @@ import {
   getUserIdFromContext,
   MissingSyncUserIdentityError,
 } from "./auth.js";
+import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { createVocalHandler } from "./vocal/ws-handler.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -138,6 +140,15 @@ const BridgeCallBodySchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
+
+function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
+  if (!TERMINAL_DEBUG_ENABLED) {
+    return;
+  }
+  console.info("[terminal-debug][gateway]", event, details);
+}
+
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 
 export interface GatewayConfig {
@@ -155,6 +166,7 @@ export type ServerMessage =
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
   | { type: "kernel:result"; data: unknown; requestId?: string }
   | { type: "kernel:error"; message: string; requestId?: string }
+  | { type: "kernel:aborted"; requestId?: string }
   | { type: "file:change"; path: string; event: string }
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
@@ -187,6 +199,8 @@ function kernelEventToServerMessage(event: KernelEvent, requestId?: string): Ser
       return { type: "kernel:tool_end", input: event.input, requestId };
     case "result":
       return { type: "kernel:result", data: event.data, requestId };
+    case "aborted":
+      return { type: "kernel:aborted", requestId };
   }
 }
 
@@ -1306,6 +1320,11 @@ export async function createGateway(config: GatewayConfig) {
       let approvalBridge: ApprovalBridge | undefined;
       let detachConversationRun: (() => void) | null = null;
       let conversationReplayVersion = 0;
+      // Per-WS-connection abort controllers, keyed by requestId. Created
+      // when the user submits a message; consumed when they explicitly
+      // stop the agent. Cleaned up after result / error / aborted so the
+      // map doesn't grow.
+      const abortControllers = new Map<string, AbortController>();
 
       const clearConversationRunAttachment = () => {
         conversationReplayVersion++;
@@ -1455,11 +1474,29 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
+          if (parsed.type === "abort") {
+            const controller = abortControllers.get(parsed.requestId);
+            if (controller) {
+              controller.abort();
+              // Map cleanup happens in the dispatcher's terminal-event
+              // path (kernel:aborted -> delete). No need to delete here.
+            }
+            return;
+          }
+
           if (parsed.type === "message") {
             clearConversationRunAttachment();
             pendingText = parsed.text;
             const requestId = parsed.requestId;
             let lastToolName: string | undefined;
+
+            // Register abort controller so the user can stop this run.
+            // Skip if no requestId (legacy clients) -- they can't target
+            // a specific run anyway.
+            const abortController = requestId ? new AbortController() : undefined;
+            if (requestId && abortController) {
+              abortControllers.set(requestId, abortController);
+            }
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
@@ -1496,8 +1533,12 @@ export async function createGateway(config: GatewayConfig) {
                   });
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
+                } else if (msg.type === "kernel:aborted" && activeSessionId) {
+                  publishConversationRunMessage(activeSessionId, msg);
+                  finalizeWithSummary(activeSessionId);
+                  conversationRuns.complete(activeSessionId);
                 }
-              })
+              }, undefined, abortController)
               .catch((err: Error) => {
                 console.error("[gateway] Conversation dispatch failed:", err);
                 if (activeSessionId) {
@@ -1514,6 +1555,9 @@ export async function createGateway(config: GatewayConfig) {
                   message: CLIENT_KERNEL_ERROR_MESSAGE,
                   requestId,
                 });
+              })
+              .finally(() => {
+                if (requestId) abortControllers.delete(requestId);
               });
           }
         },
@@ -1522,6 +1566,12 @@ export async function createGateway(config: GatewayConfig) {
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
+          // Abort any in-flight runs for this client so the kernel doesn't
+          // keep burning tokens after the WS closes.
+          for (const controller of abortControllers.values()) {
+            controller.abort();
+          }
+          abortControllers.clear();
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
           }
@@ -1538,15 +1588,20 @@ export async function createGateway(config: GatewayConfig) {
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
-      const cleanupAutoCreatedSession = () => {
+      const cleanupAutoCreatedSession = (destroyAutoCreated = true) => {
+        logTerminalDebug("ws-cleanup", {
+          destroyAutoCreated,
+          handleSessionId: handle?.sessionId ?? null,
+          autoCreatedSessionId,
+        });
         if (handle) {
           const shouldDestroyAutoCreated = autoCreatedSessionId === handle.sessionId;
           handle.detach();
           handle = null;
-          if (shouldDestroyAutoCreated && autoCreatedSessionId) {
+          if (destroyAutoCreated && shouldDestroyAutoCreated && autoCreatedSessionId) {
             sessionRegistry.destroy(autoCreatedSessionId);
           }
-        } else if (autoCreatedSessionId) {
+        } else if (destroyAutoCreated && autoCreatedSessionId) {
           sessionRegistry.destroy(autoCreatedSessionId);
         }
         autoCreatedSessionId = null;
@@ -1554,6 +1609,9 @@ export async function createGateway(config: GatewayConfig) {
 
       return {
         onOpen(_evt, ws) {
+          logTerminalDebug("ws-open", {
+            cwdParam: cwdParam ?? null,
+          });
           const sendJson = (msg: PtyServerMessage) => {
             try {
               ws.send(JSON.stringify(msg));
@@ -1570,6 +1628,7 @@ export async function createGateway(config: GatewayConfig) {
               let sessionId: string | null = null;
               try {
                 sessionId = sessionRegistry.create(cwdParam);
+                logTerminalDebug("auto-create-session", { cwd: cwdParam, sessionId });
                 autoCreatedSessionId = sessionId;
                 handle = sessionRegistry.attach(sessionId);
                 if (handle) {
@@ -1627,6 +1686,12 @@ export async function createGateway(config: GatewayConfig) {
               ws.send(JSON.stringify({ type: "pong" }));
               break;
             case "attach": {
+              logTerminalDebug("ws-attach-request", {
+                mode: "cwd" in msg ? "create" : "reattach",
+                cwd: "cwd" in msg ? msg.cwd : null,
+                sessionId: "sessionId" in msg ? msg.sessionId : null,
+                fromSeq: "fromSeq" in msg ? (msg.fromSeq ?? 0) : null,
+              });
               if (autoCreateTimer) {
                 clearTimeout(autoCreateTimer);
                 autoCreateTimer = null;
@@ -1639,6 +1704,11 @@ export async function createGateway(config: GatewayConfig) {
                 let sessionId: string | null = null;
                 try {
                   sessionId = sessionRegistry.create(msg.cwd, msg.shell);
+                  logTerminalDebug("create-session", {
+                    cwd: msg.cwd,
+                    shell: msg.shell ?? null,
+                    sessionId,
+                  });
                   autoCreatedSessionId = null;
                   handle = sessionRegistry.attach(sessionId);
                   if (handle) {
@@ -1663,6 +1733,7 @@ export async function createGateway(config: GatewayConfig) {
                 try {
                   handle = sessionRegistry.attach(msg.sessionId);
                   if (handle) {
+                    logTerminalDebug("attach-existing-success", { sessionId: msg.sessionId });
                     const info = sessionRegistry.getSession(msg.sessionId);
                     autoCreatedSessionId = null;
                     handle.subscribe(sendJson);
@@ -1674,6 +1745,7 @@ export async function createGateway(config: GatewayConfig) {
                     });
                     handle.replay(msg.fromSeq ?? 0);
                   } else {
+                    logTerminalDebug("attach-existing-miss", { sessionId: msg.sessionId });
                     sendJson({ type: "error", message: "Session not found" });
                   }
                 } catch (err: unknown) {
@@ -1695,19 +1767,153 @@ export async function createGateway(config: GatewayConfig) {
               break;
             case "detach":
               if (handle) {
+                logTerminalDebug("ws-detach", { sessionId: handle.sessionId });
                 handle.detach();
                 handle = null;
+              }
+              break;
+            case "destroy":
+              if (handle) {
+                const sessionId = handle.sessionId;
+                logTerminalDebug("ws-destroy", { sessionId });
+                handle.detach();
+                handle = null;
+                sessionRegistry.destroy(sessionId);
+                if (autoCreatedSessionId === sessionId) {
+                  autoCreatedSessionId = null;
+                }
               }
               break;
           }
         },
 
         onClose() {
+          logTerminalDebug("ws-close", {
+            handleSessionId: handle?.sessionId ?? null,
+            autoCreatedSessionId,
+          });
           if (autoCreateTimer) {
             clearTimeout(autoCreateTimer);
             autoCreateTimer = null;
           }
-          cleanupAutoCreatedSession();
+          cleanupAutoCreatedSession(false);
+        },
+      };
+    }),
+  );
+
+  // --- Onboarding WebSocket ---
+  const onboardingHandler = createOnboardingHandler({
+    homePath,
+    geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+    geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
+  });
+
+  app.get(
+    "/ws/onboarding",
+    upgradeWebSocket(() => {
+      return {
+        onOpen(_evt, ws) {
+          try {
+            onboardingHandler.activate();
+          } catch (err) {
+            console.warn("[onboarding] activate failed:", err instanceof Error ? err.message : String(err));
+            ws.send(JSON.stringify({ type: "error", code: "connection_limit", stage: "greeting", message: "Another onboarding session is active", retryable: true }));
+            ws.close();
+            return;
+          }
+          // onOpen awaits isOnboardingComplete; if that rejects (e.g. fs
+          // permission error), we must release the `active` flag and close
+          // the socket, otherwise the singleton stays locked and all future
+          // connections hang on initial message.
+          onboardingHandler.onOpen((msg) => {
+            ws.send(JSON.stringify(msg));
+          }).catch((err: unknown) => {
+            console.warn(
+              "[onboarding] onOpen failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+            try {
+              ws.send(JSON.stringify({ type: "error", code: "internal", stage: "greeting", message: "onboarding failed to initialize", retryable: true }));
+            } catch (sendErr) {
+              console.warn(
+                "[onboarding] failed to send initialization error:",
+                sendErr instanceof Error ? sendErr.message : String(sendErr),
+              );
+            }
+            onboardingHandler.onClose();
+            ws.close();
+          });
+        },
+        onMessage(evt, ws) {
+          const data = typeof evt.data === "string" ? evt.data : evt.data.toString();
+          void onboardingHandler.onMessage(data).catch((err: unknown) => {
+            console.warn(
+              "[onboarding] onMessage failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+            try {
+              ws.send(JSON.stringify({ type: "error", code: "internal", stage: "unknown", message: "Onboarding message failed", retryable: true }));
+            } catch (sendErr) {
+              console.warn(
+                "[onboarding] failed to send message error:",
+                sendErr instanceof Error ? sendErr.message : String(sendErr),
+              );
+            }
+            ws.close();
+          });
+        },
+        onClose() {
+          onboardingHandler.onClose();
+        },
+      };
+    }),
+  );
+
+  // --- Vocal mode WebSocket ---
+  // Each connection gets its own isolated handler so multiple users (or
+  // reconnecting tabs) don't share a Gemini Live session.
+  app.get(
+    "/ws/vocal",
+    upgradeWebSocket(() => {
+      const vocalHandler = createVocalHandler({
+        homePath,
+        geminiApiKey: process.env.GEMINI_API_KEY ?? "",
+        // VOCAL_GEMINI_MODEL keeps Aoede independently configurable from
+        // onboarding; fall back to ONBOARDING_GEMINI_MODEL so existing
+        // deployments don't regress until operators set the vocal-specific
+        // var.
+        geminiModel:
+          process.env.VOCAL_GEMINI_MODEL ??
+          process.env.ONBOARDING_GEMINI_MODEL ??
+          "gemini-3.1-flash-live-preview",
+      });
+      return {
+        onOpen(_evt, ws) {
+          vocalHandler.onOpen((msg) => {
+            ws.send(JSON.stringify(msg));
+          });
+        },
+        onMessage(evt, ws) {
+          const data = typeof evt.data === "string" ? evt.data : evt.data.toString();
+          void vocalHandler.onMessage(data).catch((err: unknown) => {
+            console.warn(
+              "[vocal] onMessage failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+            try {
+              ws.send(JSON.stringify({ type: "error", message: "Voice message failed", retryable: true }));
+            } catch (sendErr) {
+              console.warn(
+                "[vocal] failed to send message error:",
+                sendErr instanceof Error ? sendErr.message : String(sendErr),
+              );
+            }
+            ws.close();
+          });
+        },
+        onClose() {
+          vocalHandler.onClose();
         },
       };
     }),
@@ -1898,6 +2104,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.delete("/api/terminal/sessions/:id", (c) => {
     const id = c.req.param("id");
+    logTerminalDebug("rest-destroy-request", { sessionId: id });
     if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
     const session = sessionRegistry.getSession(id);
     if (!session) return c.json({ error: "Session not found" }, 404);
@@ -1924,9 +2131,33 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ events });
   });
 
+  function resolveServedFilePath(filePath: string): string | null {
+    const fullPath = resolveWithinHome(homePath, filePath);
+    if (!fullPath) {
+      return null;
+    }
+    if (existsSync(fullPath)) {
+      return fullPath;
+    }
+
+    if (!filePath.endsWith("/manifest.json")) {
+      return fullPath;
+    }
+
+    const dirPath = dirname(fullPath);
+    const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
+    for (const candidate of fallbackCandidates) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return fullPath;
+  }
+
   app.on("HEAD", "/files/*", (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveServedFilePath(filePath);
     if (!fullPath) return c.text("Forbidden", 403);
     if (!existsSync(fullPath)) return c.text("Not found", 404);
     if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
@@ -1935,7 +2166,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/files/*", (c) => {
     const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWithinHome(homePath, filePath);
+    const fullPath = resolveServedFilePath(filePath);
 
     if (!fullPath) {
       return c.text("Forbidden", 403);

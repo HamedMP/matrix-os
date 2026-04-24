@@ -1,7 +1,11 @@
-import { readFile, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { lstat, realpath } from "node:fs/promises";
 import type { Context } from "hono";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import { Readable } from "node:stream";
 import { resolveWithinHome } from "../path-security.js";
+
+const MAX_STATIC_ASSET_BYTES = 25 * 1024 * 1024;
 
 const TEXT_MIME_TYPES: Record<string, string> = {
   html: "text/html",
@@ -30,13 +34,69 @@ const BINARY_MIME_TYPES: Record<string, string> = {
   otf: "font/otf",
 };
 
-async function statOrNull(path: string) {
+async function lstatOrNull(path: string) {
   try {
-    return await stat(path);
+    return await lstat(path);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+}
+
+function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
+  return candidateReal === baseReal || candidateReal.startsWith(`${baseReal}${sep}`);
+}
+
+async function resolveEntry(baseDir: string, baseReal: string, path: string) {
+  const fullPath = resolveWithinHome(baseDir, path);
+  if (fullPath === null) {
+    return { status: "forbidden" as const };
+  }
+
+  const fileStat = await lstatOrNull(fullPath);
+  if (!fileStat) {
+    return { status: "missing" as const };
+  }
+  if (fileStat.isSymbolicLink()) {
+    return { status: "forbidden" as const };
+  }
+
+  const real = await realpath(fullPath);
+  if (!isWithinRealPath(baseReal, real)) {
+    return { status: "forbidden" as const };
+  }
+
+  return { status: "found" as const, fullPath, fileStat };
+}
+
+function serveFile(
+  fullPath: string,
+  requestPath: string,
+  fileStat: Awaited<ReturnType<typeof lstat>>,
+  c: Context,
+): Response {
+  if (fileStat.size > MAX_STATIC_ASSET_BYTES) {
+    return c.text("Payload too large", 413);
+  }
+
+  const ext = requestPath.split(".").pop()?.toLowerCase() ?? "";
+  const contentType = BINARY_MIME_TYPES[ext] ?? TEXT_MIME_TYPES[ext] ?? "application/octet-stream";
+  const etag = `"${fileStat.mtimeMs.toString(36)}-${fileStat.size.toString(36)}"`;
+
+  if (c.req.header("if-none-match") === etag) {
+    return c.body(null, 304);
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    ETag: etag,
+  };
+  if (BINARY_MIME_TYPES[ext]) {
+    headers["Cache-Control"] = "public, max-age=86400, immutable";
+  }
+
+  const stream = Readable.toWeb(createReadStream(fullPath)) as ReadableStream<Uint8Array>;
+  return new Response(stream, { status: 200, headers });
 }
 
 export async function serveStaticFileWithin(
@@ -44,6 +104,16 @@ export async function serveStaticFileWithin(
   requestPath: string,
   c: Context,
 ): Promise<Response> {
+  let baseReal: string;
+  try {
+    baseReal = await realpath(baseDir);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return c.text("Not found", 404);
+    }
+    throw err;
+  }
+
   // SPA fallback: empty path or directory -> index.html
   let filePath = requestPath;
   if (filePath === "" || filePath === "/") {
@@ -55,55 +125,38 @@ export async function serveStaticFileWithin(
     filePath = filePath.slice(1);
   }
 
-  const fullPath = resolveWithinHome(baseDir, filePath);
-  if (fullPath === null) {
+  const entry = await resolveEntry(baseDir, baseReal, filePath);
+  if (entry.status === "forbidden") {
     return c.text("Forbidden", 403);
   }
 
-  const fileStat = await statOrNull(fullPath);
-
-  if (!fileStat) {
+  if (entry.status === "missing") {
     // SPA fallback: non-existing paths serve index.html
-    const indexPath = join(baseDir, "index.html");
-    const indexStat = await statOrNull(indexPath);
-    if (indexStat?.isFile()) {
-      const content = await readFile(indexPath, "utf-8");
-      return c.body(content, 200, {
-        "Content-Type": "text/html",
-      });
+    const indexEntry = await resolveEntry(baseDir, baseReal, "index.html");
+    if (indexEntry.status === "forbidden") {
+      return c.text("Forbidden", 403);
+    }
+    if (indexEntry.status === "found" && indexEntry.fileStat.isFile()) {
+      return serveFile(indexEntry.fullPath, "index.html", indexEntry.fileStat, c);
     }
     return c.text("Not found", 404);
   }
 
+  const { fullPath, fileStat } = entry;
   if (fileStat.isDirectory()) {
-    const indexPath = join(fullPath, "index.html");
-    const indexStat = await statOrNull(indexPath);
-    if (indexStat?.isFile()) {
-      const content = await readFile(indexPath, "utf-8");
-      return c.body(content, 200, {
-        "Content-Type": "text/html",
-      });
+    const indexEntry = await resolveEntry(baseDir, baseReal, join(filePath, "index.html"));
+    if (indexEntry.status === "forbidden") {
+      return c.text("Forbidden", 403);
+    }
+    if (indexEntry.status === "found" && indexEntry.fileStat.isFile()) {
+      return serveFile(indexEntry.fullPath, join(filePath, "index.html"), indexEntry.fileStat, c);
     }
     return c.text("Not found", 404);
   }
 
-  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-
-  if (BINARY_MIME_TYPES[ext]) {
-    const etag = `"${fileStat.mtimeMs.toString(36)}-${fileStat.size.toString(36)}"`;
-    if (c.req.header("if-none-match") === etag) {
-      return c.body(null, 304);
-    }
-    const buffer = await readFile(fullPath);
-    return c.body(buffer, 200, {
-      "Content-Type": BINARY_MIME_TYPES[ext],
-      "Cache-Control": "public, max-age=86400, immutable",
-      ETag: etag,
-    });
+  if (!fileStat.isFile()) {
+    return c.text("Not found", 404);
   }
 
-  const content = await readFile(fullPath, "utf-8");
-  return c.body(content, 200, {
-    "Content-Type": TEXT_MIME_TYPES[ext] ?? "application/octet-stream",
-  });
+  return serveFile(fullPath, filePath, fileStat, c);
 }

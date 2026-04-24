@@ -31,9 +31,12 @@ const MIN_HEIGHT = 200;
 
 interface CanvasWindowProps {
   win: AppWindow;
+  /** When true, the window stays mounted but is visually hidden so iframe
+      state, terminal sockets, and React state survive minimize -> restore. */
+  hidden?: boolean;
 }
 
-export function CanvasWindow({ win }: CanvasWindowProps) {
+export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
   const fitAll = useCanvasTransform((s) => s.fitAll);
@@ -62,6 +65,16 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   const [interacting, setInteracting] = useState(false);
   const isInteractive = zoom >= INTERACTION_THRESHOLD;
   const inverseScale = 1 / zoom;
+
+  // Iframe windows get a "click-to-interact" overlay so wheel events reach
+  // the canvas instead of being swallowed by the iframe's browsing context.
+  const isIframeWindow = !win.path.startsWith("__");
+  const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
+  const [contentFocused, setContentFocused] = useState(false);
+
+  useEffect(() => {
+    if (isCanvasScrolling || !isFocused) setContentFocused(false);
+  }, [isCanvasScrolling, isFocused]);
 
   const dragRef = useRef<{
     startX: number;
@@ -331,14 +344,32 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
     </div>
   );
 
-  const titleBar = showTitles ? (isNeumorphic ? win98TitleBar : macTitleBar) : null;
+  const titleBarInner = isNeumorphic ? win98TitleBar : macTitleBar;
+  const titleBar = (
+    <div
+      style={{
+        opacity: showTitles ? 1 : 0,
+        transform: showTitles ? "translateY(0)" : "translateY(4px)",
+        transition: "opacity 260ms cubic-bezier(0.22, 1, 0.36, 1), transform 260ms cubic-bezier(0.22, 1, 0.36, 1)",
+        pointerEvents: showTitles ? undefined : "none",
+      }}
+    >
+      {titleBarInner}
+    </div>
+  );
 
   // Zoomed-out preview: icon card with title bar above
   if (!isInteractive) {
     return (
       <div
         className="absolute"
-        style={{ left: win.x, top: win.y, zIndex: win.zIndex, pointerEvents: "auto" }}
+        style={{
+          left: win.x,
+          top: win.y,
+          zIndex: win.zIndex,
+          pointerEvents: "auto",
+          display: hidden ? "none" : undefined,
+        }}
       >
         {titleBar}
         <div
@@ -363,7 +394,12 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
   return (
     <div
       className="absolute"
-      style={{ left: win.x, top: win.y, zIndex: win.zIndex }}
+      style={{
+        left: win.x,
+        top: win.y,
+        zIndex: win.zIndex,
+        display: hidden ? "none" : undefined,
+      }}
       onMouseDown={() => focusWindow(win.id)}
     >
       {titleBar}
@@ -398,6 +434,18 @@ export function CanvasWindow({ win }: CanvasWindowProps) {
           <AppViewer path={win.path} />
         )}
         {interacting && <div className="absolute inset-0 z-10" />}
+        {/* Click-to-interact overlay for iframe windows: captures wheel events
+            so the canvas can pan/zoom. Hides on click so the iframe is interactive. */}
+        {isIframeWindow && !contentFocused && !interacting && (
+          <div
+            className="absolute inset-0 z-10"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              setContentFocused(true);
+              focusWindow(win.id);
+            }}
+          />
+        )}
       </div>
       {/* Resize handle */}
       <div

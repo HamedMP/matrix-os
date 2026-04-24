@@ -4,7 +4,8 @@ export type ConversationRunMessage =
   | { type: "kernel:tool_start"; tool: string; requestId?: string }
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
   | { type: "kernel:result"; data: unknown; requestId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string };
+  | { type: "kernel:error"; message: string; requestId?: string }
+  | { type: "kernel:aborted"; requestId?: string };
 
 export interface ConversationRunRegistryOptions {
   maxRuns?: number;

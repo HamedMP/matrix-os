@@ -135,10 +135,18 @@ describe('platform/stats-collector', () => {
   });
 
   it('handles disappeared container gracefully', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const docker = {
-      getContainer: vi.fn(() => ({
-        stats: vi.fn().mockRejectedValue(new Error('no such container')),
-      })),
+      getContainer: vi.fn((id: string) => {
+        if (id === 'gone-1') {
+          return {
+            stats: vi.fn().mockRejectedValue(new Error('No such container')),
+          };
+        }
+        return {
+          inspect: vi.fn().mockRejectedValue(new Error('fallback inspect failed')),
+        };
+      }),
     };
 
     const db = createMockDb([
@@ -152,6 +160,10 @@ describe('platform/stats-collector', () => {
 
     const results = await collector.collectOnce();
     expect(results).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[stats-collector] Name-based fallback also failed for ghost:',
+      'fallback inspect failed',
+    );
   });
 
   it('skips containers without containerId', async () => {

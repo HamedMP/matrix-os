@@ -18,23 +18,32 @@ export interface ChatState {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  /** Name of the currently-running tool, or null when the agent is just
+      generating text. Drives the global AgentStatusCard's stage label. */
+  currentTool: string | null;
   connected: boolean;
   queue: QueuedMessage[];
   conversations: ReturnType<typeof useConversation>["conversations"];
   submitMessage: (text: string) => void;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
+  /** Stops the in-flight agent run. No-op if nothing is running. */
+  abortCurrent: () => void;
 }
 
 export function useChatState(): ChatState {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const { connected, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
   const pendingRestoreSessionRef = useRef<string | null>(null);
+  // Tracks the requestId of the in-flight run so abortCurrent() can target
+  // the right server-side AbortController. Cleared on terminal events.
+  const currentRequestIdRef = useRef<string | null>(null);
   sessionRef.current = sessionId;
 
   useEffect(() => {
@@ -84,23 +93,48 @@ export function useChatState(): ChatState {
         return;
       }
 
-      if (msg.type === "kernel:result" || msg.type === "kernel:error") {
+      if (msg.type === "kernel:tool_start") {
+        setCurrentTool(msg.tool);
+        setMessages((prev) => reduceChat(prev, msg));
+        return;
+      }
+
+      if (msg.type === "kernel:tool_end") {
+        setCurrentTool(null);
+        setMessages((prev) => reduceChat(prev, msg));
+        return;
+      }
+
+      if (
+        msg.type === "kernel:result" ||
+        msg.type === "kernel:error" ||
+        msg.type === "kernel:aborted"
+      ) {
         setBusy(false);
+        setCurrentTool(null);
+        currentRequestIdRef.current = null;
 
-        setQueue((prev) => {
-          if (prev.length === 0) return prev;
-          const [next, ...rest] = prev;
-          send({
-            type: "message",
-            text: next.text,
-            sessionId: sessionRef.current,
-            requestId: next.requestId,
+        // Abort clears the queue: stopping means "I changed my mind".
+        // Result/error drain the next queued message as before.
+        if (msg.type === "kernel:aborted") {
+          setQueue([]);
+        } else {
+          setQueue((prev) => {
+            if (prev.length === 0) return prev;
+            const [next, ...rest] = prev;
+            send({
+              type: "message",
+              text: next.text,
+              sessionId: sessionRef.current,
+              requestId: next.requestId,
+            });
+            currentRequestIdRef.current = next.requestId;
+            setBusy(true);
+            return rest;
           });
-          setBusy(true);
-          return rest;
-        });
+        }
 
-        if (msg.type === "kernel:error") {
+        if (msg.type === "kernel:error" || msg.type === "kernel:aborted") {
           setMessages((prev) => reduceChat(prev, msg));
         }
         return;
@@ -131,11 +165,22 @@ export function useChatState(): ChatState {
         setQueue((prev) => [...prev, { text, requestId }]);
       } else {
         send({ type: "message", text, sessionId, requestId });
+        currentRequestIdRef.current = requestId;
         setBusy(true);
       }
     },
     [busy, send, sessionId],
   );
+
+  const abortCurrent = useCallback(() => {
+    const requestId = currentRequestIdRef.current;
+    if (!requestId) return;
+    send({ type: "abort", requestId });
+    // Don't optimistically clear busy here -- wait for kernel:aborted from
+    // the server so the message log stays consistent with the real run
+    // state. The server-side abort takes ~50ms; visible stop button can
+    // show a "stopping..." pending state in the meantime if needed.
+  }, [send]);
 
   const newChat = useCallback(async () => {
     setMessages([]);
@@ -182,11 +227,13 @@ export function useChatState(): ChatState {
     messages,
     sessionId,
     busy,
+    currentTool,
     connected,
     queue,
     conversations,
     submitMessage,
     newChat,
     switchConversation,
+    abortCurrent,
   };
 }
