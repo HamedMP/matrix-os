@@ -53,6 +53,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
           isFocused={focusedPaneId === node.id}
           sessionId={node.sessionId}
           claudeMode={node.claudeMode === true}
+          startupCommand={node.startupCommand}
           onFocus={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCacheOnUnmount={shouldCachePane}

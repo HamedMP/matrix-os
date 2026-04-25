@@ -2049,6 +2049,80 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(result);
   });
 
+  app.get("/api/projects", async (c) => {
+    const rootParam = (c.req.query("root") ?? "projects").trim();
+    if (rootParam.length === 0 || rootParam.length > 1024) {
+      return c.json({ error: "Invalid root" }, 400);
+    }
+    const resolved = resolveWithinHome(homePath, rootParam);
+    if (!resolved) return c.json({ error: "Invalid root" }, 400);
+    let entries;
+    try {
+      const { readdir } = await import("node:fs/promises");
+      entries = await readdir(resolved, { withFileTypes: true, encoding: "utf8" });
+    } catch (err: unknown) {
+      console.warn("[projects] Failed to read root:", err instanceof Error ? err.message : err);
+      return c.json({ projects: [] });
+    }
+    const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith("."));
+
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { stat } = await import("node:fs/promises");
+    const exec = promisify(execFile);
+
+    const projects = await Promise.all(
+      dirs.map(async (entry) => {
+        const fullPath = `${resolved}/${entry.name}`;
+        const relPath = `${rootParam}/${entry.name}`;
+        let branch: string | null = null;
+        let dirtyCount = 0;
+        let isGit = false;
+        let modified: string | null = null;
+        try {
+          const s = await stat(fullPath);
+          modified = new Date(s.mtimeMs).toISOString();
+        } catch (_err: unknown) { /* skip mtime */ }
+        try {
+          const { stdout } = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+            cwd: fullPath,
+            encoding: "utf-8",
+            timeout: 2000,
+          });
+          branch = stdout.trim();
+          isGit = true;
+        } catch (_err: unknown) {
+          isGit = false;
+        }
+        if (isGit) {
+          try {
+            const { stdout } = await exec("git", ["status", "--porcelain"], {
+              cwd: fullPath,
+              encoding: "utf-8",
+              timeout: 2000,
+            });
+            dirtyCount = stdout.split("\n").filter((l) => l.trim().length > 0).length;
+          } catch (_err: unknown) { /* leave 0 */ }
+        }
+        return {
+          name: entry.name,
+          path: relPath,
+          isGit,
+          branch,
+          dirtyCount,
+          modified,
+        };
+      }),
+    );
+
+    projects.sort((a, b) => {
+      if (!a.modified || !b.modified) return a.name.localeCompare(b.name);
+      return b.modified.localeCompare(a.modified);
+    });
+
+    return c.json({ root: rootParam, projects });
+  });
+
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     try {
