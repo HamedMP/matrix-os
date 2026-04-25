@@ -47,7 +47,7 @@ FROM node:24-alpine AS runtime
 
 # Runtime: git (home dir init + self-healing), build tools (node-pty native addon),
 # bubblewrap (bwrap) for codex's per-command sandbox
-RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec bubblewrap openssh-client
+RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec bubblewrap openssh-client curl
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
