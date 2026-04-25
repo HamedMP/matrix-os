@@ -21,6 +21,7 @@ import { listDirectory } from "./files-tree.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
+import { listProjects } from "./projects.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -2047,6 +2048,13 @@ export async function createGateway(config: GatewayConfig) {
   app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
     const result = await trashEmpty(homePath);
     return c.json(result);
+  });
+
+  app.get("/api/projects", async (c) => {
+    const rootParam = (c.req.query("root") ?? "projects").trim();
+    const result = await listProjects(homePath, rootParam);
+    if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);
+    return c.json({ root: result.root, projects: result.projects });
   });
 
   app.get("/api/terminal/layout", async (c) => {
