@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
@@ -23,18 +23,13 @@ const ZELLIJ_THEME_BY_TERMINAL: Record<string, string> = {
   "github-light": "default",
 };
 
-// Build a one-shot shell command that writes a minimal zellij config
-// honoring the user's terminal theme, then launches zellij. This keeps
-// zellij in sync with the xterm theme without requiring the user to
-// hand-edit ~/.config/zellij/config.kdl.
+// Build a one-shot shell command that writes a Matrix-owned zellij config
+// honoring the user's terminal theme, then launches zellij with that config.
 function zellijLaunchCommand(themeId: TerminalThemeId, isLight: boolean): string {
   const mapped = themeId !== "system" ? ZELLIJ_THEME_BY_TERMINAL[themeId] : undefined;
   const fallback = isLight ? "one-half-light" : "default";
   const theme = mapped ?? fallback;
-  // Single line: idempotent config write, then exec zellij. Quoting note:
-  // the literal `theme "X"` line needs to land in the file, so we wrap the
-  // outer string in single quotes and embed `\"` escapes.
-  return `mkdir -p ~/.config/zellij && printf 'theme "${theme}"\\n' > ~/.config/zellij/config.kdl && zellij`;
+  return `mkdir -p ~/.config/matrix-os && printf 'theme "${theme}"\\n' > ~/.config/matrix-os/zellij.kdl && exec zellij --config ~/.config/matrix-os/zellij.kdl`;
 }
 
 const DEFAULT_CWD = "projects";
@@ -550,8 +545,6 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
 }
 
 // ---- Context for local state ----
-
-import { createContext, useContext } from "react";
 
 interface TerminalAppContextType {
   tabs: Tab[];

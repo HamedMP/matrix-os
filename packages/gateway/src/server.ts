@@ -2056,7 +2056,7 @@ export async function createGateway(config: GatewayConfig) {
     }
     const resolved = resolveWithinHome(homePath, rootParam);
     if (!resolved) return c.json({ error: "Invalid root" }, 400);
-    let entries;
+    let entries: import("node:fs").Dirent[];
     try {
       const { readdir } = await import("node:fs/promises");
       entries = await readdir(resolved, { withFileTypes: true, encoding: "utf8" });
@@ -2070,49 +2070,66 @@ export async function createGateway(config: GatewayConfig) {
     const { promisify } = await import("node:util");
     const { stat } = await import("node:fs/promises");
     const exec = promisify(execFile);
+    const mapWithConcurrency = async <T, R>(
+      values: T[],
+      concurrency: number,
+      mapper: (value: T) => Promise<R>,
+    ): Promise<R[]> => {
+      const results = new Array<R>(values.length);
+      let nextIndex = 0;
+      const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+        while (nextIndex < values.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          results[index] = await mapper(values[index]);
+        }
+      });
+      await Promise.all(workers);
+      return results;
+    };
 
-    const projects = await Promise.all(
-      dirs.map(async (entry) => {
-        const fullPath = `${resolved}/${entry.name}`;
-        const relPath = `${rootParam}/${entry.name}`;
-        let branch: string | null = null;
-        let dirtyCount = 0;
-        let isGit = false;
-        let modified: string | null = null;
+    const projects = await mapWithConcurrency(dirs, 8, async (entry) => {
+      const fullPath = join(resolved, entry.name);
+      const relPath = rootParam === "." ? entry.name : `${rootParam.replace(/\/+$/, "")}/${entry.name}`;
+      let branch: string | null = null;
+      let dirtyCount = 0;
+      let isGit = false;
+      let modified: string | null = null;
+      try {
+        const s = await stat(fullPath);
+        modified = new Date(s.mtimeMs).toISOString();
+      } catch (_err: unknown) { /* skip mtime */ }
+      try {
+        await stat(join(fullPath, ".git"));
+        const { stdout } = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: fullPath,
+          encoding: "utf-8",
+          timeout: 2000,
+        });
+        branch = stdout.trim();
+        isGit = true;
+      } catch (_err: unknown) {
+        isGit = false;
+      }
+      if (isGit) {
         try {
-          const s = await stat(fullPath);
-          modified = new Date(s.mtimeMs).toISOString();
-        } catch (_err: unknown) { /* skip mtime */ }
-        try {
-          const { stdout } = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+          const { stdout } = await exec("git", ["status", "--porcelain"], {
             cwd: fullPath,
             encoding: "utf-8",
             timeout: 2000,
           });
-          branch = stdout.trim();
-          isGit = true;
-        } catch (_err: unknown) {
-          isGit = false;
-        }
-        if (isGit) {
-          try {
-            const { stdout } = await exec("git", ["status", "--porcelain"], {
-              cwd: fullPath,
-              encoding: "utf-8",
-              timeout: 2000,
-            });
-            dirtyCount = stdout.split("\n").filter((l) => l.trim().length > 0).length;
-          } catch (_err: unknown) { /* leave 0 */ }
-        }
-        return {
-          name: entry.name,
-          path: relPath,
-          isGit,
-          branch,
-          dirtyCount,
-          modified,
-        };
-      }),
+          dirtyCount = stdout.split("\n").filter((l) => l.trim().length > 0).length;
+        } catch (_err: unknown) { /* leave 0 */ }
+      }
+      return {
+        name: entry.name,
+        path: relPath,
+        isGit,
+        branch,
+        dirtyCount,
+        modified,
+      };
+    },
     );
 
     projects.sort((a, b) => {

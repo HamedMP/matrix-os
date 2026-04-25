@@ -4,17 +4,14 @@
 # existing cloudflared tunnel. Source is bind-mounted from ~/matrix-os
 # so edits on disk hit `next dev` (Turbopack HMR) and `tsx watch` for
 # the gateway. Joins the platform's matrixos-net so cloudflared can
-# reach it as `staging-dev:3000` / `staging-dev:4000`.
+# reach it as `matrixos-staging:3000` / `matrixos-staging:4000`.
 #
 # Usage:
 #   docker compose -f docker-compose.staging.yml up -d --build
 #   docker compose -f docker-compose.staging.yml logs -f
 #   docker compose -f docker-compose.staging.yml down
 #
-# Reuses the platform's postgres (distro-postgres-1) on matrixos-net,
-# database `matrixos_staging` (created on first connect by the staging
-# pg superuser; if your auth is locked down, swap to the main `matrixos`
-# DB).
+# Reuses the platform's postgres (distro-postgres-1) on matrixos-net.
 
 services:
   staging-dev:

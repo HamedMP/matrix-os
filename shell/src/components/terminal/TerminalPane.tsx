@@ -38,6 +38,8 @@ const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
 const MAX_TERMINAL_INPUT = 65_536;
+const MAX_OSC52_BASE64_LENGTH = 1_000_000;
+const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
 
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
@@ -414,10 +416,15 @@ export function TerminalPane({
           xterm.parser.registerOscHandler(52, (data: string) => {
             const semi = data.indexOf(";");
             if (semi < 0) return false;
+            const target = data.slice(0, semi);
+            if (!OSC52_ALLOWED_TARGETS.has(target)) return false;
             const payload = data.slice(semi + 1);
             if (payload === "" || payload === "?") {
               // Query for current clipboard contents — we don't expose this.
               return true;
+            }
+            if (payload.length > MAX_OSC52_BASE64_LENGTH || !/^[A-Za-z0-9+/=]+$/.test(payload)) {
+              return false;
             }
             let text: string;
             try {
@@ -432,12 +439,14 @@ export function TerminalPane({
                 ta.value = text;
                 ta.style.position = "fixed";
                 ta.style.opacity = "0";
+                ta.setAttribute("data-osc52-fallback", "true");
                 document.body.appendChild(ta);
                 ta.select();
                 document.execCommand("copy");
-                document.body.removeChild(ta);
               } catch (err: unknown) {
                 console.warn("OSC 52 fallback copy failed:", err instanceof Error ? err.message : err);
+              } finally {
+                document.querySelectorAll("textarea[data-osc52-fallback='true']").forEach((node) => node.remove());
               }
             };
             if (typeof navigator !== "undefined" && navigator.clipboard) {
