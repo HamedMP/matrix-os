@@ -10,7 +10,6 @@ const nextConfig: NextConfig = {
   // resources on cross-origin hostnames by default.
   allowedDevOrigins: [
     "staging.matrix-os.com",
-    "*.matrix-os.com",
     "localhost",
     "127.0.0.1",
   ],

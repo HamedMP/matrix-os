@@ -21,6 +21,7 @@ import { listDirectory } from "./files-tree.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
+import { listProjects } from "./projects.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -2051,93 +2052,9 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/api/projects", async (c) => {
     const rootParam = (c.req.query("root") ?? "projects").trim();
-    if (rootParam.length === 0 || rootParam.length > 1024) {
-      return c.json({ error: "Invalid root" }, 400);
-    }
-    const resolved = resolveWithinHome(homePath, rootParam);
-    if (!resolved) return c.json({ error: "Invalid root" }, 400);
-    let entries: import("node:fs").Dirent[];
-    try {
-      const { readdir } = await import("node:fs/promises");
-      entries = await readdir(resolved, { withFileTypes: true, encoding: "utf8" });
-    } catch (err: unknown) {
-      console.warn("[projects] Failed to read root:", err instanceof Error ? err.message : err);
-      return c.json({ projects: [] });
-    }
-    const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith("."));
-
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const { stat } = await import("node:fs/promises");
-    const exec = promisify(execFile);
-    const mapWithConcurrency = async <T, R>(
-      values: T[],
-      concurrency: number,
-      mapper: (value: T) => Promise<R>,
-    ): Promise<R[]> => {
-      const results = new Array<R>(values.length);
-      let nextIndex = 0;
-      const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-        while (nextIndex < values.length) {
-          const index = nextIndex;
-          nextIndex += 1;
-          results[index] = await mapper(values[index]);
-        }
-      });
-      await Promise.all(workers);
-      return results;
-    };
-
-    const projects = await mapWithConcurrency(dirs, 8, async (entry) => {
-      const fullPath = join(resolved, entry.name);
-      const relPath = rootParam === "." ? entry.name : `${rootParam.replace(/\/+$/, "")}/${entry.name}`;
-      let branch: string | null = null;
-      let dirtyCount = 0;
-      let isGit = false;
-      let modified: string | null = null;
-      try {
-        const s = await stat(fullPath);
-        modified = new Date(s.mtimeMs).toISOString();
-      } catch (_err: unknown) { /* skip mtime */ }
-      try {
-        await stat(join(fullPath, ".git"));
-        const { stdout } = await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-          cwd: fullPath,
-          encoding: "utf-8",
-          timeout: 2000,
-        });
-        branch = stdout.trim();
-        isGit = true;
-      } catch (_err: unknown) {
-        isGit = false;
-      }
-      if (isGit) {
-        try {
-          const { stdout } = await exec("git", ["status", "--porcelain"], {
-            cwd: fullPath,
-            encoding: "utf-8",
-            timeout: 2000,
-          });
-          dirtyCount = stdout.split("\n").filter((l) => l.trim().length > 0).length;
-        } catch (_err: unknown) { /* leave 0 */ }
-      }
-      return {
-        name: entry.name,
-        path: relPath,
-        isGit,
-        branch,
-        dirtyCount,
-        modified,
-      };
-    },
-    );
-
-    projects.sort((a, b) => {
-      if (!a.modified || !b.modified) return a.name.localeCompare(b.name);
-      return b.modified.localeCompare(a.modified);
-    });
-
-    return c.json({ root: rootParam, projects });
+    const result = await listProjects(homePath, rootParam);
+    if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);
+    return c.json({ root: result.root, projects: result.projects });
   });
 
   app.get("/api/terminal/layout", async (c) => {

@@ -47,18 +47,40 @@ for tool in .claude .codex; do
 done
 
 # Expose Matrix OS skills to Claude Code and Codex
-# Clean stale copies from previous runs, then create fresh ones.
+# Clean Matrix-managed copies from previous runs, then create fresh ones.
 # Both tools discover skills in project-level and user-level directories.
-rm -rf "$MATRIX_HOME/.claude/skills" "$MATRIX_HOME/.codex/skills" \
-       "/home/matrixos/.claude/skills" "/home/matrixos/.codex/skills"
+cleanup_matrix_skills() {
+  skills_root="$1"
+  mkdir -p "$skills_root"
+  for generated in "$skills_root"/matrix-*; do
+    [ -e "$generated" ] || continue
+    [ -f "$generated/.matrix-os-managed" ] && rm -rf "$generated"
+  done
+  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
+    [ -f "$skill" ] || continue
+    name=$(basename "$skill" .md)
+    legacy="$skills_root/$name"
+    if [ -f "$legacy/SKILL.md" ] && grep -q "^name: matrix-$name\$" "$legacy/SKILL.md"; then
+      rm -rf "$legacy"
+    elif [ -f "$legacy/agents/openai.yaml" ] && grep -q 'display_name: "Matrix:' "$legacy/agents/openai.yaml"; then
+      rm -rf "$legacy"
+    fi
+  done
+}
+for skills_root in "/home/matrixos/.claude/skills" "/home/matrixos/.codex/skills" \
+                   "$MATRIX_HOME/.claude/skills" "$MATRIX_HOME/.codex/skills"; do
+  cleanup_matrix_skills "$skills_root"
+done
 
 for skills_root in "/home/matrixos/.claude/skills" "$MATRIX_HOME/.claude/skills"; do
   mkdir -p "$skills_root"
   for skill in "$MATRIX_HOME/agents/skills/"*.md; do
     [ -f "$skill" ] || continue
     name=$(basename "$skill" .md)
-    mkdir -p "$skills_root/$name"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$skills_root/$name/SKILL.md"
+    out="$skills_root/matrix-$name"
+    mkdir -p "$out"
+    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
+    touch "$out/.matrix-os-managed"
   done
 done
 
@@ -68,17 +90,19 @@ for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; 
   for skill in "$MATRIX_HOME/agents/skills/"*.md; do
     [ -f "$skill" ] || continue
     name=$(basename "$skill" .md)
-    mkdir -p "$skills_root/$name/agents"
-    cp -f "$skill" "$skills_root/$name/SKILL.md"
+    out="$skills_root/matrix-$name"
+    mkdir -p "$out/agents"
+    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
+    touch "$out/.matrix-os-managed"
     display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
     desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
     short_desc=$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')
     prompt_desc=$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    cat > "$skills_root/$name/agents/openai.yaml" <<EOYAML
+    cat > "$out/agents/openai.yaml" <<EOYAML
 interface:
   display_name: "Matrix: $display"
   short_description: "$short_desc"
-  default_prompt: "Use \$$name for $prompt_desc."
+  default_prompt: "Use \$matrix-$name for $prompt_desc."
 EOYAML
   done
 done

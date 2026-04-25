@@ -46,8 +46,8 @@ services:
       - NEXT_PUBLIC_GATEWAY_URL=https://api-staging.matrix-os.com
       - GATEWAY_URL=http://localhost:4000
       # Reuse platform postgres on matrixos-net.
-      - DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
-      - PLATFORM_DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos
+      - DATABASE_URL=${STAGING_DATABASE_URL:-postgresql://matrixos:matrixos@postgres:5432/matrixos}
+      - PLATFORM_DATABASE_URL=${STAGING_PLATFORM_DATABASE_URL:-postgresql://matrixos:matrixos@postgres:5432/matrixos}
     networks:
       - matrixos-net
     restart: unless-stopped
