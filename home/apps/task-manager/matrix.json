@@ -4,5 +4,9 @@
   "category": "productivity",
   "icon": "task-manager",
   "author": "system",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "runtime": "static",
+  "slug": "task-manager",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }

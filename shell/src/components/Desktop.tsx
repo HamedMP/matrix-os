@@ -467,12 +467,12 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   useEffect(() => {
     if (setupChecked.current) return;
     setupChecked.current = true;
-    fetch(`${GATEWAY_URL}/api/settings/api-key/status`, {
+    fetch(`${GATEWAY_URL}/api/settings/onboarding-status`, {
       signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
     })
       .then((r) => r.json())
-      .then((data: { hasKey: boolean }) => {
-        if (data.hasKey) setShowSetup(false);
+      .then((data: { complete: boolean }) => {
+        if (data.complete) setShowSetup(false);
       })
       .catch((err: unknown) => {
         console.warn("[desktop] failed to check setup status:", err instanceof Error ? err.message : String(err));

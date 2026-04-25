@@ -13,8 +13,14 @@
           "content": "text",
           "pinned": "boolean"
         },
-        "indexes": ["pinned"]
+        "indexes": [
+          "pinned"
+        ]
       }
     }
-  }
+  },
+  "runtime": "static",
+  "slug": "notes",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }

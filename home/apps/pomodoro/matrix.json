@@ -13,8 +13,14 @@
           "type": "text",
           "completed": "boolean"
         },
-        "indexes": ["type"]
+        "indexes": [
+          "type"
+        ]
       }
     }
-  }
+  },
+  "runtime": "static",
+  "slug": "pomodoro",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party"
 }

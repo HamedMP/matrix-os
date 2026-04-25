@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { VoiceState } from "@/hooks/useOnboarding";
 
 export type VocalIntent =
@@ -315,35 +316,43 @@ export function useVocalSession(enabled: boolean, options: VocalSessionOptions =
     if (!enabled) return;
 
     mountedRef.current = true;
-    const isLocalDev = typeof window !== "undefined" && window.location.hostname === "localhost";
-    const wsBase = isLocalDev ? `ws://localhost:4000` : window.location.origin.replace(/^http/, "ws");
-    const ws = new WebSocket(`${wsBase}/ws/vocal`);
-    wsRef.current = ws;
+    let ws: WebSocket | null = null;
 
-    ws.onopen = () => {
-      if (!mountedRef.current) return;
-      setConnected(true);
-      void startMic()
-        .then(() => {
-          if (mountedRef.current && ws.readyState === WebSocket.OPEN) {
-            send({ type: "start", audioFormat: "pcm16" });
-          }
-        })
-        .catch((err: unknown) => {
-          console.warn("[vocal] failed to start microphone:", err instanceof Error ? err.message : String(err));
-          ws.close();
-        });
-    };
-    ws.onmessage = handleMessage;
-    ws.onerror = () => setError("Connection failed");
-    ws.onclose = () => {
-      setConnected(false);
-      wsRef.current = null;
-    };
+    void buildAuthenticatedWebSocketUrl("/ws/vocal")
+      .then((wsUrl) => {
+        if (!mountedRef.current) return;
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          if (!mountedRef.current) return;
+          setConnected(true);
+          void startMic()
+            .then(() => {
+              if (mountedRef.current && ws?.readyState === WebSocket.OPEN) {
+                send({ type: "start", audioFormat: "pcm16" });
+              }
+            })
+            .catch((err: unknown) => {
+              console.warn("[vocal] failed to start microphone:", err instanceof Error ? err.message : String(err));
+              ws?.close();
+            });
+        };
+        ws.onmessage = handleMessage;
+        ws.onerror = () => setError("Connection failed");
+        ws.onclose = () => {
+          setConnected(false);
+          wsRef.current = null;
+        };
+      })
+      .catch((err: unknown) => {
+        console.warn("[vocal] failed to build authenticated WS url:", err instanceof Error ? err.message : String(err));
+        setError("Connection failed");
+      });
 
     return () => {
       mountedRef.current = false;
-      ws.close();
+      ws?.close();
       stopMic();
       playCtxRef.current?.close().catch((err: unknown) => {
         console.warn("[vocal] failed to close playback context:", err instanceof Error ? err.message : String(err));
