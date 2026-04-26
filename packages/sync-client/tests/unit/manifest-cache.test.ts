@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, mkdir, rm, readFile, readdir, stat } from "node:fs/promises";
+import { writeFile, mkdir, rm, readFile, readdir, stat, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import {
   loadSyncState,
@@ -88,6 +88,48 @@ describe("loadSyncState", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("schema-mismatch"),
     );
+    warn.mockRestore();
+  });
+
+  it("still resets state when the backup write itself fails", async () => {
+    if (process.getuid?.() === 0) {
+      // root bypasses chmod-enforced perms, so this scenario can't be
+      // simulated without module mocking. Skip rather than silently pass.
+      return;
+    }
+    const corrupt = "not valid json {{{";
+    await writeFile(STATE_PATH, corrupt);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Make the directory read-only so writeUtf8FileAtomic's tmp-file
+    // creation fails. Restore in finally so afterEach can clean up.
+    await chmod(TEST_DIR, 0o500);
+    try {
+      const state = await loadSyncState(STATE_PATH);
+
+      expect(state.manifestVersion).toBe(0);
+      expect(Object.keys(state.files)).toHaveLength(0);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("could not back up"),
+      );
+    } finally {
+      await chmod(TEST_DIR, 0o700);
+    }
+    warn.mockRestore();
+  });
+
+  it("caps .corrupt-* backups so they cannot accumulate unbounded", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) {
+      await writeFile(STATE_PATH, `bad-${i} {{{`);
+      await loadSyncState(STATE_PATH);
+    }
+
+    const entries = await readdir(TEST_DIR);
+    const backups = entries.filter((e) => e.startsWith("sync-state.json.corrupt-"));
+    expect(backups.length).toBeLessThanOrEqual(3);
+    expect(backups.length).toBeGreaterThan(0);
     warn.mockRestore();
   });
 
