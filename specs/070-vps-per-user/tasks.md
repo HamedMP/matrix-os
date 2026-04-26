@@ -89,19 +89,19 @@
 
 ### Tests for User Story 2
 
-- [ ] T031 [P] [US2] Add VPS-first routing and legacy fallback tests in `tests/platform/profile-routing-vps.test.ts`
-- [ ] T032 [P] [US2] Add customer host unit ordering tests in `tests/platform/customer-vps-cloud-init.test.ts`
+- [X] T031 [P] [US2] Add VPS-first routing and legacy fallback tests in `tests/platform/profile-routing-vps.test.ts`
+- [X] T032 [P] [US2] Add customer host unit ordering tests in `tests/platform/customer-vps-cloud-init.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T033 [US2] Add running-VPS lookup helper by handle and Clerk user ID in `packages/platform/src/db.ts`
-- [ ] T034 [US2] Implement VPS endpoint resolution before container routing in `packages/platform/src/profile-routing.ts`
-- [ ] T035 [US2] Integrate VPS routing branch into subdomain proxy handling in `packages/platform/src/main.ts`
-- [ ] T036 [P] [US2] Implement `matrix-gateway.service` for customer VPS hosts in `distro/customer-vps/systemd/matrix-gateway.service`
-- [ ] T037 [P] [US2] Implement `matrix-shell.service` for customer VPS hosts in `distro/customer-vps/systemd/matrix-shell.service`
-- [ ] T038 [P] [US2] Implement `matrix-sync-agent.service` shell point for customer VPS hosts in `distro/customer-vps/systemd/matrix-sync-agent.service`
-- [ ] T039 [US2] Update `distro/customer-vps/cloud-init.yaml` to install host bundle, Postgres compose, and systemd units
-- [ ] T040 [US2] Run routing tests from `quickstart.md` against `tests/platform/profile-routing-vps.test.ts`
+- [X] T033 [US2] Add running-VPS lookup helper by handle and Clerk user ID in `packages/platform/src/db.ts`
+- [X] T034 [US2] Implement VPS endpoint resolution before container routing in `packages/platform/src/profile-routing.ts`
+- [X] T035 [US2] Integrate VPS routing branch into subdomain proxy handling in `packages/platform/src/main.ts`
+- [X] T036 [P] [US2] Implement `matrix-gateway.service` for customer VPS hosts in `distro/customer-vps/systemd/matrix-gateway.service`
+- [X] T037 [P] [US2] Implement `matrix-shell.service` for customer VPS hosts in `distro/customer-vps/systemd/matrix-shell.service`
+- [X] T038 [P] [US2] Implement `matrix-sync-agent.service` shell point for customer VPS hosts in `distro/customer-vps/systemd/matrix-sync-agent.service`
+- [X] T039 [US2] Update `distro/customer-vps/cloud-init.yaml` to install host bundle, Postgres compose, and systemd units
+- [X] T040 [US2] Run routing tests from `quickstart.md` against `tests/platform/profile-routing-vps.test.ts`
 
 **Checkpoint**: User Story 2 routes running customer VPSes without breaking legacy containers.
 

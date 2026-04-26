@@ -223,6 +223,34 @@ export function getActiveUserMachineByHandle(
     .get();
 }
 
+export function getRunningUserMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): UserMachineRecord | undefined {
+  return db.select()
+    .from(userMachines)
+    .where(and(
+      eq(userMachines.handle, handle),
+      eq(userMachines.status, 'running'),
+      isNull(userMachines.deletedAt),
+    ))
+    .get();
+}
+
+export function getRunningUserMachineByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): UserMachineRecord | undefined {
+  return db.select()
+    .from(userMachines)
+    .where(and(
+      eq(userMachines.clerkUserId, clerkUserId),
+      eq(userMachines.status, 'running'),
+      isNull(userMachines.deletedAt),
+    ))
+    .get();
+}
+
 export function updateUserMachine(
   db: PlatformDB,
   machineId: string,

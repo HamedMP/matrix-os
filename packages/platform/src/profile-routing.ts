@@ -3,6 +3,11 @@ import { join } from "node:path";
 
 const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
 
+export interface CustomerVpsProxyMachine {
+  status: string;
+  publicIPv4: string | null;
+}
+
 export function resolveSubdomain(host: string): string | null {
   const match = host
     .toLowerCase()
@@ -11,6 +16,16 @@ export function resolveSubdomain(host: string): string | null {
   const sub = match[1];
   if (RESERVED_SUBDOMAINS.has(sub)) return null;
   return sub;
+}
+
+export function buildCustomerVpsProxyUrl(
+  machine: CustomerVpsProxyMachine,
+  path: string,
+  queryString = "",
+): string | null {
+  if (machine.status !== "running" || !machine.publicIPv4) return null;
+  const safePath = path.startsWith("/") ? path : `/${path}`;
+  return `https://${machine.publicIPv4}:443${safePath}${queryString}`;
 }
 
 export function isPublicProfilePath(path: string): boolean {
@@ -173,7 +188,9 @@ function generateProfileHtml(handle: string): string {
           card.appendChild(descEl);
           grid.appendChild(card);
         }
-      } catch {}
+      } catch (err) {
+        void err;
+      }
     })();
   </script>
 </body>

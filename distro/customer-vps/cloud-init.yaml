@@ -6,6 +6,103 @@ users:
     groups: docker
 
 write_files:
+  - path: /opt/matrix/postgres-compose.yml
+    owner: root:matrix
+    permissions: "0644"
+    content: |
+      services:
+        postgres:
+          image: postgres:16
+          restart: unless-stopped
+          env_file:
+            - /opt/matrix/env/postgres.env
+          volumes:
+            - matrix-postgres:/var/lib/postgresql/data
+          ports:
+            - "127.0.0.1:5432:5432"
+
+      volumes:
+        matrix-postgres:
+  - path: /etc/systemd/system/matrix-restore.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS customer restore gate
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      ExecStart=/opt/matrix/bin/matrix-restore.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-gateway.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS customer gateway
+      After=matrix-restore.service docker.service
+      Requires=matrix-restore.service docker.service
+      ConditionPathExists=/opt/matrix/restore-complete
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-gateway
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-shell.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS customer shell
+      After=matrix-gateway.service
+      Requires=matrix-gateway.service
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-shell
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-sync-agent.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS customer sync agent
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-sync-agent
+      Restart=on-failure
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /opt/matrix/env/host.env
     owner: root:matrix
     permissions: "0640"
@@ -31,6 +128,10 @@ write_files:
       MATRIX_REGISTRATION_TOKEN={{registrationToken}}
 
 runcmd:
+  - apt-get update
+  - apt-get install -y ca-certificates curl docker.io docker-compose-plugin
   - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+  - docker compose -f /opt/matrix/postgres-compose.yml up -d
   - systemctl daemon-reload
-
+  - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+  - systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service

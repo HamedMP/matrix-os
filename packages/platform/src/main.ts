@@ -12,6 +12,8 @@ import {
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
+  getRunningUserMachineByClerkId,
+  getRunningUserMachineByHandle,
   updateLastActive,
   updateContainerStatus,
   listContainers,
@@ -37,6 +39,7 @@ import {
 } from './platform-token.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { createCustomerVpsRoutes } from './customer-vps-routes.js';
+import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -275,12 +278,19 @@ async function resolveAppDomainIdentity(opts: {
     try {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
       const record = getContainer(opts.db, claims.handle);
-      if (record?.clerkUserId !== claims.sub) {
+      if (record?.clerkUserId === claims.sub) {
+        return {
+          handle: record.handle,
+          userId: record.clerkUserId,
+        };
+      }
+      const machine = getRunningUserMachineByHandle(opts.db, claims.handle);
+      if (machine?.clerkUserId !== claims.sub) {
         return null;
       }
       return {
-        handle: record.handle,
-        userId: record.clerkUserId,
+        handle: machine.handle,
+        userId: machine.clerkUserId,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -305,12 +315,19 @@ async function resolveAppDomainIdentity(opts: {
   }
 
   const record = getContainerByClerkId(opts.db, result.userId);
-  if (!record) {
+  if (record) {
+    return {
+      handle: record.handle,
+      userId: result.userId,
+    };
+  }
+  const machine = getRunningUserMachineByClerkId(opts.db, result.userId);
+  if (!machine) {
     return null;
   }
 
   return {
-    handle: record.handle,
+    handle: machine.handle,
     userId: result.userId,
   };
 }
@@ -608,6 +625,59 @@ export function createApp(deps: {
     }
 
     console.log(`[app] verified request path=${path}`);
+    const runningMachine = getRunningUserMachineByHandle(db, identity.handle);
+    if (runningMachine) {
+      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
+      }
+      const rawCookie = c.req.header('cookie');
+      if (rawCookie) {
+        const forwarded = rawCookie
+          .split(';')
+          .map((p) => p.trim())
+          .filter((p) => p.startsWith('matrix_app_session__'))
+          .join('; ');
+        if (forwarded) headers.set('cookie', forwarded);
+      }
+      headers.set('host', `${runningMachine.handle}.matrix-os.com`);
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('connection', 'close');
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
+        headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
+      }
+      headers.set('x-platform-user-id', identity.userId);
+
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body,
+          dispatcher: containerProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: upstream.headers,
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('app-domain vps proxy', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
+
     const record = getContainer(db, identity.handle);
     if (!record) {
       return c.html(getNoContainerPage());
@@ -1077,6 +1147,42 @@ export function createApp(deps: {
 
   app.all('/proxy/:handle/*', async (c) => {
     const handle = c.req.param('handle');
+    const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
+    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const runningMachine = getRunningUserMachineByHandle(db, handle);
+    if (runningMachine) {
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      try {
+        const headers = new Headers();
+        const originalHost = c.req.header('host') ?? `${handle}.matrix-os.com`;
+        for (const [key, value] of Object.entries(c.req.header())) {
+          if (key !== 'host' && value) headers.set(key, value);
+        }
+        headers.set('host', `${handle}.matrix-os.com`);
+        headers.set('x-forwarded-host', originalHost);
+        headers.set('x-forwarded-proto', 'https');
+
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(30_000),
+          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+        });
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: upstream.headers,
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('/proxy/:handle/* vps', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
+
     const record = getContainer(db, handle);
     if (!record) return c.json({ error: 'Unknown handle' }, 404);
 
@@ -1091,7 +1197,6 @@ export function createApp(deps: {
 
     updateLastActive(db, handle);
 
-    const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const targetUrl = `http://matrixos-${handle}:3000${path}`;
 
     try {

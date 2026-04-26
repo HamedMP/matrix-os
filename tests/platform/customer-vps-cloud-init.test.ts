@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   redactCloudInitSecrets,
   renderCloudInitTemplate,
@@ -43,5 +45,16 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).toContain('[redacted]');
   });
-});
 
+  it('orders gateway and shell behind restore completion on customer hosts', () => {
+    const root = process.cwd();
+    const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const shell = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-shell.service'), 'utf8');
+    const restore = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-restore.service'), 'utf8');
+
+    expect(gateway).toContain('Requires=matrix-restore.service');
+    expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
+    expect(shell).toContain('After=matrix-gateway.service');
+    expect(restore).toContain('Type=oneshot');
+  });
+});
