@@ -35,6 +35,8 @@ import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
 } from './platform-token.js';
+import type { CustomerVpsService } from './customer-vps.js';
+import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
@@ -488,6 +490,7 @@ export function createApp(deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
+  customerVpsService?: CustomerVpsService;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
@@ -751,6 +754,12 @@ export function createApp(deps: {
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
+  if (deps.customerVpsService) {
+    app.route('/vps', createCustomerVpsRoutes({
+      service: deps.customerVpsService,
+      platformSecret,
+    }));
   }
 
   // Auth middleware for admin API routes below
@@ -1273,6 +1282,28 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     });
   }
 
+  let customerVpsService: CustomerVpsService | undefined;
+  if (process.env.CUSTOMER_VPS_ENABLED === 'true') {
+    const [
+      { createCustomerVpsService },
+      { loadCustomerVpsConfig },
+      { createHetznerClient },
+      { createNoopCustomerVpsSystemStore },
+    ] = await Promise.all([
+      import('./customer-vps.js'),
+      import('./customer-vps-config.js'),
+      import('./customer-vps-hetzner.js'),
+      import('./customer-vps-r2.js'),
+    ]);
+    const customerVpsConfig = loadCustomerVpsConfig();
+    customerVpsService = createCustomerVpsService({
+      db,
+      config: customerVpsConfig,
+      hetzner: createHetznerClient(customerVpsConfig),
+      systemStore: createNoopCustomerVpsSystemStore(),
+    });
+  }
+
   const app = createApp({
     db,
     docker,
@@ -1282,6 +1313,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     integrationRoutes,
     internalIntegrationRoutes,
     internalSyncRoutes,
+    customerVpsService,
   });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {

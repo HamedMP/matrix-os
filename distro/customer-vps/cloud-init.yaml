@@ -1,0 +1,36 @@
+#cloud-config
+users:
+  - name: matrix
+    system: true
+    shell: /usr/sbin/nologin
+    groups: docker
+
+write_files:
+  - path: /opt/matrix/env/host.env
+    owner: root:matrix
+    permissions: "0640"
+    content: |
+      MATRIX_MACHINE_ID={{machineId}}
+      MATRIX_CLERK_USER_ID={{clerkUserId}}
+      MATRIX_HANDLE={{handle}}
+      MATRIX_IMAGE_VERSION={{imageVersion}}
+      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
+      MATRIX_R2_BUCKET={{r2Bucket}}
+      MATRIX_R2_PREFIX={{r2Prefix}}
+  - path: /opt/matrix/env/postgres.env
+    owner: root:matrix
+    permissions: "0640"
+    content: |
+      POSTGRES_DB=matrix
+      POSTGRES_USER=matrix
+      POSTGRES_PASSWORD={{postgresPassword}}
+  - path: /opt/matrix/env/registration.env
+    owner: root:matrix
+    permissions: "0640"
+    content: |
+      MATRIX_REGISTRATION_TOKEN={{registrationToken}}
+
+runcmd:
+  - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+  - systemctl daemon-reload
+

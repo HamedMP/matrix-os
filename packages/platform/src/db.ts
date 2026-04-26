@@ -2,9 +2,9 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { eq, desc, sql, max } from 'drizzle-orm';
+import { eq, desc, sql, max, and, isNull, inArray, lt } from 'drizzle-orm';
 import * as schema from './schema.js';
-import { containers, portAssignments } from './schema.js';
+import { containers, portAssignments, userMachines } from './schema.js';
 import { runAppRegistryMigrations } from './app-registry.js';
 import { runMatrixUserMigrations } from './matrix-provisioning.js';
 import { runSocialFeedMigrations } from './social-feed.js';
@@ -86,6 +86,35 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
   ).run();
 
   sqlite.prepare(`
+    CREATE TABLE IF NOT EXISTS user_machines (
+      machine_id TEXT PRIMARY KEY,
+      clerk_user_id TEXT UNIQUE NOT NULL,
+      handle TEXT NOT NULL,
+      hetzner_server_id INTEGER,
+      public_ipv4 TEXT,
+      public_ipv6 TEXT,
+      status TEXT NOT NULL DEFAULT 'provisioning',
+      image_version TEXT,
+      registration_token_hash TEXT,
+      registration_token_expires_at TEXT,
+      provisioned_at TEXT NOT NULL,
+      last_seen_at TEXT,
+      deleted_at TEXT,
+      failure_code TEXT,
+      failure_at TEXT
+    )
+  `).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)'
+  ).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_user_machines_clerk ON user_machines(clerk_user_id)'
+  ).run();
+  sqlite.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)'
+  ).run();
+
+  sqlite.prepare(`
     CREATE TABLE IF NOT EXISTS port_assignments (
       port INTEGER PRIMARY KEY,
       handle TEXT
@@ -116,6 +145,8 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
 
 export type ContainerRecord = typeof containers.$inferSelect;
 export type NewContainer = typeof containers.$inferInsert;
+export type UserMachineRecord = typeof userMachines.$inferSelect;
+export type NewUserMachine = typeof userMachines.$inferInsert;
 
 export function insertContainer(db: PlatformDB, record: Omit<NewContainer, 'createdAt' | 'lastActive'>): void {
   db.insert(containers).values({
@@ -162,6 +193,63 @@ export function listContainers(db: PlatformDB, status?: string): ContainerRecord
 
 export function deleteContainer(db: PlatformDB, handle: string): void {
   db.delete(containers).where(eq(containers.handle, handle)).run();
+}
+
+export function insertUserMachine(db: PlatformDB, record: NewUserMachine): void {
+  db.insert(userMachines).values(record).run();
+}
+
+export function getUserMachine(db: PlatformDB, machineId: string): UserMachineRecord | undefined {
+  return db.select().from(userMachines).where(eq(userMachines.machineId, machineId)).get();
+}
+
+export function getActiveUserMachineByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): UserMachineRecord | undefined {
+  return db.select()
+    .from(userMachines)
+    .where(and(eq(userMachines.clerkUserId, clerkUserId), isNull(userMachines.deletedAt)))
+    .get();
+}
+
+export function getActiveUserMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): UserMachineRecord | undefined {
+  return db.select()
+    .from(userMachines)
+    .where(and(eq(userMachines.handle, handle), isNull(userMachines.deletedAt)))
+    .get();
+}
+
+export function updateUserMachine(
+  db: PlatformDB,
+  machineId: string,
+  values: Partial<NewUserMachine>,
+): void {
+  db.update(userMachines).set(values).where(eq(userMachines.machineId, machineId)).run();
+}
+
+export function softDeleteUserMachine(db: PlatformDB, machineId: string, deletedAt: string): void {
+  db.update(userMachines)
+    .set({ status: 'deleted', deletedAt })
+    .where(eq(userMachines.machineId, machineId))
+    .run();
+}
+
+export function listStaleUserMachines(
+  db: PlatformDB,
+  statuses: string[],
+  olderThanIso: string,
+  limit: number,
+): UserMachineRecord[] {
+  return db.select()
+    .from(userMachines)
+    .where(and(inArray(userMachines.status, statuses), lt(userMachines.provisionedAt, olderThanIso), isNull(userMachines.deletedAt)))
+    .orderBy(userMachines.provisionedAt)
+    .limit(limit)
+    .all();
 }
 
 export function allocatePort(db: PlatformDB, basePort: number, handle: string): number {

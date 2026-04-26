@@ -18,6 +18,32 @@ export const containers = sqliteTable(
   ],
 );
 
+export const userMachines = sqliteTable(
+  'user_machines',
+  {
+    machineId: text('machine_id').primaryKey(),
+    clerkUserId: text('clerk_user_id').notNull().unique(),
+    handle: text('handle').notNull(),
+    hetznerServerId: integer('hetzner_server_id'),
+    publicIPv4: text('public_ipv4'),
+    publicIPv6: text('public_ipv6'),
+    status: text('status').notNull().default('provisioning'),
+    imageVersion: text('image_version'),
+    registrationTokenHash: text('registration_token_hash'),
+    registrationTokenExpiresAt: text('registration_token_expires_at'),
+    provisionedAt: text('provisioned_at').notNull().$defaultFn(() => new Date().toISOString()),
+    lastSeenAt: text('last_seen_at'),
+    deletedAt: text('deleted_at'),
+    failureCode: text('failure_code'),
+    failureAt: text('failure_at'),
+  },
+  (table) => [
+    index('idx_user_machines_status').on(table.status),
+    index('idx_user_machines_clerk').on(table.clerkUserId),
+    index('idx_user_machines_hetzner').on(table.hetznerServerId),
+  ],
+);
+
 export const portAssignments = sqliteTable('port_assignments', {
   port: integer('port').primaryKey(),
   handle: text('handle'),

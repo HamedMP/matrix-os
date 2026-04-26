@@ -1,0 +1,18 @@
+[Unit]
+Description=Matrix OS customer gateway
+After=matrix-restore.service docker.service
+Requires=matrix-restore.service docker.service
+ConditionPathExists=/opt/matrix/restore-complete
+
+[Service]
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/opt/matrix
+ExecStart=/opt/matrix/bin/matrix-gateway
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

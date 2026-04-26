@@ -19,11 +19,11 @@
 
 **Purpose**: Create the file layout and configuration surfaces needed by all VPS-per-user work.
 
-- [ ] T001 Create customer VPS artifact directories in `distro/customer-vps/`, `distro/customer-vps/systemd/`, and `tests/platform/`
-- [ ] T002 [P] Add customer VPS environment/config module skeleton in `packages/platform/src/customer-vps-config.ts`
-- [ ] T003 [P] Add Hetzner/R2 test fixture scaffolding in `tests/platform/customer-vps-fixtures.ts`
-- [ ] T004 [P] Add deployment docs page placeholder in `www/content/docs/deployment/vps-per-user.mdx`
-- [ ] T005 [P] Add deployment docs navigation entry for `www/content/docs/deployment/vps-per-user.mdx` in `www/content/docs/meta.json`
+- [X] T001 Create customer VPS artifact directories in `distro/customer-vps/`, `distro/customer-vps/systemd/`, and `tests/platform/`
+- [X] T002 [P] Add customer VPS environment/config module skeleton in `packages/platform/src/customer-vps-config.ts`
+- [X] T003 [P] Add Hetzner/R2 test fixture scaffolding in `tests/platform/customer-vps-fixtures.ts`
+- [X] T004 [P] Add deployment docs page placeholder in `www/content/docs/deployment/vps-per-user.mdx`
+- [X] T005 [P] Add deployment docs navigation entry for `www/content/docs/deployment/vps-per-user.mdx` in `www/content/docs/meta.json`
 
 ---
 
@@ -33,19 +33,19 @@
 
 **CRITICAL**: No user-story implementation can begin until this phase is complete.
 
-- [ ] T006 Add `userMachines` Drizzle table, indexes, and inferred types in `packages/platform/src/schema.ts`
-- [ ] T007 Add `user_machines` SQLite bootstrap migration in `packages/platform/src/db.ts`
-- [ ] T008 Add UserMachine CRUD helpers and transaction helpers in `packages/platform/src/db.ts`
-- [ ] T009 [P] Define VPS request/response/status Zod schemas in `packages/platform/src/customer-vps-schema.ts`
-- [ ] T010 [P] Define generic provider error mapping and failure-code enums in `packages/platform/src/customer-vps-errors.ts`
-- [ ] T011 [P] Implement fixed Hetzner/R2/server-type config loading with safe defaults in `packages/platform/src/customer-vps-config.ts`
-- [ ] T012 [P] Implement constant-time bearer and registration-token helpers in `packages/platform/src/customer-vps-auth.ts`
-- [ ] T013 [P] Implement typed Hetzner API client with `fetch()` timeouts in `packages/platform/src/customer-vps-hetzner.ts`
-- [ ] T014 [P] Implement scoped R2 system-state helper for `vps-meta.json` and `system/db/latest` in `packages/platform/src/customer-vps-r2.ts`
-- [ ] T015 [P] Create cloud-init renderer contract in `packages/platform/src/customer-vps-cloud-init.ts`
-- [ ] T016 [P] Create initial cloud-init template in `distro/customer-vps/cloud-init.yaml`
-- [ ] T017 [P] Create initial Postgres compose template in `distro/customer-vps/postgres-compose.yml`
-- [ ] T018 [P] Create initial customer host systemd unit files in `distro/customer-vps/systemd/`
+- [X] T006 Add `userMachines` Drizzle table, indexes, and inferred types in `packages/platform/src/schema.ts`
+- [X] T007 Add `user_machines` SQLite bootstrap migration in `packages/platform/src/db.ts`
+- [X] T008 Add UserMachine CRUD helpers and transaction helpers in `packages/platform/src/db.ts`
+- [X] T009 [P] Define VPS request/response/status Zod schemas in `packages/platform/src/customer-vps-schema.ts`
+- [X] T010 [P] Define generic provider error mapping and failure-code enums in `packages/platform/src/customer-vps-errors.ts`
+- [X] T011 [P] Implement fixed Hetzner/R2/server-type config loading with safe defaults in `packages/platform/src/customer-vps-config.ts`
+- [X] T012 [P] Implement constant-time bearer and registration-token helpers in `packages/platform/src/customer-vps-auth.ts`
+- [X] T013 [P] Implement typed Hetzner API client with `fetch()` timeouts in `packages/platform/src/customer-vps-hetzner.ts`
+- [X] T014 [P] Implement scoped R2 system-state helper for `vps-meta.json` and `system/db/latest` in `packages/platform/src/customer-vps-r2.ts`
+- [X] T015 [P] Create cloud-init renderer contract in `packages/platform/src/customer-vps-cloud-init.ts`
+- [X] T016 [P] Create initial cloud-init template in `distro/customer-vps/cloud-init.yaml`
+- [X] T017 [P] Create initial Postgres compose template in `distro/customer-vps/postgres-compose.yml`
+- [X] T018 [P] Create initial customer host systemd unit files in `distro/customer-vps/systemd/`
 
 **Checkpoint**: Shared database, validation, provider clients, auth, and template surfaces are ready.
 
@@ -61,21 +61,21 @@
 
 > Write these tests first and verify they fail before implementation.
 
-- [ ] T019 [P] [US1] Add provisioning idempotency and failure-state tests in `tests/platform/customer-vps.test.ts`
-- [ ] T020 [P] [US1] Add `/vps/provision`, `/vps/register`, `/vps/:machineId/status`, and `DELETE /vps/:machineId` route contract tests in `tests/platform/customer-vps-routes.test.ts`
-- [ ] T021 [P] [US1] Add auth, body-limit, and validation rejection tests for VPS routes in `tests/platform/customer-vps-routes.test.ts`
-- [ ] T022 [P] [US1] Add cloud-init render tests for required variables and secret redaction in `tests/platform/customer-vps-cloud-init.test.ts`
+- [X] T019 [P] [US1] Add provisioning idempotency and failure-state tests in `tests/platform/customer-vps.test.ts`
+- [X] T020 [P] [US1] Add `/vps/provision`, `/vps/register`, `/vps/:machineId/status`, and `DELETE /vps/:machineId` route contract tests in `tests/platform/customer-vps-routes.test.ts`
+- [X] T021 [P] [US1] Add auth, body-limit, and validation rejection tests for VPS routes in `tests/platform/customer-vps-routes.test.ts`
+- [X] T022 [P] [US1] Add cloud-init render tests for required variables and secret redaction in `tests/platform/customer-vps-cloud-init.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T023 [US1] Implement one-time registration token generation, hashing, expiry, and clearing in `packages/platform/src/customer-vps-auth.ts`
-- [ ] T024 [US1] Implement cloud-init rendering with no secret logging in `packages/platform/src/customer-vps-cloud-init.ts`
-- [ ] T025 [US1] Implement provision/register/status/delete orchestration in `packages/platform/src/customer-vps.ts`
-- [ ] T026 [US1] Implement `/vps/*` Hono routes with `bodyLimit({ maxSize: 4096 })` in `packages/platform/src/customer-vps-routes.ts`
-- [ ] T027 [US1] Mount `/vps/*` routes and verify dependencies at registration time in `packages/platform/src/main.ts`
-- [ ] T028 [US1] Add provisioning reconciliation for stale `provisioning` rows with bounded batches in `packages/platform/src/customer-vps.ts`
-- [ ] T029 [US1] Add operator-safe generic logging for provider and database failures in `packages/platform/src/customer-vps.ts`
-- [ ] T030 [US1] Run focused US1 tests from `quickstart.md` against `tests/platform/customer-vps.test.ts`, `tests/platform/customer-vps-routes.test.ts`, and `tests/platform/customer-vps-cloud-init.test.ts`
+- [X] T023 [US1] Implement one-time registration token generation, hashing, expiry, and clearing in `packages/platform/src/customer-vps-auth.ts`
+- [X] T024 [US1] Implement cloud-init rendering with no secret logging in `packages/platform/src/customer-vps-cloud-init.ts`
+- [X] T025 [US1] Implement provision/register/status/delete orchestration in `packages/platform/src/customer-vps.ts`
+- [X] T026 [US1] Implement `/vps/*` Hono routes with `bodyLimit({ maxSize: 4096 })` in `packages/platform/src/customer-vps-routes.ts`
+- [X] T027 [US1] Mount `/vps/*` routes and verify dependencies at registration time in `packages/platform/src/main.ts`
+- [X] T028 [US1] Add provisioning reconciliation for stale `provisioning` rows with bounded batches in `packages/platform/src/customer-vps.ts`
+- [X] T029 [US1] Add operator-safe generic logging for provider and database failures in `packages/platform/src/customer-vps.ts`
+- [X] T030 [US1] Run focused US1 tests from `quickstart.md` against `tests/platform/customer-vps.test.ts`, `tests/platform/customer-vps-routes.test.ts`, and `tests/platform/customer-vps-cloud-init.test.ts`
 
 **Checkpoint**: User Story 1 is independently functional and testable as the MVP.
 

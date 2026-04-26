@@ -1,0 +1,17 @@
+[Unit]
+Description=Matrix OS customer sync agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/opt/matrix
+ExecStart=/opt/matrix/bin/matrix-sync-agent
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+

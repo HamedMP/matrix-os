@@ -1,0 +1,16 @@
+[Unit]
+Description=Matrix OS customer restore gate
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+ExecStart=/opt/matrix/bin/matrix-restore.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+
