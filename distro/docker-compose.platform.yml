@@ -77,6 +77,7 @@ services:
     command: ["packages/platform/src/main.ts"]
     environment:
       - PLATFORM_PORT=9000
+      - PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL:-}
       - PLATFORM_DB_PATH=/data/platform.db
       - PLATFORM_SECRET=${PLATFORM_SECRET}
       - PLATFORM_JWT_SECRET=${PLATFORM_JWT_SECRET}
