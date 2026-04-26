@@ -119,6 +119,7 @@ Untracked support/spec files currently present:
   - Partial: `tests/gateway/agent-launcher.test.ts` covers agent detection, auth-needed states, launch argv construction, and Codex sandbox fail-closed launch requirements.
   - Partial: `tests/gateway/zellij-runtime.test.ts` covers generated layouts, argv-based Zellij lifecycle commands, and degraded health metadata.
   - Partial: `tests/gateway/agent-session-manager.test.ts` covers session lifecycle records, worktree lease conflicts, send/kill/list/get, and startup degradation reconciliation.
+  - Partial: `tests/gateway/session-runtime-bridge.test.ts` covers external runtime bridge registration for Zellij/tmux owner and observe attaches.
 
 - [x] T201 Implement `agent-launcher.ts` for Claude, Codex, OpenCode, and Pi detection plus launch command construction.
   - Files: `packages/gateway/src/agent-launcher.ts`, `tests/gateway/agent-launcher.test.ts`
@@ -127,7 +128,8 @@ Untracked support/spec files currently present:
   - Files: `packages/gateway/src/zellij-runtime.ts`, `tests/gateway/zellij-runtime.test.ts`
 - [x] T203 Implement `agent-session-manager.ts` for session records, lifecycle, worktree lease integration, send/kill/list/get, and startup reconciliation.
   - Files: `packages/gateway/src/agent-session-manager.ts`, `tests/gateway/agent-session-manager.test.ts`
-- [ ] T204 Implement `session-runtime-bridge.ts` to register external Zellij/tmux sessions with the terminal registry.
+- [x] T204 Implement `session-runtime-bridge.ts` to register external Zellij/tmux sessions with the terminal registry.
+  - Files: `packages/gateway/src/session-runtime-bridge.ts`, `packages/gateway/src/session-registry.ts`, `tests/gateway/session-runtime-bridge.test.ts`
 - [ ] T205 Implement `session-transcript.ts` for durable JSONL replay, 10,000-line/5 MiB hot replay caps, 100 MiB or 30-day retention, truncation, export, and rehydration.
 - [ ] T206 Implement `agent-sandbox.ts` for sandbox preflight and fail-closed Codex-style launches.
 - [ ] T207 Add gateway API and CLI commands for sessions, observe/takeover, native terminal handoff, and sandbox status.
