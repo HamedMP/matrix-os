@@ -187,15 +187,15 @@
 
 **Purpose**: Hardening, review sweeps, and final validation across all stories.
 
-- [ ] T069 [P] Verify every new external `fetch()` has `AbortSignal.timeout()` in `packages/platform/src/customer-vps-hetzner.ts` and `packages/platform/src/customer-vps-r2.ts`
-- [ ] T070 [P] Verify all new mutating Hono routes use `bodyLimit({ maxSize: 4096 })` in `packages/platform/src/customer-vps-routes.ts`
-- [ ] T071 [P] Verify no client response exposes provider, filesystem, database, R2 key, signed URL, or raw Zod issue details in `packages/platform/src/customer-vps-routes.ts`
-- [ ] T072 [P] Verify bounded reconciliation and no unbounded Map/Set usage in `packages/platform/src/customer-vps.ts`
-- [ ] T073 [P] Verify customer host scripts avoid credential leakage and use restrictive file modes in `distro/customer-vps/matrixctl`, `distro/customer-vps/matrix-db-backup.sh`, and `distro/customer-vps/matrix-restore.sh`
+- [X] T069 [P] Verify every new external `fetch()` has `AbortSignal.timeout()` in `packages/platform/src/customer-vps-hetzner.ts` and `packages/platform/src/customer-vps-r2.ts`
+- [X] T070 [P] Verify all new mutating Hono routes use `bodyLimit({ maxSize: 4096 })` in `packages/platform/src/customer-vps-routes.ts`
+- [X] T071 [P] Verify no client response exposes provider, filesystem, database, R2 key, signed URL, or raw Zod issue details in `packages/platform/src/customer-vps-routes.ts`
+- [X] T072 [P] Verify bounded reconciliation and no unbounded Map/Set usage in `packages/platform/src/customer-vps.ts`
+- [X] T073 [P] Verify customer host scripts avoid credential leakage and use restrictive file modes in `distro/customer-vps/matrixctl`, `distro/customer-vps/matrix-db-backup.sh`, and `distro/customer-vps/matrix-restore.sh`
 - [ ] T074 Run `bun run typecheck` for the repository from `package.json`
 - [ ] T075 Run `bun run check:patterns` for the repository from `package.json`
 - [ ] T076 Run `bun run test` for the repository from `package.json`
-- [ ] T077 Update implementation notes and any changed manual verification steps in `specs/070-vps-per-user/quickstart.md`
+- [X] T077 Update implementation notes and any changed manual verification steps in `specs/070-vps-per-user/quickstart.md`
 
 ---
 
