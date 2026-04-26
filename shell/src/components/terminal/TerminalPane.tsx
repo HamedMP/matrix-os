@@ -38,6 +38,8 @@ const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
 const MAX_TERMINAL_INPUT = 65_536;
+const MAX_OSC52_BASE64_LENGTH = 1_000_000;
+const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
 
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
@@ -169,6 +171,7 @@ interface TerminalPaneProps {
   isFocused: boolean;
   sessionId?: string;
   claudeMode?: boolean;
+  startupCommand?: string;
   onFocus?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   isClosing?: boolean;
@@ -183,6 +186,7 @@ export function TerminalPane({
   isFocused,
   sessionId: initialSessionId,
   claudeMode,
+  startupCommand,
   onFocus,
   onSessionAttached,
   isClosing,
@@ -209,6 +213,7 @@ export function TerminalPane({
   const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
@@ -361,6 +366,12 @@ export function TerminalPane({
           fontSize: terminalFontSize,
           fontFamily: theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
           theme: xtermTheme,
+          // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
+          // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
+          macOptionIsMeta: true,
+          // Send a Unicode bullet for Option+key combos that fall through to the
+          // browser instead of producing accented characters.
+          macOptionClickForcesSelection: true,
         });
 
         const nextFitAddon = new FitAddon();
@@ -399,6 +410,60 @@ export function TerminalPane({
         // Link provider
         xterm.registerLinkProvider(new WebLinkProvider(xterm));
 
+        // OSC 52 clipboard handler — used by TUIs (Claude Code, tmux, neovim, ...)
+        // to copy text to the host clipboard. Format: "<Pc>;<Pd>" where Pc is the
+        // selection target ("c", "p", "s", "0"-"7") and Pd is base64 or "?".
+        try {
+          xterm.parser.registerOscHandler(52, (data: string) => {
+            const semi = data.indexOf(";");
+            if (semi < 0) return false;
+            const target = data.slice(0, semi);
+            if (!OSC52_ALLOWED_TARGETS.has(target)) return false;
+            const payload = data.slice(semi + 1);
+            if (payload === "" || payload === "?") {
+              // Query for current clipboard contents — we don't expose this.
+              return true;
+            }
+            if (payload.length > MAX_OSC52_BASE64_LENGTH || !/^[A-Za-z0-9+/=]+$/.test(payload)) {
+              return false;
+            }
+            let text: string;
+            try {
+              const bytes = Uint8Array.from(atob(payload), (ch) => ch.charCodeAt(0));
+              text = new TextDecoder().decode(bytes);
+            } catch (_err: unknown) {
+              return false;
+            }
+            const fallbackCopy = () => {
+              try {
+                const ta = document.createElement("textarea");
+                ta.value = text;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                ta.setAttribute("data-osc52-fallback", "true");
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+              } catch (err: unknown) {
+                console.warn("OSC 52 fallback copy failed:", err instanceof Error ? err.message : err);
+              } finally {
+                document.querySelectorAll("textarea[data-osc52-fallback='true']").forEach((node) => node.remove());
+              }
+            };
+            if (typeof navigator !== "undefined" && navigator.clipboard) {
+              navigator.clipboard.writeText(text).catch((err: unknown) => {
+                console.warn("OSC 52 clipboard write failed, using fallback:", err instanceof Error ? err.message : err);
+                fallbackCopy();
+              });
+            } else {
+              fallbackCopy();
+            }
+            return true;
+          });
+        } catch (err: unknown) {
+          console.warn("Failed to register OSC 52 handler:", err instanceof Error ? err.message : err);
+        }
+
         if (disposed) {
           xterm.dispose();
           return;
@@ -433,10 +498,13 @@ export function TerminalPane({
 
           ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
 
-          if (claudeMode && !sessionIdRef.current) {
+          const startup = sessionIdRef.current
+            ? null
+            : initialStartupCommandRef.current?.trim() || (claudeMode ? "claude" : null);
+          if (startup) {
             setTimeout(() => {
               if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "input", data: "claude\r" }));
+                ws.send(JSON.stringify({ type: "input", data: `${startup}\r` }));
               }
             }, 100);
           }
@@ -690,6 +758,13 @@ export function TerminalPane({
       });
 
       // Keyboard shortcuts
+      const sendRaw = (data: string) => {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data }));
+        }
+      };
+
       term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
         if (ev.type !== "keydown") return true;
 
@@ -723,6 +798,30 @@ export function TerminalPane({
             console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
           });
           return false;
+        }
+
+        // macOS-style line-editing shortcuts. The browser only delivers
+        // Cmd-arrow events to us when the focus is inside xterm; otherwise
+        // the OS swallows them. We map them to the readline-equivalent
+        // control sequences so bash/zsh, claude, pi, etc. all behave
+        // predictably regardless of OS keymap.
+        if (ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+          if (ev.key === "ArrowLeft") {
+            sendRaw("\x01"); // Ctrl-A — beginning of line
+            return false;
+          }
+          if (ev.key === "ArrowRight") {
+            sendRaw("\x05"); // Ctrl-E — end of line
+            return false;
+          }
+          if (ev.key === "Backspace") {
+            sendRaw("\x15"); // Ctrl-U — kill to start of line
+            return false;
+          }
+          if (ev.key === "ArrowUp") {
+            sendRaw("\x1b[1;5H"); // scroll-to-top emulation: Home with Ctrl mod
+            return false;
+          }
         }
 
         return true;

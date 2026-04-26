@@ -45,7 +45,9 @@ const palettes: Record<string, AnsiPalette> = {
     brightBlue: "#4078f2",
     brightMagenta: "#a626a4",
     brightCyan: "#0184bc",
-    brightWhite: "#fafafa",
+    // Was #fafafa which equals the background — bold/bright-white text
+    // disappeared. Use a very light neutral that still has contrast.
+    brightWhite: "#dcdcdc",
   },
   "catppuccin-mocha": {
     black: "#45475a",
@@ -63,7 +65,9 @@ const palettes: Record<string, AnsiPalette> = {
     brightBlue: "#89b4fa",
     brightMagenta: "#f5c2e7",
     brightCyan: "#94e2d5",
-    brightWhite: "#a6adc8",
+    // Catppuccin "text" — the brightest fg variant. Was previously subtext0
+    // which is *darker* than `white` and made bold text look dim.
+    brightWhite: "#cdd6f4",
   },
   "dracula": {
     black: "#21222c",
@@ -110,32 +114,38 @@ const palettes: Record<string, AnsiPalette> = {
     magenta: "#d33682",
     cyan: "#2aa198",
     white: "#eee8d5",
-    brightBlack: "#002b36",
+    // brightBlack used to equal the background (#002b36) which made dim
+    // text invisible. Use base01 instead — Solarized's intended "comment"
+    // color, slightly brighter than base02.
+    brightBlack: "#586e75",
     brightRed: "#cb4b16",
-    brightGreen: "#586e75",
-    brightYellow: "#657b83",
-    brightBlue: "#839496",
+    brightGreen: "#859900",
+    brightYellow: "#b58900",
+    brightBlue: "#268bd2",
     brightMagenta: "#6c71c4",
-    brightCyan: "#93a1a1",
+    brightCyan: "#2aa198",
     brightWhite: "#fdf6e3",
   },
   "solarized-light": {
-    black: "#eee8d5",
+    black: "#073642",
     red: "#dc322f",
     green: "#859900",
     yellow: "#b58900",
     blue: "#268bd2",
     magenta: "#d33682",
     cyan: "#2aa198",
-    white: "#073642",
-    brightBlack: "#fdf6e3",
+    white: "#eee8d5",
+    // For light mode, brightBlack should still be a dim grey on a light
+    // background — base1 (#93a1a1). The previous value (#fdf6e3) was the
+    // background itself, hiding all dim text.
+    brightBlack: "#93a1a1",
     brightRed: "#cb4b16",
-    brightGreen: "#93a1a1",
-    brightYellow: "#839496",
-    brightBlue: "#657b83",
+    brightGreen: "#859900",
+    brightYellow: "#b58900",
+    brightBlue: "#268bd2",
     brightMagenta: "#6c71c4",
-    brightCyan: "#586e75",
-    brightWhite: "#002b36",
+    brightCyan: "#2aa198",
+    brightWhite: "#fdf6e3",
   },
   "github-dark": {
     black: "#484f58",
@@ -144,7 +154,10 @@ const palettes: Record<string, AnsiPalette> = {
     yellow: "#d29922",
     blue: "#58a6ff",
     magenta: "#bc8cff",
-    cyan: "#39d353",
+    // GitHub's primer palette has no dedicated "cyan" — previously this
+    // was set to a green hex which collided with `green`/`brightGreen`
+    // and made cyan-output invisible on green backgrounds.
+    cyan: "#76e3ea",
     white: "#b1bac4",
     brightBlack: "#6e7681",
     brightRed: "#ffa198",
@@ -152,14 +165,14 @@ const palettes: Record<string, AnsiPalette> = {
     brightYellow: "#e3b341",
     brightBlue: "#79c0ff",
     brightMagenta: "#d2a8ff",
-    brightCyan: "#56d364",
+    brightCyan: "#a5f3fc",
     brightWhite: "#f0f6fc",
   },
   "github-light": {
     black: "#24292f",
     red: "#cf222e",
     green: "#116329",
-    yellow: "#4d2d00",
+    yellow: "#9a6700",
     blue: "#0969da",
     magenta: "#8250df",
     cyan: "#1b7c83",
@@ -167,11 +180,14 @@ const palettes: Record<string, AnsiPalette> = {
     brightBlack: "#57606a",
     brightRed: "#a40e26",
     brightGreen: "#1a7f37",
-    brightYellow: "#633c01",
+    // Was #633c01 (almost-black brown) which is unreadable as "yellow".
+    brightYellow: "#bf8700",
     brightBlue: "#218bff",
     brightMagenta: "#a475f9",
     brightCyan: "#3192aa",
-    brightWhite: "#8c959f",
+    // brightWhite must be lighter than `white` — was darker, swapping
+    // visual weight on bold text.
+    brightWhite: "#d0d7de",
   },
 };
 
