@@ -14,16 +14,44 @@ export interface ShellClient {
     cmd?: string;
   }): Promise<Record<string, unknown>>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  createAttachUrl(name: string, options?: { fromSeq?: number }): string;
+  attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
 
 export interface ShellClientError extends Error {
   code: string;
 }
 
+interface AttachWebSocket {
+  send(data: string): void;
+  close(): void;
+  on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
+  off?(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
+}
+
+export interface ShellAttachOptions {
+  fromSeq?: number;
+  input?: NodeJS.ReadStream;
+  output?: NodeJS.WriteStream;
+  errorOutput?: NodeJS.WriteStream;
+  detachSequence?: string;
+  WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
+}
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const base = options.gatewayUrl.replace(/\/+$/, "");
+
+  function createAttachUrl(name: string, attachOptions: { fromSeq?: number } = {}): string {
+    const url = new URL(`${base}/ws/terminal`);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.searchParams.set("session", name);
+    if (typeof attachOptions.fromSeq === "number") {
+      url.searchParams.set("fromSeq", String(attachOptions.fromSeq));
+    }
+    return url.toString();
+  }
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const headers: Record<string, string> = {};
@@ -88,6 +116,90 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const suffix = options.force ? "?force=1" : "";
       await request(`/api/sessions/${encodeURIComponent(name)}${suffix}`, {
         method: "DELETE",
+      });
+    },
+    createAttachUrl,
+    async attachSession(name, attachOptions = {}) {
+      const WebSocketImpl =
+        attachOptions.WebSocketImpl ??
+        (await import("ws").then((mod) => mod.WebSocket as unknown as ShellAttachOptions["WebSocketImpl"]));
+      if (!WebSocketImpl) {
+        throw Object.assign(new Error("Request failed"), { code: "websocket_unavailable" });
+      }
+
+      const headers = options.token ? { Authorization: `Bearer ${options.token}` } : undefined;
+      const ws = new WebSocketImpl(createAttachUrl(name, attachOptions), { headers });
+      const output = attachOptions.output ?? process.stdout;
+      const errorOutput = attachOptions.errorOutput ?? process.stderr;
+      const input = attachOptions.input ?? process.stdin;
+      const detachSequence = attachOptions.detachSequence ?? "\u001c\u001c";
+      let pendingInput = "";
+
+      return new Promise<{ detached: boolean }>((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => {
+          input.off?.("data", onInput);
+          ws.off?.("message", onMessage);
+          ws.off?.("close", onClose);
+          ws.off?.("error", onError);
+        };
+        const settle = (fn: () => void) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          fn();
+        };
+        const onInput = (chunk: Buffer | string) => {
+          const data = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          pendingInput = `${pendingInput}${data}`.slice(-detachSequence.length);
+          if (pendingInput === detachSequence) {
+            ws.send(JSON.stringify({ type: "detach" }));
+            ws.close();
+            settle(() => resolve({ detached: true }));
+            return;
+          }
+          ws.send(JSON.stringify({ type: "input", data }));
+        };
+        const onMessage = (chunk: unknown) => {
+          const raw = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch (err: unknown) {
+            if (!(err instanceof SyntaxError)) {
+              reject(err);
+            }
+            return;
+          }
+          if (!parsed || typeof parsed !== "object") {
+            return;
+          }
+          const msg = parsed as Record<string, unknown>;
+          if (msg.type === "output" && typeof msg.data === "string") {
+            output.write(msg.data);
+          } else if (msg.type === "error") {
+            const code = typeof msg.code === "string" ? msg.code : "attach_failed";
+            settle(() => reject(Object.assign(new Error("Request failed"), { code })));
+          } else if (msg.type === "exit") {
+            settle(() => resolve({ detached: false }));
+          }
+        };
+        const onClose = () => {
+          settle(() => resolve({ detached: true }));
+        };
+        const onError = (err: unknown) => {
+          errorOutput.write("Shell attach failed\n");
+          settle(() => reject(Object.assign(new Error("Request failed"), {
+            code: err instanceof Error ? "attach_failed" : "request_failed",
+          })));
+        };
+
+        ws.on("message", onMessage);
+        ws.on("close", onClose);
+        ws.on("error", onError);
+        input.on?.("data", onInput);
       });
     },
   };

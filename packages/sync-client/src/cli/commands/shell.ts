@@ -98,9 +98,32 @@ export const shellCommand = defineCommand({
       meta: { name: "attach", description: "Attach to a shell session" },
       args: {
         name: { type: "positional", required: true },
+        fromSeq: { type: "string", required: false },
+        profile: { type: "string", required: false },
+        dev: { type: "boolean", required: false, default: false },
+        gateway: { type: "string", required: false },
+        token: { type: "string", required: false },
+        json: { type: "boolean", required: false, default: false },
       },
-      run: ({ args }) => {
-        console.log(`Attach is not available in this build yet. Session: ${args.name}`);
+      run: async ({ args }) => {
+        const json = args.json === true;
+        try {
+          const fromSeq =
+            typeof args.fromSeq === "string" && /^\d+$/.test(args.fromSeq)
+              ? Number(args.fromSeq)
+              : undefined;
+          const result = await (await clientFromArgs(args)).attachSession(String(args.name), {
+            fromSeq,
+          });
+          console.log(
+            json
+              ? formatCliSuccess({ detached: result.detached })
+              : `Detached. Reattach: matrix shell attach ${args.name}`,
+          );
+        } catch (err) {
+          writeError(err, json);
+          process.exitCode = 1;
+        }
       },
     }),
     rm: defineCommand({

@@ -140,6 +140,7 @@ import {
   createShellRoutes,
   ScrollbackStore,
   ShellPreferencesStore,
+  createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
@@ -261,10 +262,16 @@ export async function createGateway(config: GatewayConfig) {
   });
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
+  const zellijAdapter = createZellijAdapter();
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
-    adapter: createZellijAdapter(),
+    adapter: zellijAdapter,
     maxSessions: 20,
+    scrollbackStore: shellScrollbackStore,
+  });
+  const zellijShellWs = createShellWsHandler({
+    registry: zellijShellRegistry,
+    adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
 
@@ -1663,7 +1670,10 @@ export async function createGateway(config: GatewayConfig) {
     "/ws/terminal",
     upgradeWebSocket((c) => {
       const cwdParam = c.req.query("cwd");
+      const namedSession = c.req.query("session");
+      const fromSeqParam = c.req.query("fromSeq");
       let handle: SessionHandle | null = null;
+      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
@@ -1690,6 +1700,7 @@ export async function createGateway(config: GatewayConfig) {
         onOpen(_evt, ws) {
           logTerminalDebug("ws-open", {
             cwdParam: cwdParam ?? null,
+            namedSession: namedSession ?? null,
           });
           const sendJson = (msg: PtyServerMessage) => {
             try {
@@ -1698,6 +1709,33 @@ export async function createGateway(config: GatewayConfig) {
               logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
             }
           };
+
+          if (namedSession) {
+            const fromSeq =
+              typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
+                ? Number(fromSeqParam)
+                : 0;
+            void zellijShellWs.open({
+              ws,
+              session: namedSession,
+              fromSeq,
+            }).then((session) => {
+              namedHandle = session;
+            }).catch((err: unknown) => {
+              console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
+              try {
+                ws.send(JSON.stringify({
+                  type: "error",
+                  code: "attach_failed",
+                  message: "Shell attach failed",
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+              }
+              ws.close();
+            });
+            return;
+          }
 
           // Backward compat: auto-create session if no attach message within 100ms
           if (cwdParam && cwdParam.length >= 1 && cwdParam.length <= 4096) {
@@ -1736,6 +1774,10 @@ export async function createGateway(config: GatewayConfig) {
 
         onMessage(evt, ws) {
           const raw = typeof evt.data === "string" ? evt.data : "";
+          if (namedSession) {
+            namedHandle?.onMessage(raw);
+            return;
+          }
           let parsed: unknown;
           try {
             parsed = JSON.parse(raw);
@@ -1867,6 +1909,10 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose() {
+          if (namedHandle) {
+            namedHandle.onClose();
+            namedHandle = null;
+          }
           logTerminalDebug("ws-close", {
             handleSessionId: handle?.sessionId ?? null,
             autoCreatedSessionId,

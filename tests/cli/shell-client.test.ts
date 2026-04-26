@@ -36,4 +36,15 @@ describe("shell REST client", () => {
       message: "Request failed",
     });
   });
+
+  it("builds authenticated terminal websocket URLs for attach", () => {
+    const client = createShellClient({
+      gatewayUrl: "https://gateway.example",
+      token: "tok",
+    });
+
+    expect(client.createAttachUrl("main", { fromSeq: 7 })).toBe(
+      "wss://gateway.example/ws/terminal?session=main&fromSeq=7",
+    );
+  });
 });
