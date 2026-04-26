@@ -117,7 +117,53 @@ Expected:
 - Status returns `running`.
 - User files and Postgres sanity query match pre-recovery state.
 
-## 6. Documentation Deliverable
+## 6. First-Customer Rollout Checklist
+
+Use this checklist before enabling a real opt-in customer.
+
+- **Customer opt-in**: customer, Clerk user ID, handle, and rollback contact are recorded.
+- **Quota ceiling**: Hetzner project has capacity for exactly the intended test user count.
+- **Cost approval**: server type, monthly estimate, and backup storage expectations are accepted.
+- **Backup observation**: `matrix-db-backup.timer` is active and R2 has `system/db/latest` after the first hourly run.
+- **Recovery observation**: a non-production `POST /vps/recover` replaces the server and returns to `running`.
+- **Rollback**: legacy container fallback has been verified for the same handle before rollout.
+- **Deletion policy**: operator understands `DELETE /vps/:machineId` does not delete R2 user data.
+
+### Non-production smoke commands
+
+Provision:
+
+```bash
+curl -sS -X POST "$PLATFORM_PUBLIC_URL/vps/provision" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"clerkUserId":"user_test_vps","handle":"vps-test"}'
+```
+
+Check status:
+
+```bash
+curl -sS "$PLATFORM_PUBLIC_URL/vps/$MACHINE_ID/status" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+Trigger manual recovery:
+
+```bash
+curl -sS -X POST "$PLATFORM_PUBLIC_URL/vps/recover" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"clerkUserId":"user_test_vps"}'
+```
+
+Rollback to legacy routing for the smoke user:
+
+```bash
+curl -sS -X DELETE "$PLATFORM_PUBLIC_URL/vps/$MACHINE_ID" \
+  -H "Authorization: Bearer $PLATFORM_SECRET"
+```
+
+## 7. Documentation Deliverable
 
 Implementation tasks must include public docs at:
 

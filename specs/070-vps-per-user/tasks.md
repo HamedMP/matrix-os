@@ -168,15 +168,15 @@
 
 ### Tests for User Story 5
 
-- [ ] T062 [P] [US5] Add first-customer rollout checklist assertions to `tests/platform/customer-vps.test.ts`
-- [ ] T063 [P] [US5] Add public docs smoke check for deployment page links in `www/content/docs/deployment/vps-per-user.mdx`
+- [X] T062 [P] [US5] Add first-customer rollout checklist assertions to `tests/platform/customer-vps.test.ts`
+- [X] T063 [P] [US5] Add public docs smoke check for deployment page links in `www/content/docs/deployment/vps-per-user.mdx`
 
 ### Implementation for User Story 5
 
-- [ ] T064 [US5] Document phase 1 scope, non-goals, quota ceiling, and cost model in `www/content/docs/deployment/vps-per-user.mdx`
-- [ ] T065 [US5] Document backup retention, restored/not-restored state, and manual recovery procedure in `www/content/docs/deployment/vps-per-user.mdx`
-- [ ] T066 [US5] Document rollback and legacy-container fallback behavior in `www/content/docs/deployment/vps-per-user.mdx`
-- [ ] T067 [US5] Add first-customer operator runbook and observation checklist in `specs/070-vps-per-user/quickstart.md`
+- [X] T064 [US5] Document phase 1 scope, non-goals, quota ceiling, and cost model in `www/content/docs/deployment/vps-per-user.mdx`
+- [X] T065 [US5] Document backup retention, restored/not-restored state, and manual recovery procedure in `www/content/docs/deployment/vps-per-user.mdx`
+- [X] T066 [US5] Document rollback and legacy-container fallback behavior in `www/content/docs/deployment/vps-per-user.mdx`
+- [X] T067 [US5] Add first-customer operator runbook and observation checklist in `specs/070-vps-per-user/quickstart.md`
 - [ ] T068 [US5] Run documented manual smoke commands from `specs/070-vps-per-user/quickstart.md` against a non-production test user
 
 **Checkpoint**: User Story 5 is ready for one opt-in customer rollout.

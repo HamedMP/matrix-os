@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   createPlatformDb,
@@ -259,5 +259,26 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.11',
     });
     expect(getUserMachine(db, provisioned.machineId)).toBeUndefined();
+  });
+
+  it('documents first-customer rollout checks and recovery expectations', () => {
+    const quickstart = readFileSync('specs/070-vps-per-user/quickstart.md', 'utf8');
+
+    expect(quickstart).toContain('First-Customer Rollout Checklist');
+    expect(quickstart).toContain('Quota ceiling');
+    expect(quickstart).toContain('Backup observation');
+    expect(quickstart).toContain('Rollback');
+    expect(quickstart).toContain('Non-production smoke commands');
+  });
+
+  it('publishes VPS-per-user deployment docs through the docs navigation', () => {
+    const meta = JSON.parse(readFileSync('www/content/docs/deployment/meta.json', 'utf8')) as { pages: string[] };
+    const page = readFileSync('www/content/docs/deployment/vps-per-user.mdx', 'utf8');
+
+    expect(meta.pages).toContain('vps-per-user');
+    expect(page).toContain('## Phase 1 Scope');
+    expect(page).toContain('## Backup Retention');
+    expect(page).toContain('## Manual Recovery');
+    expect(page).toContain('## Rollback');
   });
 });
