@@ -1,7 +1,11 @@
 node_modules
 .git
 .gitignore
+Dockerfile*
 .dockerignore
+*.log*
+.env*
+coverage
 tests
 specs
 docs
@@ -9,8 +13,6 @@ spike
 www
 .specify
 .claude
-coverage
-.env*
 *.md
 !home/**/*.md
 !packages/**/*.md

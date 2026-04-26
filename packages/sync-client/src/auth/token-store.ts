@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
+import { profileAuthPath } from "../lib/profiles.js";
 
 export const AuthDataSchema = z.object({
   accessToken: z.string().min(1),
@@ -16,6 +17,13 @@ export type AuthData = z.infer<typeof AuthDataSchema>;
 
 function authFilePath(): string {
   return join(homedir(), ".matrixos", "auth.json");
+}
+
+export function authFilePathForProfile(
+  profileName: string,
+  configDir?: string,
+): string {
+  return profileAuthPath(profileName, configDir);
 }
 
 export async function loadAuth(path?: string): Promise<AuthData | null> {
@@ -60,6 +68,28 @@ export async function clearAuth(path?: string): Promise<void> {
     }
     throw err;
   }
+}
+
+export function loadProfileAuth(
+  profileName: string,
+  configDir?: string,
+): Promise<AuthData | null> {
+  return loadAuth(authFilePathForProfile(profileName, configDir));
+}
+
+export function saveProfileAuth(
+  profileName: string,
+  data: AuthData,
+  configDir?: string,
+): Promise<void> {
+  return saveAuth(data, authFilePathForProfile(profileName, configDir));
+}
+
+export function clearProfileAuth(
+  profileName: string,
+  configDir?: string,
+): Promise<void> {
+  return clearAuth(authFilePathForProfile(profileName, configDir));
 }
 
 export function isExpired(auth: AuthData): boolean {
