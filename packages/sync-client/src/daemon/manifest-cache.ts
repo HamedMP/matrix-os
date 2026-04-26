@@ -1,8 +1,11 @@
-import { readFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile, mkdir, readdir, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join } from "node:path";
 import { SyncStateSchema } from "./types.js";
 import type { SyncState, Manifest, ManifestEntry } from "./types.js";
 import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
+
+const MAX_CORRUPT_BACKUPS = 3;
 
 export type { SyncState };
 
@@ -46,8 +49,93 @@ export async function loadSyncState(filePath: string): Promise<SyncState> {
     throw err;
   }
 
-  const parsed: unknown = JSON.parse(raw);
-  return SyncStateSchema.parse(parsed);
+  // Cache is expendable: bad bytes get backed up and reset rather than
+  // crash-loop the daemon (a 0.2.4 schema tightening bricked installs).
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    await backupCorruptState(filePath, raw, "malformed-json", err);
+    return { ...DEFAULT_STATE, files: {} };
+  }
+
+  const result = SyncStateSchema.safeParse(parsed);
+  if (!result.success) {
+    await backupCorruptState(filePath, raw, "schema-mismatch", result.error);
+    return { ...DEFAULT_STATE, files: {} };
+  }
+  return result.data;
+}
+
+async function backupCorruptState(
+  filePath: string,
+  raw: string,
+  reason: "malformed-json" | "schema-mismatch",
+  cause: unknown,
+): Promise<void> {
+  // Suffix with a uuid so two recoveries within the same ms don't collide.
+  const backupPath = `${filePath}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const causeMessage = cause instanceof Error ? cause.message : String(cause);
+  try {
+    await pruneOldCorruptBackups(filePath, MAX_CORRUPT_BACKUPS - 1);
+    await writeUtf8FileAtomic(backupPath, raw, 0o600);
+    // Remove the original so a restart before the next saveSyncState does
+    // not produce another backup of identical bytes.
+    await unlink(filePath).catch((err: unknown) => {
+      if (isENOENT(err)) return;
+      console.warn(
+        `[manifest-cache] could not remove corrupt ${filePath} after backup: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    console.warn(
+      `[manifest-cache] ${reason}: backed up ${filePath} to ${backupPath} and reset state. Cause: ${causeMessage}`,
+    );
+  } catch (backupErr) {
+    const backupMessage =
+      backupErr instanceof Error ? backupErr.message : String(backupErr);
+    console.warn(
+      `[manifest-cache] ${reason}: could not back up ${filePath} (${backupMessage}); resetting state anyway. Cause: ${causeMessage}`,
+    );
+  }
+}
+
+async function pruneOldCorruptBackups(
+  filePath: string,
+  keep: number,
+): Promise<void> {
+  const dir = dirname(filePath);
+  const prefix = `${basename(filePath)}.corrupt-`;
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (err: unknown) {
+    if (isENOENT(err)) return;
+    console.warn(
+      `[manifest-cache] could not list ${dir} for backup pruning: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  const backups = entries.filter((e) => e.startsWith(prefix)).sort();
+  const removeCount = Math.max(0, backups.length - keep);
+  if (removeCount === 0) return;
+  await Promise.all(
+    backups.slice(0, removeCount).map((name) =>
+      unlink(join(dir, name)).catch((err: unknown) => {
+        if (isENOENT(err)) return;
+        console.warn(
+          `[manifest-cache] could not prune old backup ${name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }),
+    ),
+  );
+}
+
+function isENOENT(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    (err as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 export async function saveSyncState(

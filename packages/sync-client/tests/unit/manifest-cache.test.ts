@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFile, mkdir, rm, readFile, stat } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { writeFile, mkdir, rm, readFile, readdir, stat, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import {
   loadSyncState,
@@ -18,6 +18,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 
@@ -51,16 +52,111 @@ describe("loadSyncState", () => {
     expect(state.files["src/index.ts"]?.hash).toBe(data.files["src/index.ts"]!.hash);
   });
 
-  it("throws on malformed JSON", async () => {
-    await writeFile(STATE_PATH, "not valid json {{{");
+  it("recovers from malformed JSON by backing it up and returning default state", async () => {
+    const corrupt = "not valid json {{{";
+    await writeFile(STATE_PATH, corrupt);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await expect(loadSyncState(STATE_PATH)).rejects.toThrow();
+    const state = await loadSyncState(STATE_PATH);
+
+    expect(state.manifestVersion).toBe(0);
+    expect(Object.keys(state.files)).toHaveLength(0);
+
+    const entries = await readdir(TEST_DIR);
+    const backups = entries.filter((e) => e.startsWith("sync-state.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(join(TEST_DIR, backups[0]!), "utf-8")).toBe(corrupt);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("malformed-json"),
+    );
   });
 
-  it("throws on invalid schema (missing required fields)", async () => {
-    await writeFile(STATE_PATH, JSON.stringify({ manifestVersion: "not-a-number" }));
+  it("recovers from schema mismatch by backing it up and returning default state", async () => {
+    const corrupt = JSON.stringify({ manifestVersion: "not-a-number" });
+    await writeFile(STATE_PATH, corrupt);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await expect(loadSyncState(STATE_PATH)).rejects.toThrow();
+    const state = await loadSyncState(STATE_PATH);
+
+    expect(state.manifestVersion).toBe(0);
+    expect(Object.keys(state.files)).toHaveLength(0);
+
+    const entries = await readdir(TEST_DIR);
+    const backups = entries.filter((e) => e.startsWith("sync-state.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(join(TEST_DIR, backups[0]!), "utf-8")).toBe(corrupt);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("schema-mismatch"),
+    );
+  });
+
+  it("still resets state when the backup write itself fails", async () => {
+    if (process.getuid?.() === 0) {
+      // root bypasses chmod-enforced perms, so this scenario can't be
+      // simulated without module mocking. Skip rather than silently pass.
+      return;
+    }
+    const corrupt = "not valid json {{{";
+    await writeFile(STATE_PATH, corrupt);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Make the directory read-only so writeUtf8FileAtomic's tmp-file
+    // creation fails. Restore in finally so afterEach can clean up.
+    await chmod(TEST_DIR, 0o500);
+    try {
+      const state = await loadSyncState(STATE_PATH);
+
+      expect(state.manifestVersion).toBe(0);
+      expect(Object.keys(state.files)).toHaveLength(0);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("could not back up"),
+      );
+    } finally {
+      await chmod(TEST_DIR, 0o700);
+    }
+  });
+
+  it("caps .corrupt-* backups so they cannot accumulate unbounded", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) {
+      await writeFile(STATE_PATH, `bad-${i} {{{`);
+      await loadSyncState(STATE_PATH);
+    }
+
+    const entries = await readdir(TEST_DIR);
+    const backups = entries.filter((e) => e.startsWith("sync-state.json.corrupt-"));
+    expect(backups.length).toBeLessThanOrEqual(3);
+    expect(backups.length).toBeGreaterThan(0);
+  });
+
+  // Regression: a daemon shipped before mtime was tightened from z.number()
+  // to z.int() wrote floating-point millisecond timestamps into sync-state.json.
+  // The 0.2.4 schema rejected them and the daemon crash-looped on every
+  // existing install. This test pins the recovery behavior so a future schema
+  // tightening can't reproduce the same outage.
+  it("recovers when an old daemon wrote a non-integer mtime", async () => {
+    const corrupt = JSON.stringify({
+      manifestVersion: 5,
+      lastSyncAt: 1700000000000,
+      files: {
+        "system/icons/folder.svg": {
+          hash: "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+          mtime: 1700000000000.123,
+          size: 1024,
+        },
+      },
+    });
+    await writeFile(STATE_PATH, corrupt);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const state = await loadSyncState(STATE_PATH);
+
+    expect(state.manifestVersion).toBe(0);
+    expect(Object.keys(state.files)).toHaveLength(0);
+
+    const entries = await readdir(TEST_DIR);
+    expect(entries.some((e) => e.startsWith("sync-state.json.corrupt-"))).toBe(true);
   });
 });
 
