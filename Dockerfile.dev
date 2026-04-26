@@ -4,10 +4,48 @@
 
 FROM node:24-alpine
 
-# System deps for native addons (node-pty, better-sqlite3, sqlite-vec) and
-# bubblewrap (bwrap) for codex's per-command sandbox
-RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec cmake \
-    zsh curl shadow bubblewrap openssh-client
+# System deps for native addons (node-pty, better-sqlite3, sqlite-vec),
+# coding/debugging baseline, and bubblewrap for codex's per-command sandbox.
+RUN apk add --no-cache \
+    bash \
+    bind-tools \
+    bubblewrap \
+    ca-certificates \
+    cmake \
+    curl \
+    fd \
+    file \
+    g++ \
+    git \
+    gzip \
+    htop \
+    iputils \
+    jq \
+    less \
+    linux-headers \
+    lsof \
+    make \
+    nano \
+    netcat-openbsd \
+    openssh-client \
+    pkgconf \
+    procps \
+    python3 \
+    ripgrep \
+    rsync \
+    shadow \
+    strace \
+    su-exec \
+    tar \
+    tree \
+    tzdata \
+    unzip \
+    util-linux \
+    uv \
+    vim \
+    xz \
+    zip \
+    zsh
 
 # pnpm via corepack (Agent SDK bundles its own claude runtime)
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate

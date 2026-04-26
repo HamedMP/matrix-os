@@ -45,9 +45,51 @@ RUN cd shell && node ../node_modules/next/dist/bin/next build
 # --------------------------------------------------
 FROM node:24-alpine AS runtime
 
-# Runtime: git (home dir init + self-healing), build tools (node-pty native addon),
-# bubblewrap (bwrap) for codex's per-command sandbox
-RUN apk add --no-cache git python3 make g++ linux-headers bash su-exec bubblewrap openssh-client curl
+# Runtime: coding/debugging baseline and build tools. This image doubles as
+# the user's interactive coding environment, so keep common compilers and build
+# generators available for projects users create or clone inside Matrix.
+# bubblewrap (bwrap) is used for codex's per-command sandbox.
+# strace requires containers to run with CAP_SYS_PTRACE, for example
+# `--cap-add SYS_PTRACE`, before it can attach to traced processes.
+RUN apk add --no-cache \
+    bash \
+    bind-tools \
+    bubblewrap \
+    ca-certificates \
+    cmake \
+    curl \
+    fd \
+    file \
+    g++ \
+    git \
+    gzip \
+    htop \
+    iputils \
+    jq \
+    less \
+    linux-headers \
+    lsof \
+    make \
+    nano \
+    netcat-openbsd \
+    openssh-client \
+    pkgconf \
+    procps \
+    python3 \
+    ripgrep \
+    rsync \
+    strace \
+    su-exec \
+    tar \
+    tree \
+    tzdata \
+    unzip \
+    util-linux \
+    uv \
+    vim \
+    xz \
+    zip \
+    zsh
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
@@ -84,7 +126,7 @@ RUN set -eux; \
     rm /tmp/zellij.tgz
 
 # Non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
-RUN adduser -D -u 1001 -h /home/matrixos matrixos && \
+RUN adduser -D -u 1001 -h /home/matrixos -s /bin/zsh matrixos && \
     su-exec matrixos git config --global user.name "Matrix OS" && \
     su-exec matrixos git config --global user.email "os@matrix-os.com"
 
@@ -119,6 +161,7 @@ RUN echo "$VERSION" > /app/VERSION
 ENV NODE_ENV=production
 ENV PORT=4000
 ENV MATRIX_HOME=/home/matrixos/home
+ENV SHELL=/bin/zsh
 ENV NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
 ENV NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
 ENV GATEWAY_URL=http://localhost:4000
