@@ -81,7 +81,12 @@ async function backupCorruptState(
     await writeUtf8FileAtomic(backupPath, raw, 0o600);
     // Remove the original so a restart before the next saveSyncState does
     // not produce another backup of identical bytes.
-    await unlink(filePath).catch(() => undefined);
+    await unlink(filePath).catch((err: unknown) => {
+      if (isENOENT(err)) return;
+      console.warn(
+        `[manifest-cache] could not remove corrupt ${filePath} after backup: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
     console.warn(
       `[manifest-cache] ${reason}: backed up ${filePath} to ${backupPath} and reset state. Cause: ${causeMessage}`,
     );
@@ -103,16 +108,33 @@ async function pruneOldCorruptBackups(
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
+  } catch (err: unknown) {
+    if (isENOENT(err)) return;
+    console.warn(
+      `[manifest-cache] could not list ${dir} for backup pruning: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return;
   }
   const backups = entries.filter((e) => e.startsWith(prefix)).sort();
   const removeCount = Math.max(0, backups.length - keep);
   if (removeCount === 0) return;
   await Promise.all(
-    backups
-      .slice(0, removeCount)
-      .map((name) => unlink(join(dir, name)).catch(() => undefined)),
+    backups.slice(0, removeCount).map((name) =>
+      unlink(join(dir, name)).catch((err: unknown) => {
+        if (isENOENT(err)) return;
+        console.warn(
+          `[manifest-cache] could not prune old backup ${name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }),
+    ),
+  );
+}
+
+function isENOENT(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    (err as NodeJS.ErrnoException).code === "ENOENT"
   );
 }
 
