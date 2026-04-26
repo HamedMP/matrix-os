@@ -32,6 +32,15 @@ function zellijLaunchCommand(themeId: TerminalThemeId, isLight: boolean): string
   return `mkdir -p ~/.config/matrix-os && printf 'theme "${theme}"\\n' > ~/.config/matrix-os/zellij.kdl && exec zellij --config ~/.config/matrix-os/zellij.kdl`;
 }
 
+function isLightTerminalTheme(themeId: TerminalThemeId, desktopThemeSlug?: string): boolean {
+  return (
+    themeId === "one-light" ||
+    themeId === "solarized-light" ||
+    themeId === "github-light" ||
+    (themeId === "system" && /light|day/i.test(desktopThemeSlug ?? ""))
+  );
+}
+
 const DEFAULT_CWD = "projects";
 
 interface Tab {
@@ -131,11 +140,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
-  const isLightTheme =
-    themeId === "one-light" ||
-    themeId === "solarized-light" ||
-    themeId === "github-light" ||
-    (themeId === "system" && /light|day/i.test(((theme as { slug?: string }).slug ?? "")));
+  const isLightTheme = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
 
   // Match the padding around the xterm to the active terminal theme so the
   // user never sees a colored seam between the OS theme bg and the xterm
@@ -866,9 +871,9 @@ type SidebarTab = "projects" | "files";
 
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
+  const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
-  const isLightSidebar =
-    themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light";
+  const isLightSidebar = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
   const [tab, setTab] = useState<SidebarTab>("projects");
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);

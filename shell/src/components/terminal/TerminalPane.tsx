@@ -213,6 +213,7 @@ export function TerminalPane({
   const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
@@ -499,7 +500,7 @@ export function TerminalPane({
 
           const startup = sessionIdRef.current
             ? null
-            : startupCommand?.trim() || (claudeMode ? "claude" : null);
+            : initialStartupCommandRef.current?.trim() || (claudeMode ? "claude" : null);
           if (startup) {
             setTimeout(() => {
               if (ws.readyState === WebSocket.OPEN) {
@@ -899,7 +900,7 @@ export function TerminalPane({
       disposed = true;
       cleanup.then((fn) => fn?.());
     };
-  }, [claudeMode, cursorBlink, cwd, paneId, startupCommand, terminalFontSize, terminalThemeId, theme]);
+  }, [claudeMode, cursorBlink, cwd, paneId, terminalFontSize, terminalThemeId, theme]);
 
   useEffect(() => {
     if (termRef.current && fitAddonRef.current) {
