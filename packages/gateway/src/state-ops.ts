@@ -133,7 +133,10 @@ export async function withProjectLock<T>(projectSlug: string, callback: () => Pr
   projectLocks.set(projectSlug, chained);
 
   try {
-    await previous.catch(() => undefined);
+    await previous.catch((err: unknown) => {
+      // Previous lock holder errored; their error is re-thrown to their own caller. Proceed regardless.
+      console.error("[withProjectLock] previous lock holder error (swallowed):", err instanceof Error ? err.message : String(err));
+    });
     return await callback();
   } finally {
     release();
