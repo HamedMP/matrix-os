@@ -19,7 +19,7 @@
     "fumadocs-core": "^16.6.5",
     "fumadocs-mdx": "^14.2.8",
     "fumadocs-ui": "^16.6.5",
-    "inngest": "^3.32.0",
+    "inngest": "^3.54.0",
     "lucide-react": "^0.563.0",
     "mermaid": "^11.12.3",
     "next": "16.1.6",
