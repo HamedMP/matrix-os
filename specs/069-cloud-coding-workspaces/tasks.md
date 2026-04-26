@@ -117,10 +117,13 @@ Untracked support/spec files currently present:
 
 - [ ] T200 Add failing unit and integration tests for agent detection, launch argv construction, Zellij/tmux fallback, session lifecycle, attach/replay, lease conflicts, observe/takeover, transcript retention, and sandbox diagnostics.
   - Partial: `tests/gateway/agent-launcher.test.ts` covers agent detection, auth-needed states, launch argv construction, and Codex sandbox fail-closed launch requirements.
+  - Partial: `tests/gateway/zellij-runtime.test.ts` covers generated layouts, argv-based Zellij lifecycle commands, and degraded health metadata.
 
 - [x] T201 Implement `agent-launcher.ts` for Claude, Codex, OpenCode, and Pi detection plus launch command construction.
   - Files: `packages/gateway/src/agent-launcher.ts`, `tests/gateway/agent-launcher.test.ts`
-- [ ] T202 Implement `zellij-runtime.ts` for generated layouts, start/attach/observe/kill, health checks, and degraded fallback metadata.
+
+- [x] T202 Implement `zellij-runtime.ts` for generated layouts, start/attach/observe/kill, health checks, and degraded fallback metadata.
+  - Files: `packages/gateway/src/zellij-runtime.ts`, `tests/gateway/zellij-runtime.test.ts`
 - [ ] T203 Implement `agent-session-manager.ts` for session records, lifecycle, worktree lease integration, send/kill/list/get, and startup reconciliation.
 - [ ] T204 Implement `session-runtime-bridge.ts` to register external Zellij/tmux sessions with the terminal registry.
 - [ ] T205 Implement `session-transcript.ts` for durable JSONL replay, 10,000-line/5 MiB hot replay caps, 100 MiB or 30-day retention, truncation, export, and rehydration.
