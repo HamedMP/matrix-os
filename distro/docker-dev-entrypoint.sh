@@ -195,6 +195,25 @@ exec su-exec matrixos bash -c '
     echo "[matrix-os-dev] QMD search ready (BM25)"
   fi
 
+  if command -v code-server >/dev/null 2>&1; then
+    CODE_SERVER_PORT="${MATRIX_CODE_SERVER_PORT:-8787}"
+    CODE_SERVER_ROOT="$MATRIX_HOME/system/code-server"
+    mkdir -p "$CODE_SERVER_ROOT/user-data" "$CODE_SERVER_ROOT/extensions"
+    echo "[matrix-os-dev] Starting Matrix Code editor on :$CODE_SERVER_PORT"
+    env -u PORT -u HOST code-server \
+      --auth none \
+      --bind-addr "0.0.0.0:$CODE_SERVER_PORT" \
+      --disable-telemetry \
+      --disable-update-check \
+      --user-data-dir "$CODE_SERVER_ROOT/user-data" \
+      --extensions-dir "$CODE_SERVER_ROOT/extensions" \
+      "$MATRIX_HOME" &
+    CODE_SERVER_PID=$!
+  else
+    echo "[matrix-os-dev] code-server is not installed; code.matrix-os.com editor disabled"
+    CODE_SERVER_PID=
+  fi
+
   pnpm --filter shell exec next dev -p 3000 &
   SHELL_PID=$!
 
@@ -213,11 +232,17 @@ exec su-exec matrixos bash -c '
         [ -f \"\$src/auth.json\" ] && cp \"\$src/auth.json\" \"\$AI_AUTH/codex/auth.json\" 2>/dev/null && break
       done
     fi
+    [ -n \"\$CODE_SERVER_PID\" ] && kill \$CODE_SERVER_PID 2>/dev/null || true
     kill \$SHELL_PID \$GATEWAY_PID 2>/dev/null; exit 0
   " SIGTERM SIGINT
 
-  wait -n $SHELL_PID $GATEWAY_PID
+  if [ -n "$CODE_SERVER_PID" ]; then
+    wait -n $SHELL_PID $GATEWAY_PID $CODE_SERVER_PID
+  else
+    wait -n $SHELL_PID $GATEWAY_PID
+  fi
   EXIT_CODE=$?
+  [ -n "$CODE_SERVER_PID" ] && kill $CODE_SERVER_PID 2>/dev/null || true
   kill $SHELL_PID $GATEWAY_PID 2>/dev/null
   exit $EXIT_CODE
 '

@@ -902,7 +902,7 @@ export function createApp(deps: {
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
         console.warn(
-          `[platform] app-domain proxy unresolved handle=${record.handle} attempt=${attempt + 1} path=${path} targetPort=${targetPort}`,
+          `[platform] session-domain proxy unresolved handle=${record.handle} attempt=${attempt + 1} path=${path} targetPort=${targetPort}`,
         );
         return c.json({ error: 'Container unreachable' }, 502);
       }
@@ -1713,7 +1713,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       platformJwtSecret: PLATFORM_JWT_SECRET,
       wsToken,
     });
-    if (!identity) { socket.destroy(); return; }
+    if (!identity) {
+      console.warn(`[platform] websocket unauthenticated host=${host} path=${path} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
+      socket.destroy();
+      return;
+    }
 
     const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
     const record = await getContainer(db, identity.handle);

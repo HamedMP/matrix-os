@@ -195,6 +195,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
       `PORT=4000`,
       `SHELL_PORT=3000`,
+      `MATRIX_CODE_SERVER_PORT=8787`,
       ...extraEnv,
     ];
     // MATRIX_USER_ID is the immutable Clerk userId; gateway + home-mirror
@@ -271,6 +272,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           ExposedPorts: {
             '4000/tcp': {},
             '3000/tcp': {},
+            '8787/tcp': {},
           },
         });
 

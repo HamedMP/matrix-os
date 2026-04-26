@@ -11,7 +11,8 @@ Internet
   |
   +-- matrix-os.com ---------> Vercel (www/ -- landing, auth, dashboard)
   |
-  +-- app.matrix-os.com ----+  (session-based: Clerk JWT -> container)
+  +-- app.matrix-os.com ----+  (session-based: Clerk JWT -> container shell)
+  +-- code.matrix-os.com ---+  (session-based: Clerk JWT -> container code-server)
   +-- api.matrix-os.com ----+
   +-- *.matrix-os.com ------+  (handle-based: {handle}.matrix-os.com -> container)
                             |
@@ -357,7 +358,8 @@ curl https://api.matrix-os.com/health
 ```
 
 **Two routing modes:**
-- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header, looks up container by `clerkUserId`, proxies to it. No handle in URL. Redirects to `/login` if no session.
+- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header, looks up container by `clerkUserId`, proxies to the shell/gateway. No handle in URL. Redirects to `/login` if no session.
+- `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the private code-server port inside the user's container. No handle, SSH, or server IP is exposed.
 - `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain, proxies to container. No auth required (public access).
 
 ## Container Management
@@ -872,6 +874,7 @@ Cloudflare sits between the browser and the origin (gateway). It has its own cac
   CDN-Cache-Control: public, max-age=86400           # Cloudflare edge cache
   ```
 - **Cloudflare caches 404 responses.** If an icon doesn't exist yet and Cloudflare caches the 404, subsequent requests for the same URL will get 404 even after the icon is generated. Solutions: use `CDN-Cache-Control: no-store` for dynamic endpoints, or use cache-busting query params after generating new content.
+- **Do not edge-cache code editor static assets while auth is fronting code-server.** `code.matrix-os.com` serves versioned code-server JS/font URLs through the platform so unauthenticated module, worker, service-worker, and font fetches do not receive auth HTML. These responses intentionally set `CDN-Cache-Control: no-store` and `Cloudflare-CDN-Cache-Control: no-store`; otherwise Cloudflare can cache a previous auth HTML response under a `.js` or `.ttf` URL and browsers will continue failing MIME/font checks after a hard reload.
 - **DevTools "Disable cache" defeats all caching.** If icons appear to re-download every time, check that "Disable cache" is unchecked in browser DevTools Network tab. This checkbox forces the browser to bypass its cache entirely.
 
 ### Image Cache-Busting Strategy

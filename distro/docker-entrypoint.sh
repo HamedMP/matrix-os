@@ -117,6 +117,31 @@ EOYAML
 done
 chown -R matrixos:matrixos /home/matrixos/.claude /home/matrixos/.codex 2>/dev/null || true
 
+start_matrix_code_server() {
+  if ! command -v code-server >/dev/null 2>&1; then
+    echo "code-server is not installed; code.matrix-os.com editor disabled"
+    return
+  fi
+
+  code_server_port="${MATRIX_CODE_SERVER_PORT:-8787}"
+  code_server_root="$MATRIX_HOME/system/code-server"
+  mkdir -p "$code_server_root/user-data" "$code_server_root/extensions"
+  chown -R matrixos:matrixos "$code_server_root"
+
+  echo "Starting Matrix Code editor on :$code_server_port"
+  su-exec matrixos env -u PORT -u HOST code-server \
+    --auth none \
+    --bind-addr "0.0.0.0:$code_server_port" \
+    --disable-telemetry \
+    --disable-update-check \
+    --user-data-dir "$code_server_root/user-data" \
+    --extensions-dir "$code_server_root/extensions" \
+    "$MATRIX_HOME" &
+  CODE_SERVER_PID=$!
+}
+
+start_matrix_code_server
+
 # Start Next.js shell in background as non-root user
 cd /app/shell
 su-exec matrixos node ../node_modules/next/dist/bin/next start -p 3000 &
