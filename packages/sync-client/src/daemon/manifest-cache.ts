@@ -46,8 +46,48 @@ export async function loadSyncState(filePath: string): Promise<SyncState> {
     throw err;
   }
 
-  const parsed: unknown = JSON.parse(raw);
-  return SyncStateSchema.parse(parsed);
+  // The cache is a derivable accelerator, not a source of truth: any cached
+  // state is worth losing if it would otherwise crash the daemon. A schema
+  // tightening shipped in a CLI upgrade (e.g. mtime number -> int) would
+  // otherwise brick every existing install until the user manually deleted
+  // sync-state.json. Back the bad file up so it stays inspectable and rebuild
+  // from the server manifest on next sync.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    await backupCorruptState(filePath, raw, "malformed-json", err);
+    return { ...DEFAULT_STATE, files: {} };
+  }
+
+  const result = SyncStateSchema.safeParse(parsed);
+  if (!result.success) {
+    await backupCorruptState(filePath, raw, "schema-mismatch", result.error);
+    return { ...DEFAULT_STATE, files: {} };
+  }
+  return result.data;
+}
+
+async function backupCorruptState(
+  filePath: string,
+  raw: string,
+  reason: "malformed-json" | "schema-mismatch",
+  cause: unknown,
+): Promise<void> {
+  const backupPath = `${filePath}.corrupt-${Date.now()}`;
+  const causeMessage = cause instanceof Error ? cause.message : String(cause);
+  try {
+    await writeUtf8FileAtomic(backupPath, raw, 0o600);
+    console.warn(
+      `[manifest-cache] ${reason}: backed up ${filePath} to ${backupPath} and reset state. Cause: ${causeMessage}`,
+    );
+  } catch (backupErr) {
+    const backupMessage =
+      backupErr instanceof Error ? backupErr.message : String(backupErr);
+    console.warn(
+      `[manifest-cache] ${reason}: could not back up ${filePath} (${backupMessage}); resetting state anyway. Cause: ${causeMessage}`,
+    );
+  }
 }
 
 export async function saveSyncState(
