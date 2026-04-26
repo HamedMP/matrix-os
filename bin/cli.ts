@@ -2,16 +2,60 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const COMMANDS = new Set(["start", "send", "status", "doctor", "help", "version"]);
+const COMMANDS = new Set([
+  "start",
+  "send",
+  "status",
+  "doctor",
+  "help",
+  "version",
+  "project",
+  "worktree",
+  "workspace",
+]);
 
 export interface ParsedArgs {
   command: string;
+  subcommand?: string;
+  positional: string[];
   message?: string;
   gateway: string;
   token?: string;
   shell?: boolean;
   session?: string;
   noStream?: boolean;
+  slug?: string;
+  project?: string;
+  branch?: string;
+  pr?: number;
+  confirmDirtyDelete?: boolean;
+  confirm?: string;
+  includeTranscripts?: boolean;
+}
+
+export interface WorkspaceRequest {
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  body?: Record<string, unknown>;
+}
+
+interface ProjectListResponse {
+  projects: Array<{
+    slug?: string;
+    name?: string;
+    github?: { owner?: string; repo?: string };
+    updatedAt?: string;
+  }>;
+  nextCursor?: string | null;
+}
+
+interface WorktreeListResponse {
+  worktrees: Array<{
+    id?: string;
+    currentBranch?: string;
+    dirtyState?: string;
+    path?: string;
+  }>;
 }
 
 export interface StatusInfo {
@@ -40,6 +84,7 @@ export interface DoctorCheck {
 export function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
     command: "help",
+    positional: [],
     gateway: "http://localhost:4000",
   };
 
@@ -87,6 +132,51 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--slug" && i + 1 < argv.length) {
+      result.slug = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--project" && i + 1 < argv.length) {
+      result.project = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--branch" && i + 1 < argv.length) {
+      result.branch = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--pr" && i + 1 < argv.length) {
+      const pr = Number.parseInt(argv[i + 1], 10);
+      if (Number.isSafeInteger(pr) && pr > 0) {
+        result.pr = pr;
+      }
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--confirm" && i + 1 < argv.length) {
+      result.confirm = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--confirm-dirty-delete") {
+      result.confirmDirtyDelete = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--include-transcripts") {
+      result.includeTranscripts = true;
+      i++;
+      continue;
+    }
+
     if (arg === "--no-stream") {
       result.noStream = true;
       i++;
@@ -100,8 +190,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
         result.command = "help";
       }
       positionalIndex++;
+    } else if (
+      positionalIndex === 1 &&
+      ["project", "worktree", "workspace"].includes(result.command)
+    ) {
+      result.subcommand = arg;
+      positionalIndex++;
     } else if (positionalIndex === 1 && result.command === "send") {
       result.message = arg;
+      positionalIndex++;
+    } else if (["project", "worktree", "workspace"].includes(result.command)) {
+      result.positional.push(arg);
       positionalIndex++;
     }
 
@@ -109,6 +208,155 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return result;
+}
+
+function encodePathSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function requirePositional(args: ParsedArgs, index: number, label: string): string {
+  const value = args.positional[index];
+  if (!value) {
+    throw new Error(`${label} required`);
+  }
+  return value;
+}
+
+export function buildWorkspaceRequest(args: ParsedArgs): WorkspaceRequest {
+  if (args.command === "project") {
+    switch (args.subcommand) {
+      case "add": {
+        const url = requirePositional(args, 0, "repository URL");
+        return {
+          method: "POST",
+          path: "/api/projects",
+          body: args.slug ? { url, slug: args.slug } : { url },
+        };
+      }
+      case "ls":
+      case "list":
+        return { method: "GET", path: "/api/projects" };
+      case "prs": {
+        const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
+        return { method: "GET", path: `/api/projects/${slug}/prs` };
+      }
+      case "branches": {
+        const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
+        return { method: "GET", path: `/api/projects/${slug}/branches` };
+      }
+      case "rm":
+      case "delete": {
+        const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
+        return { method: "DELETE", path: `/api/projects/${slug}` };
+      }
+      default:
+        throw new Error("Unknown project command");
+    }
+  }
+
+  if (args.command === "worktree") {
+    switch (args.subcommand) {
+      case "create": {
+        const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
+        if ((args.branch ? 1 : 0) + (typeof args.pr === "number" ? 1 : 0) !== 1) {
+          throw new Error("Exactly one of --branch or --pr is required");
+        }
+        return {
+          method: "POST",
+          path: `/api/projects/${slug}/worktrees`,
+          body: args.branch ? { branch: args.branch } : { pr: args.pr },
+        };
+      }
+      case "ls":
+      case "list": {
+        const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
+        return { method: "GET", path: `/api/projects/${slug}/worktrees` };
+      }
+      case "rm":
+      case "delete": {
+        const slug = encodePathSegment(requirePositional(args, 0, "project slug"));
+        const worktreeId = encodePathSegment(requirePositional(args, 1, "worktree ID"));
+        return {
+          method: "DELETE",
+          path: `/api/projects/${slug}/worktrees/${worktreeId}`,
+          body: { confirmDirtyDelete: args.confirmDirtyDelete === true },
+        };
+      }
+      default:
+        throw new Error("Unknown worktree command");
+    }
+  }
+
+  if (args.command === "workspace") {
+    switch (args.subcommand) {
+      case "export":
+        return {
+          method: "POST",
+          path: "/api/workspace/export",
+          body: args.project
+            ? { scope: "project", projectSlug: args.project, includeTranscripts: args.includeTranscripts === true }
+            : { scope: "all", includeTranscripts: args.includeTranscripts === true },
+        };
+      case "delete": {
+        if (!args.project) {
+          throw new Error("--project required");
+        }
+        return {
+          method: "DELETE",
+          path: "/api/workspace/data",
+          body: {
+            scope: "project",
+            projectSlug: args.project,
+            confirmation: args.confirm ?? "",
+          },
+        };
+      }
+      default:
+        throw new Error("Unknown workspace command");
+    }
+  }
+
+  throw new Error("Unknown workspace command");
+}
+
+export function formatProjectList(response: ProjectListResponse): string {
+  if (response.projects.length === 0) {
+    return "No projects";
+  }
+  return response.projects
+    .map((project) => {
+      const slug = project.slug ?? "-";
+      const name = project.name ?? slug;
+      const remote = project.github?.owner && project.github.repo
+        ? `${project.github.owner}/${project.github.repo}`
+        : "-";
+      return `${slug}\t${name}\t${remote}`;
+    })
+    .join("\n");
+}
+
+export function formatWorktreeList(response: WorktreeListResponse): string {
+  if (response.worktrees.length === 0) {
+    return "No worktrees";
+  }
+  return response.worktrees
+    .map((worktree) => {
+      const id = worktree.id ?? "-";
+      const branch = worktree.currentBranch ?? "-";
+      const dirty = worktree.dirtyState ?? "unknown";
+      return `${id}\t${branch}\t${dirty}`;
+    })
+    .join("\n");
+}
+
+export function formatWorkspaceResponse(command: string, subcommand: string | undefined, data: unknown): string {
+  if (command === "project" && (subcommand === "ls" || subcommand === "list")) {
+    return formatProjectList(data as ProjectListResponse);
+  }
+  if (command === "worktree" && (subcommand === "ls" || subcommand === "list")) {
+    return formatWorktreeList(data as WorktreeListResponse);
+  }
+  return JSON.stringify(data, null, 2);
 }
 
 function formatUptime(seconds: number): string {
@@ -186,7 +434,14 @@ export function getVersion(): string {
     const pkgPath = join(__dirname, "..", "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     return pkg.version ?? "0.0.0";
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) {
+      return "0.0.0";
+    }
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return "0.0.0";
+    }
+    console.warn("[matrixos] Failed to read package version:", err instanceof Error ? err.message : String(err));
     return "0.0.0";
   }
 }
@@ -201,6 +456,9 @@ Commands:
   send        Send a message to the kernel
   status      Show gateway health and status
   doctor      Run diagnostic checks
+  project     Manage coding projects
+  worktree    Manage project worktrees
+  workspace   Export or delete workspace data
   help        Show this help text
   version     Show version
 
@@ -213,5 +471,21 @@ Start options:
 
 Send options:
   --session ID     Send to a specific session
-  --no-stream      Wait for complete response`;
+  --no-stream      Wait for complete response
+
+Project commands:
+  project add <github-url> [--slug slug]
+  project ls
+  project prs <slug>
+  project branches <slug>
+  project rm <slug>
+
+Worktree commands:
+  worktree create <slug> (--branch name | --pr number)
+  worktree ls <slug>
+  worktree rm <slug> <worktreeId> [--confirm-dirty-delete]
+
+Workspace commands:
+  workspace export [--project slug] [--include-transcripts]
+  workspace delete --project slug --confirm "delete project workspace data"`;
 }

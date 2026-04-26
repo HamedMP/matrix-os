@@ -92,13 +92,26 @@ Untracked support/spec files currently present:
 
 ### Project / GitHub / Worktree Foundation
 
-- [ ] T100 Add failing unit and integration tests for project CRUD, GitHub URL validation, slug conflicts, clone staging cleanup, worktree leases, op-log recovery, and owner-scoped workspace export/delete.
-- [ ] T101 Implement `project-manager.ts` for project CRUD, GitHub URL validation, slug generation, safe clone staging, GitHub auth status, PR listing, and branch listing.
-- [ ] T102 Implement `worktree-manager.ts` for branch/PR worktrees, stable `wt_` IDs, dirty-state detection, safe deletion, and write leases.
-- [ ] T103 Implement `state-ops.ts` for atomic writes, operation logs, per-project locks, startup replay, index rebuild, and export/delete helpers.
-- [ ] T104 Add gateway API routes for projects, GitHub status, branches, PRs, worktrees, workspace export, and workspace data deletion.
-- [ ] T105 Add CLI project/worktree/export/delete commands.
-- [ ] T106 Complete green/refactor coverage for project manager, worktree manager, clone staging, validation, leases, op-log recovery, and export/delete scoping.
+- [x] T100 Add failing unit and integration tests for project CRUD, GitHub URL validation, slug conflicts, clone staging cleanup, worktree leases, op-log recovery, and owner-scoped workspace export/delete.
+  - Files: `tests/gateway/project-manager.test.ts`, `tests/gateway/worktree-manager.test.ts`, `tests/gateway/state-ops.test.ts`, `tests/gateway/workspace-routes.test.ts`
+
+- [x] T101 Implement `project-manager.ts` for project CRUD, GitHub URL validation, slug generation, safe clone staging, GitHub auth status, PR listing, and branch listing.
+  - Files: `packages/gateway/src/project-manager.ts`
+
+- [x] T102 Implement `worktree-manager.ts` for branch/PR worktrees, stable `wt_` IDs, dirty-state detection, safe deletion, and write leases.
+  - Files: `packages/gateway/src/worktree-manager.ts`
+
+- [x] T103 Implement `state-ops.ts` for atomic writes, operation logs, per-project locks, startup replay, index rebuild, and export/delete helpers.
+  - Files: `packages/gateway/src/state-ops.ts`
+
+- [x] T104 Add gateway API routes for projects, GitHub status, branches, PRs, worktrees, workspace export, and workspace data deletion.
+  - Files: `packages/gateway/src/workspace-routes.ts`, `packages/gateway/src/server.ts`
+
+- [x] T105 Add CLI project/worktree/export/delete commands.
+  - Files: `bin/cli.ts`, `bin/matrixos.ts`, `tests/cli/cli.test.ts`
+
+- [x] T106 Complete green/refactor coverage for project manager, worktree manager, clone staging, validation, leases, op-log recovery, and export/delete scoping.
+  - Commands: `pnpm exec vitest run tests/cli/cli.test.ts tests/gateway/project-manager.test.ts tests/gateway/state-ops.test.ts tests/gateway/worktree-manager.test.ts tests/gateway/workspace-routes.test.ts`
 
 ### Agent Sessions / Runtime Bridge
 
