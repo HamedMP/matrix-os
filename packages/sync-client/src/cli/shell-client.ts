@@ -42,7 +42,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const payload = await res.json().catch(() => ({}));
+    const payload = await res.json().catch((err: unknown) => {
+      // Response body is not valid JSON; proceed with empty payload so the
+      // !res.ok branch can still throw a typed ShellClientError.
+      console.error("[shell-client] failed to parse response JSON:", err);
+      return {} as Record<string, unknown>;
+    });
 
     if (!res.ok) {
       const code =
