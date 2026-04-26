@@ -143,18 +143,18 @@
 
 ### Tests for User Story 4
 
-- [ ] T053 [P] [US4] Add recovery state-transition and R2 preflight tests in `tests/platform/customer-vps.test.ts`
-- [ ] T054 [P] [US4] Add `/vps/recover` route contract and auth tests in `tests/platform/customer-vps-routes.test.ts`
-- [ ] T055 [P] [US4] Add opt-in real-Hetzner recovery smoke test gated by env flag in `tests/platform/customer-vps-real-hetzner.test.ts`
+- [X] T053 [P] [US4] Add recovery state-transition and R2 preflight tests in `tests/platform/customer-vps.test.ts`
+- [X] T054 [P] [US4] Add `/vps/recover` route contract and auth tests in `tests/platform/customer-vps-routes.test.ts`
+- [X] T055 [P] [US4] Add opt-in real-Hetzner recovery smoke test gated by env flag in `tests/platform/customer-vps-real-hetzner.test.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T056 [US4] Implement recovery orchestration with durable `recovering` state in `packages/platform/src/customer-vps.ts`
-- [ ] T057 [US4] Implement R2 `system/db/latest` preflight and `allowEmpty` behavior in `packages/platform/src/customer-vps-r2.ts`
-- [ ] T058 [US4] Add `/vps/recover` route behavior and generic error responses in `packages/platform/src/customer-vps-routes.ts`
-- [ ] T059 [P] [US4] Add admin `matrixctl recover` wrapper documentation or script in `distro/customer-vps/matrixctl`
-- [ ] T060 [US4] Extend reconciliation to handle stale `recovering` rows in `packages/platform/src/customer-vps.ts`
-- [ ] T061 [US4] Run recovery tests from `quickstart.md` against `tests/platform/customer-vps.test.ts` and `tests/platform/customer-vps-routes.test.ts`
+- [X] T056 [US4] Implement recovery orchestration with durable `recovering` state in `packages/platform/src/customer-vps.ts`
+- [X] T057 [US4] Implement R2 `system/db/latest` preflight and `allowEmpty` behavior in `packages/platform/src/customer-vps-r2.ts`
+- [X] T058 [US4] Add `/vps/recover` route behavior and generic error responses in `packages/platform/src/customer-vps-routes.ts`
+- [X] T059 [P] [US4] Add admin `matrixctl recover` wrapper documentation or script in `distro/customer-vps/matrixctl`
+- [X] T060 [US4] Extend reconciliation to handle stale `recovering` rows in `packages/platform/src/customer-vps.ts`
+- [X] T061 [US4] Run recovery tests from `quickstart.md` against `tests/platform/customer-vps.test.ts` and `tests/platform/customer-vps-routes.test.ts`
 
 **Checkpoint**: User Story 4 provides deterministic manual recovery from R2.
 

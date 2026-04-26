@@ -102,4 +102,15 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('awscli postgresql-client');
     expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
   });
+
+  it('includes a bounded matrixctl recovery wrapper', () => {
+    const root = process.cwd();
+    const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+    expect(matrixctl).toContain('${MATRIX_PLATFORM_URL%/}/vps/recover');
+    expect(matrixctl).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
+  });
 });

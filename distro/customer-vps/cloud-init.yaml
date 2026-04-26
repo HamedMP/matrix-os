@@ -154,9 +154,12 @@ write_files:
       R2_PREFIX="${R2_PREFIX:-${MATRIX_R2_PREFIX:-}}"
       R2_ENDPOINT="${R2_ENDPOINT:-}"
       R2_ACCOUNT_ID="${R2_ACCOUNT_ID:-}"
+      MATRIX_PLATFORM_URL="${MATRIX_PLATFORM_URL:-${PLATFORM_URL:-}}"
+      MATRIX_PLATFORM_TOKEN="${MATRIX_PLATFORM_TOKEN:-${PLATFORM_TOKEN:-}}"
 
       usage() {
         echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
+        echo "usage: matrixctl recover <clerk-user-id> [--allow-empty]" >&2
       }
 
       fail() {
@@ -253,13 +256,47 @@ write_files:
         echo "matrixctl: prune checked ${prefix} (max deletes 100)"
       }
 
-      require_r2
+      recover() {
+        local clerk_user_id="$1"
+        local allow_empty="${2:-}"
+        case "$clerk_user_id" in
+          ""|*..*|*://*|*$'\r'*|*$'\n'*) fail "invalid recovery user" ;;
+        esac
+        if [ -n "$allow_empty" ] && [ "$allow_empty" != "--allow-empty" ]; then
+          usage
+          exit 2
+        fi
+        [ -n "$MATRIX_PLATFORM_URL" ] || fail "platform recovery not configured"
+        [ -n "$MATRIX_PLATFORM_TOKEN" ] || fail "platform recovery not configured"
+
+        local allow_json="false"
+        if [ "$allow_empty" = "--allow-empty" ]; then
+          allow_json="true"
+        fi
+        local payload
+        payload="$(printf '{"clerkUserId":"%s","allowEmpty":%s}' "$clerk_user_id" "$allow_json")"
+        if ! curl --fail --silent --show-error --max-time 10 \
+          -H "authorization: Bearer ${MATRIX_PLATFORM_TOKEN}" \
+          -H "content-type: application/json" \
+          -d "$payload" \
+          "${MATRIX_PLATFORM_URL%/}/vps/recover" >/dev/null; then
+          fail "recover request failed"
+        fi
+        echo "matrixctl: recovery requested"
+      }
+
+      if [ "${1:-}" = "recover" ]; then
+        [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage; exit 2; }
+        recover "$2" "${3:-}"
+        exit 0
+      fi
 
       if [ "${1:-}" != "r2" ]; then
         usage
         exit 2
       fi
       shift
+      require_r2
 
       case "${1:-}" in
         put)

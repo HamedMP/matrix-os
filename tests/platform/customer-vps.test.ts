@@ -189,4 +189,75 @@ describe('platform/customer-vps', () => {
       'Invalid customer VPS system key',
     );
   });
+
+  it('refuses recovery without an R2 latest pointer unless allowEmpty is set', async () => {
+    const hetzner = createMockHetznerClient();
+    const systemStore = createMockCustomerVpsSystemStore({
+      hasDbLatest: vi.fn().mockResolvedValue(false),
+    });
+    const { service } = createService({ hetzner, systemStore });
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.recover({ clerkUserId: 'user_123' })).rejects.toMatchObject({
+      status: 409,
+      publicMessage: 'No backup snapshot available',
+    });
+    expect(hetzner.deleteServer).not.toHaveBeenCalled();
+  });
+
+  it('creates a replacement machine in recovering state from R2 preflight', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+    ];
+    const hetzner = createMockHetznerClient({
+      createServer: vi
+        .fn()
+        .mockResolvedValueOnce({
+          id: 123456,
+          status: 'running',
+          publicIPv4: '203.0.113.10',
+          publicIPv6: '2001:db8::10',
+        })
+        .mockResolvedValueOnce({
+          id: 789012,
+          status: 'running',
+          publicIPv4: '203.0.113.11',
+          publicIPv6: '2001:db8::11',
+        }),
+    });
+    const systemStore = createMockCustomerVpsSystemStore({
+      hasDbLatest: vi.fn().mockResolvedValue(true),
+    });
+    const { service } = createService({
+      hetzner,
+      systemStore,
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const recovered = await service.recover({ clerkUserId: 'user_123' });
+
+    expect(recovered).toMatchObject({
+      oldMachineId: provisioned.machineId,
+      machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      status: 'recovering',
+    });
+    expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
+    const row = getUserMachine(db, recovered.machineId)!;
+    expect(row).toMatchObject({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      status: 'recovering',
+      hetznerServerId: 789012,
+      publicIPv4: '203.0.113.11',
+    });
+    expect(getUserMachine(db, provisioned.machineId)).toBeUndefined();
+  });
 });

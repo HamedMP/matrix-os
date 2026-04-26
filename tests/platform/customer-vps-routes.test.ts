@@ -100,6 +100,49 @@ describe('platform/customer-vps-routes', () => {
     expect(await deleted.json()).toEqual({ deleted: true, machineId: provisionBody.machineId, status: 'deleted' });
   });
 
+  it('protects and validates the recover route contract', async () => {
+    const service = {
+      recover: vi.fn().mockResolvedValue({
+        oldMachineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+        status: 'recovering',
+        etaSeconds: 120,
+      }),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const unauthorized = await app.request('/vps/recover', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123' }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const invalid = await app.request('/vps/recover', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: '../user' }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: 'Invalid request' });
+
+    const recover = await app.request('/vps/recover', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ clerkUserId: 'user_123', allowEmpty: true }),
+    });
+
+    expect(recover.status).toBe(202);
+    expect(await recover.json()).toEqual({
+      oldMachineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      status: 'recovering',
+      etaSeconds: 120,
+    });
+    expect(service.recover).toHaveBeenCalledWith({ clerkUserId: 'user_123', allowEmpty: true });
+  });
+
   it('rejects invalid request bodies with generic validation errors', async () => {
     const app = createApp();
     const res = await app.request('/vps/provision', {
