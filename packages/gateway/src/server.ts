@@ -22,6 +22,7 @@ import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } f
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
+import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -2115,6 +2116,7 @@ export async function createGateway(config: GatewayConfig) {
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
+  app.route("/", createWorkspaceRoutes({ homePath }));
 
   async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
     try {
