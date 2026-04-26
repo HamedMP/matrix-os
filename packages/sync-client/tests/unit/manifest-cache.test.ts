@@ -18,6 +18,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(TEST_DIR, { recursive: true, force: true });
 });
 
@@ -68,7 +69,6 @@ describe("loadSyncState", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("malformed-json"),
     );
-    warn.mockRestore();
   });
 
   it("recovers from schema mismatch by backing it up and returning default state", async () => {
@@ -88,7 +88,6 @@ describe("loadSyncState", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("schema-mismatch"),
     );
-    warn.mockRestore();
   });
 
   it("still resets state when the backup write itself fails", async () => {
@@ -115,11 +114,10 @@ describe("loadSyncState", () => {
     } finally {
       await chmod(TEST_DIR, 0o700);
     }
-    warn.mockRestore();
   });
 
   it("caps .corrupt-* backups so they cannot accumulate unbounded", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
 
     for (let i = 0; i < 5; i++) {
       await writeFile(STATE_PATH, `bad-${i} {{{`);
@@ -130,7 +128,6 @@ describe("loadSyncState", () => {
     const backups = entries.filter((e) => e.startsWith("sync-state.json.corrupt-"));
     expect(backups.length).toBeLessThanOrEqual(3);
     expect(backups.length).toBeGreaterThan(0);
-    warn.mockRestore();
   });
 
   // Regression: a daemon shipped before mtime was tightened from z.number()
@@ -151,7 +148,7 @@ describe("loadSyncState", () => {
       },
     });
     await writeFile(STATE_PATH, corrupt);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const state = await loadSyncState(STATE_PATH);
 
@@ -160,7 +157,6 @@ describe("loadSyncState", () => {
 
     const entries = await readdir(TEST_DIR);
     expect(entries.some((e) => e.startsWith("sync-state.json.corrupt-"))).toBe(true);
-    warn.mockRestore();
   });
 });
 

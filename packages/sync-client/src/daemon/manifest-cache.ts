@@ -79,6 +79,9 @@ async function backupCorruptState(
   try {
     await pruneOldCorruptBackups(filePath, MAX_CORRUPT_BACKUPS - 1);
     await writeUtf8FileAtomic(backupPath, raw, 0o600);
+    // Remove the original so a restart before the next saveSyncState does
+    // not produce another backup of identical bytes.
+    await unlink(filePath).catch(() => undefined);
     console.warn(
       `[manifest-cache] ${reason}: backed up ${filePath} to ${backupPath} and reset state. Cause: ${causeMessage}`,
     );
