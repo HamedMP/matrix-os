@@ -42,7 +42,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const payload = await res.json().catch(() => ({}));
+    let payload: unknown = {};
+    try {
+      payload = await res.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        throw err;
+      }
+    }
 
     if (!res.ok) {
       const code =

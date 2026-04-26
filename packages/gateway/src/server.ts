@@ -138,6 +138,8 @@ import {
 } from "./metrics.js";
 import {
   createShellRoutes,
+  ScrollbackStore,
+  ShellPreferencesStore,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
 } from "./shell/index.js";
@@ -257,10 +259,13 @@ export async function createGateway(config: GatewayConfig) {
     bufferSize: 5 * 1024 * 1024,
     persistPath: join(homePath, "system", "terminal-sessions.json"),
   });
+  const shellScrollbackStore = new ScrollbackStore({ homePath });
+  const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: createZellijAdapter(),
     maxSessions: 20,
+    scrollbackStore: shellScrollbackStore,
   });
 
   const dispatcher: Dispatcher = createDispatcher({
@@ -1154,7 +1159,10 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
-  app.route("/api", createShellRoutes({ registry: zellijShellRegistry }));
+  app.route("/api", createShellRoutes({
+    registry: zellijShellRegistry,
+    preferences: shellPreferencesStore,
+  }));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an

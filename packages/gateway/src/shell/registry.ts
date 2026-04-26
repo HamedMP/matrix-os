@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
 import { resolveShellCwd, validateLayoutName, validateSessionName } from "./names.js";
+import type { ScrollbackStore } from "./scrollback-store.js";
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
@@ -38,6 +39,7 @@ export interface ShellRegistryOptions {
   adapter: ShellRegistryAdapter;
   maxSessions?: number;
   persistPath?: string;
+  scrollbackStore?: ScrollbackStore;
 }
 
 export class ShellRegistry {
@@ -58,6 +60,7 @@ export class ShellRegistry {
     for (const name of Object.keys(file.sessions)) {
       if (!live.has(name)) {
         delete file.sessions[name];
+        await this.options.scrollbackStore?.cleanup(name);
         changed = true;
       }
     }
@@ -84,6 +87,7 @@ export class ShellRegistry {
     for (const existing of Object.keys(file.sessions)) {
       if (!live.has(existing)) {
         delete file.sessions[existing];
+        await this.options.scrollbackStore?.cleanup(existing);
       }
     }
 
@@ -130,6 +134,7 @@ export class ShellRegistry {
     }
     await this.options.adapter.deleteSession(safeName, options);
     delete file.sessions[safeName];
+    await this.options.scrollbackStore?.cleanup(safeName);
     await this.write(file);
   }
 

@@ -2,6 +2,10 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { toShellError } from "./errors.js";
+import {
+  ShellPreferencesSchema,
+  type ShellPreferencesStore,
+} from "./preferences.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;
@@ -16,6 +20,7 @@ interface SessionRegistryRoutes {
 
 export interface ShellRouteDeps {
   registry: SessionRegistryRoutes;
+  preferences?: ShellPreferencesStore;
 }
 
 const CreateSessionBodySchema = z.object({
@@ -28,6 +33,7 @@ const CreateSessionBodySchema = z.object({
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
+  const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
 
   app.get("/sessions", async (c) => {
     try {
@@ -57,6 +63,35 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
       return c.json({ ok: true });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.get("/sessions/:name/preferences", async (c) => {
+    try {
+      if (!deps.preferences) {
+        return c.json({ preferences: ShellPreferencesSchema.parse({}) });
+      }
+      return c.json({ preferences: await deps.preferences.load(c.req.param("name")) });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.put("/sessions/:name/preferences", preferencesBodyLimit, async (c) => {
+    try {
+      if (!deps.preferences) {
+        return c.json(
+          { error: { code: "preferences_unavailable", message: "Request failed" } },
+          503,
+        );
+      }
+      const preferences = await deps.preferences.save(
+        c.req.param("name"),
+        ShellPreferencesSchema.parse(await c.req.json()),
+      );
+      return c.json({ preferences });
     } catch (err) {
       return safeError(c, err);
     }

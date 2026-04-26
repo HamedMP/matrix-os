@@ -7,7 +7,8 @@ import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
-import { TERMINAL_THEME_OPTIONS, getTerminalThemePreset } from "./terminal-themes";
+import { getTerminalThemePreset } from "./terminal-themes";
+import { TerminalPreferencesPanel } from "./preferences-panel";
 
 // Map xterm theme ids onto zellij's built-in theme names. Zellij ships with
 // these themes in 0.44, so referencing them by name "just works".
@@ -121,6 +122,10 @@ function getSessionIds(node: PaneNode): string[] {
     return node.sessionId ? [node.sessionId] : [];
   }
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
+}
+
+function getSafePreferencesSessionName(value: string | null): string | null {
+  return value && /^[a-z][a-z0-9-]{0,30}$/.test(value) ? value : null;
 }
 
 function terminalAppDebug(event: string, details: Record<string, unknown>): void {
@@ -685,10 +690,14 @@ function ToolbarBtn({ onClick, title, children, variant = "default" }: ToolbarBt
 }
 
 function ThemePickerButton() {
-  const themeId = useTerminalSettings((s) => s.themeId);
-  const setThemeId = useTerminalSettings((s) => s.setThemeId);
+  const ctx = useTerminalAppContext();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
+  const focusedPaneId = ctx.focusedPaneId ?? (activeTab ? getFirstPaneId(activeTab.paneTree) : null);
+  const sessionName = activeTab && focusedPaneId
+    ? getSafePreferencesSessionName(getPaneSessionId(activeTab.paneTree, focusedPaneId))
+    : null;
 
   useEffect(() => {
     if (!open) return;
@@ -699,11 +708,9 @@ function ThemePickerButton() {
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const current = TERMINAL_THEME_OPTIONS.find((o) => o.id === themeId) ?? TERMINAL_THEME_OPTIONS[0];
-
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
-      <ToolbarBtn onClick={() => setOpen((o) => !o)} title={`Terminal theme: ${current.label}`}>
+      <ToolbarBtn onClick={() => setOpen((o) => !o)} title="Terminal preferences">
         <IconPalette />
       </ToolbarBtn>
       {open && (
@@ -717,34 +724,11 @@ function ThemePickerButton() {
             border: "1px solid var(--border)",
             borderRadius: 8,
             boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-            padding: 4,
-            minWidth: 180,
+            padding: 0,
+            minWidth: 260,
           }}
         >
-          <div style={{ padding: "6px 10px", fontSize: 10, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            Terminal Theme
-          </div>
-          {TERMINAL_THEME_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => { setThemeId(opt.id); setOpen(false); }}
-              className="w-full flex items-center gap-2 cursor-pointer transition-colors"
-              style={{
-                padding: "6px 10px",
-                fontSize: 12,
-                background: opt.id === themeId ? "var(--accent)" : "transparent",
-                color: "var(--foreground)",
-                border: "none",
-                textAlign: "left",
-                borderRadius: 4,
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accent)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = opt.id === themeId ? "var(--accent)" : "transparent"; }}
-            >
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: opt.id === themeId ? "var(--primary)" : "var(--border)" }} />
-              {opt.label}
-            </button>
-          ))}
+          <TerminalPreferencesPanel sessionName={sessionName} />
         </div>
       )}
     </div>

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { detectUrls, detectFilePaths, WebLinkProvider } from "../../shell/src/components/terminal/web-link-provider.js";
+import {
+  detectUrls,
+  detectFilePaths,
+  detectGitReferences,
+  detectPackageSpecifiers,
+  WebLinkProvider,
+} from "../../shell/src/components/terminal/web-link-provider.js";
 
 describe("Web Link Provider", () => {
   describe("URL detection", () => {
@@ -107,6 +113,32 @@ describe("Web Link Provider", () => {
     it("ignores bare directory paths without extensions", () => {
       const matches = detectFilePaths("In /usr/local/lib directory");
       expect(matches).toHaveLength(0);
+    });
+  });
+
+  describe("semantic terminal links", () => {
+    it("detects commit SHAs", () => {
+      expect(detectGitReferences("commit a3f8d9c1b2a3e4f5678901234567890abcdef123")).toEqual([
+        {
+          kind: "commit",
+          text: "a3f8d9c1b2a3e4f5678901234567890abcdef123",
+          startIndex: 7,
+        },
+      ]);
+    });
+
+    it("detects issue references", () => {
+      expect(detectGitReferences("Fixes #123 and refs #456")).toEqual([
+        { kind: "issue", text: "#123", startIndex: 6 },
+        { kind: "issue", text: "#456", startIndex: 20 },
+      ]);
+    });
+
+    it("detects npm and pnpm package specifiers", () => {
+      expect(detectPackageSpecifiers("Install npm:@scope/pkg@1.2.3 or pnpm:vite")).toEqual([
+        { kind: "package", text: "npm:@scope/pkg@1.2.3", startIndex: 8 },
+        { kind: "package", text: "pnpm:vite", startIndex: 32 },
+      ]);
     });
   });
 
