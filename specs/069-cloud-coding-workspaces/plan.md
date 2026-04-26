@@ -17,7 +17,7 @@ The implementation is intentionally headless-first: gateway managers own project
 **Testing**: Vitest, integration tests for manager/API/runtime flows, browser proxy tests, targeted e2e for workspace/CLI convergence
 **Target Platform**: Single-user Docker container per Matrix user, non-root `matrixos` user
 **Performance Goals**: existing session attach under 3s, live fanout under 1s, URL-to-agent under 60s where dependencies are warm, responsive project/task lists at 100 projects and 1,000 tasks
-**Constraints**: bounded replay buffers, bounded clone/review/session operations, 20-ish concurrent sessions for v1, 1-5 active review loops, no desktop-local source of truth
+**Constraints**: 10,000-line/5 MiB hot replay cap per session, 100 MiB or 30-day transcript retention per user, 100-record API page limit, 5,000 hot activity events per user, 100 saved previews per project, 20 saved previews per task, 20 concurrent coding sessions per user for v1, 5 active review loops per user, no desktop-local source of truth
 
 ## Constitution Check
 
@@ -128,6 +128,11 @@ GET    /api/projects/:slug/tasks
 PATCH  /api/projects/:slug/tasks/:taskId
 DELETE /api/projects/:slug/tasks/:taskId
 
+POST   /api/projects/:slug/previews
+GET    /api/projects/:slug/previews
+PATCH  /api/projects/:slug/previews/:previewId
+DELETE /api/projects/:slug/previews/:previewId
+
 POST   /api/sessions
 GET    /api/sessions
 GET    /api/sessions/:sessionId
@@ -146,9 +151,12 @@ POST   /api/reviews/:reviewId/stop
 GET    /api/agents
 GET    /api/agents/sandbox-status
 GET    /api/workspace/events
+
+POST   /api/workspace/export
+DELETE /api/workspace/data
 ```
 
-All mutating routes use body limits, authenticated user context, ownership checks, Zod validation, structured errors, and no raw provider/internal details in responses.
+All mutating routes use body limits, authenticated user context, ownership checks, Zod validation, structured errors, and no raw provider/internal details in responses. Destructive export/delete workflows are owner-scoped; deletion requires explicit confirmation and re-authentication or an equivalent fresh CLI credential.
 
 ## CLI/TUI Surface
 
@@ -210,10 +218,10 @@ Deliverables:
 
 1. `project-manager.ts`: CRUD for projects, GitHub URL validation, slug generation, `gh auth status` preflight, bounded clone staging, pre-clone size probe where feasible, timeout cleanup, atomic rename into `~/projects/{slug}/repo`, PR listing through `gh pr list --json`, branch listing through `git`.
 2. `worktree-manager.ts`: create/list/delete git worktrees for branches and PRs, use stable `wt_` IDs, derive session membership from session records, require explicit confirmation for dirty cleanup, acquire/release worktree write leases.
-3. `state-ops.ts`: atomic write helpers, per-project locks, operation log in `~/system/ops`, startup recovery/replay, reverse-index rebuild.
-4. Gateway API routes for projects, GitHub status, PRs, branches, and worktrees.
-5. CLI commands for project and worktree workflows.
-6. Tests for CRUD, clone staging cleanup, command injection rejection, invalid refs, lease behavior, stale lease recovery, path validation, and op-log recovery.
+3. `state-ops.ts`: atomic write helpers, per-project locks, operation log in `~/system/ops`, startup recovery/replay, reverse-index rebuild, and owner-scoped export/delete helpers for file-backed workspace records.
+4. Gateway API routes for projects, GitHub status, PRs, branches, worktrees, workspace export, and workspace data deletion.
+5. CLI commands for project, worktree, export, and delete workflows.
+6. Tests for CRUD, clone staging cleanup, command injection rejection, invalid refs, lease behavior, stale lease recovery, path validation, op-log recovery, export manifests, and delete scoping.
 
 ### Phase 2: Agent Session Runtime
 
@@ -225,7 +233,7 @@ Deliverables:
 2. `zellij-runtime.ts`: generate layouts in `~/system/zellij/layouts/{sessionId}.kdl`, start/attach/observe/kill sessions, inspect runtime health, and report degraded fallback reasons.
 3. `agent-session-manager.ts`: create/list/get/send/kill session records in `~/system/sessions`, acquire worktree leases, monitor exit state, release leases, reconcile on startup.
 4. `session-runtime-bridge.ts`: register runtime-backed coding sessions with the existing terminal registry as external sessions, fan out live output, preserve write/observe modes, and avoid making `/api/terminal/sessions` the business source of truth.
-5. `session-transcript.ts`: append-only JSONL transcripts, replay rehydration, retention/truncation policy, export hooks.
+5. `session-transcript.ts`: append-only JSONL transcripts, replay rehydration, 10,000-line/5 MiB hot replay caps, 100 MiB or 30-day retention/truncation policy, export hooks.
 6. `agent-sandbox.ts`: preflight for Codex-style sandboxing, non-root execution, workspace-write scoping to the target worktree and scratch dirs, fail-closed behavior with explicit admin override.
 7. Gateway and CLI session commands, including native Zellij terminal handoff.
 8. Tests for session lifecycle, runtime fallback, attach/replay after gateway restart, write lease conflicts, observe/takeover semantics, sandbox preflight, and transcript retention.
@@ -251,10 +259,10 @@ Requirements: FR-003 through FR-005, FR-009, FR-014 through FR-016, FR-022, FR-0
 Deliverables:
 
 1. `task-manager.ts`: CRUD for project-scoped tasks in `~/projects/{slug}/tasks/{taskId}.json`, ordering, priority, status, parent/child links, session/worktree links, archive.
-2. `workspace-events.ts`: bounded event stream for project/task/session/review/git/preview changes used by web, CLI, TUI, and desktop clients.
-3. `preview-manager.ts`: save preview URLs, detect local preview URLs from session output, validate allowed schemes, expose recoverable failure states.
-4. API routes and CLI commands for tasks and preview links.
-5. Tests for task lifecycle, ordering, session links, event fanout, preview URL validation, and stale/missing linked state.
+2. `workspace-events.ts`: event stream for project/task/session/review/git/preview changes used by web, CLI, TUI, and desktop clients, capped at 5,000 hot events per user with cursor pagination.
+3. `preview-manager.ts`: save preview URLs, detect local preview URLs from session output, validate allowed schemes, enforce 100-per-project and 20-per-task caps, use 10 second probes, and expose recoverable failure states.
+4. API routes and CLI commands for tasks, preview links, workspace export, and workspace data deletion.
+5. Tests for task lifecycle, ordering, session links, event fanout, preview URL validation, stale/missing linked state, export manifests, and delete scoping.
 
 ### Phase 5: Matrix Web Workspace And Terminal Cockpit
 
@@ -267,7 +275,7 @@ Deliverables:
 3. One-click attach, observe, takeover, kill, duplicate pane, local-terminal handoff, and transcript/search health panel.
 4. Browser IDE entry points from home/project/task/worktree context.
 5. Desktop parity by consuming the same APIs and terminal components.
-6. Browser tests for layout, no overlapping controls, reconnect banners, duplicate input prevention, and mobile/desktop behavior.
+6. Browser tests for layout, no overlapping controls, reconnect banners, duplicate input prevention, browser IDE file-operation persistence, large-list virtualization, and mobile/desktop behavior.
 
 ### Phase 6: Ink TUI
 

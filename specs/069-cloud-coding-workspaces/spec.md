@@ -229,7 +229,7 @@ A developer starts durable coding sessions backed by Zellij, attaches locally wh
 - **FR-015**: System SHOULD detect preview URLs emitted by sessions and offer to associate them with the active project or task.
 - **FR-016**: Users MUST be able to run equivalent project, task, and session workflows from the Matrix CLI and observe those changes in the web workspace.
 - **FR-017**: System MUST store project workspace state in Matrix-owned user data, not in a desktop-local application database.
-- **FR-018**: System MUST expose all user-owned project/task/session metadata for export and deletion according to Matrix OS data ownership rules.
+- **FR-018**: System MUST expose all user-owned project/task/session/review/preview/transcript metadata for export and deletion through workspace manager API and CLI workflows according to Matrix OS data ownership rules.
 - **FR-019**: System MUST validate all project paths, file paths, task identifiers, branch names, and session names before use.
 - **FR-020**: System MUST scope every project, task, session, preview, and working area operation to the authenticated user or authorized organization context.
 - **FR-021**: System MUST never expose internal filesystem paths, provider errors, stack traces, or raw validation details in user-facing error responses.
@@ -266,6 +266,23 @@ A developer starts durable coding sessions backed by Zellij, attaches locally wh
 ### Security Architecture
 
 - Every project/task/session endpoint, stream, and CLI-backed operation MUST require authenticated user context and MUST enforce ownership or organization authorization before reading or mutating data.
+- Endpoint auth matrix:
+
+| Surface | Routes / Operations | Auth Method | Public? | Authorization / Notes |
+|---------|---------------------|-------------|---------|-----------------------|
+| GitHub status | `GET /api/github/status` | Matrix session or CLI token | No | Current user's container only; no raw `gh` output in responses. |
+| Projects | `POST/GET/DELETE /api/projects...` | Matrix session or CLI token | No | User/org ownership on project slug and backing path before filesystem or git access. |
+| Worktrees | `POST/GET/DELETE /api/projects/:slug/worktrees...` | Matrix session or CLI token | No | Project ownership plus worktree ID validation and lease checks for writes. |
+| Tasks | `POST/GET/PATCH/DELETE /api/projects/:slug/tasks...` | Matrix session or CLI token | No | Project ownership plus task ID validation. |
+| Previews | `POST/GET/PATCH/DELETE /api/projects/:slug/previews...` | Matrix session or CLI token | No | Project/task/session ownership plus allowed URL scheme validation. |
+| Sessions | `POST/GET/DELETE /api/sessions...`, `send`, `observe`, `takeover` | Matrix session or CLI token | No | Session owner/org authorization; observe/takeover/write modes enforced separately. |
+| Reviews | `POST/GET /api/reviews...`, `next`, `approve`, `stop` | Matrix session or CLI token | No | Project/worktree ownership plus review state transition authorization. |
+| Agents | `GET /api/agents`, `GET /api/agents/sandbox-status` | Matrix session or CLI token | No | Reports availability only; no secrets or provider diagnostics. |
+| Workspace events | `GET /api/workspace/events` | Matrix session or CLI token | No | Events scoped to authorized project/task/session/review records. |
+| Export/delete | `POST /api/workspace/export`, `DELETE /api/workspace/data...` and CLI equivalents | Matrix session or CLI token with re-auth for destructive delete | No | Owner-scoped only; destructive delete records audit metadata and never deletes outside Matrix-owned roots. |
+| Browser IDE HTTP/WS | `code.matrix-os.com` HTTP resources and WebSocket upgrades | Matrix session plus short-lived editor session credential where needed | Mixed | User files always require auth; non-user editor static assets MAY be served without credentials only with non-cacheable/shared-cache-safe headers. |
+| Health | `/health` workspace status | Internal service token or sanitized unauthenticated readiness, deployment-dependent | Limited | Must not include paths, secrets, provider output, or user-owned metadata. |
+
 - The spec treats user-controlled paths, names, branch refs, session names, preview URLs, and commands as untrusted input. Each boundary MUST validate and normalize input before use.
 - Mutating operations MUST apply request body size limits before buffering request bodies.
 - Destructive operations MUST distinguish "not found", "permission denied", validation failure, and internal failure without leaking internals to clients.
@@ -293,9 +310,12 @@ A developer starts durable coding sessions backed by Zellij, attaches locally wh
 
 - Git status checks, preview detection, and external metadata refreshes MUST have bounded timeouts.
 - Browser IDE proxy requests and editor startup MUST have bounded timeouts and recoverable failure states.
-- Long-running session streams MUST have bounded replay buffers and documented cleanup behavior.
-- Task and project lists MUST handle large workspaces without unbounded memory growth.
-- Temporary files, screenshots, generated previews, and exported artifacts MUST have cleanup policies.
+- Long-running session streams MUST keep at most 10,000 replay lines or 5 MiB of hot replay per session, whichever is reached first, with older output served only from durable transcript storage.
+- Session transcripts MUST retain at most 100 MiB per user by default, or 30 days of output when lower, with explicit export before destructive cleanup.
+- Task and project list APIs MUST paginate at no more than 100 returned records per request, while UI surfaces virtualize lists for at least 100 projects and 1,000 tasks.
+- Activity events MUST be capped to 5,000 hot events per user with cursor pagination and oldest-first eviction after durable state has been written.
+- Preview records MUST be capped to 100 saved previews per project and 20 per task; preview status probes MUST use a 10 second timeout.
+- Temporary files, screenshots, generated previews, clone staging directories, and exported artifacts MUST have cleanup policies. Default TTL is 24 hours unless a shorter operation-specific cleanup applies.
 - Crashes during worktree/session creation MUST leave recoverable metadata and must not silently lose user work.
 - Repository clones MUST use a bounded staging flow with size/time limits and cleanup on failure.
 - Review loops MUST have bounded round counts, bounded transcript storage, and explicit stop/recovery behavior.

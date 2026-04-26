@@ -92,51 +92,57 @@ Untracked support/spec files currently present:
 
 ### Project / GitHub / Worktree Foundation
 
+- [ ] T100 Add failing unit and integration tests for project CRUD, GitHub URL validation, slug conflicts, clone staging cleanup, worktree leases, op-log recovery, and owner-scoped workspace export/delete.
 - [ ] T101 Implement `project-manager.ts` for project CRUD, GitHub URL validation, slug generation, safe clone staging, GitHub auth status, PR listing, and branch listing.
 - [ ] T102 Implement `worktree-manager.ts` for branch/PR worktrees, stable `wt_` IDs, dirty-state detection, safe deletion, and write leases.
-- [ ] T103 Implement `state-ops.ts` for atomic writes, operation logs, per-project locks, startup replay, and index rebuild.
-- [ ] T104 Add gateway API routes for projects, GitHub status, branches, PRs, and worktrees.
-- [ ] T105 Add CLI project/worktree commands.
-- [ ] T106 Add unit and integration tests for project manager, worktree manager, clone staging, validation, leases, and op-log recovery.
+- [ ] T103 Implement `state-ops.ts` for atomic writes, operation logs, per-project locks, startup replay, index rebuild, and export/delete helpers.
+- [ ] T104 Add gateway API routes for projects, GitHub status, branches, PRs, worktrees, workspace export, and workspace data deletion.
+- [ ] T105 Add CLI project/worktree/export/delete commands.
+- [ ] T106 Complete green/refactor coverage for project manager, worktree manager, clone staging, validation, leases, op-log recovery, and export/delete scoping.
 
 ### Agent Sessions / Runtime Bridge
 
+- [ ] T200 Add failing unit and integration tests for agent detection, launch argv construction, Zellij/tmux fallback, session lifecycle, attach/replay, lease conflicts, observe/takeover, transcript retention, and sandbox diagnostics.
 - [ ] T201 Implement `agent-launcher.ts` for Claude, Codex, OpenCode, and Pi detection plus launch command construction.
 - [ ] T202 Implement `zellij-runtime.ts` for generated layouts, start/attach/observe/kill, health checks, and degraded fallback metadata.
 - [ ] T203 Implement `agent-session-manager.ts` for session records, lifecycle, worktree lease integration, send/kill/list/get, and startup reconciliation.
 - [ ] T204 Implement `session-runtime-bridge.ts` to register external Zellij/tmux sessions with the terminal registry.
-- [ ] T205 Implement `session-transcript.ts` for durable JSONL replay, retention, truncation, export, and rehydration.
+- [ ] T205 Implement `session-transcript.ts` for durable JSONL replay, 10,000-line/5 MiB hot replay caps, 100 MiB or 30-day retention, truncation, export, and rehydration.
 - [ ] T206 Implement `agent-sandbox.ts` for sandbox preflight and fail-closed Codex-style launches.
 - [ ] T207 Add gateway API and CLI commands for sessions, observe/takeover, native terminal handoff, and sandbox status.
-- [ ] T208 Add tests for session lifecycle, runtime fallback, attach/replay, leases, observe/takeover, transcripts, and sandbox diagnostics.
+- [ ] T208 Complete green/refactor coverage for session lifecycle, runtime fallback, attach/replay, leases, observe/takeover, transcripts, and sandbox diagnostics.
 
 ### Review Loop Engine
 
+- [ ] T300 Add failing unit and integration tests for findings parsing, legal/illegal review transitions, convergence, stall, parse failure, verification failure, operator stop/approve, max-round limits, and recovery from partial writes.
 - [ ] T301 Implement `findings-parser.ts` for structured markdown findings and explicit parse failure states.
 - [ ] T302 Implement `review-loop.ts` state machine for reviewer/implementer rounds, control files, convergence gates, failures, stop/next/approve, and max rounds.
 - [ ] T303 Add review prompts and atomic `.matrix/review-round-{N}.json` control-file protocol.
 - [ ] T304 Persist review records under `~/system/reviews/{reviewId}.json`.
 - [ ] T305 Add gateway API and CLI commands for review start/status/watch/next/approve/stop.
-- [ ] T306 Add tests for convergence, stall, parse failure, verification failure, illegal transitions, and recovery from partial writes.
+- [ ] T306 Complete green/refactor coverage for convergence, stall, parse failure, verification failure, illegal transitions, and recovery from partial writes.
 
 ### Tasks / Events / Previews
 
+- [ ] T400 Add failing unit and integration tests for task lifecycle, ordering, archive, session/worktree links, bounded activity eviction, preview validation, preview caps, stale links, export manifests, and delete scoping.
 - [ ] T401 Implement `task-manager.ts` for task CRUD, ordering, archive, status, parent/child links, and session/worktree links.
-- [ ] T402 Implement `workspace-events.ts` for bounded project/task/session/review/preview event updates.
-- [ ] T403 Implement `preview-manager.ts` for saved preview URLs, URL detection from session output, validation, and recoverable failure states.
-- [ ] T404 Add API and CLI support for tasks and previews.
-- [ ] T405 Add tests for task lifecycle, event fanout, preview validation, and stale link behavior.
+- [ ] T402 Implement `workspace-events.ts` for project/task/session/review/preview event updates capped at 5,000 hot events per user with cursor pagination and eviction.
+- [ ] T403 Implement `preview-manager.ts` for saved preview URLs, URL detection from session output, validation, 100-per-project and 20-per-task caps, 10 second probes, and recoverable failure states.
+- [ ] T404 Add API and CLI support for tasks, previews, workspace export, and workspace data deletion.
+- [ ] T405 Complete green/refactor coverage for task lifecycle, event fanout, preview validation, stale link behavior, export manifests, and delete scoping.
 
 ### Web Workspace / Terminal Cockpit / TUI
 
+- [ ] T500 Add failing web, desktop, and TUI tests for project/task layout, attach/reconnect behavior, event convergence, browser IDE file edit/save persistence, large-list virtualization for 100 projects and 1,000 tasks, and mobile/desktop rendering.
 - [ ] T501 Build Matrix-native workspace app with project list, project detail, task board/list, git/worktree panel, sessions panel, review panel, preview panel, and browser IDE launch links.
 - [ ] T502 Update terminal cockpit to use `/api/sessions` as the coding-session source of truth and terminal registry only as transport.
 - [ ] T503 Add attach, observe, takeover, kill, duplicate pane, local-terminal handoff, transcript search, and session health UI.
 - [ ] T504 Build Ink TUI dashboard and `matrixos` no-subcommand entry point.
-- [ ] T505 Add web, desktop, and TUI tests for layout, attach/reconnect behavior, event convergence, and mobile/desktop rendering.
+- [ ] T505 Complete green/refactor coverage for layout, attach/reconnect behavior, event convergence, browser IDE file-operation persistence, large-list responsiveness, and mobile/desktop rendering.
 
 ### Docker / Recovery / Docs
 
+- [ ] T600 Add failing startup, health, and documentation-gate tests for required runtime tools, workspace directory ownership, recovery order, sanitized health output, and public docs presence.
 - [ ] T601 Ensure final container includes Zellij, tmux, gh, openssh-client, sandbox tooling, agent CLIs, git, and code-server.
 - [ ] T602 Create required workspace directories at startup with correct ownership.
 - [ ] T603 Implement startup recovery order for state ops, projects, worktree leases, runtime sessions, bridges, transcripts, reviews, browser IDE health, and preview detection.
