@@ -13,6 +13,12 @@ import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
+import {
+  buildCustomerVpsR2Key,
+  buildVpsMeta,
+  createCustomerVpsSystemStore,
+  validateDbLatestPointer,
+} from '../../packages/platform/src/customer-vps-r2.js';
 
 describe('platform/customer-vps', () => {
   let tmpDir: string;
@@ -115,5 +121,72 @@ describe('platform/customer-vps', () => {
     })).rejects.toMatchObject({ status: 401 });
 
     expect(getUserMachine(db, provisioned.machineId)?.status).toBe('provisioning');
+  });
+
+  it('builds valid R2 VPS metadata from a running machine row', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const row = getUserMachine(db, provisioned.machineId)!;
+    expect(buildVpsMeta(row, '2026-04-26T12:05:00.000Z')).toMatchObject({
+      version: 1,
+      userId: 'user_123',
+      machineId: provisioned.machineId,
+      status: 'running',
+      publicIPv4: '203.0.113.10',
+    });
+  });
+
+  it('validates R2 latest pointers without accepting paths or URLs', () => {
+    expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.sql.gz')).toBe(true);
+    expect(validateDbLatestPointer('../system/db/snapshots/2026-04-26T1800Z.sql.gz')).toBe(false);
+    expect(validateDbLatestPointer('https://example.com/snapshot.sql.gz')).toBe(false);
+    expect(validateDbLatestPointer('system/db/snapshots/not-a-date.sql.gz')).toBe(false);
+  });
+
+  it('writes VPS metadata to the scoped user R2 key', async () => {
+    const writes: Array<{ key: string; body: string }> = [];
+    const store = createCustomerVpsSystemStore({
+      r2PrefixRoot: 'matrixos-sync',
+      r2: {
+        async putObject(key, body) {
+          writes.push({ key, body: String(body) });
+          return {};
+        },
+        async getObject() {
+          throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
+        },
+      },
+    });
+
+    const { service } = createService({ systemStore: store });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].key).toBe('matrixos-sync/user_123/system/vps-meta.json');
+    expect(JSON.parse(writes[0].body)).toMatchObject({
+      userId: 'user_123',
+      machineId: provisioned.machineId,
+      status: 'running',
+    });
+    await expect(store.hasDbLatest('user_123')).resolves.toBe(false);
+    expect(buildCustomerVpsR2Key('matrixos-sync/', 'user_123', 'system/db/latest')).toBe(
+      'matrixos-sync/user_123/system/db/latest',
+    );
+    expect(() => buildCustomerVpsR2Key('matrixos-sync', 'user_123', '../system/db/latest')).toThrow(
+      'Invalid customer VPS system key',
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
@@ -35,15 +35,25 @@ export function isPublicProfilePath(path: string): boolean {
   return false;
 }
 
-export function createDefaultProfile(homePath: string, handle: string): void {
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export async function createDefaultProfile(homePath: string, handle: string): Promise<void> {
   const profileDir = join(homePath, "apps", "profile");
   const indexPath = join(profileDir, "index.html");
 
-  if (existsSync(indexPath)) return;
+  if (await pathExists(indexPath)) return;
 
-  if (!existsSync(profileDir)) {
-    mkdirSync(profileDir, { recursive: true });
-  }
+  await mkdir(profileDir, { recursive: true });
 
   const manifest = {
     name: "Profile",
@@ -54,13 +64,13 @@ export function createDefaultProfile(homePath: string, handle: string): void {
     author: `@${handle}`,
   };
 
-  writeFileSync(
+  await writeFile(
     join(profileDir, "matrix.json"),
     JSON.stringify(manifest, null, 2),
   );
 
   const html = generateProfileHtml(handle);
-  writeFileSync(indexPath, html);
+  await writeFile(indexPath, html);
 }
 
 function generateProfileHtml(handle: string): string {

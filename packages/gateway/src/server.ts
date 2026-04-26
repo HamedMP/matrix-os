@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { appendFile as appendFileAsync, mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { dirname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -151,6 +151,18 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
+
+function timingSafeStringEquals(actual: string | null | undefined, expected: string): boolean {
+  if (!actual) return false;
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  const maxLength = Math.max(actualBuffer.length, expectedBuffer.length);
+  const paddedActual = Buffer.alloc(maxLength);
+  const paddedExpected = Buffer.alloc(maxLength);
+  actualBuffer.copy(paddedActual);
+  expectedBuffer.copy(paddedExpected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(paddedActual, paddedExpected);
+}
 
 export interface GatewayConfig {
   homePath: string;
@@ -2955,6 +2967,19 @@ export async function createGateway(config: GatewayConfig) {
     const info = getSystemInfo(homePath);
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
+  });
+
+  app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
+    const token = process.env.MATRIX_SYSTEM_BACKUP_TOKEN;
+    if (!token) {
+      return c.json({ error: "Backup trigger not configured" }, 503);
+    }
+    const authHeader = c.req.header("authorization");
+    const presented = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!timingSafeStringEquals(presented, token)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    return c.json({ error: "Backup trigger not implemented" }, 501);
   });
 
   app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {

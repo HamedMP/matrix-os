@@ -1361,6 +1361,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
 
   let internalSyncRoutes: Hono | undefined;
+  let customerVpsObjectStore:
+    | {
+        putObject(key: string, body: string | Uint8Array | ReadableStream<Uint8Array>): Promise<{ etag?: string }>;
+        getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+      }
+    | undefined;
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
   const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
   const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
@@ -1385,6 +1391,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       r2,
       platformSecret: PLATFORM_SECRET,
     });
+    customerVpsObjectStore = r2;
   }
 
   let customerVpsService: CustomerVpsService | undefined;
@@ -1393,7 +1400,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       { createCustomerVpsService },
       { loadCustomerVpsConfig },
       { createHetznerClient },
-      { createNoopCustomerVpsSystemStore },
+      { createCustomerVpsSystemStore, createNoopCustomerVpsSystemStore },
     ] = await Promise.all([
       import('./customer-vps.js'),
       import('./customer-vps-config.js'),
@@ -1405,7 +1412,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       db,
       config: customerVpsConfig,
       hetzner: createHetznerClient(customerVpsConfig),
-      systemStore: createNoopCustomerVpsSystemStore(),
+      systemStore: customerVpsObjectStore
+        ? createCustomerVpsSystemStore({
+            r2: customerVpsObjectStore,
+            r2PrefixRoot: customerVpsConfig.r2PrefixRoot,
+          })
+        : createNoopCustomerVpsSystemStore(),
     });
   }
 

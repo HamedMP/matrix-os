@@ -70,7 +70,7 @@ describe('platform/profile-routing', () => {
   });
 
   describe('createDefaultProfile', () => {
-    it('creates profile app directory with matrix.json', () => {
+    it('creates profile app directory with matrix.json', async () => {
       const homePath = join(tmpDir, 'home');
       mkdirSync(join(homePath, 'apps'), { recursive: true });
       mkdirSync(join(homePath, 'system'), { recursive: true });
@@ -79,18 +79,18 @@ describe('platform/profile-routing', () => {
         '---\nname: Hamed\nbio: Builder\n---\n',
       );
 
-      createDefaultProfile(homePath, 'hamed');
+      await createDefaultProfile(homePath, 'hamed');
 
       expect(existsSync(join(homePath, 'apps', 'profile', 'matrix.json'))).toBe(true);
       expect(existsSync(join(homePath, 'apps', 'profile', 'index.html'))).toBe(true);
     });
 
-    it('does not overwrite existing profile', () => {
+    it('does not overwrite existing profile', async () => {
       const homePath = join(tmpDir, 'home');
       mkdirSync(join(homePath, 'apps', 'profile'), { recursive: true });
       writeFileSync(join(homePath, 'apps', 'profile', 'index.html'), 'custom');
 
-      createDefaultProfile(homePath, 'hamed');
+      await createDefaultProfile(homePath, 'hamed');
 
       const content = require('node:fs').readFileSync(
         join(homePath, 'apps', 'profile', 'index.html'),
@@ -99,11 +99,11 @@ describe('platform/profile-routing', () => {
       expect(content).toBe('custom');
     });
 
-    it('includes handle in generated profile', () => {
+    it('includes handle in generated profile', async () => {
       const homePath = join(tmpDir, 'home');
       mkdirSync(join(homePath, 'apps'), { recursive: true });
 
-      createDefaultProfile(homePath, 'alice');
+      await createDefaultProfile(homePath, 'alice');
 
       const html = require('node:fs').readFileSync(
         join(homePath, 'apps', 'profile', 'index.html'),

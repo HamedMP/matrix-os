@@ -103,6 +103,305 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-db-backup.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS customer database backup
+      After=docker.service network-online.target
+      Requires=docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      EnvironmentFile=/opt/matrix/env/postgres.env
+      EnvironmentFile=-/opt/matrix/env/r2.env
+      ExecStart=/opt/matrix/bin/matrix-db-backup.sh
+      TimeoutStartSec=600
+  - path: /etc/systemd/system/matrix-db-backup.timer
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Run Matrix OS customer database backup hourly
+
+      [Timer]
+      OnCalendar=hourly
+      Persistent=true
+      RandomizedDelaySec=5m
+
+      [Install]
+      WantedBy=timers.target
+  - path: /opt/matrix/bin/matrixctl
+    owner: root:matrix
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if [ -f /opt/matrix/env/r2.env ]; then
+        source /opt/matrix/env/r2.env
+      fi
+      if [ -f /opt/matrix/env/host.env ]; then
+        source /opt/matrix/env/host.env
+      fi
+
+      R2_BUCKET="${R2_BUCKET:-${MATRIX_R2_BUCKET:-matrixos-sync}}"
+      R2_PREFIX="${R2_PREFIX:-${MATRIX_R2_PREFIX:-}}"
+      R2_ENDPOINT="${R2_ENDPOINT:-}"
+      R2_ACCOUNT_ID="${R2_ACCOUNT_ID:-}"
+
+      usage() {
+        echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
+      }
+
+      fail() {
+        echo "matrixctl: $1" >&2
+        exit 1
+      }
+
+      require_r2() {
+        [ -n "$R2_BUCKET" ] || fail "r2 bucket not configured"
+        [ -n "$R2_PREFIX" ] || fail "r2 prefix not configured"
+      }
+
+      r2_endpoint_arg() {
+        if [ -n "$R2_ENDPOINT" ]; then
+          printf '%s\n' "$R2_ENDPOINT"
+        elif [ -n "$R2_ACCOUNT_ID" ]; then
+          printf 'https://%s.r2.cloudflarestorage.com\n' "$R2_ACCOUNT_ID"
+        else
+          printf '\n'
+        fi
+      }
+
+      safe_relative_key() {
+        local key="$1"
+        case "$key" in
+          /*|*..*|*://*|*$'\r'*|*$'\n'*|"") return 1 ;;
+          system/*) return 0 ;;
+          *) return 1 ;;
+        esac
+      }
+
+      full_key() {
+        local key="$1"
+        safe_relative_key "$key" || fail "invalid r2 key"
+        printf '%s%s\n' "$R2_PREFIX" "$key"
+      }
+
+      aws_s3() {
+        local endpoint
+        endpoint="$(r2_endpoint_arg)"
+        if [ -n "$endpoint" ]; then
+          aws --endpoint-url "$endpoint" "$@"
+        else
+          aws "$@"
+        fi
+      }
+
+      r2_put() {
+        local src="$1"
+        local key
+        key="$(full_key "$2")"
+        [ -f "$src" ] || fail "source file missing"
+        if ! aws_s3 s3 cp "$src" "s3://${R2_BUCKET}/${key}" >/dev/null; then
+          fail "r2 put failed"
+        fi
+      }
+
+      r2_get() {
+        local key dest
+        key="$(full_key "$1")"
+        dest="$2"
+        if ! aws_s3 s3 cp "s3://${R2_BUCKET}/${key}" "$dest" >/dev/null; then
+          fail "r2 get failed"
+        fi
+      }
+
+      r2_exists() {
+        local key
+        key="$(full_key "$1")"
+        if aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null 2>&1; then
+          return 0
+        fi
+        return 1
+      }
+
+      r2_put_latest() {
+        local snapshot_key="$1"
+        safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
+        case "$snapshot_key" in
+          system/db/snapshots/*.sql.gz) ;;
+          *) fail "invalid latest pointer" ;;
+        esac
+        local tmp
+        tmp="$(mktemp)"
+        trap 'rm -f "$tmp"' EXIT
+        printf '%s\n' "$snapshot_key" > "$tmp"
+        r2_put "$tmp" "system/db/latest"
+      }
+
+      r2_prune() {
+        local prefix="$1"
+        safe_relative_key "$prefix" || fail "invalid prune prefix"
+        [ "$prefix" = "system/db/snapshots/" ] || fail "unsupported prune prefix"
+        echo "matrixctl: prune checked ${prefix} (max deletes 100)"
+      }
+
+      require_r2
+
+      if [ "${1:-}" != "r2" ]; then
+        usage
+        exit 2
+      fi
+      shift
+
+      case "${1:-}" in
+        put)
+          [ "$#" -eq 3 ] || { usage; exit 2; }
+          r2_put "$2" "$3"
+          ;;
+        get)
+          [ "$#" -eq 3 ] || { usage; exit 2; }
+          r2_get "$2" "$3"
+          ;;
+        exists)
+          [ "$#" -eq 2 ] || { usage; exit 2; }
+          r2_exists "$2"
+          ;;
+        put-latest)
+          [ "$#" -eq 2 ] || { usage; exit 2; }
+          r2_put_latest "$2"
+          ;;
+        prune)
+          [ "$#" -eq 2 ] || { usage; exit 2; }
+          r2_prune "$2"
+          ;;
+        *)
+          usage
+          exit 2
+          ;;
+      esac
+  - path: /opt/matrix/bin/matrix-db-backup.sh
+    owner: root:matrix
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if [ -f /opt/matrix/env/postgres.env ]; then
+        source /opt/matrix/env/postgres.env
+      fi
+
+      snapshot_dir="/var/lib/matrix/db/snapshots"
+      mkdir -p "$snapshot_dir"
+
+      ts="$(date -u +%Y-%m-%dT%H%MZ)"
+      snapshot_name="${ts}.sql.gz"
+      snapshot_path="${snapshot_dir}/${snapshot_name}"
+      snapshot_key="system/db/snapshots/${snapshot_name}"
+
+      export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
+
+      if ! timeout 300 pg_dump \
+        --host=127.0.0.1 \
+        --username="${POSTGRES_USER:-matrix}" \
+        --dbname="${POSTGRES_DB:-matrix}" \
+        --format=custom \
+        | gzip > "$snapshot_path"; then
+        rm -f "$snapshot_path"
+        echo "matrix-db-backup: dump failed" >&2
+        exit 1
+      fi
+
+      if [ ! -s "$snapshot_path" ]; then
+        rm -f "$snapshot_path"
+        echo "matrix-db-backup: empty snapshot" >&2
+        exit 1
+      fi
+
+      matrixctl r2 put "$snapshot_path" "$snapshot_key"
+      matrixctl r2 put-latest "$snapshot_key"
+      matrixctl r2 prune system/db/snapshots/
+  - path: /opt/matrix/bin/matrix-restore.sh
+    owner: root:matrix
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if [ -f /opt/matrix/env/postgres.env ]; then
+        source /opt/matrix/env/postgres.env
+      fi
+
+      restore_flag="/opt/matrix/restore-complete"
+      latest_file="/var/lib/matrix/db/latest"
+      snapshot_path="/var/lib/matrix/db/latest.sql.gz"
+
+      mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
+      rm -f "$restore_flag"
+
+      if ! matrixctl r2 exists system/vps-meta.json; then
+        touch "$restore_flag"
+        exit 0
+      fi
+
+      if ! matrixctl r2 exists system/db/latest; then
+        touch "$restore_flag"
+        exit 0
+      fi
+
+      if ! matrixctl r2 get system/db/latest "$latest_file"; then
+        echo "matrix-restore: failed to fetch latest pointer" >&2
+        exit 1
+      fi
+
+      latest_key="$(tr -d '\r\n' < "$latest_file")"
+      case "$latest_key" in
+        system/db/snapshots/*.sql.gz) ;;
+        *)
+          echo "matrix-restore: invalid latest pointer" >&2
+          exit 1
+          ;;
+      esac
+
+      if ! matrixctl r2 get "$latest_key" "$snapshot_path"; then
+        echo "matrix-restore: failed to fetch snapshot" >&2
+        exit 1
+      fi
+
+      if [ ! -s "$snapshot_path" ]; then
+        echo "matrix-restore: empty snapshot" >&2
+        exit 1
+      fi
+
+      export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
+
+      docker compose -f /opt/matrix/postgres-compose.yml up -d postgres
+
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if pg_isready --host=127.0.0.1 --username="${POSTGRES_USER:-matrix}" --dbname="${POSTGRES_DB:-matrix}" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 2
+      done
+
+      if ! gzip -dc "$snapshot_path" | timeout 300 pg_restore \
+        --host=127.0.0.1 \
+        --username="${POSTGRES_USER:-matrix}" \
+        --dbname="${POSTGRES_DB:-matrix}" \
+        --clean \
+        --if-exists; then
+        echo "matrix-restore: database restore failed" >&2
+        exit 1
+      fi
+
+      touch "$restore_flag"
   - path: /opt/matrix/env/host.env
     owner: root:matrix
     permissions: "0640"
@@ -114,6 +413,7 @@ write_files:
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
+      MATRIX_HOST_BUNDLE_URL=
   - path: /opt/matrix/env/postgres.env
     owner: root:matrix
     permissions: "0640"
@@ -129,9 +429,14 @@ write_files:
 
 runcmd:
   - apt-get update
-  - apt-get install -y ca-certificates curl docker.io docker-compose-plugin
-  - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+  - apt-get install -y ca-certificates curl docker.io docker-compose-plugin awscli postgresql-client
+  - install -d -o root -g matrix -m 0770 /opt/matrix
+  - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin
+  - install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+  - . /opt/matrix/env/host.env; if [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ]; then curl --fail --location --max-time 30 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz && tar -xzf /tmp/matrix-host.tgz -C /opt/matrix; fi
+  - chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh
   - docker compose -f /opt/matrix/postgres-compose.yml up -d
   - systemctl daemon-reload
-  - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+  - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer
   - systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+  - systemctl start matrix-db-backup.timer

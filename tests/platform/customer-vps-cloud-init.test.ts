@@ -57,4 +57,49 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(shell).toContain('After=matrix-gateway.service');
     expect(restore).toContain('Type=oneshot');
   });
+
+  it('uploads DB snapshots before updating latest and prunes safely', () => {
+    const root = process.cwd();
+    const backup = readFileSync(join(root, 'distro/customer-vps/matrix-db-backup.sh'), 'utf8');
+
+    expect(backup.indexOf('matrixctl r2 put "$snapshot_path" "$snapshot_key"')).toBeLessThan(
+      backup.indexOf('matrixctl r2 put-latest "$snapshot_key"'),
+    );
+    expect(backup).toContain('matrixctl r2 prune system/db/snapshots/');
+    expect(backup).toContain('timeout');
+  });
+
+  it('keeps restore as a boot gate and refuses failed restores', () => {
+    const root = process.cwd();
+    const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
+    const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+
+    expect(restore).toContain('restore-complete');
+    expect(restore).toContain('pg_restore');
+    expect(restore).toContain('exit 1');
+    expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
+  });
+
+  it('runs DB backup on an hourly systemd timer', () => {
+    const root = process.cwd();
+    const service = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-db-backup.service'), 'utf8');
+    const timer = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-db-backup.timer'), 'utf8');
+
+    expect(service).toContain('ExecStart=/opt/matrix/bin/matrix-db-backup.sh');
+    expect(timer).toContain('OnCalendar=hourly');
+    expect(timer).toContain('Persistent=true');
+  });
+
+  it('installs backup artifacts into cloud-init with restrictive modes', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('path: /opt/matrix/bin/matrixctl');
+    expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-db-backup.sh');
+    expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
+    expect(cloudInit).toContain('permissions: "0750"');
+    expect(cloudInit).toContain('awscli postgresql-client');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
+  });
 });

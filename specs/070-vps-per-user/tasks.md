@@ -115,21 +115,21 @@
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] Add R2 metadata and latest-pointer validation tests in `tests/platform/customer-vps.test.ts`
-- [ ] T042 [P] [US3] Add backup retention and prune-safety tests in `tests/platform/customer-vps-cloud-init.test.ts`
-- [ ] T043 [P] [US3] Add restore-or-fresh boot-gate tests in `tests/platform/customer-vps-cloud-init.test.ts`
+- [X] T041 [P] [US3] Add R2 metadata and latest-pointer validation tests in `tests/platform/customer-vps.test.ts`
+- [X] T042 [P] [US3] Add backup retention and prune-safety tests in `tests/platform/customer-vps-cloud-init.test.ts`
+- [X] T043 [P] [US3] Add restore-or-fresh boot-gate tests in `tests/platform/customer-vps-cloud-init.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T044 [US3] Implement R2 `vps-meta.json` write and heartbeat update helpers in `packages/platform/src/customer-vps-r2.ts`
-- [ ] T045 [US3] Update `/vps/register` to write R2 metadata after the transaction in `packages/platform/src/customer-vps.ts`
-- [ ] T046 [P] [US3] Implement `matrixctl` R2 put/get/prune helpers with sanitized logs in `distro/customer-vps/matrixctl`
-- [ ] T047 [P] [US3] Implement Postgres backup script with upload-before-latest semantics in `distro/customer-vps/matrix-db-backup.sh`
-- [ ] T048 [P] [US3] Implement restore-or-fresh script and restore-complete flag handling in `distro/customer-vps/matrix-restore.sh`
-- [ ] T049 [P] [US3] Implement backup service and timer units in `distro/customer-vps/systemd/matrix-db-backup.service` and `distro/customer-vps/systemd/matrix-db-backup.timer`
-- [ ] T050 [US3] Update `distro/customer-vps/cloud-init.yaml` to install `matrixctl`, backup scripts, restore script, and timer units with restrictive file modes
-- [ ] T051 [US3] Add gateway `/system/backup` trigger integration point or explicit deferred stub in `packages/gateway/src/server.ts`
-- [ ] T052 [US3] Run backup and restore-focused tests from `quickstart.md` against `tests/platform/customer-vps-cloud-init.test.ts`
+- [X] T044 [US3] Implement R2 `vps-meta.json` write and heartbeat update helpers in `packages/platform/src/customer-vps-r2.ts`
+- [X] T045 [US3] Update `/vps/register` to write R2 metadata after the transaction in `packages/platform/src/customer-vps.ts`
+- [X] T046 [P] [US3] Implement `matrixctl` R2 put/get/prune helpers with sanitized logs in `distro/customer-vps/matrixctl`
+- [X] T047 [P] [US3] Implement Postgres backup script with upload-before-latest semantics in `distro/customer-vps/matrix-db-backup.sh`
+- [X] T048 [P] [US3] Implement restore-or-fresh script and restore-complete flag handling in `distro/customer-vps/matrix-restore.sh`
+- [X] T049 [P] [US3] Implement backup service and timer units in `distro/customer-vps/systemd/matrix-db-backup.service` and `distro/customer-vps/systemd/matrix-db-backup.timer`
+- [X] T050 [US3] Update `distro/customer-vps/cloud-init.yaml` to install `matrixctl`, backup scripts, restore script, and timer units with restrictive file modes
+- [X] T051 [US3] Add gateway `/system/backup` trigger integration point or explicit deferred stub in `packages/gateway/src/server.ts`
+- [X] T052 [US3] Run backup and restore-focused tests from `quickstart.md` against `tests/platform/customer-vps-cloud-init.test.ts`
 
 **Checkpoint**: User Story 3 creates recoverable R2 system state and DB snapshots.
 
