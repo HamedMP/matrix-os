@@ -130,6 +130,11 @@ import {
   wsConnectionsActive,
   normalizePath,
 } from "./metrics.js";
+import {
+  createShellRoutes,
+  createZellijAdapter,
+  ShellRegistry as ZellijShellRegistry,
+} from "./shell/index.js";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -233,6 +238,11 @@ export async function createGateway(config: GatewayConfig) {
     maxSessions: 20,
     bufferSize: 5 * 1024 * 1024,
     persistPath: join(homePath, "system", "terminal-sessions.json"),
+  });
+  const zellijShellRegistry = new ZellijShellRegistry({
+    homePath,
+    adapter: createZellijAdapter(),
+    maxSessions: 20,
   });
 
   const dispatcher: Dispatcher = createDispatcher({
@@ -1085,6 +1095,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api", createShellRoutes({ registry: zellijShellRegistry }));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
