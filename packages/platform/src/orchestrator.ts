@@ -212,6 +212,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);
+      env.push(`MATRIX_CODE_PROXY_TOKEN=${token}`);
       // The platform terminates sync JWTs on the single-domain app entrypoint
       // and re-proxies to the container with this HMAC bearer. Containers do
       // not need PLATFORM_JWT_SECRET unless we intentionally enable direct

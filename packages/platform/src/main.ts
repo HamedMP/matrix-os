@@ -158,12 +158,16 @@ function isCodeDomainStaticAssetPath(path: string): boolean {
 function buildCodeDomainProxyHeaders(
   requestHeaders: Record<string, string | undefined>,
   host: string,
+  codeProxyToken?: string,
 ): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(requestHeaders)) {
-    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && key !== 'x-matrix-code-proxy-token' && value) {
       headers.set(key, value);
     }
+  }
+  if (codeProxyToken) {
+    headers.set('x-matrix-code-proxy-token', codeProxyToken);
   }
   headers.set('host', host);
   headers.set('x-forwarded-host', host);
@@ -720,7 +724,13 @@ export function createApp(deps: {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-      const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+      const headers = isCodeDomain
+        ? buildCodeDomainProxyHeaders(
+            c.req.header(),
+            host,
+            platformSecret ? buildPlatformVerificationToken(runningMachine.handle, platformSecret) : undefined,
+          )
+        : new Headers();
       if (!isCodeDomain) {
         for (const [key, value] of Object.entries(c.req.header())) {
           if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
@@ -821,7 +831,13 @@ export function createApp(deps: {
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
     const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-    const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+    const headers = isCodeDomain
+      ? buildCodeDomainProxyHeaders(
+          c.req.header(),
+          host,
+          platformSecret ? buildPlatformVerificationToken(record.handle, platformSecret) : undefined,
+        )
+      : new Headers();
     if (!isCodeDomain) {
       for (const [key, value] of Object.entries(c.req.header())) {
         if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
@@ -1706,6 +1722,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
                 `x-platform-verified: ${buildPlatformUserProof(handle, identity.userId, PLATFORM_SECRET)}`,
                 `x-platform-user-id: ${identity.userId}`,
               ]
+            : [],
+        )
+        .concat(
+          PLATFORM_SECRET && isCodeDomain
+            ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`]
             : [],
         )
         .join('\r\n');

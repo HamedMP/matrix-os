@@ -88,4 +88,34 @@ describe("state-ops", () => {
     await expect(stat(join(homePath, "projects", "drop"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(join(homePath, "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
   });
+
+  it("exports all owner-scoped workspace data for full backups", async () => {
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_abc123.json"), {
+      id: "sess_abc123",
+      status: "running",
+    });
+    await atomicWriteJson(join(homePath, "projects", "owned", "config.json"), {
+      slug: "owned",
+      ownerScope: { type: "user", id: "user_a" },
+    });
+    await atomicWriteJson(join(homePath, "projects", "owned", "tasks", "task_abc123.json"), {
+      id: "task_abc123",
+    });
+    await atomicWriteJson(join(homePath, "projects", "other", "config.json"), {
+      slug: "other",
+      ownerScope: { type: "user", id: "user_b" },
+    });
+    await atomicWriteJson(join(homePath, "projects", "other", "tasks", "task_def456.json"), {
+      id: "task_def456",
+    });
+    const ops = createStateOps({ homePath });
+
+    const manifest = await ops.exportWorkspace({ scope: "all", ownerScope: { type: "user", id: "user_a" } });
+
+    expect(manifest.files).toContain("system/sessions/sess_abc123.json");
+    expect(manifest.files).toContain("projects/owned/config.json");
+    expect(manifest.files).toContain("projects/owned/tasks/task_abc123.json");
+    expect(manifest.files).not.toContain("projects/other/config.json");
+    expect(manifest.files).not.toContain("projects/other/tasks/task_def456.json");
+  });
 });

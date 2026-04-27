@@ -294,6 +294,7 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("host")).toBe("code.matrix-os.com");
     expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-matrix-code-proxy-token")).toBeTruthy();
     expect(headers.get("authorization")).toBeNull();
     expect(headers.get("x-platform-user-id")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
@@ -345,6 +346,7 @@ describe("platform proxy routing", () => {
     expect(url).toBe("https://203.0.113.11:443/stable/static/out/vs/code/browser/workbench/workbench.js");
     const headers = init?.headers as Headers;
     expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-matrix-code-proxy-token")).toBeTruthy();
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("authorization")).not.toContain("matrix_code_session");
   });

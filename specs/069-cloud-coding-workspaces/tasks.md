@@ -38,10 +38,10 @@ Untracked support/spec files currently present:
 - [x] T003 Install code-server wrapper and expose `MATRIX_CODE_SERVER_PORT=8787` in production and development images.
   - Files: `Dockerfile`, `Dockerfile.dev`
 
-- [x] T004 Start code-server in the production container entrypoint as the non-root `matrixos` user with auth disabled because Matrix platform proxy owns public auth.
+- [x] T004 Start code-server in the production container entrypoint as the non-root `matrixos` user on loopback behind an authenticated editor proxy.
   - Files: `distro/docker-entrypoint.sh`
 
-- [x] T005 Start and supervise code-server in the development container entrypoint alongside shell and gateway processes.
+- [x] T005 Start and supervise code-server plus the authenticated editor proxy in the development container entrypoint alongside shell and gateway processes.
   - Files: `distro/docker-dev-entrypoint.sh`
 
 - [x] T006 Add `code.matrix-os.com` Cloudflare/platform routing documentation and tunnel ingress.

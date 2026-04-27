@@ -142,22 +142,95 @@ start_matrix_code_server() {
     echo "code-server is not installed; code.matrix-os.com editor disabled"
     return
   fi
+  if [ -z "${MATRIX_CODE_PROXY_TOKEN:-}" ]; then
+    echo "MATRIX_CODE_PROXY_TOKEN is not set; code.matrix-os.com editor disabled"
+    return
+  fi
 
   code_server_port="${MATRIX_CODE_SERVER_PORT:-8787}"
+  code_server_upstream_port="${MATRIX_CODE_SERVER_UPSTREAM_PORT:-8788}"
   code_server_root="$MATRIX_HOME/system/code-server"
   mkdir -p "$code_server_root/user-data" "$code_server_root/extensions"
   chown -R matrixos:matrixos "$code_server_root"
 
-  echo "Starting Matrix Code editor on :$code_server_port"
+  echo "Starting Matrix Code editor on 127.0.0.1:$code_server_upstream_port behind authenticated proxy :$code_server_port"
   su-exec matrixos env -u PORT -u HOST code-server \
     --auth none \
-    --bind-addr "0.0.0.0:$code_server_port" \
+    --bind-addr "127.0.0.1:$code_server_upstream_port" \
     --disable-telemetry \
     --disable-update-check \
     --user-data-dir "$code_server_root/user-data" \
     --extensions-dir "$code_server_root/extensions" \
     "$MATRIX_HOME" &
   CODE_SERVER_PID=$!
+
+  MATRIX_CODE_PROXY_LISTEN="$code_server_port" MATRIX_CODE_PROXY_UPSTREAM="$code_server_upstream_port" node <<'EOF' &
+const http = require("node:http");
+const net = require("node:net");
+const crypto = require("node:crypto");
+
+const token = process.env.MATRIX_CODE_PROXY_TOKEN || "";
+const listenPort = Number(process.env.MATRIX_CODE_PROXY_LISTEN || "8787");
+const upstreamPort = Number(process.env.MATRIX_CODE_PROXY_UPSTREAM || "8788");
+
+function authorized(req) {
+  const value = String(req.headers["x-matrix-code-proxy-token"] || "");
+  const actual = Buffer.from(value);
+  const expected = Buffer.from(token);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function scrubHeaders(headers) {
+  const next = { ...headers };
+  delete next["x-matrix-code-proxy-token"];
+  return next;
+}
+
+const server = http.createServer((req, res) => {
+  if (!authorized(req)) {
+    res.writeHead(401, { "cache-control": "no-store" });
+    res.end("Unauthorized");
+    return;
+  }
+  const upstream = http.request({
+    host: "127.0.0.1",
+    port: upstreamPort,
+    method: req.method,
+    path: req.url,
+    headers: scrubHeaders(req.headers),
+  }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+    upstreamRes.pipe(res);
+  });
+  upstream.on("error", () => {
+    res.writeHead(502, { "cache-control": "no-store" });
+    res.end("Editor unavailable");
+  });
+  req.pipe(upstream);
+});
+
+server.on("upgrade", (req, socket, head) => {
+  if (!authorized(req)) {
+    socket.end("HTTP/1.1 401 Unauthorized\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const upstream = net.connect(upstreamPort, "127.0.0.1", () => {
+    const headers = scrubHeaders(req.headers);
+    const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+    for (const [key, value] of Object.entries(headers)) {
+      if (Array.isArray(value)) for (const item of value) lines.push(`${key}: ${item}`);
+      else if (value !== undefined) lines.push(`${key}: ${value}`);
+    }
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    if (head.length > 0) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+});
+
+server.listen(listenPort, "0.0.0.0");
+EOF
+  CODE_PROXY_PID=$!
 }
 
 start_matrix_code_server

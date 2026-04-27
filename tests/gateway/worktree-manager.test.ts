@@ -48,6 +48,17 @@ describe("worktree-manager", () => {
     expect(metadata.pr.number).toBe(42);
   });
 
+  it("fetches GitHub PR refs before creating a PR worktree", async () => {
+    const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const manager = createWorktreeManager({ homePath, runCommand });
+
+    const result = await manager.createWorktree({ projectSlug: "repo", pr: 42 });
+
+    expect(result.ok).toBe(true);
+    expect(runCommand).toHaveBeenNthCalledWith(1, "git", ["fetch", "origin", "pull/42/head:refs/heads/pr-42"], expect.any(Object));
+    expect(runCommand).toHaveBeenNthCalledWith(2, "git", ["worktree", "add", "--", expect.any(String), "pr-42"], expect.any(Object));
+  });
+
   it("rejects invalid refs before invoking git", async () => {
     const runCommand = vi.fn();
     const manager = createWorktreeManager({ homePath, runCommand });

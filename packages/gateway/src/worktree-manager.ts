@@ -173,7 +173,7 @@ export function createWorktreeManager(options: {
       const project = await readProject(homePath, input.projectSlug);
       if (!project) return failure(404, "not_found", "Project was not found");
 
-      const source = typeof input.pr === "number" ? `pr/${input.pr}` : input.branch!;
+      const source = typeof input.pr === "number" ? `pull/${input.pr}/head` : input.branch!;
       const id = worktreeId(input.projectSlug, source);
       const path = worktreePath(homePath, input.projectSlug, id);
       const currentBranch = typeof input.pr === "number" ? `pr-${input.pr}` : input.branch!;
@@ -181,7 +181,13 @@ export function createWorktreeManager(options: {
       if (existing) return { ok: true, status: 200, worktree: existing };
 
       try {
-        await runCommand("git", ["worktree", "add", "--", path, source], {
+        if (typeof input.pr === "number") {
+          await runCommand("git", ["fetch", "origin", `${source}:refs/heads/${currentBranch}`], {
+            cwd: project.localPath,
+            timeout: DEFAULT_TIMEOUT_MS,
+          });
+        }
+        await runCommand("git", ["worktree", "add", "--", path, currentBranch], {
           cwd: project.localPath,
           timeout: DEFAULT_TIMEOUT_MS,
         });

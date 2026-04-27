@@ -284,7 +284,7 @@ export function stopReview(review: ReviewLoopRecord, input: { now?: () => string
 }
 
 export function approveReview(review: ReviewLoopRecord, input: { now?: () => string }): Result {
-  if (!terminal(review.status) || ["converged", "stopped", "approved"].includes(review.status)) {
+  if (!terminal(review.status) || ["stopped", "approved"].includes(review.status)) {
     return failure();
   }
   return {

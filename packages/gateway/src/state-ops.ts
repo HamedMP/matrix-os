@@ -92,6 +92,29 @@ async function listFilesRecursive(root: string, homePath: string): Promise<strin
   return files;
 }
 
+async function listOwnedProjectFiles(homePath: string, ownerScope?: OwnerScope): Promise<string[]> {
+  const projectsRoot = join(homePath, "projects");
+  let entries;
+  try {
+    entries = await readdir(projectsRoot, { withFileTypes: true });
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith(".")) continue;
+    const projectPath = join(projectsRoot, entry.name);
+    const owner = await readOwnerScope(join(projectPath, "config.json"));
+    if (!ownerMatches(owner, ownerScope)) continue;
+    files.push(...await listFilesRecursive(projectPath, homePath));
+  }
+  return files;
+}
+
 async function readOwnerScope(configPath: string): Promise<OwnerScope | null> {
   try {
     const config = await readJsonFile(configPath);
@@ -198,7 +221,13 @@ export function createStateOps(options: { homePath: string; now?: () => string }
     async exportWorkspace(request: WorkspaceExportRequest): Promise<WorkspaceExportManifest> {
       const createdAt = nowIso(options.now);
       const files: string[] = [];
-      if (request.scope === "project") {
+      if (request.scope === "all") {
+        const systemPath = resolveWithinHome(homePath, "system");
+        if (systemPath && await pathExists(systemPath)) {
+          files.push(...await listFilesRecursive(systemPath, homePath));
+        }
+        files.push(...await listOwnedProjectFiles(homePath, request.ownerScope));
+      } else if (request.scope === "project") {
         if (!request.projectSlug) {
           return { id: `export_${randomUUID()}`, createdAt, scope: request.scope, files };
         }

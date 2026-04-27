@@ -182,6 +182,13 @@ describe("review-loop", () => {
       ok: true,
       review: { status: "approved" },
     });
+
+    const converged = completeReview(started.review, { parseResult: parsedEmpty, now });
+    if (!converged.ok) return;
+    expect(approveReview(converged.review, { now })).toMatchObject({
+      ok: true,
+      review: { status: "approved" },
+    });
   });
 });
 

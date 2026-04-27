@@ -197,21 +197,96 @@ exec su-exec matrixos bash -c '
 
   if command -v code-server >/dev/null 2>&1; then
     CODE_SERVER_PORT="${MATRIX_CODE_SERVER_PORT:-8787}"
+    CODE_SERVER_UPSTREAM_PORT="${MATRIX_CODE_SERVER_UPSTREAM_PORT:-8788}"
     CODE_SERVER_ROOT="$MATRIX_HOME/system/code-server"
     mkdir -p "$CODE_SERVER_ROOT/user-data" "$CODE_SERVER_ROOT/extensions"
-    echo "[matrix-os-dev] Starting Matrix Code editor on :$CODE_SERVER_PORT"
-    env -u PORT -u HOST code-server \
-      --auth none \
-      --bind-addr "0.0.0.0:$CODE_SERVER_PORT" \
-      --disable-telemetry \
-      --disable-update-check \
-      --user-data-dir "$CODE_SERVER_ROOT/user-data" \
-      --extensions-dir "$CODE_SERVER_ROOT/extensions" \
-      "$MATRIX_HOME" &
-    CODE_SERVER_PID=$!
+    if [ -n "${MATRIX_CODE_PROXY_TOKEN:-}" ]; then
+      echo "[matrix-os-dev] Starting Matrix Code editor on 127.0.0.1:$CODE_SERVER_UPSTREAM_PORT behind authenticated proxy :$CODE_SERVER_PORT"
+      env -u PORT -u HOST code-server \
+        --auth none \
+        --bind-addr "127.0.0.1:$CODE_SERVER_UPSTREAM_PORT" \
+        --disable-telemetry \
+        --disable-update-check \
+        --user-data-dir "$CODE_SERVER_ROOT/user-data" \
+        --extensions-dir "$CODE_SERVER_ROOT/extensions" \
+        "$MATRIX_HOME" &
+      CODE_SERVER_PID=$!
+      MATRIX_CODE_PROXY_LISTEN="$CODE_SERVER_PORT" MATRIX_CODE_PROXY_UPSTREAM="$CODE_SERVER_UPSTREAM_PORT" node <<\CODE_PROXY_EOF &
+const http = require("node:http");
+const net = require("node:net");
+const crypto = require("node:crypto");
+
+const token = process.env.MATRIX_CODE_PROXY_TOKEN || "";
+const listenPort = Number(process.env.MATRIX_CODE_PROXY_LISTEN || "8787");
+const upstreamPort = Number(process.env.MATRIX_CODE_PROXY_UPSTREAM || "8788");
+
+function authorized(req) {
+  const value = String(req.headers["x-matrix-code-proxy-token"] || "");
+  const actual = Buffer.from(value);
+  const expected = Buffer.from(token);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function scrubHeaders(headers) {
+  const next = { ...headers };
+  delete next["x-matrix-code-proxy-token"];
+  return next;
+}
+
+const server = http.createServer((req, res) => {
+  if (!authorized(req)) {
+    res.writeHead(401, { "cache-control": "no-store" });
+    res.end("Unauthorized");
+    return;
+  }
+  const upstream = http.request({
+    host: "127.0.0.1",
+    port: upstreamPort,
+    method: req.method,
+    path: req.url,
+    headers: scrubHeaders(req.headers),
+  }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+    upstreamRes.pipe(res);
+  });
+  upstream.on("error", () => {
+    res.writeHead(502, { "cache-control": "no-store" });
+    res.end("Editor unavailable");
+  });
+  req.pipe(upstream);
+});
+
+server.on("upgrade", (req, socket, head) => {
+  if (!authorized(req)) {
+    socket.end("HTTP/1.1 401 Unauthorized\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const upstream = net.connect(upstreamPort, "127.0.0.1", () => {
+    const headers = scrubHeaders(req.headers);
+    const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+    for (const [key, value] of Object.entries(headers)) {
+      if (Array.isArray(value)) for (const item of value) lines.push(`${key}: ${item}`);
+      else if (value !== undefined) lines.push(`${key}: ${value}`);
+    }
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    if (head.length > 0) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+});
+
+server.listen(listenPort, "0.0.0.0");
+CODE_PROXY_EOF
+      CODE_PROXY_PID=$!
+    else
+      echo "[matrix-os-dev] MATRIX_CODE_PROXY_TOKEN is not set; code.matrix-os.com editor disabled"
+      CODE_SERVER_PID=
+      CODE_PROXY_PID=
+    fi
   else
     echo "[matrix-os-dev] code-server is not installed; code.matrix-os.com editor disabled"
     CODE_SERVER_PID=
+    CODE_PROXY_PID=
   fi
 
   pnpm --filter shell exec next dev -p 3000 &
@@ -232,16 +307,18 @@ exec su-exec matrixos bash -c '
         [ -f \"\$src/auth.json\" ] && cp \"\$src/auth.json\" \"\$AI_AUTH/codex/auth.json\" 2>/dev/null && break
       done
     fi
+    [ -n \"\$CODE_PROXY_PID\" ] && kill \$CODE_PROXY_PID 2>/dev/null || true
     [ -n \"\$CODE_SERVER_PID\" ] && kill \$CODE_SERVER_PID 2>/dev/null || true
     kill \$SHELL_PID \$GATEWAY_PID 2>/dev/null; exit 0
   " SIGTERM SIGINT
 
-  if [ -n "$CODE_SERVER_PID" ]; then
-    wait -n $SHELL_PID $GATEWAY_PID $CODE_SERVER_PID
+  if [ -n "$CODE_SERVER_PID" ] && [ -n "$CODE_PROXY_PID" ]; then
+    wait -n $SHELL_PID $GATEWAY_PID $CODE_SERVER_PID $CODE_PROXY_PID
   else
     wait -n $SHELL_PID $GATEWAY_PID
   fi
   EXIT_CODE=$?
+  [ -n "$CODE_PROXY_PID" ] && kill $CODE_PROXY_PID 2>/dev/null || true
   [ -n "$CODE_SERVER_PID" ] && kill $CODE_SERVER_PID 2>/dev/null || true
   kill $SHELL_PID $GATEWAY_PID 2>/dev/null
   exit $EXIT_CODE
