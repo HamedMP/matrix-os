@@ -110,7 +110,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
 
   const loadProjects = useCallback(async () => {
     try {
-      const data = await fetchJson<{ projects: ProjectSummary[] }>("/api/projects");
+      const data = await fetchJson<{ projects: ProjectSummary[] }>("/api/workspace/projects");
       setProjects(data.projects ?? []);
       if (!selectedSlug && data.projects?.[0]?.slug) {
         setSelectedSlug(data.projects[0].slug);

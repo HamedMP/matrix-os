@@ -170,46 +170,48 @@ export function createWorktreeManager(options: {
       if (typeof input.pr === "number" && (!Number.isSafeInteger(input.pr) || input.pr < 1)) {
         return failure(400, "invalid_ref", "Branch or PR reference is invalid");
       }
-      const project = await readProject(homePath, input.projectSlug);
-      if (!project) return failure(404, "not_found", "Project was not found");
+      return withProjectLock(input.projectSlug, async () => {
+        const project = await readProject(homePath, input.projectSlug);
+        if (!project) return failure(404, "not_found", "Project was not found");
 
-      const source = typeof input.pr === "number" ? `pull/${input.pr}/head` : input.branch!;
-      const id = worktreeId(input.projectSlug, source);
-      const path = worktreePath(homePath, input.projectSlug, id);
-      const currentBranch = typeof input.pr === "number" ? `pr-${input.pr}` : input.branch!;
-      const existing = await readWorktree(homePath, input.projectSlug, id);
-      if (existing) return { ok: true, status: 200, worktree: existing };
+        const source = typeof input.pr === "number" ? `pull/${input.pr}/head` : input.branch!;
+        const id = worktreeId(input.projectSlug, source);
+        const path = worktreePath(homePath, input.projectSlug, id);
+        const currentBranch = typeof input.pr === "number" ? `pr-${input.pr}` : input.branch!;
+        const existing = await readWorktree(homePath, input.projectSlug, id);
+        if (existing) return { ok: true, status: 200, worktree: existing };
 
-      try {
-        if (typeof input.pr === "number") {
-          await runCommand("git", ["fetch", "origin", `${source}:refs/heads/${currentBranch}`], {
+        try {
+          if (typeof input.pr === "number") {
+            await runCommand("git", ["fetch", "origin", `${source}:refs/heads/${currentBranch}`], {
+              cwd: project.localPath,
+              timeout: DEFAULT_TIMEOUT_MS,
+            });
+          }
+          await runCommand("git", ["worktree", "add", "--", path, currentBranch], {
             cwd: project.localPath,
             timeout: DEFAULT_TIMEOUT_MS,
           });
+        } catch (err: unknown) {
+          if (err instanceof Error) console.warn("[worktree-manager] Failed to add worktree:", err.message);
+          else console.warn("[worktree-manager] Failed to add worktree:", err);
+          await rm(path, { recursive: true, force: true });
+          return failure(502, "checkout_failed", "Worktree checkout failed");
         }
-        await runCommand("git", ["worktree", "add", "--", path, currentBranch], {
-          cwd: project.localPath,
-          timeout: DEFAULT_TIMEOUT_MS,
-        });
-      } catch (err: unknown) {
-        if (err instanceof Error) console.warn("[worktree-manager] Failed to add worktree:", err.message);
-        else console.warn("[worktree-manager] Failed to add worktree:", err);
-        await rm(path, { recursive: true, force: true });
-        return failure(502, "checkout_failed", "Worktree checkout failed");
-      }
-      const timestamp = nowIso(options.now);
-      const record: WorktreeRecord = {
-        id,
-        projectSlug: input.projectSlug,
-        path,
-        sourceBranch: source,
-        currentBranch,
-        pr: typeof input.pr === "number" ? { number: input.pr } : undefined,
-        dirtyState: "unknown",
-        createdAt: timestamp,
-      };
-      await atomicWriteJson(join(path, ".matrix", "worktree.json"), record);
-      return { ok: true, status: 201, worktree: record };
+        const timestamp = nowIso(options.now);
+        const record: WorktreeRecord = {
+          id,
+          projectSlug: input.projectSlug,
+          path,
+          sourceBranch: source,
+          currentBranch,
+          pr: typeof input.pr === "number" ? { number: input.pr } : undefined,
+          dirtyState: "unknown",
+          createdAt: timestamp,
+        };
+        await atomicWriteJson(join(path, ".matrix", "worktree.json"), record);
+        return { ok: true, status: 201, worktree: record };
+      });
     },
 
     async listWorktrees(projectSlug: string): Promise<{ ok: true; worktrees: WorktreeRecord[] } | Failure> {
@@ -331,6 +333,9 @@ export function createWorktreeManager(options: {
           dirtyCount = result.stdout.split("\n").filter((line) => line.trim().length > 0).length;
         } catch (err: unknown) {
           if (err instanceof Error) console.warn("[worktree-manager] Failed to inspect dirty state:", err.message);
+          if (!input.confirmDirtyDelete) {
+            return failure(409, "dirty_state_unknown", "Dirty worktree deletion requires confirmation");
+          }
           dirtyCount = 0;
         }
         if (dirtyCount > 0 && !input.confirmDirtyDelete) {

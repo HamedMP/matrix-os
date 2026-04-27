@@ -59,6 +59,21 @@ describe("worktree-manager", () => {
     expect(runCommand).toHaveBeenNthCalledWith(2, "git", ["worktree", "add", "--", expect.any(String), "pr-42"], expect.any(Object));
   });
 
+  it("serializes concurrent creation for the same worktree", async () => {
+    const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const manager = createWorktreeManager({ homePath, runCommand });
+
+    const results = await Promise.all([
+      manager.createWorktree({ projectSlug: "repo", branch: "feature/concurrent" }),
+      manager.createWorktree({ projectSlug: "repo", branch: "feature/concurrent" }),
+    ]);
+
+    expect(results.filter((result) => result.ok && result.status === 201)).toHaveLength(1);
+    expect(results.filter((result) => result.ok && result.status === 200)).toHaveLength(1);
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(runCommand).toHaveBeenCalledWith("git", ["worktree", "add", "--", expect.any(String), "feature/concurrent"], expect.any(Object));
+  });
+
   it("rejects invalid refs before invoking git", async () => {
     const runCommand = vi.fn();
     const manager = createWorktreeManager({ homePath, runCommand });
@@ -133,5 +148,30 @@ describe("worktree-manager", () => {
     })).resolves.toMatchObject({ ok: true });
     expect(runCommand).toHaveBeenCalledWith("git", ["worktree", "remove", "--force", "--", created.worktree.path], expect.any(Object));
     await expect(stat(created.worktree.path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails closed when dirty-state inspection fails without confirmation", async () => {
+    const runCommand = vi.fn(async (_command: string, args: string[]) => {
+      if (args[0] === "status") throw new Error("git status timed out");
+      return { stdout: "", stderr: "" };
+    });
+    const manager = createWorktreeManager({ homePath, runCommand });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "unknown-dirty" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    await writeFile(join(created.worktree.path, "file.ts"), "changed");
+
+    await expect(manager.deleteWorktree({
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      confirmDirtyDelete: false,
+    })).resolves.toMatchObject({ ok: false, status: 409, error: { code: "dirty_state_unknown" } });
+    await expect(stat(created.worktree.path)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+
+    await expect(manager.deleteWorktree({
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      confirmDirtyDelete: true,
+    })).resolves.toMatchObject({ ok: true });
   });
 });

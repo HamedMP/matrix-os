@@ -85,8 +85,9 @@ describe("review-loop", () => {
     if (!needsImplementation.ok) return;
 
     const next = completeImplementation(needsImplementation.review, {
-      sessionId: "sess_review_2",
+      sessionId: "sess_impl_1",
       commit: "abc1234",
+      nextSessionId: "sess_review_2",
       now,
     });
 
@@ -97,7 +98,7 @@ describe("review-loop", () => {
         round: 2,
         activeSessionId: "sess_review_2",
         rounds: [
-          expect.objectContaining({ implementerCommit: "abc1234" }),
+          expect.objectContaining({ phase: "implement", sessionId: "sess_impl_1", implementerCommit: "abc1234" }),
           expect.objectContaining({ round: 2, phase: "review", sessionId: "sess_review_2" }),
         ],
       },

@@ -59,7 +59,7 @@ Response: `201`
 
 Errors: `github_auth_required`, `invalid_repository_url`, `clone_too_large`, `clone_timeout`, `slug_conflict`.
 
-### `GET /api/projects`
+### `GET /api/workspace/projects`
 
 Query: `?q=&limit=&cursor=`
 

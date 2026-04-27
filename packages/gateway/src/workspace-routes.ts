@@ -219,7 +219,7 @@ export function createWorkspaceRoutes(options: {
     return c.json({ project: result.project }, 201);
   });
 
-  app.get("/api/projects", async (c) => {
+  app.get("/api/workspace/projects", async (c) => {
     const result = await projectManager.listManagedProjects();
     return c.json(result);
   });

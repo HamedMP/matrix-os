@@ -66,7 +66,7 @@ describe("workspace API routes", () => {
     const projectManager = {
       getGithubStatus: vi.fn(async () => ({ installed: true, authenticated: true, user: "octocat", errorCode: null })),
       createProject: vi.fn(),
-      listManagedProjects: vi.fn(),
+      listManagedProjects: vi.fn(async () => ({ projects: [{ slug: "repo", name: "Repo" }] })),
       getProject: vi.fn(),
       deleteProject: vi.fn(),
       listPullRequests: vi.fn(),
@@ -85,6 +85,10 @@ describe("workspace API routes", () => {
       user: "octocat",
       errorCode: null,
     });
+    await expect((await app.request("/api/workspace/projects")).json()).resolves.toEqual({
+      projects: [{ slug: "repo", name: "Repo" }],
+    });
+    expect(projectManager.listManagedProjects).toHaveBeenCalled();
     const res = await app.request(jsonRequest("/api/projects/repo/worktrees", { branch: "main" }));
     expect(res.status).toBe(201);
     expect(worktreeManager.createWorktree).toHaveBeenCalledWith({ projectSlug: "repo", branch: "main" });

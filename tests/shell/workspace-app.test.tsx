@@ -9,7 +9,7 @@ describe("WorkspaceApp", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith("/api/projects")) {
+      if (url.endsWith("/api/workspace/projects")) {
         return json({ projects: Array.from({ length: 120 }, (_, index) => ({
           slug: index === 0 ? "repo" : `repo-${index}`,
           name: index === 0 ? "Repo" : `Project ${index}`,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SupportedAgent } from "./agent-launcher.js";
 import type { FindingsParseFailure, FindingsParseSuccess } from "./findings-parser.js";
 import type { WorkspaceError } from "./project-manager.js";
@@ -217,7 +218,7 @@ export function completeReview(
 
 export function completeImplementation(
   review: ReviewLoopRecord,
-  input: { sessionId: string; commit: string; now?: () => string },
+  input: { sessionId: string; commit: string; nextSessionId?: string; now?: () => string },
 ): Result {
   if (review.status !== "implementing" || review.rounds.length === 0) {
     return failure();
@@ -227,7 +228,7 @@ export function completeImplementation(
   const completed: ReviewRoundRecord = {
     ...current,
     phase: "implement",
-    sessionId: current.sessionId,
+    sessionId: input.sessionId,
     implementerCommit: input.commit,
     completedAt: timestamp,
   };
@@ -237,7 +238,7 @@ export function completeImplementation(
     rounds: replaceCurrentRound(review, completed),
     updatedAt: timestamp,
   };
-  return startNextReviewRound(updated, { sessionId: input.sessionId, now: input.now });
+  return startNextReviewRound(updated, { sessionId: input.nextSessionId ?? `sess_${randomUUID()}`, now: input.now });
 }
 
 export function completeVerification(
