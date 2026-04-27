@@ -188,7 +188,8 @@ Untracked support/spec files currently present:
   - Files: `Dockerfile`
 - [x] T602 Create required workspace directories at startup with correct ownership.
   - Files: `distro/docker-entrypoint.sh`
-- [ ] T603 Implement startup recovery order for state ops, projects, worktree leases, runtime sessions, bridges, transcripts, reviews, browser IDE health, and preview detection.
+- [x] T603 Implement startup recovery order for state ops, projects, worktree leases, runtime sessions, bridges, transcripts, reviews, browser IDE health, and preview detection.
+  - Files: `packages/gateway/src/workspace-startup-recovery.ts`, `packages/gateway/src/server.ts`, `tests/gateway/workspace-startup-recovery.test.ts`
 - [x] T604 Extend `/health` with workspace manager, session, review, sandbox, and browser IDE status.
   - Files: `packages/gateway/src/server.ts`
 - [x] T605 Add public docs for cloud coding, GitHub auth, data ownership, worktrees, session sharing, review loops, browser IDE, and sandboxing.
