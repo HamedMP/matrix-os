@@ -170,4 +170,62 @@ describe("workspace API routes", () => {
       enforced: true,
     });
   });
+
+  it("routes review start, status, next, approve, and stop through review records", async () => {
+    const saved: unknown[] = [];
+    const review = {
+      id: "rev_abc123",
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      pr: 42,
+      status: "queued",
+      round: 0,
+      maxRounds: 5,
+      reviewer: "claude",
+      implementer: "codex",
+      convergenceGate: "findings_only",
+      verificationCommands: [],
+      rounds: [],
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
+    };
+    const reviewStore = {
+      saveReview: vi.fn(async (value: unknown) => {
+        saved.push(value);
+        return { ok: true };
+      }),
+      getReview: vi.fn(async () => ({ ok: true, review: saved.at(-1) ?? review })),
+      listReviews: vi.fn(async () => ({ ok: true, reviews: [saved.at(-1) ?? review], nextCursor: null })),
+    };
+    const app = createWorkspaceRoutes({ homePath, reviewStore });
+
+    const created = await app.request(jsonRequest("/api/reviews", {
+      projectSlug: "repo",
+      worktreeId: "wt_abc123def456",
+      pr: 42,
+      reviewer: "claude",
+      implementer: "codex",
+      maxRounds: 5,
+      convergenceGate: "findings_only",
+      verificationCommands: [],
+    }));
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      review: { id: expect.stringMatching(/^rev_/), status: "queued", round: 0 },
+    });
+
+    await expect((await app.request("/api/reviews/rev_abc123")).json()).resolves.toMatchObject({
+      review: expect.objectContaining({ projectSlug: "repo" }),
+    });
+    await expect((await app.request(jsonRequest("/api/reviews/rev_abc123/next", {}))).json()).resolves.toMatchObject({
+      review: expect.objectContaining({ status: "reviewing", round: 1 }),
+    });
+    await expect((await app.request(jsonRequest("/api/reviews/rev_abc123/stop", {}))).json()).resolves.toMatchObject({
+      review: expect.objectContaining({ status: "stopped" }),
+    });
+    saved.push({ ...(saved.at(-1) ?? review), status: "stalled" });
+    await expect((await app.request(jsonRequest("/api/reviews/rev_abc123/approve", {}))).json()).resolves.toMatchObject({
+      review: expect.objectContaining({ status: "approved" }),
+    });
+  });
 });

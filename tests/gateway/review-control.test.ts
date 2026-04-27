@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,6 +108,12 @@ describe("review-control", () => {
       ok: false,
       status: 404,
       error: { code: "control_file_missing" },
+    });
+    await writeFile(path, "{", "utf-8");
+    await expect(readReviewControlFile({ worktreePath, round: 2 })).resolves.toMatchObject({
+      ok: false,
+      status: 400,
+      error: { code: "invalid_control_file" },
     });
   });
 

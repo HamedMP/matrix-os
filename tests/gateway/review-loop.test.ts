@@ -128,6 +128,15 @@ describe("review-loop", () => {
       ok: true,
       review: { status: "converged" },
     });
+    expect(completeVerification(verifying.review, { passed: false, now })).toMatchObject({
+      ok: true,
+      review: {
+        status: "failed",
+        rounds: [expect.anything(), expect.objectContaining({
+          error: { code: "verification_failed", message: "Verification failed" },
+        })],
+      },
+    });
   });
 
   it("records parse failure and stalls at max rounds without ambiguous terminal states", () => {

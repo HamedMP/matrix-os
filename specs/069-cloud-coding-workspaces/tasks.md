@@ -138,10 +138,8 @@ Untracked support/spec files currently present:
 
 ### Review Loop Engine
 
-- [ ] T300 Add failing unit and integration tests for findings parsing, legal/illegal review transitions, convergence, stall, parse failure, verification failure, operator stop/approve, max-round limits, and recovery from partial writes.
-  - Partial: `tests/gateway/findings-parser.test.ts` covers structured findings parsing, zero-finding convergence input, parse failure states, unsafe paths, and file parsing.
-  - Partial: `tests/gateway/review-loop.test.ts` covers legal and illegal transitions, convergence, verification gates, parse failure, max-round stalls, stop, and approve.
-  - Partial: `tests/gateway/review-control.test.ts` covers review prompts, atomic control-file writes, control-file parsing, missing control files, and invalid rounds.
+- [x] T300 Add failing unit and integration tests for findings parsing, legal/illegal review transitions, convergence, stall, parse failure, verification failure, operator stop/approve, max-round limits, and recovery from partial writes.
+  - Files: `tests/gateway/findings-parser.test.ts`, `tests/gateway/review-loop.test.ts`, `tests/gateway/review-control.test.ts`, `tests/gateway/review-store.test.ts`, `tests/gateway/workspace-routes.test.ts`, `tests/cli/cli.test.ts`
 - [x] T301 Implement `findings-parser.ts` for structured markdown findings and explicit parse failure states.
   - Files: `packages/gateway/src/findings-parser.ts`, `tests/gateway/findings-parser.test.ts`
 - [x] T302 Implement `review-loop.ts` state machine for reviewer/implementer rounds, control files, convergence gates, failures, stop/next/approve, and max rounds.
@@ -150,8 +148,10 @@ Untracked support/spec files currently present:
   - Files: `packages/gateway/src/review-control.ts`, `tests/gateway/review-control.test.ts`
 - [x] T304 Persist review records under `~/system/reviews/{reviewId}.json`.
   - Files: `packages/gateway/src/review-store.ts`, `tests/gateway/review-store.test.ts`
-- [ ] T305 Add gateway API and CLI commands for review start/status/watch/next/approve/stop.
-- [ ] T306 Complete green/refactor coverage for convergence, stall, parse failure, verification failure, illegal transitions, and recovery from partial writes.
+- [x] T305 Add gateway API and CLI commands for review start/status/watch/next/approve/stop.
+  - Files: `packages/gateway/src/workspace-routes.ts`, `bin/cli.ts`, `bin/matrixos.ts`, `tests/gateway/workspace-routes.test.ts`, `tests/cli/cli.test.ts`
+- [x] T306 Complete green/refactor coverage for convergence, stall, parse failure, verification failure, illegal transitions, and recovery from partial writes.
+  - Commands: `pnpm exec vitest run tests/gateway/review-store.test.ts tests/gateway/review-control.test.ts tests/gateway/review-loop.test.ts tests/gateway/findings-parser.test.ts tests/gateway/agent-sandbox.test.ts tests/gateway/session-transcript.test.ts tests/gateway/session-runtime-bridge.test.ts tests/gateway/session-registry.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/zellij-runtime.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/worktree-manager.test.ts tests/gateway/state-ops.test.ts tests/gateway/project-manager.test.ts tests/gateway/workspace-routes.test.ts tests/cli/cli.test.ts`
 
 ### Tasks / Events / Previews
 

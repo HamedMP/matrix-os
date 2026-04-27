@@ -133,6 +133,13 @@ describe("T680a: CLI argument parser", () => {
       command: "agent",
       subcommand: "sandbox-status",
     });
+    expect(parseArgs(["review", "start", "--project", "repo", "--pr", "42", "--agent", "claude"])).toMatchObject({
+      command: "review",
+      subcommand: "start",
+      project: "repo",
+      pr: 42,
+      agent: "claude",
+    });
   });
 });
 
@@ -190,6 +197,34 @@ describe("workspace CLI helpers", () => {
     expect(buildWorkspaceRequest(parseArgs(["agent", "sandbox-status"]))).toEqual({
       method: "GET",
       path: "/api/agents/sandbox-status",
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "start", "--project", "repo", "--worktree", "wt_abc123def456", "--pr", "42", "--agent", "claude"]))).toEqual({
+      method: "POST",
+      path: "/api/reviews",
+      body: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        pr: 42,
+        reviewer: "claude",
+        implementer: "claude",
+        maxRounds: 5,
+        convergenceGate: "findings_only",
+        verificationCommands: [],
+      },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "status", "rev_abc123"]))).toEqual({
+      method: "GET",
+      path: "/api/reviews/rev_abc123",
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "next", "rev_abc123"]))).toEqual({
+      method: "POST",
+      path: "/api/reviews/rev_abc123/next",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "approve", "rev_abc123"]))).toEqual({
+      method: "POST",
+      path: "/api/reviews/rev_abc123/approve",
+      body: {},
     });
   });
 

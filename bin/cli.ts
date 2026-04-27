@@ -14,6 +14,7 @@ const COMMANDS = new Set([
   "workspace",
   "session",
   "agent",
+  "review",
 ]);
 
 export interface ParsedArgs {
@@ -229,14 +230,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       positionalIndex++;
     } else if (
       positionalIndex === 1 &&
-      ["project", "worktree", "workspace", "session", "agent"].includes(result.command)
+      ["project", "worktree", "workspace", "session", "agent", "review"].includes(result.command)
     ) {
       result.subcommand = arg;
       positionalIndex++;
     } else if (positionalIndex === 1 && result.command === "send") {
       result.message = arg;
       positionalIndex++;
-    } else if (["project", "worktree", "workspace", "session", "agent"].includes(result.command)) {
+    } else if (["project", "worktree", "workspace", "session", "agent", "review"].includes(result.command)) {
       result.positional.push(arg);
       positionalIndex++;
     }
@@ -432,6 +433,47 @@ export function buildWorkspaceRequest(args: ParsedArgs): WorkspaceRequest {
     }
   }
 
+  if (args.command === "review") {
+    switch (args.subcommand) {
+      case "start": {
+        if (!args.project) throw new Error("--project required");
+        if (!args.worktree) throw new Error("--worktree required");
+        if (typeof args.pr !== "number") throw new Error("--pr required");
+        const reviewer = args.agent ?? "claude";
+        return {
+          method: "POST",
+          path: "/api/reviews",
+          body: {
+            projectSlug: args.project,
+            worktreeId: args.worktree,
+            pr: args.pr,
+            reviewer,
+            implementer: reviewer,
+            maxRounds: 5,
+            convergenceGate: "findings_only",
+            verificationCommands: [],
+          },
+        };
+      }
+      case "ls":
+      case "list":
+        return { method: "GET", path: `/api/reviews${queryString({ projectSlug: args.project })}` };
+      case "status":
+      case "watch": {
+        const reviewId = encodePathSegment(requirePositional(args, 0, "review ID"));
+        return { method: "GET", path: `/api/reviews/${reviewId}` };
+      }
+      case "next":
+      case "approve":
+      case "stop": {
+        const reviewId = encodePathSegment(requirePositional(args, 0, "review ID"));
+        return { method: "POST", path: `/api/reviews/${reviewId}/${args.subcommand}`, body: {} };
+      }
+      default:
+        throw new Error("Unknown review command");
+    }
+  }
+
   throw new Error("Unknown workspace command");
 }
 
@@ -576,6 +618,7 @@ Commands:
   worktree    Manage project worktrees
   session     Manage coding sessions
   agent       Inspect agent runtime status
+  review      Manage review loops
   workspace   Export or delete workspace data
   help        Show this help text
   version     Show version
@@ -618,5 +661,13 @@ Session commands:
 
 Agent commands:
   agent ls
-  agent sandbox-status`;
+  agent sandbox-status
+
+Review commands:
+  review start --project slug --worktree id --pr number [--agent claude]
+  review status <reviewId>
+  review watch <reviewId>
+  review next <reviewId>
+  review approve <reviewId>
+  review stop <reviewId>`;
 }

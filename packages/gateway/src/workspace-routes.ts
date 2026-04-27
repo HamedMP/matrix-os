@@ -12,6 +12,8 @@ import { createAgentSandbox } from "./agent-sandbox.js";
 import { SessionRegistry } from "./session-registry.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
+import { approveReview, createReviewLoopRecord, startNextReviewRound, stopReview } from "./review-loop.js";
+import { createReviewStore } from "./review-store.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
@@ -19,6 +21,7 @@ type AgentLauncher = ReturnType<typeof createAgentLauncher>;
 type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
 type AgentSandbox = ReturnType<typeof createAgentSandbox>;
 type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
+type ReviewStore = ReturnType<typeof createReviewStore>;
 
 const WORKSPACE_BODY_LIMIT = 64 * 1024;
 
@@ -79,6 +82,17 @@ const SendSessionInputSchema = z.object({
 
 const EmptyObjectSchema = z.object({}).passthrough();
 
+const CreateReviewSchema = z.object({
+  projectSlug: z.string().min(1).max(63),
+  worktreeId: z.string().min(1).max(128),
+  pr: z.number().int().positive(),
+  reviewer: z.enum(["claude", "codex", "opencode", "pi"]),
+  implementer: z.enum(["claude", "codex", "opencode", "pi"]),
+  maxRounds: z.number().int().min(1).max(20).default(5),
+  convergenceGate: z.enum(["findings_only", "findings_and_verify"]).default("findings_only"),
+  verificationCommands: z.array(z.string().min(1).max(500)).max(20).default([]),
+});
+
 function status(code: number): ContentfulStatusCode {
   return code as ContentfulStatusCode;
 }
@@ -122,6 +136,7 @@ export function createWorkspaceRoutes(options: {
   agentSessionManager?: AgentSessionManager;
   agentSandbox?: AgentSandbox;
   sessionRuntimeBridge?: SessionRuntimeBridge;
+  reviewStore?: ReviewStore;
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
@@ -140,6 +155,7 @@ export function createWorkspaceRoutes(options: {
     registry: new SessionRegistry(options.homePath),
     zellijRuntime,
   });
+  const reviewStore = options.reviewStore ?? createReviewStore({ homePath: options.homePath });
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
 
@@ -308,6 +324,71 @@ export function createWorkspaceRoutes(options: {
   app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgents()));
 
   app.get("/api/agents/sandbox-status", async (c) => c.json(await agentSandbox.status()));
+
+  app.post("/api/reviews", limited, async (c) => {
+    const body = await parseJson(c, CreateReviewSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const review = createReviewLoopRecord({
+      id: `rev_${randomUUID()}`,
+      ...body.value,
+    });
+    const saved = await reviewStore.saveReview(review);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review }, 201);
+  });
+
+  app.get("/api/reviews", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const result = await reviewStore.listReviews({
+      projectSlug: c.req.query("projectSlug"),
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ reviews: result.reviews, nextCursor: result.nextCursor });
+  });
+
+  app.get("/api/reviews/:reviewId", async (c) => {
+    const result = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ review: result.review });
+  });
+
+  app.post("/api/reviews/:reviewId/next", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const current = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!current.ok) return c.json({ error: current.error }, status(current.status));
+    const next = startNextReviewRound(current.review, { sessionId: `sess_${randomUUID()}` });
+    if (!next.ok) return c.json({ error: next.error }, status(next.status));
+    const saved = await reviewStore.saveReview(next.review);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review: next.review });
+  });
+
+  app.post("/api/reviews/:reviewId/approve", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const current = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!current.ok) return c.json({ error: current.error }, status(current.status));
+    const approved = approveReview(current.review, {});
+    if (!approved.ok) return c.json({ error: approved.error }, status(approved.status));
+    const saved = await reviewStore.saveReview(approved.review);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review: approved.review });
+  });
+
+  app.post("/api/reviews/:reviewId/stop", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const current = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!current.ok) return c.json({ error: current.error }, status(current.status));
+    const stopped = stopReview(current.review, {});
+    if (!stopped.ok) return c.json({ error: stopped.error }, status(stopped.status));
+    const saved = await reviewStore.saveReview(stopped.review);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review: stopped.review });
+  });
 
   app.post("/api/workspace/export", limited, async (c) => {
     const body = await parseJson(c, ExportWorkspaceSchema);

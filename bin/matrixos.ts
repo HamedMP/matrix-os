@@ -317,6 +317,7 @@ async function main() {
     case "workspace":
     case "session":
     case "agent":
+    case "review":
       await runWorkspaceCommand(args);
       break;
     case "sync": {
