@@ -53,6 +53,31 @@ export type {
 export { authMiddleware } from "./auth.js";
 export { getSystemInfo } from "./system-info.js";
 export type { SystemInfo } from "./system-info.js";
+export {
+  CanvasActionSchema,
+  CanvasDocumentWriteSchema,
+  CanvasEdgeSchema,
+  CanvasIdSchema,
+  CanvasNodeSchema,
+  ReplaceCanvasRequestSchema,
+  validateCanvasDocumentEdges,
+} from "./canvas/contracts.js";
+export type {
+  CanvasAction,
+  CanvasDocumentWrite,
+  CanvasEdge,
+  CanvasNode,
+  CanvasOwnerScope,
+  CanvasScopeType,
+} from "./canvas/contracts.js";
+export { CanvasConflictError, CanvasNotFoundError, CanvasRepository } from "./canvas/repository.js";
+export type { CanvasOwner, CanvasRecord, CreateCanvasInput, ReplaceCanvasInput } from "./canvas/repository.js";
+export { CanvasService, mapCanvasError } from "./canvas/service.js";
+export type { CanvasDocumentResult, CanvasListResult, CanvasSafeError } from "./canvas/service.js";
+export { createCanvasRoutes } from "./canvas/routes.js";
+export type { CanvasRouteDeps, CanvasRouteService } from "./canvas/routes.js";
+export { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
+export type { CanvasSubscriber, CanvasSubscriptionHubOptions } from "./canvas/subscriptions.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
 export { createApprovalBridge } from "./approval.js";

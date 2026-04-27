@@ -118,6 +118,11 @@ import { migrateSyncTables, type SyncDatabase } from "./sync/sharing-db.js";
 import type { Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema } from "./social.js";
 import { createActivityService } from "./social-activity.js";
+import { CanvasRepository } from "./canvas/repository.js";
+import { CanvasService } from "./canvas/service.js";
+import { createCanvasRoutes } from "./canvas/routes.js";
+import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
+import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
 import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
@@ -253,6 +258,9 @@ export async function createGateway(config: GatewayConfig) {
   let kvStore: KvStore | null = null;
   let appRegistry: AppRegistry | null = null;
   let kyselyInstance: Kysely<any> | null = null;
+  let canvasRepository: CanvasRepository | null = null;
+  let canvasService: CanvasService | null = null;
+  let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
 
   if (databaseUrl) {
     try {
@@ -263,6 +271,22 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = createQueryEngine(appDb);
       kvStore = createKvStore(kysely);
       appRegistry = createAppRegistry(appDb, kysely);
+      canvasRepository = new CanvasRepository(kysely as Kysely<any>);
+      await canvasRepository.bootstrap();
+      canvasService = new CanvasService(canvasRepository, { terminalRegistry: sessionRegistry, homePath });
+      canvasSubscriptionHub = new CanvasSubscriptionHub({
+        authorize: async (subscriber) => {
+          const record = await canvasRepository?.get(
+            { ownerScope: "personal", ownerId: subscriber.userId },
+            subscriber.canvasId,
+          );
+          return Boolean(record);
+        },
+      });
+      await cleanupCanvasTempFiles(join(homePath, "system", "canvas-exports"), {
+        ttlMs: 7 * 24 * 60 * 60 * 1000,
+        maxFiles: 100,
+      });
       console.log("[app-db] Postgres connected, data layer ready");
 
       // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
@@ -324,6 +348,9 @@ export async function createGateway(config: GatewayConfig) {
       queryEngine = null;
       kvStore = null;
       appRegistry = null;
+      canvasRepository = null;
+      canvasService = null;
+      canvasSubscriptionHub = null;
     }
   }
 
@@ -2642,29 +2669,32 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ok: true });
   });
 
-  app.get("/api/canvas", (c) => {
-    const canvasPath = join(homePath, "system/canvas.json");
-    if (!existsSync(canvasPath)) {
-      return c.json({});
+  app.get("/api/canvas", async (c) => {
+    if (!canvasService) {
+      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
     }
     try {
-      const data = JSON.parse(readFileSync(canvasPath, "utf-8"));
-      return c.json(data);
+      const userId = getUserIdFromContext(c);
+      const result = await canvasService.listCanvases(userId);
+      return c.json({
+        legacy: true,
+        canvasesEndpoint: "/api/canvases",
+        canvases: result.canvases,
+      });
     } catch (err: unknown) {
-      logBestEffortFailure("Failed to read canvas", err);
-      return c.json({});
+      logBestEffortFailure("Failed to read Postgres-backed canvas summaries", err);
+      return c.json({ error: "Canvas request failed" }, 500);
     }
   });
 
-  app.put("/api/canvas", canvasBodyLimit, async (c) => {
-    const body = await c.req.json<Record<string, unknown>>();
-    if (!body || typeof body !== "object" || !body.transform) {
-      return c.json({ error: "Invalid canvas data: requires transform object" }, 400);
+  app.put("/api/canvas", canvasBodyLimit, (c) => {
+    if (!canvasService) {
+      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
     }
-    const canvasPath = join(homePath, "system/canvas.json");
-    await mkdirAsync(dirname(canvasPath), { recursive: true });
-    await writeFileAsync(canvasPath, JSON.stringify(body, null, 2));
-    return c.json({ ok: true });
+    return c.json({
+      error: "Legacy canvas writes moved to /api/canvases",
+      canvasesEndpoint: "/api/canvases",
+    }, 410);
   });
 
   app.get("/api/theme", (c) => {
@@ -3035,6 +3065,70 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
+
+  if (canvasService) {
+    app.route("/api/canvases", createCanvasRoutes({
+      service: canvasService,
+      getUserId: (c) => getUserIdFromContext(c),
+    }));
+
+    app.get(
+      "/api/canvases/:canvasId/ws",
+      upgradeWebSocket((c) => {
+        const canvasId = c.req.param("canvasId") ?? "";
+        const userId = getUserIdFromContext(c);
+        const connectionId = `canvas_${randomBytes(12).toString("hex")}`;
+
+        return {
+          onOpen(_evt, ws) {
+            void canvasSubscriptionHub?.subscribe({
+              connectionId,
+              canvasId,
+              userId,
+              send: (message) => {
+                try {
+                  ws.send(message);
+                } catch (err: unknown) {
+                  logUnexpectedWsSendFailure("Canvas WebSocket send failed", err);
+                }
+              },
+            }).then(() => {
+              ws.send(JSON.stringify({ type: "canvas:subscribed", canvasId }));
+            }).catch((err: unknown) => {
+              console.error("[canvas/ws] Subscribe failed:", err instanceof Error ? err.message : String(err));
+              ws.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+              ws.close();
+            });
+          },
+          onMessage(evt) {
+            try {
+              const parsed = canvasSubscriptionHub?.validateInboundFrame(
+                typeof evt.data === "string" ? evt.data : "",
+              );
+              if (
+                typeof parsed === "object" &&
+                parsed !== null &&
+                (parsed as { type?: unknown }).type === "presence"
+              ) {
+                canvasSubscriptionHub?.updatePresence(
+                  connectionId,
+                  parsed as Record<string, unknown>,
+                );
+              }
+            } catch (err: unknown) {
+              canvasSubscriptionHub?.sendSafeError(connectionId, err);
+            }
+          },
+          onClose() {
+            canvasSubscriptionHub?.unsubscribe(connectionId);
+          },
+        };
+      }),
+    );
+  } else {
+    app.all("/api/canvases/*", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
+    app.all("/api/canvases", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
+  }
 
   // 066: Sync API routes
   if (syncDeps) {

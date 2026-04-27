@@ -1,0 +1,91 @@
+import { describe, expect, it, vi } from "vitest";
+import { CanvasSubscriptionHub } from "../../packages/gateway/src/canvas/subscriptions.js";
+
+describe("CanvasSubscriptionHub", () => {
+  it("authorizes subscriptions before registering a connection", async () => {
+    const hub = new CanvasSubscriptionHub({
+      authorize: vi.fn().mockResolvedValue(false),
+    });
+
+    await expect(hub.subscribe({
+      connectionId: "conn_1",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_a",
+      send: vi.fn(),
+    })).rejects.toThrow("Unauthorized");
+    expect(hub.subscriberCount).toBe(0);
+  });
+
+  it("validates inbound frames at 32 KiB", () => {
+    const hub = new CanvasSubscriptionHub();
+    expect(() => hub.validateInboundFrame(JSON.stringify({ type: "presence", cursor: { x: 1, y: 2 } }))).not.toThrow();
+    expect(() => hub.validateInboundFrame("x".repeat(32 * 1024 + 1))).toThrow();
+  });
+
+  it("caps subscribers globally and per canvas/user", async () => {
+    const hub = new CanvasSubscriptionHub({
+      maxSubscribers: 12,
+      maxSubscribersPerCanvasUser: 10,
+      authorize: vi.fn().mockResolvedValue(true),
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      await hub.subscribe({
+        connectionId: `conn_${index}`,
+        canvasId: "cnv_0123456789abcdef",
+        userId: "user_a",
+        send: vi.fn(),
+      });
+    }
+
+    await expect(hub.subscribe({
+      connectionId: "conn_over_canvas",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_a",
+      send: vi.fn(),
+    })).rejects.toThrow("Too many subscribers");
+
+    await hub.subscribe({
+      connectionId: "conn_other_1",
+      canvasId: "cnv_other123456789",
+      userId: "user_b",
+      send: vi.fn(),
+    });
+    await hub.subscribe({
+      connectionId: "conn_other_2",
+      canvasId: "cnv_other123456789",
+      userId: "user_c",
+      send: vi.fn(),
+    });
+
+    await expect(hub.subscribe({
+      connectionId: "conn_global_over",
+      canvasId: "cnv_over123456789",
+      userId: "user_d",
+      send: vi.fn(),
+    })).rejects.toThrow("Too many subscribers");
+  });
+
+  it("evicts expired presence and sends generic errors", async () => {
+    const now = vi.fn()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(40_001);
+    const send = vi.fn();
+    const hub = new CanvasSubscriptionHub({ presenceTtlMs: 30_000, now });
+
+    await hub.subscribe({
+      connectionId: "conn_1",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_a",
+      send,
+    });
+    hub.updatePresence("conn_1", { cursor: { x: 1, y: 2 } });
+    expect(hub.presenceForCanvas("cnv_0123456789abcdef")).toHaveLength(1);
+    expect(hub.presenceForCanvas("cnv_0123456789abcdef")).toHaveLength(0);
+
+    hub.sendSafeError("conn_1", new Error("postgres://secret /home/deploy"));
+    expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+  });
+});

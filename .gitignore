@@ -14,6 +14,14 @@ coverage/
 .remember/
 logs/
 
+# Vim swap/recovery files
+*.swp
+*.swo
+*.swn
+.*.swp
+.*.swo
+.*.swn
+
 # Local platform data
 packages/platform/data/
 

@@ -236,6 +236,8 @@ Read these on demand, not every session:
 - Agents work on current branch in parallel, no feature branches
 
 ## Active Technologies
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), planned `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
+- User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -246,5 +248,6 @@ Read these on demand, not every session:
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read:
+`specs/071-tldraw-workspace-canvas/plan.md`
 <!-- SPECKIT END -->

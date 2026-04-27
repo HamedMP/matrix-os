@@ -8,6 +8,7 @@ import { useCanvasLabels, type CanvasLabel } from "@/stores/canvas-labels";
 import { useCanvasSettings, type CanvasNavMode } from "@/stores/canvas-settings";
 import { CanvasTransform } from "./CanvasTransform";
 import { CanvasWindow } from "./CanvasWindow";
+import { WorkspaceCanvas } from "./WorkspaceCanvas";
 import { CanvasGroupRect } from "./CanvasGroup";
 import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
@@ -246,6 +247,7 @@ export function CanvasRenderer() {
           <CanvasWindow key={win.id} win={win} hidden={win.minimized} />
         ))}
       </CanvasTransform>
+      <WorkspaceCanvas />
       <CanvasMinimap />
     </div>
   );

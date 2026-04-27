@@ -1,0 +1,23 @@
+{
+  "id": "cnv_seed_pr",
+  "title": "Seed PR Workspace",
+  "revision": 1,
+  "schemaVersion": 1,
+  "scopeType": "pull_request",
+  "scopeRef": { "projectId": "prj_seed", "owner": "acme", "repo": "app", "number": 57 },
+  "nodes": [
+    {
+      "id": "node_terminal",
+      "type": "terminal",
+      "position": { "x": 100, "y": 100 },
+      "size": { "width": 520, "height": 320 },
+      "zIndex": 0,
+      "displayState": "normal",
+      "sourceRef": { "kind": "terminal_session", "id": "550e8400-e29b-41d4-a716-446655440000" },
+      "metadata": { "label": "Terminal" }
+    }
+  ],
+  "edges": [],
+  "viewStates": [],
+  "displayOptions": {}
+}
