@@ -39,7 +39,7 @@ Key principles:
 ## Development Rules
 
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
-- **Conventional Commits**: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
+- **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Drizzle ORM only**: never raw SQL with better-sqlite3
 - **Kernel prompt**: keep under 7K tokens
