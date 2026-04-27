@@ -422,8 +422,10 @@ export function createAgentSessionManager(options: {
         ...session,
         runtime: {
           ...session.runtime,
-          status: releaseOk ? "exited" : "failed",
-          fallbackReason: releaseOk ? session.runtime.fallbackReason : "lease_release_failed",
+          status: killFailed ? "degraded" : releaseOk ? "exited" : "failed",
+          fallbackReason: killFailed
+            ? "kill_failed"
+            : releaseOk ? session.runtime.fallbackReason : "lease_release_failed",
         },
         writeMode: "closed",
         lastActivityAt: exitedAt,

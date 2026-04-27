@@ -92,10 +92,20 @@ function taskPath(homePath: string, projectSlug: string, taskId: string): string
   return join(tasksDir(homePath, projectSlug), `${taskId}.json`);
 }
 
+function projectConfigPath(homePath: string, projectSlug: string): string {
+  return join(homePath, "projects", projectSlug, "config.json");
+}
+
 function validateProjectSlug(projectSlug: string): Failure | null {
   return ProjectSlugSchema.safeParse(projectSlug).success
     ? null
     : failure(400, "invalid_project_slug", "Project slug is invalid");
+}
+
+async function requireProject(homePath: string, projectSlug: string): Promise<Failure | null> {
+  return await pathExists(projectConfigPath(homePath, projectSlug))
+    ? null
+    : failure(404, "not_found", "Project was not found");
 }
 
 function validateTaskId(taskId: string): Failure | null {
@@ -144,6 +154,8 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
     async createTask(projectSlug: string, input: unknown): Promise<Result<{ task: TaskRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const parsed = CreateTaskSchema.safeParse(input);
       if (!parsed.success) {
         return failure(400, "invalid_task", "Task payload is invalid");
@@ -176,6 +188,8 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
     > {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const parsed = ListTasksSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_task_query", "Task query is invalid");
 
@@ -192,6 +206,8 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
     async updateTask(projectSlug: string, taskId: string, input: unknown): Promise<Result<{ task: TaskRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const taskError = validateTaskId(taskId);
       if (taskError) return taskError;
       const parsed = UpdateTaskSchema.safeParse(input);
@@ -215,6 +231,8 @@ export function createTaskManager(options: { homePath: string; now?: () => strin
     async deleteTask(projectSlug: string, taskId: string): Promise<{ ok: true } | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const taskError = validateTaskId(taskId);
       if (taskError) return taskError;
       const path = taskPath(homePath, projectSlug, taskId);

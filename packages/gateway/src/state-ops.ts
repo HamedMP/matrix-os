@@ -39,6 +39,7 @@ export interface WorkspaceExportManifest {
 
 const DELETE_CONFIRMATION = "delete project workspace data";
 const MAX_LOCKS = 256;
+const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 const projectLocks = new Map<string, Promise<unknown>>();
 
@@ -254,6 +255,13 @@ export function createStateOps(options: { homePath: string; now?: () => string }
           ok: false,
           status: 400,
           error: { code: "confirmation_required", message: "Deletion confirmation is required" },
+        };
+      }
+      if (!PROJECT_SLUG_REGEX.test(request.projectSlug)) {
+        return {
+          ok: false,
+          status: 400,
+          error: { code: "delete_scope_invalid", message: "Delete scope is invalid" },
         };
       }
       const projectPath = resolveWithinHome(homePath, `projects/${request.projectSlug}`);

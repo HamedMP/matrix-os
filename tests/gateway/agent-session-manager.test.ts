@@ -233,7 +233,7 @@ describe("agent-session-manager", () => {
     expect(zellijRuntime.kill).toHaveBeenCalledWith("sess_abc123");
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
-      session: { runtime: { status: "exited" }, writeMode: "closed" },
+      session: { runtime: { status: "degraded", fallbackReason: "kill_failed" }, writeMode: "closed" },
     });
     await expect(worktreeManager.acquireLease({
       projectSlug: "repo",

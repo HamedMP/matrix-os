@@ -89,6 +89,25 @@ describe("state-ops", () => {
     await expect(readFile(join(homePath, "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
   });
 
+  it("rejects invalid project slugs before deleting workspace data", async () => {
+    await atomicWriteJson(join(homePath, "projects", "keep", "config.json"), {
+      slug: "keep",
+      ownerScope: { type: "user", id: "user_a" },
+    });
+    const ops = createStateOps({ homePath });
+
+    await expect(ops.deleteWorkspaceData({
+      scope: "project",
+      projectSlug: "",
+      confirmation: "delete project workspace data",
+    })).resolves.toMatchObject({
+      ok: false,
+      status: 400,
+      error: { code: "delete_scope_invalid" },
+    });
+    await expect(readFile(join(homePath, "projects", "keep", "config.json"), "utf-8")).resolves.toContain("keep");
+  });
+
   it("exports all owner-scoped workspace data for full backups", async () => {
     await atomicWriteJson(join(homePath, "system", "sessions", "sess_abc123.json"), {
       id: "sess_abc123",

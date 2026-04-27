@@ -82,6 +82,10 @@ function previewPath(homePath: string, projectSlug: string, previewId: string): 
   return join(previewsDir(homePath, projectSlug), `${previewId}.json`);
 }
 
+function projectConfigPath(homePath: string, projectSlug: string): string {
+  return join(homePath, "projects", projectSlug, "config.json");
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK);
@@ -217,6 +221,12 @@ function validateProjectSlug(projectSlug: string): Failure | null {
     : failure(400, "invalid_project_slug", "Project slug is invalid");
 }
 
+async function requireProject(homePath: string, projectSlug: string): Promise<Failure | null> {
+  return await pathExists(projectConfigPath(homePath, projectSlug))
+    ? null
+    : failure(404, "not_found", "Project was not found");
+}
+
 function validatePreviewId(previewId: string): Failure | null {
   return PreviewIdSchema.safeParse(previewId).success
     ? null
@@ -252,6 +262,8 @@ export function createPreviewManager(options: {
     async createPreview(projectSlug: string, input: unknown): Promise<Result<{ preview: PreviewRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const parsed = CreatePreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview", "Preview payload is invalid");
       const safeUrl = await safePreviewUrl(parsed.data.url, resolvePreviewHost);
@@ -290,6 +302,8 @@ export function createPreviewManager(options: {
     > {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const parsed = ListPreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview_query", "Preview query is invalid");
       const query = parsed.data;
@@ -306,6 +320,8 @@ export function createPreviewManager(options: {
     async updatePreview(projectSlug: string, previewId: string, input: unknown): Promise<Result<{ preview: PreviewRecord }> | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const previewError = validatePreviewId(previewId);
       if (previewError) return previewError;
       const parsed = UpdatePreviewSchema.safeParse(input);
@@ -332,6 +348,8 @@ export function createPreviewManager(options: {
     async deletePreview(projectSlug: string, previewId: string): Promise<{ ok: true } | Failure> {
       const projectError = validateProjectSlug(projectSlug);
       if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
       const previewError = validatePreviewId(previewId);
       if (previewError) return previewError;
       const path = previewPath(homePath, projectSlug, previewId);

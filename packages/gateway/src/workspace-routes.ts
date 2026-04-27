@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { createProjectManager } from "./project-manager.js";
+import { createProjectManager, PROJECT_SLUG_REGEX } from "./project-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createStateOps, type OwnerScope } from "./state-ops.js";
 import { createAgentLauncher } from "./agent-launcher.js";
@@ -61,7 +61,7 @@ const ExportWorkspaceSchema = z.object({
 
 const DeleteWorkspaceSchema = z.object({
   scope: z.literal("project"),
-  projectSlug: z.string(),
+  projectSlug: z.string().regex(PROJECT_SLUG_REGEX),
   confirmation: z.string(),
   ownerScope: z.object({
     type: z.enum(["user", "org"]),

@@ -4,12 +4,18 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPreviewManager } from "../../packages/gateway/src/preview-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
 
 describe("preview-manager", () => {
   let homePath: string;
 
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "matrix-preview-manager-"));
+    await atomicWriteJson(join(homePath, "projects", "repo", "config.json"), {
+      slug: "repo",
+      name: "repo",
+      ownerScope: { type: "user", id: "user_a" },
+    });
   });
 
   afterEach(() => {
@@ -74,11 +80,17 @@ describe("preview-manager", () => {
       status: 400,
       error: { code: "invalid_preview_url" },
     });
+    await expect(manager.createPreview("ghost-project", { label: "Missing", url: "http://localhost:3000" })).resolves.toMatchObject({
+      ok: false,
+      status: 404,
+      error: { code: "not_found" },
+    });
     await expect(manager.createPreview("repo", { label: "Metadata", url: "http://169.254.169.254/latest/meta-data" })).resolves.toMatchObject({
       ok: false,
       status: 400,
       error: { code: "invalid_preview_url" },
     });
+    await expect(stat(join(homePath, "projects", "ghost-project"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(manager.createPreview("repo", { label: "Down", url: "https://localhost:3000" })).resolves.toMatchObject({
       ok: true,
       preview: { lastStatus: "failed" },

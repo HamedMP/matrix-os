@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,6 +60,20 @@ describe("workspace API routes", () => {
     const res = await app.request(jsonRequest("/api/projects", { url: "github.com/owner/repo", padding: "x".repeat(70 * 1024) }));
 
     expect(res.status).toBe(413);
+  });
+
+  it("rejects invalid workspace delete slugs before state deletion", async () => {
+    await mkdir(join(homePath, "projects", "keep"), { recursive: true });
+    const app = createWorkspaceRoutes({ homePath });
+
+    const res = await app.request(deleteJsonRequest("/api/workspace/data", {
+      scope: "project",
+      projectSlug: "",
+      confirmation: "delete project workspace data",
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(stat(join(homePath, "projects", "keep"))).resolves.toMatchObject({ isDirectory: expect.any(Function) });
   });
 
   it("routes GitHub status and worktree creation through injected managers", async () => {
