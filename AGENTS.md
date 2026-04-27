@@ -4,12 +4,12 @@ Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social +
 
 ## Constitution
 
-Read `.specify/memory/constitution.md`: the 8 non-negotiable principles. Re-read after compaction.
+Read `.specify/memory/constitution.md`: the 9 core principles. Re-read after compaction.
 
 Key principles:
 
-1. **Everything Is a File**: filesystem is the single source of truth
-2. **Agent Is the Kernel**: Agent SDK V1 `query()` with `resume`
+1. **Data Belongs to Its Owner**: files hold identity/config/export state; user/org app data lives in owner-controlled Postgres
+2. **AI Is the Kernel**: Agent SDK V1 `query()` with `resume`, model-agnostic routing over time
 3. **Headless Core, Multi-Shell**: core works without UI, shell is one renderer
 4. **Defense in Depth (NON-NEGOTIABLE)**: auth matrix, input validation, resource limits, timeouts
 5. **TDD (NON-NEGOTIABLE)**: tests first, 99-100% coverage target
@@ -39,7 +39,7 @@ Key principles:
 ## Development Rules
 
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
-- **Conventional Commits**: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
+- **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add SQLite, Drizzle ORM, or better-sqlite3 for new persistence
 - **Kernel prompt**: keep under 7K tokens
@@ -53,36 +53,75 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 ### Atomicity
 
 - **2+ related DB writes MUST use a transaction**. No exceptions. Like + counter, delete + cascade, insert + update are all multi-step.
+- **Optimistic concurrency must be enforced in the write statement**. Pre-reading a revision inside a transaction is not enough under READ COMMITTED; include `WHERE revision = :baseRevision` on the `UPDATE` or take a row lock.
 - **Use `ON CONFLICT` for idempotent upserts** instead of check-then-insert (TOCTOU race).
+- **Unique-scope create flows must be idempotent server-side**. If a unique index defines the logical singleton, `INSERT ... ON CONFLICT ... DO NOTHING` and select the existing row; do not rely on a client pre-check.
 - **Use `{ flag: 'wx' }` for exclusive file creates** instead of `existsSync` + `writeFile`.
 
 ### External Calls
 
 - **Every `fetch()` to an external service MUST have `signal: AbortSignal.timeout(ms)`**. Default: 10s for APIs, 30s for file downloads. No external call may hang indefinitely.
+- **Server-side fetches of user-controlled URLs must block SSRF**. Parse the URL, resolve DNS, and reject loopback, link-local, private, multicast, documentation, and internal ranges before calling `fetch()`.
+- **Server-side fetches of user-controlled URLs must reject redirects** unless each redirected URL is revalidated. Use `redirect: "error"` for preview/health checks to avoid redirect-based SSRF.
+- **DNS preflight is not DNS pinning**. If user-controlled server-side fetch remains hostname-based after validation, document the residual DNS-rebinding risk or use a dispatcher/agent that pins the resolved address.
 - **Never expose provider names or raw error messages to clients**. Log the real error server-side, return a generic message. This includes Postgres errors, Twilio/ElevenLabs/OpenAI errors, and filesystem paths.
 
 ### Input Validation
 
 - **Use Hono `bodyLimit` middleware** on every mutating endpoint. Never check Content-Length after the body is already buffered.
+- **DELETE is a mutating endpoint**. It still needs `bodyLimit`, even when the route normally ignores request bodies.
 - **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Use `resolveWithinHome` for paths, `SAFE_SLUG` regex for identifiers.
+- **Validate URL path params and query params at the route boundary** with Zod schemas before calling services. This includes IDs embedded in paths (`nodeId`, `canvasId`), scope filters, cursors, limits, and search strings.
+- **Action endpoints need per-action payload schemas**. Use a Zod discriminated union keyed by `type`; do not accept a generic record and cast `action.payload as ...` in the service.
 - **No wildcard CORS** (`Access-Control-Allow-Origin: *`). Use explicit origin allowlist.
 
 ### Resource Management
 
 - **Every in-memory Map/Set MUST have a size cap and eviction policy**. No unbounded growth. Cap + LRU eviction or TTL-based cleanup.
+- **Realtime subscriber registries need stale-connection eviction**, not only `onClose` cleanup. Network partitions can skip close handlers; sweep by `lastTouched`/TTL before enforcing caps.
+- **Realtime subscriber registries need explicit shutdown drains**. On server shutdown, notify/clear subscribers before destroying dependencies used by authorization or broadcast paths.
 - **Every temp file MUST have a cleanup policy** (TTL, max count, or explicit deletion after use).
+- **Temp cleanup must be symlink-safe and recurring**. Use `lstat()` when sweeping attacker-named files, skip symlinks, schedule periodic cleanup, and clear timers on shutdown.
+- **Long-lived Postgres/Kysely resources must be destroyed on gateway shutdown**. If a repository wraps a pool or Kysely instance, add it to the close path.
+- **Only owners close shared DB pools/connections**. Transaction-scoped or dependency-injected repository wrappers must not call `pool.end()`/`destroy()` for resources they did not create.
 - **`appendFileSync`/`writeFileSync` are banned in request handlers**. Use async `fs/promises` to avoid blocking the event loop.
 
 ### Error Handling
 
 - **No bare `catch { return null }`**. Every catch must check error type -- DB connection failures and timeouts are not "not found."
 - **No `catch { }` (empty catch)**. At minimum, log the error.
+- **Async store workflows must catch create/open/load failures at the orchestration boundary**. If a multi-step UI action creates data then opens/reloads it, set an error on any failed step and refresh summaries/cache when safe.
+- **Misconfiguration is not not-found**. Missing server dependencies such as `homePath`, registries, provider config, or database handles should return a generic 5xx/503-style error, not a 404 that looks like user data is missing.
+- **Do not throw raw `Response` objects from service/route helpers**. Use typed errors and one mapper so auth, validation, and server misconfiguration cannot masquerade as missing resources.
+- **Client stores must allowlist/cap server error strings before showing them**. Even gateway-normalized errors can regress; UI state must fall back to a generic message for unknown, long, or provider/path/database-looking errors.
+- **Health checks and reachability probes must return coarse booleans only**. Do not echo upstream status codes or provider/network details to clients after SSRF filtering.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
+- **WebSocket broadcasts must isolate subscriber failures**. Wrap each per-subscriber send, log failures, and continue delivering to remaining subscribers.
+- **WebSocket broadcasts must evict dead senders**. A failed send should remove that subscriber after the broadcast loop so future broadcasts do not retry known-dead sockets.
+- **Async WebSocket subscription/auth setup must be awaited** before success messages are sent; failure paths should send a generic error best-effort and then close.
+- **WebSocket message bodies need schema validation after JSON parsing**. Size and syntax checks are not enough; validate each frame type with bounded Zod schemas before storing or broadcasting payloads.
+
+### Concurrency and UI State
+
+- **Read-modify-write database operations must stay inside one transaction** or one targeted SQL update. Do not read outside a transaction and write inside a later transaction.
+- **Single-entity JSONB patches should target the entity path when possible**. Avoid whole-document rewrites that conflict independent edits to different nodes/items; use `jsonb_set`/targeted SQL or document coarse locking and retry expectations.
+- **Soft-deleted records should stay out of normal/export reads** unless the recovery/audit path explicitly documents why deleted data remains readable.
+- **Delete paths should filter already-deleted records** (`deleted_at IS NULL`) so repeat deletes do not silently refresh tombstones and mask stale clients.
+- **REST mutations that affect realtime documents must notify subscribers** after the write succeeds, using generic events that include the new revision and timestamp.
+- **Browser WebSocket auth must support query-token paths explicitly**. Browsers cannot set `Authorization` headers on WebSocket upgrades; every authenticated browser WS route needs exact or pattern registration in the query-token allowlist.
+- **Debounced saves must guard against active-document changes**. Conflict reloads should only reopen the document if it is still the active document when the save settles.
+- **Debounced save conflicts must not silently discard optimistic local edits**. Keep the local document visible or provide explicit conflict resolution; do not replace user edits with the server version without a deliberate user action.
+- **Destructive UI actions must catch request failures before clearing local state**. Delete/archive flows should only clear the active document after the server confirms success.
+- **Export/download store actions need the same error handling as mutations**. Catch request failures, set safe error state, and return a null/error result instead of leaking unhandled rejections.
+- **Shared client store state should be serializable** unless there is a strong reason otherwise. Prefer arrays or records over `Set`/`Map` in Zustand state.
+- **Zustand selectors must not allocate fresh arrays/objects every render**. Select primitive/stable slices and derive filtered arrays with `useMemo` inside components.
+- **Do not duplicate derived store logic in components**. Put shared filters/search derivations in a pure exported helper or store method, then reuse it from both tests/store and UI components.
 
 ### Wiring Verification
 
 - **Every IPC tool must resolve its dependency at registration time**, not at call time. If a tool needs `callManager`, verify it's not `undefined` when the tool is registered.
 - **Never use `globalThis` for cross-package communication**. Use dependency injection or typed IPC messages.
+- **Read paths for persisted UI references must reconcile stale live-resource refs**. Terminal sessions, review loops, and similar runtime refs should be marked recoverable on main read paths instead of only during explicit recovery jobs.
 
 ## Setup
 
@@ -200,6 +239,10 @@ Every backend PR must include an "Invariants" section:
 - **Auth source of truth**: primary auth mechanism, fallback behavior
 - **Deferred scope**: what is explicitly NOT in scope -- say so, don't leave dead code
 
+### CI Timeouts
+
+- **Timeouts must cover observed runtime with margin**. If a CI job completes all tests successfully but is canceled by `timeout-minutes`, raise or split the job instead of treating it as a product test failure.
+
 ### Branch Freeze
 
 Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
@@ -236,6 +279,8 @@ Read these on demand, not every session:
 - Agents work on current branch in parallel, no feature branches
 
 ## Active Technologies
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
+- User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -246,5 +291,6 @@ Read these on demand, not every session:
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read:
+`specs/071-tldraw-workspace-canvas/plan.md`
 <!-- SPECKIT END -->

@@ -1,0 +1,116 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    "Avenir Next",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  background: #f8fafc;
+  color: #172033;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(96, 165, 250, 0.18), transparent 34rem),
+    linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+.whiteboard-shell {
+  position: fixed;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.whiteboard-shell .excalidraw {
+  --color-primary: #2563eb;
+  --color-primary-darker: #1d4ed8;
+  --color-primary-darkest: #1e3a8a;
+  --color-primary-light: #dbeafe;
+  font-family:
+    "Avenir Next",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+
+.app-loading {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(37, 99, 235, 0.18), transparent 18rem),
+    #f8fafc;
+  color: #475569;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+.save-pill {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  min-width: 5.5rem;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  color: #334155;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 0.55rem 0.75rem;
+  text-align: center;
+  backdrop-filter: blur(14px);
+}
+
+.save-pill--saving {
+  color: #1d4ed8;
+}
+
+.save-pill--error {
+  color: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #111827;
+    color: #e5e7eb;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(96, 165, 250, 0.16), transparent 34rem),
+      linear-gradient(135deg, #111827 0%, #172033 100%);
+  }
+
+  .app-loading {
+    background:
+      radial-gradient(circle at 50% 40%, rgba(96, 165, 250, 0.16), transparent 18rem),
+      #111827;
+    color: #cbd5e1;
+  }
+
+  .save-pill {
+    border-color: rgba(226, 232, 240, 0.14);
+    background: rgba(15, 23, 42, 0.82);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+    color: #e2e8f0;
+  }
+}

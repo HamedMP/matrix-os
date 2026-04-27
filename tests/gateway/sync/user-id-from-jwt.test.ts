@@ -14,6 +14,7 @@ import {
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 const HANDLE = "alice";
 const CLERK_USER_ID = "user_2abc123xyz";
+const LEGACY_TOKEN = "legacy-shared-secret";
 
 const mockR2 = {
   getObject: vi.fn(),
@@ -56,7 +57,7 @@ function buildApp(getUserId: (c: any) => string) {
     getPeerId: () => "test-peer",
   };
   const app = new Hono();
-  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.use("*", authMiddleware(LEGACY_TOKEN));
   app.route("/api/sync", createSyncRoutes(deps));
   return app;
 }
@@ -64,7 +65,7 @@ function buildApp(getUserId: (c: any) => string) {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-  process.env.MATRIX_AUTH_TOKEN = "legacy-shared-secret";
+  process.env.MATRIX_AUTH_TOKEN = LEGACY_TOKEN;
   process.env.MATRIX_HANDLE = HANDLE;
 
   const manifest = { version: 2, files: {} };
@@ -161,7 +162,7 @@ describe("sync routes: userId resolution from JWT", () => {
     process.env.MATRIX_USER_ID = CLERK_USER_ID;
     const app = buildApp(getUserIdFromContext);
     const res = await app.request("/api/sync/manifest", {
-      headers: { Authorization: "Bearer legacy-shared-secret" },
+      headers: { Authorization: `Bearer ${LEGACY_TOKEN}` },
     });
 
     expect(res.status).toBe(200);
@@ -174,7 +175,7 @@ describe("sync routes: userId resolution from JWT", () => {
     delete process.env.MATRIX_HANDLE;
     const app = buildApp(getUserIdFromContext);
     const res = await app.request("/api/sync/manifest", {
-      headers: { Authorization: "Bearer legacy-shared-secret" },
+      headers: { Authorization: `Bearer ${LEGACY_TOKEN}` },
     });
 
     expect(res.status).toBe(401);
@@ -217,7 +218,7 @@ describe("sync routes: userId resolution from JWT", () => {
     // 2. Legitimate legacy bearer still lands under MATRIX_HANDLE — the
     //    tampered JWT didn't poison the shared `authMiddleware` state.
     const res = await app.request("/api/sync/manifest", {
-      headers: { Authorization: "Bearer legacy-shared-secret" },
+      headers: { Authorization: `Bearer ${LEGACY_TOKEN}` },
     });
     expect(res.status).toBe(200);
     const key = mockR2.getObject.mock.calls[0][0] as string;

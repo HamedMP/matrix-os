@@ -8,6 +8,7 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
@@ -980,6 +981,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const hydrated = useDesktopMode((s) => s._hydrated);
   const modeConfig = getModeConfig(hydrated ? desktopMode : "canvas");
+  const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
@@ -988,6 +990,17 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       wmCascadeWindows(dockXOffset, 20, 30);
     }
   }, [desktopMode, previousMode, dockXOffset, wmCascadeWindows]);
+
+  useEffect(() => {
+    const onOpenPrCanvas = (event: Event) => {
+      const detail = (event as CustomEvent<{ scopeRef?: Record<string, unknown>; title?: string }>).detail;
+      if (!detail?.scopeRef) return;
+      setDesktopMode("canvas");
+      void openPrCanvas(detail.scopeRef, detail.title);
+    };
+    window.addEventListener("matrix:open-pr-canvas", onOpenPrCanvas);
+    return () => window.removeEventListener("matrix:open-pr-canvas", onOpenPrCanvas);
+  }, [openPrCanvas, setDesktopMode]);
 
   // Aoede is orthogonal to mode now — a pointer-events-none overlay that
   // can ride on top of any mode. The dock button toggles it.

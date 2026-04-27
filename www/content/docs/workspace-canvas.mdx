@@ -1,0 +1,35 @@
+---
+title: Workspace Canvas
+description: Spatial PR, terminal, and review-loop workspaces in Matrix OS.
+---
+
+# Workspace Canvas
+
+Workspace Canvas turns a project, pull request, task, or review loop into a durable spatial workspace. The canvas document is stored in the user's Matrix OS Postgres database on their VPS. Files are only written for export, backup materialization, and recovery artifacts.
+
+## Concepts
+
+- Canvas documents contain visual nodes, visual edges, view state, and display options.
+- Nodes reference source-of-truth records such as terminal sessions, pull requests, tasks, files, app windows, issues, and review loops.
+- Edges are visual by default. Changing a real task, project, or review relationship requires a separate confirmed action.
+- Optimistic revisions protect concurrent edits. A stale save reloads the latest document instead of overwriting it.
+
+## PR Review Workflows
+
+PR canvases start with PR summary, review-loop, and terminal summary nodes. Review controls can start, stop, advance, approve, or refresh the loop from the canvas while provider-specific errors stay server-side.
+
+## Terminal Nodes
+
+Terminal nodes attach to existing Matrix OS terminal sessions or create a durable session through the gateway session registry. Reloading the browser keeps the canvas node identity separate from the terminal session identity, so the same session can be reattached from another surface.
+
+## Custom Nodes
+
+Notes, files, previews, app windows, issues, and custom nodes use typed metadata with size caps. Unsafe file paths, unsafe URL schemes, invalid custom versions, and oversized payloads are rejected before persistence. Missing renderers degrade into fallback nodes rather than deleting user data.
+
+## Ownership, Export, And Delete
+
+Canvas data is scoped to the authenticated user and stored in Postgres. Delete is a soft delete so recovery/export workflows can inspect the document until cleanup. Export writes a temporary bundle with crash-safe temp-file plus rename behavior and cleanup policies.
+
+## VPS Recovery
+
+On startup, Matrix OS can reconcile canvas references against available terminal sessions, projects, and review loops. Missing references become recoverable nodes with recovery metadata, preserving spatial context while making broken links visible.

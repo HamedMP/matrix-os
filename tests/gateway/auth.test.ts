@@ -156,6 +156,16 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("allows canvas WebSocket paths with query token", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/canvases/cnv_0123456789abcdef/ws", undefined, "secret-token", "10.0.0.3"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("rejects REST endpoint with query token (only WS allowed)", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

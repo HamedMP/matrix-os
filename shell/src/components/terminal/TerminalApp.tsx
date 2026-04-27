@@ -134,9 +134,10 @@ const countPanes = countPanesFromStore;
 
 interface TerminalAppProps {
   initialCommand?: string;
+  initialSessionId?: string;
 }
 
-export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -235,7 +236,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
   }, []);
 
   const addTab = useCallback(
-    (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => {
+    (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
       const id = genId();
       const paneId = genId();
       const basename = cwd.split("/").filter(Boolean).pop() ?? "~";
@@ -248,6 +249,7 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
           cwd,
           claudeMode: claude,
           startupCommand,
+          sessionId,
         },
       };
       setTabs((prev) => [...prev, tab]);
@@ -264,6 +266,12 @@ export function TerminalApp({ initialCommand }: TerminalAppProps = {}) {
     async function initLayout() {
       if (initialCommand) {
         addTab(DEFAULT_CWD, "Claude Code", true);
+        if (!cancelled) setInitialized(true);
+        return;
+      }
+
+      if (initialSessionId) {
+        addTab(DEFAULT_CWD, "Canvas Terminal", false, undefined, initialSessionId);
         if (!cancelled) setInitialized(true);
         return;
       }
@@ -809,9 +817,11 @@ function LocalTerminalTabBar({ defaultCwd, isLightTheme }: { defaultCwd: string;
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.background = "var(--accent)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; e.currentTarget.style.background = "transparent"; }}
+                aria-label="Close tab"
                 title="Close tab"
               >
                 <IconClose />
+                <span className="sr-only">x</span>
               </button>
             </div>
           );
