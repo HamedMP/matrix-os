@@ -170,8 +170,10 @@ Untracked support/spec files currently present:
 
 ### Web Workspace / Terminal Cockpit / TUI
 
-- [ ] T500 Add failing web, desktop, and TUI tests for project/task layout, attach/reconnect behavior, event convergence, browser IDE file edit/save persistence, large-list virtualization for 100 projects and 1,000 tasks, and mobile/desktop rendering.
-- [ ] T501 Build Matrix-native workspace app with project list, project detail, task board/list, git/worktree panel, sessions panel, review panel, preview panel, and browser IDE launch links.
+- [x] T500 Add failing web, desktop, and TUI tests for project/task layout, attach/reconnect behavior, event convergence, browser IDE file edit/save persistence, large-list virtualization for 100 projects and 1,000 tasks, and mobile/desktop rendering.
+  - Files: `tests/shell/workspace-app.test.tsx`, `tests/cli/tui-dashboard.test.ts`
+- [x] T501 Build Matrix-native workspace app with project list, project detail, task board/list, git/worktree panel, sessions panel, review panel, preview panel, and browser IDE launch links.
+  - Files: `shell/src/components/workspace/WorkspaceApp.tsx`, `shell/src/components/Desktop.tsx`, `tests/shell/workspace-app.test.tsx`
 - [ ] T502 Update terminal cockpit to use `/api/sessions` as the coding-session source of truth and terminal registry only as transport.
 - [ ] T503 Add attach, observe, takeover, kill, duplicate pane, local-terminal handoff, transcript search, and session health UI.
 - [ ] T504 Build Ink TUI dashboard and `matrixos` no-subcommand entry point.
