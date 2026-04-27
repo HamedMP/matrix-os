@@ -76,6 +76,7 @@ const AgentSandboxSchema = z.object({
   adminOverride: z.boolean().optional(),
 }).strict();
 const StartSessionSchema = z.object({
+  sessionId: SessionIdSchema.optional(),
   kind: z.enum(["shell", "agent"]),
   ownerId: z.string().trim().min(1).max(200),
   projectSlug: SlugSchema.optional(),
@@ -229,7 +230,7 @@ export function createAgentSessionManager(options: {
       const parsed = sanitizeStartupInput(input);
       if (!parsed.ok) return parsed;
       const request = parsed.value;
-      const sessionId = idGenerator();
+      const sessionId = request.sessionId ?? idGenerator();
       if (!SessionIdSchema.safeParse(sessionId).success) {
         return failure(500, "session_id_invalid", "Session could not be created");
       }

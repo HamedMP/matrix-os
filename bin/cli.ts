@@ -12,6 +12,8 @@ const COMMANDS = new Set([
   "project",
   "worktree",
   "workspace",
+  "session",
+  "agent",
 ]);
 
 export interface ParsedArgs {
@@ -31,6 +33,11 @@ export interface ParsedArgs {
   confirmDirtyDelete?: boolean;
   confirm?: string;
   includeTranscripts?: boolean;
+  agent?: string;
+  task?: string;
+  worktree?: string;
+  terminal?: boolean;
+  statusFilter?: string;
 }
 
 export interface WorkspaceRequest {
@@ -144,6 +151,36 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--agent" && i + 1 < argv.length) {
+      result.agent = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--task" && i + 1 < argv.length) {
+      result.task = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--worktree" && i + 1 < argv.length) {
+      result.worktree = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--terminal") {
+      result.terminal = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--status" && i + 1 < argv.length) {
+      result.statusFilter = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
     if (arg === "--branch" && i + 1 < argv.length) {
       result.branch = argv[i + 1];
       i += 2;
@@ -192,14 +229,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       positionalIndex++;
     } else if (
       positionalIndex === 1 &&
-      ["project", "worktree", "workspace"].includes(result.command)
+      ["project", "worktree", "workspace", "session", "agent"].includes(result.command)
     ) {
       result.subcommand = arg;
       positionalIndex++;
     } else if (positionalIndex === 1 && result.command === "send") {
       result.message = arg;
       positionalIndex++;
-    } else if (["project", "worktree", "workspace"].includes(result.command)) {
+    } else if (["project", "worktree", "workspace", "session", "agent"].includes(result.command)) {
       result.positional.push(arg);
       positionalIndex++;
     }
@@ -212,6 +249,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 function encodePathSegment(value: string): string {
   return encodeURIComponent(value);
+}
+
+function queryString(params: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    query.set(key, String(value));
+  }
+  const encoded = query.toString();
+  return encoded.length > 0 ? `?${encoded}` : "";
 }
 
 function requirePositional(args: ParsedArgs, index: number, label: string): string {
@@ -313,6 +360,75 @@ export function buildWorkspaceRequest(args: ParsedArgs): WorkspaceRequest {
       }
       default:
         throw new Error("Unknown workspace command");
+    }
+  }
+
+  if (args.command === "session") {
+    switch (args.subcommand) {
+      case "start": {
+        const prompt = args.positional[0];
+        return {
+          method: "POST",
+          path: "/api/sessions",
+          body: {
+            kind: args.agent ? "agent" : "shell",
+            ...(args.agent ? { agent: args.agent } : {}),
+            ...(args.project ? { projectSlug: args.project } : {}),
+            ...(args.task ? { taskId: args.task } : {}),
+            ...(args.worktree ? { worktreeId: args.worktree } : {}),
+            ...(typeof args.pr === "number" ? { pr: args.pr } : {}),
+            ...(prompt ? { prompt } : {}),
+          },
+        };
+      }
+      case "ls":
+      case "list":
+        return {
+          method: "GET",
+          path: `/api/sessions${queryString({
+            projectSlug: args.project,
+            taskId: args.task,
+            pr: args.pr,
+            status: args.statusFilter,
+          })}`,
+        };
+      case "get":
+      case "attach": {
+        const sessionId = encodePathSegment(requirePositional(args, 0, "session ID"));
+        return { method: "GET", path: `/api/sessions/${sessionId}` };
+      }
+      case "send": {
+        const sessionId = encodePathSegment(requirePositional(args, 0, "session ID"));
+        const input = requirePositional(args, 1, "input");
+        return { method: "POST", path: `/api/sessions/${sessionId}/send`, body: { input } };
+      }
+      case "observe": {
+        const sessionId = encodePathSegment(requirePositional(args, 0, "session ID"));
+        return { method: "POST", path: `/api/sessions/${sessionId}/observe`, body: {} };
+      }
+      case "takeover": {
+        const sessionId = encodePathSegment(requirePositional(args, 0, "session ID"));
+        return { method: "POST", path: `/api/sessions/${sessionId}/takeover`, body: {} };
+      }
+      case "kill":
+      case "rm": {
+        const sessionId = encodePathSegment(requirePositional(args, 0, "session ID"));
+        return { method: "DELETE", path: `/api/sessions/${sessionId}`, body: {} };
+      }
+      default:
+        throw new Error("Unknown session command");
+    }
+  }
+
+  if (args.command === "agent") {
+    switch (args.subcommand) {
+      case "ls":
+      case "list":
+        return { method: "GET", path: "/api/agents" };
+      case "sandbox-status":
+        return { method: "GET", path: "/api/agents/sandbox-status" };
+      default:
+        throw new Error("Unknown agent command");
     }
   }
 
@@ -458,6 +574,8 @@ Commands:
   doctor      Run diagnostic checks
   project     Manage coding projects
   worktree    Manage project worktrees
+  session     Manage coding sessions
+  agent       Inspect agent runtime status
   workspace   Export or delete workspace data
   help        Show this help text
   version     Show version
@@ -487,5 +605,18 @@ Worktree commands:
 
 Workspace commands:
   workspace export [--project slug] [--include-transcripts]
-  workspace delete --project slug --confirm "delete project workspace data"`;
+  workspace delete --project slug --confirm "delete project workspace data"
+
+Session commands:
+  session start [prompt] [--project slug] [--worktree id] [--task id] [--pr number] [--agent codex]
+  session ls [--project slug] [--task id] [--status running]
+  session attach <sessionId>
+  session observe <sessionId>
+  session takeover <sessionId>
+  session send <sessionId> <input>
+  session kill <sessionId>
+
+Agent commands:
+  agent ls
+  agent sandbox-status`;
 }

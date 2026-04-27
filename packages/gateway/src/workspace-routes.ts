@@ -1,13 +1,24 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { createProjectManager } from "./project-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createStateOps, type OwnerScope } from "./state-ops.js";
+import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
+import { createAgentSandbox } from "./agent-sandbox.js";
+import { SessionRegistry } from "./session-registry.js";
+import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
+import { createZellijRuntime } from "./zellij-runtime.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
+type AgentLauncher = ReturnType<typeof createAgentLauncher>;
+type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
+type AgentSandbox = ReturnType<typeof createAgentSandbox>;
+type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
 
 const WORKSPACE_BODY_LIMIT = 64 * 1024;
 
@@ -49,6 +60,25 @@ const DeleteWorkspaceSchema = z.object({
   }).optional(),
 });
 
+const StartSessionSchema = z.object({
+  sessionId: z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/).optional(),
+  projectSlug: z.string().min(1).max(63).optional(),
+  taskId: z.string().min(1).max(128).optional(),
+  worktreeId: z.string().min(1).max(128).optional(),
+  pr: z.number().int().positive().optional(),
+  kind: z.enum(["shell", "agent"]),
+  agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+  prompt: z.string().max(100_000).optional(),
+  runtimePreference: z.enum(["zellij"]).optional(),
+  adminSandboxOverride: z.boolean().optional(),
+});
+
+const SendSessionInputSchema = z.object({
+  input: z.string().min(1).max(64 * 1024),
+});
+
+const EmptyObjectSchema = z.object({}).passthrough();
+
 function status(code: number): ContentfulStatusCode {
   return code as ContentfulStatusCode;
 }
@@ -88,10 +118,28 @@ export function createWorkspaceRoutes(options: {
   homePath: string;
   projectManager?: ProjectManager;
   worktreeManager?: WorktreeManager;
+  agentLauncher?: AgentLauncher;
+  agentSessionManager?: AgentSessionManager;
+  agentSandbox?: AgentSandbox;
+  sessionRuntimeBridge?: SessionRuntimeBridge;
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
   const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
+  const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath });
+  const zellijRuntime = createZellijRuntime({ homePath: options.homePath });
+  const agentSessionManager = options.agentSessionManager ?? createAgentSessionManager({
+    homePath: options.homePath,
+    worktreeManager,
+    agentLauncher,
+    zellijRuntime,
+  });
+  const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
+  const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge({
+    homePath: options.homePath,
+    registry: new SessionRegistry(options.homePath),
+    zellijRuntime,
+  });
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
 
@@ -167,6 +215,99 @@ export function createWorkspaceRoutes(options: {
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });
   });
+
+  app.post("/api/sessions", limited, async (c) => {
+    const body = await parseJson(c, StartSessionSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const sessionId = body.value.sessionId ?? `sess_${randomUUID()}`;
+    let sandbox;
+    if (body.value.agent === "codex") {
+      if (!body.value.projectSlug || !body.value.worktreeId) {
+        return c.json(errorBody("sandbox_unavailable", "Agent sandbox is unavailable"), 400);
+      }
+      const worktrees = await worktreeManager.listWorktrees(body.value.projectSlug);
+      if (!worktrees.ok) return c.json({ error: worktrees.error }, status(worktrees.status));
+      const worktree = worktrees.worktrees.find((entry) => entry.id === body.value.worktreeId);
+      if (!worktree) return c.json(errorBody("not_found", "Worktree was not found"), 404);
+      const preflight = await agentSandbox.preflight({
+        agent: "codex",
+        sessionId,
+        worktreePath: worktree.path,
+        adminOverride: body.value.adminSandboxOverride,
+      });
+      if (!preflight.ok) return c.json({ error: preflight.error, sandboxStatus: preflight.sandboxStatus }, status(preflight.status));
+      sandbox = preflight.sandbox;
+    }
+    const result = await agentSessionManager.startSession({
+      ...body.value,
+      sessionId,
+      ownerId: ownerScopeFromContext().id,
+      sandbox,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session }, result.status);
+  });
+
+  app.get("/api/sessions", async (c) => {
+    const prRaw = c.req.query("pr");
+    const limitRaw = c.req.query("limit");
+    const result = await agentSessionManager.listSessions({
+      projectSlug: c.req.query("projectSlug"),
+      taskId: c.req.query("taskId"),
+      status: c.req.query("status"),
+      pr: prRaw ? Number.parseInt(prRaw, 10) : undefined,
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
+  });
+
+  app.get("/api/sessions/:sessionId", async (c) => {
+    const result = await agentSessionManager.getSession(c.req.param("sessionId"));
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session });
+  });
+
+  app.post("/api/sessions/:sessionId/send", limited, async (c) => {
+    const body = await parseJson(c, SendSessionInputSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const result = await agentSessionManager.sendInput(c.req.param("sessionId"), body.value.input);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session });
+  });
+
+  app.post("/api/sessions/:sessionId/observe", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const session = await agentSessionManager.getSession(c.req.param("sessionId"));
+    if (!session.ok) return c.json({ error: session.error }, status(session.status));
+    const result = sessionRuntimeBridge.registerSession(session.session, { mode: "observe" });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
+  });
+
+  app.post("/api/sessions/:sessionId/takeover", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const session = await agentSessionManager.getSession(c.req.param("sessionId"));
+    if (!session.ok) return c.json({ error: session.error }, status(session.status));
+    const result = sessionRuntimeBridge.registerSession(session.session, { mode: "owner" });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
+  });
+
+  app.delete("/api/sessions/:sessionId", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const result = await agentSessionManager.killSession(c.req.param("sessionId"));
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session });
+  });
+
+  app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgents()));
+
+  app.get("/api/agents/sandbox-status", async (c) => c.json(await agentSandbox.status()));
 
   app.post("/api/workspace/export", limited, async (c) => {
     const body = await parseJson(c, ExportWorkspaceSchema);

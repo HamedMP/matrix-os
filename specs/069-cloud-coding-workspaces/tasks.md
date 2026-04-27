@@ -136,7 +136,8 @@ Untracked support/spec files currently present:
   - Files: `packages/gateway/src/session-transcript.ts`, `tests/gateway/session-transcript.test.ts`
 - [x] T206 Implement `agent-sandbox.ts` for sandbox preflight and fail-closed Codex-style launches.
   - Files: `packages/gateway/src/agent-sandbox.ts`, `tests/gateway/agent-sandbox.test.ts`
-- [ ] T207 Add gateway API and CLI commands for sessions, observe/takeover, native terminal handoff, and sandbox status.
+- [x] T207 Add gateway API and CLI commands for sessions, observe/takeover, native terminal handoff, and sandbox status.
+  - Files: `packages/gateway/src/workspace-routes.ts`, `bin/cli.ts`, `bin/matrixos.ts`, `tests/gateway/workspace-routes.test.ts`, `tests/cli/cli.test.ts`
 - [ ] T208 Complete green/refactor coverage for session lifecycle, runtime fallback, attach/replay, leases, observe/takeover, transcripts, and sandbox diagnostics.
 
 ### Review Loop Engine

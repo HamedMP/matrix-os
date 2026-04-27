@@ -315,6 +315,8 @@ async function main() {
     case "project":
     case "worktree":
     case "workspace":
+    case "session":
+    case "agent":
       await runWorkspaceCommand(args);
       break;
     case "sync": {

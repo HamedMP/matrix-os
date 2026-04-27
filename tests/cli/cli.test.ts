@@ -121,6 +121,18 @@ describe("T680a: CLI argument parser", () => {
       project: "repo",
       confirm: "delete project workspace data",
     });
+    expect(parseArgs(["session", "start", "fix tests", "--project", "repo", "--worktree", "wt_abc123def456", "--agent", "codex"])).toMatchObject({
+      command: "session",
+      subcommand: "start",
+      positional: ["fix tests"],
+      project: "repo",
+      worktree: "wt_abc123def456",
+      agent: "codex",
+    });
+    expect(parseArgs(["agent", "sandbox-status"])).toMatchObject({
+      command: "agent",
+      subcommand: "sandbox-status",
+    });
   });
 });
 
@@ -144,6 +156,40 @@ describe("workspace CLI helpers", () => {
       method: "DELETE",
       path: "/api/projects/repo/worktrees/wt_abc123",
       body: { confirmDirtyDelete: true },
+    });
+  });
+
+  it("builds API requests for session and agent commands", () => {
+    expect(buildWorkspaceRequest(parseArgs(["session", "start", "fix tests", "--project", "repo", "--worktree", "wt_abc123def456", "--agent", "codex", "--pr", "42"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions",
+      body: {
+        kind: "agent",
+        agent: "codex",
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        pr: 42,
+        prompt: "fix tests",
+      },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["session", "send", "sess_abc123", "pnpm test"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions/sess_abc123/send",
+      body: { input: "pnpm test" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["session", "observe", "sess_abc123"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions/sess_abc123/observe",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["session", "kill", "sess_abc123"]))).toEqual({
+      method: "DELETE",
+      path: "/api/sessions/sess_abc123",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["agent", "sandbox-status"]))).toEqual({
+      method: "GET",
+      path: "/api/agents/sandbox-status",
     });
   });
 
