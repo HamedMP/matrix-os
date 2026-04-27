@@ -102,6 +102,7 @@ RUN apk add --no-cache \
     strace \
     su-exec \
     tar \
+    tmux \
     tree \
     tzdata \
     unzip \

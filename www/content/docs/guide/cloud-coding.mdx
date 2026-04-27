@@ -1,0 +1,58 @@
+---
+title: Cloud Coding
+description: Project workspaces, GitHub authentication, Browser IDE access, review loops, and sandboxed coding agents.
+---
+
+Matrix OS cloud coding workspaces turn each user container into a private development machine. Projects, tasks, worktrees, sessions, transcripts, reviews, and editor settings live in the user's Matrix home so the gateway, web desktop, CLI, TUI, and browser IDE all operate on the same records.
+
+## GitHub authentication
+
+Connect GitHub inside your Matrix workspace with the GitHub CLI. SSH keys and GitHub credentials are stored under your Matrix home, so terminal panes, agents, and the browser IDE see the same authenticated identity.
+
+```bash
+gh auth login
+matrixos project add github.com/owner/repo
+```
+
+Project import validates repository URLs, stages clones safely, and creates a durable project record before worktrees, sessions, or reviews attach to it.
+
+## Data ownership
+
+Your workspace data belongs to you. Source repositories live under `~/projects`, session records live under `~/system/sessions`, transcripts live under `~/system/session-output`, and review state lives under `~/system/reviews`.
+
+Matrix OS treats these files as the source of truth. Exports include owned project, task, session, transcript, review, preview, and activity records. Deleting workspace data is owner-scoped and does not depend on a shared platform database.
+
+## Worktrees
+
+Each branch or pull request can get an isolated git worktree with a stable Matrix worktree ID. That keeps long-running agents, human shell sessions, and review loops from fighting over the same checkout.
+
+```bash
+matrixos worktree create my-project --pr 42
+matrixos session start --project my-project --agent codex
+```
+
+Dirty worktrees require explicit cleanup. Matrix OS tracks leases so two writers do not mutate the same worktree at the same time.
+
+## Session sharing
+
+Coding sessions are durable workspace objects. You can attach as the active operator, observe without taking control, take over when needed, duplicate panes, or hand a session to a local terminal.
+
+Session transcripts are retained with bounded replay caps, so reconnecting from web, desktop, CLI, or TUI can show recent output without keeping unbounded process output in memory.
+
+## Review loops
+
+Review loops coordinate reviewer and implementer agents through explicit control files and review records. Each round records findings, transitions, verification status, and operator decisions.
+
+The operator can approve, stop, or advance a loop. Matrix OS treats parse failures, stalled convergence, and failed verification as visible states instead of hiding them behind generic agent output.
+
+## Browser IDE
+
+The Browser IDE is code-server running privately inside the user's container and exposed through the authenticated Matrix platform proxy. It opens the same files that agents and terminal sessions edit.
+
+Editor assets and WebSocket traffic stay behind Matrix authentication. Platform credentials are stripped before requests reach code-server, and cache-control headers prevent protected editor responses from being cached publicly.
+
+## Sandboxing
+
+Sandboxing starts with a non-root runtime and preflight checks for required tools such as bubblewrap, git, GitHub CLI, Zellij, tmux, and supported agent CLIs.
+
+Agent launches fail closed when a requested sandbox cannot be prepared. Health output reports workspace, session, review, sandbox, and Browser IDE status without exposing filesystem paths, provider names, secrets, or raw internal errors.

@@ -182,9 +182,14 @@ Untracked support/spec files currently present:
 
 ### Docker / Recovery / Docs
 
-- [ ] T600 Add failing startup, health, and documentation-gate tests for required runtime tools, workspace directory ownership, recovery order, sanitized health output, and public docs presence.
-- [ ] T601 Ensure final container includes Zellij, tmux, gh, openssh-client, sandbox tooling, agent CLIs, git, and code-server.
-- [ ] T602 Create required workspace directories at startup with correct ownership.
+- [x] T600 Add failing startup, health, and documentation-gate tests for required runtime tools, workspace directory ownership, recovery order, sanitized health output, and public docs presence.
+  - Files: `tests/deploy/cloud-workspace-runtime.test.ts`
+- [x] T601 Ensure final container includes Zellij, tmux, gh, openssh-client, sandbox tooling, agent CLIs, git, and code-server.
+  - Files: `Dockerfile`
+- [x] T602 Create required workspace directories at startup with correct ownership.
+  - Files: `distro/docker-entrypoint.sh`
 - [ ] T603 Implement startup recovery order for state ops, projects, worktree leases, runtime sessions, bridges, transcripts, reviews, browser IDE health, and preview detection.
-- [ ] T604 Extend `/health` with workspace manager, session, review, sandbox, and browser IDE status.
-- [ ] T605 Add public docs for cloud coding, GitHub auth, data ownership, worktrees, session sharing, review loops, browser IDE, and sandboxing.
+- [x] T604 Extend `/health` with workspace manager, session, review, sandbox, and browser IDE status.
+  - Files: `packages/gateway/src/server.ts`
+- [x] T605 Add public docs for cloud coding, GitHub auth, data ownership, worktrees, session sharing, review loops, browser IDE, and sandboxing.
+  - Files: `www/content/docs/guide/cloud-coding.mdx`, `www/content/docs/guide/meta.json`

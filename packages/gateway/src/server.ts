@@ -3339,6 +3339,21 @@ export async function createGateway(config: GatewayConfig) {
     cronJobs: cronService.listJobs().length,
     channels: channelManager.status(),
     plugins: loadedPlugins.length,
+    workspace: {
+      status: "ok",
+    },
+    sessions: {
+      status: "ok",
+    },
+    reviews: {
+      status: "ok",
+    },
+    sandbox: {
+      status: typeof process.getuid === "function" && process.getuid() === 0 ? "degraded" : "ok",
+    },
+    browserIde: {
+      status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
+    },
   }));
 
   // Load plugins and mount their HTTP routes

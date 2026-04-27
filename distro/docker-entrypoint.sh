@@ -40,6 +40,26 @@ if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
   cd /app
 fi
 
+echo "Ensuring cloud workspace runtime directories..."
+mkdir -p \
+  "$MATRIX_HOME/projects" \
+  "$MATRIX_HOME/system/sessions" \
+  "$MATRIX_HOME/system/session-output" \
+  "$MATRIX_HOME/system/reviews" \
+  "$MATRIX_HOME/system/ops" \
+  "$MATRIX_HOME/system/zellij/layouts" \
+  "$MATRIX_HOME/system/agent-scratch" \
+  "$MATRIX_HOME/system/code-server"
+chown -R matrixos:matrixos \
+  "$MATRIX_HOME/projects" \
+  "$MATRIX_HOME/system/sessions" \
+  "$MATRIX_HOME/system/session-output" \
+  "$MATRIX_HOME/system/reviews" \
+  "$MATRIX_HOME/system/ops" \
+  "$MATRIX_HOME/system/zellij" \
+  "$MATRIX_HOME/system/agent-scratch" \
+  "$MATRIX_HOME/system/code-server"
+
 # Unify SSH config: terminal panes run with HOME=$MATRIX_HOME, so `ssh-keygen`
 # / `gh auth login` write into $MATRIX_HOME/.ssh, but `ssh` itself uses the
 # passwd-derived $HOME (/home/matrixos), so it never finds the key. Symlink
