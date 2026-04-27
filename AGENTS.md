@@ -239,6 +239,10 @@ Every backend PR must include an "Invariants" section:
 - **Auth source of truth**: primary auth mechanism, fallback behavior
 - **Deferred scope**: what is explicitly NOT in scope -- say so, don't leave dead code
 
+### CI Timeouts
+
+- **Timeouts must cover observed runtime with margin**. If a CI job completes all tests successfully but is canceled by `timeout-minutes`, raise or split the job instead of treating it as a product test failure.
+
 ### Branch Freeze
 
 Do not request review while still pushing commits. Either declare a review commit range or mark the PR as ready and stop pushing.
