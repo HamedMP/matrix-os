@@ -40,6 +40,26 @@ if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
   cd /app
 fi
 
+echo "Ensuring cloud workspace runtime directories..."
+mkdir -p \
+  "$MATRIX_HOME/projects" \
+  "$MATRIX_HOME/system/sessions" \
+  "$MATRIX_HOME/system/session-output" \
+  "$MATRIX_HOME/system/reviews" \
+  "$MATRIX_HOME/system/ops" \
+  "$MATRIX_HOME/system/zellij/layouts" \
+  "$MATRIX_HOME/system/agent-scratch" \
+  "$MATRIX_HOME/system/code-server"
+chown -R matrixos:matrixos \
+  "$MATRIX_HOME/projects" \
+  "$MATRIX_HOME/system/sessions" \
+  "$MATRIX_HOME/system/session-output" \
+  "$MATRIX_HOME/system/reviews" \
+  "$MATRIX_HOME/system/ops" \
+  "$MATRIX_HOME/system/zellij" \
+  "$MATRIX_HOME/system/agent-scratch" \
+  "$MATRIX_HOME/system/code-server"
+
 # Unify SSH config: terminal panes run with HOME=$MATRIX_HOME, so `ssh-keygen`
 # / `gh auth login` write into $MATRIX_HOME/.ssh, but `ssh` itself uses the
 # passwd-derived $HOME (/home/matrixos), so it never finds the key. Symlink
@@ -116,6 +136,104 @@ EOYAML
   done
 done
 chown -R matrixos:matrixos /home/matrixos/.claude /home/matrixos/.codex 2>/dev/null || true
+
+start_matrix_code_server() {
+  if ! command -v code-server >/dev/null 2>&1; then
+    echo "code-server is not installed; code.matrix-os.com editor disabled"
+    return
+  fi
+  if [ -z "${MATRIX_CODE_PROXY_TOKEN:-}" ]; then
+    echo "MATRIX_CODE_PROXY_TOKEN is not set; code.matrix-os.com editor disabled"
+    return
+  fi
+
+  code_server_port="${MATRIX_CODE_SERVER_PORT:-8787}"
+  code_server_upstream_port="${MATRIX_CODE_SERVER_UPSTREAM_PORT:-8788}"
+  code_server_root="$MATRIX_HOME/system/code-server"
+  mkdir -p "$code_server_root/user-data" "$code_server_root/extensions"
+  chown -R matrixos:matrixos "$code_server_root"
+
+  echo "Starting Matrix Code editor on 127.0.0.1:$code_server_upstream_port behind authenticated proxy :$code_server_port"
+  su-exec matrixos env -u PORT -u HOST code-server \
+    --auth none \
+    --bind-addr "127.0.0.1:$code_server_upstream_port" \
+    --disable-telemetry \
+    --disable-update-check \
+    --user-data-dir "$code_server_root/user-data" \
+    --extensions-dir "$code_server_root/extensions" \
+    "$MATRIX_HOME" &
+  CODE_SERVER_PID=$!
+
+  MATRIX_CODE_PROXY_LISTEN="$code_server_port" MATRIX_CODE_PROXY_UPSTREAM="$code_server_upstream_port" node <<'EOF' &
+const http = require("node:http");
+const net = require("node:net");
+const crypto = require("node:crypto");
+
+const token = process.env.MATRIX_CODE_PROXY_TOKEN || "";
+const listenPort = Number(process.env.MATRIX_CODE_PROXY_LISTEN || "8787");
+const upstreamPort = Number(process.env.MATRIX_CODE_PROXY_UPSTREAM || "8788");
+
+function authorized(req) {
+  const value = String(req.headers["x-matrix-code-proxy-token"] || "");
+  const actual = Buffer.from(value);
+  const expected = Buffer.from(token);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function scrubHeaders(headers) {
+  const next = { ...headers };
+  delete next["x-matrix-code-proxy-token"];
+  return next;
+}
+
+const server = http.createServer((req, res) => {
+  if (!authorized(req)) {
+    res.writeHead(401, { "cache-control": "no-store" });
+    res.end("Unauthorized");
+    return;
+  }
+  const upstream = http.request({
+    host: "127.0.0.1",
+    port: upstreamPort,
+    method: req.method,
+    path: req.url,
+    headers: scrubHeaders(req.headers),
+  }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+    upstreamRes.pipe(res);
+  });
+  upstream.on("error", () => {
+    res.writeHead(502, { "cache-control": "no-store" });
+    res.end("Editor unavailable");
+  });
+  req.pipe(upstream);
+});
+
+server.on("upgrade", (req, socket, head) => {
+  if (!authorized(req)) {
+    socket.end("HTTP/1.1 401 Unauthorized\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const upstream = net.connect(upstreamPort, "127.0.0.1", () => {
+    const headers = scrubHeaders(req.headers);
+    const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+    for (const [key, value] of Object.entries(headers)) {
+      if (Array.isArray(value)) for (const item of value) lines.push(`${key}: ${item}`);
+      else if (value !== undefined) lines.push(`${key}: ${value}`);
+    }
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    if (head.length > 0) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+});
+
+server.listen(listenPort, "0.0.0.0");
+EOF
+  CODE_PROXY_PID=$!
+}
+
+start_matrix_code_server
 
 # Start Next.js shell in background as non-root user
 cd /app/shell

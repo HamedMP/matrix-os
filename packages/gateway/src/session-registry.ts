@@ -8,7 +8,7 @@ import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
+const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
   if (!TERMINAL_DEBUG_ENABLED) {
@@ -68,6 +68,20 @@ export interface SessionInfo {
   createdAt: number;
   lastAttachedAt: number;
   attachedClients: number;
+}
+
+const ExternalSessionRegistrationSchema = z.object({
+  sessionId: z.string().regex(UUID_REGEX).optional(),
+  cwd: z.string().min(1).max(4096),
+  command: z.enum(["zellij", "tmux"]),
+  args: z.array(z.string().max(4096)).max(64),
+});
+
+export interface ExternalSessionRegistration {
+  sessionId?: string;
+  cwd: string;
+  command: "zellij" | "tmux";
+  args: string[];
 }
 
 const PersistedSessionInfoSchema = z.object({
@@ -320,35 +334,14 @@ export class SessionRegistry {
     const buffer = new RingBuffer(this.bufferSize);
     const validatedCwd = resolveWithinHome(this.homePath, cwd);
     const initialCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
-    const userLocalBin = join(this.homePath, ".local", "bin");
-    const spawnOptions = (targetCwd: string) => ({
-      name: "xterm-256color",
-      cols: 80,
-      rows: 24,
-      cwd: targetCwd,
-      env: {
-        PATH: `${userLocalBin}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
-        HOME: this.homePath,
-        TERM: "xterm-256color",
-        LANG: process.env.LANG ?? "en_US.UTF-8",
-        SHELL: resolvedShell,
-        ZDOTDIR: this.homePath,
-        USER: process.env.MATRIX_HANDLE || process.env.USER || "matrixos",
-        LOGNAME: process.env.MATRIX_HANDLE || process.env.LOGNAME || "matrixos",
-        ...(process.env.MATRIX_HANDLE ? { MATRIX_HANDLE: process.env.MATRIX_HANDLE } : {}),
-        ...(process.env.MATRIX_DISPLAY_NAME ? { MATRIX_DISPLAY_NAME: process.env.MATRIX_DISPLAY_NAME } : {}),
-        ...(process.env.MATRIX_HOME ? { MATRIX_HOME: process.env.MATRIX_HOME } : {}),
-      },
-    });
-
     let ptyProcess: PtyLike;
     let targetCwd = initialCwd;
     try {
-      ptyProcess = this.spawnFn(resolvedShell, [], spawnOptions(targetCwd));
+      ptyProcess = this.spawnFn(resolvedShell, [], this.spawnOptions(targetCwd, resolvedShell));
     } catch (error) {
       if (targetCwd !== this.homePath) {
         targetCwd = this.homePath;
-        ptyProcess = this.spawnFn(resolvedShell, [], spawnOptions(targetCwd));
+        ptyProcess = this.spawnFn(resolvedShell, [], this.spawnOptions(targetCwd, resolvedShell));
       } else {
         throw error;
       }
@@ -361,6 +354,37 @@ export class SessionRegistry {
       sessionId,
       cwd: targetCwd,
       shell: resolvedShell,
+      totalSessions: this.sessions.size,
+    });
+
+    return sessionId;
+  }
+
+  registerExternal(input: ExternalSessionRegistration): string {
+    this.evictIfNeeded();
+
+    if (this.sessions.size >= this.maxSessions) {
+      throw new Error("Session limit reached");
+    }
+
+    const parsed = ExternalSessionRegistrationSchema.parse(input);
+    const sessionId = parsed.sessionId ?? randomUUID();
+    const validatedCwd = resolveWithinHome(this.homePath, parsed.cwd);
+    const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
+    const buffer = new RingBuffer(this.bufferSize);
+    const ptyProcess = this.spawnFn(
+      parsed.command,
+      parsed.args,
+      this.spawnOptions(targetCwd, "/bin/bash"),
+    );
+
+    const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, parsed.command);
+    this.sessions.set(sessionId, session);
+    this.schedulePersist();
+    logTerminalDebug("register-external", {
+      sessionId,
+      cwd: targetCwd,
+      command: parsed.command,
       totalSessions: this.sessions.size,
     });
 
@@ -521,6 +545,29 @@ export class SessionRegistry {
     this.persistTimer = setTimeout(() => {
       void this.persistNow();
     }, 100);
+  }
+
+  private spawnOptions(targetCwd: string, resolvedShell: string): Record<string, unknown> {
+    const userLocalBin = join(this.homePath, ".local", "bin");
+    return {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: targetCwd,
+      env: {
+        PATH: `${userLocalBin}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
+        HOME: this.homePath,
+        TERM: "xterm-256color",
+        LANG: process.env.LANG ?? "en_US.UTF-8",
+        SHELL: resolvedShell,
+        ZDOTDIR: this.homePath,
+        USER: process.env.MATRIX_HANDLE || process.env.USER || "matrixos",
+        LOGNAME: process.env.MATRIX_HANDLE || process.env.LOGNAME || "matrixos",
+        ...(process.env.MATRIX_HANDLE ? { MATRIX_HANDLE: process.env.MATRIX_HANDLE } : {}),
+        ...(process.env.MATRIX_DISPLAY_NAME ? { MATRIX_DISPLAY_NAME: process.env.MATRIX_DISPLAY_NAME } : {}),
+        ...(process.env.MATRIX_HOME ? { MATRIX_HOME: process.env.MATRIX_HOME } : {}),
+      },
+    };
   }
 
   private persistNow(): Promise<void> {

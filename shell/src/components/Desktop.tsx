@@ -12,6 +12,7 @@ import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { saveDesktopConfig } from "@/hooks/useDesktopConfig";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
+import { WorkspaceApp } from "./workspace/WorkspaceApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
 import { PreviewWindow } from "./preview-window/PreviewWindow";
 import { AIButton } from "./AIButton";
@@ -772,6 +773,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
       // Register built-in apps
       addApp("Terminal", "__terminal__");
+      addApp("Workspace", "__workspace__");
       addApp("Files", "__file-browser__");
       addApp("Chat", "__chat__");
       const savedTerminals = savedWindows.filter((w) => w.path.startsWith("__terminal__"));
@@ -1749,6 +1751,8 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp />
+                  ) : win.path === "__workspace__" ? (
+                    <WorkspaceApp />
                   ) : win.path === "__file-browser__" ? (
                     <FileBrowser windowId={win.id} />
                   ) : win.path === "__preview-window__" ? (

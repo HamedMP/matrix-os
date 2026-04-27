@@ -195,6 +195,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       `GATEWAY_EXTERNAL_URL=http://${containerName}:4000`,
       `PORT=4000`,
       `SHELL_PORT=3000`,
+      `MATRIX_CODE_SERVER_PORT=8787`,
       ...extraEnv,
     ];
     // MATRIX_USER_ID is the immutable Clerk userId; gateway + home-mirror
@@ -211,6 +212,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     if (platformSecret) {
       const token = createHmac('sha256', platformSecret).update(handle).digest('hex');
       env.push(`UPGRADE_TOKEN=${token}`);
+      env.push(`MATRIX_CODE_PROXY_TOKEN=${token}`);
       // The platform terminates sync JWTs on the single-domain app entrypoint
       // and re-proxies to the container with this HMAC bearer. Containers do
       // not need PLATFORM_JWT_SECRET unless we intentionally enable direct
@@ -271,6 +273,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           ExposedPorts: {
             '4000/tcp': {},
             '3000/tcp': {},
+            '8787/tcp': {},
           },
         });
 

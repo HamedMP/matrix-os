@@ -41,7 +41,27 @@ ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 RUN cd shell && node ../node_modules/next/dist/bin/next build
 
 # --------------------------------------------------
-# Stage 2: Runtime base (cached -- only changes when base image or system deps change)
+# Stage 2: code-server (Node 22 runtime isolated from Matrix's Node 24)
+# --------------------------------------------------
+FROM node:22-alpine AS code-server-builder
+
+RUN apk add --no-cache alpine-sdk bash krb5-dev libc6-compat libstdc++ python3
+
+ARG CODE_SERVER_VERSION=4.116.0
+WORKDIR /opt/code-server-app
+RUN npm init -y >/dev/null && \
+    npm_config_update_notifier=false \
+    npm_config_cache=/tmp/npm-cache \
+    npm install --unsafe-perm --foreground-scripts code-server@${CODE_SERVER_VERSION} && \
+    npm_config_update_notifier=false \
+    npm_config_cache=/tmp/npm-cache \
+    npm install --unsafe-perm --foreground-scripts \
+      --prefix /opt/code-server-app/node_modules/code-server/lib/vscode/extensions/git \
+      @vscode/fs-copyfile@2.0.0 && \
+    rm -rf /tmp/npm-cache /root/.npm /root/.cache
+
+# --------------------------------------------------
+# Stage 3: Runtime base (cached -- only changes when base image or system deps change)
 # --------------------------------------------------
 FROM node:24-alpine AS runtime
 
@@ -78,9 +98,11 @@ RUN apk add --no-cache \
     python3 \
     ripgrep \
     rsync \
+    krb5-libs \
     strace \
     su-exec \
     tar \
+    tmux \
     tree \
     tzdata \
     unzip \
@@ -99,6 +121,17 @@ RUN npm install -g \
     @openai/codex@0.118.0 \
     opencode-ai@1.14.25 \
     @mariozechner/pi-coding-agent@0.70.2
+
+# Browser IDE served only on the private Docker network and exposed publicly
+# through the authenticated platform proxy at code.matrix-os.com. code-server
+# currently follows VS Code's Node 22 runtime, while Matrix runs Node 24.
+COPY --from=code-server-builder /usr/local/bin/node /opt/code-server-node22/bin/node
+COPY --from=code-server-builder /opt/code-server-app /opt/code-server-app
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'export PATH="/opt/code-server-node22/bin:$PATH"' \
+    'exec /opt/code-server-app/node_modules/.bin/code-server "$@"' \
+    > /usr/local/bin/code-server && chmod +x /usr/local/bin/code-server
 
 # GitHub CLI (release binary; alpine's github-cli package trails a few versions).
 # GH_SHA256 must match the upstream gh_${GH_VERSION}_checksums.txt entry for
@@ -137,7 +170,7 @@ RUN chown -R matrixos:matrixos /usr/local/lib/node_modules /usr/local/bin
 WORKDIR /app
 
 # --------------------------------------------------
-# Stage 3: Final image
+# Stage 4: Final image
 # --------------------------------------------------
 FROM runtime
 
@@ -180,9 +213,10 @@ ENV MATRIX_BUILD_DATE=$MATRIX_BUILD_DATE
 ENV NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
 ENV NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
 ENV GATEWAY_URL=http://localhost:4000
+ENV MATRIX_CODE_SERVER_PORT=8787
 
-# Ports: gateway (4000) + shell (3000)
-EXPOSE 3000 4000
+# Ports: shell (3000), gateway (4000), code-server (8787 private network only)
+EXPOSE 3000 4000 8787
 
 # Persistent home directory
 VOLUME ["/home/matrixos/home"]

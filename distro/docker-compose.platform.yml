@@ -5,6 +5,7 @@
 #   - Cloudflare tunnel created: cloudflared tunnel create matrix-os
 #   - Credentials at /etc/cloudflared/credentials.json
 #   - DNS: CNAME *.matrix-os.com -> <tunnel-id>.cfargotunnel.com
+#     (covers app.matrix-os.com and code.matrix-os.com)
 #   - DNS: CNAME api.matrix-os.com -> <tunnel-id>.cfargotunnel.com
 #   - DNS: CNAME matrix.matrix-os.com -> <tunnel-id>.cfargotunnel.com
 #

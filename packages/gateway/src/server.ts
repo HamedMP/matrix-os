@@ -22,6 +22,8 @@ import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } f
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
+import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
@@ -2115,6 +2117,11 @@ export async function createGateway(config: GatewayConfig) {
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
+  app.route("/", createWorkspaceRoutes({ homePath }));
+  const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
+  if (workspaceStartupRecovery.status === "degraded") {
+    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
+  }
 
   async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
     try {
@@ -3337,6 +3344,21 @@ export async function createGateway(config: GatewayConfig) {
     cronJobs: cronService.listJobs().length,
     channels: channelManager.status(),
     plugins: loadedPlugins.length,
+    workspace: {
+      status: "ok",
+    },
+    sessions: {
+      status: "ok",
+    },
+    reviews: {
+      status: "ok",
+    },
+    sandbox: {
+      status: typeof process.getuid === "function" && process.getuid() === 0 ? "degraded" : "ok",
+    },
+    browserIde: {
+      status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
+    },
   }));
 
   // Load plugins and mount their HTTP routes

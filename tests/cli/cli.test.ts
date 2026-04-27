@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseArgs, formatStatus, formatDoctor } from "../../bin/cli.js";
+import {
+  parseArgs,
+  formatStatus,
+  formatDoctor,
+  formatProjectList,
+  formatWorktreeList,
+  buildWorkspaceRequest,
+} from "../../bin/cli.js";
 import type { StatusInfo, DoctorCheck } from "../../bin/cli.js";
 
 describe("T680a: CLI argument parser", () => {
@@ -27,6 +34,11 @@ describe("T680a: CLI argument parser", () => {
   it("parseArgs([]) returns { command: 'help' }", () => {
     const result = parseArgs([]);
     expect(result.command).toBe("help");
+  });
+
+  it("parseArgs(['tui']) returns { command: 'tui' }", () => {
+    const result = parseArgs(["tui"]);
+    expect(result.command).toBe("tui");
   });
 
   it("parseArgs(['help']) returns { command: 'help' }", () => {
@@ -88,6 +100,190 @@ describe("T680a: CLI argument parser", () => {
   it("treats unknown command as help", () => {
     const result = parseArgs(["foobar"]);
     expect(result.command).toBe("help");
+  });
+
+  it("parses project, worktree, export, and delete workspace commands", () => {
+    expect(parseArgs(["project", "add", "github.com/owner/repo", "--slug", "repo"])).toMatchObject({
+      command: "project",
+      subcommand: "add",
+      positional: ["github.com/owner/repo"],
+      slug: "repo",
+    });
+    expect(parseArgs(["worktree", "create", "repo", "--pr", "42"])).toMatchObject({
+      command: "worktree",
+      subcommand: "create",
+      positional: ["repo"],
+      pr: 42,
+    });
+    expect(parseArgs(["workspace", "export", "--project", "repo"])).toMatchObject({
+      command: "workspace",
+      subcommand: "export",
+      project: "repo",
+    });
+    expect(parseArgs(["workspace", "delete", "--project", "repo", "--confirm", "delete project workspace data"])).toMatchObject({
+      command: "workspace",
+      subcommand: "delete",
+      project: "repo",
+      confirm: "delete project workspace data",
+    });
+    expect(parseArgs(["session", "start", "fix tests", "--project", "repo", "--worktree", "wt_abc123def456", "--agent", "codex"])).toMatchObject({
+      command: "session",
+      subcommand: "start",
+      positional: ["fix tests"],
+      project: "repo",
+      worktree: "wt_abc123def456",
+      agent: "codex",
+    });
+    expect(parseArgs(["agent", "sandbox-status"])).toMatchObject({
+      command: "agent",
+      subcommand: "sandbox-status",
+    });
+    expect(parseArgs(["review", "start", "--project", "repo", "--pr", "42", "--agent", "claude"])).toMatchObject({
+      command: "review",
+      subcommand: "start",
+      project: "repo",
+      pr: 42,
+      agent: "claude",
+    });
+    expect(parseArgs(["task", "create", "Fix auth", "--project", "repo", "--priority", "high"])).toMatchObject({
+      command: "task",
+      subcommand: "create",
+      positional: ["Fix auth"],
+      project: "repo",
+      priority: "high",
+    });
+    expect(parseArgs(["preview", "add", "--project", "repo", "--task", "task_abc123", "--label", "Local app", "--url", "http://localhost:3000"])).toMatchObject({
+      command: "preview",
+      subcommand: "add",
+      project: "repo",
+      task: "task_abc123",
+      label: "Local app",
+      url: "http://localhost:3000",
+    });
+  });
+});
+
+describe("workspace CLI helpers", () => {
+  it("builds API requests for project and worktree commands", () => {
+    expect(buildWorkspaceRequest(parseArgs(["project", "add", "github.com/owner/repo", "--slug", "repo"]))).toEqual({
+      method: "POST",
+      path: "/api/projects",
+      body: { url: "github.com/owner/repo", slug: "repo" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["project", "prs", "repo"]))).toEqual({
+      method: "GET",
+      path: "/api/projects/repo/prs",
+    });
+    expect(buildWorkspaceRequest(parseArgs(["worktree", "create", "repo", "--branch", "main"]))).toEqual({
+      method: "POST",
+      path: "/api/projects/repo/worktrees",
+      body: { branch: "main" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["worktree", "rm", "repo", "wt_abc123", "--confirm-dirty-delete"]))).toEqual({
+      method: "DELETE",
+      path: "/api/projects/repo/worktrees/wt_abc123",
+      body: { confirmDirtyDelete: true },
+    });
+  });
+
+  it("builds API requests for session and agent commands", () => {
+    expect(buildWorkspaceRequest(parseArgs(["session", "start", "fix tests", "--project", "repo", "--worktree", "wt_abc123def456", "--agent", "codex", "--pr", "42"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions",
+      body: {
+        kind: "agent",
+        agent: "codex",
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        pr: 42,
+        prompt: "fix tests",
+      },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["session", "send", "sess_abc123", "pnpm test"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions/sess_abc123/send",
+      body: { input: "pnpm test" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["session", "observe", "sess_abc123"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions/sess_abc123/observe",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["session", "kill", "sess_abc123"]))).toEqual({
+      method: "DELETE",
+      path: "/api/sessions/sess_abc123",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["agent", "sandbox-status"]))).toEqual({
+      method: "GET",
+      path: "/api/agents/sandbox-status",
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "start", "--project", "repo", "--worktree", "wt_abc123def456", "--pr", "42", "--agent", "claude"]))).toEqual({
+      method: "POST",
+      path: "/api/reviews",
+      body: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        pr: 42,
+        reviewer: "claude",
+        implementer: "claude",
+        maxRounds: 5,
+        convergenceGate: "findings_only",
+        verificationCommands: [],
+      },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "status", "rev_abc123"]))).toEqual({
+      method: "GET",
+      path: "/api/reviews/rev_abc123",
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "next", "rev_abc123"]))).toEqual({
+      method: "POST",
+      path: "/api/reviews/rev_abc123/next",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["review", "approve", "rev_abc123"]))).toEqual({
+      method: "POST",
+      path: "/api/reviews/rev_abc123/approve",
+      body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["task", "create", "Fix auth", "--project", "repo", "--priority", "high"]))).toEqual({
+      method: "POST",
+      path: "/api/projects/repo/tasks",
+      body: { title: "Fix auth", priority: "high" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["task", "archive", "task_abc123", "--project", "repo"]))).toEqual({
+      method: "PATCH",
+      path: "/api/projects/repo/tasks/task_abc123",
+      body: { status: "archived" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["task", "work", "task_abc123", "--project", "repo", "--agent", "codex"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions",
+      body: { kind: "agent", agent: "codex", projectSlug: "repo", taskId: "task_abc123" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["preview", "add", "--project", "repo", "--task", "task_abc123", "--label", "Local app", "--url", "http://localhost:3000"]))).toEqual({
+      method: "POST",
+      path: "/api/projects/repo/previews",
+      body: { taskId: "task_abc123", label: "Local app", url: "http://localhost:3000" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["workspace", "events", "--project", "repo"]))).toEqual({
+      method: "GET",
+      path: "/api/workspace/events?projectSlug=repo",
+    });
+  });
+
+  it("formats project and worktree lists for terminal output", () => {
+    expect(formatProjectList({
+      projects: [
+        { slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" }, updatedAt: "2026-04-26T00:00:00.000Z" },
+      ],
+      nextCursor: null,
+    })).toContain("repo");
+    expect(formatWorktreeList({
+      worktrees: [
+        { id: "wt_abc123", currentBranch: "main", dirtyState: "clean", path: "/home/matrixos/home/projects/repo/worktrees/wt_abc123" },
+      ],
+    })).toContain("wt_abc123");
   });
 });
 

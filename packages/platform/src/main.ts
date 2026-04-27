@@ -10,7 +10,6 @@ import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
   createPlatformDb,
-  type ContainerRecord,
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
@@ -163,16 +162,6 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Expires', '0');
 }
 
-function applyCodeDomainStaticAssetHeaders(headers: Headers): Headers {
-  const next = new Headers(headers);
-  next.set('Cache-Control', 'no-store, private');
-  next.set('CDN-Cache-Control', 'no-store');
-  next.set('Cloudflare-CDN-Cache-Control', 'no-store');
-  next.set('Pragma', 'no-cache');
-  next.set('Expires', '0');
-  return next;
-}
-
 function isCodeDomainStaticAssetPath(path: string): boolean {
   return (
     path === '/favicon.ico' ||
@@ -184,22 +173,22 @@ function isCodeDomainStaticAssetPath(path: string): boolean {
 function buildCodeDomainProxyHeaders(
   requestHeaders: Record<string, string | undefined>,
   host: string,
+  codeProxyToken?: string,
 ): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(requestHeaders)) {
-    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && key !== 'x-matrix-code-proxy-token' && value) {
       headers.set(key, value);
     }
+  }
+  if (codeProxyToken) {
+    headers.set('x-matrix-code-proxy-token', codeProxyToken);
   }
   headers.set('host', host);
   headers.set('x-forwarded-host', host);
   headers.set('x-forwarded-proto', 'https');
   headers.set('connection', 'close');
   return headers;
-}
-
-async function pickCodeDomainStaticAssetContainer(db: PlatformDB): Promise<ContainerRecord | null> {
-  return (await listContainers(db, 'running'))[0] ?? null;
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -768,40 +757,11 @@ export function createApp(deps: {
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
-      if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
-        const staticRecord = await pickCodeDomainStaticAssetContainer(db);
-        if (!staticRecord) {
-          applyNoStoreHeaders(c);
-          return c.text('Editor assets unavailable', 503);
-        }
-        const endpoint = await resolveContainerEndpoint(docker, db, staticRecord.handle, staticRecord.containerId);
-        if (!endpoint) {
-          applyNoStoreHeaders(c);
-          return c.text('Editor assets unavailable', 503);
-        }
-        const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-        const targetUrl = `http://${endpoint.host}:${CODE_SERVER_PORT}${path}${qs}`;
-        try {
-          const upstream = await fetch(targetUrl, {
-            method: c.req.method,
-            headers: buildCodeDomainProxyHeaders(c.req.header(), host),
-            redirect: 'manual',
-            signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
-            body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-            dispatcher: containerProxyDispatcher,
-          } as RequestInit & { dispatcher: Agent });
-
-          return new Response(upstream.body, {
-            status: upstream.status,
-            headers: applyCodeDomainStaticAssetHeaders(upstream.headers),
-          });
-        } catch (err: unknown) {
-          logPlatformRouteError('code-domain static asset proxy', err);
-          applyNoStoreHeaders(c);
-          return c.text('Editor assets unavailable', 502);
-        }
-      }
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
+      if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
@@ -822,7 +782,13 @@ export function createApp(deps: {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-      const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+      const headers = isCodeDomain
+        ? buildCodeDomainProxyHeaders(
+            c.req.header(),
+            host,
+            platformSecret ? buildPlatformVerificationToken(runningMachine.handle, platformSecret) : undefined,
+          )
+        : new Headers();
       if (!isCodeDomain) {
         for (const [key, value] of Object.entries(c.req.header())) {
           if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
@@ -923,7 +889,13 @@ export function createApp(deps: {
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
     const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-    const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+    const headers = isCodeDomain
+      ? buildCodeDomainProxyHeaders(
+          c.req.header(),
+          host,
+          platformSecret ? buildPlatformVerificationToken(record.handle, platformSecret) : undefined,
+        )
+      : new Headers();
     if (!isCodeDomain) {
       for (const [key, value] of Object.entries(c.req.header())) {
         if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
@@ -960,7 +932,7 @@ export function createApp(deps: {
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
         console.warn(
-          `[platform] app-domain proxy unresolved handle=${record.handle} attempt=${attempt + 1} path=${path} targetPort=${targetPort}`,
+          `[platform] session-domain proxy unresolved handle=${record.handle} attempt=${attempt + 1} path=${path} targetPort=${targetPort}`,
         );
         return c.json({ error: 'Container unreachable' }, 502);
       }
@@ -1772,7 +1744,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       platformJwtSecret: PLATFORM_JWT_SECRET,
       wsToken,
     });
-    if (!identity) { socket.destroy(); return; }
+    if (!identity) {
+      console.warn(`[platform] websocket unauthenticated host=${host} path=${path} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
+      socket.destroy();
+      return;
+    }
 
     const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
     const record = await getContainer(db, identity.handle);
@@ -1805,6 +1781,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
                 `x-platform-verified: ${buildPlatformUserProof(handle, identity.userId, PLATFORM_SECRET)}`,
                 `x-platform-user-id: ${identity.userId}`,
               ]
+            : [],
+        )
+        .concat(
+          PLATFORM_SECRET && isCodeDomain
+            ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`]
             : [],
         )
         .join('\r\n');

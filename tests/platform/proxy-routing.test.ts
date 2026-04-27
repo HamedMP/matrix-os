@@ -293,8 +293,15 @@ describe("platform proxy routing", () => {
     expect(url).toBe("http://matrixos-alice:8787/?folder=/home/matrixos/home");
     const headers = init?.headers as Headers;
     expect(headers.get("host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-matrix-code-proxy-token")).toBeTruthy();
     expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("x-platform-user-id")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
+    expect(res.headers.get("set-cookie")).toContain("matrix_code_session=");
+    expect(res.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(res.headers.get("set-cookie")).toContain("SameSite=Lax");
+    expect(res.headers.get("set-cookie")).toContain("Max-Age=43200");
   });
 
   it("accepts the short-lived code-domain session cookie for follow-up VPS editor requests", async () => {
@@ -339,6 +346,7 @@ describe("platform proxy routing", () => {
     expect(url).toBe("https://203.0.113.11:443/stable/static/out/vs/code/browser/workbench/workbench.js");
     const headers = init?.headers as Headers;
     expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-matrix-code-proxy-token")).toBeTruthy();
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("authorization")).not.toContain("matrix_code_session");
   });
@@ -364,6 +372,72 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(500);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires authentication before proxying code-domain editor static assets", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("asset", {
+        status: 200,
+        headers: {
+          "content-type": "text/javascript",
+          "cache-control": "public, max-age=31536000",
+        },
+      }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue({ authenticated: false });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/stable-abc123/static/out/vs/editor/common/services/editorWebWorkerMain.js",
+      {
+        headers: {
+          host: "code.matrix-os.com",
+        },
+      },
+    );
+
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("Unauthorized");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(verifyToken).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("marks the code-domain auth page as non-cacheable", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ authenticated: false }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_123";
+    try {
+      const res = await app.request("/", {
+        headers: {
+          host: "code.matrix-os.com",
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(res.headers.get("cache-control")).toBe("no-store, private");
+    } finally {
+      delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    }
   });
 
   it("adds a timeout and strips admin credentials on /proxy/:handle fetches", async () => {

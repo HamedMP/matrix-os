@@ -14,7 +14,13 @@ build/
 .idea/
 
 .DS_Store
+Thumbs.db
+*.tmp
+*.swp
+*.log
 coverage/
+.vscode/
+.idea/
 .playwright-mcp/
 .superpowers/
 .remember/

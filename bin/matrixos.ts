@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
-import { parseArgs, formatStatus, formatDoctor, getVersion, getHelpText } from "./cli.js";
-import type { StatusInfo, DoctorCheck } from "./cli.js";
+import {
+  parseArgs,
+  formatStatus,
+  formatDoctor,
+  getVersion,
+  getHelpText,
+  buildWorkspaceRequest,
+  formatWorkspaceResponse,
+} from "./cli.js";
+import type { StatusInfo, DoctorCheck, ParsedArgs } from "./cli.js";
+import { buildTuiDashboardModel, renderTuiDashboard } from "./tui/dashboard.js";
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -43,6 +52,40 @@ async function fetchJSON(url: string, token?: string): Promise<unknown> {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+async function fetchWorkspaceJSON(
+  gateway: string,
+  request: ReturnType<typeof buildWorkspaceRequest>,
+  token?: string,
+): Promise<unknown> {
+  const headers: Record<string, string> = {};
+  let body: string | undefined;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (request.body) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(request.body);
+  }
+  const res = await fetch(`${gateway}${request.path}`, {
+    method: request.method,
+    headers,
+    body,
+    signal: AbortSignal.timeout(CLI_FETCH_TIMEOUT_MS),
+  });
+  const data = await res.json().catch((err: unknown) => {
+    if (err instanceof SyntaxError) {
+      return null;
+    }
+    console.warn("[matrixos] Failed to parse workspace response:", err instanceof Error ? err.message : String(err));
+    return null;
+  });
+  if (!res.ok) {
+    const error = typeof data === "object" && data !== null && "error" in data
+      ? (data as { error?: { code?: string; message?: string } }).error
+      : undefined;
+    throw new Error(error?.message ?? `HTTP ${res.status}`);
+  }
+  return data;
 }
 
 async function runStart(args: { gateway: string; shell?: boolean; token?: string }) {
@@ -142,6 +185,59 @@ async function runStatus(args: { gateway: string; token?: string }) {
 
   console.log(formatStatus(info));
   process.exit(info.healthy ? 0 : 1);
+}
+
+async function runWorkspaceCommand(args: ParsedArgs) {
+  try {
+    const request = buildWorkspaceRequest(args);
+    const data = await fetchWorkspaceJSON(args.gateway, request, args.token);
+    console.log(formatWorkspaceResponse(args.command, args.subcommand, data));
+  } catch (err: unknown) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+async function runTui(args: { gateway: string; token?: string }) {
+  const projectsData = await fetchJSON(`${args.gateway}/api/projects`, args.token) as { projects?: Array<{ slug?: string; name?: string }> };
+  const projects = projectsData.projects ?? [];
+  const firstProjectSlug = projects[0]?.slug;
+  const [pullRequestsData, worktreesData, tasksData, sessionsData, reviewsData] = await Promise.all([
+    firstProjectSlug
+      ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/prs`, args.token)
+      : Promise.resolve({ prs: [] }),
+    firstProjectSlug
+      ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/worktrees`, args.token)
+      : Promise.resolve({ worktrees: [] }),
+    firstProjectSlug
+      ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/tasks?limit=100`, args.token)
+      : Promise.resolve({ tasks: [] }),
+    fetchJSON(`${args.gateway}/api/sessions?limit=100`, args.token),
+    fetchJSON(`${args.gateway}/api/reviews?limit=100`, args.token),
+  ]) as [
+    { prs?: Array<{ number?: number; title?: string; headRef?: string; state?: string }> },
+    { worktrees?: Array<{ id?: string; currentBranch?: string; dirtyState?: string }> },
+    { tasks?: Array<{ id?: string; title?: string; status?: string; priority?: string }> },
+    { sessions?: Array<{ id?: string; status?: string; projectSlug?: string; taskId?: string; nativeAttachCommand?: string[] }> },
+    { reviews?: Array<{ id?: string; status?: string; projectSlug?: string; round?: number }> },
+  ];
+
+  const model = buildTuiDashboardModel({
+    projects,
+    pullRequests: pullRequestsData.prs ?? [],
+    worktrees: worktreesData.worktrees ?? [],
+    tasks: tasksData.tasks ?? [],
+    sessions: sessionsData.sessions ?? [],
+    reviews: reviewsData.reviews ?? [],
+  });
+
+  if (process.stdout.isTTY && process.stdin.isTTY) {
+    const { renderInkDashboard } = await import("./tui/app.js");
+    await renderInkDashboard({ model });
+    return;
+  }
+
+  console.log(renderTuiDashboard(model));
 }
 
 async function runDoctor(args: { gateway: string; token?: string }) {
@@ -246,6 +342,11 @@ async function main() {
     return;
   }
 
+  if (rawArgs.length === 0) {
+    await runTui(args);
+    return;
+  }
+
   switch (args.command) {
     case "start":
       await runStart(args);
@@ -258,6 +359,19 @@ async function main() {
       break;
     case "doctor":
       await runDoctor(args);
+      break;
+    case "tui":
+      await runTui(args);
+      break;
+    case "project":
+    case "worktree":
+    case "workspace":
+    case "session":
+    case "agent":
+    case "review":
+    case "task":
+    case "preview":
+      await runWorkspaceCommand(args);
       break;
     case "sync": {
       const syncArgs = rawArgs.slice(1).filter((a) => !a.startsWith("--gateway") && !a.startsWith("--token"));
