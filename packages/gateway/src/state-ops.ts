@@ -79,10 +79,14 @@ async function listFilesRecursive(root: string, homePath: string): Promise<strin
   const files: string[] = [];
   for (const entry of entries) {
     const fullPath = join(root, entry.name);
+    const relativePath = relative(homePath, resolve(fullPath));
+    if (entry.isSymbolicLink() || relativePath.startsWith("..") || relativePath === "" || resolve(relativePath) === relativePath) {
+      continue;
+    }
     if (entry.isDirectory()) {
       files.push(...await listFilesRecursive(fullPath, homePath));
     } else if (entry.isFile()) {
-      files.push(relative(homePath, fullPath));
+      files.push(relativePath);
     }
   }
   return files;

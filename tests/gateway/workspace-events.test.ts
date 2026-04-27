@@ -61,4 +61,24 @@ describe("workspace-events", () => {
       error: { code: "invalid_event_query" },
     });
   });
+
+  it("serializes concurrent event publishes without dropping activity", async () => {
+    const store = createWorkspaceEventStore({
+      homePath,
+      maxEvents: 100,
+      now: () => "2026-04-26T00:00:00.000Z",
+    });
+
+    await Promise.all(Array.from({ length: 25 }, (_, index) => store.publishEvent({
+      type: `task.event.${index}`,
+      scope: { projectSlug: "repo" },
+      payload: { index },
+    })));
+
+    const listed = await store.listEvents({ projectSlug: "repo", limit: 100 });
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.events).toHaveLength(25);
+    expect(new Set(listed.events.map((event) => event.type)).size).toBe(25);
+  });
 });

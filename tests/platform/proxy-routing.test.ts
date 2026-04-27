@@ -372,7 +372,7 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("proxies unauthenticated code-domain editor static assets without auth HTML", async () => {
+  it("requires authentication before proxying code-domain editor static assets", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("asset", {
@@ -402,22 +402,13 @@ describe("platform proxy routing", () => {
       },
     );
 
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe("asset");
-    expect(res.headers.get("content-type")).toBe("text/javascript");
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("Unauthorized");
     expect(res.headers.get("cache-control")).toBe("no-store, private");
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(verifyToken).not.toHaveBeenCalled();
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe(
-      "http://matrixos-alice:8787/stable-abc123/static/out/vs/editor/common/services/editorWebWorkerMain.js",
-    );
-    const headers = init?.headers as Headers;
-    expect(headers.get("host")).toBe("code.matrix-os.com");
-    expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
-    expect(headers.get("cookie")).toBeNull();
-    expect(headers.get("authorization")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("marks the code-domain auth page as non-cacheable", async () => {

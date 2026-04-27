@@ -58,7 +58,7 @@ Untracked support/spec files currently present:
 
 - [x] T010 Preserve editor asset/cache behavior so unauthenticated protected editor responses do not return cacheable auth HTML that can poison JavaScript, worker, font, icon, or service worker loads.
   - Files: `packages/platform/src/main.ts`, `tests/platform/proxy-routing.test.ts`
-  - Notes: code-server application static assets are proxied from the user's private editor port, but the platform forces `Cache-Control: no-store, private`, `CDN-Cache-Control: no-store`, and `Cloudflare-CDN-Cache-Control: no-store` so Cloudflare cannot retain auth HTML under editor bundle URLs.
+  - Notes: code-server application static assets now require a Matrix session or `matrix_code_session` cookie; unauthenticated static asset requests return a non-cacheable `401` instead of proxying from an arbitrary tenant container.
 
 - [x] T011 Strip Matrix platform credentials before proxying code-domain requests into code-server and preserve forwarded host/proto headers.
   - Files: `packages/platform/src/main.ts`, `tests/platform/proxy-routing.test.ts`

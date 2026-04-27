@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { constants } from "node:fs";
+import { isIP } from "node:net";
 import { access, readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -24,6 +26,7 @@ export interface PreviewRecord {
 
 type ProbeResult = { ok: true } | { ok: false; code: string };
 type ProbeUrl = (url: string, options: { timeoutMs: number }) => Promise<ProbeResult>;
+type ResolvePreviewHost = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
 type Failure = {
   ok: false;
@@ -91,14 +94,72 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function validPreviewUrl(value: string): boolean {
+function parsePreviewUrl(value: string): URL | null {
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
   } catch (err: unknown) {
-    if (err instanceof TypeError) return false;
-    return false;
+    if (err instanceof TypeError) return null;
+    console.error("[preview-manager] Unexpected URL parse failure:", err);
+    return null;
   }
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && (b === 0 || b === 168)) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  return false;
+}
+
+function isPrivateIpv6(address: string): boolean {
+  const normalized = address.toLowerCase().split("%", 1)[0] ?? "";
+  if (normalized === "::" || normalized === "::1") return true;
+  if (normalized.startsWith("::ffff:")) return isPrivateIpv4(normalized.slice("::ffff:".length));
+  if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
+  if (/^fe[89ab]/.test(normalized)) return true;
+  if (normalized.startsWith("ff")) return true;
+  return normalized.startsWith("2001:db8");
+}
+
+function isPublicIpAddress(address: string): boolean {
+  const kind = isIP(address);
+  if (kind === 4) return !isPrivateIpv4(address);
+  if (kind === 6) return !isPrivateIpv6(address);
+  return false;
+}
+
+function isLoopbackPreviewHost(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "::1" ||
+    normalized === "127.0.0.1" ||
+    normalized.startsWith("127.");
+}
+
+async function safePreviewUrl(rawUrl: string, resolvePreviewHost: ResolvePreviewHost): Promise<string | null> {
+  const url = parsePreviewUrl(rawUrl);
+  if (!url) return null;
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (isLoopbackPreviewHost(hostname)) return rawUrl;
+  const literalKind = isIP(hostname);
+  let addresses: Array<{ address: string; family: number }>;
+  try {
+    addresses = literalKind > 0
+      ? [{ address: hostname, family: literalKind }]
+      : await resolvePreviewHost(hostname);
+  } catch (err: unknown) {
+    console.warn("[preview-manager] Preview host resolution failed:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+  return addresses.length > 0 && addresses.every((entry) => isPublicIpAddress(entry.address)) ? rawUrl : null;
 }
 
 async function defaultProbeUrl(url: string, options: { timeoutMs: number }): Promise<ProbeResult> {
@@ -174,12 +235,14 @@ function detectPreviewUrls(text: string): string[] {
 export function createPreviewManager(options: {
   homePath: string;
   probeUrl?: ProbeUrl;
+  resolvePreviewHost?: ResolvePreviewHost;
   maxPreviewsPerProject?: number;
   maxPreviewsPerTask?: number;
   now?: () => string;
 }) {
   const homePath = resolve(options.homePath);
   const probeUrl = options.probeUrl ?? defaultProbeUrl;
+  const resolvePreviewHost = options.resolvePreviewHost ?? ((hostname: string) => lookup(hostname, { all: true, verbatim: true }));
   const projectCap = options.maxPreviewsPerProject ?? DEFAULT_PROJECT_CAP;
   const taskCap = options.maxPreviewsPerTask ?? DEFAULT_TASK_CAP;
 
@@ -191,7 +254,8 @@ export function createPreviewManager(options: {
       if (projectError) return projectError;
       const parsed = CreatePreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview", "Preview payload is invalid");
-      if (!validPreviewUrl(parsed.data.url)) {
+      const safeUrl = await safePreviewUrl(parsed.data.url, resolvePreviewHost);
+      if (!safeUrl) {
         return failure(400, "invalid_preview_url", "Preview URL is invalid");
       }
 
@@ -203,7 +267,7 @@ export function createPreviewManager(options: {
         return failure(409, "preview_limit_exceeded", "Preview limit exceeded");
       }
 
-      const probe = await probeUrl(parsed.data.url, { timeoutMs: PROBE_TIMEOUT_MS });
+      const probe = await probeUrl(safeUrl, { timeoutMs: PROBE_TIMEOUT_MS });
       const timestamp = nowIso(options.now);
       const preview: PreviewRecord = {
         id: `prev_${randomUUID()}`,
@@ -211,7 +275,7 @@ export function createPreviewManager(options: {
         taskId: parsed.data.taskId,
         sessionId: parsed.data.sessionId,
         label: parsed.data.label,
-        url: parsed.data.url,
+        url: safeUrl,
         lastStatus: probe.ok ? "ok" : "failed",
         displayPreference: parsed.data.displayPreference,
         createdAt: timestamp,
@@ -246,18 +310,18 @@ export function createPreviewManager(options: {
       if (previewError) return previewError;
       const parsed = UpdatePreviewSchema.safeParse(input);
       if (!parsed.success) return failure(400, "invalid_preview", "Preview payload is invalid");
-      if (parsed.data.url && !validPreviewUrl(parsed.data.url)) {
-        return failure(400, "invalid_preview_url", "Preview URL is invalid");
-      }
+      const safeUrl = parsed.data.url ? await safePreviewUrl(parsed.data.url, resolvePreviewHost) : null;
+      if (parsed.data.url && !safeUrl) return failure(400, "invalid_preview_url", "Preview URL is invalid");
       const existing = await readPreview(homePath, projectSlug, previewId);
       if (!existing) return failure(404, "not_found", "Preview was not found");
 
       const nextStatus = parsed.data.url
-        ? (await probeUrl(parsed.data.url, { timeoutMs: PROBE_TIMEOUT_MS })).ok ? "ok" : "failed"
+        ? (await probeUrl(safeUrl!, { timeoutMs: PROBE_TIMEOUT_MS })).ok ? "ok" : "failed"
         : parsed.data.lastStatus ?? existing.lastStatus;
       const preview: PreviewRecord = {
         ...existing,
         ...parsed.data,
+        url: safeUrl ?? existing.url,
         lastStatus: nextStatus,
         updatedAt: nowIso(options.now),
       };

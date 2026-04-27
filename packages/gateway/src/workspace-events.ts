@@ -113,6 +113,15 @@ export function createWorkspaceEventStore(options: {
 }) {
   const homePath = resolve(options.homePath);
   const maxEvents = Math.max(1, Math.min(options.maxEvents ?? DEFAULT_MAX_EVENTS, DEFAULT_MAX_EVENTS));
+  let writeQueue: Promise<unknown> = Promise.resolve();
+
+  function enqueueWrite<T>(run: () => Promise<T>): Promise<T> {
+    const next = writeQueue.then(run, run);
+    writeQueue = next.catch((err: unknown) => {
+      console.warn("[workspace-events] queued event write failed:", err instanceof Error ? err.message : String(err));
+    });
+    return next;
+  }
 
   return {
     async publishEvent(input: unknown): Promise<Result<{ event: ActivityEvent }> | Failure> {
@@ -125,9 +134,11 @@ export function createWorkspaceEventStore(options: {
         payload: parsed.data.payload,
         createdAt: nowIso(options.now),
       };
-      const events = [...await readEvents(homePath), event].slice(-maxEvents);
-      await atomicWriteJson(eventsPath(homePath), events);
-      return { ok: true, event };
+      return enqueueWrite(async () => {
+        const events = [...await readEvents(homePath), event].slice(-maxEvents);
+        await atomicWriteJson(eventsPath(homePath), events);
+        return { ok: true, event };
+      });
     },
 
     async listEvents(input: unknown = {}): Promise<Result<{ events: ActivityEvent[]; nextCursor: string | null }> | Failure> {

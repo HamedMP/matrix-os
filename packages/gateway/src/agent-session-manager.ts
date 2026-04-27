@@ -211,6 +211,20 @@ async function resolveWorktree(
   return listed.worktrees.find((worktree) => worktree.id === worktreeId) ?? null;
 }
 
+async function releaseSessionLease(worktreeManager: WorktreeManager, session: Pick<WorkspaceSession, "id" | "projectSlug" | "worktreeId">): Promise<boolean> {
+  if (!session.projectSlug || !session.worktreeId) return true;
+  const released = await worktreeManager.releaseLease({
+    projectSlug: session.projectSlug,
+    worktreeId: session.worktreeId,
+    holderId: session.id,
+  });
+  if (!released.ok) {
+    console.warn("[agent-session-manager] Worktree lease release failed:", released.error.code);
+    return false;
+  }
+  return true;
+}
+
 export function createAgentSessionManager(options: {
   homePath: string;
   worktreeManager: WorktreeManager;
@@ -237,6 +251,7 @@ export function createAgentSessionManager(options: {
 
       let cwd = homePath;
       let worktree: WorktreeRecord | null = null;
+      let leaseAcquired = false;
       if (request.projectSlug) {
         const project = await readProject(homePath, request.projectSlug);
         if (!project) return failure(404, "not_found", "Project was not found");
@@ -258,6 +273,7 @@ export function createAgentSessionManager(options: {
           const holderId = "holderId" in lease ? lease.holderId : undefined;
           return failure(lease.status, "worktree_locked", "Worktree is locked", holderId);
         }
+        leaseAcquired = true;
       }
 
       const startedAt = nowIso(options.now);
@@ -275,12 +291,8 @@ export function createAgentSessionManager(options: {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Launch preflight failed:", err.message);
         }
-        if (request.projectSlug && request.worktreeId) {
-          await options.worktreeManager.releaseLease({
-            projectSlug: request.projectSlug,
-            worktreeId: request.worktreeId,
-            holderId: sessionId,
-          });
+        if (leaseAcquired) {
+          await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
         return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
       }
@@ -292,12 +304,8 @@ export function createAgentSessionManager(options: {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Runtime start failed:", err.message);
         }
-        if (request.projectSlug && request.worktreeId) {
-          await options.worktreeManager.releaseLease({
-            projectSlug: request.projectSlug,
-            worktreeId: request.worktreeId,
-            holderId: sessionId,
-          });
+        if (leaseAcquired) {
+          await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
         return failure(503, "runtime_unavailable", "Session runtime is unavailable");
       }
@@ -324,7 +332,18 @@ export function createAgentSessionManager(options: {
         startedAt,
         lastActivityAt: startedAt,
       };
-      await writeSession(homePath, session);
+      try {
+        await writeSession(homePath, session);
+      } catch (err: unknown) {
+        console.warn("[agent-session-manager] Session write failed after runtime start:", err instanceof Error ? err.message : String(err));
+        await options.zellijRuntime.kill(sessionId).catch((killErr: unknown) => {
+          console.warn("[agent-session-manager] Runtime cleanup after session write failure failed:", killErr instanceof Error ? killErr.message : String(killErr));
+        });
+        if (leaseAcquired) {
+          await releaseSessionLease(options.worktreeManager, session);
+        }
+        return failure(500, "session_persist_failed", "Session could not be created");
+      }
       return { ok: true, status: 201, session: decorateSession(session, options.zellijRuntime) };
     },
 
@@ -388,44 +407,44 @@ export function createAgentSessionManager(options: {
       }
       const session = await readSession(homePath, sessionId);
       if (!session) return failure(404, "not_found", "Session was not found");
+      let killFailed = false;
       try {
         await options.zellijRuntime.kill(sessionId);
       } catch (err: unknown) {
         if (err instanceof Error) {
           console.warn("[agent-session-manager] Runtime kill failed:", err.message);
         }
-        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
+        killFailed = true;
       }
-      if (session.projectSlug && session.worktreeId) {
-        const released = await options.worktreeManager.releaseLease({
-          projectSlug: session.projectSlug,
-          worktreeId: session.worktreeId,
-          holderId: session.id,
-        });
-        if (!released.ok) {
-          console.warn("[agent-session-manager] Worktree lease release failed:", released.error.code);
-        }
-      }
+      const releaseOk = await releaseSessionLease(options.worktreeManager, session);
       const exitedAt = nowIso(options.now);
       const updated: WorkspaceSession = {
         ...session,
-        runtime: { ...session.runtime, status: "exited" },
+        runtime: {
+          ...session.runtime,
+          status: releaseOk ? "exited" : "failed",
+          fallbackReason: releaseOk ? session.runtime.fallbackReason : "lease_release_failed",
+        },
         writeMode: "closed",
         lastActivityAt: exitedAt,
         exitedAt,
       };
       await writeSession(homePath, updated);
+      if (!releaseOk) return failure(500, "lease_release_failed", "Session stopped but the worktree lease could not be released");
+      if (killFailed) return failure(503, "runtime_unavailable", "Session runtime is unavailable");
       return { ok: true, session: decorateSession(updated, options.zellijRuntime) };
     },
 
     async reconcileStartup(): Promise<{ checked: number; degraded: number; releasedLeases: number }> {
       const sessions = await readAllSessions(homePath);
       let degraded = 0;
+      let releasedLeases = 0;
       for (const session of sessions) {
         if (!isActive(session) || session.runtime.type !== "zellij") continue;
         const health = await options.zellijRuntime.health();
         if (health.status !== "degraded") continue;
         degraded += 1;
+        if (session.projectSlug && session.worktreeId && await releaseSessionLease(options.worktreeManager, session)) releasedLeases += 1;
         await writeSession(homePath, {
           ...session,
           runtime: {
@@ -433,10 +452,11 @@ export function createAgentSessionManager(options: {
             status: "degraded",
             fallbackReason: health.fallbackReason ?? "runtime_degraded",
           },
+          writeMode: "closed",
           lastActivityAt: nowIso(options.now),
         });
       }
-      return { checked: sessions.length, degraded, releasedLeases: 0 };
+      return { checked: sessions.length, degraded, releasedLeases };
     },
   };
 }

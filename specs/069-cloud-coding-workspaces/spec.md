@@ -20,7 +20,7 @@ The advanced workflow is an autonomous review loop: Matrix checks out a PR in a 
 
 The first implementation slice delivers `https://code.matrix-os.com/?folder=/home/matrixos/home` through the Matrix platform. Each user container starts code-server on private port `8787`, the orchestrator records and exposes that private port, and the platform routes authenticated `code.matrix-os.com` HTTP and WebSocket traffic to the user's container without exposing code-server directly.
 
-The slice also handles browser editor subresources: Matrix issues a short-lived `matrix_code_session` cookie, preserves `Host: code.matrix-os.com` for code-server WebSockets, strips Matrix credentials before proxying to code-server, serves non-user code-server static application assets when browsers omit cookies, and marks those asset responses `no-store` for browser and CDN caches so auth HTML cannot poison JavaScript, worker, service-worker, icon, or font URLs.
+The slice also handles browser editor subresources: Matrix issues a short-lived `matrix_code_session` cookie, preserves `Host: code.matrix-os.com` for code-server WebSockets, strips Matrix credentials before proxying to code-server, rejects unauthenticated code-server static asset requests instead of proxying from an arbitrary tenant container, and marks those protected responses `no-store` for browser and CDN caches so auth HTML cannot poison JavaScript, worker, service-worker, icon, or font URLs.
 
 ## User Scenarios & Testing *(mandatory)*
 

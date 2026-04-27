@@ -207,6 +207,42 @@ describe("agent-session-manager", () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
+  it("releases the worktree lease and closes session state when runtime kill fails", async () => {
+    const { manager, zellijRuntime, worktreeManager } = createManager({
+      zellijRuntime: {
+        kill: vi.fn(async () => {
+          throw new Error("zellij unavailable");
+        }),
+      },
+    });
+    const started = await manager.startSession({
+      kind: "agent",
+      agent: "claude",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+    expect(started.ok).toBe(true);
+
+    await expect(manager.killSession("sess_abc123")).resolves.toMatchObject({
+      ok: false,
+      status: 503,
+      error: { code: "runtime_unavailable" },
+    });
+    expect(zellijRuntime.kill).toHaveBeenCalledWith("sess_abc123");
+    await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
+      ok: true,
+      session: { runtime: { status: "exited" }, writeMode: "closed" },
+    });
+    await expect(worktreeManager.acquireLease({
+      projectSlug: "repo",
+      worktreeId,
+      holderType: "session",
+      holderId: "sess_after",
+    })).resolves.toMatchObject({ ok: true });
+  });
+
   it("lists and gets sessions with scoped filters", async () => {
     const { manager } = createManager();
     await manager.startSession({
@@ -258,7 +294,7 @@ describe("agent-session-manager", () => {
     expect(result).toEqual({
       checked: 1,
       degraded: 1,
-      releasedLeases: 0,
+      releasedLeases: 1,
     });
     await expect(manager.getSession("sess_abc123")).resolves.toMatchObject({
       ok: true,
@@ -267,6 +303,7 @@ describe("agent-session-manager", () => {
           status: "degraded",
           fallbackReason: "zellij_unavailable",
         },
+        writeMode: "closed",
       },
     });
   });

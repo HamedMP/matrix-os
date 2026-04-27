@@ -84,8 +84,26 @@ describe("worktree-manager", () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
+  it("allows only one concurrent writer to acquire a new worktree lease", async () => {
+    const manager = createWorktreeManager({ homePath, runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })) });
+    const created = await manager.createWorktree({ projectSlug: "repo", branch: "race" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const results = await Promise.all(Array.from({ length: 20 }, (_, index) => manager.acquireLease({
+      projectSlug: "repo",
+      worktreeId: created.worktree.id,
+      holderType: "session",
+      holderId: `sess_${index}`,
+    })));
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok && result.status === 409)).toHaveLength(19);
+  });
+
   it("requires explicit confirmation before deleting dirty worktrees", async () => {
-    const manager = createWorktreeManager({ homePath, runCommand: vi.fn(async () => ({ stdout: " M file.ts\n", stderr: "" })) });
+    const runCommand = vi.fn(async () => ({ stdout: " M file.ts\n", stderr: "" }));
+    const manager = createWorktreeManager({ homePath, runCommand });
     const created = await manager.createWorktree({ projectSlug: "repo", branch: "dirty" });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
@@ -102,6 +120,7 @@ describe("worktree-manager", () => {
       worktreeId: created.worktree.id,
       confirmDirtyDelete: true,
     })).resolves.toMatchObject({ ok: true });
+    expect(runCommand).toHaveBeenCalledWith("git", ["worktree", "remove", "--force", "--", created.worktree.path], expect.any(Object));
     await expect(stat(created.worktree.path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,12 +67,16 @@ describe("state-ops", () => {
       id: "prev_abc123",
       url: "http://localhost:3000",
     });
+    const outside = await mkdtemp(join(tmpdir(), "matrix-state-outside-"));
+    await writeFile(join(outside, "secret.txt"), "secret");
+    await symlink(outside, join(homePath, "projects", "drop", "outside-link"));
     const ops = createStateOps({ homePath });
 
     const manifest = await ops.exportWorkspace({ scope: "project", projectSlug: "drop", ownerScope: { type: "user", id: "user_a" } });
     expect(manifest.files).toContain("projects/drop/config.json");
     expect(manifest.files).toContain("projects/drop/tasks/task_abc123.json");
     expect(manifest.files).toContain("projects/drop/previews/prev_abc123.json");
+    expect(manifest.files).not.toContain("projects/drop/outside-link/secret.txt");
     expect(manifest.files).not.toContain("projects/keep/config.json");
 
     await expect(ops.deleteWorkspaceData({

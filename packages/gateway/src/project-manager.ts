@@ -5,7 +5,7 @@ import { access, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { atomicWriteJson, readJsonFile, type OwnerScope } from "./state-ops.js";
+import { atomicWriteJson, readJsonFile, withProjectLock, type OwnerScope } from "./state-ops.js";
 
 export const PROJECT_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -189,64 +189,67 @@ export function createProjectManager(options: {
       if (!SlugSchema.safeParse(slug).success) {
         return genericError(400, "invalid_slug", "Project slug is invalid");
       }
-      const targetProjectPath = projectPath(homePath, slug);
-      if (await pathExists(targetProjectPath)) {
-        return genericError(409, "slug_conflict", "Project slug already exists");
-      }
+      return withProjectLock(slug, async () => {
+        const targetProjectPath = projectPath(homePath, slug);
+        if (await pathExists(targetProjectPath)) {
+          return genericError(409, "slug_conflict", "Project slug already exists");
+        }
 
-      const stagingRoot = join(homePath, "system", "clone-staging");
-      const stagingPath = join(stagingRoot, `${slug}-${randomUUID()}`);
-      const repoPath = join(targetProjectPath, "repo");
-      await mkdir(stagingRoot, { recursive: true });
+        const stagingRoot = join(homePath, "system", "clone-staging");
+        const stagingPath = join(stagingRoot, `${slug}-${randomUUID()}`);
+        const repoPath = join(targetProjectPath, "repo");
+        await mkdir(stagingRoot, { recursive: true });
 
-      try {
-        await runCommand("gh", ["auth", "status"], { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
-      } catch (err: unknown) {
-        if (err instanceof Error) {
+        try {
+          await runCommand("gh", ["auth", "status"], { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
+        } catch (err: unknown) {
+          if (err instanceof Error) {
+            return genericError(401, "github_auth_required", "GitHub authentication is required");
+          }
           return genericError(401, "github_auth_required", "GitHub authentication is required");
         }
-        return genericError(401, "github_auth_required", "GitHub authentication is required");
-      }
 
-      try {
-        await runCommand("git", ["clone", "--", github.cloneUrl, stagingPath], {
-          cwd: stagingRoot,
-          timeout: CLONE_TIMEOUT_MS,
-        });
-        if (!await pathExists(stagingPath)) {
-          await mkdir(stagingPath, { recursive: true });
+        try {
+          await runCommand("git", ["clone", "--", github.cloneUrl, stagingPath], {
+            cwd: stagingRoot,
+            timeout: CLONE_TIMEOUT_MS,
+          });
+          if (!await pathExists(stagingPath)) {
+            await mkdir(stagingPath, { recursive: true });
+          }
+          await mkdir(targetProjectPath, { recursive: true });
+          await rename(stagingPath, repoPath);
+        } catch (err: unknown) {
+          if (err instanceof Error) {
+            console.warn("[project-manager] Clone failed:", err.message);
+          } else {
+            console.warn("[project-manager] Clone failed:", err);
+          }
+          await rm(stagingPath, { recursive: true, force: true });
+          await rm(targetProjectPath, { recursive: true, force: true });
+          return genericError(502, "clone_failed", "Repository clone failed");
         }
-        await mkdir(targetProjectPath, { recursive: true });
-        await rename(stagingPath, repoPath);
-      } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn("[project-manager] Clone failed:", err.message);
-        } else {
-          console.warn("[project-manager] Clone failed:", err);
-        }
-        await rm(stagingPath, { recursive: true, force: true });
-        return genericError(502, "clone_failed", "Repository clone failed");
-      }
 
-      const timestamp = nowIso(options.now);
-      const project: ProjectConfig = {
-        id: `proj_${randomUUID()}`,
-        name: github.repo,
-        slug,
-        remote: input.url,
-        localPath: repoPath,
-        addedAt: timestamp,
-        updatedAt: timestamp,
-        ownerScope: input.ownerScope ?? { type: "user", id: "local" },
-        github: {
-          owner: github.owner,
-          repo: github.repo,
-          htmlUrl: github.htmlUrl,
-          authState: "ok",
-        },
-      };
-      await atomicWriteJson(join(targetProjectPath, "config.json"), project);
-      return { ok: true, status: 201, project };
+        const timestamp = nowIso(options.now);
+        const project: ProjectConfig = {
+          id: `proj_${randomUUID()}`,
+          name: github.repo,
+          slug,
+          remote: input.url,
+          localPath: repoPath,
+          addedAt: timestamp,
+          updatedAt: timestamp,
+          ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+          github: {
+            owner: github.owner,
+            repo: github.repo,
+            htmlUrl: github.htmlUrl,
+            authState: "ok",
+          },
+        };
+        await atomicWriteJson(join(targetProjectPath, "config.json"), project);
+        return { ok: true, status: 201, project };
+      });
     },
 
     async listManagedProjects(): Promise<{ projects: ProjectConfig[]; nextCursor: null }> {

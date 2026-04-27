@@ -10,7 +10,6 @@ import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
   createPlatformDb,
-  type ContainerRecord,
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
@@ -148,16 +147,6 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Expires', '0');
 }
 
-function applyCodeDomainStaticAssetHeaders(headers: Headers): Headers {
-  const next = new Headers(headers);
-  next.set('Cache-Control', 'no-store, private');
-  next.set('CDN-Cache-Control', 'no-store');
-  next.set('Cloudflare-CDN-Cache-Control', 'no-store');
-  next.set('Pragma', 'no-cache');
-  next.set('Expires', '0');
-  return next;
-}
-
 function isCodeDomainStaticAssetPath(path: string): boolean {
   return (
     path === '/favicon.ico' ||
@@ -181,10 +170,6 @@ function buildCodeDomainProxyHeaders(
   headers.set('x-forwarded-proto', 'https');
   headers.set('connection', 'close');
   return headers;
-}
-
-async function pickCodeDomainStaticAssetContainer(db: PlatformDB): Promise<ContainerRecord | null> {
-  return (await listContainers(db, 'running'))[0] ?? null;
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -710,40 +695,11 @@ export function createApp(deps: {
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
-      if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
-        const staticRecord = await pickCodeDomainStaticAssetContainer(db);
-        if (!staticRecord) {
-          applyNoStoreHeaders(c);
-          return c.text('Editor assets unavailable', 503);
-        }
-        const endpoint = await resolveContainerEndpoint(docker, db, staticRecord.handle, staticRecord.containerId);
-        if (!endpoint) {
-          applyNoStoreHeaders(c);
-          return c.text('Editor assets unavailable', 503);
-        }
-        const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-        const targetUrl = `http://${endpoint.host}:${CODE_SERVER_PORT}${path}${qs}`;
-        try {
-          const upstream = await fetch(targetUrl, {
-            method: c.req.method,
-            headers: buildCodeDomainProxyHeaders(c.req.header(), host),
-            redirect: 'manual',
-            signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
-            body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-            dispatcher: containerProxyDispatcher,
-          } as RequestInit & { dispatcher: Agent });
-
-          return new Response(upstream.body, {
-            status: upstream.status,
-            headers: applyCodeDomainStaticAssetHeaders(upstream.headers),
-          });
-        } catch (err: unknown) {
-          logPlatformRouteError('code-domain static asset proxy', err);
-          applyNoStoreHeaders(c);
-          return c.text('Editor assets unavailable', 502);
-        }
-      }
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
+      if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
+        applyNoStoreHeaders(c);
+        return c.text('Unauthorized', 401);
+      }
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }

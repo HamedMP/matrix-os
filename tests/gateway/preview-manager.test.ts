@@ -63,12 +63,18 @@ describe("preview-manager", () => {
   });
 
   it("rejects unsafe preview URLs and exposes probe failures as recoverable status", async () => {
+    const probeUrl = vi.fn(async () => ({ ok: false as const, code: "preview_probe_failed" }));
     const manager = createPreviewManager({
       homePath,
-      probeUrl: vi.fn(async () => ({ ok: false as const, code: "preview_probe_failed" })),
+      probeUrl,
     });
 
     await expect(manager.createPreview("repo", { label: "File", url: "file:///etc/passwd" })).resolves.toMatchObject({
+      ok: false,
+      status: 400,
+      error: { code: "invalid_preview_url" },
+    });
+    await expect(manager.createPreview("repo", { label: "Metadata", url: "http://169.254.169.254/latest/meta-data" })).resolves.toMatchObject({
       ok: false,
       status: 400,
       error: { code: "invalid_preview_url" },
@@ -77,6 +83,7 @@ describe("preview-manager", () => {
       ok: true,
       preview: { lastStatus: "failed" },
     });
+    expect(probeUrl).toHaveBeenCalledTimes(1);
   });
 
   it("enforces project and task preview caps and detects preview URLs from session output", async () => {

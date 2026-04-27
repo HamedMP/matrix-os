@@ -97,6 +97,7 @@ describe("project-manager", () => {
       expect(result.error.message).not.toContain("ghp_secret");
     }
     await expect(readdir(join(homePath, "system", "clone-staging"))).resolves.toEqual([]);
+    await expect(stat(join(homePath, "projects", "repo"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("lists PRs and branches through argv-based commands", async () => {
