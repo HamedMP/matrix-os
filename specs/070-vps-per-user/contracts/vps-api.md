@@ -16,6 +16,17 @@ All mutating endpoints use `bodyLimit({ maxSize: 4096 })`. All request bodies ar
 
 Secret comparisons must use `timingSafeEqual` over equal-length buffers.
 
+## Session Routing Contract
+
+`code.matrix-os.com` is a shared public hostname, not a per-user subdomain. The platform must:
+
+1. Authenticate Clerk session, sync JWT bearer token, websocket query token, or short-lived `matrix_code_session` cookie.
+2. Resolve the authenticated Clerk user to a `running` `userMachines` row.
+3. Forward HTTP and WebSocket traffic to `https://<publicIPv4>:443` with `Host: code.matrix-os.com`, `X-Forwarded-Host: code.matrix-os.com`, and platform proof headers.
+4. Strip user-supplied `Cookie` and `Authorization` headers before the VPS hop.
+5. Set `matrix_code_session` (`HttpOnly`, `Secure`, `SameSite=None`, 12 hour max age) after an authenticated code-domain response.
+6. Fall back to the legacy container code-server port only when no running VPS exists for the user.
+
 ## POST /vps/provision
 
 Create or return the user's customer VPS. Idempotent by `clerkUserId`.

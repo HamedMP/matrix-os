@@ -2,13 +2,15 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { createConnection } from 'node:net';
+import { createConnection, type Socket } from 'node:net';
+import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage } from 'node:http';
 import Dockerode from 'dockerode';
 import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
   createPlatformDb,
+  type ContainerRecord,
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
@@ -30,6 +32,8 @@ import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
+  isCodeDomainHost,
+  isSessionRoutedHost,
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from './ws-upgrade.js';
@@ -52,6 +56,9 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
+const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
+const CODE_SESSION_COOKIE = 'matrix_code_session';
+const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -95,6 +102,80 @@ function bearerTokenEquals(authHeader: string | undefined, expected: string): bo
   return timingSafeTokenEquals(authHeader.slice(7), expected);
 }
 
+function readCookie(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]+)`));
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch (err: unknown) {
+    if (err instanceof URIError) {
+      return null;
+    }
+    console.warn('[platform] Failed to decode cookie value:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+function buildCodeSessionCookie(token: string): string {
+  return [
+    `${CODE_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=None',
+    `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
+  ].join('; ');
+}
+
+function applyNoStoreHeaders(c: import('hono').Context): void {
+  c.header('Cache-Control', 'no-store, private');
+  c.header('CDN-Cache-Control', 'no-store');
+  c.header('Cloudflare-CDN-Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  c.header('Expires', '0');
+}
+
+function applyCodeDomainStaticAssetHeaders(headers: Headers): Headers {
+  const next = new Headers(headers);
+  next.set('Cache-Control', 'no-store, private');
+  next.set('CDN-Cache-Control', 'no-store');
+  next.set('Cloudflare-CDN-Cache-Control', 'no-store');
+  next.set('Pragma', 'no-cache');
+  next.set('Expires', '0');
+  return next;
+}
+
+function isCodeDomainStaticAssetPath(path: string): boolean {
+  return (
+    path === '/favicon.ico' ||
+    path.startsWith('/_static/') ||
+    /^\/stable-[^/]+\/static\//.test(path)
+  );
+}
+
+function buildCodeDomainProxyHeaders(
+  requestHeaders: Record<string, string | undefined>,
+  host: string,
+): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(requestHeaders)) {
+    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+      headers.set(key, value);
+    }
+  }
+  headers.set('host', host);
+  headers.set('x-forwarded-host', host);
+  headers.set('x-forwarded-proto', 'https');
+  headers.set('connection', 'close');
+  return headers;
+}
+
+function pickCodeDomainStaticAssetContainer(db: PlatformDB): ContainerRecord | null {
+  return listContainers(db, 'running')[0] ?? null;
+}
+
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
   const handleToken = buildPlatformVerificationToken(handle, platformSecret);
   return createHmac('sha256', handleToken).update(userId).digest('hex');
@@ -120,6 +201,7 @@ function applyAuthPageHeaders(
   c: import('hono').Context,
   scriptNonce: string,
 ): void {
+  applyNoStoreHeaders(c);
   c.header('X-Frame-Options', 'DENY');
   c.header(
     'Content-Security-Policy',
@@ -269,10 +351,11 @@ async function resolveAppDomainIdentity(opts: {
   platformJwtSecret: string;
   wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
+  const codeSessionToken = readCookie(opts.cookieHeader, CODE_SESSION_COOKIE);
   const bearerToken =
     opts.authHeader?.startsWith('Bearer ')
       ? opts.authHeader.slice(7)
-      : opts.wsToken ?? null;
+      : opts.wsToken ?? codeSessionToken;
 
   if (bearerToken && opts.platformJwtSecret) {
     try {
@@ -562,22 +645,25 @@ export function createApp(deps: {
     );
   }
 
-  // Session-based routing: app.matrix-os.com -> Clerk session -> container
+  // Session-based routing:
+  // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
+  // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
   app.use('*', async (c, next) => {
     const host = c.req.header('host') ?? '';
     const isAppDomain = isAppDomainHost(host);
-    if (!isAppDomain) return next();
+    const isCodeDomain = isCodeDomainHost(host);
+    if (!isAppDomain && !isCodeDomain) return next();
 
     // Device-flow paths are served directly by the platform's auth-routes.ts
     // (registered above). In normal dispatch they never reach this middleware,
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
-    if (
+    if (isAppDomain && (
       reqPath === '/auth/device' ||
       reqPath.startsWith('/auth/device/') ||
       reqPath.startsWith('/api/auth/device/')
-    ) {
+    )) {
       return next();
     }
     const isPublicIntegrationPath =
@@ -585,7 +671,7 @@ export function createApp(deps: {
       reqPath.startsWith('/api/integrations/webhook/');
     const isIntegrationPath =
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
-    if (isPublicIntegrationPath) {
+    if (isAppDomain && isPublicIntegrationPath) {
       return next();
     }
 
@@ -593,12 +679,13 @@ export function createApp(deps: {
     const cookieHeader = c.req.header('cookie');
 
     const path = c.req.path;
-    const isGatewayPath =
+    const isGatewayPath = isAppDomain && (
       path.startsWith('/api/') ||
       path.startsWith('/ws') ||
       path.startsWith('/files/') ||
       path.startsWith('/modules/') ||
-      path === '/health';
+      path === '/health'
+    );
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
 
@@ -612,7 +699,40 @@ export function createApp(deps: {
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
-      console.log(`[app] no token path=${path}`);
+      if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
+        const staticRecord = pickCodeDomainStaticAssetContainer(db);
+        if (!staticRecord) {
+          applyNoStoreHeaders(c);
+          return c.text('Editor assets unavailable', 503);
+        }
+        const endpoint = await resolveContainerEndpoint(docker, db, staticRecord.handle, staticRecord.containerId);
+        if (!endpoint) {
+          applyNoStoreHeaders(c);
+          return c.text('Editor assets unavailable', 503);
+        }
+        const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+        const targetUrl = `http://${endpoint.host}:${CODE_SERVER_PORT}${path}${qs}`;
+        try {
+          const upstream = await fetch(targetUrl, {
+            method: c.req.method,
+            headers: buildCodeDomainProxyHeaders(c.req.header(), host),
+            redirect: 'manual',
+            signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+            body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+            dispatcher: containerProxyDispatcher,
+          } as RequestInit & { dispatcher: Agent });
+
+          return new Response(upstream.body, {
+            status: upstream.status,
+            headers: applyCodeDomainStaticAssetHeaders(upstream.headers),
+          });
+        } catch (err: unknown) {
+          logPlatformRouteError('code-domain static asset proxy', err);
+          applyNoStoreHeaders(c);
+          return c.text('Editor assets unavailable', 502);
+        }
+      }
+      console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
@@ -624,7 +744,7 @@ export function createApp(deps: {
       return c.html(getAuthPage(publishableKey, authMode, scriptNonce));
     }
 
-    console.log(`[app] verified request path=${path}`);
+    console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
     const runningMachine = getRunningUserMachineByHandle(db, identity.handle);
     if (runningMachine) {
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
@@ -633,25 +753,27 @@ export function createApp(deps: {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
-          headers.set(key, value);
+      const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+      if (!isCodeDomain) {
+        for (const [key, value] of Object.entries(c.req.header())) {
+          if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+            headers.set(key, value);
+          }
         }
+        const rawCookie = c.req.header('cookie');
+        if (rawCookie) {
+          const forwarded = rawCookie
+            .split(';')
+            .map((p) => p.trim())
+            .filter((p) => p.startsWith('matrix_app_session__'))
+            .join('; ');
+          if (forwarded) headers.set('cookie', forwarded);
+        }
+        headers.set('host', `${runningMachine.handle}.matrix-os.com`);
+        headers.set('x-forwarded-host', host);
+        headers.set('x-forwarded-proto', 'https');
+        headers.set('connection', 'close');
       }
-      const rawCookie = c.req.header('cookie');
-      if (rawCookie) {
-        const forwarded = rawCookie
-          .split(';')
-          .map((p) => p.trim())
-          .filter((p) => p.startsWith('matrix_app_session__'))
-          .join('; ');
-        if (forwarded) headers.set('cookie', forwarded);
-      }
-      headers.set('host', `${runningMachine.handle}.matrix-os.com`);
-      headers.set('x-forwarded-host', host);
-      headers.set('x-forwarded-proto', 'https');
-      headers.set('connection', 'close');
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
         headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
@@ -668,12 +790,24 @@ export function createApp(deps: {
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
+        const responseHeaders = new Headers(upstream.headers);
+        if (isCodeDomain && platformJwtSecret) {
+          const issued = await issueSyncJwt({
+            secret: platformJwtSecret,
+            clerkUserId: identity.userId,
+            handle: runningMachine.handle,
+            gatewayUrl: 'https://code.matrix-os.com',
+            expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+          });
+          responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
+        }
+
         return new Response(upstream.body, {
           status: upstream.status,
-          headers: upstream.headers,
+          headers: responseHeaders,
         });
       } catch (err: unknown) {
-        logPlatformRouteError('app-domain vps proxy', err);
+        logPlatformRouteError(isCodeDomain ? 'code-domain vps proxy' : 'app-domain vps proxy', err);
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }
@@ -683,13 +817,13 @@ export function createApp(deps: {
       return c.html(getNoContainerPage());
     }
 
-    if (isIntegrationPath) {
+    if (isAppDomain && isIntegrationPath) {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', record.handle);
       return next();
     }
 
-    if (path === '/api/auth/ws-token') {
+    if (isAppDomain && path === '/api/auth/ws-token') {
       if (!platformJwtSecret) {
         return c.json({ error: 'WebSocket auth unavailable' }, 503);
       }
@@ -718,35 +852,39 @@ export function createApp(deps: {
     updateLastActive(db, record.handle);
 
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const targetPort = isGatewayPath ? 4000 : 3000;
+    const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
-        headers.set(key, value);
+    const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+    if (!isCodeDomain) {
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
       }
     }
     // Forward only the app-session cookies (spec 063). Clerk and other
     // cookies are stripped because gateway auth goes via the bearer token
     // set below; forwarding them would leak the user's Clerk session into
     // the container process.
-    const rawCookie = c.req.header('cookie');
-    if (rawCookie) {
-      const forwarded = rawCookie
-        .split(';')
-        .map((p) => p.trim())
-        .filter((p) => p.startsWith('matrix_app_session__'))
-        .join('; ');
-      if (forwarded) headers.set('cookie', forwarded);
+    if (!isCodeDomain) {
+      const rawCookie = c.req.header('cookie');
+      if (rawCookie) {
+        const forwarded = rawCookie
+          .split(';')
+          .map((p) => p.trim())
+          .filter((p) => p.startsWith('matrix_app_session__'))
+          .join('; ');
+        if (forwarded) headers.set('cookie', forwarded);
+      }
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('connection', 'close');
     }
-    headers.set('x-forwarded-host', host);
-    headers.set('x-forwarded-proto', 'https');
-    headers.set('connection', 'close');
-    if (platformSecret) {
+    if (platformSecret && isAppDomain) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
       headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
+      headers.set('x-platform-user-id', identity.userId);
     }
-    headers.set('x-platform-user-id', identity.userId);
 
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -769,19 +907,32 @@ export function createApp(deps: {
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
+        const responseHeaders = new Headers(upstream.headers);
+        if (isCodeDomain && platformJwtSecret) {
+          const issued = await issueSyncJwt({
+            secret: platformJwtSecret,
+            clerkUserId: identity.userId,
+            handle: record.handle,
+            gatewayUrl: 'https://code.matrix-os.com',
+            expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+          });
+          responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
+        }
+
         return new Response(upstream.body, {
           status: upstream.status,
-          headers: upstream.headers,
+          headers: responseHeaders,
         });
       } catch (err: unknown) {
         lastErr = err;
+        const routeName = isCodeDomain ? 'code-domain' : 'app-domain';
         console.warn(
-          `[platform] app-domain proxy retry attempt=${attempt + 1} handle=${record.handle} target=${targetUrl} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+          `[platform] ${routeName} proxy retry attempt=${attempt + 1} handle=${record.handle} target=${targetUrl} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
         );
       }
     }
 
-    logPlatformRouteError('app-domain proxy', lastErr);
+    logPlatformRouteError(isCodeDomain ? 'code-domain proxy' : 'app-domain proxy', lastErr);
     return c.json({ error: 'Container unreachable' }, 502);
   });
 
@@ -1440,10 +1591,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   // WebSocket upgrade handler
   (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
     const host = getWebSocketUpgradeHost(req.headers.host, req.headers['x-forwarded-host']);
-    if (!isAppDomainHost(host)) {
+    if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;
     }
+    const isCodeDomain = isCodeDomainHost(host);
 
     const path = req.url ?? '/';
     const wsToken = getWebSocketUpgradeToken(path);
@@ -1457,12 +1609,86 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     });
     if (!identity) { socket.destroy(); return; }
 
+    const runningMachine = getRunningUserMachineByHandle(db, identity.handle);
     const record = getContainer(db, identity.handle);
-    if (!record) { socket.destroy(); return; }
-    let activeUpstream: ReturnType<typeof createConnection> | null = null;
+    if (!runningMachine && !record) { socket.destroy(); return; }
+    let activeUpstream: Socket | null = null;
     const onSocketError = () => activeUpstream?.destroy();
     socket.on('error', onSocketError);
 
+    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => {
+      return Object.entries(req.headers)
+        .filter(([k]) => (
+          k !== 'host' &&
+          k !== 'authorization' &&
+          k !== 'cookie' &&
+          k !== 'x-forwarded-host' &&
+          k !== 'x-forwarded-proto'
+        ))
+        .flatMap(([k, v]) => {
+          if (v === undefined) return [];
+          return `${k}: ${Array.isArray(v) ? v.join(', ') : v}`;
+        })
+        .concat([
+          `x-forwarded-host: ${host}`,
+          'x-forwarded-proto: https',
+        ])
+        .concat(
+          PLATFORM_SECRET && includePlatformProof
+            ? [
+                `authorization: Bearer ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`,
+                `x-platform-verified: ${buildPlatformUserProof(handle, identity.userId, PLATFORM_SECRET)}`,
+                `x-platform-user-id: ${identity.userId}`,
+              ]
+            : [],
+        )
+        .join('\r\n');
+    };
+
+    const writeUpgradeRequest = (
+      upstream: Socket,
+      upstreamHostHeader: string,
+      headers: string,
+    ): void => {
+      if (!isSafeWebSocketUpgradePath(path)) {
+        socket.destroy();
+        upstream.destroy();
+        return;
+      }
+      const upstreamPath = stripWebSocketUpgradeToken(path);
+      upstream.write(
+        `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`
+      );
+      if (head.length > 0) upstream.write(head);
+
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    };
+
+    if (runningMachine?.publicIPv4) {
+      const upstreamHostHeader = isCodeDomain ? host : `${runningMachine.handle}.matrix-os.com`;
+      const headers = buildUpgradeHeaders(runningMachine.handle, true);
+      const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
+      const upstream = createTlsConnection({
+        host: runningMachine.publicIPv4,
+        port: 443,
+        servername: upstreamServerName,
+        rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'false' ? false : undefined,
+      }, () => {
+        activeUpstream = upstream;
+        writeUpgradeRequest(upstream, upstreamHostHeader, headers);
+      });
+      upstream.on('error', (err) => {
+        upstream.destroy();
+        console.warn(
+          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} path=${path} error=${describeError(err)}`,
+        );
+        socket.destroy();
+      });
+      return;
+    }
+
+    if (!record) { socket.destroy(); return; }
     const connectUpstream = async (attempt: number): Promise<void> => {
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
@@ -1474,36 +1700,16 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       }
 
       let connected = false;
-      const upstream = createConnection({ host: endpoint.host, port: 4000 }, () => {
+      const targetPort = isCodeDomain ? CODE_SERVER_PORT : 4000;
+      const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
         connected = true;
         activeUpstream = upstream;
-        if (!isSafeWebSocketUpgradePath(path)) {
-          socket.destroy();
-          upstream.destroy();
-          return;
-        }
-        const upstreamPath = stripWebSocketUpgradeToken(path);
-        const headers = Object.entries(req.headers)
-          .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
-          .map(([k, v]) => `${k}: ${v}`)
-          .concat(
-            PLATFORM_SECRET
-              ? [
-                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
-                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
-                  `x-platform-user-id: ${identity.userId}`,
-                ]
-              : [],
-          )
-          .join('\r\n');
-
-        upstream.write(
-          `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${endpoint.host}:4000\r\n${headers}\r\n\r\n`
+        const upstreamHostHeader = isCodeDomain ? host : `${endpoint.host}:${targetPort}`;
+        writeUpgradeRequest(
+          upstream,
+          upstreamHostHeader,
+          buildUpgradeHeaders(record.handle, !isCodeDomain),
         );
-        if (head.length > 0) upstream.write(head);
-
-        upstream.pipe(socket);
-        socket.pipe(upstream);
       });
 
       upstream.on('error', (err) => {

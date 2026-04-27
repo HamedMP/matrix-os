@@ -34,11 +34,12 @@
 
 ## Decision: Default phase 1 routing is control-plane reverse proxy to customer VPS HTTPS
 
-**Rationale**: This preserves the existing Cloudflare tunnel and subdomain entry path while adding a single routing branch in `profile-routing.ts`. It keeps per-user cloudflared tunnels out of phase 1 and avoids DNS automation complexity while customer count is low.
+**Rationale**: This preserves the existing Cloudflare tunnel while moving user resolution into the control-plane session router. `app.matrix-os.com` and the shared `code.matrix-os.com` hostname authenticate centrally, resolve Clerk identity to a running `userMachines` row, and forward to that user's VPS HTTPS gateway. It keeps per-user cloudflared tunnels and per-user code DNS out of phase 1 while customer count is low.
 
 **Alternatives considered**:
 - Per-user cloudflared tunnels: better bandwidth scaling later, but more moving parts and tunnel credential lifecycle.
 - Direct DNS A/AAAA records to VPSes: simpler data path, but exposes more DNS automation and certificate issuance concerns immediately.
+- Per-user code subdomains: no longer used; a single `code.matrix-os.com` entrypoint avoids DNS churn and lets the platform choose the correct VPS from the authenticated session.
 
 ## Decision: Use Cloudflare Origin Certificates for phase 1.1 if Let's Encrypt boot issuance is unreliable
 

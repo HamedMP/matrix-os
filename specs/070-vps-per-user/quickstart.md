@@ -38,6 +38,8 @@ tests/platform/customer-vps.test.ts
 tests/platform/customer-vps-routes.test.ts
 tests/platform/customer-vps-cloud-init.test.ts
 tests/platform/profile-routing-vps.test.ts
+tests/platform/proxy-routing.test.ts
+tests/platform/ws-upgrade.test.ts
 ```
 
 Minimum assertions:
@@ -49,6 +51,8 @@ Minimum assertions:
 - Hetzner/R2 errors map to generic client errors.
 - Cloud-init render includes required variables and does not leak secrets to logs.
 - Routing prefers `userMachines.running` and falls back to legacy `containers`.
+- `code.matrix-os.com` resolves the authenticated user and routes to that user's VPS before legacy code-server containers.
+- Code-domain follow-up requests can use the short-lived `matrix_code_session` cookie without forwarding Clerk/code-server cookies upstream.
 - Recovery refuses missing `system/db/latest` unless `allowEmpty` is true.
 
 ## 3. Local Verification
@@ -59,6 +63,7 @@ Run focused tests:
 bun run test tests/platform/customer-vps.test.ts
 bun run test tests/platform/customer-vps-routes.test.ts
 bun run test tests/platform/profile-routing-vps.test.ts
+bun run test tests/platform/proxy-routing.test.ts tests/platform/ws-upgrade.test.ts
 ```
 
 Run standard pre-PR checks:

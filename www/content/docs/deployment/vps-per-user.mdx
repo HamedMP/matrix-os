@@ -14,6 +14,7 @@ Included:
 - Lazy provisioning through `POST /vps/provision` for an authenticated internal operator request.
 - One-time host registration through `POST /vps/register`.
 - VPS-first routing for users with a `running` `user_machines` row.
+- Shared `code.matrix-os.com` routing to the authenticated user's VPS-hosted code-server gateway.
 - Customer host restore gate, hourly Postgres backups, and R2 metadata pointers.
 - Manual recovery through `POST /vps/recover` or `matrixctl recover`.
 
@@ -35,6 +36,10 @@ The default server type is controlled by `HETZNER_SERVER_TYPE` and currently tar
 - `CUSTOMER_VPS_ENABLED=true` is set only in the intended environment.
 
 Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable users until recovery and rollback have been exercised for a non-production account.
+
+## Routing
+
+`code.matrix-os.com` is a single public entrypoint. The platform authenticates the Clerk session or `matrix_code_session`, resolves the user to a running VPS, strips user cookies and authorization headers, then forwards to that VPS over HTTPS with platform proof headers. If no running VPS exists, the legacy container code-server path remains the fallback for non-migrated users.
 
 ## Backup Retention
 

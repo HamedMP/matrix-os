@@ -158,16 +158,18 @@ Hetzner config:
 Phase 1: **control-plane reverse proxy**, not per-user cloudflared tunnels.
 
 ```
-{handle}.matrix-os.com
+app.matrix-os.com / code.matrix-os.com
   -> Cloudflare
   -> control-plane cloudflared tunnel
-  -> platform:9000 subdomain router
+  -> platform:9000 session router
   -> reverse_proxy to userMachines.publicIPv4:443
 ```
 
-The platform's existing subdomain router (`profile-routing.ts`) gets a branch: if the user has a `userMachines` row in `running` state, route to that VPS; else fall back to existing container routing. New users: only the VPS branch ever fires.
+The platform session router resolves the authenticated Clerk user to a `userMachines` row. If that row is `running`, `app.matrix-os.com` and `code.matrix-os.com` requests route to that user's VPS; otherwise the router falls back to the existing container path. New users: only the VPS branch ever fires.
 
-TLS between control plane and customer VPS: customer VPS has a cert from Let's Encrypt for `{handle}.matrix-os.com` issued at provision time (cloud-init step). Control plane connects over HTTPS with hostname verification. Alternative for phase 1 if LE is slow on first boot: control plane → customer VPS over a Hetzner private network with a self-signed cert + pinned fingerprint stored in `userMachines`. Decision deferred to implementation, defaulting to LE.
+Cloud coding uses one shared public hostname: `https://code.matrix-os.com/?folder=/home/matrixos/home`. The control plane authenticates the user, strips Clerk/code-server cookies before forwarding, attaches platform proof headers to the customer VPS gateway, and pins a short-lived `matrix_code_session` cookie so code-server static assets and websocket reconnects can stay on the correct VPS without per-user DNS.
+
+TLS between control plane and customer VPS: customer VPS has a cert acceptable to the control-plane HTTPS client for the central routed hostnames, issued during provisioning. Alternative for phase 1 if public CA issuance is slow on first boot: control plane → customer VPS over a Hetzner private network with a self-signed cert + pinned fingerprint stored in `userMachines`. Decision deferred to implementation, defaulting to HTTPS with hostname verification.
 
 Per-user cloudflared tunnels (each VPS gets its own tunnel ID, DNS CNAME points directly) are the upgrade path when control-plane bandwidth becomes a concern. Not now.
 
