@@ -45,6 +45,22 @@ describe("canvas recovery", () => {
     expect((reconciled.nodes[0] as any).displayState).toBe("recoverable");
   });
 
+  it("does not mark omitted live reference categories as missing", () => {
+    const base = record();
+    const reconciled = reconcileCanvasRecord({
+      ...base,
+      nodes: [
+        { id: "node_project", type: "task", sourceRef: { kind: "project", id: "prj_1" }, displayState: "normal", metadata: {} },
+        { id: "node_review", type: "review_loop", sourceRef: { kind: "review_loop", id: "review_1" }, displayState: "normal", metadata: {} },
+      ],
+    });
+
+    expect(reconciled.nodes).toEqual([
+      expect.objectContaining({ id: "node_project", displayState: "normal", metadata: {} }),
+      expect.objectContaining({ id: "node_review", displayState: "normal", metadata: {} }),
+    ]);
+  });
+
   it("cleans old temporary export bundles with ttl and max-count policies", async () => {
     const dir = await mkdtemp(join(tmpdir(), "canvas-cleanup-"));
     await writeFile(join(dir, "canvas-old.json"), "{}");

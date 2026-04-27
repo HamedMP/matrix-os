@@ -29,9 +29,19 @@ export function reconcileCanvasRecord(record: CanvasRecord, liveRefs: { terminal
     if (typeof node !== "object" || node === null) return node;
     const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
     if (!sourceRef?.id) return node;
-    const missingTerminal = sourceRef.kind === "terminal_session" && sourceRef.id !== "unattached" && !liveRefs.terminalSessionIds?.has(sourceRef.id);
-    const missingProject = sourceRef.kind === "project" && !liveRefs.projectIds?.has(sourceRef.id);
-    const missingReview = sourceRef.kind === "review_loop" && !liveRefs.reviewLoopIds?.has(sourceRef.id);
+    const missingTerminal =
+      liveRefs.terminalSessionIds !== undefined &&
+      sourceRef.kind === "terminal_session" &&
+      sourceRef.id !== "unattached" &&
+      !liveRefs.terminalSessionIds.has(sourceRef.id);
+    const missingProject =
+      liveRefs.projectIds !== undefined &&
+      sourceRef.kind === "project" &&
+      !liveRefs.projectIds.has(sourceRef.id);
+    const missingReview =
+      liveRefs.reviewLoopIds !== undefined &&
+      sourceRef.kind === "review_loop" &&
+      !liveRefs.reviewLoopIds.has(sourceRef.id);
     if (missingTerminal || missingProject || missingReview) {
       return { ...node, displayState: "recoverable", metadata: { ...(node as { metadata?: object }).metadata, recoveryReason: "missing_reference" } };
     }
