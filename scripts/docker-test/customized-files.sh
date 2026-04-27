@@ -14,7 +14,7 @@ begin_test "Customized Files Survive Sync"
 # Clean slate and start
 echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 
@@ -41,7 +41,7 @@ $COMPOSE exec -T dev rm -f /home/matrixos/home/system/logs/template-sync.log
 # Restart container (triggers template sync)
 echo -e "${YELLOW}[SETUP]${NC} Restarting container to trigger sync..."
 $COMPOSE stop dev
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 

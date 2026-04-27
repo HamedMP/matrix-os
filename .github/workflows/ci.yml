@@ -67,10 +67,14 @@ jobs:
 
   # ── Gate 2: Tests ──
   unit:
-    name: Unit Tests
+    name: Unit Tests (${{ matrix.shard }}/4)
     needs: [typecheck, patterns]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
@@ -90,7 +94,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: bun run test
+      - run: bun run test -- --shard=${{ matrix.shard }}/4
 
   e2e:
     name: E2E Tests

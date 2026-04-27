@@ -19,7 +19,13 @@ TEST_NAME=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.dev.yml"
-COMPOSE="docker compose -f $COMPOSE_FILE"
+if [ -n "${COMPOSE_OVERRIDE_FILE:-}" ]; then
+  COMPOSE="docker compose -f $COMPOSE_FILE -f $COMPOSE_OVERRIDE_FILE"
+  COMPOSE_UP_FLAGS="--no-build"
+else
+  COMPOSE="docker compose -f $COMPOSE_FILE"
+  COMPOSE_UP_FLAGS=""
+fi
 
 # Gateway base URL for the default dev container
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:4000}"

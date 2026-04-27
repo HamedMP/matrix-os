@@ -11,10 +11,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  docker-scenarios:
-    name: Docker Scenario Tests
+  docker-build:
+    name: Build Docker Test Image
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Populate dev image cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.dev
+          cache-from: type=gha,scope=dev-image
+          cache-to: type=gha,mode=max,scope=dev-image
+
+  docker-scenarios:
+    name: Docker Scenario Tests (${{ matrix.scenario }})
+    needs: docker-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # multi-user and resource-limits remain excluded because they need
+        # dedicated profile/resource setup outside this parallel smoke matrix.
+        scenario:
+          - fresh-install
+          - upgrade
+          - customized-files
+          - channels
+          - recovery
 
     steps:
       - uses: actions/checkout@v4
@@ -22,46 +52,49 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
+      - name: Build dev image
+        uses: docker/build-push-action@v6
         with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ hashFiles('Dockerfile.dev', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+          context: .
+          file: Dockerfile.dev
+          load: true
+          tags: matrix-os-dev:ci
+          cache-from: type=gha,scope=dev-image
 
       - name: Create CI env file
         run: |
           echo "ANTHROPIC_API_KEY=test-not-used-in-docker-scenarios" > .env.docker
 
+      - name: Create CI compose override
+        run: |
+          cat > docker-compose.ci.yml <<'EOF'
+          services:
+            dev:
+              image: matrix-os-dev:ci
+              build: null
+          EOF
+
       - name: Create external volumes
         run: docker volume create matrixos-ai-auth
-
-      - name: Build dev image
-        run: |
-          docker compose -f docker-compose.dev.yml build dev
-        env:
-          DOCKER_BUILDKIT: 1
 
       - name: Run scenario tests
         run: |
           chmod +x scripts/docker-test/*.sh
-          ./scripts/docker-test/run-all.sh
+          ./scripts/docker-test/${{ matrix.scenario }}.sh
         env:
-          # Skip multi-user and resource-limits in CI to save time
-          SKIP_SCENARIOS: "multi-user resource-limits"
+          COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
 
       - name: Collect container logs on failure
         if: failure()
         run: |
           mkdir -p /tmp/docker-test-logs
-          docker compose -f docker-compose.dev.yml logs --tail 100 > /tmp/docker-test-logs/compose.log 2>&1 || true
-          docker compose -f docker-compose.dev.yml ps -a > /tmp/docker-test-logs/containers.log 2>&1 || true
+          docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml logs --tail 100 > /tmp/docker-test-logs/compose.log 2>&1 || true
+          docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml ps -a > /tmp/docker-test-logs/containers.log 2>&1 || true
 
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-test-logs
+          name: docker-test-logs-${{ matrix.scenario }}
           path: /tmp/docker-test-logs/
           retention-days: 7
