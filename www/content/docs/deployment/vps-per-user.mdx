@@ -49,9 +49,9 @@ R2 keys:
 
 - `system/vps-meta.json`: current machine metadata and heartbeat timestamp.
 - `system/db/latest`: latest successful snapshot pointer.
-- `system/db/snapshots/<timestamp>.sql.gz`: compressed Postgres custom-format snapshot.
+- `system/db/snapshots/<timestamp>.dump`: Postgres custom-format snapshot restored directly with `pg_restore`.
 
-Retention is intentionally conservative in this slice. `matrixctl r2 prune system/db/snapshots/` is bounded and safe to no-op until richer retention metadata is added.
+Retention pruning is deferred in this slice, so the hourly backup path uploads a new snapshot and updates `system/db/latest` without calling a no-op prune command.
 
 ## Manual Recovery
 

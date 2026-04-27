@@ -98,16 +98,16 @@ On every boot before gateway start:
 Hourly backup runs:
 
 ```text
-pg_dump --format=custom matrix | gzip > /var/lib/matrix/db/snapshots/<ts>.sql.gz
-matrixctl r2 put /var/lib/matrix/db/snapshots/<ts>.sql.gz system/db/snapshots/<ts>.sql.gz
-matrixctl r2 put-latest system/db/snapshots/<ts>.sql.gz
-matrixctl r2 prune system/db/snapshots/
+pg_dump --format=custom --file=/var/lib/matrix/db/snapshots/<ts>.dump matrix
+matrixctl r2 put /var/lib/matrix/db/snapshots/<ts>.dump system/db/snapshots/<ts>.dump
+matrixctl r2 put-latest system/db/snapshots/<ts>.dump
 ```
 
 Requirements:
 
 - `latest` is updated only after snapshot upload succeeds.
 - Backup process has a timeout and exits non-zero on failed dump/upload.
+- Retention pruning is deferred in this slice; the backup script must not call a no-op prune path.
 - Prune never deletes the object referenced by `latest`.
 - Logs do not include R2 credentials or raw provider response bodies.
 

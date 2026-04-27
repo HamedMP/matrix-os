@@ -1,26 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { Hono } from 'hono';
-import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
-import { insertApp, submitRating } from '../../packages/platform/src/app-registry.js';
+import { type PlatformDB } from '../../packages/platform/src/db.js';
+import { insertApp } from '../../packages/platform/src/app-registry.js';
 import { createStoreApi } from '../../packages/platform/src/store-api.js';
 
 describe('platform/store-api', () => {
-  let tmpDir: string;
   let db: PlatformDB;
   let app: Hono;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'store-api-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     app = new Hono();
     app.route('/api/store', createStoreApi(db));
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   function req(path: string, init?: RequestInit) {
@@ -28,11 +24,11 @@ describe('platform/store-api', () => {
   }
 
   describe('GET /apps', () => {
-    beforeEach(() => {
-      insertApp(db, { id: 'app_001', name: 'Snake', slug: 'snake', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
-      insertApp(db, { id: 'app_002', name: 'Chess', slug: 'chess', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
-      insertApp(db, { id: 'app_003', name: 'Calculator', slug: 'calc', authorId: '@alice', category: 'utility', version: '1.0.0', isPublic: true });
-      insertApp(db, { id: 'app_004', name: 'Private', slug: 'private', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: false });
+    beforeEach(async () => {
+      await insertApp(db, { id: 'app_001', name: 'Snake', slug: 'snake', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
+      await insertApp(db, { id: 'app_002', name: 'Chess', slug: 'chess', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
+      await insertApp(db, { id: 'app_003', name: 'Calculator', slug: 'calc', authorId: '@alice', category: 'utility', version: '1.0.0', isPublic: true });
+      await insertApp(db, { id: 'app_004', name: 'Private', slug: 'private', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: false });
     });
 
     it('lists public apps', async () => {
@@ -64,7 +60,7 @@ describe('platform/store-api', () => {
 
   describe('GET /apps/:author/:slug', () => {
     it('returns app detail', async () => {
-      insertApp(db, { id: 'app_001', name: 'Snake', slug: 'snake', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true, description: 'Classic snake' });
+      await insertApp(db, { id: 'app_001', name: 'Snake', slug: 'snake', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true, description: 'Classic snake' });
 
       const res = await req('/apps/@hamed/snake');
       expect(res.status).toBe(200);
@@ -80,9 +76,9 @@ describe('platform/store-api', () => {
   });
 
   describe('GET /apps/search', () => {
-    beforeEach(() => {
-      insertApp(db, { id: 'app_001', name: 'Snake Game', slug: 'snake', authorId: '@hamed', description: 'Classic arcade snake', category: 'game', version: '1.0.0', isPublic: true });
-      insertApp(db, { id: 'app_002', name: 'Chess', slug: 'chess', authorId: '@alice', description: 'Strategic board game', category: 'game', version: '1.0.0', isPublic: true });
+    beforeEach(async () => {
+      await insertApp(db, { id: 'app_001', name: 'Snake Game', slug: 'snake', authorId: '@hamed', description: 'Classic arcade snake', category: 'game', version: '1.0.0', isPublic: true });
+      await insertApp(db, { id: 'app_002', name: 'Chess', slug: 'chess', authorId: '@alice', description: 'Strategic board game', category: 'game', version: '1.0.0', isPublic: true });
     });
 
     it('searches apps by query', async () => {
@@ -138,8 +134,8 @@ describe('platform/store-api', () => {
   });
 
   describe('POST /apps/:id/rate', () => {
-    beforeEach(() => {
-      insertApp(db, { id: 'app_001', name: 'Chess', slug: 'chess', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
+    beforeEach(async () => {
+      await insertApp(db, { id: 'app_001', name: 'Chess', slug: 'chess', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
     });
 
     it('submits a rating', async () => {
@@ -165,8 +161,8 @@ describe('platform/store-api', () => {
   });
 
   describe('POST /apps/:id/install', () => {
-    beforeEach(() => {
-      insertApp(db, { id: 'app_001', name: 'Chess', slug: 'chess', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
+    beforeEach(async () => {
+      await insertApp(db, { id: 'app_001', name: 'Chess', slug: 'chess', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
     });
 
     it('increments install count', async () => {
@@ -182,9 +178,9 @@ describe('platform/store-api', () => {
   });
 
   describe('GET /categories', () => {
-    beforeEach(() => {
-      insertApp(db, { id: 'app_001', name: 'Snake', slug: 'snake', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
-      insertApp(db, { id: 'app_002', name: 'Calc', slug: 'calc', authorId: '@alice', category: 'utility', version: '1.0.0', isPublic: true });
+    beforeEach(async () => {
+      await insertApp(db, { id: 'app_001', name: 'Snake', slug: 'snake', authorId: '@hamed', category: 'game', version: '1.0.0', isPublic: true });
+      await insertApp(db, { id: 'app_002', name: 'Calc', slug: 'calc', authorId: '@alice', category: 'utility', version: '1.0.0', isPublic: true });
     });
 
     it('returns categories with counts', async () => {

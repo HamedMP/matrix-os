@@ -32,7 +32,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   // --- Feed ---
 
-  api.get('/feed', (c) => {
+  api.get('/feed', async (c) => {
     const userId = c.req.query('userId');
     if (!userId) {
       return c.json({ error: 'userId parameter is required' }, 400);
@@ -41,9 +41,9 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
     const cursor = c.req.query('cursor');
 
-    const followingIds = getFollowingIds(db, userId);
+    const followingIds = await getFollowingIds(db, userId);
     const authorIds = [...followingIds, userId];
-    const result = listFeed(db, {
+    const result = await listFeed(db, {
       authorIds,
       limit,
       cursor: cursor || undefined,
@@ -75,7 +75,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'Invalid post type' }, 400);
     }
 
-    const id = insertPost(db, {
+    const id = await insertPost(db, {
       authorId: body.authorId,
       content: body.content,
       type: body.type,
@@ -86,14 +86,14 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     return c.json({ id }, 201);
   });
 
-  api.delete('/posts/:id', (c) => {
+  api.delete('/posts/:id', async (c) => {
     const id = c.req.param('id');
     const userId = c.req.query('userId') || c.req.header('x-user-id');
     if (!userId) return c.json({ error: 'userId is required' }, 401);
-    const post = getPost(db, id);
+    const post = await getPost(db, id);
     if (!post) return c.json({ error: 'Post not found' }, 404);
     if (post.authorId !== userId) return c.json({ error: 'Not authorized' }, 403);
-    deletePost(db, id);
+    await deletePost(db, id);
     return c.json({ ok: true });
   });
 
@@ -106,9 +106,9 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'userId is required' }, 400);
     }
 
-    likePost(db, postId, body.userId);
+    await likePost(db, postId, body.userId);
     return c.json({
-      likesCount: getLikeCount(db, postId),
+      likesCount: await getLikeCount(db, postId),
       liked: true,
     });
   });
@@ -120,9 +120,9 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'userId is required' }, 400);
     }
 
-    unlikePost(db, postId, body.userId);
+    await unlikePost(db, postId, body.userId);
     return c.json({
-      likesCount: getLikeCount(db, postId),
+      likesCount: await getLikeCount(db, postId),
       liked: false,
     });
   });
@@ -139,7 +139,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'Comment must be 500 characters or less' }, 400);
     }
 
-    const id = addComment(db, {
+    const id = await addComment(db, {
       postId,
       authorId: body.authorId,
       content: body.content,
@@ -148,9 +148,9 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     return c.json({ id }, 201);
   });
 
-  api.get('/posts/:id/comments', (c) => {
+  api.get('/posts/:id/comments', async (c) => {
     const postId = c.req.param('id');
-    const result = listComments(db, postId);
+    const result = await listComments(db, postId);
     return c.json({ comments: result });
   });
 
@@ -167,7 +167,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'followerId and followingId are required' }, 400);
     }
 
-    followUser(db, body.followerId, body.followingId, body.followingType ?? 'user');
+    await followUser(db, body.followerId, body.followingId, body.followingType ?? 'user');
     return c.json({ ok: true });
   });
 
@@ -177,32 +177,32 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
       return c.json({ error: 'followerId and followingId are required' }, 400);
     }
 
-    unfollowUser(db, body.followerId, body.followingId);
+    await unfollowUser(db, body.followerId, body.followingId);
     return c.json({ ok: true });
   });
 
-  api.get('/followers/:handle', (c) => {
+  api.get('/followers/:handle', async (c) => {
     const handle = c.req.param('handle');
-    const followers = getFollowers(db, handle);
-    const counts = getFollowCounts(db, handle);
+    const followers = await getFollowers(db, handle);
+    const counts = await getFollowCounts(db, handle);
     return c.json({ followers, count: counts.followers });
   });
 
-  api.get('/following/:handle', (c) => {
+  api.get('/following/:handle', async (c) => {
     const handle = c.req.param('handle');
-    const following = getFollowing(db, handle);
-    const counts = getFollowCounts(db, handle);
+    const following = await getFollowing(db, handle);
+    const counts = await getFollowCounts(db, handle);
     return c.json({ following, count: counts.following });
   });
 
   // --- Explore ---
 
-  api.get('/explore', (c) => {
+  api.get('/explore', async (c) => {
     const sort = c.req.query('sort') ?? 'trending';
     const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 100);
 
     if (sort === 'trending') {
-      const trending = listTrendingPosts(db, limit);
+      const trending = await listTrendingPosts(db, limit);
       return c.json({ posts: trending });
     }
 

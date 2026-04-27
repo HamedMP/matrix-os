@@ -10,7 +10,7 @@ snapshot_dir="/var/lib/matrix/db/snapshots"
 mkdir -p "$snapshot_dir"
 
 ts="$(date -u +%Y-%m-%dT%H%MZ)"
-snapshot_name="${ts}.sql.gz"
+snapshot_name="${ts}.dump"
 snapshot_path="${snapshot_dir}/${snapshot_name}"
 snapshot_key="system/db/snapshots/${snapshot_name}"
 
@@ -21,7 +21,7 @@ if ! timeout 300 pg_dump \
   --username="${POSTGRES_USER:-matrix}" \
   --dbname="${POSTGRES_DB:-matrix}" \
   --format=custom \
-  | gzip > "$snapshot_path"; then
+  --file="$snapshot_path"; then
   rm -f "$snapshot_path"
   echo "matrix-db-backup: dump failed" >&2
   exit 1
@@ -35,4 +35,3 @@ fi
 
 matrixctl r2 put "$snapshot_path" "$snapshot_key"
 matrixctl r2 put-latest "$snapshot_key"
-matrixctl r2 prune system/db/snapshots/

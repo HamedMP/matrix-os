@@ -12,8 +12,8 @@ Phase 1 delivers lazy provisioning, host installation through cloud-init, revers
 ## Technical Context
 
 **Language/Version**: TypeScript 5.5+ strict, ES modules; Bash/cloud-init YAML for customer VPS bootstrap; systemd unit files for host services.
-**Primary Dependencies**: Hono (platform routes), Drizzle ORM with SQLite (control-plane registry), Zod 4 (`zod/v4`) for request validation, Hetzner Cloud API via `fetch()` with `AbortSignal.timeout(10_000)`, Cloudflare R2 through the existing S3-compatible sync infrastructure, Docker Engine + Compose plugin on customer VPSes, Postgres 16 container per user, systemd timers.
-**Storage**: Control-plane SQLite `user_machines` table; Cloudflare R2 `matrixos-sync/{userId}/system/...`; customer VPS Docker named volume for Postgres; user files under the spec 066 home/projects sync paths.
+**Primary Dependencies**: Hono (platform routes), Kysely with PostgreSQL (control-plane registry), Zod 4 (`zod/v4`) for request validation, Hetzner Cloud API via `fetch()` with `AbortSignal.timeout(10_000)`, Cloudflare R2 through the existing S3-compatible sync infrastructure, Docker Engine + Compose plugin on customer VPSes, Postgres 16 container per user, systemd timers.
+**Storage**: Control-plane PostgreSQL `user_machines` table; Cloudflare R2 `matrixos-sync/{userId}/system/...`; customer VPS Docker named volume for Postgres; user files under the spec 066 home/projects sync paths.
 **Testing**: Vitest unit/contract/integration tests first; platform route tests with mocked Hetzner/R2 clients; cloud-init render tests; recovery integration test behind a real-Hetzner flag; standard pre-PR `bun run typecheck`, `bun run check:patterns`, `bun run test`.
 **Target Platform**: Control-plane Hetzner VPS running platform/proxy/cloudflared; customer Ubuntu 24.04 Hetzner VPSes in `nbg1`.
 **Project Type**: Monorepo infrastructure feature spanning `packages/platform/`, `distro/customer-vps/`, `distro/systemd/`, optional sync/gateway host bundle packaging, and `tests/platform/`.
@@ -63,8 +63,7 @@ packages/platform/src/
 ├── customer-vps.ts              # NEW: Hetzner provision/recover/delete orchestration
 ├── customer-vps-routes.ts       # NEW: /vps/* internal/admin Hono routes
 ├── customer-vps-schema.ts       # NEW: Zod request/response schemas and status enum
-├── schema.ts                    # MODIFIED: userMachines table
-├── db.ts                        # MODIFIED: migration/bootstrap wiring for userMachines
+├── db.ts                        # MODIFIED: Kysely/Postgres migrations and userMachines helpers
 ├── main.ts                      # MODIFIED: mount /vps routes and route deps
 └── profile-routing.ts           # MODIFIED: running VPS branch before legacy containers
 
@@ -118,7 +117,7 @@ No constitution violations to justify.
 4. **External timeouts**: Hetzner, R2, Cloudflare, and customer VPS callback verification calls use `AbortSignal.timeout(10_000)` for APIs and `AbortSignal.timeout(30_000)` for downloads.
 5. **No raw errors**: Provider errors, filesystem paths, R2 keys, and token details are logged server-side and mapped to generic client errors.
 6. **Atomicity**: Multi-step DB updates use transactions. Network calls are outside transactions; durable rows encode acceptable orphan states and reconciliation fixes drift.
-7. **Resource limits**: Provisioning reconciliation scans capped batches of stale rows. Registration-token cache, if in memory, must have TTL and max-size eviction; preferred storage is hashed token metadata in SQLite.
+7. **Resource limits**: Provisioning reconciliation scans capped batches of stale rows. Registration-token metadata is stored hashed in PostgreSQL; any in-memory cache must have TTL and max-size eviction.
 8. **Network boundary**: Hetzner firewall allows 22 only from ops IPs and 443 from Cloudflare/control-plane paths. Postgres is container-local and never public.
 
 ## Implementation Phases

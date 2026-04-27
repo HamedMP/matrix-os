@@ -58,14 +58,16 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(restore).toContain('Type=oneshot');
   });
 
-  it('uploads DB snapshots before updating latest and prunes safely', () => {
+  it('uploads DB snapshots before updating latest without calling deferred pruning', () => {
     const root = process.cwd();
     const backup = readFileSync(join(root, 'distro/customer-vps/matrix-db-backup.sh'), 'utf8');
 
     expect(backup.indexOf('matrixctl r2 put "$snapshot_path" "$snapshot_key"')).toBeLessThan(
       backup.indexOf('matrixctl r2 put-latest "$snapshot_key"'),
     );
-    expect(backup).toContain('matrixctl r2 prune system/db/snapshots/');
+    expect(backup).not.toContain('matrixctl r2 prune system/db/snapshots/');
+    expect(backup).toContain('--format=custom');
+    expect(backup).toContain('.dump');
     expect(backup).toContain('timeout');
   });
 

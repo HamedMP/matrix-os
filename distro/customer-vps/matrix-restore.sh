@@ -8,7 +8,7 @@ fi
 
 restore_flag="/opt/matrix/restore-complete"
 latest_file="/var/lib/matrix/db/latest"
-snapshot_path="/var/lib/matrix/db/latest.sql.gz"
+snapshot_path="/var/lib/matrix/db/latest.dump"
 
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
 rm -f "$restore_flag"
@@ -30,7 +30,7 @@ fi
 
 latest_key="$(tr -d '\r\n' < "$latest_file")"
 case "$latest_key" in
-  system/db/snapshots/*.sql.gz) ;;
+  system/db/snapshots/*.dump) ;;
   *)
     echo "matrix-restore: invalid latest pointer" >&2
     exit 1
@@ -51,12 +51,13 @@ export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
 
 docker compose -f /opt/matrix/postgres-compose.yml up -d postgres
 
-if ! gzip -dc "$snapshot_path" | timeout 300 pg_restore \
+if ! timeout 300 pg_restore \
   --host=127.0.0.1 \
   --username="${POSTGRES_USER:-matrix}" \
   --dbname="${POSTGRES_DB:-matrix}" \
   --clean \
-  --if-exists; then
+  --if-exists \
+  "$snapshot_path"; then
   echo "matrix-restore: database restore failed" >&2
   exit 1
 fi

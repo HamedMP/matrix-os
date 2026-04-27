@@ -100,8 +100,7 @@ The AI kernel. Key files:
 | `agents.ts` | Core agent definitions, `parseFrontmatter()`, `loadCustomAgents()` |
 | `hooks.ts` | All hook implementations (safety, snapshots, permissions, healing) |
 | `soul.ts` | SOUL identity loading (`loadSoul()`, `loadIdentity()`, `loadUser()`) |
-| `schema.ts` | Drizzle ORM schema (tasks, messages, memories) |
-| `db.ts` | Database setup (WAL mode, migrations) |
+| `db.ts` | Kysely/PostgreSQL setup, schema bootstrap, and migrations |
 
 ### `packages/gateway/`
 
@@ -119,7 +118,7 @@ Hono HTTP/WebSocket gateway. Key files:
 
 ### `packages/platform/`
 
-Multi-tenant cloud orchestrator (Hono :9000). Manages container provisioning via dockerode, Drizzle for tenant data, Clerk auth integration, and Cloudflare Tunnel configuration.
+Multi-tenant cloud orchestrator (Hono :9000). Manages container provisioning via dockerode, Kysely/PostgreSQL for tenant and control-plane data, Clerk auth integration, and Cloudflare Tunnel configuration.
 
 ### `shell/`
 
@@ -132,7 +131,7 @@ Here's the complete path of a user message from input to response:
 1. **User sends a message** via WebSocket (`/ws`), REST (`/api/message`), or a channel adapter
 2. **Gateway receives it** in `createGateway()` and passes it to `dispatcher.dispatch()`
 3. **Dispatcher queues it** in the serial FIFO queue (or concurrent queue if configured)
-4. **Task is created** in SQLite via `createTask()`, then claimed via `claimTask()`
+4. **Task is created** in PostgreSQL via `createTask()`, then claimed via `claimTask()`
 5. **`spawnKernel()` is called** with the message and `KernelConfig` (db, homePath)
 6. **System prompt is built** by `buildSystemPrompt()`:
    - SOUL identity (`soul.md`, `identity.md`, `user.md`)
@@ -166,6 +165,6 @@ Here's the complete path of a user message from input to response:
 | Syscalls | Read, Write, Edit, Bash (file tools) |
 | Disk | `~/matrixos/` (apps, data, system, agents) |
 | Drivers | MCP servers (IPC tools) |
-| IPC | File coordination + SQLite task queue |
+| IPC | File coordination + PostgreSQL task queue |
 | Shell | Web desktop, Telegram, CLI (any renderer) |
 | Device drivers | Channel adapters |

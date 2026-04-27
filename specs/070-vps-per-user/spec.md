@@ -46,7 +46,7 @@ Control-plane VPS (this box, Hetzner project "matrix-os-infra")
    proxy:8080         shared API proxy
    conduit:6167       Matrix homeserver
    cloudflared        tunnel
-   sqlite             machine + container registry
+   postgres           machine + container registry via Kysely
    (legacy)           existing matrixos-* containers keep running
 
 Customer VPSes (Hetzner project "matrix-os-customers", one per user)
@@ -60,7 +60,7 @@ Customer VPSes (Hetzner project "matrix-os-customers", one per user)
 Cloudflare R2 (existing matrixos-sync bucket, extended layout)
    {userId}/manifest.json
    {userId}/files/...                          (per spec 066)
-   {userId}/system/db/snapshots/<ts>.sql.gz    (NEW)
+   {userId}/system/db/snapshots/<ts>.dump      (NEW)
    {userId}/system/db/latest                   (NEW, pointer to newest snapshot key)
    {userId}/system/vps-meta.json               (NEW)
 ```
@@ -89,8 +89,8 @@ matrixos-sync/{userId}/
   system/
     vps-meta.json                  # provision metadata, image version, last seen
     db/
-      snapshots/2026-04-26T1200Z.sql.gz
-      snapshots/2026-04-26T1800Z.sql.gz
+      snapshots/2026-04-26T1200Z.dump
+      snapshots/2026-04-26T1800Z.dump
       ...
       latest                       # tiny file containing the newest snapshot key
 ```
@@ -192,10 +192,9 @@ Gateway systemd unit has `ConditionPathExists=/var/run/matrix-restore-complete` 
 `matrix-db-backup.timer` runs every hour:
 
 ```
-pg_dump --format=custom matrix | gzip > /var/lib/matrix/db/snapshots/<ts>.sql.gz
-matrixctl r2 put system/db/snapshots/<ts>.sql.gz
-matrixctl r2 put system/db/latest <ts>.sql.gz
-matrixctl r2 prune system/db/snapshots/  # keep 24h hourly + 14d daily
+pg_dump --format=custom --file=/var/lib/matrix/db/snapshots/<ts>.dump matrix
+matrixctl r2 put system/db/snapshots/<ts>.dump
+matrixctl r2 put system/db/latest <ts>.dump
 ```
 
 `matrixctl` is a small binary on the host (Go or shell + AWS CLI compatible — R2 is S3-compatible).
@@ -204,31 +203,22 @@ On-demand backup endpoint on the gateway: `POST /system/backup` triggers the sam
 
 ### 6. Schema changes (control plane)
 
-New table in `packages/platform/src/schema.ts`:
+New table managed by Kysely/PostgreSQL migrations in `packages/platform/src/db.ts`:
 
 ```ts
-export const userMachines = sqliteTable(
-  'user_machines',
-  {
-    machineId: text('machine_id').primaryKey(),         // uuid
-    clerkUserId: text('clerk_user_id').notNull().unique(),
-    handle: text('handle').notNull(),
-    hetznerServerId: integer('hetzner_server_id'),
-    publicIPv4: text('public_ipv4'),
-    publicIPv6: text('public_ipv6'),
-    status: text('status').notNull().default('provisioning'),
-      // provisioning | running | failed | recovering | deleted
-    imageVersion: text('image_version'),
-    provisionedAt: text('provisioned_at').notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    lastSeenAt: text('last_seen_at'),
-    deletedAt: text('deleted_at'),
-  },
-  (table) => [
-    index('idx_user_machines_status').on(table.status),
-    index('idx_user_machines_clerk').on(table.clerkUserId),
-  ],
-);
+await db.schema.createTable('user_machines')
+  .addColumn('machine_id', 'text', (col) => col.primaryKey())
+  .addColumn('clerk_user_id', 'text', (col) => col.notNull().unique())
+  .addColumn('handle', 'text', (col) => col.notNull())
+  .addColumn('hetzner_server_id', 'integer')
+  .addColumn('public_ipv4', 'text')
+  .addColumn('public_ipv6', 'text')
+  .addColumn('status', 'text', (col) => col.notNull())
+  .addColumn('image_version', 'text')
+  .addColumn('provisioned_at', 'text', (col) => col.notNull())
+  .addColumn('last_seen_at', 'text')
+  .addColumn('deleted_at', 'text')
+  .execute();
 ```
 
 `containers` table is **kept** for legacy users. No changes. Routing chooses between `userMachines` and `containers` based on which row exists for the user.
@@ -280,7 +270,7 @@ Once we have ~10+ customer VPSes this becomes painful and we add an in-place upd
 
 **Phase 1.0 — provisioner + image (no R2 yet)**
 - Hetzner customer project + API token in control-plane env.
-- `userMachines` table + Drizzle migration.
+- `userMachines` table + Kysely/PostgreSQL migration.
 - `customer-vps.ts` provisioner module + `/vps/*` routes (admin-only behind `PLATFORM_SECRET`).
 - `distro/customer-vps/cloud-init.yaml` that installs Docker + Postgres + a placeholder gateway.
 - Manual test: `curl -X POST localhost:9000/vps/provision -d '{"clerkUserId":"test"}'` creates a real VPS, comes up, registers, status flips to `running`. Tear down by hand.

@@ -82,7 +82,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     const results = await collector.collectOnce();
@@ -106,7 +106,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     const results = await collector.collectOnce();
@@ -126,7 +126,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     const results = await collector.collectOnce();
@@ -155,7 +155,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     const results = await collector.collectOnce();
@@ -174,7 +174,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     const results = await collector.collectOnce();
@@ -198,7 +198,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     await collector.collectOnce();
@@ -220,7 +220,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
       intervalMs: 5000,
     });
 
@@ -250,7 +250,7 @@ describe('platform/stats-collector', () => {
 
     const collector = createStatsCollector({
       docker: docker as any,
-      listRunning: () => db.listRunningContainers(),
+      listRunning: async () => db.listRunningContainers(),
     });
 
     const results = await collector.collectOnce();

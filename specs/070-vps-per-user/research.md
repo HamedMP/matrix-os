@@ -8,13 +8,13 @@
 - Hetzner snapshot image: faster boot, but hidden drift and harder reviewability.
 - Full image build with mkosi/Packer now: stronger reproducibility, but unnecessary before the bootstrap contract stabilizes.
 
-## Decision: Control plane owns provisioning state in SQLite `user_machines`
+## Decision: Control plane owns provisioning state in PostgreSQL `user_machines`
 
-**Rationale**: Platform already owns container provisioning, Clerk identity, profile routing, and internal sync integration. A Drizzle-managed SQLite table matches existing control-plane registry patterns and keeps the customer-VPS registry separate from user app data.
+**Rationale**: Platform already owns container provisioning, Clerk identity, profile routing, and internal sync integration. A Kysely-managed PostgreSQL table is the canonical control-plane registry and avoids introducing SQLite/Drizzle into Matrix OS persistence.
 
 **Alternatives considered**:
 - Store machine metadata only in R2: recoverable, but poor for routing and status queries.
-- Store in Postgres/Kysely: app/social data store is not the control-plane source of truth for machine lifecycle.
+- Store in a separate app/social-only Postgres database: rejected because the platform control-plane database is the correct source of truth for machine lifecycle.
 
 ## Decision: Hetzner API integration uses a small typed client over `fetch()`
 
@@ -58,9 +58,9 @@
 - Central Postgres host: violates the per-user isolation model.
 - Hetzner Volume now: better persistence, but out of scope until sleep/delete and larger DBs require it.
 
-## Decision: DB snapshots use custom-format `pg_dump` compressed to R2
+## Decision: DB snapshots use custom-format `pg_dump` archives in R2
 
-**Rationale**: Per-user DBs are expected to be small in phase 1. A scheduled `pg_dump` plus `latest` pointer is simple to restore, easy to inspect operationally, and compatible with the recovery target.
+**Rationale**: Per-user DBs are expected to be small in phase 1. A scheduled `pg_dump --format=custom --file=<ts>.dump` plus `latest` pointer is simple to restore with `pg_restore`, easy to inspect operationally, and compatible with the recovery target without double-compressing the archive.
 
 **Alternatives considered**:
 - WAL archiving: stronger point-in-time recovery but more operational complexity.

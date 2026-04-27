@@ -71,7 +71,7 @@ Type something like:
 Here's what happens:
 
 1. Your message hits the gateway's `/ws` WebSocket endpoint
-2. The dispatcher adds it to the serial queue and creates a task in SQLite
+2. The dispatcher adds it to the serial queue and creates a task in PostgreSQL
 3. `spawnKernel()` builds a system prompt with SOUL, identity, skills TOC, and active processes
 4. The kernel invokes Claude Agent SDK `query()` and selects the **Builder** agent
 5. Builder uses IPC tools to create files in `~/matrixos/apps/`
@@ -86,7 +86,7 @@ Everything it creates is a file you own. Check `~/matrixos/apps/` to see the gen
 ```
 packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
 packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
-packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode)
+packages/platform/   # Multi-tenant orchestrator (Hono :9000, Kysely/PostgreSQL, dockerode)
 shell/               # Next.js 16 web desktop (one of many shells)
 www/                 # matrix-os.com website (you're reading its docs)
 home/                # File system template (copied on first boot)

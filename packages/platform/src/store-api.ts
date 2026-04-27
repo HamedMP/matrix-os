@@ -18,14 +18,14 @@ import {
 export function createStoreApi(db: PlatformDB): Hono {
   const api = new Hono();
 
-  api.get('/apps', (c) => {
+  api.get('/apps', async (c) => {
     const category = c.req.query('category');
     const authorId = c.req.query('author');
     const sort = c.req.query('sort') as 'new' | 'popular' | 'rated' | undefined;
     const limit = Number(c.req.query('limit')) || 50;
     const offset = Number(c.req.query('offset')) || 0;
 
-    const result = listApps(db, {
+    const result = await listApps(db, {
       category,
       authorId,
       publicOnly: true,
@@ -37,21 +37,21 @@ export function createStoreApi(db: PlatformDB): Hono {
     return c.json(result);
   });
 
-  api.get('/apps/search', (c) => {
+  api.get('/apps/search', async (c) => {
     const q = c.req.query('q');
     if (!q) {
       return c.json({ error: 'Query parameter "q" is required' }, 400);
     }
 
-    const results = searchApps(db, q);
+    const results = await searchApps(db, q);
     return c.json({ results });
   });
 
-  api.get('/apps/:author/:slug', (c) => {
+  api.get('/apps/:author/:slug', async (c) => {
     const author = c.req.param('author');
     const slug = c.req.param('slug');
 
-    const app = getAppBySlug(db, author, slug);
+    const app = await getAppBySlug(db, author, slug);
     if (!app) {
       return c.json({ error: 'App not found' }, 404);
     }
@@ -79,7 +79,7 @@ export function createStoreApi(db: PlatformDB): Hono {
     const slug = body.slug ?? body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const id = `app_${randomUUID().slice(0, 12)}`;
 
-    insertApp(db, {
+    await insertApp(db, {
       id,
       name: body.name,
       slug,
@@ -107,14 +107,14 @@ export function createStoreApi(db: PlatformDB): Hono {
       return c.json({ error: 'Rating must be between 1 and 5' }, 400);
     }
 
-    submitRating(db, {
+    await submitRating(db, {
       appId,
       userId: body.userId,
       rating: body.rating,
       review: body.review,
     });
 
-    const app = getApp(db, appId);
+    const app = await getApp(db, appId);
     return c.json({ rating: app?.rating ?? 0, ratingsCount: app?.ratingsCount ?? 0 });
   });
 
@@ -130,17 +130,17 @@ export function createStoreApi(db: PlatformDB): Hono {
     }
 
     if (body.userId) {
-      recordInstall(db, appId, body.userId);
+      await recordInstall(db, appId, body.userId);
     } else {
-      incrementInstalls(db, appId);
+      await incrementInstalls(db, appId);
     }
 
-    const app = getApp(db, appId);
+    const app = await getApp(db, appId);
     return c.json({ installs: app?.installs ?? 0 });
   });
 
-  api.get('/categories', (c) => {
-    const categories = listCategories(db);
+  api.get('/categories', async (c) => {
+    const categories = await listCategories(db);
     return c.json(categories);
   });
 

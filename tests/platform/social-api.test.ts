@@ -1,26 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { Hono } from 'hono';
-import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
+import { type PlatformDB } from '../../packages/platform/src/db.js';
 import { createSocialFeedApi } from '../../packages/platform/src/social-api.js';
 import { insertPost, followUser, likePost, addComment } from '../../packages/platform/src/social-feed.js';
 
 describe('platform/social-api', () => {
-  let tmpDir: string;
   let db: PlatformDB;
   let app: Hono;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'social-api-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     app = new Hono();
     app.route('/api/social', createSocialFeedApi(db));
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   function req(path: string, init?: RequestInit) {
@@ -29,10 +25,10 @@ describe('platform/social-api', () => {
 
   describe('GET /feed', () => {
     it('returns paginated feed for given user', async () => {
-      insertPost(db, { authorId: '@alice', content: 'Post 1', type: 'text' });
-      insertPost(db, { authorId: '@bob', content: 'Post 2', type: 'text' });
-      followUser(db, '@viewer', '@alice', 'user');
-      followUser(db, '@viewer', '@bob', 'user');
+      await insertPost(db, { authorId: '@alice', content: 'Post 1', type: 'text' });
+      await insertPost(db, { authorId: '@bob', content: 'Post 2', type: 'text' });
+      await followUser(db, '@viewer', '@alice', 'user');
+      await followUser(db, '@viewer', '@bob', 'user');
 
       const res = await req('/feed?userId=@viewer');
       expect(res.status).toBe(200);
@@ -41,7 +37,7 @@ describe('platform/social-api', () => {
     });
 
     it('returns empty feed when user follows nobody', async () => {
-      insertPost(db, { authorId: '@alice', content: 'Post 1', type: 'text' });
+      await insertPost(db, { authorId: '@alice', content: 'Post 1', type: 'text' });
 
       const res = await req('/feed?userId=@viewer');
       expect(res.status).toBe(200);
@@ -112,7 +108,7 @@ describe('platform/social-api', () => {
 
   describe('DELETE /posts/:id', () => {
     it('deletes a post', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
+      const id = await insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
 
       const res = await req(`/posts/${id}`, {
         method: 'DELETE',
@@ -122,13 +118,13 @@ describe('platform/social-api', () => {
     });
 
     it('returns 401 without userId', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
+      const id = await insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
       const res = await req(`/posts/${id}`, { method: 'DELETE' });
       expect(res.status).toBe(401);
     });
 
     it('returns 403 for wrong user', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
+      const id = await insertPost(db, { authorId: '@alice', content: 'Delete me', type: 'text' });
       const res = await req(`/posts/${id}`, {
         method: 'DELETE',
         headers: { 'x-user-id': '@bob' },
@@ -147,7 +143,7 @@ describe('platform/social-api', () => {
 
   describe('POST /posts/:id/like', () => {
     it('likes a post', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Like me', type: 'text' });
+      const id = await insertPost(db, { authorId: '@alice', content: 'Like me', type: 'text' });
 
       const res = await req(`/posts/${id}/like`, {
         method: 'POST',
@@ -163,8 +159,8 @@ describe('platform/social-api', () => {
 
   describe('DELETE /posts/:id/like', () => {
     it('unlikes a post', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Unlike me', type: 'text' });
-      likePost(db, id, '@bob');
+      const id = await insertPost(db, { authorId: '@alice', content: 'Unlike me', type: 'text' });
+      await likePost(db, id, '@bob');
 
       const res = await req(`/posts/${id}/like`, {
         method: 'DELETE',
@@ -180,7 +176,7 @@ describe('platform/social-api', () => {
 
   describe('POST /posts/:id/comments', () => {
     it('adds a comment to a post', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Comment me', type: 'text' });
+      const id = await insertPost(db, { authorId: '@alice', content: 'Comment me', type: 'text' });
 
       const res = await req(`/posts/${id}/comments`, {
         method: 'POST',
@@ -195,9 +191,9 @@ describe('platform/social-api', () => {
 
   describe('GET /posts/:id/comments', () => {
     it('lists comments on a post', async () => {
-      const id = insertPost(db, { authorId: '@alice', content: 'Post', type: 'text' });
-      addComment(db, { postId: id, authorId: '@bob', content: 'Comment 1' });
-      addComment(db, { postId: id, authorId: '@charlie', content: 'Comment 2' });
+      const id = await insertPost(db, { authorId: '@alice', content: 'Post', type: 'text' });
+      await addComment(db, { postId: id, authorId: '@bob', content: 'Comment 1' });
+      await addComment(db, { postId: id, authorId: '@charlie', content: 'Comment 2' });
 
       const res = await req(`/posts/${id}/comments`);
       expect(res.status).toBe(200);
@@ -225,7 +221,7 @@ describe('platform/social-api', () => {
 
   describe('DELETE /follow', () => {
     it('unfollows a user', async () => {
-      followUser(db, '@alice', '@bob', 'user');
+      await followUser(db, '@alice', '@bob', 'user');
 
       const res = await req('/follow', {
         method: 'DELETE',
@@ -238,8 +234,8 @@ describe('platform/social-api', () => {
 
   describe('GET /followers/:handle', () => {
     it('returns followers for a handle', async () => {
-      followUser(db, '@alice', '@bob', 'user');
-      followUser(db, '@charlie', '@bob', 'user');
+      await followUser(db, '@alice', '@bob', 'user');
+      await followUser(db, '@charlie', '@bob', 'user');
 
       const res = await req('/followers/@bob');
       expect(res.status).toBe(200);
@@ -251,8 +247,8 @@ describe('platform/social-api', () => {
 
   describe('GET /following/:handle', () => {
     it('returns following list for a handle', async () => {
-      followUser(db, '@bob', '@alice', 'user');
-      followUser(db, '@bob', '@charlie', 'user');
+      await followUser(db, '@bob', '@alice', 'user');
+      await followUser(db, '@bob', '@charlie', 'user');
 
       const res = await req('/following/@bob');
       expect(res.status).toBe(200);
@@ -264,12 +260,12 @@ describe('platform/social-api', () => {
 
   describe('GET /explore', () => {
     it('returns trending posts (most liked)', async () => {
-      const p1 = insertPost(db, { authorId: '@alice', content: 'Popular', type: 'text' });
-      const p2 = insertPost(db, { authorId: '@bob', content: 'Less popular', type: 'text' });
-      likePost(db, p1, '@user1');
-      likePost(db, p1, '@user2');
-      likePost(db, p1, '@user3');
-      likePost(db, p2, '@user1');
+      const p1 = await insertPost(db, { authorId: '@alice', content: 'Popular', type: 'text' });
+      const p2 = await insertPost(db, { authorId: '@bob', content: 'Less popular', type: 'text' });
+      await likePost(db, p1, '@user1');
+      await likePost(db, p1, '@user2');
+      await likePost(db, p1, '@user3');
+      await likePost(db, p2, '@user1');
 
       const res = await req('/explore?sort=trending');
       expect(res.status).toBe(200);

@@ -33,8 +33,8 @@
 
 **CRITICAL**: No user-story implementation can begin until this phase is complete.
 
-- [X] T006 Add `userMachines` Drizzle table, indexes, and inferred types in `packages/platform/src/schema.ts`
-- [X] T007 Add `user_machines` SQLite bootstrap migration in `packages/platform/src/db.ts`
+- [X] T006 Add `user_machines` Kysely/PostgreSQL table, indexes, and inferred types in `packages/platform/src/db.ts`
+- [X] T007 Add `user_machines` PostgreSQL bootstrap migration in `packages/platform/src/db.ts`
 - [X] T008 Add UserMachine CRUD helpers and transaction helpers in `packages/platform/src/db.ts`
 - [X] T009 [P] Define VPS request/response/status Zod schemas in `packages/platform/src/customer-vps-schema.ts`
 - [X] T010 [P] Define generic provider error mapping and failure-code enums in `packages/platform/src/customer-vps-errors.ts`

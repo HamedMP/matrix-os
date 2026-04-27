@@ -27,14 +27,15 @@ VPS (no public ports)
 
 ## Components
 
-### Database (`src/db.ts` + `src/schema.ts`)
+### Database (`src/db.ts`)
 
-Drizzle ORM with better-sqlite3. Two tables:
+Kysely with PostgreSQL. Core tables:
 
 - **containers** -- one row per user. PK is `handle`, stores clerk_user_id, container_id, port mappings, status, timestamps.
+- **user_machines** -- one row per customer VPS. Stores Clerk identity, handle, Hetzner IDs, registration metadata, status, and recovery timestamps.
 - **port_assignments** -- tracks which host ports are allocated. Sequential allocation starting from base ports (4001 for gateway, 3001 for shell).
 
-Factory: `createPlatformDb(path)` returns a Drizzle instance. All query functions take `db` as their first argument for testability.
+Factory: `createPlatformDb(connectionString)` returns a Kysely-backed platform database. All query functions take `db` as their first argument for testability.
 
 ### Orchestrator (`src/orchestrator.ts`)
 

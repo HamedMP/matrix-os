@@ -11,8 +11,8 @@ matrixos-sync/{userId}/
     └── db/
         ├── latest
         └── snapshots/
-            ├── 2026-04-26T1200Z.sql.gz
-            └── 2026-04-26T1800Z.sql.gz
+            ├── 2026-04-26T1200Z.dump
+            └── 2026-04-26T1800Z.dump
 ```
 
 ## `system/vps-meta.json`
@@ -44,7 +44,7 @@ Validation:
 Plain UTF-8 text containing the latest snapshot key:
 
 ```text
-system/db/snapshots/2026-04-26T1800Z.sql.gz
+system/db/snapshots/2026-04-26T1800Z.dump
 ```
 
 Validation:
@@ -53,23 +53,21 @@ Validation:
 - Must not contain absolute paths, `..`, URL schemes, or control characters.
 - Restore refuses a missing referenced object.
 
-## `system/db/snapshots/<ts>.sql.gz`
+## `system/db/snapshots/<ts>.dump`
 
-Compressed custom-format Postgres dump.
+Custom-format Postgres dump created by `pg_dump --format=custom` and restored directly with `pg_restore`.
 
 Filename:
 
 ```text
-YYYY-MM-DDTHHmmZ.sql.gz
+YYYY-MM-DDTHHmmZ.dump
 ```
 
-Restore process must stream/download with `AbortSignal.timeout(30_000)` or equivalent host timeout, verify non-empty object size, and fail closed if decompression or `pg_restore` fails.
+Restore process must stream/download with `AbortSignal.timeout(30_000)` or equivalent host timeout, verify non-empty object size, and fail closed if `pg_restore` fails.
 
 ## Retention
 
-The customer VPS backup job keeps last 24 hourly and last 14 daily snapshots.
-
-Pruning algorithm requirements:
+Retention pruning is deferred in this slice. Future pruning algorithm requirements:
 
 - List only `system/db/snapshots/`.
 - Sort by parsed UTC timestamp, not lexicographic fallback alone.

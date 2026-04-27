@@ -164,6 +164,15 @@ function buildHostConfig(
   };
 }
 
+function buildServerName(handle: string): string {
+  return `matrix-${handle}`;
+}
+
+function buildRecoveryServerName(handle: string, machineId: string): string {
+  const suffix = machineId.replaceAll('-', '').slice(0, 8);
+  return `${buildServerName(handle).slice(0, 54)}-${suffix}`;
+}
+
 export function createCustomerVpsService(deps: CustomerVpsServiceDeps): CustomerVpsService {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
@@ -184,12 +193,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         postgresPassword,
       );
 
-      const provisionRow = runInPlatformTransaction(deps.db, () => {
-        const existing = getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
+        const existing = await getActiveUserMachineByClerkId(trx, input.clerkUserId);
         if (existing) {
           return { existing };
         }
-        insertUserMachine(deps.db, {
+        await insertUserMachine(trx, {
           machineId,
           clerkUserId: input.clerkUserId,
           handle: input.handle,
@@ -213,7 +222,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let serverIdForCompensation: number | null = null;
       try {
         const server = await deps.hetzner.createServer({
-          name: `matrix-${input.handle}`,
+          name: buildServerName(input.handle),
           userData,
           labels: {
             app: 'matrix-os',
@@ -222,7 +231,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           },
         });
         serverIdForCompensation = server.id;
-        updateUserMachine(deps.db, machineId, {
+        await updateUserMachine(deps.db, machineId, {
           hetznerServerId: server.id,
           publicIPv4: server.publicIPv4,
           publicIPv6: server.publicIPv6,
@@ -237,7 +246,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           }
         }
         try {
-          updateUserMachine(deps.db, machineId, {
+          await updateUserMachine(deps.db, machineId, {
             status: 'failed',
             failureCode: toFailureCode(err),
             failureAt: now().toISOString(),
@@ -256,7 +265,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async register(token, input) {
-      const row = getUserMachine(deps.db, input.machineId);
+      const row = await getUserMachine(deps.db, input.machineId);
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
@@ -274,8 +283,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
 
       const lastSeenAt = now().toISOString();
-      runInPlatformTransaction(deps.db, () => {
-        updateUserMachine(deps.db, input.machineId, {
+      await runInPlatformTransaction(deps.db, async (trx) => {
+        await updateUserMachine(trx, input.machineId, {
           status: 'running',
           publicIPv4: input.publicIPv4,
           publicIPv6: input.publicIPv6,
@@ -288,7 +297,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         });
       });
 
-      const updated = getUserMachine(deps.db, input.machineId);
+      const updated = await getUserMachine(deps.db, input.machineId);
       if (updated) {
         try {
           await deps.systemStore.writeVpsMeta(buildVpsMeta(updated, lastSeenAt));
@@ -301,8 +310,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async recover(input) {
-      const existing = runInPlatformTransaction(deps.db, () => {
-        const row = getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      const existing = await runInPlatformTransaction(deps.db, async (trx) => {
+        const row = await getActiveUserMachineByClerkId(trx, input.clerkUserId);
         if (!row) {
           throw new CustomerVpsError(404, 'not_found', 'Machine not found');
         }
@@ -335,7 +344,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           hostConfig,
         );
         const server = await deps.hetzner.createServer({
-          name: `matrix-${existing.handle}`,
+          name: buildRecoveryServerName(existing.handle, machineId),
           userData,
           labels: {
             app: 'matrix-os',
@@ -344,8 +353,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           },
         });
         newServerId = server.id;
-        runInPlatformTransaction(deps.db, () => {
-          updateUserMachine(deps.db, oldMachineId, {
+        await runInPlatformTransaction(deps.db, async (trx) => {
+          await updateUserMachine(trx, oldMachineId, {
             machineId,
             status: 'recovering',
             hetznerServerId: server.id,
@@ -371,7 +380,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           }
         }
         try {
-          updateUserMachine(deps.db, oldMachineId, {
+          await updateUserMachine(deps.db, oldMachineId, {
             status: 'failed',
             failureCode: toFailureCode(err),
             failureAt: now().toISOString(),
@@ -399,7 +408,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async status(machineId) {
-      const row = getUserMachine(deps.db, machineId);
+      const row = await getUserMachine(deps.db, machineId);
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
@@ -407,11 +416,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async delete(machineId) {
-      const row = getUserMachine(deps.db, machineId);
+      const row = await getUserMachine(deps.db, machineId);
       if (!row || row.deletedAt) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      softDeleteUserMachine(deps.db, machineId, now().toISOString());
+      await softDeleteUserMachine(deps.db, machineId, now().toISOString());
       if (row.hetznerServerId) {
         await deps.hetzner.deleteServer(row.hetznerServerId);
       }
@@ -420,7 +429,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
     async reconcileProvisioning() {
       const staleBefore = new Date(now().getTime() - deps.config.reconciliationStaleAfterMs).toISOString();
-      const rows = listStaleUserMachines(
+      const rows = await listStaleUserMachines(
         deps.db,
         ['provisioning', 'recovering'],
         staleBefore,
@@ -430,7 +439,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let running = 0;
       for (const row of rows) {
         if (!row.hetznerServerId) {
-          updateUserMachine(deps.db, row.machineId, {
+          await updateUserMachine(deps.db, row.machineId, {
             status: 'failed',
             failureCode: 'provider_unavailable',
             failureAt: now().toISOString(),
@@ -440,7 +449,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
         const server = await deps.hetzner.getServer(row.hetznerServerId);
         if (!server) {
-          updateUserMachine(deps.db, row.machineId, {
+          await updateUserMachine(deps.db, row.machineId, {
             status: 'failed',
             failureCode: 'not_found',
             failureAt: now().toISOString(),
@@ -449,7 +458,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           continue;
         }
         if (server.status === 'running' && server.publicIPv4) {
-          updateUserMachine(deps.db, row.machineId, {
+          await updateUserMachine(deps.db, row.machineId, {
             publicIPv4: server.publicIPv4,
             publicIPv6: server.publicIPv6,
           });

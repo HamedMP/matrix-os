@@ -1,9 +1,7 @@
-import { createHmac } from "node:crypto";
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { createPlatformDb, insertContainer, type PlatformDB } from "../../packages/platform/src/db.js";
+import { createHmac } from "node:crypto";
+import { insertContainer, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createInternalSyncRoutes } from "../../packages/platform/src/internal-sync-routes.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
@@ -13,7 +11,6 @@ function bearerFor(handle: string, secret: string): string {
 }
 
 describe("platform/internal-sync-routes", () => {
-  let tmpDir: string;
   let db: PlatformDB;
 
   const r2 = {
@@ -27,11 +24,9 @@ describe("platform/internal-sync-routes", () => {
     destroy: vi.fn(),
   };
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    tmpDir = mkdtempSync(join(tmpdir(), "platform-internal-sync-"));
-    db = createPlatformDb(join(tmpDir, "test.db"));
-    insertContainer(db, {
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await insertContainer(db, {
       handle: "alice",
       clerkUserId: "user_alice",
       port: 5001,
@@ -40,8 +35,8 @@ describe("platform/internal-sync-routes", () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   function stubOrchestrator(): Orchestrator {

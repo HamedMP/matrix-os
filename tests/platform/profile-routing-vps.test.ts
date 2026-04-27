@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import {
-  createPlatformDb,
   insertContainer,
   insertUserMachine,
   type PlatformDB,
@@ -45,13 +42,11 @@ function stubDocker(): Dockerode {
 }
 
 describe('platform/profile-routing-vps', () => {
-  let tmpDir: string;
   let db: PlatformDB;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'profile-routing-vps-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
-    insertContainer(db, {
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'user_alice',
       port: 5001,
@@ -60,8 +55,8 @@ describe('platform/profile-routing-vps', () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
     vi.restoreAllMocks();
   });
 
@@ -73,7 +68,7 @@ describe('platform/profile-routing-vps', () => {
   });
 
   it('routes /proxy/:handle requests to a running VPS before legacy containers', async () => {
-    insertUserMachine(db, {
+    await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
       clerkUserId: 'user_alice',
       handle: 'alice',

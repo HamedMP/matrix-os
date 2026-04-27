@@ -2,7 +2,7 @@
 
 ## Entity: UserMachine
 
-Control-plane SQLite row in `packages/platform/src/schema.ts`.
+Control-plane PostgreSQL row managed by Kysely migrations in `packages/platform/src/db.ts`.
 
 | Field | Type | Required | Validation / Notes |
 |-------|------|----------|--------------------|
@@ -80,13 +80,13 @@ type VpsMeta = {
 
 ## Entity: DbSnapshot
 
-R2 object under `matrixos-sync/{userId}/system/db/snapshots/<timestamp>.sql.gz`.
+R2 object under `matrixos-sync/{userId}/system/db/snapshots/<timestamp>.dump`.
 
 | Field | Source | Validation / Notes |
 |-------|--------|--------------------|
-| `key` | R2 object key | Must match `system/db/snapshots/YYYY-MM-DDTHHmmZ.sql.gz`. |
+| `key` | R2 object key | Must match `system/db/snapshots/YYYY-MM-DDTHHmmZ.dump`. |
 | `createdAt` | filename/object metadata | UTC timestamp. |
-| `format` | backup script | `pg_dump --format=custom` compressed with gzip. |
+| `format` | backup script | `pg_dump --format=custom` archive, restored directly with `pg_restore`. |
 | `sizeBytes` | R2 metadata | Used for sanity checks and alerts. |
 | `sha256` | optional sidecar/metadata | Recommended for restore verification. |
 
@@ -98,10 +98,7 @@ R2 object under `matrixos-sync/{userId}/system/db/snapshots/<timestamp>.sql.gz`.
 
 The customer VPS backup job keeps:
 
-- Last 24 hourly snapshots
-- Last 14 daily snapshots
-
-Pruning must be bounded and should never delete the object referenced by `latest`.
+Retention pruning is deferred in this slice. The hourly backup uploads a bounded custom-format archive and updates `latest`; a future retention task must never delete the object referenced by `latest`.
 
 ## Entity: RecoveryOperation
 

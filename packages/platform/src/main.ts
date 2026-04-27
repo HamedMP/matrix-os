@@ -46,7 +46,6 @@ import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
-const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
 const DEV_PLATFORM_SECRET = 'dev-secret';
@@ -172,8 +171,8 @@ function buildCodeDomainProxyHeaders(
   return headers;
 }
 
-function pickCodeDomainStaticAssetContainer(db: PlatformDB): ContainerRecord | null {
-  return listContainers(db, 'running')[0] ?? null;
+async function pickCodeDomainStaticAssetContainer(db: PlatformDB): Promise<ContainerRecord | null> {
+  return (await listContainers(db, 'running'))[0] ?? null;
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -316,7 +315,7 @@ async function resolveContainerEndpoint(
 
   const { info, source } = inspected;
   if (info.Id && info.Id !== containerId) {
-    updateContainerStatus(db, handle, info.State?.Running ? 'running' : 'stopped', info.Id);
+    await updateContainerStatus(db, handle, info.State?.Running ? 'running' : 'stopped', info.Id);
   }
 
   return {
@@ -360,14 +359,14 @@ async function resolveAppDomainIdentity(opts: {
   if (bearerToken && opts.platformJwtSecret) {
     try {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
-      const record = getContainer(opts.db, claims.handle);
+      const record = await getContainer(opts.db, claims.handle);
       if (record?.clerkUserId === claims.sub) {
         return {
           handle: record.handle,
           userId: record.clerkUserId,
         };
       }
-      const machine = getRunningUserMachineByHandle(opts.db, claims.handle);
+      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle);
       if (machine?.clerkUserId !== claims.sub) {
         return null;
       }
@@ -397,14 +396,14 @@ async function resolveAppDomainIdentity(opts: {
     return null;
   }
 
-  const record = getContainerByClerkId(opts.db, result.userId);
+  const record = await getContainerByClerkId(opts.db, result.userId);
   if (record) {
     return {
       handle: record.handle,
       userId: result.userId,
     };
   }
-  const machine = getRunningUserMachineByClerkId(opts.db, result.userId);
+  const machine = await getRunningUserMachineByClerkId(opts.db, result.userId);
   if (!machine) {
     return null;
   }
@@ -700,7 +699,7 @@ export function createApp(deps: {
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
-        const staticRecord = pickCodeDomainStaticAssetContainer(db);
+        const staticRecord = await pickCodeDomainStaticAssetContainer(db);
         if (!staticRecord) {
           applyNoStoreHeaders(c);
           return c.text('Editor assets unavailable', 503);
@@ -745,7 +744,7 @@ export function createApp(deps: {
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
-    const runningMachine = getRunningUserMachineByHandle(db, identity.handle);
+    const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
     if (runningMachine) {
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
@@ -812,7 +811,7 @@ export function createApp(deps: {
       }
     }
 
-    const record = getContainer(db, identity.handle);
+    const record = await getContainer(db, identity.handle);
     if (!record) {
       return c.html(getNoContainerPage());
     }
@@ -849,7 +848,7 @@ export function createApp(deps: {
       }
     }
 
-    updateLastActive(db, record.handle);
+    await updateLastActive(db, record.handle);
 
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
     const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
@@ -961,7 +960,7 @@ export function createApp(deps: {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record?.clerkUserId) {
         return c.json({ error: 'Unknown handle' }, 404);
       }
@@ -1148,17 +1147,17 @@ export function createApp(deps: {
   app.get('/containers', async (c) => {
     await orchestrator.syncStates();
     const status = c.req.query('status');
-    return c.json(orchestrator.listAll(status));
+    return c.json(await orchestrator.listAll(status));
   });
 
-  app.get('/containers/:handle', (c) => {
-    const info = orchestrator.getInfo(c.req.param('handle'));
+  app.get('/containers/:handle', async (c) => {
+    const info = await orchestrator.getInfo(c.req.param('handle'));
     if (!info) return c.json({ error: 'Not found' }, 404);
     return c.json({ ...info, image: orchestrator.getImage() });
   });
 
-  app.get('/containers/check-handle/:handle', (c) => {
-    const info = orchestrator.getInfo(c.req.param('handle'));
+  app.get('/containers/check-handle/:handle', async (c) => {
+    const info = await orchestrator.getInfo(c.req.param('handle'));
     if (!info) return c.json({ error: 'Not found' }, 404);
     return c.json({ exists: true, status: info.status });
   });
@@ -1167,7 +1166,7 @@ export function createApp(deps: {
 
   app.get('/admin/dashboard', async (c) => {
     await orchestrator.syncStates();
-    const all = orchestrator.listAll();
+    const all = await orchestrator.listAll();
     const running = all.filter((r) => r.status === 'running');
     const stopped = all.filter((r) => r.status !== 'running');
 
@@ -1255,8 +1254,8 @@ export function createApp(deps: {
 
   const social = createSocialApi(db);
 
-  app.get('/social/users', (c) => {
-    return c.json(social.listUsers());
+  app.get('/social/users', async (c) => {
+    return c.json(await social.listUsers());
   });
 
   app.get('/social/profiles/:handle', async (c) => {
@@ -1300,7 +1299,7 @@ export function createApp(deps: {
     const handle = c.req.param('handle');
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const runningMachine = getRunningUserMachineByHandle(db, handle);
+    const runningMachine = await getRunningUserMachineByHandle(db, handle);
     if (runningMachine) {
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {
@@ -1334,7 +1333,7 @@ export function createApp(deps: {
       }
     }
 
-    const record = getContainer(db, handle);
+    const record = await getContainer(db, handle);
     if (!record) return c.json({ error: 'Unknown handle' }, 404);
 
     if (record.status === 'stopped') {
@@ -1346,7 +1345,7 @@ export function createApp(deps: {
       }
     }
 
-    updateLastActive(db, handle);
+    await updateLastActive(db, handle);
 
     const targetUrl = `http://matrixos-${handle}:3000${path}`;
 
@@ -1385,7 +1384,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   if (checkUnsafeDefaultSecrets().length > 0) {
     process.exit(1);
   }
-  const db = createPlatformDb(DB_PATH);
+  const platformDatabaseUrl = process.env.PLATFORM_DATABASE_URL ??
+    (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
+  const db = platformDatabaseUrl ? createPlatformDb(platformDatabaseUrl) : createPlatformDb();
+  await db.ready;
   const docker = new Dockerode();
   const extraEnv: string[] = [];
   if (process.env.CLERK_SECRET_KEY) {
@@ -1424,8 +1426,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const statsCollector = createStatsCollector({
     docker,
     listRunning: () => listContainers(db, 'running'),
-    onResolvedContainerId: (handle, containerId) => {
-      updateContainerStatus(db, handle, 'running', containerId);
+    onResolvedContainerId: async (handle, containerId) => {
+      await updateContainerStatus(db, handle, 'running', containerId);
     },
   });
   statsCollector.start();
@@ -1631,8 +1633,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     });
     if (!identity) { socket.destroy(); return; }
 
-    const runningMachine = getRunningUserMachineByHandle(db, identity.handle);
-    const record = getContainer(db, identity.handle);
+    const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+    const record = await getContainer(db, identity.handle);
     if (!runningMachine && !record) { socket.destroy(); return; }
     let activeUpstream: Socket | null = null;
     const onSocketError = () => activeUpstream?.destroy();

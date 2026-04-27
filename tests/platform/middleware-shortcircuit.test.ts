@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
-  createPlatformDb,
   type PlatformDB,
 } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
@@ -35,11 +35,8 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
   let db: PlatformDB;
   let app: ReturnType<typeof createApp>;
 
-  beforeEach(() => {
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_"bad"&<tag>';
-    tmpDir = mkdtempSync(join(tmpdir(), "middleware-shortcircuit-"));
-    db = createPlatformDb(join(tmpDir, "test.db"));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
 
     // Clerk stub that always fails verification -- proves the short-circuit
     // takes effect BEFORE the middleware gets a chance to call Clerk.
@@ -50,8 +47,8 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
     app = createApp({ db, orchestrator: stubOrchestrator(), clerkAuth });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   });

@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import pg from 'pg';
-import { createPlatformDb, type PlatformDB, getContainer } from '../../packages/platform/src/db.js';
+import { type PlatformDB, getContainer } from '../../packages/platform/src/db.js';
 import { createOrchestrator, type Orchestrator } from '../../packages/platform/src/orchestrator.js';
 
 function createMockDocker() {
@@ -26,16 +24,14 @@ function createMockDocker() {
 }
 
 describe('platform/orchestrator', () => {
-  let tmpDir: string;
   let db: PlatformDB;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'platform-orch-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   it('provisions a container', async () => {
@@ -125,11 +121,11 @@ describe('platform/orchestrator', () => {
     await orch.provision('dan', 'user_2ghi');
     // Simulate legacy DB row: blank out clerkUserId directly in the DB
     // bypassing the type-safe insert path.
-    const { getDb } = await import('../../packages/platform/src/db.js');
-    // Cheap hack via raw SQL on the underlying sqlite: the drizzle handle
-    // wraps a sqlite.prepare-capable client.
-    // (Use the same db instance to keep the test self-contained.)
-    (db as any).$client.prepare("UPDATE containers SET clerk_user_id = '' WHERE handle = 'dan'").run();
+    await db.executor
+      .updateTable('containers')
+      .set({ clerk_user_id: '' })
+      .where('handle', '=', 'dan')
+      .execute();
 
     await expect(orch.upgrade('dan')).rejects.toThrow(
       /No clerkUserId in container record for handle 'dan'/,
@@ -145,7 +141,11 @@ describe('platform/orchestrator', () => {
     await orch.provision('erin', 'user_2jkl');
     await orch.provision('frank', 'user_2mno');
     // Corrupt one record to simulate partial-failure state.
-    (db as any).$client.prepare("UPDATE containers SET clerk_user_id = '' WHERE handle = 'erin'").run();
+    await db.executor
+      .updateTable('containers')
+      .set({ clerk_user_id: '' })
+      .where('handle', '=', 'erin')
+      .execute();
     docker.createContainer.mockClear();
 
     const result = await orch.rollingRestart();
@@ -173,7 +173,7 @@ describe('platform/orchestrator', () => {
     const orch = createOrchestrator({ db, docker: docker as any });
 
     await expect(orch.provision('alice', 'clerk_1')).rejects.toThrow('create failed');
-    expect(getContainer(db, 'alice')).toBeUndefined();
+    expect(await getContainer(db, 'alice')).toBeUndefined();
 
     const record = await orch.provision('bob', 'clerk_2');
     expect(record.port).toBe(4001);
@@ -300,7 +300,7 @@ describe('platform/orchestrator', () => {
 
     await orch.start('alice');
     expect(mockContainer.start).toHaveBeenCalledOnce();
-    expect(orch.getInfo('alice')!.status).toBe('running');
+    expect((await orch.getInfo('alice'))!.status).toBe('running');
   });
 
   it('no-ops when starting an already running container', async () => {
@@ -322,7 +322,7 @@ describe('platform/orchestrator', () => {
     await orch.stop('alice');
 
     expect(mockContainer.stop).toHaveBeenCalledOnce();
-    expect(orch.getInfo('alice')!.status).toBe('stopped');
+    expect((await orch.getInfo('alice'))!.status).toBe('stopped');
   });
 
   it('destroys a container and releases ports', async () => {
@@ -333,7 +333,7 @@ describe('platform/orchestrator', () => {
     await orch.destroy('alice');
 
     expect(mockContainer.remove).toHaveBeenCalledWith({ force: true });
-    expect(orch.getInfo('alice')).toBeUndefined();
+    expect(await orch.getInfo('alice')).toBeUndefined();
   });
 
   it('logs cleanup failures during destroy instead of swallowing them', async () => {
@@ -354,7 +354,7 @@ describe('platform/orchestrator', () => {
       '[orchestrator] Failed to remove container for alice:',
       'remove failed',
     );
-    expect(orch.getInfo('alice')).toBeUndefined();
+    expect(await orch.getInfo('alice')).toBeUndefined();
   });
 
   it('lists containers with optional status filter', async () => {
@@ -365,9 +365,9 @@ describe('platform/orchestrator', () => {
     await orch.provision('bob', 'clerk_2');
     await orch.stop('bob');
 
-    expect(orch.listAll()).toHaveLength(2);
-    expect(orch.listAll('running')).toHaveLength(1);
-    expect(orch.listAll('stopped')).toHaveLength(1);
+    expect(await orch.listAll()).toHaveLength(2);
+    expect(await orch.listAll('running')).toHaveLength(1);
+    expect(await orch.listAll('stopped')).toHaveLength(1);
   });
 
   it('throws when operating on non-existent handle', async () => {
@@ -390,7 +390,7 @@ describe('platform/orchestrator', () => {
     const orch = createOrchestrator({ db, docker: docker as any });
 
     await orch.provision('alice', 'clerk_1');
-    const before = orch.getInfo('alice')!;
+    const before = (await orch.getInfo('alice'))!;
     expect(before.containerId).toBe('mock-container-id');
 
     docker.createContainer.mockResolvedValue(newMockContainer);
@@ -408,7 +408,7 @@ describe('platform/orchestrator', () => {
     const orch = createOrchestrator({ db, docker: docker as any });
 
     await orch.provision('alice', 'clerk_1');
-    expect(orch.getInfo('alice')!.status).toBe('running');
+    expect((await orch.getInfo('alice'))!.status).toBe('running');
 
     docker.getContainer.mockReturnValue({
       ...mockContainer,
@@ -416,7 +416,7 @@ describe('platform/orchestrator', () => {
     });
 
     await orch.syncStates();
-    expect(orch.getInfo('alice')!.status).toBe('stopped');
+    expect((await orch.getInfo('alice'))!.status).toBe('stopped');
   });
 
   it('syncStates marks container stopped when Docker inspect fails', async () => {
@@ -431,7 +431,7 @@ describe('platform/orchestrator', () => {
     });
 
     await orch.syncStates();
-    expect(orch.getInfo('alice')!.status).toBe('stopped');
+    expect((await orch.getInfo('alice'))!.status).toBe('stopped');
   });
 
   describe('rollingRestart', () => {

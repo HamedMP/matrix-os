@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import {
-  createPlatformDb,
   getActiveUserMachineByClerkId,
   getUserMachine,
   type PlatformDB,
@@ -19,18 +16,17 @@ import {
   createCustomerVpsSystemStore,
   validateDbLatestPointer,
 } from '../../packages/platform/src/customer-vps-r2.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 describe('platform/customer-vps', () => {
-  let tmpDir: string;
   let db: PlatformDB;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'customer-vps-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   function createService(overrides: Parameters<typeof createCustomerVpsService>[0] = {} as any) {
@@ -67,7 +63,7 @@ describe('platform/customer-vps', () => {
     expect(first).toEqual({ machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', status: 'provisioning', etaSeconds: 90 });
     expect(second).toEqual(first);
     expect(hetzner.createServer).toHaveBeenCalledTimes(1);
-    const row = getActiveUserMachineByClerkId(db, 'user_123');
+    const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
   });
@@ -84,7 +80,7 @@ describe('platform/customer-vps', () => {
       code: 'quota_exceeded',
     });
 
-    const row = getActiveUserMachineByClerkId(db, 'user_123');
+    const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.status).toBe('failed');
     expect(row?.failureCode).toBe('quota_exceeded');
   });
@@ -94,7 +90,7 @@ describe('platform/customer-vps', () => {
     const { service, hetzner } = createService({
       hetzner: createMockHetznerClient({
         createServer: vi.fn().mockImplementation(async () => {
-          (db as { $client: { close: () => void } }).$client.close();
+          await db.destroy();
           return {
             id: 654321,
             status: 'running',
@@ -127,7 +123,7 @@ describe('platform/customer-vps', () => {
     });
 
     expect(registered).toEqual({ registered: true, status: 'running' });
-    const row = getUserMachine(db, provisioned.machineId);
+    const row = await getUserMachine(db, provisioned.machineId);
     expect(row?.status).toBe('running');
     expect(row?.registrationTokenHash).toBeNull();
     expect(row?.registrationTokenExpiresAt).toBeNull();
@@ -145,7 +141,7 @@ describe('platform/customer-vps', () => {
       imageVersion: 'matrix-os-host-2026.04.26-1',
     })).rejects.toMatchObject({ status: 401 });
 
-    expect(getUserMachine(db, provisioned.machineId)?.status).toBe('provisioning');
+    expect((await getUserMachine(db, provisioned.machineId))?.status).toBe('provisioning');
   });
 
   it('builds valid R2 VPS metadata from a running machine row', async () => {
@@ -158,7 +154,7 @@ describe('platform/customer-vps', () => {
       imageVersion: 'matrix-os-host-2026.04.26-1',
     });
 
-    const row = getUserMachine(db, provisioned.machineId)!;
+    const row = (await getUserMachine(db, provisioned.machineId))!;
     expect(buildVpsMeta(row, '2026-04-26T12:05:00.000Z')).toMatchObject({
       version: 1,
       userId: 'user_123',
@@ -169,10 +165,10 @@ describe('platform/customer-vps', () => {
   });
 
   it('validates R2 latest pointers without accepting paths or URLs', () => {
-    expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.sql.gz')).toBe(true);
-    expect(validateDbLatestPointer('../system/db/snapshots/2026-04-26T1800Z.sql.gz')).toBe(false);
-    expect(validateDbLatestPointer('https://example.com/snapshot.sql.gz')).toBe(false);
-    expect(validateDbLatestPointer('system/db/snapshots/not-a-date.sql.gz')).toBe(false);
+    expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
+    expect(validateDbLatestPointer('../system/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);
+    expect(validateDbLatestPointer('https://example.com/snapshot.dump')).toBe(false);
+    expect(validateDbLatestPointer('system/db/snapshots/not-a-date.dump')).toBe(false);
   });
 
   it('writes VPS metadata to the scoped user R2 key', async () => {
@@ -278,7 +274,9 @@ describe('platform/customer-vps', () => {
     expect(
       vi.mocked(hetzner.createServer).mock.invocationCallOrder[1],
     ).toBeLessThan(vi.mocked(hetzner.deleteServer).mock.invocationCallOrder[0]);
-    const row = getUserMachine(db, recovered.machineId)!;
+    const secondCreate = vi.mocked(hetzner.createServer).mock.calls[1][0];
+    expect(secondCreate.name).toBe('matrix-alice-f973bb98');
+    const row = (await getUserMachine(db, recovered.machineId))!;
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
       handle: 'alice',
@@ -286,7 +284,7 @@ describe('platform/customer-vps', () => {
       hetznerServerId: 789012,
       publicIPv4: '203.0.113.11',
     });
-    expect(getUserMachine(db, provisioned.machineId)).toBeUndefined();
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });
 
   it('deletes a replacement server when recovery cannot record it in the DB', async () => {
@@ -303,7 +301,7 @@ describe('platform/customer-vps', () => {
         publicIPv4: '203.0.113.10',
       })
       .mockImplementationOnce(async () => {
-        (db as { $client: { close: () => void } }).$client.close();
+        await db.destroy();
         return {
           id: 789012,
           status: 'running',
@@ -339,7 +337,7 @@ describe('platform/customer-vps', () => {
     const { service, hetzner } = createService({
       hetzner: createMockHetznerClient({
         deleteServer: vi.fn().mockImplementation(async () => {
-          deletedAtDuringProviderDelete = getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112')?.deletedAt;
+          deletedAtDuringProviderDelete = (await getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112'))?.deletedAt;
         }),
       }),
     });

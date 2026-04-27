@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { createPlatformDb, type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
+import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import type Dockerode from "dockerode";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -20,7 +18,7 @@ function stubOrchestrator(): Orchestrator {
     destroy: vi.fn(),
     upgrade: vi.fn(),
     rollingRestart: vi.fn(),
-    getInfo: vi.fn((handle: string) => ({
+    getInfo: vi.fn(async (handle: string) => ({
       handle,
       clerkUserId: "user_alice",
       containerId: "ctr-1",
@@ -29,7 +27,7 @@ function stubOrchestrator(): Orchestrator {
       status: "running",
     })),
     getImage: vi.fn(),
-    listAll: vi.fn().mockReturnValue([]),
+    listAll: vi.fn().mockResolvedValue([]),
     syncStates: vi.fn(),
   };
 }
@@ -58,13 +56,11 @@ function stubDocker(inspectInfo: { id?: string; ipAddress?: string; running?: bo
 }
 
 describe("platform proxy routing", () => {
-  let tmpDir: string;
   let db: PlatformDB;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "platform-proxy-"));
-    db = createPlatformDb(join(tmpDir, "test.db"));
-    insertContainer(db, {
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await insertContainer(db, {
       handle: "alice",
       clerkUserId: "user_alice",
       port: 5001,
@@ -73,8 +69,8 @@ describe("platform proxy routing", () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
   });
@@ -147,7 +143,7 @@ describe("platform proxy routing", () => {
 
   it("routes code.matrix-os.com to the authenticated user's VPS gateway first", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    insertUserMachine(db, {
+    await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
       clerkUserId: "user_alice",
       handle: "alice",
@@ -196,8 +192,8 @@ describe("platform proxy routing", () => {
 
   it("routes new VPS-only users on code.matrix-os.com without a legacy container", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    deleteContainer(db, "alice");
-    insertUserMachine(db, {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff114",
       clerkUserId: "user_alice",
       handle: "alice",
@@ -263,7 +259,7 @@ describe("platform proxy routing", () => {
 
   it("accepts the short-lived code-domain session cookie for follow-up VPS editor requests", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    insertUserMachine(db, {
+    await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff113",
       clerkUserId: "user_alice",
       handle: "alice",
@@ -413,6 +409,6 @@ describe("platform proxy routing", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("[platform] app-domain proxy retry attempt=1 handle=alice"),
     );
-    expect(getContainer(db, "alice")?.containerId).toBe("docker-ctr-2");
+    expect((await getContainer(db, "alice"))?.containerId).toBe("docker-ctr-2");
   });
 });

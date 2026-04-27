@@ -239,7 +239,7 @@ write_files:
         local snapshot_key="$1"
         safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
         case "$snapshot_key" in
-          system/db/snapshots/*.sql.gz) ;;
+          system/db/snapshots/*.dump) ;;
           *) fail "invalid latest pointer" ;;
         esac
         local tmp
@@ -260,7 +260,7 @@ write_files:
         local clerk_user_id="$1"
         local allow_empty="${2:-}"
         case "$clerk_user_id" in
-          ""|*..*|*://*|*$'\r'*|*$'\n'*) fail "invalid recovery user" ;;
+          ""|*[^A-Za-z0-9_-]*) fail "invalid recovery user" ;;
         esac
         if [ -n "$allow_empty" ] && [ "$allow_empty" != "--allow-empty" ]; then
           usage
@@ -339,7 +339,7 @@ write_files:
       mkdir -p "$snapshot_dir"
 
       ts="$(date -u +%Y-%m-%dT%H%MZ)"
-      snapshot_name="${ts}.sql.gz"
+      snapshot_name="${ts}.dump"
       snapshot_path="${snapshot_dir}/${snapshot_name}"
       snapshot_key="system/db/snapshots/${snapshot_name}"
 
@@ -350,7 +350,7 @@ write_files:
         --username="${POSTGRES_USER:-matrix}" \
         --dbname="${POSTGRES_DB:-matrix}" \
         --format=custom \
-        | gzip > "$snapshot_path"; then
+        --file="$snapshot_path"; then
         rm -f "$snapshot_path"
         echo "matrix-db-backup: dump failed" >&2
         exit 1
@@ -364,7 +364,6 @@ write_files:
 
       matrixctl r2 put "$snapshot_path" "$snapshot_key"
       matrixctl r2 put-latest "$snapshot_key"
-      matrixctl r2 prune system/db/snapshots/
   - path: /opt/matrix/bin/matrix-restore.sh
     owner: root:matrix
     permissions: "0750"
@@ -378,7 +377,7 @@ write_files:
 
       restore_flag="/opt/matrix/restore-complete"
       latest_file="/var/lib/matrix/db/latest"
-      snapshot_path="/var/lib/matrix/db/latest.sql.gz"
+      snapshot_path="/var/lib/matrix/db/latest.dump"
 
       mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
       rm -f "$restore_flag"
@@ -400,7 +399,7 @@ write_files:
 
       latest_key="$(tr -d '\r\n' < "$latest_file")"
       case "$latest_key" in
-        system/db/snapshots/*.sql.gz) ;;
+        system/db/snapshots/*.dump) ;;
         *)
           echo "matrix-restore: invalid latest pointer" >&2
           exit 1
@@ -428,12 +427,13 @@ write_files:
         sleep 2
       done
 
-      if ! gzip -dc "$snapshot_path" | timeout 300 pg_restore \
+      if ! timeout 300 pg_restore \
         --host=127.0.0.1 \
         --username="${POSTGRES_USER:-matrix}" \
         --dbname="${POSTGRES_DB:-matrix}" \
         --clean \
-        --if-exists; then
+        --if-exists \
+        "$snapshot_path"; then
         echo "matrix-restore: database restore failed" >&2
         exit 1
       fi

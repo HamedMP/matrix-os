@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createHmac } from 'node:crypto';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { createPlatformDb, type PlatformDB, insertContainer } from '../../packages/platform/src/db.js';
+import { type PlatformDB, insertContainer } from '../../packages/platform/src/db.js';
 import { createOrchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
 
@@ -28,22 +26,20 @@ function createMockDocker() {
 }
 
 describe('platform/api', () => {
-  let tmpDir: string;
   let db: PlatformDB;
   let app: ReturnType<typeof createApp>;
   const platformSecret = 'platform-secret-123';
   const adminHeaders = { authorization: `Bearer ${platformSecret}` };
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'platform-api-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     const { docker } = createMockDocker();
     const orchestrator = createOrchestrator({ db, docker: docker as any });
     app = createApp({ db, orchestrator, platformSecret });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   it('GET /health returns ok', async () => {
@@ -213,7 +209,7 @@ describe('platform/api', () => {
   });
 
   it('POST /containers/:handle/self-upgrade rejects invalid bearer tokens regardless of length', async () => {
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       port: 5001,
@@ -230,7 +226,7 @@ describe('platform/api', () => {
   });
 
   it('POST /containers/:handle/self-upgrade accepts the derived per-handle bearer token', async () => {
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       port: 5001,

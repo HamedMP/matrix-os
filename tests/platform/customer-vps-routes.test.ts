@@ -1,27 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
+import { type PlatformDB } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createCustomerVpsRoutes } from '../../packages/platform/src/customer-vps-routes.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 describe('platform/customer-vps-routes', () => {
-  let tmpDir: string;
   let db: PlatformDB;
   const platformSecret = 'platform-secret';
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'customer-vps-routes-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   function createApp() {

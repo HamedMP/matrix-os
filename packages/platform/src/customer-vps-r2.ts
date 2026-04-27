@@ -44,7 +44,7 @@ export function buildVpsMeta(machine: UserMachineRecord, nowIso: string): VpsMet
 }
 
 export function validateDbLatestPointer(value: string): boolean {
-  return /^system\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.sql\.gz$/.test(value) &&
+  return /^system\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/.test(value) &&
     !value.includes('..') &&
     !value.includes(':') &&
     !/[\x00-\x1f\x7f]/.test(value);
@@ -64,6 +64,11 @@ function isNotFoundError(err: unknown): boolean {
   return candidate.name === 'NoSuchKey' ||
     candidate.name === 'NotFound' ||
     candidate.$metadata?.httpStatusCode === 404;
+}
+
+async function readObjectText(body: ReadableStream | null): Promise<string | null> {
+  if (!body) return null;
+  return new Response(body).text();
 }
 
 export function buildCustomerVpsR2Key(
@@ -97,8 +102,11 @@ export function createCustomerVpsSystemStore(options: {
 
     async hasDbLatest(clerkUserId) {
       try {
-        await options.r2.getObject(buildCustomerVpsR2Key(options.r2PrefixRoot, clerkUserId, 'system/db/latest'));
-        return true;
+        const object = await options.r2.getObject(
+          buildCustomerVpsR2Key(options.r2PrefixRoot, clerkUserId, 'system/db/latest'),
+        );
+        const pointer = await readObjectText(object.body);
+        return pointer !== null && validateDbLatestPointer(pointer.trim());
       } catch (err: unknown) {
         if (isNotFoundError(err)) return false;
         throw err;

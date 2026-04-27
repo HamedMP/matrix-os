@@ -99,7 +99,7 @@ r2_put_latest() {
   local snapshot_key="$1"
   safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
   case "$snapshot_key" in
-    system/db/snapshots/*.sql.gz) ;;
+    system/db/snapshots/*.dump) ;;
     *) fail "invalid latest pointer" ;;
   esac
   local tmp
@@ -123,7 +123,7 @@ recover() {
   local clerk_user_id="$1"
   local allow_empty="${2:-}"
   case "$clerk_user_id" in
-    ""|*..*|*://*|*$'\r'*|*$'\n'*) fail "invalid recovery user" ;;
+    ""|*[^A-Za-z0-9_-]*) fail "invalid recovery user" ;;
   esac
   if [ -n "$allow_empty" ] && [ "$allow_empty" != "--allow-empty" ]; then
     usage

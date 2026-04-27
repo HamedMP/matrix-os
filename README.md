@@ -140,7 +140,7 @@ The core metaphor maps precisely to computer architecture:
 | Disk | File system (`~/apps`, `~/data`, `~/system`) |
 | System calls | 26 IPC tools via MCP server |
 | Device drivers | MCP servers |
-| IPC | File-based coordination + SQLite task queue |
+| IPC | File-based coordination + PostgreSQL-backed task queue |
 
 ### The Web 4 Vision
 
@@ -164,7 +164,7 @@ Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, m
 | AI | Claude Agent SDK V1 (`query()` + `resume`), Opus 4.6 |
 | Frontend | Next.js 16 (Turbopack, React Compiler), React 19 |
 | Backend | Hono (HTTP/WebSocket gateway) |
-| Database | SQLite via Drizzle ORM (kernel), Postgres via Kysely (social/app data) |
+| Database | PostgreSQL via Kysely for kernel durable state, platform, social, app, and user data |
 | Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
 | Federation | Matrix protocol (matrix-js-sdk), Conduit homeserver |
 | Voice | Edge TTS, ElevenLabs, OpenAI TTS/Whisper, Twilio |
@@ -182,7 +182,7 @@ Matrix OS is the foundation for **Web 4** -- a unified platform where your OS, m
 ```
 packages/kernel/     # AI kernel (Agent SDK, agents, IPC tools, hooks, SOUL, skills)
 packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat + voice
-packages/platform/   # Multi-tenant orchestrator (Hono :9000, Drizzle, dockerode, social API)
+packages/platform/   # Multi-tenant orchestrator (Hono :9000, Kysely/Postgres, dockerode, social API)
 packages/proxy/      # Shared API proxy (Hono :8080, usage tracking)
 shell/               # Next.js 16 frontend (desktop shell, file browser, terminal, canvas)
 www/                 # matrix-os.com + /docs (Next.js on Vercel, Clerk auth, Fumadocs)
