@@ -522,6 +522,12 @@ importers:
       '@codemirror/view':
         specifier: ^6.40.0
         version: 6.40.0
+      '@fontsource/fira-code':
+        specifier: ^5.2.7
+        version: 5.2.7
+      '@fontsource/jetbrains-mono':
+        specifier: ^5.2.8
+        version: 5.2.8
       '@react-three/drei':
         specifier: ^10.7.7
         version: 10.7.7(@react-three/fiber@9.5.0(@types/react@19.2.14)(expo-asset@55.0.10(expo@55.0.8)(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3))(react@19.2.3)(typescript@5.9.3))(expo-file-system@55.0.11(expo@55.0.8)(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)))(expo@55.0.8)(react-dom@19.2.3(react@19.2.3))(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3))(react@19.2.3)(three@0.183.2))(@types/react@19.2.14)(@types/three@0.183.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(three@0.183.2)
@@ -546,6 +552,9 @@ importers:
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
+      '@xterm/addon-image':
+        specifier: ^0.9.0
+        version: 0.9.0
       '@xterm/addon-search':
         specifier: ^0.16.0
         version: 0.16.0
@@ -2516,6 +2525,12 @@ packages:
 
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
+
+  '@fontsource/fira-code@5.2.7':
+    resolution: {integrity: sha512-tnB9NNund9TwIym8/7DMJe573nlPEQb+fKUV5GL8TBYXjIhDvL0D7mgmNVNQUPhXp+R7RylQeiBdkA4EbOHPGQ==}
+
+  '@fontsource/jetbrains-mono@5.2.8':
+    resolution: {integrity: sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ==}
 
   '@formatjs/fast-memoize@3.1.1':
     resolution: {integrity: sha512-CbNbf+tlJn1baRnPkNePnBqTLxGliG6DDgNa/UtV66abwIjwsliPMOt0172tzxABYzSuxZBZfcp//qI8AvBWPg==}
@@ -6127,6 +6142,9 @@ packages:
 
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
+
+  '@xterm/addon-image@0.9.0':
+    resolution: {integrity: sha512-oYWA8/QAr5/Emwl1xL7WCoOqeG3IZfpzEz/OVq1j4Oi9934TQmHiyubClikRf0D/jL3JNiNuz/Lsqx0kXQ02BA==}
 
   '@xterm/addon-search@0.16.0':
     resolution: {integrity: sha512-9OeuBFu0/uZJPu+9AHKY6g/w0Czyb/Ut0A5t79I4ULoU4IfU5BEpPFVGQxP4zTTMdfZEYkVIRYbHBX1xWwjeSA==}
@@ -15552,7 +15570,7 @@ snapshots:
       metro-babel-transformer: 0.83.3
       metro-cache: 0.83.3
       metro-cache-key: 0.83.3
-      metro-config: 0.83.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      metro-config: 0.83.3(bufferutil@4.1.0)
       metro-core: 0.83.3
       metro-file-map: 0.83.3
       metro-minify-terser: 0.83.3
@@ -15682,6 +15700,10 @@ snapshots:
       tabbable: 6.4.0
 
   '@floating-ui/utils@0.2.11': {}
+
+  '@fontsource/fira-code@5.2.7': {}
+
+  '@fontsource/jetbrains-mono@5.2.8': {}
 
   '@formatjs/fast-memoize@3.1.1': {}
 
@@ -20195,6 +20217,8 @@ snapshots:
   '@xmldom/xmldom@0.8.11': {}
 
   '@xterm/addon-fit@0.11.0': {}
+
+  '@xterm/addon-image@0.9.0': {}
 
   '@xterm/addon-search@0.16.0': {}
 
@@ -25091,42 +25115,12 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  metro-config@0.83.3(bufferutil@4.1.0)(utf-8-validate@6.0.6):
-    dependencies:
-      connect: 3.7.0
-      flow-enums-runtime: 0.0.6
-      jest-validate: 29.7.0
-      metro: 0.83.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      metro-cache: 0.83.3
-      metro-core: 0.83.3
-      metro-runtime: 0.83.3
-      yaml: 2.8.2
-    transitivePeerDependencies:
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-
   metro-config@0.83.5(bufferutil@4.1.0):
     dependencies:
       connect: 3.7.0
       flow-enums-runtime: 0.0.6
       jest-validate: 29.7.0
       metro: 0.83.5(bufferutil@4.1.0)
-      metro-cache: 0.83.5
-      metro-core: 0.83.5
-      metro-runtime: 0.83.5
-      yaml: 2.8.2
-    transitivePeerDependencies:
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-
-  metro-config@0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6):
-    dependencies:
-      connect: 3.7.0
-      flow-enums-runtime: 0.0.6
-      jest-validate: 29.7.0
-      metro: 0.83.5(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       metro-cache: 0.83.5
       metro-core: 0.83.5
       metro-runtime: 0.83.5
@@ -25430,7 +25424,7 @@ snapshots:
       metro-babel-transformer: 0.83.3
       metro-cache: 0.83.3
       metro-cache-key: 0.83.3
-      metro-config: 0.83.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      metro-config: 0.83.3(bufferutil@4.1.0)
       metro-core: 0.83.3
       metro-file-map: 0.83.3
       metro-resolver: 0.83.3
