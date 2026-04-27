@@ -180,6 +180,7 @@ describe("platform proxy routing", () => {
     expect(docker.getContainer).not.toHaveBeenCalled();
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://203.0.113.10:443/?folder=/home/matrixos/home");
+    expect(init?.dispatcher).toBeDefined();
     const headers = init?.headers as Headers;
     expect(headers.get("host")).toBe("code.matrix-os.com");
     expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
@@ -224,6 +225,7 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.12:443/");
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
   });
 
   it("falls back to the legacy container code-server when no running VPS exists", async () => {

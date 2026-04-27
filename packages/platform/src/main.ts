@@ -67,6 +67,16 @@ const containerProxyDispatcher = new Agent({
   keepAliveMaxTimeout: 1,
   connections: 64,
 });
+
+const customerVpsProxyDispatcher = new Agent({
+  pipelining: 0,
+  keepAliveTimeout: 1,
+  keepAliveMaxTimeout: 1,
+  connections: 64,
+  connect: {
+    rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY !== 'false',
+  },
+});
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
 
 const ProvisionBodySchema = z.object({
@@ -786,7 +796,7 @@ export function createApp(deps: {
           redirect: 'manual',
           signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
           body,
-          dispatcher: containerProxyDispatcher,
+          dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = new Headers(upstream.headers);
@@ -1321,7 +1331,8 @@ export function createApp(deps: {
           redirect: 'manual',
           signal: AbortSignal.timeout(30_000),
           body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-        });
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
 
         return new Response(upstream.body, {
           status: upstream.status,

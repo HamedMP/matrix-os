@@ -93,6 +93,7 @@ describe('platform/profile-routing-vps', () => {
 
     expect(res.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://203.0.113.10:443/api/ping?x=1');
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
     expect(docker.getContainer).not.toHaveBeenCalled();
   });
 
