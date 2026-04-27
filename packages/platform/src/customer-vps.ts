@@ -1,6 +1,7 @@
 import { randomUUID, randomBytes } from 'node:crypto';
 import type { PlatformDB, UserMachineRecord } from './db.js';
 import {
+  claimUserMachineRecovery,
   getActiveUserMachineByClerkId,
   getUserMachine,
   insertUserMachine,
@@ -310,18 +311,23 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async recover(input) {
-      const existing = await runInPlatformTransaction(deps.db, async (trx) => {
-        const row = await getActiveUserMachineByClerkId(trx, input.clerkUserId);
-        if (!row) {
-          throw new CustomerVpsError(404, 'not_found', 'Machine not found');
-        }
-        if (row.status === 'recovering') {
-          throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
-        }
-        return row;
-      });
+      const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+      if (!active) {
+        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
+      }
+      if (active.status === 'recovering') {
+        throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
+      }
       if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
+      }
+      const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId);
+      if (!existing) {
+        const latest = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+        if (latest?.status === 'recovering') {
+          throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
+        }
+        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
       const oldMachineId = existing.machineId;
       const oldServerId = existing.hetznerServerId;

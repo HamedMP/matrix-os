@@ -672,6 +672,26 @@ export async function updateUserMachine(
     .execute();
 }
 
+export async function claimUserMachineRecovery(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({
+      status: 'recovering',
+      failure_code: null,
+      failure_at: null,
+    })
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('status', '!=', 'recovering')
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
 export async function softDeleteUserMachine(db: PlatformDB, machineId: string, deletedAt: string): Promise<void> {
   await updateUserMachine(db, machineId, { status: 'deleted', deletedAt });
 }

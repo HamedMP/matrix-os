@@ -287,6 +287,43 @@ describe('platform/customer-vps', () => {
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });
 
+  it('rejects concurrent recover calls before creating a second replacement server', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      'aaaaaaaa-2538-4f9f-a10d-1be5920a7bf7',
+    ];
+    const { service, hetzner } = createService({
+      systemStore: createMockCustomerVpsSystemStore({
+        hasDbLatest: vi.fn().mockResolvedValue(true),
+      }),
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const results = await Promise.allSettled([
+      service.recover({ clerkUserId: 'user_123' }),
+      service.recover({ clerkUserId: 'user_123' }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected');
+    expect(rejected).toMatchObject({
+      reason: expect.objectContaining({
+        status: 409,
+        code: 'invalid_state',
+      }),
+    });
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+    expect(await getUserMachine(db, 'aaaaaaaa-2538-4f9f-a10d-1be5920a7bf7')).toBeUndefined();
+  });
+
   it('deletes a replacement server when recovery cannot record it in the DB', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
