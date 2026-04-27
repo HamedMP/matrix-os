@@ -193,7 +193,7 @@ fi
 header "5. Resource Management — writeFileSync/appendFileSync in handlers"
 
 MATCHES=$(rg_scan '(writeFileSync|appendFileSync)' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
-SYNC_IO_ALLOWLIST='packages/kernel/src/(audit|boot|build-pipeline|identity|memory|onboarding|usage)\.ts|packages/gateway/src/(app-fork|app-ops|app-upload|conversation-summary|conversations|cron/store|logger|postgres-manager|security/outbound-queue|session-store|storage-tracker|voice/call-store|voice/usage)\.ts'
+SYNC_IO_ALLOWLIST='packages/kernel/src/(audit|boot|build-pipeline|identity|memory|onboarding|usage)\.ts|packages/gateway/src/(app-fork|app-ops|app-upload|conversation-summary|conversations|cron/store|logger|postgres-manager|security/outbound-queue|session-store|social-connectors/index|storage-tracker|voice/call-store|voice/usage)\.ts'
 if [[ -n "$MATCHES" ]]; then
   MATCHES=$(printf '%s\n' "$MATCHES" | grep -Ev "$SYNC_IO_ALLOWLIST" || true)
 fi

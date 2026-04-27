@@ -34,8 +34,8 @@ import {
   renderCloudInitTemplate,
   type CustomerHostConfig,
 } from './customer-vps-cloud-init.js';
+import { PublicIPv4Schema, type CustomerVpsStatus } from './customer-vps-schema.js';
 import type {
-  CustomerVpsStatus,
   ProvisionRequest,
   RegisterRequest,
   RecoverRequest,
@@ -249,7 +249,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   }
 
   async function cleanupUntrackedServersForMachine(row: UserMachineRecord): Promise<void> {
-    if (!deps.hetzner.listServersByLabel) return;
+    if (!deps.hetzner.listServersByLabel) {
+      logCustomerVpsError(
+        `provider orphan scan unavailable machineId=${row.machineId}`,
+        new Error('Hetzner label listing is not configured'),
+      );
+      return;
+    }
     let servers: Awaited<ReturnType<NonNullable<HetznerClient['listServersByLabel']>>>;
     try {
       servers = await deps.hetzner.listServersByLabel(`machine_id=${row.machineId}`);
@@ -377,6 +383,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async register(token, input) {
+      const publicIPv4 = PublicIPv4Schema.safeParse(input.publicIPv4);
+      if (!publicIPv4.success) {
+        throw new CustomerVpsError(400, 'invalid_state', 'Invalid request');
+      }
       const row = await getUserMachine(deps.db, input.machineId);
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');

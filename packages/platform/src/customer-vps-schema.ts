@@ -12,6 +12,16 @@ export type CustomerVpsStatus = z.infer<typeof CustomerVpsStatusSchema>;
 
 export const SafeHandleSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/);
 export const ClerkUserIdSchema = z.string().min(3).max(256).regex(/^[A-Za-z0-9_-]+$/);
+export const PublicIPv4Schema = z.ipv4().refine((ip) => {
+  const parts = ip.split('.').map(Number);
+  const [a = 0, b = 0] = parts;
+  if (a === 0 || a === 10 || a === 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a >= 224) return false;
+  return true;
+}, 'publicIPv4 must be a public IPv4 address');
 
 export const ProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
@@ -21,7 +31,7 @@ export const ProvisionRequestSchema = z.object({
 export const RegisterRequestSchema = z.object({
   machineId: z.uuid(),
   hetznerServerId: z.number().int().positive(),
-  publicIPv4: z.ipv4(),
+  publicIPv4: PublicIPv4Schema,
   publicIPv6: z.ipv6().optional(),
   imageVersion: z.string().min(1).max(128),
 });

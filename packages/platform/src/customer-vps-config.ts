@@ -14,6 +14,12 @@ export interface CustomerVpsConfig {
   reconciliationStaleAfterMs: number;
 }
 
+function numberFromEnv(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
   const platformUrl = env.PLATFORM_PUBLIC_URL ?? `http://localhost:${env.PLATFORM_PORT ?? 9000}`;
   return {
@@ -26,9 +32,9 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     platformRegisterUrl: `${platformUrl.replace(/\/$/, '')}/vps/register`,
     r2Bucket: env.S3_BUCKET ?? env.R2_BUCKET ?? 'matrixos-sync',
     r2PrefixRoot: env.R2_PREFIX_ROOT ?? 'matrixos-sync',
-    provisionEtaSeconds: Number(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS ?? 90),
-    registrationTokenTtlMs: Number(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS ?? 15 * 60 * 1000),
-    reconciliationBatchSize: Number(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE ?? 50),
-    reconciliationStaleAfterMs: Number(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS ?? 10 * 60 * 1000),
+    provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
+    registrationTokenTtlMs: numberFromEnv(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS, 15 * 60 * 1000),
+    reconciliationBatchSize: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE, 50),
+    reconciliationStaleAfterMs: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS, 10 * 60 * 1000),
   };
 }

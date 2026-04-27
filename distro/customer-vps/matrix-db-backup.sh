@@ -35,3 +35,8 @@ fi
 
 matrixctl r2 put "$snapshot_path" "$snapshot_key"
 matrixctl r2 put-latest "$snapshot_key"
+
+find "$snapshot_dir" -maxdepth 1 -type f -name '*.dump' -printf '%T@ %p\n' \
+  | sort -rn \
+  | awk 'NR>24 {print $2}' \
+  | xargs -r rm -f

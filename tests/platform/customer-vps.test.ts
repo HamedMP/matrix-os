@@ -188,6 +188,23 @@ describe('platform/customer-vps', () => {
     expect((await getUserMachine(db, provisioned.machineId))?.status).toBe('provisioning');
   });
 
+  it('rejects registration with a private IPv4 address', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '10.0.0.5',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    })).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_state',
+    });
+
+    expect((await getUserMachine(db, provisioned.machineId))?.status).toBe('provisioning');
+  });
+
   it('does not complete registration after the machine leaves a registerable state', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });

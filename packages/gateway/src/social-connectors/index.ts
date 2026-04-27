@@ -1,4 +1,4 @@
-import { readFileSync, writeFile, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface ExternalPost {
@@ -56,11 +56,11 @@ export function createConnectorRegistry(homePath: string): ConnectorRegistry {
   }
 
   function writeConnections(connections: SocialConnection[]): void {
-    writeFile(connectionsPath, JSON.stringify(connections, null, 2), (err) => {
-      if (err) {
-        console.warn('[social-connectors] Could not persist connections:', err.message);
-      }
-    });
+    try {
+      writeFileSync(connectionsPath, JSON.stringify(connections, null, 2));
+    } catch (err: unknown) {
+      console.warn('[social-connectors] Could not persist connections:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   return {
