@@ -202,24 +202,42 @@ async function runTui(args: { gateway: string; token?: string }) {
   const projectsData = await fetchJSON(`${args.gateway}/api/projects`, args.token) as { projects?: Array<{ slug?: string; name?: string }> };
   const projects = projectsData.projects ?? [];
   const firstProjectSlug = projects[0]?.slug;
-  const [tasksData, sessionsData, reviewsData] = await Promise.all([
+  const [pullRequestsData, worktreesData, tasksData, sessionsData, reviewsData] = await Promise.all([
+    firstProjectSlug
+      ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/prs`, args.token)
+      : Promise.resolve({ prs: [] }),
+    firstProjectSlug
+      ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/worktrees`, args.token)
+      : Promise.resolve({ worktrees: [] }),
     firstProjectSlug
       ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/tasks?limit=100`, args.token)
       : Promise.resolve({ tasks: [] }),
     fetchJSON(`${args.gateway}/api/sessions?limit=100`, args.token),
     fetchJSON(`${args.gateway}/api/reviews?limit=100`, args.token),
   ]) as [
+    { prs?: Array<{ number?: number; title?: string; headRef?: string; state?: string }> },
+    { worktrees?: Array<{ id?: string; currentBranch?: string; dirtyState?: string }> },
     { tasks?: Array<{ id?: string; title?: string; status?: string; priority?: string }> },
-    { sessions?: Array<{ id?: string; status?: string; projectSlug?: string; taskId?: string }> },
+    { sessions?: Array<{ id?: string; status?: string; projectSlug?: string; taskId?: string; nativeAttachCommand?: string[] }> },
     { reviews?: Array<{ id?: string; status?: string; projectSlug?: string; round?: number }> },
   ];
 
-  console.log(renderTuiDashboard(buildTuiDashboardModel({
+  const model = buildTuiDashboardModel({
     projects,
+    pullRequests: pullRequestsData.prs ?? [],
+    worktrees: worktreesData.worktrees ?? [],
     tasks: tasksData.tasks ?? [],
     sessions: sessionsData.sessions ?? [],
     reviews: reviewsData.reviews ?? [],
-  })));
+  });
+
+  if (process.stdout.isTTY && process.stdin.isTTY) {
+    const { renderInkDashboard } = await import("./tui/app.js");
+    await renderInkDashboard({ model });
+    return;
+  }
+
+  console.log(renderTuiDashboard(model));
 }
 
 async function runDoctor(args: { gateway: string; token?: string }) {
