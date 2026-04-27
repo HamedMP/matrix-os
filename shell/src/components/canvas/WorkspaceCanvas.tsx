@@ -16,6 +16,7 @@ export function WorkspaceCanvas() {
   const query = useWorkspaceCanvasStore((s) => s.query);
   const filters = useWorkspaceCanvasStore((s) => s.filters);
   const setSelectedNode = useWorkspaceCanvasStore((s) => s.setSelectedNode);
+  const tldrawLayerEnabled = document?.displayOptions.tldrawLayer === true;
   const visibleNodes = useMemo(() => {
     if (!document) return [];
     const needle = query.trim().toLowerCase();
@@ -42,9 +43,11 @@ export function WorkspaceCanvas() {
 
   return (
     <div className="absolute inset-0 z-10 pointer-events-none" data-tldraw-workspace>
-      <div className="absolute inset-0 opacity-0">
-        <Tldraw persistenceKey={`workspace-${document.id}`} hideUi />
-      </div>
+      {tldrawLayerEnabled && (
+        <div className="absolute inset-0 opacity-0">
+          <Tldraw persistenceKey={`workspace-${document.id}`} hideUi />
+        </div>
+      )}
       <div className="absolute left-4 top-4 z-20">
         <WorkspaceCanvasToolbar />
       </div>

@@ -400,6 +400,7 @@ export class CanvasRepository {
       .where("id", "=", canvasId)
       .where("owner_scope", "=", owner.ownerScope)
       .where("owner_id", "=", owner.ownerId)
+      .where("deleted_at", "is", null)
       .returning("id")
       .executeTakeFirst();
 

@@ -73,4 +73,25 @@ describe("workspace canvas renderer", () => {
     });
     expect(screen.queryByTestId("mock-tldraw")).toBeNull();
   });
+
+  it("mounts tldraw only when the active document opts into the backing layer", () => {
+    useWorkspaceCanvasStore.setState({
+      document: {
+        id: "cnv_0123456789abcdef",
+        title: "PR 57",
+        revision: 1,
+        schemaVersion: 1,
+        scopeType: "pull_request",
+        scopeRef: null,
+        nodes: [],
+        edges: [],
+        viewStates: [],
+        displayOptions: { tldrawLayer: true },
+      } as any,
+    });
+
+    render(<WorkspaceCanvas />);
+
+    expect(screen.getByTestId("mock-tldraw")).toBeTruthy();
+  });
 });

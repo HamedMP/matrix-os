@@ -66,6 +66,38 @@ describe("CanvasSubscriptionHub", () => {
     })).rejects.toThrow("Too many subscribers");
   });
 
+  it("evicts stale subscribers before enforcing the global cap", async () => {
+    let currentTime = 1_000;
+    const hub = new CanvasSubscriptionHub({
+      maxSubscribers: 2,
+      subscriberTtlMs: 30_000,
+      now: () => currentTime,
+    });
+
+    await hub.subscribe({
+      connectionId: "conn_stale",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_a",
+      send: vi.fn(),
+    });
+    currentTime = 4_000;
+    await hub.subscribe({
+      connectionId: "conn_active",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_b",
+      send: vi.fn(),
+    });
+    currentTime = 32_001;
+    await hub.subscribe({
+      connectionId: "conn_new",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_c",
+      send: vi.fn(),
+    });
+
+    expect(hub.subscriberCount).toBe(2);
+  });
+
   it("evicts expired presence and sends generic errors", async () => {
     let currentTime = 1_000;
     const send = vi.fn();

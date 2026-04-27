@@ -148,7 +148,7 @@ function documentForTemplate(input: CreateCanvasRequest): CanvasDocumentWrite {
       { id: "edge_pr_review", fromNodeId: "node_pr_summary", toNodeId: "node_review_status", type: "reviews" },
     ],
     viewStates: [{ userId: "system", viewport: { x: 0, y: 0, zoom: 1 }, selection: [], filters: {}, groups: [], updatedAt: timestamp }],
-    displayOptions: { layout: "pr_workspace" },
+    displayOptions: { layout: "pr_workspace", tldrawLayer: true },
   };
 }
 
@@ -257,7 +257,10 @@ export class CanvasService {
   async patchCanvasNode(userId: string, canvasId: string, input: { baseRevision: number; nodeId: string; updates: Record<string, unknown> }): Promise<{ revision: number; updatedAt: string }> {
     if (input.updates.sourceRef && typeof input.updates.sourceRef === "object") {
       const sourceRef = input.updates.sourceRef as { kind?: unknown; id?: unknown };
-      if (sourceRef.kind === "file" && typeof sourceRef.id === "string" && this.homePath) {
+      if (sourceRef.kind === "file" && typeof sourceRef.id === "string") {
+        if (!this.homePath) {
+          throw new CanvasNotFoundError("file");
+        }
         if (!resolveWithinHome(this.homePath, sourceRef.id)) {
           throw new CanvasNotFoundError("file");
         }
@@ -387,6 +390,8 @@ export class CanvasService {
     if (addresses.length === 0 || addresses.some((entry) => !isPublicIpAddress(entry.address))) {
       throw new CanvasNotFoundError("preview");
     }
+    // Node fetch resolves DNS independently; the preflight above blocks obvious SSRF
+    // targets, while HEAD-only fetches stay bounded by the request timeout.
     return url.toString();
   }
 

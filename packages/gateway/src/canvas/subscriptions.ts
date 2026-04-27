@@ -3,6 +3,7 @@ import { CanvasIdSchema } from "./contracts.js";
 const DEFAULT_MAX_SUBSCRIBERS = 100;
 const DEFAULT_MAX_SUBSCRIBERS_PER_CANVAS_USER = 10;
 const DEFAULT_PRESENCE_TTL_MS = 30_000;
+const DEFAULT_SUBSCRIBER_TTL_MS = 5 * 60_000;
 const MAX_FRAME_BYTES = 32 * 1024;
 
 export interface CanvasSubscriber {
@@ -17,6 +18,7 @@ export interface CanvasSubscriptionHubOptions {
   maxSubscribers?: number;
   maxSubscribersPerCanvasUser?: number;
   presenceTtlMs?: number;
+  subscriberTtlMs?: number;
   authorize?: (subscriber: CanvasSubscriber) => boolean | Promise<boolean>;
   now?: () => number;
 }
@@ -32,6 +34,7 @@ export class CanvasSubscriptionHub {
   private readonly maxSubscribers: number;
   private readonly maxSubscribersPerCanvasUser: number;
   private readonly presenceTtlMs: number;
+  private readonly subscriberTtlMs: number;
   private readonly authorize?: CanvasSubscriptionHubOptions["authorize"];
   private readonly now: () => number;
 
@@ -39,6 +42,7 @@ export class CanvasSubscriptionHub {
     this.maxSubscribers = options.maxSubscribers ?? DEFAULT_MAX_SUBSCRIBERS;
     this.maxSubscribersPerCanvasUser = options.maxSubscribersPerCanvasUser ?? DEFAULT_MAX_SUBSCRIBERS_PER_CANVAS_USER;
     this.presenceTtlMs = options.presenceTtlMs ?? DEFAULT_PRESENCE_TTL_MS;
+    this.subscriberTtlMs = options.subscriberTtlMs ?? DEFAULT_SUBSCRIBER_TTL_MS;
     this.authorize = options.authorize;
     this.now = options.now ?? Date.now;
   }
@@ -51,7 +55,9 @@ export class CanvasSubscriptionHub {
     CanvasIdSchema.parse(subscriber.canvasId);
     const authorized = this.authorize ? await this.authorize(subscriber) : true;
     if (!authorized) throw new Error("Unauthorized");
-    this.pruneExpiredPresence();
+    const now = this.now();
+    this.pruneExpiredPresence(now);
+    this.evictStaleSubscribers(now);
 
     if (!this.subscribers.has(subscriber.connectionId) && this.subscribers.size >= this.maxSubscribers) {
       throw new Error("Too many subscribers");
@@ -66,7 +72,7 @@ export class CanvasSubscriptionHub {
 
     this.subscribers.set(subscriber.connectionId, {
       ...subscriber,
-      lastTouched: this.now(),
+      lastTouched: now,
       presence: null,
       presenceUpdatedAt: 0,
     });
@@ -142,6 +148,14 @@ export class CanvasSubscriptionHub {
     for (const subscriber of this.subscribers.values()) {
       if (subscriber.presence && now - subscriber.presenceUpdatedAt > this.presenceTtlMs) {
         subscriber.presence = null;
+      }
+    }
+  }
+
+  private evictStaleSubscribers(now = this.now()): void {
+    for (const [connectionId, subscriber] of this.subscribers) {
+      if (now - subscriber.lastTouched > this.subscriberTtlMs) {
+        this.subscribers.delete(connectionId);
       }
     }
   }

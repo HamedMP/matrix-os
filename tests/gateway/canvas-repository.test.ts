@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
-import { CanvasConflictError, CanvasRepository } from "../../packages/gateway/src/canvas/repository.js";
+import { CanvasConflictError, CanvasNotFoundError, CanvasRepository } from "../../packages/gateway/src/canvas/repository.js";
 
 const owner = { ownerScope: "personal" as const, ownerId: "user_a" };
 const otherOwner = { ownerScope: "personal" as const, ownerId: "user_b" };
@@ -106,6 +106,7 @@ describe("CanvasRepository", () => {
 
     expect(await repository.get(owner, created.id)).toBeNull();
     expect(await repository.export(owner, created.id)).toBeNull();
+    await expect(repository.softDelete(owner, created.id)).rejects.toBeInstanceOf(CanvasNotFoundError);
   });
 
   it("rolls back all writes when a transaction fails", async () => {

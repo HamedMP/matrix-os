@@ -119,6 +119,18 @@ describe("CanvasService", () => {
     })).rejects.toBeInstanceOf(CanvasNotFoundError);
   });
 
+  it("requires homePath before accepting file source refs in node patches", async () => {
+    const repo = repository([record()]);
+    const service = new CanvasService(repo);
+
+    await expect(service.patchCanvasNode("user_a", "cnv_0123456789abcdef", {
+      baseRevision: 1,
+      nodeId: "node_file",
+      updates: { sourceRef: { kind: "file", id: "projects/app/README.md" } },
+    })).rejects.toBeInstanceOf(CanvasNotFoundError);
+    expect(repo.patchNode).not.toHaveBeenCalled();
+  });
+
   it("uses a 10 second timeout for preview health checks", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     const resolvePreviewHost = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);

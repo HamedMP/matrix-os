@@ -122,6 +122,7 @@ import { CanvasRepository } from "./canvas/repository.js";
 import { CanvasService } from "./canvas/service.js";
 import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
+import { CanvasIdSchema } from "./canvas/contracts.js";
 import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
 import type { WSContext } from "hono/ws";
 import {
@@ -3084,9 +3085,26 @@ export async function createGateway(config: GatewayConfig) {
     app.get(
       "/api/canvases/:canvasId/ws",
       upgradeWebSocket((c) => {
-        const canvasId = c.req.param("canvasId") ?? "";
-        const userId = getUserIdFromContext(c);
         const connectionId = `canvas_${randomBytes(12).toString("hex")}`;
+        let canvasId: string;
+        let userId: string;
+        try {
+          canvasId = CanvasIdSchema.parse(c.req.param("canvasId"));
+          userId = getUserIdFromContext(c);
+        } catch (err: unknown) {
+          console.error("[canvas/ws] Upgrade rejected:", err instanceof Error ? err.message : String(err));
+          return {
+            onOpen(_evt, ws) {
+              try {
+                ws.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Canvas WebSocket rejected error send failed", sendErr);
+              } finally {
+                ws.close();
+              }
+            },
+          };
+        }
 
         return {
           async onOpen(_evt, ws) {
