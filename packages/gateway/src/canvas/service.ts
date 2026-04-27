@@ -7,8 +7,10 @@ import {
   type CanvasAction,
   type CanvasDocumentWrite,
   type CanvasNode,
+  type PatchCanvasNodeUpdates,
   type CreateCanvasRequest,
 } from "./contracts.js";
+import { reconcileCanvasRecord } from "./recovery.js";
 import {
   CanvasConflictError,
   CanvasNotFoundError,
@@ -222,7 +224,7 @@ export class CanvasService {
     let records = await this.repository.list(ownerFromUser(userId), query.limit ?? 50);
     if (query.scopeType) records = records.filter((record) => record.scopeType === query.scopeType);
     if (query.scopeId) records = records.filter((record) => JSON.stringify(record.scopeRef ?? {}).includes(query.scopeId ?? ""));
-    records = safeSearch(records, query.q);
+    records = safeSearch(records, query.q).map((record) => this.reconcileRecord(record));
     return {
       canvases: records.map((record) => ({
         id: record.id,
@@ -249,8 +251,9 @@ export class CanvasService {
   }
 
   async getCanvas(userId: string, canvasId: string): Promise<CanvasDocumentResult> {
-    const record = await this.repository.get(ownerFromUser(userId), canvasId);
-    if (!record) throw new CanvasNotFoundError(canvasId);
+    const stored = await this.repository.get(ownerFromUser(userId), canvasId);
+    if (!stored) throw new CanvasNotFoundError(canvasId);
+    const record = this.reconcileRecord(stored);
     return {
       document: record,
       linkedState: this.resolveLinkedState(record),
@@ -265,7 +268,7 @@ export class CanvasService {
     return this.repository.replaceDocument(ownerFromUser(userId), canvasId, input);
   }
 
-  async patchCanvasNode(userId: string, canvasId: string, input: { baseRevision: number; nodeId: string; updates: Record<string, unknown> }): Promise<{ revision: number; updatedAt: string }> {
+  async patchCanvasNode(userId: string, canvasId: string, input: { baseRevision: number; nodeId: string; updates: PatchCanvasNodeUpdates }): Promise<{ revision: number; updatedAt: string }> {
     if (input.updates.sourceRef && typeof input.updates.sourceRef === "object") {
       const sourceRef = input.updates.sourceRef as { kind?: unknown; id?: unknown };
       if (sourceRef.kind === "file" && typeof sourceRef.id === "string") {
@@ -331,6 +334,19 @@ export class CanvasService {
     return record.nodes.filter((node) => JSON.stringify(node).toLowerCase().includes(needle));
   }
 
+  private reconcileRecord(record: CanvasRecord): CanvasRecord {
+    const terminalSessionIds = new Set<string>();
+    for (const node of record.nodes) {
+      if (typeof node !== "object" || node === null) continue;
+      const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
+      if (sourceRef?.kind !== "terminal_session" || typeof sourceRef.id !== "string" || sourceRef.id === "unattached") continue;
+      if (this.terminalRegistry?.getSession(sourceRef.id)) {
+        terminalSessionIds.add(sourceRef.id);
+      }
+    }
+    return reconcileCanvasRecord(record, { terminalSessionIds });
+  }
+
   private resolveLinkedState(record: CanvasRecord): CanvasDocumentResult["linkedState"] {
     const terminalSessions: unknown[] = [];
     const pullRequests: unknown[] = [];
@@ -380,7 +396,7 @@ export class CanvasService {
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
-    return { ok: true as const, result: { kind: "preview_health", ok: response.ok, status: response.status } };
+    return { ok: true as const, result: { kind: "preview_health", ok: response.ok } };
   }
 
   private async safePreviewUrl(rawUrl: string): Promise<string> {

@@ -90,6 +90,9 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **No `catch { }` (empty catch)**. At minimum, log the error.
 - **Async store workflows must catch create/open/load failures at the orchestration boundary**. If a multi-step UI action creates data then opens/reloads it, set an error on any failed step and refresh summaries/cache when safe.
 - **Misconfiguration is not not-found**. Missing server dependencies such as `homePath`, registries, provider config, or database handles should return a generic 5xx/503-style error, not a 404 that looks like user data is missing.
+- **Do not throw raw `Response` objects from service/route helpers**. Use typed errors and one mapper so auth, validation, and server misconfiguration cannot masquerade as missing resources.
+- **Client stores must allowlist/cap server error strings before showing them**. Even gateway-normalized errors can regress; UI state must fall back to a generic message for unknown, long, or provider/path/database-looking errors.
+- **Health checks and reachability probes must return coarse booleans only**. Do not echo upstream status codes or provider/network details to clients after SSRF filtering.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
 - **WebSocket broadcasts must isolate subscriber failures**. Wrap each per-subscriber send, log failures, and continue delivering to remaining subscribers.
 - **Async WebSocket subscription/auth setup must be awaited** before success messages are sent; failure paths should send a generic error best-effort and then close.
@@ -112,6 +115,7 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 
 - **Every IPC tool must resolve its dependency at registration time**, not at call time. If a tool needs `callManager`, verify it's not `undefined` when the tool is registered.
 - **Never use `globalThis` for cross-package communication**. Use dependency injection or typed IPC messages.
+- **Read paths for persisted UI references must reconcile stale live-resource refs**. Terminal sessions, review loops, and similar runtime refs should be marked recoverable on main read paths instead of only during explicit recovery jobs.
 
 ## Setup
 

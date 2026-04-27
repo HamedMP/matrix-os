@@ -67,6 +67,17 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().activeCanvasId).toBeNull();
   });
 
+  it("does not surface raw server internals from canvas errors", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "postgres constraint failed at /home/deploy/secret" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ canvases: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await useWorkspaceCanvasStore.getState().openPrCanvas({ projectId: "prj_1" });
+
+    expect(useWorkspaceCanvasStore.getState().error).toBe("Canvas request failed");
+  });
+
   it("records delete failures without clearing the active canvas", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas not found" }) });

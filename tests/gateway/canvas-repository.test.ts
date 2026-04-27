@@ -137,6 +137,15 @@ describe("CanvasRepository", () => {
     expect(pool.end).not.toHaveBeenCalled();
   });
 
+  it("does not double-end pools owned by the Kysely dialect", async () => {
+    const pool = { end: vi.fn() };
+    const owned = new CanvasRepository(pglite.dialect, pool as any);
+
+    await owned.destroy();
+
+    expect(pool.end).not.toHaveBeenCalled();
+  });
+
   it("excludes soft-deleted documents from normal and export reads", async () => {
     const created = await repository.create(owner, {
       title: "Exportable",

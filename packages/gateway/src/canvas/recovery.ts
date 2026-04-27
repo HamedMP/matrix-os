@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { CanvasIdSchema } from "./contracts.js";
 import type { CanvasRecord } from "./repository.js";
 
 export interface RecoveryDeps {
@@ -14,7 +15,8 @@ export interface CleanupPolicy {
 
 export async function materializeCanvasExport(record: CanvasRecord, deps: RecoveryDeps): Promise<string> {
   const now = deps.now?.() ?? Date.now();
-  const finalPath = join(deps.tmpDir, `canvas-${record.id}-${now}.json`);
+  const canvasId = CanvasIdSchema.parse(record.id);
+  const finalPath = join(deps.tmpDir, `canvas-${canvasId}-${now}.json`);
   const tempPath = `${finalPath}.tmp`;
   await mkdir(dirname(finalPath), { recursive: true });
   await writeFile(tempPath, JSON.stringify({ canvas: record, exportedAt: new Date(now).toISOString() }, null, 2), { flag: "wx" });

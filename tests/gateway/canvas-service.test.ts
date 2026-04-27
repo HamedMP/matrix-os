@@ -131,6 +131,31 @@ describe("CanvasService", () => {
     expect(repo.patchNode).not.toHaveBeenCalled();
   });
 
+  it("marks stale terminal refs recoverable on the main canvas read path", async () => {
+    const service = new CanvasService(repository([record({
+      nodes: [{
+        id: "node_terminal",
+        type: "terminal",
+        sourceRef: { kind: "terminal_session", id: "550e8400-e29b-41d4-a716-446655440000" },
+        displayState: "normal",
+        metadata: {},
+      }],
+    })]), {
+      terminalRegistry: {
+        create: vi.fn(),
+        getSession: vi.fn().mockReturnValue(null),
+        destroy: vi.fn(),
+      },
+    });
+
+    const result = await service.getCanvas("user_a", "cnv_0123456789abcdef");
+
+    expect(result.document.nodes[0]).toMatchObject({
+      displayState: "recoverable",
+      metadata: { recoveryReason: "missing_reference" },
+    });
+  });
+
   it("maps canvas configuration failures to service unavailable", () => {
     expect(mapCanvasError(new CanvasConfigurationError())).toEqual({
       error: "Canvas service unavailable",
@@ -138,12 +163,12 @@ describe("CanvasService", () => {
     });
   });
 
-  it("uses a 10 second timeout for preview health checks", async () => {
+  it("uses a bounded HEAD-only fetch for preview health checks without echoing response status", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     const resolvePreviewHost = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
     const service = new CanvasService(repository([record()]), { fetchImpl: fetchImpl as any, resolvePreviewHost });
 
-    await service.executeAction("user_a", "cnv_0123456789abcdef", {
+    const result = await service.executeAction("user_a", "cnv_0123456789abcdef", {
       nodeId: "node_preview",
       type: "preview.healthCheck",
       payload: { url: "https://example.com" },
@@ -154,6 +179,7 @@ describe("CanvasService", () => {
       redirect: "error",
     });
     expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    expect(result.result).toEqual({ kind: "preview_health", ok: true });
   });
 
   it("blocks preview health checks to private or link-local resolved addresses", async () => {

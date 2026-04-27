@@ -291,10 +291,21 @@ export async function createGateway(config: GatewayConfig) {
         maxFiles: 100,
       };
       await cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy);
+      let canvasCleanupFailures = 0;
       canvasCleanupTimer = setInterval(() => {
-        void cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy).catch((cleanupErr: unknown) => {
-          logBestEffortFailure("Canvas export cleanup failed", cleanupErr);
-        });
+        void cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy)
+          .then(() => {
+            canvasCleanupFailures = 0;
+          })
+          .catch((cleanupErr: unknown) => {
+            canvasCleanupFailures += 1;
+            logBestEffortFailure("Canvas export cleanup failed", cleanupErr);
+            if (canvasCleanupFailures >= 3 && canvasCleanupTimer) {
+              clearInterval(canvasCleanupTimer);
+              canvasCleanupTimer = null;
+              console.warn("[canvas] Export cleanup disabled after repeated failures");
+            }
+          });
       }, 6 * 60 * 60 * 1000);
       console.log("[app-db] Postgres connected, data layer ready");
 
@@ -3076,6 +3087,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/settings", settingsRoutes);
 
   if (canvasService) {
+    // Global authMiddleware is mounted before route registration; routes still resolve user IDs defensively.
     app.route("/api/canvases", createCanvasRoutes({
       service: canvasService,
       getUserId: (c) => getUserIdFromContext(c),

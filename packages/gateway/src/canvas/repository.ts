@@ -189,7 +189,6 @@ export class CanvasRepository {
   async destroy(): Promise<void> {
     if (this.ownsConnection) {
       await this.kysely.destroy();
-      await this.pool?.end();
     }
   }
 

@@ -2,6 +2,7 @@ import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ZodError } from "zod/v4";
 import { cleanupCanvasTempFiles, materializeCanvasExport, reconcileCanvasRecord } from "../../packages/gateway/src/canvas/recovery.js";
 
 const now = "2026-04-27T00:00:00.000Z";
@@ -31,6 +32,11 @@ describe("canvas recovery", () => {
     const dir = await mkdtemp(join(tmpdir(), "canvas-export-"));
     const path = await materializeCanvasExport(record(), { tmpDir: dir, now: () => Date.parse(now) });
     await expect(readFile(path, "utf8")).resolves.toContain("cnv_0123456789abcdef");
+  });
+
+  it("rejects unsafe canvas ids before materializing export paths", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "canvas-export-"));
+    await expect(materializeCanvasExport({ ...record(), id: "cnv_../../escape" } as any, { tmpDir: dir })).rejects.toBeInstanceOf(ZodError);
   });
 
   it("marks missing linked references recoverable without deleting nodes", () => {

@@ -4,6 +4,26 @@ import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const SAFE_CANVAS_ERROR_MESSAGES = new Set([
+  "Canvas conflict",
+  "Canvas not found",
+  "Canvas request failed",
+  "Canvas service unavailable",
+  "Invalid JSON",
+  "Invalid request",
+  "Request body too large",
+  "Unauthorized",
+]);
+const UNSAFE_CANVAS_ERROR_MESSAGE = /(postgres|sqlite|mysql|pipedream|twilio|openai|anthropic|\/home\/|\/tmp\/|stack|constraint|zod|issues)/i;
+
+function safeCanvasErrorMessage(value: unknown): string {
+  if (typeof value !== "string") return "Canvas request failed";
+  const message = value.trim();
+  if (message.length > 80 || UNSAFE_CANVAS_ERROR_MESSAGE.test(message)) {
+    return "Canvas request failed";
+  }
+  return SAFE_CANVAS_ERROR_MESSAGES.has(message) ? message : "Canvas request failed";
+}
 const SAVE_DEBOUNCE_MS = 500;
 
 export type WorkspaceCanvasNodeType =
@@ -128,7 +148,7 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     return {};
   });
   if (!response.ok) {
-    throw new Error(typeof body.error === "string" ? body.error : "Canvas request failed");
+    throw new Error(safeCanvasErrorMessage((body as { error?: unknown }).error));
   }
   return body as T;
 }

@@ -336,6 +336,7 @@ export type CanvasNode = z.infer<typeof CanvasNodeSchema>;
 export type CanvasEdge = z.infer<typeof CanvasEdgeSchema>;
 export type CreateCanvasRequest = z.infer<typeof CreateCanvasRequestSchema>;
 export type ReplaceCanvasRequest = z.infer<typeof ReplaceCanvasRequestSchema>;
+export type PatchCanvasNodeUpdates = z.infer<typeof PatchCanvasNodeRequestSchema>["updates"];
 export type CanvasAction = z.infer<typeof CanvasActionSchema>;
 
 const COMPATIBLE_EDGE_TYPES: Record<string, Set<string>> = {

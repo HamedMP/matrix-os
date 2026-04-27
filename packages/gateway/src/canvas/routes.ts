@@ -11,6 +11,7 @@ import {
   ReplaceCanvasRequestSchema,
   type CanvasAction,
   type CanvasDocumentWrite,
+  type PatchCanvasNodeUpdates,
   type CreateCanvasRequest,
 } from "./contracts.js";
 import { mapCanvasError } from "./service.js";
@@ -23,7 +24,7 @@ export interface CanvasRouteService {
   createCanvas(userId: string, input: CreateCanvasRequest): Promise<unknown>;
   getCanvas(userId: string, canvasId: string): Promise<unknown>;
   replaceCanvas(userId: string, canvasId: string, input: { baseRevision: number; document: CanvasDocumentWrite }): Promise<unknown>;
-  patchCanvasNode?(userId: string, canvasId: string, input: { baseRevision: number; nodeId: string; updates: Record<string, unknown> }): Promise<unknown>;
+  patchCanvasNode?(userId: string, canvasId: string, input: { baseRevision: number; nodeId: string; updates: PatchCanvasNodeUpdates }): Promise<unknown>;
   deleteCanvas(userId: string, canvasId: string): Promise<unknown>;
   exportCanvas(userId: string, canvasId: string): Promise<unknown>;
   executeAction(userId: string, canvasId: string, action: CanvasAction): Promise<unknown>;
@@ -33,6 +34,13 @@ export interface CanvasRouteDeps {
   service: CanvasRouteService;
   getUserId: (c: Context) => string;
   broadcastCanvasUpdate?: (canvasId: string, message: { type: "canvas:updated"; revision: number; updatedAt: string }) => void | Promise<void>;
+}
+
+class CanvasUnauthorizedError extends Error {
+  constructor() {
+    super("Unauthorized");
+    this.name = "CanvasUnauthorizedError";
+  }
 }
 
 async function parseJson(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
@@ -48,10 +56,7 @@ function getUserIdOrThrow(deps: CanvasRouteDeps, c: Context): string {
     if (!(err instanceof Error && /missing/i.test(err.message))) {
       console.error("[canvas/routes] User resolution failed:", err);
     }
-    throw new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+    throw new CanvasUnauthorizedError();
   }
 }
 
@@ -76,7 +81,9 @@ function validationError(c: any) {
 }
 
 function handleError(c: any, err: unknown) {
-  if (err instanceof Response) return err;
+  if (err instanceof CanvasUnauthorizedError) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
   if (typeof err === "object" && err !== null && "issues" in err) {
     return validationError(c);
   }
