@@ -79,6 +79,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
   const workspaceBodyLimit = bodyLimit({ maxSize: 8192 });
   const layoutBodyLimit = bodyLimit({ maxSize: 128_000 });
+  const deleteBodyLimit = bodyLimit({ maxSize: 512 });
 
   app.get("/sessions", async (c) => {
     try {
@@ -102,7 +103,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  app.delete("/sessions/:name", async (c) => {
+  app.delete("/sessions/:name", deleteBodyLimit, async (c) => {
     try {
       await deps.registry.delete(SafeSessionNameSchema.parse(c.req.param("name")), {
         force: new URL(c.req.url).searchParams.get("force") === "1",
@@ -143,7 +144,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  app.delete("/sessions/:name/tabs/:tab", async (c) => {
+  app.delete("/sessions/:name/tabs/:tab", deleteBodyLimit, async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       const tab = z.coerce.number().int().nonnegative().parse(c.req.param("tab"));
@@ -164,7 +165,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  app.delete("/sessions/:name/panes/:pane", async (c) => {
+  app.delete("/sessions/:name/panes/:pane", deleteBodyLimit, async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       await deps.workspace.closePane(SafeSessionNameSchema.parse(c.req.param("name")), SafeNameSchema.parse(c.req.param("pane")));
@@ -203,7 +204,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  app.delete("/layouts/:name", async (c) => {
+  app.delete("/layouts/:name", deleteBodyLimit, async (c) => {
     try {
       if (!deps.layouts) return unavailable(c, "layouts_unavailable");
       await deps.layouts.delete(SafeLayoutNameSchema.parse(c.req.param("name")));

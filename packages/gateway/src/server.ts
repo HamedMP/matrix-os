@@ -1678,6 +1678,7 @@ export async function createGateway(config: GatewayConfig) {
       const fromSeqParam = c.req.query("fromSeq");
       let handle: SessionHandle | null = null;
       let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+      let namedSocketClosed = false;
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
@@ -1724,9 +1725,16 @@ export async function createGateway(config: GatewayConfig) {
               session: namedSession,
               fromSeq,
             }).then((session) => {
+              if (namedSocketClosed) {
+                session.onClose();
+                return;
+              }
               namedHandle = session;
             }).catch((err: unknown) => {
               console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
+              if (namedSocketClosed) {
+                return;
+              }
               try {
                 ws.send(JSON.stringify({
                   type: "error",
@@ -1913,6 +1921,7 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose() {
+          namedSocketClosed = true;
           if (namedHandle) {
             namedHandle.onClose();
             namedHandle = null;

@@ -143,7 +143,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         "--session",
         name,
         "action",
-        input.direction === "right" ? "new-pane" : "new-pane",
+        "new-pane",
         input.direction === "right" ? "--right" : "--down",
       ];
       if (input.cwd) args.push("--cwd", input.cwd);

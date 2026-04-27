@@ -61,6 +61,27 @@ describe("gateway shell routes", () => {
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
   });
 
+  it("caps ignored DELETE request bodies", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/sessions/main", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "text/plain",
+        "Content-Length": "1024",
+      },
+      body: "x".repeat(1024),
+    });
+
+    expect(res.status).toBe(413);
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
   it("rejects unsafe session route parameters before dispatch", async () => {
     const registry = {
       list: vi.fn(async () => []),

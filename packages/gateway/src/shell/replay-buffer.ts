@@ -22,6 +22,7 @@ export class ShellReplayBuffer {
   private readonly sessionName?: string;
   private seqOffset = 0;
   private seedPromise: Promise<void> | null = null;
+  private persistentQueue: Promise<void> = Promise.resolve();
 
   constructor(options: ShellReplayBufferOptions = {}) {
     this.buffer = new RingBuffer(options.maxBytes);
@@ -35,6 +36,19 @@ export class ShellReplayBuffer {
   }
 
   async writePersistent(data: string): Promise<{ seq: number | null; stored: boolean }> {
+    let result: { seq: number | null; stored: boolean } = { seq: null, stored: false };
+    const run = this.persistentQueue.then(async () => {
+      result = await this.writePersistentNow(data);
+    });
+    this.persistentQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    await run;
+    return result;
+  }
+
+  private async writePersistentNow(data: string): Promise<{ seq: number | null; stored: boolean }> {
     await this.seedOffsetFromScrollback();
     const result = this.write(data);
     if (result.seq === null || !this.scrollbackStore || !this.sessionName) {

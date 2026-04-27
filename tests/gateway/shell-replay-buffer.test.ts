@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ShellReplayBuffer } from "../../packages/gateway/src/shell/replay-buffer.js";
+import type { ScrollbackStore } from "../../packages/gateway/src/shell/scrollback-store.js";
 
 describe("shell replay buffer", () => {
   it("assigns monotonically increasing output sequence numbers", () => {
@@ -62,5 +63,42 @@ describe("shell replay buffer", () => {
     replay.write(image);
 
     expect(replay.replayFrom(0)).toContainEqual({ type: "output", seq: 0, data: image });
+  });
+
+  it("serializes persistent writes for a session", async () => {
+    const events: string[] = [];
+    let releaseFirstAppend: (() => void) | null = null;
+    const store = {
+      latestSeq: async () => null,
+      readSince: async () => [],
+      append: async (_name: string, records: Array<{ seq: number }>) => {
+        events.push(`start:${records[0]!.seq}`);
+        if (records[0]!.seq === 0) {
+          await new Promise<void>((resolve) => {
+            releaseFirstAppend = resolve;
+          });
+        }
+        events.push(`end:${records[0]!.seq}`);
+      },
+      cleanup: async () => undefined,
+      pathForSession: () => "",
+    } as unknown as ScrollbackStore;
+    const replay = new ShellReplayBuffer({
+      maxBytes: 4096,
+      scrollbackStore: store,
+      sessionName: "main",
+    });
+
+    const first = replay.writePersistent("one");
+    const second = replay.writePersistent("two");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["start:0"]);
+
+    releaseFirstAppend?.();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { seq: 0, stored: true },
+      { seq: 1, stored: true },
+    ]);
+    expect(events).toEqual(["start:0", "end:0", "start:1", "end:1"]);
   });
 });
