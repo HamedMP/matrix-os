@@ -155,10 +155,14 @@ Untracked support/spec files currently present:
 
 ### Tasks / Events / Previews
 
-- [ ] T400 Add failing unit and integration tests for task lifecycle, ordering, archive, session/worktree links, bounded activity eviction, preview validation, preview caps, stale links, export manifests, and delete scoping.
-- [ ] T401 Implement `task-manager.ts` for task CRUD, ordering, archive, status, parent/child links, and session/worktree links.
-- [ ] T402 Implement `workspace-events.ts` for project/task/session/review/preview event updates capped at 5,000 hot events per user with cursor pagination and eviction.
-- [ ] T403 Implement `preview-manager.ts` for saved preview URLs, URL detection from session output, validation, 100-per-project and 20-per-task caps, 10 second probes, and recoverable failure states.
+- [x] T400 Add failing unit and integration tests for task lifecycle, ordering, archive, session/worktree links, bounded activity eviction, preview validation, preview caps, stale links, export manifests, and delete scoping.
+  - Files: `tests/gateway/task-manager.test.ts`, `tests/gateway/workspace-events.test.ts`, `tests/gateway/preview-manager.test.ts`, `tests/gateway/state-ops.test.ts`
+- [x] T401 Implement `task-manager.ts` for task CRUD, ordering, archive, status, parent/child links, and session/worktree links.
+  - Files: `packages/gateway/src/task-manager.ts`, `tests/gateway/task-manager.test.ts`
+- [x] T402 Implement `workspace-events.ts` for project/task/session/review/preview event updates capped at 5,000 hot events per user with cursor pagination and eviction.
+  - Files: `packages/gateway/src/workspace-events.ts`, `tests/gateway/workspace-events.test.ts`
+- [x] T403 Implement `preview-manager.ts` for saved preview URLs, URL detection from session output, validation, 100-per-project and 20-per-task caps, 10 second probes, and recoverable failure states.
+  - Files: `packages/gateway/src/preview-manager.ts`, `tests/gateway/preview-manager.test.ts`
 - [ ] T404 Add API and CLI support for tasks, previews, workspace export, and workspace data deletion.
 - [ ] T405 Complete green/refactor coverage for task lifecycle, event fanout, preview validation, stale link behavior, export manifests, and delete scoping.
 

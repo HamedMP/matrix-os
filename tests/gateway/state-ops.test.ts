@@ -59,10 +59,20 @@ describe("state-ops", () => {
       slug: "drop",
       ownerScope: { type: "user", id: "user_a" },
     });
+    await atomicWriteJson(join(homePath, "projects", "drop", "tasks", "task_abc123.json"), {
+      id: "task_abc123",
+      title: "Exported task",
+    });
+    await atomicWriteJson(join(homePath, "projects", "drop", "previews", "prev_abc123.json"), {
+      id: "prev_abc123",
+      url: "http://localhost:3000",
+    });
     const ops = createStateOps({ homePath });
 
     const manifest = await ops.exportWorkspace({ scope: "project", projectSlug: "drop", ownerScope: { type: "user", id: "user_a" } });
     expect(manifest.files).toContain("projects/drop/config.json");
+    expect(manifest.files).toContain("projects/drop/tasks/task_abc123.json");
+    expect(manifest.files).toContain("projects/drop/previews/prev_abc123.json");
     expect(manifest.files).not.toContain("projects/keep/config.json");
 
     await expect(ops.deleteWorkspaceData({
