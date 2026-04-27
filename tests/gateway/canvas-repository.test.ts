@@ -94,7 +94,7 @@ describe("CanvasRepository", () => {
     })).rejects.toBeInstanceOf(CanvasConflictError);
   });
 
-  it("patches independent nodes without whole-document revision conflicts", async () => {
+  it("patches nodes with strict optimistic revisions", async () => {
     const created = await repository.create(owner, {
       title: "Patchable",
       scopeType: "global",
@@ -107,8 +107,13 @@ describe("CanvasRepository", () => {
       nodeId: "node_a",
       updates: { metadata: { label: "A" } },
     });
-    const second = await repository.patchNode(owner, created.id, {
+    await expect(repository.patchNode(owner, created.id, {
       baseRevision: 1,
+      nodeId: "node_b",
+      updates: { metadata: { label: "B" } },
+    })).rejects.toBeInstanceOf(CanvasConflictError);
+    const second = await repository.patchNode(owner, created.id, {
+      baseRevision: first.revision,
       nodeId: "node_b",
       updates: { metadata: { label: "B" } },
     });

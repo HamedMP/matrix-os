@@ -349,7 +349,7 @@ export class CanvasRepository {
         .where("id", "=", canvasId)
         .where("owner_scope", "=", owner.ownerScope)
         .where("owner_id", "=", owner.ownerId)
-        .where("revision", ">=", input.baseRevision)
+        .where("revision", "=", input.baseRevision)
         .where("deleted_at", "is", null)
         .where(sql<boolean>`EXISTS (
           SELECT 1

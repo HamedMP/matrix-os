@@ -275,9 +275,13 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
   async deleteCanvas() {
     const document = get().document;
     if (!document) return;
-    await requestJson(`/api/canvases/${encodeURIComponent(document.id)}`, { method: "DELETE" });
-    set({ activeCanvasId: null, document: null, selectedNodeId: null, focusedNodeId: null });
-    await get().loadSummaries();
+    try {
+      await requestJson(`/api/canvases/${encodeURIComponent(document.id)}`, { method: "DELETE" });
+      set({ activeCanvasId: null, document: null, selectedNodeId: null, focusedNodeId: null, error: null });
+      await get().loadSummaries();
+    } catch (err: unknown) {
+      set({ error: err instanceof Error ? err.message : "Canvas request failed" });
+    }
   },
 
   async exportCanvas() {

@@ -22,6 +22,25 @@ describe("CanvasSubscriptionHub", () => {
     expect(() => hub.validateInboundFrame("x".repeat(32 * 1024 + 1))).toThrow();
   });
 
+  it("validates bounded presence frames before storing them", () => {
+    const hub = new CanvasSubscriptionHub();
+
+    expect(hub.validatePresenceFrame({
+      type: "presence",
+      cursor: { x: 1, y: 2 },
+      viewport: { x: 0, y: 0, zoom: 1 },
+      selection: ["node_a"],
+    })).toMatchObject({ type: "presence" });
+    expect(() => hub.validatePresenceFrame({
+      type: "presence",
+      payload: { nested: "unexpected" },
+    })).toThrow();
+    expect(() => hub.validatePresenceFrame({
+      type: "presence",
+      selection: Array.from({ length: 101 }, (_, index) => `node_${index}`),
+    })).toThrow();
+  });
+
   it("caps subscribers globally and per canvas/user", async () => {
     const hub = new CanvasSubscriptionHub({
       maxSubscribers: 12,
@@ -145,5 +164,21 @@ describe("CanvasSubscriptionHub", () => {
     expect(secondSend).toHaveBeenCalledWith(JSON.stringify({ type: "canvas:updated" }));
     expect(consoleSpy).toHaveBeenCalledWith("[canvas/realtime] Broadcast send failed:", "socket closed");
     consoleSpy.mockRestore();
+  });
+
+  it("sends shutdown notices and clears subscribers on close", async () => {
+    const send = vi.fn();
+    const hub = new CanvasSubscriptionHub();
+
+    await hub.subscribe({
+      connectionId: "conn_1",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_a",
+      send,
+    });
+    hub.close();
+
+    expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "server:closing" }));
+    expect(hub.subscriberCount).toBe(0);
   });
 });

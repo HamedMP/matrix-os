@@ -67,6 +67,21 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().activeCanvasId).toBeNull();
   });
 
+  it("records delete failures without clearing the active canvas", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas not found" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceCanvasStore.setState({
+      activeCanvasId: document.id,
+      document: document as any,
+    });
+
+    await useWorkspaceCanvasStore.getState().deleteCanvas();
+
+    expect(useWorkspaceCanvasStore.getState().document?.id).toBe(document.id);
+    expect(useWorkspaceCanvasStore.getState().error).toBe("Canvas not found");
+  });
+
   it("filters and focuses visible nodes", () => {
     useWorkspaceCanvasStore.setState({ document: { ...document, nodes: [
       { id: "node_terminal", type: "terminal", position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, zIndex: 0, displayState: "normal", sourceRef: null, metadata: { label: "Term" } },

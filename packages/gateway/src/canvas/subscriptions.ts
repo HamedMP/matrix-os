@@ -1,10 +1,25 @@
 import { CanvasIdSchema } from "./contracts.js";
+import { z } from "zod/v4";
 
 const DEFAULT_MAX_SUBSCRIBERS = 100;
 const DEFAULT_MAX_SUBSCRIBERS_PER_CANVAS_USER = 10;
 const DEFAULT_PRESENCE_TTL_MS = 30_000;
 const DEFAULT_SUBSCRIBER_TTL_MS = 5 * 60_000;
 const MAX_FRAME_BYTES = 32 * 1024;
+
+const PresenceFrameSchema = z.object({
+  type: z.literal("presence"),
+  cursor: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+  }).optional(),
+  viewport: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    zoom: z.number().finite().min(0.05).max(8),
+  }).optional(),
+  selection: z.array(z.string().min(1).max(120)).max(100).optional(),
+}).strict();
 
 export interface CanvasSubscriber {
   connectionId: string;
@@ -96,6 +111,10 @@ export class CanvasSubscriptionHub {
     }
   }
 
+  validatePresenceFrame(frame: unknown): Record<string, unknown> {
+    return PresenceFrameSchema.parse(frame);
+  }
+
   updatePresence(connectionId: string, presence: Record<string, unknown>): void {
     const subscriber = this.subscribers.get(connectionId);
     if (!subscriber) return;
@@ -142,6 +161,17 @@ export class CanvasSubscriptionHub {
     } catch (sendErr: unknown) {
       console.error("[canvas/realtime] Error response send failed:", sendErr instanceof Error ? sendErr.message : String(sendErr));
     }
+  }
+
+  close(): void {
+    for (const subscriber of this.subscribers.values()) {
+      try {
+        subscriber.send(JSON.stringify({ type: "server:closing" }));
+      } catch (err: unknown) {
+        console.error("[canvas/realtime] Shutdown notice failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
+    this.subscribers.clear();
   }
 
   private pruneExpiredPresence(now = this.now()): void {

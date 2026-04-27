@@ -149,6 +149,10 @@ describe("CanvasService", () => {
       payload: { url: "https://example.com" },
     });
 
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({
+      method: "HEAD",
+      redirect: "error",
+    });
     expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 

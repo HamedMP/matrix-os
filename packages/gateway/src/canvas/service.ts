@@ -377,6 +377,7 @@ export class CanvasService {
     const url = await this.safePreviewUrl(action.payload.url);
     const response = await this.fetchImpl(url, {
       method: "HEAD",
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     return { ok: true as const, result: { kind: "preview_health", ok: response.ok, status: response.status } };

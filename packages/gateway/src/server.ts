@@ -3145,7 +3145,7 @@ export async function createGateway(config: GatewayConfig) {
               ) {
                 canvasSubscriptionHub?.updatePresence(
                   connectionId,
-                  parsed as Record<string, unknown>,
+                  canvasSubscriptionHub.validatePresenceFrame(parsed),
                 );
               }
             } catch (err: unknown) {
@@ -3301,6 +3301,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
+      canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
       await sessionRegistry.shutdown();
