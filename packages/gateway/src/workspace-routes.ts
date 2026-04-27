@@ -14,6 +14,9 @@ import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { approveReview, createReviewLoopRecord, startNextReviewRound, stopReview } from "./review-loop.js";
 import { createReviewStore } from "./review-store.js";
+import { createTaskManager } from "./task-manager.js";
+import { createPreviewManager } from "./preview-manager.js";
+import { createWorkspaceEventStore } from "./workspace-events.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
@@ -22,6 +25,9 @@ type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
 type AgentSandbox = ReturnType<typeof createAgentSandbox>;
 type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
 type ReviewStore = ReturnType<typeof createReviewStore>;
+type TaskManager = ReturnType<typeof createTaskManager>;
+type PreviewManager = ReturnType<typeof createPreviewManager>;
+type WorkspaceEventStore = ReturnType<typeof createWorkspaceEventStore>;
 
 const WORKSPACE_BODY_LIMIT = 64 * 1024;
 
@@ -93,6 +99,33 @@ const CreateReviewSchema = z.object({
   verificationCommands: z.array(z.string().min(1).max(500)).max(20).default([]),
 });
 
+const CreateTaskSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(10_000).optional(),
+  status: z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]).optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  order: z.number().finite().optional(),
+  parentTaskId: z.string().min(1).max(128).optional(),
+  dueAt: z.string().min(1).max(64).optional(),
+  linkedSessionId: z.string().min(1).max(128).optional(),
+  linkedWorktreeId: z.string().min(1).max(128).optional(),
+  previewIds: z.array(z.string().min(1).max(128)).max(20).optional(),
+});
+
+const UpdateTaskSchema = CreateTaskSchema.partial();
+
+const CreatePreviewSchema = z.object({
+  taskId: z.string().min(1).max(128).optional(),
+  sessionId: z.string().min(1).max(128).optional(),
+  label: z.string().min(1).max(120),
+  url: z.string().min(1).max(2048),
+  displayPreference: z.enum(["panel", "external"]).optional(),
+});
+
+const UpdatePreviewSchema = CreatePreviewSchema.partial().extend({
+  lastStatus: z.enum(["unknown", "ok", "failed"]).optional(),
+});
+
 function status(code: number): ContentfulStatusCode {
   return code as ContentfulStatusCode;
 }
@@ -137,6 +170,9 @@ export function createWorkspaceRoutes(options: {
   agentSandbox?: AgentSandbox;
   sessionRuntimeBridge?: SessionRuntimeBridge;
   reviewStore?: ReviewStore;
+  taskManager?: TaskManager;
+  previewManager?: PreviewManager;
+  eventStore?: WorkspaceEventStore;
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
@@ -156,8 +192,18 @@ export function createWorkspaceRoutes(options: {
     zellijRuntime,
   });
   const reviewStore = options.reviewStore ?? createReviewStore({ homePath: options.homePath });
+  const taskManager = options.taskManager ?? createTaskManager({ homePath: options.homePath });
+  const previewManager = options.previewManager ?? createPreviewManager({ homePath: options.homePath });
+  const eventStore = options.eventStore ?? createWorkspaceEventStore({ homePath: options.homePath });
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
+
+  async function publishWorkspaceEvent(input: Parameters<WorkspaceEventStore["publishEvent"]>[0]): Promise<void> {
+    const result = await eventStore.publishEvent(input);
+    if (!result.ok) {
+      console.warn("[workspace-routes] Failed to publish workspace event:", result.error.code);
+    }
+  }
 
   app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
 
@@ -229,6 +275,115 @@ export function createWorkspaceRoutes(options: {
       confirmDirtyDelete: body.value.confirmDirtyDelete,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/projects/:slug/tasks", limited, async (c) => {
+    const body = await parseJson(c, CreateTaskSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const result = await taskManager.createTask(projectSlug, body.value);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    await publishWorkspaceEvent({
+      type: "task.created",
+      scope: { projectSlug, taskId: result.task.id },
+      payload: { title: result.task.title, status: result.task.status },
+    });
+    return c.json({ task: result.task }, status(result.status ?? 201));
+  });
+
+  app.get("/api/projects/:slug/tasks", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const result = await taskManager.listTasks(c.req.param("slug"), {
+      includeArchived: c.req.query("includeArchived") === "true",
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ tasks: result.tasks, nextCursor: result.nextCursor });
+  });
+
+  app.patch("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
+    const body = await parseJson(c, UpdateTaskSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    await publishWorkspaceEvent({
+      type: "task.updated",
+      scope: { projectSlug, taskId: result.task.id },
+      payload: { status: result.task.status, updatedAt: result.task.updatedAt },
+    });
+    return c.json({ task: result.task });
+  });
+
+  app.delete("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const taskId = c.req.param("taskId");
+    const result = await taskManager.deleteTask(projectSlug, taskId);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    await publishWorkspaceEvent({
+      type: "task.deleted",
+      scope: { projectSlug, taskId },
+      payload: {},
+    });
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/projects/:slug/previews", limited, async (c) => {
+    const body = await parseJson(c, CreatePreviewSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const result = await previewManager.createPreview(projectSlug, body.value);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    await publishWorkspaceEvent({
+      type: "preview.created",
+      scope: { projectSlug, taskId: result.preview.taskId, sessionId: result.preview.sessionId, previewId: result.preview.id },
+      payload: { url: result.preview.url, lastStatus: result.preview.lastStatus },
+    });
+    return c.json({ preview: result.preview }, status(result.status ?? 201));
+  });
+
+  app.get("/api/projects/:slug/previews", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const result = await previewManager.listPreviews(c.req.param("slug"), {
+      taskId: c.req.query("taskId"),
+      sessionId: c.req.query("sessionId"),
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ previews: result.previews, nextCursor: result.nextCursor });
+  });
+
+  app.patch("/api/projects/:slug/previews/:previewId", limited, async (c) => {
+    const body = await parseJson(c, UpdatePreviewSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    await publishWorkspaceEvent({
+      type: "preview.updated",
+      scope: { projectSlug, taskId: result.preview.taskId, sessionId: result.preview.sessionId, previewId: result.preview.id },
+      payload: { lastStatus: result.preview.lastStatus, updatedAt: result.preview.updatedAt },
+    });
+    return c.json({ preview: result.preview });
+  });
+
+  app.delete("/api/projects/:slug/previews/:previewId", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const previewId = c.req.param("previewId");
+    const result = await previewManager.deletePreview(projectSlug, previewId);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    await publishWorkspaceEvent({
+      type: "preview.deleted",
+      scope: { projectSlug, previewId },
+      payload: {},
+    });
     return c.json({ ok: true });
   });
 
@@ -324,6 +479,21 @@ export function createWorkspaceRoutes(options: {
   app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgents()));
 
   app.get("/api/agents/sandbox-status", async (c) => c.json(await agentSandbox.status()));
+
+  app.get("/api/workspace/events", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const result = await eventStore.listEvents({
+      projectSlug: c.req.query("projectSlug"),
+      taskId: c.req.query("taskId"),
+      sessionId: c.req.query("sessionId"),
+      reviewId: c.req.query("reviewId"),
+      previewId: c.req.query("previewId"),
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ events: result.events, nextCursor: result.nextCursor });
+  });
 
   app.post("/api/reviews", limited, async (c) => {
     const body = await parseJson(c, CreateReviewSchema);

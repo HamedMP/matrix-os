@@ -163,8 +163,10 @@ Untracked support/spec files currently present:
   - Files: `packages/gateway/src/workspace-events.ts`, `tests/gateway/workspace-events.test.ts`
 - [x] T403 Implement `preview-manager.ts` for saved preview URLs, URL detection from session output, validation, 100-per-project and 20-per-task caps, 10 second probes, and recoverable failure states.
   - Files: `packages/gateway/src/preview-manager.ts`, `tests/gateway/preview-manager.test.ts`
-- [ ] T404 Add API and CLI support for tasks, previews, workspace export, and workspace data deletion.
-- [ ] T405 Complete green/refactor coverage for task lifecycle, event fanout, preview validation, stale link behavior, export manifests, and delete scoping.
+- [x] T404 Add API and CLI support for tasks, previews, workspace export, and workspace data deletion.
+  - Files: `packages/gateway/src/workspace-routes.ts`, `bin/cli.ts`, `bin/matrixos.ts`, `tests/gateway/workspace-routes.test.ts`, `tests/cli/cli.test.ts`
+- [x] T405 Complete green/refactor coverage for task lifecycle, event fanout, preview validation, stale link behavior, export manifests, and delete scoping.
+  - Commands: `pnpm exec vitest run tests/gateway/task-manager.test.ts tests/gateway/workspace-events.test.ts tests/gateway/preview-manager.test.ts tests/gateway/state-ops.test.ts tests/gateway/workspace-routes.test.ts tests/cli/cli.test.ts`
 
 ### Web Workspace / Terminal Cockpit / TUI
 

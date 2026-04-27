@@ -15,6 +15,8 @@ const COMMANDS = new Set([
   "session",
   "agent",
   "review",
+  "task",
+  "preview",
 ]);
 
 export interface ParsedArgs {
@@ -39,10 +41,13 @@ export interface ParsedArgs {
   worktree?: string;
   terminal?: boolean;
   statusFilter?: string;
+  priority?: string;
+  label?: string;
+  url?: string;
 }
 
 export interface WorkspaceRequest {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: Record<string, unknown>;
 }
@@ -182,6 +187,24 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--priority" && i + 1 < argv.length) {
+      result.priority = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--label" && i + 1 < argv.length) {
+      result.label = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--url" && i + 1 < argv.length) {
+      result.url = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
     if (arg === "--branch" && i + 1 < argv.length) {
       result.branch = argv[i + 1];
       i += 2;
@@ -230,14 +253,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       positionalIndex++;
     } else if (
       positionalIndex === 1 &&
-      ["project", "worktree", "workspace", "session", "agent", "review"].includes(result.command)
+      ["project", "worktree", "workspace", "session", "agent", "review", "task", "preview"].includes(result.command)
     ) {
       result.subcommand = arg;
       positionalIndex++;
     } else if (positionalIndex === 1 && result.command === "send") {
       result.message = arg;
       positionalIndex++;
-    } else if (["project", "worktree", "workspace", "session", "agent", "review"].includes(result.command)) {
+    } else if (["project", "worktree", "workspace", "session", "agent", "review", "task", "preview"].includes(result.command)) {
       result.positional.push(arg);
       positionalIndex++;
     }
@@ -359,6 +382,15 @@ export function buildWorkspaceRequest(args: ParsedArgs): WorkspaceRequest {
           },
         };
       }
+      case "events":
+        return {
+          method: "GET",
+          path: `/api/workspace/events${queryString({
+            projectSlug: args.project,
+            taskId: args.task,
+            status: args.statusFilter,
+          })}`,
+        };
       default:
         throw new Error("Unknown workspace command");
     }
@@ -430,6 +462,99 @@ export function buildWorkspaceRequest(args: ParsedArgs): WorkspaceRequest {
         return { method: "GET", path: "/api/agents/sandbox-status" };
       default:
         throw new Error("Unknown agent command");
+    }
+  }
+
+  if (args.command === "task") {
+    switch (args.subcommand) {
+      case "create": {
+        if (!args.project) throw new Error("--project required");
+        const title = requirePositional(args, 0, "task title");
+        return {
+          method: "POST",
+          path: `/api/projects/${encodePathSegment(args.project)}/tasks`,
+          body: {
+            title,
+            ...(args.priority ? { priority: args.priority } : {}),
+          },
+        };
+      }
+      case "ls":
+      case "list":
+        if (!args.project) throw new Error("--project required");
+        return { method: "GET", path: `/api/projects/${encodePathSegment(args.project)}/tasks` };
+      case "archive": {
+        if (!args.project) throw new Error("--project required");
+        const taskId = encodePathSegment(requirePositional(args, 0, "task ID"));
+        return {
+          method: "PATCH",
+          path: `/api/projects/${encodePathSegment(args.project)}/tasks/${taskId}`,
+          body: { status: "archived" },
+        };
+      }
+      case "rm":
+      case "delete": {
+        if (!args.project) throw new Error("--project required");
+        const taskId = encodePathSegment(requirePositional(args, 0, "task ID"));
+        return {
+          method: "DELETE",
+          path: `/api/projects/${encodePathSegment(args.project)}/tasks/${taskId}`,
+          body: {},
+        };
+      }
+      case "work": {
+        if (!args.project) throw new Error("--project required");
+        const taskId = requirePositional(args, 0, "task ID");
+        return {
+          method: "POST",
+          path: "/api/sessions",
+          body: {
+            kind: args.agent ? "agent" : "shell",
+            ...(args.agent ? { agent: args.agent } : {}),
+            projectSlug: args.project,
+            taskId,
+          },
+        };
+      }
+      default:
+        throw new Error("Unknown task command");
+    }
+  }
+
+  if (args.command === "preview") {
+    switch (args.subcommand) {
+      case "add": {
+        if (!args.project) throw new Error("--project required");
+        if (!args.url) throw new Error("--url required");
+        return {
+          method: "POST",
+          path: `/api/projects/${encodePathSegment(args.project)}/previews`,
+          body: {
+            ...(args.task ? { taskId: args.task } : {}),
+            label: args.label ?? args.url,
+            url: args.url,
+          },
+        };
+      }
+      case "ls":
+      case "list":
+        if (!args.project) throw new Error("--project required");
+        return {
+          method: "GET",
+          path: `/api/projects/${encodePathSegment(args.project)}/previews${queryString({ taskId: args.task })}`,
+        };
+      case "rm":
+      case "delete": {
+        if (!args.project) throw new Error("--project required");
+        const previewId = encodePathSegment(requirePositional(args, 0, "preview ID"));
+        return {
+          method: "DELETE",
+          path: `/api/projects/${encodePathSegment(args.project)}/previews/${previewId}`,
+          body: {},
+        };
+      }
+      default:
+        throw new Error("Unknown preview command");
     }
   }
 
@@ -619,6 +744,8 @@ Commands:
   session     Manage coding sessions
   agent       Inspect agent runtime status
   review      Manage review loops
+  task        Manage project tasks
+  preview     Manage project previews
   workspace   Export or delete workspace data
   help        Show this help text
   version     Show version
@@ -649,6 +776,7 @@ Worktree commands:
 Workspace commands:
   workspace export [--project slug] [--include-transcripts]
   workspace delete --project slug --confirm "delete project workspace data"
+  workspace events [--project slug] [--task id]
 
 Session commands:
   session start [prompt] [--project slug] [--worktree id] [--task id] [--pr number] [--agent codex]
@@ -669,5 +797,17 @@ Review commands:
   review watch <reviewId>
   review next <reviewId>
   review approve <reviewId>
-  review stop <reviewId>`;
+  review stop <reviewId>
+
+Task commands:
+  task create "<title>" --project slug [--priority high]
+  task ls --project slug
+  task work <taskId> --project slug [--agent codex]
+  task archive <taskId> --project slug
+  task rm <taskId> --project slug
+
+Preview commands:
+  preview add --project slug --url URL [--label label] [--task id]
+  preview ls --project slug [--task id]
+  preview rm <previewId> --project slug`;
 }

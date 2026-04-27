@@ -21,6 +21,14 @@ function deleteJsonRequest(path: string, body: unknown): Request {
   });
 }
 
+function patchJsonRequest(path: string, body: unknown): Request {
+  return new Request(`http://localhost${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("workspace API routes", () => {
   let homePath: string;
 
@@ -226,6 +234,87 @@ describe("workspace API routes", () => {
     saved.push({ ...(saved.at(-1) ?? review), status: "stalled" });
     await expect((await app.request(jsonRequest("/api/reviews/rev_abc123/approve", {}))).json()).resolves.toMatchObject({
       review: expect.objectContaining({ status: "approved" }),
+    });
+  });
+
+  it("routes task, preview, and workspace event APIs through workspace managers", async () => {
+    const task = {
+      id: "task_abc123",
+      projectSlug: "repo",
+      title: "Fix auth",
+      status: "todo",
+      priority: "high",
+      order: 0,
+      previewIds: [],
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
+    };
+    const preview = {
+      id: "prev_abc123",
+      projectSlug: "repo",
+      taskId: "task_abc123",
+      label: "Local app",
+      url: "http://localhost:3000",
+      lastStatus: "ok",
+      displayPreference: "panel",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z",
+    };
+    const event = {
+      id: "evt_abc123",
+      scope: { projectSlug: "repo", taskId: "task_abc123" },
+      type: "task.created",
+      payload: { title: "Fix auth" },
+      createdAt: "2026-04-26T00:00:00.000Z",
+    };
+    const taskManager = {
+      createTask: vi.fn(async () => ({ ok: true, status: 201, task })),
+      listTasks: vi.fn(async () => ({ ok: true, tasks: [task], nextCursor: null })),
+      updateTask: vi.fn(async () => ({ ok: true, task: { ...task, status: "running" } })),
+      deleteTask: vi.fn(async () => ({ ok: true })),
+    };
+    const previewManager = {
+      createPreview: vi.fn(async () => ({ ok: true, status: 201, preview })),
+      listPreviews: vi.fn(async () => ({ ok: true, previews: [preview], nextCursor: null })),
+      updatePreview: vi.fn(async () => ({ ok: true, preview: { ...preview, label: "External app" } })),
+      deletePreview: vi.fn(async () => ({ ok: true })),
+      detectPreviewUrls: vi.fn(),
+    };
+    const eventStore = {
+      publishEvent: vi.fn(async () => ({ ok: true, event })),
+      listEvents: vi.fn(async () => ({ ok: true, events: [event], nextCursor: null })),
+    };
+    const app = createWorkspaceRoutes({ homePath, taskManager, previewManager, eventStore });
+
+    const createdTask = await app.request(jsonRequest("/api/projects/repo/tasks", { title: "Fix auth", priority: "high" }));
+    expect(createdTask.status).toBe(201);
+    expect(taskManager.createTask).toHaveBeenCalledWith("repo", { title: "Fix auth", priority: "high" });
+    expect(eventStore.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "task.created" }));
+    await expect((await app.request("/api/projects/repo/tasks?includeArchived=true")).json()).resolves.toMatchObject({
+      tasks: [expect.objectContaining({ id: "task_abc123" })],
+    });
+    await expect((await app.request(patchJsonRequest("/api/projects/repo/tasks/task_abc123", { status: "running" }))).json()).resolves.toMatchObject({
+      task: expect.objectContaining({ status: "running" }),
+    });
+    await expect((await app.request(deleteJsonRequest("/api/projects/repo/tasks/task_abc123", {}))).json()).resolves.toEqual({ ok: true });
+
+    const createdPreview = await app.request(jsonRequest("/api/projects/repo/previews", {
+      taskId: "task_abc123",
+      label: "Local app",
+      url: "http://localhost:3000",
+    }));
+    expect(createdPreview.status).toBe(201);
+    expect(previewManager.createPreview).toHaveBeenCalledWith("repo", expect.objectContaining({ url: "http://localhost:3000" }));
+    await expect((await app.request("/api/projects/repo/previews?taskId=task_abc123")).json()).resolves.toMatchObject({
+      previews: [expect.objectContaining({ id: "prev_abc123" })],
+    });
+    await expect((await app.request(patchJsonRequest("/api/projects/repo/previews/prev_abc123", { label: "External app" }))).json()).resolves.toMatchObject({
+      preview: expect.objectContaining({ label: "External app" }),
+    });
+    await expect((await app.request(deleteJsonRequest("/api/projects/repo/previews/prev_abc123", {}))).json()).resolves.toEqual({ ok: true });
+
+    await expect((await app.request("/api/workspace/events?projectSlug=repo")).json()).resolves.toMatchObject({
+      events: [expect.objectContaining({ type: "task.created" })],
     });
   });
 });

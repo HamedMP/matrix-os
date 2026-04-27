@@ -140,6 +140,21 @@ describe("T680a: CLI argument parser", () => {
       pr: 42,
       agent: "claude",
     });
+    expect(parseArgs(["task", "create", "Fix auth", "--project", "repo", "--priority", "high"])).toMatchObject({
+      command: "task",
+      subcommand: "create",
+      positional: ["Fix auth"],
+      project: "repo",
+      priority: "high",
+    });
+    expect(parseArgs(["preview", "add", "--project", "repo", "--task", "task_abc123", "--label", "Local app", "--url", "http://localhost:3000"])).toMatchObject({
+      command: "preview",
+      subcommand: "add",
+      project: "repo",
+      task: "task_abc123",
+      label: "Local app",
+      url: "http://localhost:3000",
+    });
   });
 });
 
@@ -225,6 +240,30 @@ describe("workspace CLI helpers", () => {
       method: "POST",
       path: "/api/reviews/rev_abc123/approve",
       body: {},
+    });
+    expect(buildWorkspaceRequest(parseArgs(["task", "create", "Fix auth", "--project", "repo", "--priority", "high"]))).toEqual({
+      method: "POST",
+      path: "/api/projects/repo/tasks",
+      body: { title: "Fix auth", priority: "high" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["task", "archive", "task_abc123", "--project", "repo"]))).toEqual({
+      method: "PATCH",
+      path: "/api/projects/repo/tasks/task_abc123",
+      body: { status: "archived" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["task", "work", "task_abc123", "--project", "repo", "--agent", "codex"]))).toEqual({
+      method: "POST",
+      path: "/api/sessions",
+      body: { kind: "agent", agent: "codex", projectSlug: "repo", taskId: "task_abc123" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["preview", "add", "--project", "repo", "--task", "task_abc123", "--label", "Local app", "--url", "http://localhost:3000"]))).toEqual({
+      method: "POST",
+      path: "/api/projects/repo/previews",
+      body: { taskId: "task_abc123", label: "Local app", url: "http://localhost:3000" },
+    });
+    expect(buildWorkspaceRequest(parseArgs(["workspace", "events", "--project", "repo"]))).toEqual({
+      method: "GET",
+      path: "/api/workspace/events?projectSlug=repo",
     });
   });
 
