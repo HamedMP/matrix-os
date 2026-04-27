@@ -45,6 +45,14 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
 
+  it('uses a retrying bounded download for the host bundle and sha sidecar', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL"');
+    expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
+  });
+
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
       'token={{registrationToken}}\npassword={{postgresPassword}}\n',
