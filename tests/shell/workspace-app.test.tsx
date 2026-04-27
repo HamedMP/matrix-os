@@ -40,8 +40,25 @@ describe("WorkspaceApp", () => {
       if (url.includes("/api/sessions/sess_abc123/observe") && init?.method === "POST") {
         return json({ terminalSessionId: "term_abc123" });
       }
+      if (url.includes("/api/sessions/sess_abc123/takeover") && init?.method === "POST") {
+        return json({ terminalSessionId: "term_owner_abc123" });
+      }
+      if (url.includes("/api/sessions/sess_abc123") && init?.method === "DELETE") {
+        return json({ session: { id: "sess_abc123", status: "exited" } });
+      }
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return json({ session: { id: "sess_duplicate", status: "starting" } });
+      }
       if (url.includes("/api/sessions")) {
-        return json({ sessions: [{ id: "sess_abc123", status: "running", taskId: "task_0", agent: "codex" }] });
+        return json({ sessions: [{
+          id: "sess_abc123",
+          status: "running",
+          projectSlug: "repo",
+          taskId: "task_0",
+          agent: "codex",
+          runtime: { status: "running" },
+          nativeAttachCommand: ["zellij", "attach", "matrix-sess_abc123"],
+        }] });
       }
       return json({});
     }));
@@ -64,12 +81,18 @@ describe("WorkspaceApp", () => {
     expect(screen.getByText(/Round 2/)).toBeTruthy();
     expect(screen.getByText("Local app").closest("a")?.getAttribute("href")).toBe("http://localhost:3000");
     expect(screen.getByText("Open IDE").getAttribute("href")).toContain("code.matrix-os.com");
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/api/terminal/sessions"), expect.anything());
   });
 
-  it("converges from workspace events and attaches to running sessions", async () => {
+  it("converges from workspace events and controls running sessions through /api/sessions", async () => {
     render(<WorkspaceApp initialProjectSlug="repo" />);
 
     await waitFor(() => expect(screen.getByText("task.updated")).toBeTruthy());
+    expect(screen.getByText("zellij attach matrix-sess_abc123")).toBeTruthy();
+    expect(screen.getByText("running health")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "task_0" } });
+    expect(screen.getByText("sess_abc123")).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /attach sess_abc123/i }));
@@ -80,6 +103,27 @@ describe("WorkspaceApp", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(await screen.findByText("Attached term_abc123")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /take over sess_abc123/i }));
+    });
+    expect(await screen.findByText("Attached term_owner_abc123")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /duplicate sess_abc123/i }));
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions"),
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /kill sess_abc123/i }));
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions/sess_abc123"),
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });
 

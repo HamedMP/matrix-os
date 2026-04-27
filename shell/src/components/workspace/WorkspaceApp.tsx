@@ -29,6 +29,8 @@ interface WorkspaceSession {
   projectSlug?: string;
   taskId?: string;
   agent?: string;
+  runtime?: { status?: string };
+  nativeAttachCommand?: string[];
 }
 
 interface WorkspaceReview {
@@ -97,6 +99,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [previews, setPreviews] = useState<WorkspacePreview[]>([]);
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
   const [attachMessage, setAttachMessage] = useState("");
+  const [sessionSearch, setSessionSearch] = useState("");
   const [error, setError] = useState("");
 
   const selectedProject = useMemo(
@@ -158,8 +161,44 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
   }, []);
 
+  const takeoverSession = useCallback(async (sessionId: string) => {
+    const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/takeover`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
+  }, []);
+
+  const duplicateSession = useCallback(async (session: WorkspaceSession) => {
+    await fetchJson<{ session?: WorkspaceSession }>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        kind: session.agent ? "agent" : "shell",
+        ...(session.agent ? { agent: session.agent } : {}),
+        ...(session.projectSlug ? { projectSlug: session.projectSlug } : {}),
+        ...(session.taskId ? { taskId: session.taskId } : {}),
+      }),
+    });
+    await loadProjectDetail(activeSlug);
+  }, [activeSlug, loadProjectDetail]);
+
+  const killSession = useCallback(async (sessionId: string) => {
+    await fetchJson<{ session?: WorkspaceSession }>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+    await loadProjectDetail(activeSlug);
+  }, [activeSlug, loadProjectDetail]);
+
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);
+  const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
+  const visibleSessions = sessions.filter((session) => {
+    if (!normalizedSessionSearch) return true;
+    return [session.id, session.projectSlug, session.taskId, session.agent, session.status]
+      .filter((value): value is string => typeof value === "string")
+      .some((value) => value.toLowerCase().includes(normalizedSessionSearch));
+  });
   const ideHref = activeSlug
     ? `https://code.matrix-os.com/?folder=${encodeURIComponent(`/home/matrixos/home/projects/${activeSlug}`)}`
     : "https://code.matrix-os.com/";
@@ -251,22 +290,36 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
 
         <aside className="min-h-0 overflow-auto border-t border-border lg:border-l lg:border-t-0">
           <WorkspacePanel title="Sessions" icon={<PanelRightOpenIcon className="size-3.5" />}>
-            {sessions.map((session) => (
-              <div key={session.id} className="flex items-center justify-between gap-2 py-2 text-xs">
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{session.id}</div>
-                  <div className="text-muted-foreground">{session.status ?? "unknown"} · {session.agent ?? "shell"}</div>
+            <label className="mb-2 block text-xs text-muted-foreground">
+              Search sessions
+              <input
+                aria-label="Search sessions"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+              />
+            </label>
+            {visibleSessions.map((session) => (
+              <div key={session.id} className="py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{session.id}</div>
+                    <div className="text-muted-foreground">{session.status ?? "unknown"} · {session.agent ?? "shell"}</div>
+                    <div className="text-muted-foreground">{session.runtime?.status ?? session.status ?? "unknown"} health</div>
+                  </div>
                 </div>
+                {session.nativeAttachCommand && (
+                  <code className="mt-2 block truncate rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                    {session.nativeAttachCommand.join(" ")}
+                  </code>
+                )}
                 {session.id && (
-                  <button
-                    type="button"
-                    aria-label={`Attach ${session.id}`}
-                    onClick={() => void attachSession(session.id!)}
-                    className="inline-flex h-7 items-center gap-1 rounded border border-border px-2 hover:bg-accent"
-                  >
-                    <PlayIcon className="size-3" />
-                    Attach
-                  </button>
+                  <div className="mt-2 grid grid-cols-2 gap-1">
+                    <SessionButton label="Attach" sessionId={session.id} onClick={() => void attachSession(session.id!)} />
+                    <SessionButton label="Take over" sessionId={session.id} onClick={() => void takeoverSession(session.id!)} />
+                    <SessionButton label="Duplicate" sessionId={session.id} onClick={() => void duplicateSession(session)} />
+                    <SessionButton label="Kill" sessionId={session.id} onClick={() => void killSession(session.id!)} />
+                  </div>
                 )}
               </div>
             ))}
@@ -317,6 +370,28 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         </aside>
       </div>
     </div>
+  );
+}
+
+function SessionButton({
+  label,
+  sessionId,
+  onClick,
+}: {
+  label: string;
+  sessionId: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`${label} ${sessionId}`}
+      onClick={onClick}
+      className="inline-flex h-7 items-center justify-center gap-1 rounded border border-border px-2 hover:bg-accent"
+    >
+      <PlayIcon className="size-3" />
+      {label}
+    </button>
   );
 }
 
