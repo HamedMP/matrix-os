@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { useWorkspaceCanvasStore } from "../../shell/src/stores/workspace-canvas-store.js";
+import { WorkspaceCanvas } from "../../shell/src/components/canvas/WorkspaceCanvas.js";
 import { WorkspaceCanvasNode } from "../../shell/src/components/canvas/WorkspaceCanvasNode.js";
 
+vi.mock("@tldraw/tldraw", () => ({
+  Tldraw: () => <div data-testid="mock-tldraw" />,
+}));
 vi.mock("../../shell/src/components/terminal/TerminalPane.js", () => ({
   TerminalPane: () => <div>terminal pane</div>,
 }));
@@ -44,5 +49,28 @@ describe("workspace canvas renderer", () => {
   it("shows review actions and recoverable state details through rendered text", () => {
     render(<WorkspaceCanvasNode node={node("review_loop", { state: "idle" }) as any} />);
     expect(screen.getByText(/State:/)).toBeTruthy();
+  });
+
+  it("renders an empty workspace canvas without unstable selector loops", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ canvases: [] }) }));
+    useWorkspaceCanvasStore.setState({
+      summaries: [],
+      activeCanvasId: null,
+      document: null,
+      linkedState: null,
+      selectedNodeId: null,
+      focusedNodeId: null,
+      query: "",
+      filters: [],
+      saveStatus: "idle",
+      error: null,
+    });
+
+    render(<WorkspaceCanvas />);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("mock-tldraw")).toBeNull();
   });
 });

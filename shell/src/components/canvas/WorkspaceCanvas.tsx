@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Tldraw } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
@@ -13,8 +13,18 @@ export function WorkspaceCanvas() {
   const summaries = useWorkspaceCanvasStore((s) => s.summaries);
   const loadSummaries = useWorkspaceCanvasStore((s) => s.loadSummaries);
   const openCanvas = useWorkspaceCanvasStore((s) => s.openCanvas);
-  const visibleNodes = useWorkspaceCanvasStore((s) => s.visibleNodes());
+  const query = useWorkspaceCanvasStore((s) => s.query);
+  const filters = useWorkspaceCanvasStore((s) => s.filters);
   const setSelectedNode = useWorkspaceCanvasStore((s) => s.setSelectedNode);
+  const visibleNodes = useMemo(() => {
+    if (!document) return [];
+    const needle = query.trim().toLowerCase();
+    return document.nodes.filter((node) => {
+      if (filters.length > 0 && !filters.includes(node.type)) return false;
+      if (!needle) return true;
+      return JSON.stringify(node).toLowerCase().includes(needle);
+    });
+  }, [document, filters, query]);
 
   useEffect(() => {
     void loadSummaries();

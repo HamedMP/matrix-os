@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { CanvasConflictError } from "../../packages/gateway/src/canvas/repository.js";
 import { createCanvasRoutes, type CanvasRouteService } from "../../packages/gateway/src/canvas/routes.js";
 
-function createApp(service: CanvasRouteService, userId: string | null = "user_a") {
+function createApp(service: CanvasRouteService, userId: string | null = "user_a", broadcastCanvasUpdate?: Parameters<typeof createCanvasRoutes>[0]["broadcastCanvasUpdate"]) {
   const app = new Hono();
   app.route("/api/canvases", createCanvasRoutes({
     service,
@@ -11,6 +11,7 @@ function createApp(service: CanvasRouteService, userId: string | null = "user_a"
       if (!userId) throw new Error("missing auth");
       return userId;
     },
+    broadcastCanvasUpdate,
   }));
   return app;
 }
@@ -116,5 +117,38 @@ describe("canvas routes", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid request" });
     expect(patchCanvasNode).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts canvas updates after replace and patch mutations", async () => {
+    const updatedAt = "2026-04-27T00:00:00.000Z";
+    const broadcastCanvasUpdate = vi.fn();
+    const replaceCanvas = vi.fn().mockResolvedValue({ revision: 2, updatedAt });
+    const patchCanvasNode = vi.fn().mockResolvedValue({ revision: 3, updatedAt });
+    const app = createApp({ ...service, replaceCanvas, patchCanvasNode }, "user_a", broadcastCanvasUpdate);
+
+    await app.request("/api/canvases/cnv_0123456789abcdef", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: 1,
+        document: { schemaVersion: 1, nodes: [], edges: [], viewStates: [], displayOptions: {} },
+      }),
+    });
+    await app.request("/api/canvases/cnv_0123456789abcdef/nodes/node_0123456789abcdef", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseRevision: 2, updates: { metadata: { label: "updated" } } }),
+    });
+
+    expect(broadcastCanvasUpdate).toHaveBeenNthCalledWith(1, "cnv_0123456789abcdef", {
+      type: "canvas:updated",
+      revision: 2,
+      updatedAt,
+    });
+    expect(broadcastCanvasUpdate).toHaveBeenNthCalledWith(2, "cnv_0123456789abcdef", {
+      type: "canvas:updated",
+      revision: 3,
+      updatedAt,
+    });
   });
 });

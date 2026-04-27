@@ -3078,6 +3078,7 @@ export async function createGateway(config: GatewayConfig) {
     app.route("/api/canvases", createCanvasRoutes({
       service: canvasService,
       getUserId: (c) => getUserIdFromContext(c),
+      broadcastCanvasUpdate: (canvasId, message) => canvasSubscriptionHub?.broadcast(canvasId, message),
     }));
 
     app.get(

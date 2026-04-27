@@ -32,6 +32,7 @@ export interface CanvasRouteService {
 export interface CanvasRouteDeps {
   service: CanvasRouteService;
   getUserId: (c: Context) => string;
+  broadcastCanvasUpdate?: (canvasId: string, message: { type: "canvas:updated"; revision: number; updatedAt: string }) => void | Promise<void>;
 }
 
 async function parseJson(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
@@ -85,6 +86,28 @@ function handleError(c: any, err: unknown) {
   return c.json(body, mapped.status as 400 | 401 | 403 | 404 | 409 | 500);
 }
 
+async function broadcastCanvasUpdate(deps: CanvasRouteDeps, canvasId: string, result: unknown): Promise<void> {
+  if (!deps.broadcastCanvasUpdate) return;
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    typeof (result as { revision?: unknown }).revision !== "number" ||
+    typeof (result as { updatedAt?: unknown }).updatedAt !== "string"
+  ) {
+    return;
+  }
+
+  try {
+    await deps.broadcastCanvasUpdate(canvasId, {
+      type: "canvas:updated",
+      revision: (result as { revision: number }).revision,
+      updatedAt: (result as { updatedAt: string }).updatedAt,
+    });
+  } catch (err: unknown) {
+    console.error("[canvas/routes] Realtime broadcast failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
   const app = new Hono();
   const writeBodyLimit = bodyLimit({ maxSize: CANVAS_WRITE_BODY_LIMIT, onError: bodyTooLarge });
@@ -130,9 +153,12 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
   app.put("/:canvasId", writeBodyLimit, async (c) => {
     try {
       const userId = getUserIdOrThrow(deps, c);
+      const canvasId = parseCanvasId(c);
       const parsed = ReplaceCanvasRequestSchema.safeParse(await parseJson(c));
       if (!parsed.success) return validationError(c);
-      return c.json(await deps.service.replaceCanvas(userId, parseCanvasId(c), parsed.data));
+      const result = await deps.service.replaceCanvas(userId, canvasId, parsed.data);
+      await broadcastCanvasUpdate(deps, canvasId, result);
+      return c.json(result);
     } catch (err: unknown) {
       return handleError(c, err);
     }
@@ -148,11 +174,13 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
       if (!deps.service.patchCanvasNode) {
         return c.json({ error: "Canvas request failed" }, 500);
       }
-      return c.json(await deps.service.patchCanvasNode(userId, canvasId, {
+      const result = await deps.service.patchCanvasNode(userId, canvasId, {
         baseRevision: parsed.data.baseRevision,
         nodeId,
         updates: parsed.data.updates,
-      }));
+      });
+      await broadcastCanvasUpdate(deps, canvasId, result);
+      return c.json(result);
     } catch (err: unknown) {
       return handleError(c, err);
     }

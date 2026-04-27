@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { resolveWithinHome } from "../path-security.js";
 import {
   CanvasNodeSchema,
@@ -54,6 +56,7 @@ export interface CanvasServiceOptions {
   terminalRegistry?: CanvasTerminalRegistry;
   homePath?: string;
   fetchImpl?: typeof fetch;
+  resolvePreviewHost?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 }
 
 export function mapCanvasError(err: unknown): CanvasSafeError {
@@ -158,15 +161,50 @@ function safeSearch(records: CanvasRecord[], query?: string): CanvasRecord[] {
   });
 }
 
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && (b === 0 || b === 168)) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  return false;
+}
+
+function isPrivateIpv6(address: string): boolean {
+  const normalized = address.toLowerCase().split("%", 1)[0] ?? "";
+  if (normalized === "::" || normalized === "::1") return true;
+  if (normalized.startsWith("::ffff:")) {
+    const mappedIpv4 = normalized.slice("::ffff:".length);
+    return isPrivateIpv4(mappedIpv4);
+  }
+  if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
+  if (/^fe[89ab]/.test(normalized)) return true;
+  if (normalized.startsWith("ff")) return true;
+  return normalized.startsWith("2001:db8");
+}
+
+function isPublicIpAddress(address: string): boolean {
+  const kind = isIP(address);
+  if (kind === 4) return !isPrivateIpv4(address);
+  if (kind === 6) return !isPrivateIpv6(address);
+  return false;
+}
+
 export class CanvasService {
   private readonly terminalRegistry?: CanvasTerminalRegistry;
   private readonly homePath?: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly resolvePreviewHost: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
   constructor(private readonly repository: CanvasRepository, options: CanvasServiceOptions = {}) {
     this.terminalRegistry = options.terminalRegistry;
     this.homePath = options.homePath;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.resolvePreviewHost = options.resolvePreviewHost ?? ((hostname) => lookup(hostname, { all: true, verbatim: true }));
   }
 
   async listCanvases(userId: string, query: { scopeType?: string; scopeId?: string; limit?: number; cursor?: string; q?: string } = {}): Promise<CanvasListResult> {
@@ -322,12 +360,34 @@ export class CanvasService {
   }
 
   private async previewHealthCheck(action: Extract<CanvasAction, { type: "preview.healthCheck" }>) {
-    const url = action.payload.url;
+    const url = await this.safePreviewUrl(action.payload.url);
     const response = await this.fetchImpl(url, {
       method: "HEAD",
       signal: AbortSignal.timeout(10_000),
     });
     return { ok: true as const, result: { kind: "preview_health", ok: response.ok, status: response.status } };
+  }
+
+  private async safePreviewUrl(rawUrl: string): Promise<string> {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+      throw new CanvasNotFoundError("preview");
+    }
+    const literalKind = isIP(hostname);
+    let addresses: Array<{ address: string; family: number }>;
+    try {
+      addresses = literalKind > 0
+        ? [{ address: hostname, family: literalKind }]
+        : await this.resolvePreviewHost(hostname);
+    } catch (err: unknown) {
+      console.error("[canvas] Preview host resolution failed:", err instanceof Error ? err.message : String(err));
+      throw new CanvasNotFoundError("preview");
+    }
+    if (addresses.length === 0 || addresses.some((entry) => !isPublicIpAddress(entry.address))) {
+      throw new CanvasNotFoundError("preview");
+    }
+    return url.toString();
   }
 
   private openFile(action: Extract<CanvasAction, { type: "file.open" }>) {

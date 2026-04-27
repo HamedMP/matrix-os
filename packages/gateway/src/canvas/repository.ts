@@ -256,6 +256,7 @@ export class CanvasRepository {
       .where("id", "=", canvasId)
       .where("owner_scope", "=", owner.ownerScope)
       .where("owner_id", "=", owner.ownerId)
+      .where("deleted_at", "is", null)
       .executeTakeFirst();
 
     return row ? toRecord(row) : null;
@@ -280,7 +281,7 @@ export class CanvasRepository {
         throw new CanvasConflictError(canvasId, Number(current.revision));
       }
 
-      return trx
+      const updated = await trx
         .updateTable("canvas_documents")
         .set({
           revision: input.baseRevision + 1,
@@ -294,8 +295,24 @@ export class CanvasRepository {
         .where("id", "=", canvasId)
         .where("owner_scope", "=", owner.ownerScope)
         .where("owner_id", "=", owner.ownerId)
+        .where("revision", "=", input.baseRevision)
         .returning(["revision", "updated_at"])
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+
+      if (!updated) {
+        const latest = await trx
+          .selectFrom("canvas_documents")
+          .select(["revision"])
+          .where("id", "=", canvasId)
+          .where("owner_scope", "=", owner.ownerScope)
+          .where("owner_id", "=", owner.ownerId)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (!latest) throw new CanvasNotFoundError(canvasId);
+        throw new CanvasConflictError(canvasId, Number(latest.revision));
+      }
+
+      return updated;
     });
 
     return { revision: Number(row.revision), updatedAt: asIso(row.updated_at) ?? new Date().toISOString() };
@@ -339,7 +356,7 @@ export class CanvasRepository {
         displayOptions: record.displayOptions,
       });
 
-      return trx
+      const updated = await trx
         .updateTable("canvas_documents")
         .set({
           revision: input.baseRevision + 1,
@@ -353,8 +370,24 @@ export class CanvasRepository {
         .where("id", "=", canvasId)
         .where("owner_scope", "=", owner.ownerScope)
         .where("owner_id", "=", owner.ownerId)
+        .where("revision", "=", input.baseRevision)
         .returning(["revision", "updated_at"])
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+
+      if (!updated) {
+        const latest = await trx
+          .selectFrom("canvas_documents")
+          .select(["revision"])
+          .where("id", "=", canvasId)
+          .where("owner_scope", "=", owner.ownerScope)
+          .where("owner_id", "=", owner.ownerId)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (!latest) throw new CanvasNotFoundError(canvasId);
+        throw new CanvasConflictError(canvasId, Number(latest.revision));
+      }
+
+      return updated;
     });
 
     return { revision: Number(row.revision), updatedAt: asIso(row.updated_at) ?? new Date().toISOString() };

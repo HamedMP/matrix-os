@@ -121,7 +121,8 @@ describe("CanvasService", () => {
 
   it("uses a 10 second timeout for preview health checks", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-    const service = new CanvasService(repository([record()]), { fetchImpl: fetchImpl as any });
+    const resolvePreviewHost = vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    const service = new CanvasService(repository([record()]), { fetchImpl: fetchImpl as any, resolvePreviewHost });
 
     await service.executeAction("user_a", "cnv_0123456789abcdef", {
       nodeId: "node_preview",
@@ -130,5 +131,19 @@ describe("CanvasService", () => {
     });
 
     expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("blocks preview health checks to private or link-local resolved addresses", async () => {
+    const fetchImpl = vi.fn();
+    const resolvePreviewHost = vi.fn().mockResolvedValue([{ address: "169.254.169.254", family: 4 }]);
+    const service = new CanvasService(repository([record()]), { fetchImpl: fetchImpl as any, resolvePreviewHost });
+
+    await expect(service.executeAction("user_a", "cnv_0123456789abcdef", {
+      nodeId: "node_preview",
+      type: "preview.healthCheck",
+      payload: { url: "https://metadata.internal/latest" },
+    })).rejects.toBeInstanceOf(CanvasNotFoundError);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

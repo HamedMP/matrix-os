@@ -94,7 +94,7 @@ describe("CanvasRepository", () => {
     })).rejects.toBeInstanceOf(CanvasConflictError);
   });
 
-  it("soft deletes documents while keeping export reads available", async () => {
+  it("excludes soft-deleted documents from normal and export reads", async () => {
     const created = await repository.create(owner, {
       title: "Exportable",
       scopeType: "global",
@@ -105,8 +105,7 @@ describe("CanvasRepository", () => {
     await repository.softDelete(owner, created.id);
 
     expect(await repository.get(owner, created.id)).toBeNull();
-    const exported = await repository.export(owner, created.id);
-    expect(exported).toMatchObject({ id: created.id, deletedAt: expect.any(String) });
+    expect(await repository.export(owner, created.id)).toBeNull();
   });
 
   it("rolls back all writes when a transaction fails", async () => {
