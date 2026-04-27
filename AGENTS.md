@@ -79,12 +79,15 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **Every temp file MUST have a cleanup policy** (TTL, max count, or explicit deletion after use).
 - **Temp cleanup must be symlink-safe and recurring**. Use `lstat()` when sweeping attacker-named files, skip symlinks, schedule periodic cleanup, and clear timers on shutdown.
 - **Long-lived Postgres/Kysely resources must be destroyed on gateway shutdown**. If a repository wraps a pool or Kysely instance, add it to the close path.
+- **Only owners close shared DB pools/connections**. Transaction-scoped or dependency-injected repository wrappers must not call `pool.end()`/`destroy()` for resources they did not create.
 - **`appendFileSync`/`writeFileSync` are banned in request handlers**. Use async `fs/promises` to avoid blocking the event loop.
 
 ### Error Handling
 
 - **No bare `catch { return null }`**. Every catch must check error type -- DB connection failures and timeouts are not "not found."
 - **No `catch { }` (empty catch)**. At minimum, log the error.
+- **Async store workflows must catch create/open/load failures at the orchestration boundary**. If a multi-step UI action creates data then opens/reloads it, set an error on any failed step and refresh summaries/cache when safe.
+- **Misconfiguration is not not-found**. Missing server dependencies such as `homePath`, registries, provider config, or database handles should return a generic 5xx/503-style error, not a 404 that looks like user data is missing.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
 - **WebSocket broadcasts must isolate subscriber failures**. Wrap each per-subscriber send, log failures, and continue delivering to remaining subscribers.
 - **Async WebSocket subscription/auth setup must be awaited** before success messages are sent; failure paths should send a generic error best-effort and then close.
@@ -92,12 +95,14 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 ### Concurrency and UI State
 
 - **Read-modify-write database operations must stay inside one transaction** or one targeted SQL update. Do not read outside a transaction and write inside a later transaction.
+- **Single-entity JSONB patches should target the entity path when possible**. Avoid whole-document rewrites that conflict independent edits to different nodes/items; use `jsonb_set`/targeted SQL or document coarse locking and retry expectations.
 - **Soft-deleted records should stay out of normal/export reads** unless the recovery/audit path explicitly documents why deleted data remains readable.
 - **Delete paths should filter already-deleted records** (`deleted_at IS NULL`) so repeat deletes do not silently refresh tombstones and mask stale clients.
 - **REST mutations that affect realtime documents must notify subscribers** after the write succeeds, using generic events that include the new revision and timestamp.
 - **Debounced saves must guard against active-document changes**. Conflict reloads should only reopen the document if it is still the active document when the save settles.
 - **Shared client store state should be serializable** unless there is a strong reason otherwise. Prefer arrays or records over `Set`/`Map` in Zustand state.
 - **Zustand selectors must not allocate fresh arrays/objects every render**. Select primitive/stable slices and derive filtered arrays with `useMemo` inside components.
+- **Do not duplicate derived store logic in components**. Put shared filters/search derivations in a pure exported helper or store method, then reuse it from both tests/store and UI components.
 
 ### Wiring Verification
 
