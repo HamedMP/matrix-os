@@ -7,6 +7,7 @@ const COMMANDS = new Set([
   "send",
   "status",
   "doctor",
+  "tui",
   "help",
   "version",
   "project",
@@ -739,6 +740,7 @@ Commands:
   send        Send a message to the kernel
   status      Show gateway health and status
   doctor      Run diagnostic checks
+  tui         Open the workspace dashboard
   project     Manage coding projects
   worktree    Manage project worktrees
   session     Manage coding sessions

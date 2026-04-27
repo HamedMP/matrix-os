@@ -177,6 +177,7 @@ Untracked support/spec files currently present:
 - [ ] T502 Update terminal cockpit to use `/api/sessions` as the coding-session source of truth and terminal registry only as transport.
 - [ ] T503 Add attach, observe, takeover, kill, duplicate pane, local-terminal handoff, transcript search, and session health UI.
 - [ ] T504 Build Ink TUI dashboard and `matrixos` no-subcommand entry point.
+  - Partial: `bin/tui/dashboard.ts`, `bin/matrixos.ts`, and `tests/cli/tui-dashboard.test.ts` add the dashboard model plus `matrixos`/`matrixos tui` text entrypoint; Ink rendering is still pending.
 - [ ] T505 Complete green/refactor coverage for layout, attach/reconnect behavior, event convergence, browser IDE file-operation persistence, large-list responsiveness, and mobile/desktop rendering.
 
 ### Docker / Recovery / Docs

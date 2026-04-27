@@ -36,6 +36,11 @@ describe("T680a: CLI argument parser", () => {
     expect(result.command).toBe("help");
   });
 
+  it("parseArgs(['tui']) returns { command: 'tui' }", () => {
+    const result = parseArgs(["tui"]);
+    expect(result.command).toBe("tui");
+  });
+
   it("parseArgs(['help']) returns { command: 'help' }", () => {
     const result = parseArgs(["help"]);
     expect(result.command).toBe("help");

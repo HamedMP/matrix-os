@@ -10,6 +10,7 @@ import {
   formatWorkspaceResponse,
 } from "./cli.js";
 import type { StatusInfo, DoctorCheck, ParsedArgs } from "./cli.js";
+import { buildTuiDashboardModel, renderTuiDashboard } from "./tui/dashboard.js";
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -197,6 +198,30 @@ async function runWorkspaceCommand(args: ParsedArgs) {
   }
 }
 
+async function runTui(args: { gateway: string; token?: string }) {
+  const projectsData = await fetchJSON(`${args.gateway}/api/projects`, args.token) as { projects?: Array<{ slug?: string; name?: string }> };
+  const projects = projectsData.projects ?? [];
+  const firstProjectSlug = projects[0]?.slug;
+  const [tasksData, sessionsData, reviewsData] = await Promise.all([
+    firstProjectSlug
+      ? fetchJSON(`${args.gateway}/api/projects/${encodeURIComponent(firstProjectSlug)}/tasks?limit=100`, args.token)
+      : Promise.resolve({ tasks: [] }),
+    fetchJSON(`${args.gateway}/api/sessions?limit=100`, args.token),
+    fetchJSON(`${args.gateway}/api/reviews?limit=100`, args.token),
+  ]) as [
+    { tasks?: Array<{ id?: string; title?: string; status?: string; priority?: string }> },
+    { sessions?: Array<{ id?: string; status?: string; projectSlug?: string; taskId?: string }> },
+    { reviews?: Array<{ id?: string; status?: string; projectSlug?: string; round?: number }> },
+  ];
+
+  console.log(renderTuiDashboard(buildTuiDashboardModel({
+    projects,
+    tasks: tasksData.tasks ?? [],
+    sessions: sessionsData.sessions ?? [],
+    reviews: reviewsData.reviews ?? [],
+  })));
+}
+
 async function runDoctor(args: { gateway: string; token?: string }) {
   const checks: DoctorCheck[] = [];
 
@@ -299,6 +324,11 @@ async function main() {
     return;
   }
 
+  if (rawArgs.length === 0) {
+    await runTui(args);
+    return;
+  }
+
   switch (args.command) {
     case "start":
       await runStart(args);
@@ -311,6 +341,9 @@ async function main() {
       break;
     case "doctor":
       await runDoctor(args);
+      break;
+    case "tui":
+      await runTui(args);
       break;
     case "project":
     case "worktree":
