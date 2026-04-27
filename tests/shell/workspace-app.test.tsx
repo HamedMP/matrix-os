@@ -125,6 +125,22 @@ describe("WorkspaceApp", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
   });
+
+  it("anchors browser IDE file persistence and mobile/desktop workspace layouts", async () => {
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("Repo").length).toBeGreaterThan(0));
+
+    const ideLink = screen.getByText("Open IDE").closest("a");
+    expect(ideLink?.getAttribute("data-folder")).toBe("/home/matrixos/home/projects/repo");
+    expect(ideLink?.getAttribute("href")).toContain(encodeURIComponent("/home/matrixos/home/projects/repo"));
+
+    expect(screen.getByTestId("workspace-layout").className).toContain("grid-cols-1");
+    expect(screen.getByTestId("workspace-layout").className).toContain("lg:grid-cols-[240px_1fr_320px]");
+    expect(screen.getByTestId("workspace-task-grid").className).toContain("grid-cols-1");
+    expect(screen.getByTestId("workspace-task-grid").className).toContain("md:grid-cols-2");
+    expect(screen.getByTestId("workspace-task-grid").className).toContain("xl:grid-cols-3");
+  });
 });
 
 function json(body: unknown): Response {

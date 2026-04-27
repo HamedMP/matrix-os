@@ -180,7 +180,8 @@ Untracked support/spec files currently present:
   - Files: `shell/src/components/terminal/TerminalApp.tsx`, `tests/shell/terminal-app-component.test.tsx`
 - [x] T504 Build Ink TUI dashboard and `matrixos` no-subcommand entry point.
   - Files: `bin/tui/dashboard.ts`, `bin/tui/app.tsx`, `bin/matrixos.ts`, `tests/cli/tui-dashboard.test.ts`, `package.json`, `pnpm-lock.yaml`
-- [ ] T505 Complete green/refactor coverage for layout, attach/reconnect behavior, event convergence, browser IDE file-operation persistence, large-list responsiveness, and mobile/desktop rendering.
+- [x] T505 Complete green/refactor coverage for layout, attach/reconnect behavior, event convergence, browser IDE file-operation persistence, large-list responsiveness, and mobile/desktop rendering.
+  - Commands: `pnpm exec vitest run tests/shell/workspace-app.test.tsx tests/shell/terminal-app-component.test.tsx tests/shell/pane-grid.test.tsx tests/cli/tui-dashboard.test.ts tests/cli/cli.test.ts tests/gateway/workspace-startup-recovery.test.ts tests/deploy/cloud-workspace-runtime.test.ts tests/gateway/workspace-routes.test.ts`; `node /home/deploy/matrix-os/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/bin/tsc --noEmit -p shell/tsconfig.json`; `pnpm --filter './shell' exec eslint src/components/workspace/WorkspaceApp.tsx src/components/terminal/TerminalApp.tsx`; `./scripts/review/check-patterns.sh --diff origin/main`
 
 ### Docker / Recovery / Docs
 

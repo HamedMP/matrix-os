@@ -146,11 +146,13 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   }, []);
 
   useEffect(() => {
-    void loadProjects();
+    const timer = window.setTimeout(() => void loadProjects(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadProjects]);
 
   useEffect(() => {
-    void loadProjectDetail(activeSlug);
+    const timer = window.setTimeout(() => void loadProjectDetail(activeSlug), 0);
+    return () => window.clearTimeout(timer);
   }, [activeSlug, loadProjectDetail]);
 
   const attachSession = useCallback(async (sessionId: string) => {
@@ -199,9 +201,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       .filter((value): value is string => typeof value === "string")
       .some((value) => value.toLowerCase().includes(normalizedSessionSearch));
   });
-  const ideHref = activeSlug
-    ? `https://code.matrix-os.com/?folder=${encodeURIComponent(`/home/matrixos/home/projects/${activeSlug}`)}`
-    : "https://code.matrix-os.com/";
+  const ideFolder = activeSlug ? `/home/matrixos/home/projects/${activeSlug}` : "/home/matrixos/home";
+  const ideHref = `https://code.matrix-os.com/?folder=${encodeURIComponent(ideFolder)}`;
 
   return (
     <div
@@ -219,6 +220,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         <div className="flex items-center gap-2">
           <a
             href={ideHref}
+            data-folder={ideFolder}
             target="_blank"
             rel="noreferrer"
             className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs hover:bg-accent"
@@ -243,7 +245,10 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[240px_1fr_320px]">
+      <div
+        data-testid="workspace-layout"
+        className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[240px_1fr_320px]"
+      >
         <aside className="min-h-0 overflow-auto border-b border-border lg:border-b-0 lg:border-r">
           <div className="px-3 py-2 text-xs font-medium text-muted-foreground">Projects</div>
           <div className="space-y-1 px-2 pb-3">
@@ -273,7 +278,10 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               <span className="text-xs text-muted-foreground">{formatCount(tasks.length)} tasks</span>
             </div>
           </section>
-          <section className="grid grid-cols-1 gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
+          <section
+            data-testid="workspace-task-grid"
+            className="grid grid-cols-1 gap-px bg-border md:grid-cols-2 xl:grid-cols-3"
+          >
             {visibleTasks.map((task) => (
               <article key={task.id} className="min-h-[96px] bg-background p-3">
                 <div className="flex items-start justify-between gap-2">
