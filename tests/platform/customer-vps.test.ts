@@ -418,6 +418,29 @@ describe('platform/customer-vps', () => {
     errorSpy.mockRestore();
   });
 
+  it('can provision the same Clerk user after a soft-deleted VPS row', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+    ];
+    const { service, hetzner } = createService({
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.delete(first.machineId);
+
+    const second = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    expect(second).toEqual({
+      machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+    expect((await getUserMachine(db, first.machineId))?.deletedAt).toBe('2026-04-26T12:00:00.000Z');
+    expect((await getUserMachine(db, second.machineId))?.deletedAt).toBeNull();
+  });
+
   it('documents first-customer rollout checks and recovery expectations', () => {
     const quickstart = readFileSync('specs/070-vps-per-user/quickstart.md', 'utf8');
 

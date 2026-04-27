@@ -247,7 +247,7 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS user_machines (
       machine_id TEXT PRIMARY KEY,
-      clerk_user_id TEXT UNIQUE NOT NULL,
+      clerk_user_id TEXT NOT NULL,
       handle TEXT NOT NULL,
       hetzner_server_id INTEGER,
       public_ipv4 TEXT,
@@ -264,7 +264,13 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
-  await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk ON user_machines(clerk_user_id)`.execute(db);
+  await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active
+    ON user_machines(clerk_user_id)
+    WHERE deleted_at IS NULL
+  `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
 
   await sql`
