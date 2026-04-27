@@ -210,6 +210,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
+        let socketOpen = false;
+        const queuedFrames: string[] = [];
         const timeout = setTimeout(() => {
           ws.close();
           settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
@@ -218,6 +220,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         const cleanup = () => {
           clearTimeout(timeout);
           input.off?.("data", onInput);
+          ws.off?.("open", onOpen);
           ws.off?.("message", onMessage);
           ws.off?.("close", onClose);
           ws.off?.("error", onError);
@@ -230,16 +233,43 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           cleanup();
           fn();
         };
+        const markOpen = () => {
+          if (socketOpen) {
+            return;
+          }
+          socketOpen = true;
+          clearTimeout(timeout);
+          for (const frame of queuedFrames.splice(0)) {
+            sendFrame(frame);
+          }
+        };
+        const sendFrame = (frame: string) => {
+          if (!socketOpen) {
+            queuedFrames.push(frame);
+            return;
+          }
+          try {
+            ws.send(frame);
+          } catch (err: unknown) {
+            errorOutput.write("Shell attach failed\n");
+            settle(() => reject(Object.assign(new Error("Request failed"), {
+              code: err instanceof Error ? "attach_failed" : "request_failed",
+            })));
+          }
+        };
         const onInput = (chunk: Buffer | string) => {
           const data = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
           pendingInput = `${pendingInput}${data}`.slice(-detachSequence.length);
           if (pendingInput === detachSequence) {
-            ws.send(JSON.stringify({ type: "detach" }));
+            sendFrame(JSON.stringify({ type: "detach" }));
             ws.close();
             settle(() => resolve({ detached: true }));
             return;
           }
-          ws.send(JSON.stringify({ type: "input", data }));
+          sendFrame(JSON.stringify({ type: "input", data }));
+        };
+        const onOpen = () => {
+          markOpen();
         };
         const onMessage = (chunk: unknown) => {
           const raw = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
@@ -256,7 +286,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           const msg = parsed as Record<string, unknown>;
-          if (msg.type === "output" && typeof msg.data === "string") {
+          if (msg.type === "attached") {
+            markOpen();
+          } else if (msg.type === "output" && typeof msg.data === "string") {
             output.write(msg.data);
           } else if (msg.type === "error") {
             const code = typeof msg.code === "string" ? msg.code : "attach_failed";
@@ -275,6 +307,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           })));
         };
 
+        ws.on("open", onOpen);
         ws.on("message", onMessage);
         ws.on("close", onClose);
         ws.on("error", onError);

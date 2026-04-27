@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createShellClient } from "../../packages/sync-client/src/cli/shell-client.js";
 
@@ -84,5 +85,109 @@ describe("shell REST client", () => {
       output,
       errorOutput,
     })).rejects.toMatchObject({ code: "attach_timeout" });
+  });
+
+  it("clears the attach timeout after the websocket opens", async () => {
+    class ControlledWebSocket {
+      static last: ControlledWebSocket | null = null;
+      listeners = new Map<string, (...args: unknown[]) => void>();
+      sent: string[] = [];
+
+      constructor() {
+        ControlledWebSocket.last = this;
+      }
+
+      send(data: string) {
+        this.sent.push(data);
+      }
+
+      close() {
+        this.listeners.get("close")?.();
+      }
+
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        this.listeners.set(event, listener);
+        return this;
+      }
+
+      off(event: "open" | "message" | "close" | "error") {
+        this.listeners.delete(event);
+        return this;
+      }
+
+      emit(event: "open" | "message" | "close" | "error", value?: unknown) {
+        this.listeners.get(event)?.(value);
+      }
+    }
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 5 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).resolves.toEqual({ detached: true });
+  });
+
+  it("queues stdin frames until the websocket is open", async () => {
+    class ControlledWebSocket {
+      static last: ControlledWebSocket | null = null;
+      listeners = new Map<string, (...args: unknown[]) => void>();
+      sent: string[] = [];
+
+      constructor() {
+        ControlledWebSocket.last = this;
+      }
+
+      send(data: string) {
+        this.sent.push(data);
+      }
+
+      close() {
+        this.listeners.get("close")?.();
+      }
+
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        this.listeners.set(event, listener);
+        return this;
+      }
+
+      off(event: "open" | "message" | "close" | "error") {
+        this.listeners.delete(event);
+        return this;
+      }
+
+      emit(event: "open" | "message" | "close" | "error", value?: unknown) {
+        this.listeners.get(event)?.(value);
+      }
+    }
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    input.emit("data", "pwd\r");
+    expect(ControlledWebSocket.last?.sent).toEqual([]);
+
+    ControlledWebSocket.last?.emit("open");
+    expect(ControlledWebSocket.last?.sent).toEqual([
+      JSON.stringify({ type: "input", data: "pwd\r" }),
+    ]);
+    ControlledWebSocket.last?.emit("close");
+    await expect(attached).resolves.toEqual({ detached: true });
   });
 });
