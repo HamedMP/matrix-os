@@ -422,7 +422,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       await softDeleteUserMachine(deps.db, machineId, now().toISOString());
       if (row.hetznerServerId) {
-        await deps.hetzner.deleteServer(row.hetznerServerId);
+        try {
+          await deps.hetzner.deleteServer(row.hetznerServerId);
+        } catch (err: unknown) {
+          logCustomerVpsError('delete server cleanup failed', err);
+        }
       }
       return { deleted: true, machineId, status: 'deleted' };
     },

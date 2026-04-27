@@ -49,8 +49,8 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
             await orchestrator.stop(c.handle);
             stopped.push(c.handle);
             alreadyStopped.add(c.handle);
-          } catch {
-            // Container may already be stopped
+          } catch (err: unknown) {
+            console.warn('[lifecycle] Failed to stop idle container:', err instanceof Error ? err.message : String(err));
           }
         }
       }
@@ -69,8 +69,8 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
         try {
           await orchestrator.stop(container.handle);
           stopped.push(container.handle);
-        } catch {
-          // Container may already be stopped
+        } catch (err: unknown) {
+          console.warn('[lifecycle] Failed to evict idle container:', err instanceof Error ? err.message : String(err));
         }
       }
     }
@@ -82,7 +82,9 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
     start() {
       if (intervalHandle) return;
       intervalHandle = setInterval(() => {
-        checkIdle().catch(() => {});
+        checkIdle().catch((err: unknown) => {
+          console.warn('[lifecycle] Idle check failed:', err instanceof Error ? err.message : String(err));
+        });
       }, checkIntervalMs);
     },
 

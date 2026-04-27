@@ -355,6 +355,32 @@ describe('platform/customer-vps', () => {
     expect(deletedAtDuringProviderDelete).toBe('2026-04-26T12:00:00.000Z');
   });
 
+  it('returns deleted when Hetzner cleanup fails after the DB soft-delete', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        deleteServer: vi.fn().mockRejectedValue(new Error('hetzner timeout')),
+      }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(service.delete(provisioned.machineId)).resolves.toEqual({
+      deleted: true,
+      machineId: provisioned.machineId,
+      status: 'deleted',
+    });
+    expect((await getUserMachine(db, provisioned.machineId))?.deletedAt).toBe('2026-04-26T12:00:00.000Z');
+    expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
+    expect(errorSpy).toHaveBeenCalledWith('[customer-vps] delete server cleanup failed: hetzner timeout');
+    errorSpy.mockRestore();
+  });
+
   it('documents first-customer rollout checks and recovery expectations', () => {
     const quickstart = readFileSync('specs/070-vps-per-user/quickstart.md', 'utf8');
 

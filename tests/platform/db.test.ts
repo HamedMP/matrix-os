@@ -143,6 +143,15 @@ describe('platform/db', () => {
     expect(p1again).toBe(4001);
   });
 
+  it('allocates distinct ports under concurrent requests', async () => {
+    const ports = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => allocatePort(db, 4001, `user-${i}`)),
+    );
+
+    expect(new Set(ports).size).toBe(8);
+    expect([...ports].sort((a, b) => a - b)).toEqual([4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008]);
+  });
+
   it('releases ports', async () => {
     await allocatePort(db, 4001, 'alice');
     await allocatePort(db, 4001, 'bob');

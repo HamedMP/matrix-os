@@ -109,7 +109,12 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
     });
 
     if (!regRes.ok) {
-      const err = (await regRes.json().catch(() => ({}))) as { errcode?: string };
+      let err: { errcode?: string } = {};
+      try {
+        err = (await regRes.json()) as { errcode?: string };
+      } catch (parseErr: unknown) {
+        console.warn('[matrix] Failed to parse registration error response:', parseErr instanceof Error ? parseErr.message : String(parseErr));
+      }
       throw new Error(`Failed to register Matrix user ${username}: ${err.errcode ?? regRes.status}`);
     }
 

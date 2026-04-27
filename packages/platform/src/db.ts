@@ -698,20 +698,28 @@ export async function listStaleUserMachines(
 
 export async function allocatePort(db: PlatformDB, basePort: number, handle: string): Promise<number> {
   await db.ready;
-  const existing = await db.executor
-    .selectFrom('port_assignments')
-    .select('port')
-    .where('handle', '=', handle)
-    .executeTakeFirst();
-  if (existing) return existing.port;
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const existing = await db.executor
+      .selectFrom('port_assignments')
+      .select('port')
+      .where('handle', '=', handle)
+      .executeTakeFirst();
+    if (existing) return existing.port;
 
-  const result = await db.executor
-    .selectFrom('port_assignments')
-    .select((eb) => eb.fn.max<number>('port').as('max_port'))
-    .executeTakeFirst();
-  const nextPort = result?.max_port ? Number(result.max_port) + 1 : basePort;
-  await db.executor.insertInto('port_assignments').values({ port: nextPort, handle }).execute();
-  return nextPort;
+    const result = await db.executor
+      .selectFrom('port_assignments')
+      .select((eb) => eb.fn.max<number>('port').as('max_port'))
+      .executeTakeFirst();
+    const nextPort = result?.max_port ? Number(result.max_port) + 1 : basePort;
+    const inserted = await db.executor
+      .insertInto('port_assignments')
+      .values({ port: nextPort, handle })
+      .onConflict((oc) => oc.doNothing())
+      .returning('port')
+      .executeTakeFirst();
+    if (inserted) return inserted.port;
+  }
+  throw new Error('Unable to allocate platform port after concurrent retries');
 }
 
 export async function releasePort(db: PlatformDB, handle: string): Promise<void> {
