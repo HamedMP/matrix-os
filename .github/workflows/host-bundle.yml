@@ -37,10 +37,11 @@ jobs:
     timeout-minutes: 30
     env:
       IMAGE_VERSION: ${{ inputs.imageVersion || 'matrix-os-host-dev' }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || vars.R2_ACCOUNT_ID }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT || secrets.S3_ENDPOINT || vars.R2_ENDPOINT || vars.S3_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET || secrets.S3_BUCKET || vars.R2_BUCKET || vars.S3_BUCKET || 'matrixos-sync' }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || secrets.S3_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
     steps:
       - uses: actions/checkout@v4
@@ -66,14 +67,16 @@ jobs:
         run: ./scripts/build-host-bundle.sh
 
       - name: Upload to R2
-        env:
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
         run: |
           set -euo pipefail
-          if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+          endpoint="${R2_ENDPOINT:-}"
+          if [ -z "$endpoint" ] && [ -n "${R2_ACCOUNT_ID:-}" ]; then
+            endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          fi
+          if [ -z "$endpoint" ] || [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
             echo "R2 credentials are not configured" >&2
             exit 1
           fi
           key="system-bundles/${IMAGE_VERSION}"
-          aws --endpoint-url "$R2_ENDPOINT" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz"
-          aws --endpoint-url "$R2_ENDPOINT" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz.sha256 "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz.sha256"
+          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz"
+          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz.sha256 "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz.sha256"
