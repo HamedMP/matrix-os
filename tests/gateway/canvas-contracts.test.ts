@@ -143,4 +143,17 @@ describe("canvas contracts", () => {
       }),
     ).toThrow();
   });
+
+  it("requires HTTPS URLs for server-side preview health checks", () => {
+    expect(CanvasActionSchema.safeParse({
+      nodeId: "node_a",
+      type: "preview.healthCheck",
+      payload: { url: "http://example.com" },
+    }).success).toBe(false);
+    expect(CanvasActionSchema.safeParse({
+      nodeId: "node_a",
+      type: "preview.healthCheck",
+      payload: { url: "https://example.com" },
+    }).success).toBe(true);
+  });
 });

@@ -137,7 +137,7 @@ describe("CanvasSubscriptionHub", () => {
     expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
   });
 
-  it("isolates broadcast send failures to the failing subscriber", async () => {
+  it("isolates broadcast send failures and evicts the failing subscriber", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const firstSend = vi.fn(() => {
       throw new Error("socket closed");
@@ -163,6 +163,7 @@ describe("CanvasSubscriptionHub", () => {
     expect(firstSend).toHaveBeenCalled();
     expect(secondSend).toHaveBeenCalledWith(JSON.stringify({ type: "canvas:updated" }));
     expect(consoleSpy).toHaveBeenCalledWith("[canvas/realtime] Broadcast send failed:", "socket closed");
+    expect(hub.subscriberCount).toBe(1);
     consoleSpy.mockRestore();
   });
 

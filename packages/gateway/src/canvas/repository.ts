@@ -215,10 +215,30 @@ export class CanvasRepository {
         view_states: jsonb(document.viewStates),
         display_options: jsonb(document.displayOptions),
       })
+      .onConflict((oc) => oc
+        .expression(sql`owner_scope, owner_id, scope_type, COALESCE(scope_ref::text, 'null')`)
+        .where("deleted_at", "is", null)
+        .doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
 
-    return toRecord(row);
+    if (row) {
+      return toRecord(row);
+    }
+
+    let existingQuery = this.kysely
+      .selectFrom("canvas_documents")
+      .selectAll()
+      .where("owner_scope", "=", owner.ownerScope)
+      .where("owner_id", "=", owner.ownerId)
+      .where("scope_type", "=", input.scopeType)
+      .where("deleted_at", "is", null);
+    existingQuery = input.scopeRef === null
+      ? existingQuery.where("scope_ref", "is", null)
+      : existingQuery.where(sql<boolean>`scope_ref = ${jsonb(input.scopeRef)}`);
+    const existing = await existingQuery.executeTakeFirstOrThrow();
+
+    return toRecord(existing);
   }
 
   async list(owner: CanvasOwner, limit = 50): Promise<CanvasRecord[]> {

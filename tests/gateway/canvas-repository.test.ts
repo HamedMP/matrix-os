@@ -74,6 +74,27 @@ describe("CanvasRepository", () => {
     await expect(repository.list(owner)).resolves.toHaveLength(1);
   });
 
+  it("returns the existing active scoped canvas on duplicate create", async () => {
+    const first = await repository.create(owner, {
+      title: "PR workspace",
+      scopeType: "pull_request",
+      scopeRef: { projectId: "prj_1", number: 57 },
+      document: document([node("node_a")]),
+    });
+
+    const second = await repository.create(owner, {
+      title: "Duplicate PR workspace",
+      scopeType: "pull_request",
+      scopeRef: { projectId: "prj_1", number: 57 },
+      document: document([node("node_b")]),
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.title).toBe("PR workspace");
+    expect(second.nodes).toEqual([expect.objectContaining({ id: "node_a" })]);
+    await expect(repository.list(owner)).resolves.toHaveLength(1);
+  });
+
   it("uses optimistic revisions for document updates", async () => {
     const created = await repository.create(owner, {
       title: "Revisioned",

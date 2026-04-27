@@ -41,6 +41,19 @@ function safeUrl(value: string): boolean {
   }
 }
 
+function safeHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch (err: unknown) {
+    if (err instanceof TypeError) {
+      return false;
+    }
+    console.error("[canvas/contracts] Unexpected URL parse failure:", err);
+    return false;
+  }
+}
+
 function safeRelativePath(value: string): boolean {
   if (value.startsWith("/") || value.includes("\0")) return false;
   return !value.split(/[\\/]+/).some((segment) => segment === ".." || segment === "");
@@ -314,7 +327,7 @@ export const CanvasActionSchema = z.discriminatedUnion("type", [
   CanvasActionBaseSchema.extend({
     type: z.literal("preview.healthCheck"),
     payload: z.object({
-      url: z.string().min(1).max(2048).refine(safeUrl, { message: "Invalid preview URL" }),
+      url: z.string().min(1).max(2048).refine(safeHttpsUrl, { message: "Invalid preview URL" }),
     }).strict(),
   }),
   CanvasActionBaseSchema.extend({

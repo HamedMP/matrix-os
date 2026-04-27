@@ -139,16 +139,21 @@ export class CanvasSubscriptionHub {
 
   broadcast(canvasId: string, message: unknown): void {
     const payload = JSON.stringify(message);
+    const failedConnectionIds: string[] = [];
     this.pruneExpiredPresence();
-    for (const subscriber of this.subscribers.values()) {
+    for (const [connectionId, subscriber] of this.subscribers) {
       if (subscriber.canvasId === canvasId) {
         try {
           subscriber.send(payload);
           subscriber.lastTouched = this.now();
         } catch (err: unknown) {
           console.error("[canvas/realtime] Broadcast send failed:", err instanceof Error ? err.message : String(err));
+          failedConnectionIds.push(connectionId);
         }
       }
+    }
+    for (const connectionId of failedConnectionIds) {
+      this.subscribers.delete(connectionId);
     }
   }
 

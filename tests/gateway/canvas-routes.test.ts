@@ -50,6 +50,19 @@ describe("canvas routes", () => {
     expect(createCanvas).not.toHaveBeenCalled();
   });
 
+  it("applies a body limit to delete requests before request handling", async () => {
+    const deleteCanvas = vi.fn();
+    const app = createApp({ ...service, deleteCanvas });
+    const res = await app.request("/api/canvases/cnv_0123456789abcdef", {
+      method: "DELETE",
+      headers: { "Content-Type": "text/plain", "Content-Length": "2048" },
+      body: "x".repeat(2048),
+    });
+
+    expect(res.status).toBe(413);
+    expect(deleteCanvas).not.toHaveBeenCalled();
+  });
+
   it("returns generic client errors without raw internals", async () => {
     const app = createApp({
       ...service,
@@ -119,7 +132,7 @@ describe("canvas routes", () => {
     expect(patchCanvasNode).not.toHaveBeenCalled();
   });
 
-  it("broadcasts canvas updates after replace and patch mutations", async () => {
+  it("broadcasts canvas updates after replace, patch, and delete mutations", async () => {
     const updatedAt = "2026-04-27T00:00:00.000Z";
     const broadcastCanvasUpdate = vi.fn();
     const replaceCanvas = vi.fn().mockResolvedValue({ revision: 2, updatedAt });
@@ -139,6 +152,9 @@ describe("canvas routes", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseRevision: 2, updates: { metadata: { label: "updated" } } }),
     });
+    await app.request("/api/canvases/cnv_0123456789abcdef", {
+      method: "DELETE",
+    });
 
     expect(broadcastCanvasUpdate).toHaveBeenNthCalledWith(1, "cnv_0123456789abcdef", {
       type: "canvas:updated",
@@ -149,6 +165,9 @@ describe("canvas routes", () => {
       type: "canvas:updated",
       revision: 3,
       updatedAt,
+    });
+    expect(broadcastCanvasUpdate).toHaveBeenNthCalledWith(3, "cnv_0123456789abcdef", {
+      type: "canvas:deleted",
     });
   });
 });

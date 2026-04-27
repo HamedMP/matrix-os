@@ -33,7 +33,7 @@ export interface CanvasRouteService {
 export interface CanvasRouteDeps {
   service: CanvasRouteService;
   getUserId: (c: Context) => string;
-  broadcastCanvasUpdate?: (canvasId: string, message: { type: "canvas:updated"; revision: number; updatedAt: string }) => void | Promise<void>;
+  broadcastCanvasUpdate?: (canvasId: string, message: { type: "canvas:updated"; revision: number; updatedAt: string } | { type: "canvas:deleted" }) => void | Promise<void>;
 }
 
 class CanvasUnauthorizedError extends Error {
@@ -119,6 +119,7 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
   const app = new Hono();
   const writeBodyLimit = bodyLimit({ maxSize: CANVAS_WRITE_BODY_LIMIT, onError: bodyTooLarge });
   const actionBodyLimit = bodyLimit({ maxSize: CANVAS_ACTION_BODY_LIMIT, onError: bodyTooLarge });
+  const deleteBodyLimit = bodyLimit({ maxSize: 1024, onError: bodyTooLarge });
 
   app.get("/", async (c) => {
     try {
@@ -204,10 +205,15 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
     }
   });
 
-  app.delete("/:canvasId", async (c) => {
+  app.delete("/:canvasId", deleteBodyLimit, async (c) => {
     try {
       const userId = getUserIdOrThrow(deps, c);
-      return c.json(await deps.service.deleteCanvas(userId, parseCanvasId(c)));
+      const canvasId = parseCanvasId(c);
+      const result = await deps.service.deleteCanvas(userId, canvasId);
+      if (deps.broadcastCanvasUpdate) {
+        await deps.broadcastCanvasUpdate(canvasId, { type: "canvas:deleted" });
+      }
+      return c.json(result);
     } catch (err: unknown) {
       return handleError(c, err);
     }

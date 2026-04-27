@@ -18,6 +18,7 @@ export function WorkspaceCanvas() {
   const setSelectedNode = useWorkspaceCanvasStore((s) => s.setSelectedNode);
   const tldrawLayerEnabled = document?.displayOptions.tldrawLayer === true;
   const visibleNodes = useMemo(() => selectVisibleWorkspaceCanvasNodes(document, query, filters), [document, filters, query]);
+  const nodeById = useMemo(() => new Map(document?.nodes.map((node) => [node.id, node]) ?? []), [document?.nodes]);
 
   useEffect(() => {
     void loadSummaries();
@@ -64,8 +65,8 @@ export function WorkspaceCanvas() {
         ))}
         <svg className="pointer-events-none absolute inset-0 h-full w-full">
           {document.edges.map((edge) => {
-            const from = document.nodes.find((node) => node.id === edge.fromNodeId);
-            const to = document.nodes.find((node) => node.id === edge.toNodeId);
+            const from = nodeById.get(edge.fromNodeId);
+            const to = nodeById.get(edge.toNodeId);
             if (!from || !to) return null;
             return (
               <line

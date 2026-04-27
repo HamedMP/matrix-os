@@ -55,6 +55,7 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **2+ related DB writes MUST use a transaction**. No exceptions. Like + counter, delete + cascade, insert + update are all multi-step.
 - **Optimistic concurrency must be enforced in the write statement**. Pre-reading a revision inside a transaction is not enough under READ COMMITTED; include `WHERE revision = :baseRevision` on the `UPDATE` or take a row lock.
 - **Use `ON CONFLICT` for idempotent upserts** instead of check-then-insert (TOCTOU race).
+- **Unique-scope create flows must be idempotent server-side**. If a unique index defines the logical singleton, `INSERT ... ON CONFLICT ... DO NOTHING` and select the existing row; do not rely on a client pre-check.
 - **Use `{ flag: 'wx' }` for exclusive file creates** instead of `existsSync` + `writeFile`.
 
 ### External Calls
@@ -68,6 +69,7 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 ### Input Validation
 
 - **Use Hono `bodyLimit` middleware** on every mutating endpoint. Never check Content-Length after the body is already buffered.
+- **DELETE is a mutating endpoint**. It still needs `bodyLimit`, even when the route normally ignores request bodies.
 - **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Use `resolveWithinHome` for paths, `SAFE_SLUG` regex for identifiers.
 - **Validate URL path params and query params at the route boundary** with Zod schemas before calling services. This includes IDs embedded in paths (`nodeId`, `canvasId`), scope filters, cursors, limits, and search strings.
 - **Action endpoints need per-action payload schemas**. Use a Zod discriminated union keyed by `type`; do not accept a generic record and cast `action.payload as ...` in the service.
@@ -95,6 +97,7 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **Health checks and reachability probes must return coarse booleans only**. Do not echo upstream status codes or provider/network details to clients after SSRF filtering.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
 - **WebSocket broadcasts must isolate subscriber failures**. Wrap each per-subscriber send, log failures, and continue delivering to remaining subscribers.
+- **WebSocket broadcasts must evict dead senders**. A failed send should remove that subscriber after the broadcast loop so future broadcasts do not retry known-dead sockets.
 - **Async WebSocket subscription/auth setup must be awaited** before success messages are sent; failure paths should send a generic error best-effort and then close.
 - **WebSocket message bodies need schema validation after JSON parsing**. Size and syntax checks are not enough; validate each frame type with bounded Zod schemas before storing or broadcasting payloads.
 
@@ -105,8 +108,11 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **Soft-deleted records should stay out of normal/export reads** unless the recovery/audit path explicitly documents why deleted data remains readable.
 - **Delete paths should filter already-deleted records** (`deleted_at IS NULL`) so repeat deletes do not silently refresh tombstones and mask stale clients.
 - **REST mutations that affect realtime documents must notify subscribers** after the write succeeds, using generic events that include the new revision and timestamp.
+- **Browser WebSocket auth must support query-token paths explicitly**. Browsers cannot set `Authorization` headers on WebSocket upgrades; every authenticated browser WS route needs exact or pattern registration in the query-token allowlist.
 - **Debounced saves must guard against active-document changes**. Conflict reloads should only reopen the document if it is still the active document when the save settles.
+- **Debounced save conflicts must not silently discard optimistic local edits**. Keep the local document visible or provide explicit conflict resolution; do not replace user edits with the server version without a deliberate user action.
 - **Destructive UI actions must catch request failures before clearing local state**. Delete/archive flows should only clear the active document after the server confirms success.
+- **Export/download store actions need the same error handling as mutations**. Catch request failures, set safe error state, and return a null/error result instead of leaking unhandled rejections.
 - **Shared client store state should be serializable** unless there is a strong reason otherwise. Prefer arrays or records over `Set`/`Map` in Zustand state.
 - **Zustand selectors must not allocate fresh arrays/objects every render**. Select primitive/stable slices and derive filtered arrays with `useMemo` inside components.
 - **Do not duplicate derived store logic in components**. Put shared filters/search derivations in a pure exported helper or store method, then reuse it from both tests/store and UI components.

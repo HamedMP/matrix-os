@@ -140,13 +140,17 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const body = await response.json().catch((err: unknown) => {
-    if (err instanceof SyntaxError) {
-      return {};
+  let body: unknown = {};
+  try {
+    body = await response.json();
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) {
+      console.warn("[workspace-canvas] Failed to parse gateway response:", err);
+      if (response.ok) {
+        throw new Error("Canvas request failed");
+      }
     }
-    console.warn("[workspace-canvas] Failed to parse gateway response:", err);
-    return {};
-  });
+  }
   if (!response.ok) {
     throw new Error(safeCanvasErrorMessage((body as { error?: unknown }).error));
   }
@@ -182,6 +186,11 @@ function createNode(type: WorkspaceCanvasNodeType, metadata: Record<string, unkn
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function createEdgeId(index: number): string {
+  const entropy = Math.random().toString(36).slice(2, 10);
+  return `edge_${Date.now().toString(36)}_${index}_${entropy}`;
 }
 
 export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) => {
@@ -263,11 +272,10 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Canvas request failed";
       if (/conflict/i.test(message)) {
-        set({ saveStatus: "conflict", error: "Canvas changed elsewhere. Reloaded latest version." });
-        if (get().activeCanvasId === document.id) {
-          await get().openCanvas(document.id);
-        }
-        set({ saveStatus: "conflict" });
+        set({
+          saveStatus: "conflict",
+          error: "Canvas changed elsewhere. Local edits were kept; reload latest before saving again.",
+        });
         return;
       }
       set({ saveStatus: "error", error: message });
@@ -297,7 +305,14 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
     if (!document) return;
     try {
       await requestJson(`/api/canvases/${encodeURIComponent(document.id)}`, { method: "DELETE" });
-      set({ activeCanvasId: null, document: null, selectedNodeId: null, focusedNodeId: null, error: null });
+      set({
+        activeCanvasId: null,
+        document: null,
+        selectedNodeId: null,
+        focusedNodeId: null,
+        summaries: get().summaries.filter((summary) => summary.id !== document.id),
+        error: null,
+      });
       await get().loadSummaries();
     } catch (err: unknown) {
       set({ error: err instanceof Error ? err.message : "Canvas request failed" });
@@ -307,7 +322,14 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
   async exportCanvas() {
     const document = get().document;
     if (!document) return null;
-    return requestJson(`/api/canvases/${encodeURIComponent(document.id)}/export`);
+    try {
+      const result = await requestJson(`/api/canvases/${encodeURIComponent(document.id)}/export`);
+      set({ error: null });
+      return result;
+    } catch (err: unknown) {
+      set({ error: err instanceof Error ? err.message : "Canvas request failed" });
+      return null;
+    }
   },
 
   async executeAction(nodeId, type, payload = {}) {
@@ -339,7 +361,7 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
     const document = get().document;
     if (!document || fromNodeId === toNodeId) return;
     const edge: WorkspaceCanvasEdge = {
-      id: `edge_${Date.now().toString(36)}`,
+      id: createEdgeId(document.edges.length),
       fromNodeId,
       toNodeId,
       type,
