@@ -8,7 +8,7 @@ import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
+const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
   if (!TERMINAL_DEBUG_ENABLED) {
