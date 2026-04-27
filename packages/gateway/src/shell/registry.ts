@@ -45,6 +45,7 @@ export interface ShellRegistryOptions {
 export class ShellRegistry {
   private readonly persistPath: string;
   private readonly maxSessions: number;
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ShellRegistryOptions) {
     this.persistPath =
@@ -53,23 +54,25 @@ export class ShellRegistry {
   }
 
   async list(): Promise<ShellSession[]> {
-    const file = await this.read();
-    const live = new Set(await this.options.adapter.listSessions());
-    let changed = false;
+    return this.withMutationLock(async () => {
+      const file = await this.read();
+      const live = new Set(await this.options.adapter.listSessions());
+      let changed = false;
 
-    for (const name of Object.keys(file.sessions)) {
-      if (!live.has(name)) {
-        delete file.sessions[name];
-        await this.options.scrollbackStore?.cleanup(name);
-        changed = true;
+      for (const name of Object.keys(file.sessions)) {
+        if (!live.has(name)) {
+          delete file.sessions[name];
+          await this.cleanupScrollback(name);
+          changed = true;
+        }
       }
-    }
 
-    if (changed) {
-      await this.write(file);
-    }
+      if (changed) {
+        await this.write(file);
+      }
 
-    return Object.values(file.sessions);
+      return Object.values(file.sessions);
+    });
   }
 
   async create(input: {
@@ -78,64 +81,68 @@ export class ShellRegistry {
     layout?: string;
     cmd?: string;
   }): Promise<ShellSession> {
-    const name = validateSessionName(input.name);
-    const cwd = input.cwd ? resolveShellCwd(input.cwd, this.options.homePath) : undefined;
-    const layoutName = input.layout ? validateLayoutName(input.layout) : undefined;
-    const file = await this.read();
-    const live = new Set(await this.options.adapter.listSessions());
+    return this.withMutationLock(async () => {
+      const name = validateSessionName(input.name);
+      const cwd = input.cwd ? await resolveShellCwd(input.cwd, this.options.homePath) : undefined;
+      const layoutName = input.layout ? validateLayoutName(input.layout) : undefined;
+      const file = await this.read();
+      const live = new Set(await this.options.adapter.listSessions());
 
-    for (const existing of Object.keys(file.sessions)) {
-      if (!live.has(existing)) {
-        delete file.sessions[existing];
-        await this.options.scrollbackStore?.cleanup(existing);
+      for (const existing of Object.keys(file.sessions)) {
+        if (!live.has(existing)) {
+          delete file.sessions[existing];
+          await this.cleanupScrollback(existing);
+        }
       }
-    }
 
-    if (file.sessions[name] || live.has(name)) {
-      throw shellError("session_exists", "Session already exists", 409);
-    }
-    if (Object.keys(file.sessions).length >= this.maxSessions) {
-      throw shellError("session_limit", "Session limit reached", 507);
-    }
+      if (file.sessions[name] || live.has(name)) {
+        throw shellError("session_exists", "Session already exists", 409);
+      }
+      if (Object.keys(file.sessions).length >= this.maxSessions) {
+        throw shellError("session_limit", "Session limit reached", 507);
+      }
 
-    await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
-    const now = new Date().toISOString();
-    const session: ShellSession = {
-      name,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-      layoutName,
-      tabs: [],
-      attachedClients: 0,
-    };
-    file.sessions[name] = session;
+      await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
+      const now = new Date().toISOString();
+      const session: ShellSession = {
+        name,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+        layoutName,
+        tabs: [],
+        attachedClients: 0,
+      };
+      file.sessions[name] = session;
 
-    try {
-      await this.write(file);
-    } catch (err) {
-      await this.options.adapter.deleteSession(name, { force: true }).catch((rollbackErr: unknown) => {
-        console.warn(
-          "[shell] failed to rollback orphan zellij session:",
-          rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
-        );
-      });
-      throw err;
-    }
+      try {
+        await this.write(file);
+      } catch (err) {
+        await this.options.adapter.deleteSession(name, { force: true }).catch((rollbackErr: unknown) => {
+          console.warn(
+            "[shell] failed to rollback orphan zellij session:",
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+          );
+        });
+        throw err;
+      }
 
-    return session;
+      return session;
+    });
   }
 
   async delete(name: string, options: { force?: boolean } = {}): Promise<void> {
-    const safeName = validateSessionName(name);
-    const file = await this.read();
-    if (!file.sessions[safeName]) {
-      throw shellError("session_not_found", "Session not found", 404);
-    }
-    await this.options.adapter.deleteSession(safeName, options);
-    delete file.sessions[safeName];
-    await this.options.scrollbackStore?.cleanup(safeName);
-    await this.write(file);
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      if (!file.sessions[safeName]) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      await this.options.adapter.deleteSession(safeName, options);
+      delete file.sessions[safeName];
+      await this.cleanupScrollback(safeName);
+      await this.write(file);
+    });
   }
 
   private async read(): Promise<z.infer<typeof RegistryFileSchema>> {
@@ -156,5 +163,25 @@ export class ShellRegistry {
 
   private async write(file: z.infer<typeof RegistryFileSchema>): Promise<void> {
     await writeUtf8FileAtomic(this.persistPath, JSON.stringify(file, null, 2));
+  }
+
+  private async cleanupScrollback(name: string): Promise<void> {
+    try {
+      await this.options.scrollbackStore?.cleanup(name);
+    } catch (err: unknown) {
+      console.warn(
+        "[shell] failed to clean scrollback:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  private async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutationQueue.then(fn, fn);
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DaemonRequestSchema,
   formatDaemonError,
@@ -70,6 +70,25 @@ describe("daemon IPC v1 envelopes", () => {
     await expect(handler("shell.list", {})).resolves.toEqual({ sessions: [{ name: "main" }] });
     await expect(handler("shell.create", { name: "main" })).resolves.toEqual({ name: "main", created: true });
     await expect(handler("shell.destroy", { name: "main" })).resolves.toEqual({ ok: true });
+  });
+
+  it("validates shell IPC payloads before dispatching to the REST client", async () => {
+    const shell = {
+      createSession: vi.fn(async (input: Record<string, unknown>) => ({ ...input, created: true })),
+    };
+    const handler = createIpcHandler({
+      config: baseConfig(),
+      syncState: baseSyncState(),
+      logger: { info: () => undefined },
+      saveConfig: async () => undefined,
+      persistPauseState: async () => undefined,
+      clearAuth: async () => undefined,
+      exit: () => undefined,
+      shell,
+    });
+
+    await expect(handler("shell.create", { name: "../main", cwd: "../outside" })).rejects.toThrow("invalid_request");
+    expect(shell.createSession).not.toHaveBeenCalled();
   });
 
   it("dispatches tab, pane, layout, and sync v1 aliases", async () => {

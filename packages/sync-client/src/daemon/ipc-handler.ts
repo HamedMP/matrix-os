@@ -5,6 +5,7 @@
 // entry wires this into an `IpcServer`; tests can call `createIpcHandler`
 // directly with fakes for the pieces that touch the filesystem or process.
 import { mkdir } from "node:fs/promises";
+import { z } from "zod/v4";
 import {
   normalizeGatewayFolder,
   resolveSyncPathWithinHome,
@@ -58,6 +59,50 @@ export type IpcHandler = (
 ) => Promise<Record<string, unknown>>;
 
 const DEFAULT_EXIT_DELAY_MS = 50;
+const ShellSessionNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
+const ShellLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+const ShellCwdSchema = z.string().min(1).max(1024)
+  .refine((value) => !value.startsWith("/"))
+  .refine((value) => !value.split(/[\\/]+/).includes(".."));
+const ShellCommandSchema = z.string().min(1).max(4096);
+const ShellTabNameSchema = z.string().min(1).max(64);
+const ShellCreateArgsSchema = z.object({
+  name: ShellSessionNameSchema,
+  cwd: ShellCwdSchema.optional(),
+  layout: ShellLayoutNameSchema.optional(),
+  cmd: ShellCommandSchema.optional(),
+}).strict();
+const ShellSessionArgsSchema = z.object({ session: ShellSessionNameSchema }).strict();
+const ShellDestroyArgsSchema = z.object({ name: ShellSessionNameSchema }).strict();
+const ShellTabCreateArgsSchema = z.object({
+  session: ShellSessionNameSchema,
+  name: ShellTabNameSchema.optional(),
+  cwd: ShellCwdSchema.optional(),
+  cmd: ShellCommandSchema.optional(),
+}).strict();
+const ShellPaneSplitArgsSchema = z.object({
+  session: ShellSessionNameSchema,
+  direction: z.enum(["right", "down"]),
+  cwd: ShellCwdSchema.optional(),
+  cmd: ShellCommandSchema.optional(),
+}).strict();
+const ShellTabArgsSchema = z.object({
+  session: ShellSessionNameSchema,
+  tab: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/).transform(Number)]),
+}).strict();
+const ShellPaneArgsSchema = z.object({
+  session: ShellSessionNameSchema,
+  pane: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/),
+}).strict();
+const LayoutNameArgsSchema = z.object({ name: ShellLayoutNameSchema }).strict();
+const LayoutSaveArgsSchema = z.object({
+  name: ShellLayoutNameSchema,
+  kdl: z.string().min(1).max(100_000),
+}).strict();
+const LayoutApplyArgsSchema = z.object({
+  session: ShellSessionNameSchema,
+  name: ShellLayoutNameSchema,
+}).strict();
 
 export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
   const ensureDir =
@@ -105,48 +150,52 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
       }
       case "shell.list":
         return { sessions: await requireShell(deps).listSessions!() };
-      case "shell.create":
-        return await requireShell(deps).createSession!(args);
+      case "shell.create": {
+        const input = parseIpcArgs(ShellCreateArgsSchema, args);
+        return await requireShell(deps).createSession!(input);
+      }
       case "shell.destroy":
-        await requireShell(deps).deleteSession!(requireString(args.name, "name_required"));
+        await requireShell(deps).deleteSession!(parseIpcArgs(ShellDestroyArgsSchema, args).name);
         return { ok: true };
       case "tab.list":
-        return { tabs: await requireShell(deps).listTabs!(requireString(args.session, "session_required")) };
-      case "tab.create":
-        return await requireShell(deps).createTab!(requireString(args.session, "session_required"), args);
-      case "tab.go":
-        return await requireShell(deps).switchTab!(
-          requireString(args.session, "session_required"),
-          requireNumber(args.tab, "tab_required"),
-        );
-      case "tab.close":
-        return await requireShell(deps).closeTab!(
-          requireString(args.session, "session_required"),
-          requireNumber(args.tab, "tab_required"),
-        );
-      case "pane.split":
-        return await requireShell(deps).splitPane!(requireString(args.session, "session_required"), args);
-      case "pane.close":
-        return await requireShell(deps).closePane!(
-          requireString(args.session, "session_required"),
-          requireString(args.pane, "pane_required"),
-        );
+        return { tabs: await requireShell(deps).listTabs!(parseIpcArgs(ShellSessionArgsSchema, args).session) };
+      case "tab.create": {
+        const { session, ...input } = parseIpcArgs(ShellTabCreateArgsSchema, args);
+        return await requireShell(deps).createTab!(session, input);
+      }
+      case "tab.go": {
+        const input = parseIpcArgs(ShellTabArgsSchema, args);
+        return await requireShell(deps).switchTab!(input.session, input.tab);
+      }
+      case "tab.close": {
+        const input = parseIpcArgs(ShellTabArgsSchema, args);
+        return await requireShell(deps).closeTab!(input.session, input.tab);
+      }
+      case "pane.split": {
+        const { session, ...input } = parseIpcArgs(ShellPaneSplitArgsSchema, args);
+        return await requireShell(deps).splitPane!(session, input);
+      }
+      case "pane.close": {
+        const input = parseIpcArgs(ShellPaneArgsSchema, args);
+        return await requireShell(deps).closePane!(input.session, input.pane);
+      }
       case "layout.list":
         return { layouts: await requireShell(deps).listLayouts!() };
       case "layout.show":
-        return await requireShell(deps).showLayout!(requireString(args.name, "name_required"));
-      case "layout.save":
+        return await requireShell(deps).showLayout!(parseIpcArgs(LayoutNameArgsSchema, args).name);
+      case "layout.save": {
+        const input = parseIpcArgs(LayoutSaveArgsSchema, args);
         return await requireShell(deps).saveLayout!(
-          requireString(args.name, "name_required"),
-          requireString(args.kdl, "kdl_required"),
+          input.name,
+          input.kdl,
         );
-      case "layout.apply":
-        return await requireShell(deps).applyLayout!(
-          requireString(args.session, "session_required"),
-          requireString(args.name, "name_required"),
-        );
+      }
+      case "layout.apply": {
+        const input = parseIpcArgs(LayoutApplyArgsSchema, args);
+        return await requireShell(deps).applyLayout!(input.session, input.name);
+      }
       case "layout.delete":
-        return await requireShell(deps).deleteLayout!(requireString(args.name, "name_required"));
+        return await requireShell(deps).deleteLayout!(parseIpcArgs(LayoutNameArgsSchema, args).name);
       case "getConfig":
         // Token-free projection of the daemon's persisted config. The menu
         // bar app calls this to render a Settings view; auth.json is read
@@ -210,17 +259,10 @@ function requireShell(deps: IpcHandlerDeps): NonNullable<IpcHandlerDeps["shell"]
   return deps.shell;
 }
 
-function requireString(value: unknown, code: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(code);
+function parseIpcArgs<T extends z.ZodType>(schema: T, args: Record<string, unknown>): z.infer<T> {
+  const parsed = schema.safeParse(args);
+  if (!parsed.success) {
+    throw new Error("invalid_request");
   }
-  return value;
-}
-
-function requireNumber(value: unknown, code: string): number {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(code);
-  }
-  return parsed;
+  return parsed.data;
 }

@@ -21,6 +21,7 @@ export class ShellReplayBuffer {
   private readonly scrollbackStore?: ScrollbackStore;
   private readonly sessionName?: string;
   private seqOffset = 0;
+  private seedPromise: Promise<void> | null = null;
 
   constructor(options: ShellReplayBufferOptions = {}) {
     this.buffer = new RingBuffer(options.maxBytes);
@@ -94,6 +95,18 @@ export class ShellReplayBuffer {
   }
 
   private async seedOffsetFromScrollback(): Promise<void> {
+    if (!this.scrollbackStore || !this.sessionName || this.buffer.nextSeq > 0) {
+      return;
+    }
+    if (this.seedPromise) {
+      await this.seedPromise;
+      return;
+    }
+    this.seedPromise = this.loadSeedOffset();
+    await this.seedPromise;
+  }
+
+  private async loadSeedOffset(): Promise<void> {
     if (!this.scrollbackStore || !this.sessionName || this.buffer.nextSeq > 0) {
       return;
     }

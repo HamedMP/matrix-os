@@ -1,7 +1,6 @@
-import { readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
 import { validateLayoutName } from "./names.js";
 
@@ -37,14 +36,19 @@ export class LayoutStore {
         files
           .filter((file) => file.endsWith(".kdl"))
           .map(async (file) => {
-            const info = await stat(join(this.layoutsDir, file));
+            const info = await lstat(join(this.layoutsDir, file));
+            if (info.isSymbolicLink()) {
+              return null;
+            }
             return {
               name: file.slice(0, -4),
               modifiedAt: info.mtime.toISOString(),
             };
           }),
       );
-      return layouts.sort((a, b) => a.name.localeCompare(b.name));
+      return layouts
+        .filter((layout): layout is LayoutMetadata => layout !== null)
+        .sort((a, b) => a.name.localeCompare(b.name));
     } catch (err: unknown) {
       if (
         err instanceof Error &&
@@ -87,7 +91,8 @@ export class LayoutStore {
       `.${safeName}.${randomBytes(8).toString("hex")}.tmp-${process.pid}`,
     );
     try {
-      await writeUtf8FileAtomic(tmp, kdl);
+      await mkdir(dirname(tmp), { recursive: true, mode: 0o700 });
+      await writeFile(tmp, kdl, { flag: "wx", mode: 0o600 });
       await this.options.adapter.validateLayout(tmp);
       await rename(tmp, this.pathFor(safeName));
     } catch (err) {

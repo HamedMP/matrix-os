@@ -61,6 +61,63 @@ describe("gateway shell routes", () => {
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
   });
 
+  it("rejects unsafe session route parameters before dispatch", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/sessions/Main", { method: "DELETE" });
+
+    expect(res.status).toBe(400);
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
+  it("rejects traversal cwd values in session bodies", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "main" })),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main", cwd: "../outside" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(registry.create).not.toHaveBeenCalled();
+  });
+
+  it("validates workspace session and layout params at the route boundary", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const workspace = {
+      listTabs: vi.fn(async () => []),
+      createTab: vi.fn(),
+      switchTab: vi.fn(),
+      closeTab: vi.fn(),
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      applyLayout: vi.fn(),
+      dumpLayout: vi.fn(),
+    };
+    const app = new Hono();
+    app.route("/api", createShellRoutes({ registry, workspace }));
+
+    const res = await app.request("/api/sessions/main/layouts/BadLayout/apply", { method: "POST" });
+
+    expect(res.status).toBe(400);
+    expect(workspace.applyLayout).not.toHaveBeenCalled();
+  });
+
   it("maps internal errors to generic stable responses", async () => {
     const err = Object.assign(new Error("/home/alice leaked"), {
       code: "session_not_found",

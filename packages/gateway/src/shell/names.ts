@@ -1,11 +1,13 @@
+import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
+import { shellError } from "./errors.js";
 
 const SESSION_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
 const LONG_SLUG = /^[a-z][a-z0-9-]{0,63}$/;
 
 function validateSlug(value: string, regex: RegExp, code: string): string {
   if (!regex.test(value)) {
-    throw Object.assign(new Error(code), { code });
+    throw shellError(code, "Invalid request", 400);
   }
   return value;
 }
@@ -22,9 +24,9 @@ export function validateLayoutName(value: string): string {
   return validateSlug(value, LONG_SLUG, "invalid_layout_name");
 }
 
-export function resolveShellCwd(rawCwd: string | undefined, homePath: string): string {
+export async function resolveShellCwd(rawCwd: string | undefined, homePath: string): Promise<string> {
   if (!rawCwd || rawCwd === "~") {
-    return resolve(homePath);
+    return realpathWithinHome(resolve(homePath), resolve(homePath));
   }
 
   const homeRoot = resolve(homePath);
@@ -35,8 +37,27 @@ export function resolveShellCwd(rawCwd: string | undefined, homePath: string): s
   const homePrefix = homeRoot.endsWith(sep) ? homeRoot : `${homeRoot}${sep}`;
 
   if (candidate !== homeRoot && !candidate.startsWith(homePrefix)) {
-    throw Object.assign(new Error("invalid_cwd"), { code: "invalid_cwd" });
+    throw shellError("invalid_cwd", "Invalid cwd", 400);
   }
 
-  return candidate;
+  return realpathWithinHome(candidate, homeRoot);
+}
+
+async function realpathWithinHome(candidate: string, homeRoot: string): Promise<string> {
+  try {
+    const [candidateReal, homeReal] = await Promise.all([
+      realpath(candidate),
+      realpath(homeRoot),
+    ]);
+    const homePrefix = homeReal.endsWith(sep) ? homeReal : `${homeReal}${sep}`;
+    if (candidateReal !== homeReal && !candidateReal.startsWith(homePrefix)) {
+      throw shellError("invalid_cwd", "Invalid cwd", 400);
+    }
+    return candidateReal;
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && "safeMessage" in err) {
+      throw err;
+    }
+    throw shellError("invalid_cwd", "Invalid cwd", 400);
+  }
 }

@@ -14,10 +14,12 @@ export const IPC_SOCKET_MODE = 0o600;
 export const IPC_SOCKET_DIR_MODE = 0o700;
 export const IPC_MAX_CONNECTIONS = 10;
 export const IPC_MAX_BUFFER_BYTES = 65_536;
+export const IPC_HANDLER_TIMEOUT_MS = 10_000;
 
 export interface IpcServerOptions {
   socketPath: string;
   handler: IpcHandler;
+  handlerTimeoutMs?: number;
 }
 
 export class IpcServer {
@@ -25,8 +27,11 @@ export class IpcServer {
   private connections = new Set<Socket>();
   private readonly maxConnections = IPC_MAX_CONNECTIONS;
   private readonly maxBufferBytes = IPC_MAX_BUFFER_BYTES;
+  private readonly handlerTimeoutMs: number;
 
-  constructor(private readonly options: IpcServerOptions) {}
+  constructor(private readonly options: IpcServerOptions) {
+    this.handlerTimeoutMs = options.handlerTimeoutMs ?? IPC_HANDLER_TIMEOUT_MS;
+  }
 
   async start(): Promise<void> {
     await mkdir(dirname(this.options.socketPath), { recursive: true, mode: IPC_SOCKET_DIR_MODE });
@@ -144,7 +149,7 @@ export class IpcServer {
     }
 
     try {
-      const result = await this.options.handler(
+      const result = await this.callHandlerWithTimeout(
         parsed.request.command,
         parsed.request.args,
       );
@@ -159,6 +164,26 @@ export class IpcServer {
       socket.write(
         JSON.stringify(formatDaemonError(parsed.request.id, code)) + "\n",
       );
+    }
+  }
+
+  private async callHandlerWithTimeout(
+    command: string,
+    args: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        this.options.handler(command, args),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("request_timeout")), this.handlerTimeoutMs);
+          timeout.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
     }
   }
 }

@@ -123,6 +123,12 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       signal: abortController.signal,
     });
     let closed = false;
+    const cleanupProcessListeners = () => {
+      child.stdout?.off("data", onStdout);
+      child.stderr?.off("data", onStderr);
+      child.off("close", onChildClose);
+      child.off("error", onChildError);
+    };
 
     sendJson(ws, {
       type: "attached",
@@ -138,7 +144,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       sendJson(ws, event);
     }
 
-    child.stdout?.on("data", (chunk: Buffer | string) => {
+    const onStdout = (chunk: Buffer | string) => {
       const data = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
       void replayBuffer.writePersistent(data)
         .then((result) => {
@@ -149,18 +155,23 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         .catch((err: unknown) => {
           console.warn("[shell] failed to persist terminal output:", err instanceof Error ? err.message : String(err));
         });
-    });
-    child.stderr?.on("data", () => {
+    };
+    const onStderr = (chunk: Buffer | string) => {
       // zellij stderr may contain paths or implementation details; keep it server-side only.
-    });
-    child.once("close", (code: number | null) => {
+      const length = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
+      if (length > 0) {
+        console.warn("[shell] zellij attach emitted stderr");
+      }
+    };
+    const onChildClose = (code: number | null) => {
       if (closed) {
         return;
       }
       closed = true;
+      cleanupProcessListeners();
       sendJson(ws, { type: "exit", code: code ?? null });
-    });
-    child.once("error", (err: unknown) => {
+    };
+    const onChildError = (err: unknown) => {
       console.warn("[shell] zellij attach process failed:", err instanceof Error ? err.message : String(err));
       if (!closed) {
         sendJson(ws, {
@@ -169,7 +180,11 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
           message: "Shell attach failed",
         });
       }
-    });
+    };
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+    child.once("close", onChildClose);
+    child.once("error", onChildError);
 
     const closeSession = () => {
       if (closed) {
@@ -177,6 +192,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
       closed = true;
       abortController.abort();
+      cleanupProcessListeners();
       child.kill();
     };
 

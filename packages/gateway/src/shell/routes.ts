@@ -44,13 +44,15 @@ export interface ShellRouteDeps {
 }
 
 const CreateSessionBodySchema = z.object({
-  name: z.string().min(1).max(64),
-  cwd: z.string().min(1).max(1024).optional(),
-  layout: z.string().min(1).max(64).optional(),
+  name: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
+  cwd: safeCwdSchema().optional(),
+  layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
-const SafeCwdSchema = z.string().min(1).max(1024).refine((value) => !value.startsWith("/"));
+const SafeSessionNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
+const SafeLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+const SafeCwdSchema = safeCwdSchema();
 const TabBodySchema = z.object({
   name: SafeNameSchema.optional(),
   cwd: SafeCwdSchema.optional(),
@@ -64,6 +66,12 @@ const PaneBodySchema = z.object({
 const LayoutBodySchema = z.object({
   kdl: z.string().min(1).max(100_000),
 });
+
+function safeCwdSchema() {
+  return z.string().min(1).max(1024)
+    .refine((value) => !value.startsWith("/"))
+    .refine((value) => !value.split(/[\\/]+/).includes(".."));
+}
 
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
@@ -96,7 +104,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
 
   app.delete("/sessions/:name", async (c) => {
     try {
-      await deps.registry.delete(c.req.param("name"), {
+      await deps.registry.delete(SafeSessionNameSchema.parse(c.req.param("name")), {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
       return c.json({ ok: true });
@@ -108,7 +116,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.get("/sessions/:name/tabs", async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
-      return c.json({ tabs: await deps.workspace.listTabs(c.req.param("name")) });
+      return c.json({ tabs: await deps.workspace.listTabs(SafeSessionNameSchema.parse(c.req.param("name"))) });
     } catch (err) {
       return safeError(c, err);
     }
@@ -118,7 +126,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       const body = TabBodySchema.parse(await c.req.json());
-      return c.json({ tab: await deps.workspace.createTab(c.req.param("name"), body) });
+      return c.json({ tab: await deps.workspace.createTab(SafeSessionNameSchema.parse(c.req.param("name")), body) });
     } catch (err) {
       return safeError(c, err);
     }
@@ -128,7 +136,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       const tab = z.coerce.number().int().nonnegative().parse(c.req.param("tab"));
-      await deps.workspace.switchTab(c.req.param("name"), tab);
+      await deps.workspace.switchTab(SafeSessionNameSchema.parse(c.req.param("name")), tab);
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);
@@ -139,7 +147,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       const tab = z.coerce.number().int().nonnegative().parse(c.req.param("tab"));
-      await deps.workspace.closeTab(c.req.param("name"), tab);
+      await deps.workspace.closeTab(SafeSessionNameSchema.parse(c.req.param("name")), tab);
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);
@@ -150,7 +158,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
       const body = PaneBodySchema.parse(await c.req.json());
-      return c.json({ pane: await deps.workspace.splitPane(c.req.param("name"), body) });
+      return c.json({ pane: await deps.workspace.splitPane(SafeSessionNameSchema.parse(c.req.param("name")), body) });
     } catch (err) {
       return safeError(c, err);
     }
@@ -159,7 +167,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.delete("/sessions/:name/panes/:pane", async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
-      await deps.workspace.closePane(c.req.param("name"), SafeNameSchema.parse(c.req.param("pane")));
+      await deps.workspace.closePane(SafeSessionNameSchema.parse(c.req.param("name")), SafeNameSchema.parse(c.req.param("pane")));
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);
@@ -178,7 +186,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.get("/layouts/:name", async (c) => {
     try {
       if (!deps.layouts) return unavailable(c, "layouts_unavailable");
-      return c.json({ layout: await deps.layouts.show(c.req.param("name")) });
+      return c.json({ layout: await deps.layouts.show(SafeLayoutNameSchema.parse(c.req.param("name"))) });
     } catch (err) {
       return safeError(c, err);
     }
@@ -188,7 +196,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     try {
       if (!deps.layouts) return unavailable(c, "layouts_unavailable");
       const body = LayoutBodySchema.parse(await c.req.json());
-      await deps.layouts.save(c.req.param("name"), body.kdl);
+      await deps.layouts.save(SafeLayoutNameSchema.parse(c.req.param("name")), body.kdl);
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);
@@ -198,7 +206,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.delete("/layouts/:name", async (c) => {
     try {
       if (!deps.layouts) return unavailable(c, "layouts_unavailable");
-      await deps.layouts.delete(c.req.param("name"));
+      await deps.layouts.delete(SafeLayoutNameSchema.parse(c.req.param("name")));
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);
@@ -208,7 +216,10 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.post("/sessions/:name/layouts/:layout/apply", async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
-      await deps.workspace.applyLayout(c.req.param("name"), c.req.param("layout"));
+      await deps.workspace.applyLayout(
+        SafeSessionNameSchema.parse(c.req.param("name")),
+        SafeLayoutNameSchema.parse(c.req.param("layout")),
+      );
       return c.json({ ok: true });
     } catch (err) {
       return safeError(c, err);
@@ -218,7 +229,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.get("/sessions/:name/layout/dump", async (c) => {
     try {
       if (!deps.workspace) return unavailable(c, "workspace_unavailable");
-      return c.json({ layout: await deps.workspace.dumpLayout(c.req.param("name")) });
+      return c.json({ layout: await deps.workspace.dumpLayout(SafeSessionNameSchema.parse(c.req.param("name"))) });
     } catch (err) {
       return safeError(c, err);
     }
@@ -229,7 +240,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
       if (!deps.preferences) {
         return c.json({ preferences: ShellPreferencesSchema.parse({}) });
       }
-      return c.json({ preferences: await deps.preferences.load(c.req.param("name")) });
+      return c.json({ preferences: await deps.preferences.load(SafeSessionNameSchema.parse(c.req.param("name"))) });
     } catch (err) {
       return safeError(c, err);
     }
@@ -244,7 +255,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         );
       }
       const preferences = await deps.preferences.save(
-        c.req.param("name"),
+        SafeSessionNameSchema.parse(c.req.param("name")),
         ShellPreferencesSchema.parse(await c.req.json()),
       );
       return c.json({ preferences });

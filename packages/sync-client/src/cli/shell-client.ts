@@ -210,7 +210,13 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
+        const timeout = setTimeout(() => {
+          ws.close();
+          settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
+        }, timeoutMs);
+        timeout.unref?.();
         const cleanup = () => {
+          clearTimeout(timeout);
           input.off?.("data", onInput);
           ws.off?.("message", onMessage);
           ws.off?.("close", onClose);

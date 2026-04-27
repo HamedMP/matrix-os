@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcServer } from "../../src/daemon/ipc-server.js";
 
 describe("IpcServer", () => {
@@ -75,6 +75,33 @@ describe("IpcServer", () => {
 
     client.destroy();
     warnSpy.mockRestore();
+    await server.stop();
+  });
+
+  it("returns a stable timeout error when a handler hangs", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "ipc-server-test-"));
+    tempDirs.push(tempDir);
+    const socketPath = join(tempDir, "ipc.sock");
+
+    const server = new IpcServer({
+      socketPath,
+      handlerTimeoutMs: 5,
+      handler: async () => new Promise(() => undefined),
+    });
+    await server.start();
+
+    const client = createConnection(socketPath);
+    await once(client, "connect");
+    client.write('{"id":"1","v":1,"command":"status","args":{}}\n');
+    const [data] = await once(client, "data");
+
+    expect(JSON.parse(String(data))).toEqual({
+      id: "1",
+      v: 1,
+      error: { code: "request_timeout", message: "Request failed" },
+    });
+
+    client.destroy();
     await server.stop();
   });
 });
