@@ -115,13 +115,8 @@ Untracked support/spec files currently present:
 
 ### Agent Sessions / Runtime Bridge
 
-- [ ] T200 Add failing unit and integration tests for agent detection, launch argv construction, Zellij/tmux fallback, session lifecycle, attach/replay, lease conflicts, observe/takeover, transcript retention, and sandbox diagnostics.
-  - Partial: `tests/gateway/agent-launcher.test.ts` covers agent detection, auth-needed states, launch argv construction, and Codex sandbox fail-closed launch requirements.
-  - Partial: `tests/gateway/zellij-runtime.test.ts` covers generated layouts, argv-based Zellij lifecycle commands, and degraded health metadata.
-  - Partial: `tests/gateway/agent-session-manager.test.ts` covers session lifecycle records, worktree lease conflicts, send/kill/list/get, and startup degradation reconciliation.
-  - Partial: `tests/gateway/session-runtime-bridge.test.ts` covers external runtime bridge registration for Zellij/tmux owner and observe attaches.
-  - Partial: `tests/gateway/session-transcript.test.ts` covers durable JSONL append, hot replay caps, rehydration, export metadata, retention cleanup, and invalid session IDs.
-  - Partial: `tests/gateway/agent-sandbox.test.ts` covers Codex sandbox preflight, non-root fail-closed behavior, admin override, scoped writable roots, and sanitized status.
+- [x] T200 Add failing unit and integration tests for agent detection, launch argv construction, Zellij/tmux fallback, session lifecycle, attach/replay, lease conflicts, observe/takeover, transcript retention, and sandbox diagnostics.
+  - Files: `tests/gateway/agent-launcher.test.ts`, `tests/gateway/zellij-runtime.test.ts`, `tests/gateway/agent-session-manager.test.ts`, `tests/gateway/session-runtime-bridge.test.ts`, `tests/gateway/session-transcript.test.ts`, `tests/gateway/agent-sandbox.test.ts`, `tests/gateway/workspace-routes.test.ts`, `tests/cli/cli.test.ts`
 
 - [x] T201 Implement `agent-launcher.ts` for Claude, Codex, OpenCode, and Pi detection plus launch command construction.
   - Files: `packages/gateway/src/agent-launcher.ts`, `tests/gateway/agent-launcher.test.ts`
@@ -138,7 +133,8 @@ Untracked support/spec files currently present:
   - Files: `packages/gateway/src/agent-sandbox.ts`, `tests/gateway/agent-sandbox.test.ts`
 - [x] T207 Add gateway API and CLI commands for sessions, observe/takeover, native terminal handoff, and sandbox status.
   - Files: `packages/gateway/src/workspace-routes.ts`, `bin/cli.ts`, `bin/matrixos.ts`, `tests/gateway/workspace-routes.test.ts`, `tests/cli/cli.test.ts`
-- [ ] T208 Complete green/refactor coverage for session lifecycle, runtime fallback, attach/replay, leases, observe/takeover, transcripts, and sandbox diagnostics.
+- [x] T208 Complete green/refactor coverage for session lifecycle, runtime fallback, attach/replay, leases, observe/takeover, transcripts, and sandbox diagnostics.
+  - Commands: `pnpm exec vitest run tests/gateway/agent-sandbox.test.ts tests/gateway/session-transcript.test.ts tests/gateway/session-runtime-bridge.test.ts tests/gateway/session-registry.test.ts tests/gateway/agent-session-manager.test.ts tests/gateway/zellij-runtime.test.ts tests/gateway/agent-launcher.test.ts tests/gateway/worktree-manager.test.ts tests/gateway/state-ops.test.ts tests/gateway/project-manager.test.ts tests/gateway/workspace-routes.test.ts tests/cli/cli.test.ts`
 
 ### Review Loop Engine
 
