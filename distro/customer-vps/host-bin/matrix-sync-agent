@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /opt/matrix/env/host.env
+
+echo "matrix-sync-agent: customer host lifecycle agent started for ${MATRIX_MACHINE_ID}"
+
+while true; do
+  sleep 300
+done

@@ -1,0 +1,79 @@
+name: Host Bundle
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "distro/customer-vps/**"
+      - "packages/gateway/**"
+      - "packages/kernel/**"
+      - "packages/sync-client/**"
+      - "shell/**"
+      - "scripts/build-host-bundle.sh"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/host-bundle.yml"
+  workflow_dispatch:
+    inputs:
+      imageVersion:
+        description: "Host image version key under system-bundles/"
+        required: true
+        default: "matrix-os-host-dev"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-bundle-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish host bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE_VERSION: ${{ inputs.imageVersion || 'matrix-os-host-dev' }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Validate image version
+        run: |
+          set -euo pipefail
+          if ! [[ "$IMAGE_VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
+            echo "Invalid image version: $IMAGE_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build host bundle
+        run: ./scripts/build-host-bundle.sh
+
+      - name: Upload to R2
+        env:
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: |
+          set -euo pipefail
+          if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+            echo "R2 credentials are not configured" >&2
+            exit 1
+          fi
+          key="system-bundles/${IMAGE_VERSION}"
+          aws --endpoint-url "$R2_ENDPOINT" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz"
+          aws --endpoint-url "$R2_ENDPOINT" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz.sha256 "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz.sha256"

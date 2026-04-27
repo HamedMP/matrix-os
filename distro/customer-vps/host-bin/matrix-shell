@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /opt/matrix/env/host.env
+
+NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
+APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+SHELL_PORT="${SHELL_PORT:-3000}"
+
+export NODE_ENV="${NODE_ENV:-production}"
+export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+export MATRIX_USER_ID="${MATRIX_USER_ID:-$MATRIX_CLERK_USER_ID}"
+export MATRIX_HANDLE
+export GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:4000}"
+export NEXT_PUBLIC_GATEWAY_URL="${NEXT_PUBLIC_GATEWAY_URL:-http://127.0.0.1:4000}"
+export NEXT_PUBLIC_GATEWAY_WS="${NEXT_PUBLIC_GATEWAY_WS:-wss://code.matrix-os.com/ws}"
+
+cd "$APP_DIR/shell"
+exec "$NODE_BIN" "$APP_DIR/node_modules/next/dist/bin/next" start -p "$SHELL_PORT" -H 127.0.0.1

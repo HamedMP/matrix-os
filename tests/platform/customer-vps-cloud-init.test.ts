@@ -13,6 +13,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     imageVersion: 'matrix-os-host-2026.04.26-1',
+    hostBundleUrl: 'https://assets.matrix-os.com/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
     registrationToken: 'registration-secret',
     r2Bucket: 'matrixos-sync',
@@ -31,6 +32,17 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).toContain('handle=alice');
     expect(rendered).toContain('url=https://platform.example/vps/register');
     expect(rendered).toContain('r2=matrixos-sync/user_123/');
+  });
+
+  it('renders a non-empty host bundle URL into customer cloud-init', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const rendered = renderCloudInitTemplate(cloudInit, input);
+
+    expect(rendered).toContain(
+      'MATRIX_HOST_BUNDLE_URL=https://assets.matrix-os.com/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+    );
+    expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
@@ -54,7 +66,12 @@ describe('platform/customer-vps-cloud-init', () => {
 
     expect(gateway).toContain('Requires=matrix-restore.service');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
+    expect(gateway).toContain('ConditionPathExists=/opt/matrix/bin/matrix-gateway');
     expect(shell).toContain('After=matrix-gateway.service');
+    expect(shell).toContain('ConditionPathExists=/opt/matrix/bin/matrix-shell');
+    expect(readFileSync(join(root, 'distro/customer-vps/systemd/matrix-sync-agent.service'), 'utf8')).toContain(
+      'ConditionPathExists=/opt/matrix/bin/matrix-sync-agent',
+    );
     expect(restore).toContain('Type=oneshot');
   });
 

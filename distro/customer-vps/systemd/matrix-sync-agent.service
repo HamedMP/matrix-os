@@ -2,6 +2,7 @@
 Description=Matrix OS customer sync agent
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/opt/matrix/bin/matrix-sync-agent
 
 [Service]
 User=matrix

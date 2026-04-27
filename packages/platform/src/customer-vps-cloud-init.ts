@@ -5,6 +5,7 @@ export interface CustomerHostConfig {
   clerkUserId: string;
   handle: string;
   imageVersion: string;
+  hostBundleUrl: string;
   platformRegisterUrl: string;
   registrationToken: string;
   r2Bucket: string;
@@ -13,9 +14,10 @@ export interface CustomerHostConfig {
 }
 
 const SECRET_KEYS = ['registrationToken', 'postgresPassword'] as const;
+const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
 
 function assertRenderable(input: CustomerHostConfig): void {
-  for (const key of SECRET_KEYS) {
+  for (const key of REQUIRED_KEYS) {
     if (!input[key]) throw new Error(`Missing ${key}`);
   }
 }

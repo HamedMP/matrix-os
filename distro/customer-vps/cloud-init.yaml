@@ -51,6 +51,7 @@ write_files:
       After=matrix-restore.service docker.service
       Requires=matrix-restore.service docker.service
       ConditionPathExists=/opt/matrix/restore-complete
+      ConditionPathExists=/opt/matrix/bin/matrix-gateway
 
       [Service]
       User=matrix
@@ -71,6 +72,7 @@ write_files:
       Description=Matrix OS customer shell
       After=matrix-gateway.service
       Requires=matrix-gateway.service
+      ConditionPathExists=/opt/matrix/bin/matrix-shell
 
       [Service]
       User=matrix
@@ -91,6 +93,7 @@ write_files:
       Description=Matrix OS customer sync agent
       After=network-online.target
       Wants=network-online.target
+      ConditionPathExists=/opt/matrix/bin/matrix-sync-agent
 
       [Service]
       User=matrix
@@ -136,6 +139,51 @@ write_files:
 
       [Install]
       WantedBy=timers.target
+  - path: /etc/nginx/sites-available/matrix
+    owner: root:root
+    permissions: "0644"
+    content: |
+      server {
+        listen 443 ssl http2 default_server;
+        server_name _;
+
+        ssl_certificate /opt/matrix/tls/cert.pem;
+        ssl_certificate_key /opt/matrix/tls/key.pem;
+
+        client_max_body_size 10m;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP $remote_addr;
+
+        location /api/ {
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+        location /files/ {
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+        location /icons/ {
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+        location /health {
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+        location /ws {
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_pass http://127.0.0.1:4000;
+        }
+
+        location / {
+          proxy_pass http://127.0.0.1:3000;
+        }
+      }
   - path: /opt/matrix/bin/matrixctl
     owner: root:matrix
     permissions: "0750"
@@ -450,7 +498,7 @@ write_files:
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
-      MATRIX_HOST_BUNDLE_URL=
+      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
   - path: /opt/matrix/env/postgres.env
     owner: root:matrix
     permissions: "0640"
@@ -466,14 +514,21 @@ write_files:
 
 runcmd:
   - apt-get update
-  - apt-get install -y ca-certificates curl docker.io docker-compose-plugin awscli postgresql-client
+  - apt-get install -y ca-certificates curl docker.io docker-compose-plugin awscli postgresql-client nginx openssl
   - install -d -o root -g matrix -m 0770 /opt/matrix
-  - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin
+  - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
   - install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
-  - . /opt/matrix/env/host.env; if [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ]; then curl --fail --location --max-time 30 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz && tar -xzf /tmp/matrix-host.tgz -C /opt/matrix; fi
-  - chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh
+  - . /opt/matrix/env/host.env; [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }; curl --fail --location --max-time 30 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz; curl --fail --location --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256" -o /tmp/matrix-host.tgz.sha256; expected="$(awk '{print $1}' /tmp/matrix-host.tgz.sha256)"; actual="$(sha256sum /tmp/matrix-host.tgz | awk '{print $1}')"; [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }; tar -xzf /tmp/matrix-host.tgz -C /opt/matrix; chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
+  - chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-sync-agent
+  - openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
+  - chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
+  - chmod 0640 /opt/matrix/tls/key.pem
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
+  - nginx -t
   - docker compose -f /opt/matrix/postgres-compose.yml up -d
   - systemctl daemon-reload
-  - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer
+  - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer nginx
   - systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+  - systemctl restart nginx
   - systemctl start matrix-db-backup.timer

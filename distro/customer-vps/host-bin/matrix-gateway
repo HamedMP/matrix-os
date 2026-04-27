@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source /opt/matrix/env/host.env
+if [ -f /opt/matrix/env/registration.env ]; then
+  source /opt/matrix/env/registration.env
+fi
+
+NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
+APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
+GATEWAY_PORT="${PORT:-4000}"
+REGISTER_FLAG="/opt/matrix/register-complete"
+
+export NODE_ENV="${NODE_ENV:-production}"
+export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+export MATRIX_USER_ID="${MATRIX_USER_ID:-$MATRIX_CLERK_USER_ID}"
+export MATRIX_HANDLE
+export PORT="$GATEWAY_PORT"
+export GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:${GATEWAY_PORT}}"
+export NEXT_PUBLIC_GATEWAY_URL="${NEXT_PUBLIC_GATEWAY_URL:-http://127.0.0.1:${GATEWAY_PORT}}"
+export NEXT_PUBLIC_GATEWAY_WS="${NEXT_PUBLIC_GATEWAY_WS:-wss://code.matrix-os.com/ws}"
+
+gateway_pid=""
+cleanup() {
+  if [ -n "$gateway_pid" ] && kill -0 "$gateway_pid" 2>/dev/null; then
+    kill "$gateway_pid"
+    wait "$gateway_pid" || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+"$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
+gateway_pid="$!"
+
+for _ in $(seq 1 90); do
+  if curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null; then
+    break
+  fi
+  if ! kill -0 "$gateway_pid" 2>/dev/null; then
+    wait "$gateway_pid"
+  fi
+  sleep 2
+done
+
+register_once() {
+  [ ! -f "$REGISTER_FLAG" ] || return 0
+  [ -n "${MATRIX_PLATFORM_REGISTER_URL:-}" ] || return 0
+  [ -n "${MATRIX_REGISTRATION_TOKEN:-}" ] || return 0
+  case "$MATRIX_PLATFORM_REGISTER_URL" in
+    */vps/register) ;;
+    *) echo "matrix-gateway: MATRIX_PLATFORM_REGISTER_URL must end with /vps/register" >&2; return 1 ;;
+  esac
+
+  local instance_id public_ipv4 payload
+  instance_id="$(curl --fail --silent --show-error --max-time 10 http://169.254.169.254/hetzner/v1/metadata/instance-id)"
+  public_ipv4="$(curl --fail --silent --show-error --max-time 10 http://169.254.169.254/hetzner/v1/metadata/public-ipv4)"
+  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
+    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+
+  for attempt in $(seq 1 30); do
+    if curl --fail --silent --show-error --max-time 10 \
+      -X POST \
+      -H "authorization: Bearer ${MATRIX_REGISTRATION_TOKEN}" \
+      -H "content-type: application/json" \
+      --data "$payload" \
+      "$MATRIX_PLATFORM_REGISTER_URL" >/dev/null; then
+      touch "$REGISTER_FLAG"
+      chmod 0640 "$REGISTER_FLAG"
+      return 0
+    fi
+    sleep "$((attempt < 10 ? attempt : 10))"
+  done
+
+  echo "matrix-gateway: failed to register customer VPS after gateway startup" >&2
+  return 1
+}
+
+register_once
+wait "$gateway_pid"

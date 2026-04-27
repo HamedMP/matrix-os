@@ -146,7 +146,7 @@ API surface (internal, behind `PLATFORM_SECRET`):
 - `DELETE /vps/:machineId` — Hetzner API delete + soft-delete in registry. **Phase 1: admin-only, never automatic.**
 
 Hetzner config:
-- Server type: `cpx21` (3 vCPU, 4 GB RAM, ~5 EUR/mo) — matches what one user container had on the shared host. Bigger types (cpx31/41) on request.
+- Server type: `cpx22` (small shared-vCPU shape, currently orderable in fsn1/nbg1). Bigger types (cpx31/41) on request.
 - Location: `nbg1` (same DC as control plane).
 - SSH keys: a single `matrix-ops` key uploaded to the customer project for support access. No per-user keys in phase 1.
 - Image: `ubuntu-24.04`.
@@ -303,7 +303,7 @@ After phase 1 stabilizes, phase 2 (separate spec) covers idle suspend, R2-then-d
 
 - **Cloudflare per-VPS hostnames vs LE on the VPS.** Issuing LE on first boot adds 5–15s. Alternative: Cloudflare Origin Certificates (15-year, free, no boot dependency) issued by control plane and injected via cloud-init. Probably the right answer, defer until phase 1.1.
 - **Hetzner project quota.** Default per-project server limit is ~10. File a quota raise to ~100 before phase 1.4. Note ceiling in `userMachines` provisioner so we degrade gracefully.
-- **Cost ceiling.** cpx21 ~5 EUR/mo each. 100 customer VPSes always-on ≈ 500 EUR/mo. Acceptable to learn from. Re-evaluate at 50 active users.
+- **Cost ceiling.** cpx22 is the default small shape. Re-evaluate the monthly ceiling at 50 active users before broad rollout.
 - **Backup verification.** A snapshot we can't restore is worse than no snapshot. Add an automated nightly job on a throwaway VPS that picks a random user, restores their DB, runs sanity SQL, reports OK/FAIL. Probably phase 1.3.
 - **Support SSH access.** Single `matrix-ops` key shared across all VPSes is operationally simple but a blast-radius issue. Consider per-VPS short-lived certs (Hetzner Cloud SSH or a small CA) before phase 2.
 - **Existing container migration.** Out of scope for this spec, but: do we eventually move users, deprecate the old path on a date, or grandfather forever? Decide before phase 2 begins.

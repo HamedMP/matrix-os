@@ -28,7 +28,7 @@ Not included:
 
 ## Cost And Quota
 
-The default server type is controlled by `HETZNER_SERVER_TYPE` and currently targets a small fixed shape such as `cpx21`. Before adding a customer, confirm:
+The default server type is controlled by `HETZNER_SERVER_TYPE` and currently targets `cpx22`. Before adding a customer, confirm:
 
 - The Hetzner customer project has quota for one additional server.
 - The expected monthly cost is accepted by the operator.
@@ -40,6 +40,18 @@ Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable 
 ## Routing
 
 `code.matrix-os.com` is a single public entrypoint. The platform authenticates the Clerk session or `matrix_code_session`, resolves the user to a running VPS, strips user cookies and authorization headers, then forwards to that VPS over HTTPS with platform proof headers. If no running VPS exists, the legacy container code-server path remains the fallback for non-migrated users.
+
+## Required Environment
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `CUSTOMER_VPS_ENABLED` | Yes | Enables the VPS provisioning path for the intended environment. |
+| `CUSTOMER_VPS_IMAGE_VERSION` | Yes | Selects the host bundle key at `system-bundles/<imageVersion>/matrix-host-bundle.tar.gz`. |
+| `MATRIX_HOST_BUNDLE_URL` | No | Optional override for the exact bundle URL. CI publishes the default bundle and sidecar `.sha256` to R2. |
+| `MATRIX_HOST_BUNDLE_BASE_URL` | No | Optional public base URL for default bundle URL generation when not using `MATRIX_HOST_BUNDLE_URL`. |
+| `CUSTOMER_VPS_TLS_VERIFY` | No | Defaults to `false` because phase-1 customer hosts use self-signed local TLS on :443. Set `true` only after installing publicly trusted host certificates. |
+| `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token for provisioning and deletion. |
+| `R2_BUCKET` / `S3_BUCKET` | Yes | Bucket used for metadata, DB snapshots, and host bundles. |
 
 ## Backup Retention
 

@@ -2,6 +2,7 @@
 Description=Matrix OS customer shell
 After=matrix-gateway.service
 Requires=matrix-gateway.service
+ConditionPathExists=/opt/matrix/bin/matrix-shell
 
 [Service]
 User=matrix

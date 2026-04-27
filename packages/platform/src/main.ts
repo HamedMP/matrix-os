@@ -75,7 +75,7 @@ const customerVpsProxyDispatcher = new Agent({
   keepAliveMaxTimeout: 1,
   connections: 64,
   connect: {
-    rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY !== 'false',
+    rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'true',
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
@@ -1779,7 +1779,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         host: runningMachine.publicIPv4,
         port: 443,
         servername: upstreamServerName,
-        rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'false' ? false : undefined,
+        rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'true',
       }, () => {
         activeUpstream = upstream;
         writeUpgradeRequest(upstream, upstreamHostHeader, headers);
