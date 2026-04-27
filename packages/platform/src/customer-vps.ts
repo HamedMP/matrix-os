@@ -7,7 +7,11 @@ import {
   getActiveUserMachineByClerkId,
   getUserMachine,
   insertUserMachine,
+  insertProviderDeletion,
+  listPendingProviderDeletions,
   listStaleUserMachines,
+  markProviderDeletionCompleted,
+  markProviderDeletionFailed,
   runInPlatformTransaction,
   updateUserMachine,
 } from './db.js';
@@ -45,6 +49,7 @@ export interface ProvisionResponse {
 export interface RegisterResponse {
   registered: true;
   status: 'running';
+  warnings?: string[];
 }
 
 export interface DeleteResponse {
@@ -114,6 +119,9 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_REGISTRATION_TOKEN={{registrationToken}}',
 ].join('\n');
 
+const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
+const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
+
 function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): ProvisionResponse {
   if (row.status !== 'provisioning' && row.status !== 'running') {
     throw new CustomerVpsError(409, 'invalid_state', 'Machine is not provisionable');
@@ -181,6 +189,64 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
 
+  async function queueProviderDeletion(input: {
+    providerServerId: number;
+    reason: string;
+    machineId?: string | null;
+    handle?: string | null;
+    err: unknown;
+  }): Promise<void> {
+    const currentTime = now().toISOString();
+    try {
+      await insertProviderDeletion(deps.db, {
+        id: randomUUID(),
+        providerServerId: input.providerServerId,
+        reason: input.reason,
+        machineId: input.machineId,
+        handle: input.handle,
+        nextAttemptAt: currentTime,
+        createdAt: currentTime,
+        lastError: input.err instanceof Error ? input.err.message : String(input.err),
+      });
+    } catch (queueErr: unknown) {
+      logCustomerVpsError(
+        `provider deletion enqueue failed orphanedHetznerServerId=${input.providerServerId} reason=${input.reason}`,
+        queueErr,
+      );
+    }
+  }
+
+  async function retryProviderDeletions(): Promise<void> {
+    const pending = await listPendingProviderDeletions(
+      deps.db,
+      now().toISOString(),
+      deps.config.reconciliationBatchSize,
+    );
+    for (const deletion of pending) {
+      try {
+        await deps.hetzner.deleteServer(deletion.providerServerId);
+        await markProviderDeletionCompleted(deps.db, deletion.id, now().toISOString());
+      } catch (err: unknown) {
+        const attempts = deletion.attempts + 1;
+        const delayMs = Math.min(
+          PROVIDER_DELETION_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6),
+          PROVIDER_DELETION_RETRY_MAX_MS,
+        );
+        await markProviderDeletionFailed(
+          deps.db,
+          deletion.id,
+          attempts,
+          new Date(now().getTime() + delayMs).toISOString(),
+          err instanceof Error ? err.message : String(err),
+        );
+        logCustomerVpsError(
+          `provider deletion retry failed orphanedHetznerServerId=${deletion.providerServerId} reason=${deletion.reason}`,
+          err,
+        );
+      }
+    }
+  }
+
   return {
     async provision(input) {
       const currentTime = now();
@@ -245,6 +311,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             await deps.hetzner.deleteServer(serverIdForCompensation);
           } catch (cleanupErr: unknown) {
             logCustomerVpsError('provision compensation delete failed', cleanupErr);
+            await queueProviderDeletion({
+              providerServerId: serverIdForCompensation,
+              reason: 'provision_compensation',
+              machineId,
+              handle: input.handle,
+              err: cleanupErr,
+            });
           }
         }
         try {
@@ -308,13 +381,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
       }
 
+      const warnings: string[] = [];
       try {
         await deps.systemStore.writeVpsMeta(buildVpsMeta(updated, lastSeenAt));
       } catch (err: unknown) {
         logCustomerVpsError('write vps-meta failed', err);
+        warnings.push('vps_meta_persistence_failed');
       }
 
-      return { registered: true, status: 'running' };
+      return warnings.length > 0
+        ? { registered: true, status: 'running', warnings }
+        : { registered: true, status: 'running' };
     },
 
     async recover(input) {
@@ -325,6 +402,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (active.status === 'recovering') {
         throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
       }
+      // This R2 check is an advisory fast-fail before the DB claim. The
+      // claimUserMachineRecovery WHERE clause below remains the authoritative
+      // concurrency guard; keeping the backup check before the claim avoids
+      // leaving a machine in recovering state when no snapshot exists.
       if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
@@ -390,6 +471,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             await deps.hetzner.deleteServer(newServerId);
           } catch (cleanupErr: unknown) {
             logCustomerVpsError('recover compensation delete failed', cleanupErr);
+            await queueProviderDeletion({
+              providerServerId: newServerId,
+              reason: 'recover_compensation',
+              machineId,
+              handle: existing.handle,
+              err: cleanupErr,
+            });
           }
         }
         try {
@@ -409,6 +497,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           await deps.hetzner.deleteServer(oldServerId);
         } catch (err: unknown) {
           logCustomerVpsError('recover old server cleanup failed', err);
+          await queueProviderDeletion({
+            providerServerId: oldServerId,
+            reason: 'recover_old_server',
+            machineId: oldMachineId,
+            handle: existing.handle,
+            err,
+          });
         }
       }
 
@@ -438,6 +533,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           await deps.hetzner.deleteServer(row.hetznerServerId);
         } catch (err: unknown) {
           logCustomerVpsError('delete server cleanup failed', err);
+          await queueProviderDeletion({
+            providerServerId: row.hetznerServerId,
+            reason: 'delete',
+            machineId,
+            handle: row.handle,
+            err,
+          });
         }
       }
       return { deleted: true, machineId, status: 'deleted' };
@@ -483,6 +585,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           running += 1;
         }
       }
+      await retryProviderDeletions();
       return { checked: rows.length, failed, running };
     },
   };

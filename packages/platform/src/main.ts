@@ -1593,6 +1593,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     });
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (reconciliationIntervalMs > 0) {
+      // Customer VPS reconciliation currently assumes one active platform
+      // process. If the platform is horizontally scaled, replace this
+      // in-process guard with a DB advisory lock before enabling the interval
+      // on multiple instances.
       let reconciliationRunning = false;
       const runCustomerVpsReconciliation = async () => {
         if (reconciliationRunning || !customerVpsService) return;

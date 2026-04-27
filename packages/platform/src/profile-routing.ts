@@ -93,15 +93,14 @@ export async function createDefaultProfile(homePath: string, handle: string): Pr
 }
 
 function generateProfileHtml(handle: string): string {
-  // Sanitize handle to prevent XSS in template
-  const safeHandle = handle.replace(/[<>"'&]/g, "");
+  const htmlHandle = escapeHtml(handle);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>@${safeHandle} - Matrix OS</title>
+  <title>@${htmlHandle} - Matrix OS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -185,7 +184,7 @@ function generateProfileHtml(handle: string): string {
   </div>
 
   <script>
-    const handle = ${JSON.stringify(safeHandle)};
+    const handle = ${JSON.stringify(handle)};
     document.getElementById('avatar').textContent = handle.charAt(0).toUpperCase();
     document.getElementById('display-name').textContent = handle;
     document.getElementById('handle-text').textContent = '@' + handle + ':matrix-os.com';
@@ -224,4 +223,13 @@ function generateProfileHtml(handle: string): string {
   </script>
 </body>
 </html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

@@ -36,6 +36,19 @@ interface UserMachinesTable {
   failure_at: string | null;
 }
 
+interface ProviderDeletionQueueTable {
+  id: string;
+  provider_server_id: number;
+  reason: string;
+  machine_id: string | null;
+  handle: string | null;
+  attempts: number;
+  next_attempt_at: string;
+  created_at: string;
+  last_error: string | null;
+  completed_at: string | null;
+}
+
 interface PortAssignmentsTable {
   port: number;
   handle: string | null;
@@ -130,6 +143,7 @@ interface SocialFollowsTable {
 export interface PlatformDatabase {
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  provider_deletion_queue: ProviderDeletionQueueTable;
   port_assignments: PortAssignmentsTable;
   device_codes: DeviceCodesTable;
   matrix_users: MatrixUsersTable;
@@ -190,6 +204,19 @@ export interface UserMachineRecord {
   failureAt: string | null;
 }
 
+export interface ProviderDeletionQueueRecord {
+  id: string;
+  providerServerId: number;
+  reason: string;
+  machineId: string | null;
+  handle: string | null;
+  attempts: number;
+  nextAttemptAt: string;
+  createdAt: string;
+  lastError: string | null;
+  completedAt: string | null;
+}
+
 export interface NewUserMachine {
   machineId: string;
   clerkUserId: string;
@@ -206,6 +233,19 @@ export interface NewUserMachine {
   deletedAt?: string | null;
   failureCode?: string | null;
   failureAt?: string | null;
+}
+
+export interface NewProviderDeletionQueueRecord {
+  id: string;
+  providerServerId: number;
+  reason: string;
+  machineId?: string | null;
+  handle?: string | null;
+  attempts?: number;
+  nextAttemptAt: string;
+  createdAt: string;
+  lastError?: string | null;
+  completedAt?: string | null;
 }
 
 function wrapDb(
@@ -272,6 +312,26 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     WHERE deleted_at IS NULL
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS provider_deletion_queue (
+      id TEXT PRIMARY KEY,
+      provider_server_id INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      machine_id TEXT,
+      handle TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_error TEXT,
+      completed_at TEXT
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_provider_deletion_queue_pending
+    ON provider_deletion_queue(next_attempt_at)
+    WHERE completed_at IS NULL
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS port_assignments (
@@ -537,6 +597,36 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   return update;
 }
 
+function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
+  return {
+    id: row.id,
+    providerServerId: row.provider_server_id,
+    reason: row.reason,
+    machineId: row.machine_id,
+    handle: row.handle,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    createdAt: row.created_at,
+    lastError: row.last_error,
+    completedAt: row.completed_at,
+  };
+}
+
+function toProviderDeletionRow(record: NewProviderDeletionQueueRecord): ProviderDeletionQueueTable {
+  return {
+    id: record.id,
+    provider_server_id: record.providerServerId,
+    reason: record.reason,
+    machine_id: record.machineId ?? null,
+    handle: record.handle ?? null,
+    attempts: record.attempts ?? 0,
+    next_attempt_at: record.nextAttemptAt,
+    created_at: record.createdAt,
+    last_error: record.lastError ?? null,
+    completed_at: record.completedAt ?? null,
+  };
+}
+
 export async function insertContainer(db: PlatformDB, record: NewContainer): Promise<void> {
   await db.ready;
   await db.executor.insertInto('containers').values(toContainerRow(record)).execute();
@@ -739,6 +829,67 @@ export async function claimUserMachineDelete(
 
 export async function softDeleteUserMachine(db: PlatformDB, machineId: string, deletedAt: string): Promise<void> {
   await claimUserMachineDelete(db, machineId, deletedAt);
+}
+
+export async function insertProviderDeletion(
+  db: PlatformDB,
+  record: NewProviderDeletionQueueRecord,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('provider_deletion_queue')
+    .values(toProviderDeletionRow(record))
+    .execute();
+}
+
+export async function listPendingProviderDeletions(
+  db: PlatformDB,
+  nowIso: string,
+  limit: number,
+): Promise<ProviderDeletionQueueRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('provider_deletion_queue')
+    .selectAll()
+    .where('completed_at', 'is', null)
+    .where('next_attempt_at', '<=', nowIso)
+    .orderBy('next_attempt_at')
+    .limit(limit)
+    .execute();
+  return rows.map(mapProviderDeletion);
+}
+
+export async function markProviderDeletionCompleted(
+  db: PlatformDB,
+  id: string,
+  completedAt: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('provider_deletion_queue')
+    .set({ completed_at: completedAt, last_error: null })
+    .where('id', '=', id)
+    .execute();
+}
+
+export async function markProviderDeletionFailed(
+  db: PlatformDB,
+  id: string,
+  attempts: number,
+  nextAttemptAt: string,
+  lastError: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('provider_deletion_queue')
+    .set({
+      attempts,
+      next_attempt_at: nextAttemptAt,
+      last_error: lastError,
+    })
+    .where('id', '=', id)
+    .where('completed_at', 'is', null)
+    .execute();
 }
 
 export async function listStaleUserMachines(

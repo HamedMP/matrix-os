@@ -5,6 +5,7 @@ import {
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
   getUserMachine,
+  listPendingProviderDeletions,
   updateUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
@@ -131,6 +132,26 @@ describe('platform/customer-vps', () => {
     expect(row?.registrationTokenHash).toBeNull();
     expect(row?.registrationTokenExpiresAt).toBeNull();
     expect(systemStore.writtenMeta).toHaveLength(1);
+  });
+
+  it('returns a warning when registration metadata cannot be persisted', async () => {
+    const { service } = createService({
+      systemStore: createMockCustomerVpsSystemStore({
+        writeVpsMeta: vi.fn().mockRejectedValue(new Error('r2 unavailable')),
+      }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await expect(service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    })).resolves.toEqual({
+      registered: true,
+      status: 'running',
+      warnings: ['vps_meta_persistence_failed'],
+    });
   });
 
   it('rejects invalid registration tokens without changing machine state', async () => {
@@ -326,6 +347,60 @@ describe('platform/customer-vps', () => {
     await expect(getUserMachine(db, provisioned.machineId)).resolves.toBeUndefined();
   });
 
+  it('queues failed old-server cleanup after recovery and retries it during reconciliation', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+    ];
+    const deleteServer = vi.fn()
+      .mockRejectedValueOnce(new Error('hetzner timeout'))
+      .mockResolvedValueOnce(undefined);
+    const { service } = createService({
+      hetzner: createMockHetznerClient({
+        createServer: vi
+          .fn()
+          .mockResolvedValueOnce({
+            id: 123456,
+            status: 'running',
+            publicIPv4: '203.0.113.10',
+          })
+          .mockResolvedValueOnce({
+            id: 789012,
+            status: 'running',
+            publicIPv4: '203.0.113.11',
+          }),
+        deleteServer,
+      }),
+      systemStore: createMockCustomerVpsSystemStore({
+        hasDbLatest: vi.fn().mockResolvedValue(true),
+      }),
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await service.recover({ clerkUserId: 'user_123' });
+
+    const queued = await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      providerServerId: 123456,
+      reason: 'recover_old_server',
+      machineId: provisioned.machineId,
+      handle: 'alice',
+    });
+
+    await service.reconcileProvisioning();
+
+    expect(deleteServer).toHaveBeenCalledTimes(2);
+    expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
+  });
+
   it('rejects concurrent recover calls before creating a second replacement server', async () => {
     const machineIds = [
       '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
@@ -471,6 +546,32 @@ describe('platform/customer-vps', () => {
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
     expect(errorSpy).toHaveBeenCalledWith('[customer-vps] delete server cleanup failed: hetzner timeout');
     errorSpy.mockRestore();
+  });
+
+  it('queues failed delete cleanup and retries it during reconciliation', async () => {
+    const deleteServer = vi.fn()
+      .mockRejectedValueOnce(new Error('hetzner timeout'))
+      .mockResolvedValueOnce(undefined);
+    const { service } = createService({
+      hetzner: createMockHetznerClient({ deleteServer }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    await service.delete(provisioned.machineId);
+
+    const queued = await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      providerServerId: 123456,
+      reason: 'delete',
+      machineId: provisioned.machineId,
+      handle: 'alice',
+    });
+
+    await service.reconcileProvisioning();
+
+    expect(deleteServer).toHaveBeenCalledTimes(2);
+    expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
   });
 
   it('can provision the same Clerk user after a soft-deleted VPS row', async () => {
