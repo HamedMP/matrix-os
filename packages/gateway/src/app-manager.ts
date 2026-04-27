@@ -118,15 +118,15 @@ export function createAppManager(config: AppManagerConfig): AppManager {
       if (stat.isDirectory()) {
         try {
           await register(entry);
-        } catch {
-          // skip apps with invalid manifests
+        } catch (err: unknown) {
+          console.warn("[app-manager] Could not register directory app:", err instanceof Error ? err.message : String(err));
         }
       } else if (entry.endsWith(".html")) {
         const slug = entry.replace(/\.html$/, "");
         try {
           await register(slug);
-        } catch {
-          // skip
+        } catch (err: unknown) {
+          console.warn("[app-manager] Could not register HTML app:", err instanceof Error ? err.message : String(err));
         }
       }
     }

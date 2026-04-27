@@ -17,14 +17,24 @@ export const VpsMetaSchema = z.object({
 
 export type VpsMeta = z.infer<typeof VpsMetaSchema>;
 
+const CUSTOMER_VPS_R2_READ_TIMEOUT_MS = 10_000;
+const CUSTOMER_VPS_R2_WRITE_TIMEOUT_MS = 30_000;
+
 export interface CustomerVpsSystemStore {
   writeVpsMeta(meta: VpsMeta): Promise<void>;
   hasDbLatest(clerkUserId: string): Promise<boolean>;
 }
 
 export interface CustomerVpsObjectStore {
-  putObject(key: string, body: string | Uint8Array | ReadableStream<Uint8Array>): Promise<{ etag?: string }>;
-  getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+  putObject(
+    key: string,
+    body: string | Uint8Array | ReadableStream<Uint8Array>,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ etag?: string }>;
+  getObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
 }
 
 export function buildVpsMeta(machine: UserMachineRecord, nowIso: string): VpsMeta {
@@ -97,6 +107,7 @@ export function createCustomerVpsSystemStore(options: {
       await options.r2.putObject(
         buildCustomerVpsR2Key(options.r2PrefixRoot, parsed.userId, 'system/vps-meta.json'),
         `${JSON.stringify(parsed, null, 2)}\n`,
+        { signal: AbortSignal.timeout(CUSTOMER_VPS_R2_WRITE_TIMEOUT_MS) },
       );
     },
 
@@ -104,6 +115,7 @@ export function createCustomerVpsSystemStore(options: {
       try {
         const object = await options.r2.getObject(
           buildCustomerVpsR2Key(options.r2PrefixRoot, clerkUserId, 'system/db/latest'),
+          { signal: AbortSignal.timeout(CUSTOMER_VPS_R2_READ_TIMEOUT_MS) },
         );
         const pointer = await readObjectText(object.body);
         return pointer !== null && validateDbLatestPointer(pointer.trim());

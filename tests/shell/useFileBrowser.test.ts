@@ -62,6 +62,7 @@ describe("useFileBrowser store", () => {
       useFileBrowser.getState().navigate("agents/skills");
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining("/api/files/list?path=agents%2Fskills"),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
 

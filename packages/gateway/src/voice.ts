@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface VoiceConfig {
@@ -70,6 +71,7 @@ export function createVoiceService(
             similarity_boost: 0.75,
           },
         }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
@@ -79,7 +81,10 @@ export function createVoiceService(
         if (response.status === 429) {
           throw new Error("Rate limit exceeded. Try again later.");
         }
-        const errorText = await response.text().catch(() => response.statusText);
+        const errorText = await response.text().catch((err: unknown) => {
+          console.warn("[voice] Could not read TTS error body:", err instanceof Error ? err.message : String(err));
+          return response.statusText;
+        });
         throw new Error(`TTS failed: ${response.status} ${errorText}`);
       }
 
@@ -90,7 +95,7 @@ export function createVoiceService(
       mkdirSync(audioDir, { recursive: true });
       const fileName = `${Date.now()}-tts.mp3`;
       const localPath = join(audioDir, fileName);
-      writeFileSync(localPath, audio);
+      await writeFile(localPath, audio);
 
       const cost = text.length * TTS_COST_PER_CHAR;
 
@@ -115,6 +120,7 @@ export function createVoiceService(
           "xi-api-key": config.elevenlabsKey,
         },
         body: formData,
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
@@ -124,7 +130,10 @@ export function createVoiceService(
         if (response.status === 429) {
           throw new Error("Rate limit exceeded. Try again later.");
         }
-        const errorText = await response.text().catch(() => response.statusText);
+        const errorText = await response.text().catch((err: unknown) => {
+          console.warn("[voice] Could not read STT error body:", err instanceof Error ? err.message : String(err));
+          return response.statusText;
+        });
         throw new Error(`STT failed: ${response.status} ${errorText}`);
       }
 

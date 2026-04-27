@@ -53,8 +53,8 @@ export function searchMemories(
               source: f.replace(".md", ""),
             });
           }
-        } catch {
-          // skip unreadable files
+        } catch (err: unknown) {
+          console.warn("[memory-search] Could not read summary:", err instanceof Error ? err.message : String(err));
         }
       }
     }

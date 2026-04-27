@@ -678,6 +678,29 @@ export async function updateUserMachine(
     .execute();
 }
 
+export async function completeUserMachineRegistration(
+  db: PlatformDB,
+  machineId: string,
+  hetznerServerId: number,
+  expectedRegistrationTokenHash: string,
+  expiresAfterIso: string,
+  values: Partial<NewUserMachine>,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set(toUserMachineUpdate(values))
+    .where('machine_id', '=', machineId)
+    .where('hetzner_server_id', '=', hetznerServerId)
+    .where('registration_token_hash', '=', expectedRegistrationTokenHash)
+    .where('registration_token_expires_at', '>=', expiresAfterIso)
+    .where('status', 'in', ['provisioning', 'recovering'])
+    .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
 export async function claimUserMachineRecovery(
   db: PlatformDB,
   clerkUserId: string,
@@ -698,8 +721,24 @@ export async function claimUserMachineRecovery(
   return row ? mapUserMachine(row) : undefined;
 }
 
+export async function claimUserMachineDelete(
+  db: PlatformDB,
+  machineId: string,
+  deletedAt: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({ status: 'deleted', deleted_at: deletedAt })
+    .where('machine_id', '=', machineId)
+    .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
 export async function softDeleteUserMachine(db: PlatformDB, machineId: string, deletedAt: string): Promise<void> {
-  await updateUserMachine(db, machineId, { status: 'deleted', deletedAt });
+  await claimUserMachineDelete(db, machineId, deletedAt);
 }
 
 export async function listStaleUserMachines(

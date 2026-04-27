@@ -1,4 +1,5 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
@@ -47,6 +48,24 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function writeFileAtomic(path: string, contents: string): Promise<void> {
+  const tmpPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmpPath, contents, { flag: "wx" });
+    await rename(tmpPath, path);
+  } catch (err: unknown) {
+    try {
+      await rm(tmpPath, { force: true });
+    } catch (cleanupErr: unknown) {
+      console.warn(
+        "[profile-routing] Failed to remove temporary profile file:",
+        cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+      );
+    }
+    throw err;
+  }
+}
+
 export async function createDefaultProfile(homePath: string, handle: string): Promise<void> {
   const profileDir = join(homePath, "apps", "profile");
   const indexPath = join(profileDir, "index.html");
@@ -64,13 +83,13 @@ export async function createDefaultProfile(homePath: string, handle: string): Pr
     author: `@${handle}`,
   };
 
-  await writeFile(
+  await writeFileAtomic(
     join(profileDir, "matrix.json"),
     JSON.stringify(manifest, null, 2),
   );
 
   const html = generateProfileHtml(handle);
-  await writeFile(indexPath, html);
+  await writeFileAtomic(indexPath, html);
 }
 
 function generateProfileHtml(handle: string): string {
@@ -199,7 +218,7 @@ function generateProfileHtml(handle: string): string {
           grid.appendChild(card);
         }
       } catch (err) {
-        void err;
+        console.error('Failed to load published apps', err);
       }
     })();
   </script>

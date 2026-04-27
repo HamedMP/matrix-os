@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+  claimUserMachineDelete,
+  completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
   getUserMachine,
+  updateUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
@@ -144,6 +147,38 @@ describe('platform/customer-vps', () => {
     expect((await getUserMachine(db, provisioned.machineId))?.status).toBe('provisioning');
   });
 
+  it('does not complete registration after the machine leaves a registerable state', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const row = (await getUserMachine(db, provisioned.machineId))!;
+
+    await updateUserMachine(db, provisioned.machineId, {
+      status: 'failed',
+      failureCode: 'not_found',
+      failureAt: '2026-04-26T12:00:00.000Z',
+    });
+
+    const updated = await completeUserMachineRegistration(
+      db,
+      provisioned.machineId,
+      123456,
+      row.registrationTokenHash!,
+      '2026-04-26T12:00:00.000Z',
+      {
+        status: 'running',
+        publicIPv4: '203.0.113.10',
+        imageVersion: 'matrix-os-host-2026.04.26-1',
+      },
+    );
+
+    expect(updated).toBeUndefined();
+    expect(await getUserMachine(db, provisioned.machineId)).toMatchObject({
+      status: 'failed',
+      publicIPv4: '203.0.113.10',
+      failureCode: 'not_found',
+    });
+  });
+
   it('builds valid R2 VPS metadata from a running machine row', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -172,15 +207,17 @@ describe('platform/customer-vps', () => {
   });
 
   it('writes VPS metadata to the scoped user R2 key', async () => {
-    const writes: Array<{ key: string; body: string }> = [];
+    const writes: Array<{ key: string; body: string; signal?: AbortSignal }> = [];
+    const reads: AbortSignal[] = [];
     const store = createCustomerVpsSystemStore({
       r2PrefixRoot: 'matrixos-sync',
       r2: {
-        async putObject(key, body) {
-          writes.push({ key, body: String(body) });
+        async putObject(key, body, options) {
+          writes.push({ key, body: String(body), signal: options?.signal });
           return {};
         },
-        async getObject() {
+        async getObject(_key, options) {
+          if (options?.signal) reads.push(options.signal);
           throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
         },
       },
@@ -197,12 +234,14 @@ describe('platform/customer-vps', () => {
 
     expect(writes).toHaveLength(1);
     expect(writes[0].key).toBe('matrixos-sync/user_123/system/vps-meta.json');
+    expect(writes[0].signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(writes[0].body)).toMatchObject({
       userId: 'user_123',
       machineId: provisioned.machineId,
       status: 'running',
     });
     await expect(store.hasDbLatest('user_123')).resolves.toBe(false);
+    expect(reads[0]).toBeInstanceOf(AbortSignal);
     expect(buildCustomerVpsR2Key('matrixos-sync/', 'user_123', 'system/db/latest')).toBe(
       'matrixos-sync/user_123/system/db/latest',
     );
@@ -390,6 +429,22 @@ describe('platform/customer-vps', () => {
 
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
     expect(deletedAtDuringProviderDelete).toBe('2026-04-26T12:00:00.000Z');
+  });
+
+  it('claims a VPS delete only once', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const first = await claimUserMachineDelete(db, provisioned.machineId, '2026-04-26T12:00:00.000Z');
+    const second = await claimUserMachineDelete(db, provisioned.machineId, '2026-04-26T12:01:00.000Z');
+
+    expect(first).toMatchObject({
+      machineId: provisioned.machineId,
+      status: 'deleted',
+      deletedAt: '2026-04-26T12:00:00.000Z',
+    });
+    expect(second).toBeUndefined();
+    expect((await getUserMachine(db, provisioned.machineId))?.deletedAt).toBe('2026-04-26T12:00:00.000Z');
   });
 
   it('returns deleted when Hetzner cleanup fails after the DB soft-delete', async () => {

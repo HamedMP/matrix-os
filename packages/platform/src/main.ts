@@ -4,7 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, Server } from 'node:http';
 import Dockerode from 'dockerode';
 import { Agent } from 'undici';
 import { z } from 'zod/v4';
@@ -133,7 +133,7 @@ function buildCodeSessionCookie(token: string): string {
     'Path=/',
     'HttpOnly',
     'Secure',
-    'SameSite=None',
+    'SameSite=Lax',
     `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
   ].join('; ');
 }
@@ -786,8 +786,8 @@ export function createApp(deps: {
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
         headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
+        headers.set('x-platform-user-id', identity.userId);
       }
-      headers.set('x-platform-user-id', identity.userId);
 
       try {
         const upstream = await fetch(targetUrl, {
@@ -1527,8 +1527,15 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   let internalSyncRoutes: Hono | undefined;
   let customerVpsObjectStore:
     | {
-        putObject(key: string, body: string | Uint8Array | ReadableStream<Uint8Array>): Promise<{ etag?: string }>;
-        getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+        putObject(
+          key: string,
+          body: string | Uint8Array | ReadableStream<Uint8Array>,
+          options?: { signal?: AbortSignal },
+        ): Promise<{ etag?: string }>;
+        getObject(
+          key: string,
+          options?: { signal?: AbortSignal },
+        ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
       }
     | undefined;
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
@@ -1559,6 +1566,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
 
   let customerVpsService: CustomerVpsService | undefined;
+  let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
   if (process.env.CUSTOMER_VPS_ENABLED === 'true') {
     const [
       { createCustomerVpsService },
@@ -1603,7 +1611,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         }
       };
       void runCustomerVpsReconciliation();
-      setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs).unref();
+      customerVpsReconciliationInterval = setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs);
+      customerVpsReconciliationInterval.unref();
     }
   }
 
@@ -1622,6 +1631,43 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
   });
+
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[platform] Received ${signal}, shutting down`);
+    if (customerVpsReconciliationInterval) {
+      clearInterval(customerVpsReconciliationInterval);
+    }
+    const shutdownTimer = setTimeout(() => {
+      console.error('[platform] Graceful shutdown timed out');
+      process.exit(1);
+    }, 10_000);
+    shutdownTimer.unref();
+
+    (server as Server).close((err?: Error) => {
+      let exitCode = 0;
+      if (err) {
+        exitCode = 1;
+        console.error('[platform] HTTP server close failed:', err.message);
+      }
+      db.destroy()
+        .catch((destroyErr: unknown) => {
+          exitCode = 1;
+          console.error(
+            '[platform] Database shutdown failed:',
+            destroyErr instanceof Error ? destroyErr.message : String(destroyErr),
+          );
+        })
+        .finally(() => {
+          clearTimeout(shutdownTimer);
+          process.exit(exitCode);
+        });
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 
   // WebSocket upgrade handler
   (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {

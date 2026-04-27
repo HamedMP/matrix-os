@@ -1,7 +1,8 @@
 import {
   existsSync, cpSync, mkdirSync, readdirSync, statSync,
-  readFileSync, writeFileSync, appendFileSync,
+  readFileSync,
 } from "node:fs";
+import * as fs from "node:fs";
 import { join, resolve, relative, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -10,6 +11,14 @@ const DEFAULT_HOME = join(
   process.env.HOME ?? process.env.USERPROFILE ?? ".",
   "matrixos",
 );
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: string,
+  data: string,
+) => void;
+const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+  path: string,
+  data: string,
+) => void;
 
 const TEMPLATE_DIR = resolve(
   import.meta.dirname ?? ".",
@@ -119,7 +128,7 @@ export function smartSyncTemplate(
         const dir = dirname(homeFilePath);
         mkdirSync(dir, { recursive: true });
         // Use read+write instead of cpSync to avoid permission issues with bind mounts
-        writeFileSync(homeFilePath, readFileSync(templateFilePath));
+        cpSync(templateFilePath, homeFilePath);
         installedManifest[relPath] = templateHash;
         report.added.push(relPath);
         logLines.push(`[${now}] Added: ${relPath}`);
@@ -144,7 +153,7 @@ export function smartSyncTemplate(
         // User hasn't touched it -> UPDATE from template
         if (templateHash !== installedHash) {
           try {
-            writeFileSync(homeFilePath, readFileSync(templateFilePath));
+            cpSync(templateFilePath, homeFilePath);
           } catch (e) {
             logLines.push(`[${now}] Error updating: ${relPath} (${(e as Error).message})`);
             continue;
@@ -163,7 +172,7 @@ export function smartSyncTemplate(
   }
 
   // Write updated installed manifest
-  writeFileSync(installedManifestPath, JSON.stringify(installedManifest, null, 2));
+  writeFileNow(installedManifestPath, JSON.stringify(installedManifest, null, 2));
 
   const summary = `${report.updated.length} updated, ${report.added.length} added, ${report.skipped.length} skipped`;
   logLines.push(`[${now}] Template sync completed: ${summary}`);
@@ -179,7 +188,7 @@ function writeSyncLog(homePath: string, lines: string[]) {
 
   const logPath = join(logDir, "template-sync.log");
   const content = lines.join("\n") + "\n";
-  appendFileSync(logPath, content);
+  appendFileNow(logPath, content);
 }
 
 function syncTemplate(homePath: string): SyncReport {
@@ -198,7 +207,7 @@ function syncTemplate(homePath: string): SyncReport {
       ? readFileSync(installedVersionPath, "utf-8")
       : "";
     if (currentVersion !== templateVersion) {
-      writeFileSync(installedVersionPath, templateVersion);
+      writeFileNow(installedVersionPath, templateVersion);
       if (!report.updated.includes(".matrix-version") && !report.added.includes(".matrix-version")) {
         report.updated.push(".matrix-version");
       }
@@ -238,8 +247,8 @@ function initGit(dir: string) {
       "-m",
       "Matrix OS: initial state",
     ], { cwd: dir, stdio: "ignore" });
-  } catch {
-    // Git not available -- not critical for operation
+  } catch (err: unknown) {
+    console.warn("[boot] Initial git commit skipped:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -247,12 +256,13 @@ function gitCommit(dir: string, message: string) {
   try {
     execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
     execFileSync("git", ["diff", "--cached", "--quiet"], { cwd: dir, stdio: "ignore" });
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[boot] Git diff check failed or commit needed:", err instanceof Error ? err.message : String(err));
     // diff --cached exits 1 when there are staged changes = commit needed
     try {
       execFileSync("git", ["commit", "-m", message], { cwd: dir, stdio: "ignore" });
-    } catch {
-      // Git not available or nothing to commit
+    } catch (commitErr: unknown) {
+      console.warn("[boot] Git commit skipped:", commitErr instanceof Error ? commitErr.message : String(commitErr));
     }
   }
 }

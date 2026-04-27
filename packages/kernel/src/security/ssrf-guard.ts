@@ -95,7 +95,8 @@ export async function validateUrl(
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[ssrf] Invalid URL:", err instanceof Error ? err.message : String(err));
     throw new SsrfBlockedError(url, "invalid URL");
   }
 
@@ -114,14 +115,20 @@ export async function validateUrl(
   }
 
   try {
-    const ips = await resolve4(hostname).catch(() => [] as string[]);
+    const ips = await resolve4(hostname).catch((err: unknown) => {
+      console.warn("[ssrf] IPv4 DNS lookup failed:", err instanceof Error ? err.message : String(err));
+      return [] as string[];
+    });
     for (const ip of ips) {
       if (isPrivateIp(ip)) {
         throw new SsrfBlockedError(url, `DNS resolved to private IP: ${ip}`);
       }
     }
 
-    const ipv6s = await resolve6(hostname).catch(() => [] as string[]);
+    const ipv6s = await resolve6(hostname).catch((err: unknown) => {
+      console.warn("[ssrf] IPv6 DNS lookup failed:", err instanceof Error ? err.message : String(err));
+      return [] as string[];
+    });
     for (const ip of ipv6s) {
       if (isPrivateIp(ip)) {
         throw new SsrfBlockedError(url, `DNS resolved to private IPv6: ${ip}`);

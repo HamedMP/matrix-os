@@ -51,6 +51,18 @@ export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
 
 docker compose -f /opt/matrix/postgres-compose.yml up -d postgres
 
+echo "matrix-restore: waiting for postgres..."
+for _ in $(seq 1 30); do
+  if pg_isready --host=127.0.0.1 --username="${POSTGRES_USER:-matrix}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+if ! pg_isready --host=127.0.0.1 --username="${POSTGRES_USER:-matrix}" >/dev/null 2>&1; then
+  echo "matrix-restore: postgres did not become ready" >&2
+  exit 1
+fi
+
 if ! timeout 300 pg_restore \
   --host=127.0.0.1 \
   --username="${POSTGRES_USER:-matrix}" \

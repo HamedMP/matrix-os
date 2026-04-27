@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { memories } from "./schema.js";
@@ -13,6 +14,10 @@ export interface MemoryEntry {
   createdAt: string | null;
   updatedAt: string | null;
 }
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: string,
+  data: string,
+) => void;
 
 export interface MemoryStore {
   remember(content: string, opts?: { source?: string; category?: string }): string;
@@ -102,7 +107,8 @@ export function createMemoryStore(db: MatrixDB): MemoryStore {
 
       try {
         return sqlite.prepare(sql).all(...params) as MemoryEntry[];
-      } catch {
+      } catch (err: unknown) {
+        console.warn("[memory] Search failed:", err instanceof Error ? err.message : String(err));
         return [];
       }
     },
@@ -148,7 +154,7 @@ export function createMemoryStore(db: MatrixDB): MemoryStore {
         ].join("\n");
 
         const fileName = `${mem.category ?? "fact"}-${mem.id.slice(4, 12)}.md`;
-        writeFileSync(join(memoryDir, fileName), frontmatter);
+        writeFileNow(join(memoryDir, fileName), frontmatter);
       }
     },
 

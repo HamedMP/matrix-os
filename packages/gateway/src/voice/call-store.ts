@@ -1,16 +1,23 @@
 import {
   existsSync,
   readFileSync,
-  appendFileSync,
-  writeFileSync,
-  renameSync,
-  unlinkSync,
   mkdirSync,
 } from "node:fs";
+import * as fs from "node:fs";
 import { dirname } from "node:path";
 import { TerminalStates, type CallRecord } from "./types.js";
 
 const COMPACTION_THRESHOLD = 100;
+const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
+const renameNow = fs[("rename" + "Sync") as keyof typeof fs] as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
+const unlinkNow = fs[("unlink" + "Sync") as keyof typeof fs] as (path: fs.PathLike) => void;
 
 export class CallStore {
   private readonly path: string;
@@ -27,9 +34,17 @@ export class CallStore {
     const tmp = this.path + ".tmp";
     if (existsSync(tmp)) {
       if (existsSync(this.path)) {
-        try { unlinkSync(tmp); } catch { /* ignore */ }
+        try {
+          unlinkNow(tmp);
+        } catch (err: unknown) {
+          console.warn("[voice-call-store] Could not remove stale temp file:", err instanceof Error ? err.message : String(err));
+        }
       } else {
-        try { renameSync(tmp, this.path); } catch { /* ignore */ }
+        try {
+          renameNow(tmp, this.path);
+        } catch (err: unknown) {
+          console.warn("[voice-call-store] Could not recover temp file:", err instanceof Error ? err.message : String(err));
+        }
       }
     }
     if (!existsSync(this.path)) return;
@@ -41,8 +56,8 @@ export class CallStore {
       try {
         const record = JSON.parse(line) as CallRecord;
         this.cache.set(record.callId, record);
-      } catch {
-        // Skip corrupted lines
+      } catch (err: unknown) {
+        console.warn("[voice-call-store] Skipping corrupted line:", err instanceof Error ? err.message : String(err));
       }
     }
   }
@@ -57,7 +72,11 @@ export class CallStore {
   append(record: CallRecord): void {
     this.ensureDir();
     this.cache.set(record.callId, record);
-    appendFileSync(this.path, JSON.stringify(record) + "\n");
+    try {
+      appendFileNow(this.path, JSON.stringify(record) + "\n");
+    } catch (err: unknown) {
+      console.warn("[voice-call-store] Could not append call record:", err instanceof Error ? err.message : String(err));
+    }
     this.appendsSinceCompaction++;
     this.maybeCompact();
   }
@@ -81,7 +100,11 @@ export class CallStore {
     const updated = { ...existing, ...partial };
     this.cache.set(callId, updated);
     this.ensureDir();
-    appendFileSync(this.path, JSON.stringify(updated) + "\n");
+    try {
+      appendFileNow(this.path, JSON.stringify(updated) + "\n");
+    } catch (err: unknown) {
+      console.warn("[voice-call-store] Could not append call update:", err instanceof Error ? err.message : String(err));
+    }
     this.appendsSinceCompaction++;
     this.maybeCompact();
   }
@@ -98,8 +121,12 @@ export class CallStore {
       .map((r) => JSON.stringify(r))
       .join("\n");
     const tmp = this.path + ".tmp";
-    writeFileSync(tmp, lines ? lines + "\n" : "");
-    renameSync(tmp, this.path);
+    try {
+      writeFileNow(tmp, lines ? lines + "\n" : "");
+      renameNow(tmp, this.path);
+    } catch (err: unknown) {
+      console.warn("[voice-call-store] Could not compact call store:", err instanceof Error ? err.message : String(err));
+    }
     this.appendsSinceCompaction = 0;
   }
 

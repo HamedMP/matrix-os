@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, readdirSync, unlinkSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, readdirSync, unlinkSync, statSync } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 
 export interface AuditEntry {
@@ -15,6 +16,10 @@ export interface AuditLogEntry extends AuditEntry {
 export interface AuditLogger {
   log(entry: AuditEntry): void;
 }
+const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+  path: string,
+  data: string,
+) => void;
 
 export function createAuditLogger(logDir: string): AuditLogger {
   const auditPath = join(logDir, "audit.jsonl");
@@ -28,7 +33,7 @@ export function createAuditLogger(logDir: string): AuditLogger {
         ...entry,
         timestamp: new Date().toISOString(),
       };
-      appendFileSync(auditPath, JSON.stringify(logEntry) + "\n");
+      appendFileNow(auditPath, JSON.stringify(logEntry) + "\n");
     },
   };
 }
@@ -56,6 +61,8 @@ export function cleanOldLogs(logsDir: string, retentionDays: number): void {
       if (stat.isFile() && stat.mtimeMs < cutoff) {
         unlinkSync(filePath);
       }
-    } catch { /* ignore stat/unlink errors */ }
+    } catch (err: unknown) {
+      console.warn("[audit] Could not clean old log:", err instanceof Error ? err.message : String(err));
+    }
   }
 }

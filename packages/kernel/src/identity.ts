@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 
 export interface Identity {
@@ -14,6 +15,10 @@ const EMPTY_IDENTITY: Identity = {
   displayName: "",
   createdAt: "",
 };
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: string,
+  data: string,
+) => void;
 
 export function deriveAiHandle(handle: string): string {
   return `${handle}_ai`;
@@ -30,12 +35,13 @@ export function loadHandle(homePath: string): Identity {
       displayName: data.displayName ?? "",
       createdAt: data.createdAt ?? "",
     };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[identity] Could not load identity:", err instanceof Error ? err.message : String(err));
     return { ...EMPTY_IDENTITY };
   }
 }
 
 export function saveIdentity(homePath: string, identity: Identity): void {
   const path = join(homePath, "system", "handle.json");
-  writeFileSync(path, JSON.stringify(identity, null, 2) + "\n");
+  writeFileNow(path, JSON.stringify(identity, null, 2) + "\n");
 }

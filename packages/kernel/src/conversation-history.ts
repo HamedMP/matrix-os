@@ -34,8 +34,8 @@ export function listConversationSummaries(
         date: dateMatch?.[1] ?? "",
         summary: body,
       });
-    } catch {
-      // skip unreadable files
+    } catch (err: unknown) {
+      console.warn("[conversation-history] Could not read summary:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -60,7 +60,8 @@ export function getConversationMessages(
       content:
         m.content.length > 500 ? m.content.slice(0, 500) + "..." : m.content,
     }));
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[conversation-history] Could not read conversation:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

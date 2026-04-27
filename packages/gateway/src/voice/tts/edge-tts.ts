@@ -40,7 +40,9 @@ export class EdgeTtsProvider implements TtsProvider {
         provider: this.name,
       };
     } finally {
-      await unlink(tmpPath).catch(() => {});
+      await unlink(tmpPath).catch((err: unknown) => {
+        console.warn("[edge-tts] Could not remove temporary file:", err instanceof Error ? err.message : String(err));
+      });
     }
   }
 }

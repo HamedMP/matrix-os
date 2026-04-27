@@ -15,12 +15,14 @@ export function useIdentity() {
 
   useEffect(() => {
     const url = getGatewayUrl();
-    fetch(`${url}/api/identity`)
+    fetch(`${url}/api/identity`, { signal: AbortSignal.timeout(10_000) })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.handle) setIdentity(data);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[identity] Failed to fetch identity:", err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   return identity;

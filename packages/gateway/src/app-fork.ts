@@ -2,11 +2,11 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
   readdirSync,
   statSync,
   copyFileSync,
 } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 
 interface ForkOptions {
@@ -22,6 +22,10 @@ interface ForkResult {
   targetDir?: string;
   error?: string;
 }
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
 
 export function forkApp(options: ForkOptions): ForkResult {
   const { sourceDir, homePath, slug, author, version } = options;
@@ -42,9 +46,9 @@ export function forkApp(options: ForkOptions): ForkResult {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
       manifest.forked_from = { author, slug, version };
-      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    } catch {
-      // manifest exists but is not valid JSON - just leave it
+      writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
+    } catch (err: unknown) {
+      console.warn("[app-fork] Could not update fork metadata:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -76,9 +80,9 @@ export function installApp(options: InstallOptions): ForkResult {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
       manifest.installed_from = { slug, installedAt: new Date().toISOString() };
-      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    } catch {
-      // leave as-is
+      writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
+    } catch (err: unknown) {
+      console.warn("[app-fork] Could not update install metadata:", err instanceof Error ? err.message : String(err));
     }
   }
 

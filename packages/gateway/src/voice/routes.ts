@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { VoiceService } from "./index.js";
@@ -63,8 +64,8 @@ export function createVoiceRoutes(config: VoiceRoutesConfig): Hono {
       const fileName = `${randomUUID()}.${result.format}`;
       const finalPath = join(audioDir, fileName);
       const tmpPath = finalPath + ".tmp";
-      writeFileSync(tmpPath, result.audio);
-      renameSync(tmpPath, finalPath);
+      await writeFile(tmpPath, result.audio);
+      await rename(tmpPath, finalPath);
 
       const audioUrl = `/files/data/audio/${fileName}`;
 

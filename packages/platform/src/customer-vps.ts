@@ -1,13 +1,14 @@
 import { randomUUID, randomBytes } from 'node:crypto';
 import type { PlatformDB, UserMachineRecord } from './db.js';
 import {
+  claimUserMachineDelete,
   claimUserMachineRecovery,
+  completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
   getUserMachine,
   insertUserMachine,
   listStaleUserMachines,
   runInPlatformTransaction,
-  softDeleteUserMachine,
   updateUserMachine,
 } from './db.js';
 import type { CustomerVpsConfig } from './customer-vps-config.js';
@@ -279,13 +280,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!row.registrationTokenExpiresAt || new Date(row.registrationTokenExpiresAt).getTime() < now().getTime()) {
         throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
       }
-      if (!registrationTokenMatches(token, row.registrationTokenHash)) {
+      const expectedRegistrationTokenHash = row.registrationTokenHash;
+      if (!expectedRegistrationTokenHash || !registrationTokenMatches(token, expectedRegistrationTokenHash)) {
         throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
       }
 
       const lastSeenAt = now().toISOString();
-      await runInPlatformTransaction(deps.db, async (trx) => {
-        await updateUserMachine(trx, input.machineId, {
+      const updated = await completeUserMachineRegistration(
+        deps.db,
+        input.machineId,
+        input.hetznerServerId,
+        expectedRegistrationTokenHash,
+        lastSeenAt,
+        {
           status: 'running',
           publicIPv4: input.publicIPv4,
           publicIPv6: input.publicIPv6,
@@ -295,16 +302,16 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           registrationTokenExpiresAt: null,
           failureCode: null,
           failureAt: null,
-        });
-      });
+        },
+      );
+      if (!updated) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+      }
 
-      const updated = await getUserMachine(deps.db, input.machineId);
-      if (updated) {
-        try {
-          await deps.systemStore.writeVpsMeta(buildVpsMeta(updated, lastSeenAt));
-        } catch (err: unknown) {
-          logCustomerVpsError('write vps-meta failed', err);
-        }
+      try {
+        await deps.systemStore.writeVpsMeta(buildVpsMeta(updated, lastSeenAt));
+      } catch (err: unknown) {
+        logCustomerVpsError('write vps-meta failed', err);
       }
 
       return { registered: true, status: 'running' };
@@ -422,11 +429,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async delete(machineId) {
-      const row = await getUserMachine(deps.db, machineId);
-      if (!row || row.deletedAt) {
+      const row = await claimUserMachineDelete(deps.db, machineId, now().toISOString());
+      if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      await softDeleteUserMachine(deps.db, machineId, now().toISOString());
       if (row.hetznerServerId) {
         try {
           await deps.hetzner.deleteServer(row.hetznerServerId);
@@ -468,6 +474,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           continue;
         }
         if (server.status === 'running' && server.publicIPv4) {
+          // Hetzner "running" only proves the VM booted; the host must call
+          // register() before this machine becomes routable.
           await updateUserMachine(deps.db, row.machineId, {
             publicIPv4: server.publicIPv4,
             publicIPv6: server.publicIPv6,

@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface ImageResult {
@@ -88,7 +89,10 @@ export function createImageClient(apiKey: string): ImageClient {
         if (response.status === 429) {
           throw new Error("Rate limit exceeded. Try again later.");
         }
-        const errorData = await response.json().catch(() => ({})) as GeminiResponse;
+        const errorData = await response.json().catch((err: unknown) => {
+          console.warn("[image-gen] Could not parse error response:", err instanceof Error ? err.message : String(err));
+          return {};
+        }) as GeminiResponse;
         throw new Error(`Image generation failed: ${response.status} ${errorData?.error?.message ?? response.statusText}`);
       }
 
@@ -114,7 +118,7 @@ export function createImageClient(apiKey: string): ImageClient {
       const fileName = opts.saveAs ?? `${timestamp}-${slug}.png`;
       const localPath = join(opts.imageDir, fileName);
 
-      writeFileSync(localPath, imageBuffer);
+      await writeFile(localPath, imageBuffer);
 
       const cost = MODEL_COSTS[model] ?? 0.0005;
 

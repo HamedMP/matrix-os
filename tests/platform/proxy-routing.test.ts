@@ -189,6 +189,44 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
     expect(headers.get("cookie")).toBeNull();
     expect(res.headers.get("set-cookie")).toContain("matrix_code_session=");
+    expect(res.headers.get("set-cookie")).toContain("SameSite=Lax");
+  });
+
+  it("does not send an unverified platform user header to a VPS without a platform secret", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff115",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123459,
+      publicIPv4: "203.0.113.13",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("x-platform-verified")).toBeNull();
+    expect(headers.get("x-platform-user-id")).toBeNull();
   });
 
   it("routes new VPS-only users on code.matrix-os.com without a legacy container", async () => {

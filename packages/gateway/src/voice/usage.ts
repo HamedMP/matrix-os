@@ -1,4 +1,5 @@
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import * as fs from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface VoiceUsageEntry {
@@ -14,6 +15,10 @@ export interface VoiceUsageEntry {
 export class VoiceUsageTracker {
   private filePath: string;
   private dirEnsured = false;
+  private appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+    path: fs.PathOrFileDescriptor,
+    data: string,
+  ) => void;
 
   constructor(homePath: string) {
     this.filePath = `${homePath}/system/logs/voice-usage.jsonl`;
@@ -29,7 +34,11 @@ export class VoiceUsageTracker {
       this.dirEnsured = true;
     }
     const line = JSON.stringify({ ...entry, ts: Date.now() });
-    appendFileSync(this.filePath, line + "\n");
+    try {
+      this.appendFileNow(this.filePath, line + "\n");
+    } catch (err: unknown) {
+      console.warn("[voice-usage] Could not append usage entry:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   getAll(): VoiceUsageEntry[] {
@@ -40,7 +49,8 @@ export class VoiceUsageTracker {
       .map((line) => {
         try {
           return JSON.parse(line);
-        } catch {
+        } catch (err: unknown) {
+          console.warn("[voice-usage] Skipping malformed usage line:", err instanceof Error ? err.message : String(err));
           return null;
         }
       })

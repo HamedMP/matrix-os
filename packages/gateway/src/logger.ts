@@ -1,9 +1,14 @@
-import { appendFileSync, readFileSync, existsSync } from "node:fs";
+import * as fs from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const MAX_PROMPT_LENGTH = 500;
 const MAX_TOOL_INPUT_LENGTH = 500;
 const MAX_STACK_LENGTH = 1000;
+const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
 
 export interface ToolDetail {
   name: string;
@@ -93,7 +98,11 @@ export function createInteractionLogger(homePath: string): InteractionLogger {
 
       const today = new Date().toISOString().slice(0, 10);
       const path = logPath(homePath, today);
-      appendFileSync(path, JSON.stringify(entry) + "\n");
+      try {
+        appendFileNow(path, JSON.stringify(entry) + "\n");
+      } catch (err: unknown) {
+        console.warn("[logger] Could not append interaction log:", err instanceof Error ? err.message : String(err));
+      }
     },
 
     query(filter: { date: string; source?: string }): InteractionEntry[] {

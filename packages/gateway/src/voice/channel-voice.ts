@@ -1,4 +1,5 @@
-import { writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SttProvider } from "./stt/base.js";
@@ -18,7 +19,8 @@ export function isAllowedAudioUrl(url: string): boolean {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") return false;
     return ALLOWED_AUDIO_HOSTS.has(parsed.hostname);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[voice] Invalid audio URL:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -107,8 +109,8 @@ export async function handleVoiceNote(params: {
   }
 
   const tmpPath = filePath + ".tmp";
-  writeFileSync(tmpPath, buffer);
-  renameSync(tmpPath, filePath);
+  await writeFile(tmpPath, buffer);
+  await rename(tmpPath, filePath);
 
   if (!stt || !stt.isAvailable()) {
     return {

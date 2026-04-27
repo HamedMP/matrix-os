@@ -36,6 +36,8 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
   let app: ReturnType<typeof createApp>;
 
   beforeEach(async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_"bad"&<tag>';
     ({ db } = await createTestPlatformDb());
 
     // Clerk stub that always fails verification -- proves the short-circuit

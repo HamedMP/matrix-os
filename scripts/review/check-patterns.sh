@@ -107,19 +107,19 @@ header "1. Error Handling — bare/empty catch blocks"
 MATCHES=$(rg_scan 'catch\s*\{' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   violation "Bare catch {} blocks (CLAUDE.md: every catch must check error type)"
-  echo "$MATCHES" | head -20
+  printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
 MATCHES=$(rg_scan '\.catch\(\s*\(\s*\)\s*=>' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   violation "Empty .catch(() => ...) — error param ignored (CLAUDE.md: no bare catch)"
-  echo "$MATCHES" | head -20
+  printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
 MATCHES=$(rg_scan '\.catch\(\s*\(\s*_\w*\s*\)\s*=>' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Catch with explicitly unused param (_err) — verify error is logged"
-  echo "$MATCHES" | head -10
+  printf '%s\n' "$MATCHES" | head -10 || true
 fi
 
 header "2. External Calls — fetch() without AbortSignal.timeout"
@@ -164,7 +164,7 @@ if [[ -n "$MATCHES" ]]; then
   done <<< "$MATCHES"
   if [[ -n "$MISSING_SIGNAL" ]]; then
     violation "fetch() without signal: (CLAUDE.md: every fetch MUST have AbortSignal.timeout)"
-    echo "$MISSING_SIGNAL" | head -20
+    printf '%s\n' "$MISSING_SIGNAL" | head -20 || true
   fi
 fi
 
@@ -173,7 +173,7 @@ header "3. Input Validation — missing bodyLimit on mutating endpoints"
 MATCHES=$(rg_scan 'c\.req\.(json|text|blob|arrayBuffer)\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Body consumption calls — verify bodyLimit middleware is applied to each route"
-  echo "$MATCHES" | head -20
+  printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
 header "4. Resource Management — unbounded in-memory structures"
@@ -181,13 +181,13 @@ header "4. Resource Management — unbounded in-memory structures"
 MATCHES=$(rg_scan 'new (Map|Set)\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Map/Set creation — verify each has a size cap and eviction policy"
-  echo "$MATCHES" | head -20
+  printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
 MATCHES=$(rg_scan 'buffer \+=' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Buffer concatenation — verify bounded with a size cap"
-  echo "$MATCHES" | head -10
+  printf '%s\n' "$MATCHES" | head -10 || true
 fi
 
 header "5. Resource Management — writeFileSync/appendFileSync in handlers"
@@ -195,7 +195,7 @@ header "5. Resource Management — writeFileSync/appendFileSync in handlers"
 MATCHES=$(rg_scan '(writeFileSync|appendFileSync)' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   violation "Sync file I/O (CLAUDE.md: banned in request handlers, use fs/promises)"
-  echo "$MATCHES" | head -10
+  printf '%s\n' "$MATCHES" | head -10 || true
 fi
 
 # ═══════════════════════════════════════════════════════════════
@@ -207,7 +207,7 @@ header "6. Trust Boundaries — path operations on external input"
 MATCHES=$(rg_scan '(join|resolve|realpath|rename|unlink)\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
   warning "Path operations — verify input is validated via resolveWithinPrefix or equivalent"
-  echo "$MATCHES" | head -30
+  printf '%s\n' "$MATCHES" | head -30 || true
 fi
 
 header "7. Trust Boundaries — headers and identifiers from external sources"
@@ -215,7 +215,7 @@ header "7. Trust Boundaries — headers and identifiers from external sources"
 MATCHES=$(rg_scan '(X-Forwarded-For|X-Peer-Id|X-Real-Ip|peerId|userId)' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**' -i)
 if [[ -n "$MATCHES" ]]; then
   warning "External headers/identifiers — verify validated before use in keys, paths, or SQL"
-  echo "$MATCHES" | head -20
+  printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
 # ═══════════════════════════════════════════════════════════════

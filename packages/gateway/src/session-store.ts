@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import * as fs from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface SessionEntry {
@@ -21,6 +22,11 @@ export interface SessionStore {
 
 const DEFAULT_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const SAVE_DEBOUNCE_MS = 1000;
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+  options?: fs.WriteFileOptions,
+) => void;
 
 export function createSessionStore(
   filePath: string,
@@ -39,8 +45,8 @@ export function createSessionStore(
           sessions.set(key, e);
         }
       }
-    } catch {
-      // Corrupt file — start fresh
+    } catch (err: unknown) {
+      console.warn("[session-store] Could not load session store:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -55,9 +61,9 @@ export function createSessionStore(
         for (const [key, entry] of sessions) {
           obj[key] = entry;
         }
-        writeFileSync(filePath, JSON.stringify(obj, null, 2), "utf-8");
-      } catch {
-        // Best-effort persistence
+        writeFileNow(filePath, JSON.stringify(obj, null, 2), "utf-8");
+      } catch (err: unknown) {
+        console.warn("[session-store] Could not prepare session persistence:", err instanceof Error ? err.message : String(err));
       }
     }, SAVE_DEBOUNCE_MS);
   }

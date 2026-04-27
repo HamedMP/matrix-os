@@ -20,7 +20,8 @@ function readManifest(dir: string): PluginManifest | null {
   try {
     const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
     return validateManifest(raw);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[plugins] Could not read manifest:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -51,7 +52,9 @@ export function discoverPlugins(opts: {
           const pkgDir = join(packagesDir, entry);
           add(pkgDir, "bundled");
         }
-      } catch { /* skip */ }
+      } catch (err: unknown) {
+        console.warn("[plugins] Could not discover bundled plugins:", err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
@@ -63,7 +66,9 @@ export function discoverPlugins(opts: {
         const pluginDir = join(pluginsDir, entry);
         add(pluginDir, "workspace");
       }
-    } catch { /* skip */ }
+    } catch (err: unknown) {
+      console.warn("[plugins] Could not discover workspace plugins:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   // 3. Config: explicit paths

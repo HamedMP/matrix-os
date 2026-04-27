@@ -22,7 +22,8 @@ export async function migrateJsonToKv(
     appDirs = readdirSync(dataDir).filter((f) => {
       try {
         return statSync(join(dataDir, f)).isDirectory();
-      } catch {
+      } catch (err: unknown) {
+        console.warn("[app-db-migration] Could not inspect app data directory:", err instanceof Error ? err.message : String(err));
         return false;
       }
     });

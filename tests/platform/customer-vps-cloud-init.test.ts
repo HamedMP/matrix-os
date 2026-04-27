@@ -77,6 +77,8 @@ describe('platform/customer-vps-cloud-init', () => {
     const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
 
     expect(restore).toContain('restore-complete');
+    expect(restore).toContain('pg_isready');
+    expect(restore.indexOf('pg_isready')).toBeLessThan(restore.indexOf('pg_restore'));
     expect(restore).toContain('pg_restore');
     expect(restore).toContain('exit 1');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');

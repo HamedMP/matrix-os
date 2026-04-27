@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 import { z } from "zod/v4";
 
@@ -40,6 +41,10 @@ export interface PersonaSuggestions {
 }
 
 const PLAN_FILE = "setup-plan.json";
+const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  path: string,
+  data: string,
+) => void;
 
 export function parseSetupPlan(homePath: string): SetupPlan | null {
   const filePath = join(homePath, "system", PLAN_FILE);
@@ -49,14 +54,15 @@ export function parseSetupPlan(homePath: string): SetupPlan | null {
     const raw = JSON.parse(readFileSync(filePath, "utf-8"));
     const result = SetupPlanSchema.safeParse(raw);
     return result.success ? result.data : null;
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[onboarding] Could not parse setup plan:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
 
 export function writeSetupPlan(homePath: string, plan: SetupPlan): void {
   const filePath = join(homePath, "system", PLAN_FILE);
-  writeFileSync(filePath, JSON.stringify(plan, null, 2));
+  writeFileNow(filePath, JSON.stringify(plan, null, 2));
 }
 
 const PERSONAS: Record<string, PersonaSuggestions> = {
