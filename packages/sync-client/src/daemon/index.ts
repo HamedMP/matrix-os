@@ -8,7 +8,8 @@ import {
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
-import { clearAuth, isExpired, loadAuth } from "../auth/token-store.js";
+import { clearProfileAuth, isExpired, loadAuth, loadProfileAuth } from "../auth/token-store.js";
+import { loadProfiles } from "../lib/profiles.js";
 import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
@@ -16,6 +17,7 @@ import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
+import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
 import {
   requestPresignedUrls,
@@ -586,13 +588,23 @@ export async function startDaemon(): Promise<void> {
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
+  const loadActiveProfileAuth = async () => {
+    const profiles = await loadProfiles();
+    return loadProfileAuth(profiles.active);
+  };
+  const clearActiveProfileAuth = async () => {
+    const profiles = await loadProfiles();
+    await clearProfileAuth(profiles.active);
+  };
   const ipcHandler = createIpcHandler({
     config,
     syncState,
     logger: { info: (msg) => logger.info(msg) },
     saveConfig: (next) => saveConfig(next),
     persistPauseState,
-    clearAuth,
+    clearAuth: clearActiveProfileAuth,
+    loadAuth: loadActiveProfileAuth,
+    shell: createDaemonShellControlClient({ config, loadAuth: loadActiveProfileAuth }),
     exit: (code) => process.exit(code),
   });
   const ipcServer = new IpcServer({ socketPath, handler: ipcHandler });

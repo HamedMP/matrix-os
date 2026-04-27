@@ -1,0 +1,236 @@
+---
+title: CLI
+description: The matrix CLI — log in, sync files, attach to remote zellij sessions, and drive your instance from the terminal.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Matrix OS CLI is a single binary — `matrix` (also installed as `matrixos` and `mos`) — for everything you do against your Matrix OS instance from outside the browser: signing in, syncing files, opening terminal sessions, and (soon) driving the upcoming VSCode extension.
+
+## Install
+
+<Callout type="info">
+The CLI is published as `@finnaai/matrix` on npm and as a Homebrew formula. It works against the cloud at `app.matrix-os.com` and against a local stack via `--profile local`.
+</Callout>
+
+```bash
+# Homebrew (macOS / Linux)
+brew install finnaai/tap/matrix
+
+# npm
+npm install -g @finnaai/matrix
+
+# Inside the matrix-os repo (development)
+pnpm install
+pnpm exec matrix --help
+```
+
+Verify:
+
+```bash
+matrix --version
+matrix doctor
+```
+
+## First run
+
+```bash
+matrix login                 # opens a browser, completes the device flow
+matrix whoami                # confirms handle, gateway, token expiry
+matrix shell new main        # creates and attaches to your "main" session
+```
+
+`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell attach main`.
+
+## Profiles
+
+Profiles let you point the same CLI at different stacks. Two are pre-configured:
+
+| Profile | Platform URL                      | Gateway URL                       |
+| ------- | --------------------------------- | --------------------------------- |
+| `cloud` | `https://app.matrix-os.com`       | `https://app.matrix-os.com`       |
+| `local` | `http://localhost:9000`           | `http://localhost:4000`           |
+
+```bash
+matrix profile ls
+matrix profile use local
+matrix profile show
+
+# One-shot
+matrix --profile local shell ls
+
+# Sugar for --profile local
+matrix --dev shell ls
+```
+
+Profiles are stored at `~/.matrixos/profiles.json`. Auth tokens are scoped per-profile under `~/.matrixos/profiles/<name>/auth.json`.
+
+`matrix login` writes auth into the active profile. `matrix login --profile local` (or `matrix login --dev`) skips the OAuth device flow and writes a long-lived dev stub — the local gateway in dev mode accepts any bearer. The success line always names the profile that was just written, so you always know where you are.
+
+## Shell sessions
+
+Every Matrix OS instance ships with [zellij](https://zellij.dev) pre-installed. The CLI treats zellij sessions as the source of truth — the same sessions you see in the web shell are the ones you list and attach from the terminal.
+
+```bash
+matrix shell ls                         # list sessions
+matrix shell new code                   # create + attach
+matrix shell new code --layout dev      # use a saved layout
+matrix shell new agent --cmd "claude"   # spawn an inline command in the session
+matrix shell attach code                # reattach to an existing session
+matrix shell rm code --force            # destroy a session
+```
+
+<Callout type="info">
+**Detaching.** Press `Ctrl-\` twice in quick succession to leave the session running and return to your shell — the same combo whether you're in `attach` or just created a session with `new`. To kill it instead, exit the shell normally inside the session or run `matrix shell rm <name>`.
+</Callout>
+
+### Tabs
+
+Tabs may be anonymous (zellij assigns an index) but **named tabs are recommended** so you can address them from scripts and the VSCode extension.
+
+```bash
+matrix shell tab ls --session code
+matrix shell tab new --session code --name editor --cwd ~/projects/site
+matrix shell tab go --session code --tab 1
+matrix shell tab close --session code --tab 1
+```
+
+### Panes
+
+```bash
+matrix shell pane split --session code --direction right --cmd "claude"
+matrix shell pane split --session code --direction down --cmd "pnpm dev" --cwd shell
+matrix shell pane close --session code --pane pane-2
+```
+
+Panes are addressed by focus in the current release: split or close operates on the focused pane.
+
+### Layouts
+
+Layouts are KDL files stored in your instance at `~/.config/matrix-os/layouts/`. Save the structure of an active session and apply it later (or to a fresh session).
+
+```bash
+matrix shell layout ls
+matrix shell layout save --name dev --kdl "$(matrix shell layout dump --session code --json | jq -r '.data.layout.kdl')"
+matrix shell layout apply --session code --name dev
+matrix shell layout show --name dev        # print the KDL
+matrix shell layout rm --name dev
+```
+
+## File sync
+
+The sync daemon mirrors a local folder against your instance's home directory. It runs as a background service installed by `matrix sync start`.
+
+```bash
+matrix sync ~/matrixos                    # initialize and start
+matrix sync status
+matrix sync pause
+matrix sync resume
+```
+
+Scope sync to a subtree of your instance with `--folder`:
+
+```bash
+matrix sync ~/work-projects --folder projects
+```
+
+## SSH
+
+`matrix ssh` connects to your instance via the bastion at `ssh.matrix-os.com:2222` and auto-attaches a tmux session.
+
+```bash
+matrix ssh                  # your own instance
+matrix ssh @hamed           # someone else (requires their permission)
+```
+
+Add a public key for SSH access:
+
+```bash
+matrix keys add ~/.ssh/id_ed25519.pub
+matrix keys ls
+matrix keys rm <key-id>
+```
+
+## Instance ops
+
+```bash
+matrix instance info        # handle, region, image, last restart
+matrix instance restart     # graceful restart of your container
+matrix instance logs
+```
+
+## Peers
+
+```bash
+matrix peers                # list connected sync peers (machines)
+```
+
+## Machine-readable output
+
+Every command supports `--json` for scripting and integration with the upcoming VSCode extension. Streams (terminal output, sync events, log follow) emit NDJSON, one event per line.
+
+```bash
+matrix shell ls --json
+matrix sync status --json
+matrix shell tab ls main --json | jq '.[] | .name'
+```
+
+The schema is documented at [`docs/cli-json-schema.md`](https://github.com/HamedMP/matrix-os/blob/main/docs/cli-json-schema.md). Every payload includes `"v": 1` for forward compatibility.
+
+## Global flags
+
+```
+--profile <name>      Use a named profile (default: profiles.json:active)
+--platform <url>      Override platform URL (also $MATRIXOS_PLATFORM_URL)
+--gateway <url>       Override gateway URL (also $MATRIXOS_GATEWAY_URL)
+--token <jwt>         Override auth (also $MATRIXOS_TOKEN; useful in CI)
+--json                Machine-readable output (NDJSON for streams)
+--no-color            Disable ANSI colors
+-q, --quiet
+-v, --verbose
+--dev                 Sugar for --profile local
+```
+
+## Diagnostics
+
+`matrix doctor` checks every layer of the stack and prints fix-it hints when something looks wrong. Run it before opening an issue.
+
+```
+$ matrix doctor
+
+Profile           cloud (active)
+Auth              ok      logged in as @hamed, expires in 47m
+Daemon            running pid 4821, sync resumed
+Sync              ok      manifest v412, 184 files, last sync 12s ago
+Gateway           ok      https://app.matrix-os.com    (87ms)
+Zellij            ok      v0.41.2 inside container
+Disk              ok      23G available
+```
+
+## Shell completions
+
+```bash
+matrix completion
+```
+
+## Troubleshooting
+
+**`Cannot connect to daemon. Is it running?`**
+
+The sync daemon is installed but not running. Start it with `matrix sync start`. If `matrix doctor` says the daemon is running but the socket is unreachable, remove the stale socket: `rm ~/.matrixos/daemon.sock` then `matrix sync start`.
+
+**`401 Unauthorized` on any command**
+
+Your token expired. Run `matrix login` again. Tokens are valid for the duration set by the platform (typically a few hours).
+
+**`matrix shell attach` shows a blank screen**
+
+Usually means the zellij session exited inside the container. Check `matrix shell ls` — if the session is in the `exited` state, recreate it with `matrix shell new <name>`.
+
+**`session "foo" not found` when attaching**
+
+The session does not exist on your instance. `matrix shell attach` is intentionally strict — it never auto-creates. Use `matrix shell new foo` to create it.
+
+**Local stack returns connection refused**
+
+`matrix --profile local` expects the gateway on `localhost:4000` and the platform on `localhost:9000`. Run `pnpm dev` in the `matrix-os` repo to boot both.

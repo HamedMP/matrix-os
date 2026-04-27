@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { loadConfig, saveConfig, defaultSyncPath, generatePeerId } from "../../lib/config.js";
 import { sendCommand, isDaemonRunning } from "../daemon-client.js";
 import { installService, startService } from "../../daemon/service.js";
+import { resolveCliProfile } from "../profiles.js";
 
 const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
 
@@ -26,16 +27,25 @@ async function runStatus(): Promise<void> {
 async function runStart(
   rawPath: string | undefined,
   folder: string | undefined,
+  args: Record<string, unknown>,
 ): Promise<void> {
   const syncPath = rawPath ? resolve(rawPath) : defaultSyncPath();
   await mkdir(syncPath, { recursive: true });
 
   const previous = await loadConfig();
+  const profile = await resolveCliProfile(args);
   const gatewayFolder = folder ?? previous?.gatewayFolder ?? "";
   const config = previous
-    ? { ...previous, syncPath, gatewayFolder }
+    ? {
+        ...previous,
+        platformUrl: profile.platformUrl,
+        gatewayUrl: profile.gatewayUrl,
+        syncPath,
+        gatewayFolder,
+      }
     : {
-        gatewayUrl: "https://matrix-os.com",
+        platformUrl: profile.platformUrl,
+        gatewayUrl: profile.gatewayUrl,
         syncPath,
         gatewayFolder,
         peerId: generatePeerId(),
@@ -83,6 +93,32 @@ export const syncCommand = defineCommand({
     description: "Manage file sync. Usage: matrixos sync [<path>|status|pause|resume]",
   },
   args: {
+    profile: {
+      type: "string",
+      description: "Profile to use for gateway configuration",
+      required: false,
+    },
+    dev: {
+      type: "boolean",
+      description: "Use the local profile",
+      required: false,
+      default: false,
+    },
+    platform: {
+      type: "string",
+      description: "Override platform URL for this command",
+      required: false,
+    },
+    gateway: {
+      type: "string",
+      description: "Override gateway URL for this command",
+      required: false,
+    },
+    token: {
+      type: "string",
+      description: "Override bearer token for this command",
+      required: false,
+    },
     path: {
       type: "string",
       alias: "p",
@@ -118,6 +154,6 @@ export const syncCommand = defineCommand({
     // Positional path: prefer rawArgs[0] if not a flag, else --path.
     const path = first ?? (typeof args.path === "string" ? args.path : undefined);
     const folder = typeof args.folder === "string" ? args.folder : undefined;
-    await runStart(path, folder);
+    await runStart(path, folder, args);
   },
 });

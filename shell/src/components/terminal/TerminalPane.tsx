@@ -7,15 +7,17 @@ import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
+import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { closeStaleCachedSocket, getCachedTerminalRestorePlan } from "./terminal-restore";
 
-function buildXtermTheme(theme: Theme, terminalThemeId: import("@/stores/terminal-settings").TerminalThemeId) {
+function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
     return getTerminalThemePreset(terminalThemeId);
   }
@@ -40,6 +42,29 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
+  enableSizeReports: false,
+  pixelLimit: 4_194_304,
+  storageLimit: 32,
+  showPlaceholder: true,
+  sixelSupport: true,
+  sixelScrolling: true,
+  sixelPaletteLimit: 256,
+  sixelSizeLimit: 8_000_000,
+  iipSupport: true,
+  iipSizeLimit: 8_000_000,
+};
+
+const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {
+  "Berkeley Mono": '"Berkeley Mono", "Berkeley Mono Variable", "JetBrains Mono"',
+  "JetBrains Mono": '"JetBrains Mono"',
+  "Fira Code": '"Fira Code", "JetBrains Mono"',
+};
+
+function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: string | undefined): string {
+  const fallback = themeMono || "ui-monospace, SFMono-Regular, Menlo, monospace";
+  return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
+}
 
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
@@ -389,7 +414,7 @@ export function TerminalPane({
           smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
           allowProposedApi: true,
           fontSize: terminalFontSize,
-          fontFamily: `${terminalFontFamily}, ${theme.fonts?.mono || "ui-monospace, SFMono-Regular, Menlo, monospace"}`,
+          fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           theme: xtermTheme,
           // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
           // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
@@ -430,16 +455,12 @@ export function TerminalPane({
           searchAddonRef.current = addon;
         } catch (_e: unknown) { /* unavailable */ }
 
-        // Image protocol addon (sixel/iTerm2) when the optional package is bundled.
+        // Image protocol addon (sixel/iTerm2) with bounded client-side storage.
         try {
-          const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<unknown>;
-          const imageModule = await dynamicImport("@xterm/addon-image") as {
-            ImageAddon?: new () => { activate: (terminal: Terminal) => void; dispose: () => void };
-          };
-          if (imageModule.ImageAddon) {
-            xterm.loadAddon(new imageModule.ImageAddon());
-          }
-        } catch (_e: unknown) { /* optional addon not installed */ }
+          xterm.loadAddon(new ImageAddon(IMAGE_ADDON_OPTIONS));
+        } catch (err: unknown) {
+          console.warn("Image addon initialization failed:", err instanceof Error ? err.message : err);
+        }
 
         // Serialize addon
         try {
@@ -998,7 +1019,7 @@ export function TerminalPane({
       };
       const fitAddon = fitAddonRef.current as { fit: () => void };
       term.options.theme = buildXtermTheme(theme, terminalThemeId);
-      term.options.fontFamily = `${terminalFontFamily}, ${theme.fonts?.mono || "ui-monospace, SFMono-Regular, Menlo, monospace"}`;
+      term.options.fontFamily = buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono);
       term.options.fontSize = terminalFontSize;
       term.options.cursorBlink = cursorBlink;
       term.options.cursorStyle = terminalCursorStyle;

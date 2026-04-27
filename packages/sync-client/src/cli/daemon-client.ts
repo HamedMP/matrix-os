@@ -1,6 +1,7 @@
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { getConfigDir } from "../lib/config.js";
+import { DAEMON_IPC_VERSION } from "../daemon/types.js";
 
 function socketPath(): string {
   return join(getConfigDir(), "daemon.sock");
@@ -52,7 +53,7 @@ export async function sendCommand(
 
     socket.on("connect", () => {
       const id = crypto.randomUUID();
-      socket.write(JSON.stringify({ id, command, args }) + "\n");
+      socket.write(JSON.stringify({ id, v: DAEMON_IPC_VERSION, command, args }) + "\n");
     });
 
     socket.on("data", (data) => {
@@ -64,11 +65,15 @@ export async function sendCommand(
         socket.end();
         try {
           const msg = JSON.parse(line) as {
+            v?: number;
             result?: Record<string, unknown>;
-            error?: string;
+            error?: string | { code?: string; message?: string };
           };
           if (msg.error) {
-            reject(new Error(msg.error));
+            const code = typeof msg.error === "object" && typeof msg.error.code === "string"
+              ? msg.error.code
+              : String(msg.error);
+            reject(new Error(code));
           } else {
             resolve(msg.result ?? {});
           }

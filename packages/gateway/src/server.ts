@@ -138,6 +138,7 @@ import {
 } from "./metrics.js";
 import {
   createShellRoutes,
+  LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
   createShellWsHandler,
@@ -263,6 +264,7 @@ export async function createGateway(config: GatewayConfig) {
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const zellijAdapter = createZellijAdapter();
+  const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
@@ -1169,6 +1171,8 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api", createShellRoutes({
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
+    workspace: zellijAdapter,
+    layouts: shellLayoutStore,
   }));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN

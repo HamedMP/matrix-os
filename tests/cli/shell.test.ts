@@ -32,9 +32,12 @@ describe("shell CLI command", () => {
   it("registers ls, new, attach, and rm session subcommands", () => {
     expect(Object.keys(shellCommand.subCommands ?? {}).sort()).toEqual([
       "attach",
+      "layout",
       "ls",
       "new",
+      "pane",
       "rm",
+      "tab",
     ]);
   });
 

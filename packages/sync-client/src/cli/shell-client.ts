@@ -14,6 +14,18 @@ export interface ShellClient {
     cmd?: string;
   }): Promise<Record<string, unknown>>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  listTabs(name: string): Promise<unknown[]>;
+  createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<Record<string, unknown>>;
+  switchTab(name: string, tab: number): Promise<Record<string, unknown>>;
+  closeTab(name: string, tab: number): Promise<Record<string, unknown>>;
+  splitPane(name: string, input: { direction: "right" | "down"; cwd?: string; cmd?: string }): Promise<Record<string, unknown>>;
+  closePane(name: string, pane: string): Promise<Record<string, unknown>>;
+  listLayouts(): Promise<unknown[]>;
+  showLayout(name: string): Promise<Record<string, unknown>>;
+  saveLayout(name: string, kdl: string): Promise<Record<string, unknown>>;
+  deleteLayout(name: string): Promise<Record<string, unknown>>;
+  applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
+  dumpLayout(session: string): Promise<Record<string, unknown>>;
   createAttachUrl(name: string, options?: { fromSeq?: number }): string;
   attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
@@ -117,6 +129,67 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       await request(`/api/sessions/${encodeURIComponent(name)}${suffix}`, {
         method: "DELETE",
       });
+    },
+    async listTabs(name) {
+      const payload = await request(`/api/sessions/${encodeURIComponent(name)}/tabs`);
+      return typeof payload === "object" && payload !== null && "tabs" in payload && Array.isArray((payload as { tabs: unknown }).tabs)
+        ? (payload as { tabs: unknown[] }).tabs
+        : [];
+    },
+    async createTab(name, input) {
+      return (await request(`/api/sessions/${encodeURIComponent(name)}/tabs`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      })) as Record<string, unknown>;
+    },
+    async switchTab(name, tab) {
+      return (await request(`/api/sessions/${encodeURIComponent(name)}/tabs/${tab}/go`, {
+        method: "POST",
+      })) as Record<string, unknown>;
+    },
+    async closeTab(name, tab) {
+      return (await request(`/api/sessions/${encodeURIComponent(name)}/tabs/${tab}`, {
+        method: "DELETE",
+      })) as Record<string, unknown>;
+    },
+    async splitPane(name, input) {
+      return (await request(`/api/sessions/${encodeURIComponent(name)}/panes`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      })) as Record<string, unknown>;
+    },
+    async closePane(name, pane) {
+      return (await request(`/api/sessions/${encodeURIComponent(name)}/panes/${encodeURIComponent(pane)}`, {
+        method: "DELETE",
+      })) as Record<string, unknown>;
+    },
+    async listLayouts() {
+      const payload = await request("/api/layouts");
+      return typeof payload === "object" && payload !== null && "layouts" in payload && Array.isArray((payload as { layouts: unknown }).layouts)
+        ? (payload as { layouts: unknown[] }).layouts
+        : [];
+    },
+    async showLayout(name) {
+      return (await request(`/api/layouts/${encodeURIComponent(name)}`)) as Record<string, unknown>;
+    },
+    async saveLayout(name, kdl) {
+      return (await request(`/api/layouts/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        body: JSON.stringify({ kdl }),
+      })) as Record<string, unknown>;
+    },
+    async deleteLayout(name) {
+      return (await request(`/api/layouts/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      })) as Record<string, unknown>;
+    },
+    async applyLayout(session, layout) {
+      return (await request(`/api/sessions/${encodeURIComponent(session)}/layouts/${encodeURIComponent(layout)}/apply`, {
+        method: "POST",
+      })) as Record<string, unknown>;
+    },
+    async dumpLayout(session) {
+      return (await request(`/api/sessions/${encodeURIComponent(session)}/layout/dump`)) as Record<string, unknown>;
     },
     createAttachUrl,
     async attachSession(name, attachOptions = {}) {

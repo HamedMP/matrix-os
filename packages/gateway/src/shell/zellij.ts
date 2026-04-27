@@ -31,6 +31,14 @@ export interface ZellijAdapter {
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ChildProcess;
+  listTabs(name: string): Promise<unknown[]>;
+  createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
+  switchTab(name: string, tab: number): Promise<unknown>;
+  closeTab(name: string, tab: number): Promise<unknown>;
+  splitPane(name: string, input: { direction: "right" | "down"; cwd?: string; cmd?: string }): Promise<unknown>;
+  closePane(name: string, pane: string): Promise<unknown>;
+  applyLayout(name: string, layout: string): Promise<unknown>;
+  dumpLayout(name: string): Promise<unknown>;
 }
 
 export function sanitizeZellijError(stderr: string): string {
@@ -105,6 +113,55 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       child.once?.("close", () => options.signal?.removeEventListener("abort", abort));
       child.once?.("error", () => options.signal?.removeEventListener("abort", abort));
       return child;
+    },
+    async listTabs(name) {
+      const stdout = await run(["--session", name, "action", "query-tab-names"]);
+      return stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((tab, idx) => ({ idx, name: tab }));
+    },
+    async createTab(name, input) {
+      const args = ["--session", name, "action", "new-tab"];
+      if (input.name) args.push("--name", input.name);
+      if (input.cwd) args.push("--cwd", input.cwd);
+      if (input.cmd) args.push("--", input.cmd);
+      await run(args);
+      return { ok: true };
+    },
+    async switchTab(name, tab) {
+      await run(["--session", name, "action", "go-to-tab", String(tab)]);
+      return { ok: true };
+    },
+    async closeTab(name, tab) {
+      await run(["--session", name, "action", "close-tab", String(tab)]);
+      return { ok: true };
+    },
+    async splitPane(name, input) {
+      const args = [
+        "--session",
+        name,
+        "action",
+        input.direction === "right" ? "new-pane" : "new-pane",
+        input.direction === "right" ? "--right" : "--down",
+      ];
+      if (input.cwd) args.push("--cwd", input.cwd);
+      if (input.cmd) args.push("--", input.cmd);
+      await run(args);
+      return { ok: true };
+    },
+    async closePane(name, pane) {
+      await run(["--session", name, "action", "close-pane", "--pane-id", pane]);
+      return { ok: true };
+    },
+    async applyLayout(name, layout) {
+      await run(["--session", name, "action", "new-tab", "--layout", layout]);
+      return { ok: true };
+    },
+    async dumpLayout(name) {
+      const kdl = await run(["--session", name, "action", "dump-layout"]);
+      return { kdl };
     },
   };
 }

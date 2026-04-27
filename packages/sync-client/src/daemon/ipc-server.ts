@@ -3,7 +3,17 @@ import { chmod, mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { IpcHandler } from "./ipc-handler.js";
+import {
+  formatDaemonError,
+  formatDaemonSuccess,
+  parseDaemonRequest,
+} from "./types.js";
 export type { IpcHandler };
+
+export const IPC_SOCKET_MODE = 0o600;
+export const IPC_SOCKET_DIR_MODE = 0o700;
+export const IPC_MAX_CONNECTIONS = 10;
+export const IPC_MAX_BUFFER_BYTES = 65_536;
 
 export interface IpcServerOptions {
   socketPath: string;
@@ -13,14 +23,14 @@ export interface IpcServerOptions {
 export class IpcServer {
   private server: Server | null = null;
   private connections = new Set<Socket>();
-  private readonly maxConnections = 10;
-  private readonly maxBufferBytes = 65_536;
+  private readonly maxConnections = IPC_MAX_CONNECTIONS;
+  private readonly maxBufferBytes = IPC_MAX_BUFFER_BYTES;
 
   constructor(private readonly options: IpcServerOptions) {}
 
   async start(): Promise<void> {
-    await mkdir(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
-    await chmod(dirname(this.options.socketPath), 0o700).catch((err: unknown) => {
+    await mkdir(dirname(this.options.socketPath), { recursive: true, mode: IPC_SOCKET_DIR_MODE });
+    await chmod(dirname(this.options.socketPath), IPC_SOCKET_DIR_MODE).catch((err: unknown) => {
       console.warn(
         "[sync/ipc] Failed to chmod socket directory:",
         err instanceof Error ? err.message : String(err),
@@ -54,7 +64,7 @@ export class IpcServer {
         try {
           process.umask(previousUmask);
           this.server?.off("error", onError);
-          await chmod(this.options.socketPath, 0o600);
+          await chmod(this.options.socketPath, IPC_SOCKET_MODE);
           resolve();
         } catch (err) {
           reject(err);
@@ -114,32 +124,40 @@ export class IpcServer {
     socket: Socket,
     raw: string,
   ): Promise<void> {
-    let msg: { id?: string; command?: string; args?: Record<string, unknown> };
+    let msg: unknown;
     try {
-      msg = JSON.parse(raw) as typeof msg;
+      msg = JSON.parse(raw) as unknown;
     } catch (err: unknown) {
       if (err instanceof SyntaxError) {
         socket.write(
-          JSON.stringify({ error: "Invalid JSON" }) + "\n",
+          JSON.stringify(formatDaemonError("unknown", "invalid_request")) + "\n",
         );
         return;
       }
       throw err;
     }
 
+    const parsed = parseDaemonRequest(msg);
+    if (!parsed.ok) {
+      socket.write(JSON.stringify(parsed.response) + "\n");
+      return;
+    }
+
     try {
       const result = await this.options.handler(
-        msg.command ?? "",
-        msg.args ?? {},
+        parsed.request.command,
+        parsed.request.args,
       );
       socket.write(
-        JSON.stringify({ id: msg.id, result }) + "\n",
+        JSON.stringify(formatDaemonSuccess(parsed.request.id, result)) + "\n",
       );
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Unknown error";
+      const code =
+        err instanceof Error && /^[a-z_]+$/.test(err.message)
+          ? err.message
+          : "request_failed";
       socket.write(
-        JSON.stringify({ id: msg.id, error: message }) + "\n",
+        JSON.stringify(formatDaemonError(parsed.request.id, code)) + "\n",
       );
     }
   }
