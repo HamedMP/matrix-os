@@ -36,7 +36,7 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   async function checkIdle(): Promise<string[]> {
-    const running = listContainers(db, 'running');
+    const running = await listContainers(db, 'running');
     const now = Date.now();
     const stopped: string[] = [];
     const alreadyStopped = new Set<string>();
@@ -49,8 +49,8 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
             await orchestrator.stop(c.handle);
             stopped.push(c.handle);
             alreadyStopped.add(c.handle);
-          } catch {
-            // Container may already be stopped
+          } catch (err: unknown) {
+            console.warn('[lifecycle] Failed to stop idle container:', err instanceof Error ? err.message : String(err));
           }
         }
       }
@@ -69,8 +69,8 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
         try {
           await orchestrator.stop(container.handle);
           stopped.push(container.handle);
-        } catch {
-          // Container may already be stopped
+        } catch (err: unknown) {
+          console.warn('[lifecycle] Failed to evict idle container:', err instanceof Error ? err.message : String(err));
         }
       }
     }
@@ -82,7 +82,9 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
     start() {
       if (intervalHandle) return;
       intervalHandle = setInterval(() => {
-        checkIdle().catch(() => {});
+        checkIdle().catch((err: unknown) => {
+          console.warn('[lifecycle] Idle check failed:', err instanceof Error ? err.message : String(err));
+        });
       }, checkIntervalMs);
     },
 
@@ -94,11 +96,13 @@ export function createLifecycleManager(config: LifecycleConfig): LifecycleManage
     },
 
     touchActivity(handle: string) {
-      updateLastActive(db, handle);
+      void updateLastActive(db, handle).catch((err: unknown) => {
+        console.warn('[lifecycle] Failed to update activity:', err instanceof Error ? err.message : String(err));
+      });
     },
 
     async ensureRunning(handle: string) {
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
       if (record.status === 'running') return;
       await orchestrator.start(handle);

@@ -23,7 +23,7 @@ This section covers the technical internals of Matrix OS for developers who want
 | Backend | Hono (HTTP/WebSocket gateway) |
 | Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
 | Federation | Matrix protocol (matrix-js-sdk) |
-| Database | SQLite via Drizzle ORM (better-sqlite3, WAL mode) |
+| Database | PostgreSQL via Kysely |
 | Validation | Zod 4 (`zod/v4` import) |
 | Scheduling | node-cron + native timers |
 | Testing | Vitest (99-100% coverage target, `@vitest/coverage-v8`) |
@@ -45,7 +45,7 @@ Hooks intercept agent actions at defined lifecycle points. `PreToolUse` hooks ru
 
 ### Dispatch Queue
 
-The gateway's dispatcher manages a serial FIFO queue by default, ensuring only one kernel call runs at a time to prevent file system corruption. It can be configured for concurrent dispatch with `maxConcurrency`, where each process registers in the SQLite `tasks` table.
+The gateway's dispatcher manages a serial FIFO queue by default, ensuring only one kernel call runs at a time to prevent file system corruption. It can be configured for concurrent dispatch with `maxConcurrency`, where each process registers in the PostgreSQL `tasks` table.
 
 ## Developer Resources
 

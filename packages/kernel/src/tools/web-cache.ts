@@ -59,7 +59,8 @@ export class WebCache {
       }
       parsed.searchParams.sort();
       return parsed.toString();
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[web-cache] Could not normalize cache URL:", err instanceof Error ? err.message : String(err));
       return url;
     }
   }

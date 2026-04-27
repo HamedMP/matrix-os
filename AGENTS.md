@@ -20,7 +20,7 @@ Key principles:
 - **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 4.6
 - **Frontend**: Next.js 16 (`proxy.ts` replaces middleware, Turbopack, React Compiler, `cacheComponents`), React 19
 - **Backend**: Hono (HTTP/WS gateway + channel adapters)
-- **Database**: SQLite/Drizzle ORM (kernel), Postgres/Kysely (social/app data)
+- **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data. Do not add SQLite/Drizzle/better-sqlite3 for new persistence.
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Testing**: Vitest, `@vitest/coverage-v8`
 - **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm
@@ -41,7 +41,7 @@ Key principles:
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
 - **Conventional Commits**: `feat:`, `fix:`, `test:`, `chore:`, `ci:`, `docs:`, `refactor:`
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
-- **Drizzle ORM only**: never raw SQL with better-sqlite3
+- **Kysely/Postgres only**: never add SQLite, Drizzle ORM, or better-sqlite3 for new persistence
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
 - After major features: run `/update-docs` to sync all documentation

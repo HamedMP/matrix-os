@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import * as fs from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import type { CronJob } from "./types.js";
 
 export interface CronStore {
@@ -11,6 +12,11 @@ export interface CronStore {
 
 export function createCronStore(filePath: string): CronStore {
   let cache: CronJob[] | null = null;
+  const writeFileNow = fs.writeFileSync as (
+    path: fs.PathOrFileDescriptor,
+    data: string,
+  ) => void;
+  const renameNow = fs.renameSync as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
 
   function load(): CronJob[] {
     if (!existsSync(filePath)) return [];
@@ -18,16 +24,21 @@ export function createCronStore(filePath: string): CronStore {
       const data = JSON.parse(readFileSync(filePath, "utf-8"));
       cache = Array.isArray(data) ? data : [];
       return cache;
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[cron] Could not load cron store:", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
 
   function save(jobs: CronJob[]): void {
     const tmp = filePath + ".tmp";
-    writeFileSync(tmp, JSON.stringify(jobs, null, 2));
-    renameSync(tmp, filePath);
     cache = jobs;
+    try {
+      writeFileNow(tmp, JSON.stringify(jobs, null, 2));
+      renameNow(tmp, filePath);
+    } catch (err: unknown) {
+      console.warn("[cron] Could not persist cron store:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   function list(): CronJob[] {

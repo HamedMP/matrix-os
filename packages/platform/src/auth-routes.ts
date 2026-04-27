@@ -209,7 +209,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     verificationBase: config.platformUrl,
     now: config.now,
     issueToken: async ({ clerkUserId }) => {
-      const container = getContainerByClerkId(config.db, clerkUserId);
+      const container = await getContainerByClerkId(config.db, clerkUserId);
       if (!container) {
         throw new Error('No container provisioned for this Clerk user');
       }
@@ -423,7 +423,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     if (!claims.sub || !claims.handle) {
       return c.json({ error: 'unauthorized' }, 401);
     }
-    const container = getContainer(config.db, claims.handle);
+    const container = await getContainer(config.db, claims.handle);
     if (!container) {
       return c.json({ error: 'unknown_handle' }, 404);
     }

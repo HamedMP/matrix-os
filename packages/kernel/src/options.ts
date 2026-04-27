@@ -55,7 +55,8 @@ function loadBrowserConfig(homePath: string): { enabled: boolean; headless: bool
       headless: config.browser.headless ?? true,
       timeout: config.browser.timeout ?? 30000,
     };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[kernel-options] Could not load browser config:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -64,7 +65,8 @@ function tryCreateBrowserServer(homePath: string, browserConfig: { headless: boo
   try {
     const { createBrowserMcpServer } = require("@matrix-os/mcp-browser/server");
     return createBrowserMcpServer({ homePath, ...browserConfig });
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[kernel-options] Could not create browser MCP server:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

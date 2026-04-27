@@ -31,7 +31,8 @@ function parseAppName(input: string): string | undefined {
   try {
     const parsed = JSON.parse(input);
     return parsed.app ?? parsed.message ?? undefined;
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[task-board] Failed to parse task input:", err instanceof Error ? err.message : String(err));
     return undefined;
   }
 }
@@ -48,7 +49,7 @@ export function useTaskBoard() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${GATEWAY_URL}/api/tasks`)
+    fetch(`${GATEWAY_URL}/api/tasks`, { signal: AbortSignal.timeout(10_000) })
       .then((res) => res.json())
       .then((data: TaskItem[]) => {
         setTasks(
@@ -58,7 +59,9 @@ export function useTaskBoard() {
           })),
         );
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[task-board] Failed to fetch tasks:", err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   const handleMessage = useCallback((msg: ServerMessage) => {
@@ -106,6 +109,7 @@ export function useTaskBoard() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "todo", input }),
+      signal: AbortSignal.timeout(10_000),
     });
   }, []);
 

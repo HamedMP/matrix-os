@@ -43,7 +43,8 @@ function validateWebUrl(url: string): void {
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[web-fetch] Invalid URL:", err instanceof Error ? err.message : String(err));
     throw new Error(`Invalid URL: ${url}`);
   }
   if (!["http:", "https:"].includes(parsed.protocol)) {
@@ -93,7 +94,10 @@ export function createWebFetchTool(opts: WebFetchToolOptions) {
       content = body;
       extractedVia = "cloudflare-markdown";
     } else {
-      const article = await extractWithReadability(body, url).catch(() => null);
+      const article = await extractWithReadability(body, url).catch((err: unknown) => {
+        console.warn("[web-fetch] Readability extraction failed:", err instanceof Error ? err.message : String(err));
+        return null;
+      });
       if (article && article.content.trim()) {
         content = extractMode === "text" ? article.textContent : article.content;
         title = article.title;
@@ -163,7 +167,8 @@ async function fetchWithFirecrawl(
       content: data.data.markdown,
       title: data.data.metadata?.title,
     };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[web-fetch] Firecrawl extraction failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

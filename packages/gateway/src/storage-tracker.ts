@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, statSync, appendFileSync, mkdirSync } from "node:fs";
+import * as fs from "node:fs";
+import { existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export interface StorageUsage {
@@ -11,6 +12,10 @@ export interface StorageTracker {
   measure(): StorageUsage;
   record(): void;
 }
+const appendFileNow = fs.appendFileSync as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
 
 function dirSize(dirPath: string): number {
   if (!existsSync(dirPath)) return 0;
@@ -26,8 +31,8 @@ function dirSize(dirPath: string): number {
         total += statSync(fullPath).size;
       }
     }
-  } catch {
-    // permission errors, etc.
+  } catch (err: unknown) {
+    console.warn("[storage-tracker] Could not measure directory:", err instanceof Error ? err.message : String(err));
   }
 
   return total;
@@ -46,8 +51,8 @@ function sqliteSizes(dataDir: string): Record<string, number> {
         sizes[app.name] = statSync(dbPath).size;
       }
     }
-  } catch {
-    // ignore
+  } catch (err: unknown) {
+    console.warn("[storage-tracker] Could not measure sqlite sizes:", err instanceof Error ? err.message : String(err));
   }
 
   return sizes;
@@ -68,7 +73,11 @@ export function createStorageTracker(homePath: string): StorageTracker {
       const logsDir = join(homePath, "system", "logs");
       if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
       const logPath = join(logsDir, "storage.jsonl");
-      appendFileSync(logPath, JSON.stringify(usage) + "\n");
+      try {
+        appendFileNow(logPath, JSON.stringify(usage) + "\n");
+      } catch (err: unknown) {
+        console.warn("[storage-tracker] Could not append usage log:", err instanceof Error ? err.message : String(err));
+      }
     },
   };
 }

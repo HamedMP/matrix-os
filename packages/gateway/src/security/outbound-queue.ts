@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import * as fs from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -24,6 +25,12 @@ interface QueueOptions {
 }
 
 const QUEUE_FILE = "system/outbound-queue.json";
+const writeFileNow = fs.writeFileSync as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
+const renameNow = fs.renameSync as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
+const unlinkNow = fs.unlinkSync as (path: fs.PathLike) => void;
 
 export function createOutboundQueue(
   homePath: string,
@@ -36,16 +43,28 @@ export function createOutboundQueue(
     if (!existsSync(filePath)) return [];
     try {
       return JSON.parse(readFileSync(filePath, "utf-8"));
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[outbound-queue] Could not load queue:", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
 
   function save(messages: OutboundMessage[]) {
     const tmp = filePath + ".tmp";
-    writeFileSync(tmp, JSON.stringify(messages, null, 2));
-    writeFileSync(filePath, readFileSync(tmp, "utf-8"));
-    try { unlinkSync(tmp); } catch { /* best effort cleanup */ }
+    try {
+      writeFileNow(tmp, JSON.stringify(messages, null, 2));
+      renameNow(tmp, filePath);
+    } catch (err: unknown) {
+      console.warn("[outbound-queue] Could not persist queue:", err instanceof Error ? err.message : String(err));
+      try {
+        if (existsSync(tmp)) unlinkNow(tmp);
+      } catch (cleanupErr: unknown) {
+          console.warn(
+            "[outbound-queue] Could not remove temporary queue file:",
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          );
+      }
+    }
   }
 
   return {

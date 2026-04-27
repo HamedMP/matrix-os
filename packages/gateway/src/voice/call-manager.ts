@@ -323,8 +323,8 @@ export class CallManager {
         providerCallId: call.providerCallId ?? "",
         text: greeting,
       });
-    } catch {
-      // Greeting delivery is best-effort
+    } catch (err: unknown) {
+      console.warn("[voice-call] Greeting delivery failed:", err instanceof Error ? err.message : String(err));
     }
   }
 

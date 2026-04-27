@@ -45,7 +45,8 @@ async function readManifest(trashDir: string): Promise<TrashManifestEntry[]> {
   try {
     const data = await readFile(manifestPath, "utf-8");
     return JSON.parse(data);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[trash] Could not read trash manifest:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -132,8 +133,8 @@ export async function trashList(
         size: stats.isFile() ? stats.size : undefined,
         type: stats.isDirectory() ? "directory" : "file",
       });
-    } catch {
-      // skip entries whose files were manually removed
+    } catch (err: unknown) {
+      console.warn("[trash] Could not inspect trash entry:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -210,8 +211,8 @@ export async function trashEmpty(
       try {
         await rm(fullPath, { recursive: true, force: true });
         deleted++;
-      } catch {
-        // skip entries whose files were already removed
+      } catch (err: unknown) {
+        console.warn("[trash] Could not remove trash entry:", err instanceof Error ? err.message : String(err));
       }
     }
 

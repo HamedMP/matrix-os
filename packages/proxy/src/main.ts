@@ -7,6 +7,7 @@ import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } fr
 const ANTHROPIC_API = process.env.ANTHROPIC_API_URL ?? 'https://api.anthropic.com';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 const PORT = Number(process.env.PROXY_PORT ?? 8080);
+const PROXY_FETCH_TIMEOUT_MS = 30_000;
 
 const app = new Hono();
 
@@ -63,6 +64,7 @@ app.post('/send/:targetHandle', async (c) => {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text: body.text, from: body.from }),
+    signal: AbortSignal.timeout(PROXY_FETCH_TIMEOUT_MS),
   });
 
   return c.json(await resp.json(), resp.status as any);
@@ -138,13 +140,16 @@ app.all('/v1/*', async (c) => {
       const parsed = JSON.parse(requestBody);
       bodyStreamFlag = parsed.stream === true;
       if (parsed.model) requestModel = parsed.model;
-    } catch {}
+    } catch (err: unknown) {
+      console.warn('[proxy] Failed to parse request body for usage metadata:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   const upstream = await fetch(targetUrl, {
     method: c.req.method,
     headers,
     body: requestBody,
+    signal: AbortSignal.timeout(PROXY_FETCH_TIMEOUT_MS),
   });
 
   if (bodyStreamFlag && upstream.body) {
@@ -152,7 +157,9 @@ app.all('/v1/*', async (c) => {
     const [passthrough, collector] = upstream.body.tee();
 
     // Collect usage from stream in background
-    collectStreamUsage(collector, userId, sessionId, upstream.status, requestModel).catch(() => {});
+    collectStreamUsage(collector, userId, sessionId, upstream.status, requestModel).catch((err: unknown) => {
+      console.warn('[proxy] Failed to collect streaming usage:', err instanceof Error ? err.message : String(err));
+    });
 
     return new Response(passthrough, {
       status: upstream.status,
@@ -180,7 +187,9 @@ app.all('/v1/*', async (c) => {
       cacheReadTokens = data.usage.cache_read_input_tokens ?? 0;
       cacheWriteTokens = data.usage.cache_creation_input_tokens ?? 0;
     }
-  } catch {}
+  } catch (err: unknown) {
+    console.warn('[proxy] Failed to parse response body for usage metadata:', err instanceof Error ? err.message : String(err));
+  }
 
   const costUsd = calculateCost({ model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens });
 
@@ -243,7 +252,9 @@ async function collectStreamUsage(
             cacheReadTokens = event.message.usage.cache_read_input_tokens ?? 0;
             cacheWriteTokens = event.message.usage.cache_creation_input_tokens ?? 0;
           }
-        } catch {}
+        } catch (err: unknown) {
+          console.warn('[proxy] Failed to parse streaming usage event:', err instanceof Error ? err.message : String(err));
+        }
       }
     }
   } finally {

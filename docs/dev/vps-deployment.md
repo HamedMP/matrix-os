@@ -415,7 +415,7 @@ docker stats --filter "name=matrixos-"        # resource usage
 ```bash
 # Access platform DB
 docker compose -f distro/docker-compose.platform.yml exec platform sh
-sqlite3 /data/platform.db
+psql "$PLATFORM_DATABASE_URL"
 
 # Useful queries
 SELECT handle, status, port, shell_port, last_active FROM containers;
@@ -907,7 +907,7 @@ ls /etc/cloudflared/credentials.json
 docker images ghcr.io/hamedmp/matrix-os
 
 # Check port conflicts
-sqlite3 /mnt/data/platform/platform.db "SELECT * FROM port_assignments"
+psql "$PLATFORM_DATABASE_URL" -c "SELECT * FROM port_assignments"
 ```
 
 ### User gets 502 Bad Gateway
@@ -1004,7 +1004,7 @@ docker exec matrixos-alice wget -qO- http://localhost:4000/health 2>&1
 
 ```bash
 # Platform + proxy DBs
-cp /mnt/data/platform/platform.db /backups/platform-$(date +%Y%m%d).db
+pg_dump --format=custom --file=/backups/platform-$(date +%Y%m%d).dump "$PLATFORM_DATABASE_URL"
 cp /mnt/data/proxy/proxy.db /backups/proxy-$(date +%Y%m%d).db
 
 # All user data
@@ -1019,7 +1019,7 @@ DATE=$(date +%Y%m%d)
 BACKUP_DIR=/backups/matrix-os/$DATE
 mkdir -p $BACKUP_DIR
 
-cp /mnt/data/platform/platform.db $BACKUP_DIR/
+pg_dump --format=custom --file=$BACKUP_DIR/platform.dump "$PLATFORM_DATABASE_URL"
 cp /mnt/data/proxy/proxy.db $BACKUP_DIR/
 tar czf $BACKUP_DIR/users.tar.gz /mnt/data/users/
 

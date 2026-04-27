@@ -3,9 +3,9 @@ import {
   renameSync,
   rmSync,
   readFileSync,
-  writeFileSync,
   statSync,
 } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 
 interface OpResult {
@@ -13,6 +13,10 @@ interface OpResult {
   error?: string;
   newSlug?: string;
 }
+const writeFileNow = fs.writeFileSync as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
 
 function nameToSlug(name: string): string {
   return name
@@ -86,9 +90,9 @@ export function renameApp(homePath: string, slug: string, newName: string): OpRe
       try {
         const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
         manifest.name = newName.trim();
-        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-      } catch {
-        // continue even if manifest update fails
+        writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
+      } catch (err: unknown) {
+        console.warn("[app-ops] Could not update manifest name:", err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -102,9 +106,9 @@ export function renameApp(homePath: string, slug: string, newName: string): OpRe
       try {
         let content = readFileSync(app.mdPath, "utf-8");
         content = content.replace(/^(name:\s*).+$/m, `$1${newName.trim()}`);
-        writeFileSync(app.mdPath, content);
-      } catch {
-        // continue even if md update fails
+        writeFileNow(app.mdPath, content);
+      } catch (err: unknown) {
+        console.warn("[app-ops] Could not update metadata name:", err instanceof Error ? err.message : String(err));
       }
     }
 

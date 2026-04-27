@@ -31,10 +31,12 @@ const CONV_PATTERN = /^system\/conversations\//;
 
 async function fetchConversations(): Promise<ConversationMeta[]> {
   try {
-    const res = await fetch(`${GATEWAY_URL}/api/conversations`);
+    const res = await fetch(`${GATEWAY_URL}/api/conversations`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (res.ok) return res.json();
-  } catch {
-    // gateway not available
+  } catch (err: unknown) {
+    console.warn("[conversation] Failed to fetch conversations:", err instanceof Error ? err.message : String(err));
   }
   return [];
 }
@@ -45,10 +47,11 @@ async function fetchConversation(
   try {
     const res = await fetch(
       `${GATEWAY_URL}/files/system/conversations/${id}.json`,
+      { signal: AbortSignal.timeout(10_000) },
     );
     if (res.ok) return res.json();
-  } catch {
-    // gateway not available
+  } catch (err: unknown) {
+    console.warn("[conversation] Failed to fetch conversation:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }

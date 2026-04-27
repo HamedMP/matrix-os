@@ -27,7 +27,8 @@ export function scanPluginCode(pluginDir: string): ScanResult[] {
     let entries: string[];
     try {
       entries = readdirSync(dir);
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[plugins] Could not scan plugin directory:", err instanceof Error ? err.message : String(err));
       return;
     }
     for (const entry of entries) {
@@ -49,8 +50,8 @@ export function scanPluginCode(pluginDir: string): ScanResult[] {
             results.push({ suspicious: true, patterns: found, file: fullPath });
           }
         }
-      } catch {
-        // skip unreadable files
+      } catch (err: unknown) {
+        console.warn("[plugins] Could not scan plugin file:", err instanceof Error ? err.message : String(err));
       }
     }
   }

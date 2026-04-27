@@ -35,7 +35,8 @@ function extractScore(filePath: string): number | null {
     }
 
     return null;
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[leaderboard] Could not extract score:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -44,7 +45,8 @@ function getFileMtime(filePath: string): string {
   try {
     const stat = statSync(filePath);
     return stat.mtime.toISOString();
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[leaderboard] Could not read score mtime:", err instanceof Error ? err.message : String(err));
     return new Date().toISOString();
   }
 }
@@ -59,7 +61,8 @@ export function getLeaderboard(
   let dirs: string[];
   try {
     dirs = readdirSync(dataDir);
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[leaderboard] Could not list data directory:", err instanceof Error ? err.message : String(err));
     return [];
   }
 
@@ -77,7 +80,8 @@ export function getLeaderboard(
     const dirPath = join(dataDir, dir);
     try {
       if (!statSync(dirPath).isDirectory()) continue;
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[leaderboard] Could not inspect game directory:", err instanceof Error ? err.message : String(err));
       continue;
     }
 
@@ -109,7 +113,8 @@ export function getLeaderboard(
     const dirPath = join(dataDir, dir);
     try {
       if (!statSync(dirPath).isDirectory()) continue;
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[leaderboard] Could not inspect game directory:", err instanceof Error ? err.message : String(err));
       continue;
     }
 

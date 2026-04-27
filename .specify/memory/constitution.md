@@ -105,7 +105,7 @@ Matrix OS serves individuals and organizations. An org is a group of users with 
 - **Runtime**: Node.js 24+
 - **AI Kernel**: Model-agnostic (current: Claude Agent SDK V1 `query()` with `resume` + Opus 4.6)
 - **Frontend**: React + Nextjs
-- **Database**: PostgreSQL via Kysely (per-user database, schema-per-app isolation) for app data. SQLite via Drizzle ORM (better-sqlite3, WAL mode) for kernel-internal state only.
+- **Database**: PostgreSQL via Kysely for platform, kernel durable state, per-user databases, app data, social data, and control-plane registries. SQLite, Drizzle ORM, and better-sqlite3 are not permitted for new Matrix OS persistence; migrate legacy references to Postgres/Kysely.
 - **Web Server**: Hono (lightweight, WebSocket support, channel adapters)
 - **Channels**: node-telegram-bot-api (Telegram), @whiskeysockets/baileys (WhatsApp), discord.js (Discord), @slack/bolt (Slack)
 - **Scheduling**: node-cron (cron expressions), native timers (intervals, one-shot)
@@ -199,4 +199,5 @@ This constitution supersedes all other development practices for Matrix OS. Amen
   - **NEW Principle VII**: Multi-Tenancy -- personal OS, org OS, RBAC, shared workspaces, strict personal/org boundary.
   - **Principle VIII** (was VII): Defense in Depth expanded with app sandboxing, org access control (RBAC, audit logs), and compliance (GDPR, data residency, content moderation).
   - **Principle IX** (was VIII): TDD renumbered.
-  - **Tech constraints**: AI kernel marked model-agnostic, container-per-user flagged as current implementation (not principle), Postgres preferred over SQLite.
+  - **Tech constraints**: AI kernel marked model-agnostic, container-per-user flagged as current implementation (not principle), Postgres selected as the standard persistence layer.
+- **2.1.0** (2026-04-27): Database standard hardened. PostgreSQL via Kysely is the required persistence layer for platform, kernel durable state, per-user, app, social, and control-plane data. SQLite, Drizzle ORM, and better-sqlite3 are no longer accepted for new Matrix OS persistence.

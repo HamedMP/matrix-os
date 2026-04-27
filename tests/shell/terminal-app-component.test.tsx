@@ -161,7 +161,7 @@ describe("TerminalApp", () => {
       props.onSessionAttached(props.paneTree.id, "session-pending-close");
     });
 
-    fireEvent.click(screen.getByText("x"));
+    fireEvent.click(screen.getByTitle("Close tab"));
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     const deleteCalls = fetchMock.mock.calls.filter(([input, init]) => (

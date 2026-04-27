@@ -45,7 +45,8 @@ export function loadAppMeta(
           author: strOrUndef(frontmatter.author),
           version: strOrUndef(frontmatter.version),
         };
-      } catch {
+      } catch (err: unknown) {
+        console.warn("[app-meta] Could not parse app metadata:", err instanceof Error ? err.message : String(err));
         return { name: baseName, category: "utility" };
       }
     }

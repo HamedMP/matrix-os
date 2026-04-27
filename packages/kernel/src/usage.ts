@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 
 export interface UsageEntry {
@@ -30,6 +31,10 @@ export interface UsageTracker {
   getMonthly(month?: string): UsageSummary;
   checkLimit(action: string, policy?: UsagePolicy): LimitResult;
 }
+const appendFileNow = fs.appendFileSync as (
+  path: string,
+  data: string,
+) => void;
 
 export function createUsageTracker(homePath: string): UsageTracker {
   const logPath = join(homePath, "system", "logs", "usage.jsonl");
@@ -69,7 +74,7 @@ export function createUsageTracker(homePath: string): UsageTracker {
         timestamp: new Date().toISOString(),
         ...(metadata ? { metadata } : {}),
       };
-      appendFileSync(logPath, JSON.stringify(entry) + "\n");
+      appendFileNow(logPath, JSON.stringify(entry) + "\n");
     },
 
     getDaily(date?: string): UsageSummary {

@@ -112,9 +112,9 @@ The gateway serves files from `~/matrixos/` through several endpoints:
 
 A `chokidar`-based file watcher in `packages/gateway/src/watcher.ts` monitors `~/matrixos/` for changes. When files change, it broadcasts `file:change` events over WebSocket. The shell's `useFileWatcher` hook consumes these events to render updates in real time -- new apps appear as windows, theme changes apply instantly, and the dock updates automatically.
 
-## SQLite Database
+## PostgreSQL Database
 
-While most state is file-based, a SQLite database (`matrixos.db`) managed by Drizzle ORM handles structured data:
+While most state is file-based, PostgreSQL managed through Kysely handles structured durable data:
 
 | Table | Purpose |
 |-------|---------|
@@ -122,4 +122,4 @@ While most state is file-based, a SQLite database (`matrixos.db`) managed by Dri
 | `messages` | Inter-agent IPC messaging |
 | `memories` | RAG storage with FTS5 full-text search |
 
-The database runs in WAL mode for concurrent read access. Schema is defined in `packages/kernel/src/schema.ts`.
+PostgreSQL provides concurrent access, transactions, and recovery for structured kernel and app state.

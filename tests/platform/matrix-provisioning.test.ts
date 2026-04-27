@@ -1,8 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { type PlatformDB } from '../../packages/platform/src/db.js';
 import {
   createMatrixProvisioner,
   type MatrixProvisioner,
@@ -11,14 +9,12 @@ import {
 } from '../../packages/platform/src/matrix-provisioning.js';
 
 describe('platform/matrix-provisioning', () => {
-  let tmpDir: string;
   let db: PlatformDB;
   let fetchMock: ReturnType<typeof vi.fn>;
   let provisioner: MatrixProvisioner;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'matrix-prov-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     fetchMock = vi.fn();
     provisioner = createMatrixProvisioner({
       db,
@@ -28,8 +24,8 @@ describe('platform/matrix-provisioning', () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   function mockRegisterAndLogin(userId: string, accessToken: string) {
@@ -107,7 +103,7 @@ describe('platform/matrix-provisioning', () => {
 
       await provisioner.provisionUser('bob');
 
-      const user = getMatrixUser(db, 'bob');
+      const user = await getMatrixUser(db, 'bob');
       expect(user).toBeTruthy();
       expect(user!.handle).toBe('bob');
       expect(user!.humanMatrixId).toBe('@bob:matrix-os.com');
@@ -161,8 +157,8 @@ describe('platform/matrix-provisioning', () => {
   });
 
   describe('getMatrixUser', () => {
-    it('returns null for non-existent user', () => {
-      const user = getMatrixUser(db, 'nonexistent');
+    it('returns null for non-existent user', async () => {
+      const user = await getMatrixUser(db, 'nonexistent');
       expect(user).toBeNull();
     });
   });
@@ -177,7 +173,7 @@ describe('platform/matrix-provisioning', () => {
       await provisioner.provisionUser('alice');
       await provisioner.provisionUser('bob');
 
-      const users = listMatrixUsers(db);
+      const users = await listMatrixUsers(db);
       expect(users).toHaveLength(2);
       expect(users.map((u) => u.handle)).toContain('alice');
       expect(users.map((u) => u.handle)).toContain('bob');
@@ -235,18 +231,18 @@ describe('platform/matrix-provisioning', () => {
       });
 
       await provisioner.provisionUser('eve');
-      const firstUser = getMatrixUser(db, 'eve');
+      const firstUser = await getMatrixUser(db, 'eve');
       expect(firstUser).toBeTruthy();
 
       // Second provision with same handle -- insertMatrixUser may fail due to PK constraint
       // or succeed by overwriting. This tests whatever the implementation does.
       try {
         await provisioner.provisionUser('eve');
-        const secondUser = getMatrixUser(db, 'eve');
+        const secondUser = await getMatrixUser(db, 'eve');
         expect(secondUser).toBeTruthy();
       } catch {
         // If PK constraint prevents duplicate, that's also acceptable
-        expect(getMatrixUser(db, 'eve')).toBeTruthy();
+        expect(await getMatrixUser(db, 'eve')).toBeTruthy();
       }
     });
   });
@@ -257,10 +253,10 @@ describe('platform/matrix-provisioning', () => {
       mockRegisterAndLogin('@alice_ai:matrix-os.com', 'tok2');
 
       await provisioner.provisionUser('alice');
-      expect(getMatrixUser(db, 'alice')).toBeTruthy();
+      expect(await getMatrixUser(db, 'alice')).toBeTruthy();
 
-      provisioner.deprovisionUser('alice');
-      expect(getMatrixUser(db, 'alice')).toBeNull();
+      await provisioner.deprovisionUser('alice');
+      expect(await getMatrixUser(db, 'alice')).toBeNull();
     });
   });
 });

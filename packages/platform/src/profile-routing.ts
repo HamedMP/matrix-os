@@ -1,7 +1,13 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const RESERVED_SUBDOMAINS = new Set(["www", "api", "admin", "mail", "ftp"]);
+
+export interface CustomerVpsProxyMachine {
+  status: string;
+  publicIPv4: string | null;
+}
 
 export function resolveSubdomain(host: string): string | null {
   const match = host
@@ -13,6 +19,16 @@ export function resolveSubdomain(host: string): string | null {
   return sub;
 }
 
+export function buildCustomerVpsProxyUrl(
+  machine: CustomerVpsProxyMachine,
+  path: string,
+  queryString = "",
+): string | null {
+  if (machine.status !== "running" || !machine.publicIPv4) return null;
+  const safePath = path.startsWith("/") ? path : `/${path}`;
+  return `https://${machine.publicIPv4}:443${safePath}${queryString}`;
+}
+
 export function isPublicProfilePath(path: string): boolean {
   if (path === "/" || path === "/profile" || path.startsWith("/profile/")) {
     return true;
@@ -20,15 +36,43 @@ export function isPublicProfilePath(path: string): boolean {
   return false;
 }
 
-export function createDefaultProfile(homePath: string, handle: string): void {
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (err: unknown) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function writeFileAtomic(path: string, contents: string): Promise<void> {
+  const tmpPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmpPath, contents, { flag: "wx" });
+    await rename(tmpPath, path);
+  } catch (err: unknown) {
+    try {
+      await rm(tmpPath, { force: true });
+    } catch (cleanupErr: unknown) {
+      console.warn(
+        "[profile-routing] Failed to remove temporary profile file:",
+        cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+      );
+    }
+    throw err;
+  }
+}
+
+export async function createDefaultProfile(homePath: string, handle: string): Promise<void> {
   const profileDir = join(homePath, "apps", "profile");
   const indexPath = join(profileDir, "index.html");
 
-  if (existsSync(indexPath)) return;
+  if (await pathExists(indexPath)) return;
 
-  if (!existsSync(profileDir)) {
-    mkdirSync(profileDir, { recursive: true });
-  }
+  await mkdir(profileDir, { recursive: true });
 
   const manifest = {
     name: "Profile",
@@ -39,25 +83,24 @@ export function createDefaultProfile(homePath: string, handle: string): void {
     author: `@${handle}`,
   };
 
-  writeFileSync(
+  await writeFileAtomic(
     join(profileDir, "matrix.json"),
     JSON.stringify(manifest, null, 2),
   );
 
   const html = generateProfileHtml(handle);
-  writeFileSync(indexPath, html);
+  await writeFileAtomic(indexPath, html);
 }
 
 function generateProfileHtml(handle: string): string {
-  // Sanitize handle to prevent XSS in template
-  const safeHandle = handle.replace(/[<>"'&]/g, "");
+  const htmlHandle = escapeHtml(handle);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>@${safeHandle} - Matrix OS</title>
+  <title>@${htmlHandle} - Matrix OS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -141,7 +184,7 @@ function generateProfileHtml(handle: string): string {
   </div>
 
   <script>
-    const handle = ${JSON.stringify(safeHandle)};
+    const handle = ${JSON.stringify(handle)};
     document.getElementById('avatar').textContent = handle.charAt(0).toUpperCase();
     document.getElementById('display-name').textContent = handle;
     document.getElementById('handle-text').textContent = '@' + handle + ':matrix-os.com';
@@ -173,9 +216,20 @@ function generateProfileHtml(handle: string): string {
           card.appendChild(descEl);
           grid.appendChild(card);
         }
-      } catch {}
+      } catch (err) {
+        console.error('Failed to load published apps', err);
+      }
     })();
   </script>
 </body>
 </html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

@@ -8,6 +8,10 @@ import { listTasks } from "./ipc.js";
 import { createMemoryStore } from "./memory.js";
 import type { MatrixDB } from "./db.js";
 
+function warnPromptFallback(context: string, err: unknown): void {
+  console.warn(`[prompt] ${context}: ${err instanceof Error ? err.message : String(err)}`);
+}
+
 export function estimateTokens(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);
@@ -90,8 +94,8 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
           sections.push(lines.join("\n"));
         }
       }
-    } catch {
-      // Memory table may not exist yet in older DBs
+    } catch (err: unknown) {
+      warnPromptFallback("Could not load memories", err);
     }
   }
 
@@ -150,7 +154,8 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
       } else {
         sections.push(JSON.stringify(modules, null, 2));
       }
-    } catch {
+    } catch (err: unknown) {
+      warnPromptFallback("Could not parse modules", err);
       sections.push("No modules installed yet.");
     }
   } else {
@@ -176,7 +181,8 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
       } else {
         sections.push("No apps installed yet.");
       }
-    } catch {
+    } catch (err: unknown) {
+      warnPromptFallback("Could not list installed apps", err);
       sections.push("No apps installed yet.");
     }
   } else {
@@ -191,7 +197,10 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
       const appDirs = readdirSync(dataPath).filter((f) => {
         try {
           return readdirSync(join(dataPath, f)).some((k) => k.endsWith(".json"));
-        } catch { return false; }
+        } catch (err: unknown) {
+          warnPromptFallback(`Could not inspect app data for ${f}`, err);
+          return false;
+        }
       });
       if (appDirs.length > 0) {
         const lines = appDirs.map((app) => {
@@ -204,7 +213,8 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
       } else {
         sections.push("No app data stored yet.");
       }
-    } catch {
+    } catch (err: unknown) {
+      warnPromptFallback("Could not summarize app data", err);
       sections.push("No app data stored yet.");
     }
   } else {
@@ -235,7 +245,9 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
           if (body) sections.push(`- ${body}`);
         }
       }
-    } catch { /* graceful */ }
+    } catch (err: unknown) {
+      warnPromptFallback("Could not load recent conversation summaries", err);
+    }
   }
 
   // Knowledge TOC
@@ -253,7 +265,8 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
       } else {
         sections.push("No knowledge files yet.");
       }
-    } catch {
+    } catch (err: unknown) {
+      warnPromptFallback("Could not list knowledge base", err);
       sections.push("No knowledge files yet.");
     }
   } else {
@@ -297,7 +310,8 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
           try {
             const input = JSON.parse(p.input);
             return `- ${input.message ?? "unknown task"}`;
-          } catch {
+          } catch (err: unknown) {
+            warnPromptFallback(`Could not parse active process ${p.id}`, err);
             return `- ${p.id}`;
           }
         }).join("\n"),

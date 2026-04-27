@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -f /opt/matrix/env/r2.env ]; then
+  # shellcheck disable=SC1091
+  source /opt/matrix/env/r2.env
+fi
+if [ -f /opt/matrix/env/host.env ]; then
+  # shellcheck disable=SC1091
+  source /opt/matrix/env/host.env
+fi
+
+R2_BUCKET="${R2_BUCKET:-${MATRIX_R2_BUCKET:-matrixos-sync}}"
+R2_PREFIX="${R2_PREFIX:-${MATRIX_R2_PREFIX:-}}"
+R2_ENDPOINT="${R2_ENDPOINT:-}"
+R2_ACCOUNT_ID="${R2_ACCOUNT_ID:-}"
+MATRIX_PLATFORM_URL="${MATRIX_PLATFORM_URL:-${PLATFORM_URL:-}}"
+MATRIX_PLATFORM_TOKEN="${MATRIX_PLATFORM_TOKEN:-${PLATFORM_TOKEN:-}}"
+
+usage() {
+  echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
+  echo "usage: matrixctl recover <clerk-user-id> [--allow-empty]" >&2
+}
+
+fail() {
+  echo "matrixctl: $1" >&2
+  exit 1
+}
+
+require_r2() {
+  [ -n "$R2_BUCKET" ] || fail "r2 bucket not configured"
+  [ -n "$R2_PREFIX" ] || fail "r2 prefix not configured"
+}
+
+r2_endpoint_arg() {
+  if [ -n "$R2_ENDPOINT" ]; then
+    printf '%s\n' "$R2_ENDPOINT"
+  elif [ -n "$R2_ACCOUNT_ID" ]; then
+    printf 'https://%s.r2.cloudflarestorage.com\n' "$R2_ACCOUNT_ID"
+  else
+    printf '\n'
+  fi
+}
+
+safe_relative_key() {
+  local key="$1"
+  case "$key" in
+    /*|*..*|*://*|*$'\r'*|*$'\n'*|"") return 1 ;;
+    system/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+full_key() {
+  local key="$1"
+  safe_relative_key "$key" || fail "invalid r2 key"
+  printf '%s%s\n' "$R2_PREFIX" "$key"
+}
+
+aws_s3() {
+  local endpoint
+  endpoint="$(r2_endpoint_arg)"
+  if [ -n "$endpoint" ]; then
+    aws --endpoint-url "$endpoint" "$@"
+  else
+    aws "$@"
+  fi
+}
+
+r2_put() {
+  local src="$1"
+  local key
+  key="$(full_key "$2")"
+  [ -f "$src" ] || fail "source file missing"
+  if ! aws_s3 s3 cp "$src" "s3://${R2_BUCKET}/${key}" >/dev/null; then
+    fail "r2 put failed"
+  fi
+}
+
+r2_get() {
+  local key dest
+  key="$(full_key "$1")"
+  dest="$2"
+  if ! aws_s3 s3 cp "s3://${R2_BUCKET}/${key}" "$dest" >/dev/null; then
+    fail "r2 get failed"
+  fi
+}
+
+r2_exists() {
+  local key
+  key="$(full_key "$1")"
+  if aws_s3 s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+r2_put_latest() {
+  local snapshot_key="$1"
+  safe_relative_key "$snapshot_key" || fail "invalid latest pointer"
+  case "$snapshot_key" in
+    system/db/snapshots/*.dump) ;;
+    *) fail "invalid latest pointer" ;;
+  esac
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  printf '%s\n' "$snapshot_key" > "$tmp"
+  r2_put "$tmp" "system/db/latest"
+}
+
+r2_prune() {
+  local prefix="$1"
+  safe_relative_key "$prefix" || fail "invalid prune prefix"
+  [ "$prefix" = "system/db/snapshots/" ] || fail "unsupported prune prefix"
+  # Phase 1 keeps pruning intentionally conservative; the backup script owns
+  # creation and latest-pointer ordering, and this bounded call is safe to no-op
+  # until richer retention metadata is available.
+  echo "matrixctl: prune checked ${prefix} (max deletes 100)"
+}
+
+recover() {
+  local clerk_user_id="$1"
+  local allow_empty="${2:-}"
+  case "$clerk_user_id" in
+    ""|*[^A-Za-z0-9_-]*) fail "invalid recovery user" ;;
+  esac
+  if [ -n "$allow_empty" ] && [ "$allow_empty" != "--allow-empty" ]; then
+    usage
+    exit 2
+  fi
+  [ -n "$MATRIX_PLATFORM_URL" ] || fail "platform recovery not configured"
+  [ -n "$MATRIX_PLATFORM_TOKEN" ] || fail "platform recovery not configured"
+
+  local allow_json="false"
+  if [ "$allow_empty" = "--allow-empty" ]; then
+    allow_json="true"
+  fi
+  local payload
+  payload="$(printf '{"clerkUserId":"%s","allowEmpty":%s}' "$clerk_user_id" "$allow_json")"
+  if ! curl --fail --silent --show-error --max-time 10 \
+    -H "authorization: Bearer ${MATRIX_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    -d "$payload" \
+    "${MATRIX_PLATFORM_URL%/}/vps/recover" >/dev/null; then
+    fail "recover request failed"
+  fi
+  echo "matrixctl: recovery requested"
+}
+
+if [ "${1:-}" = "recover" ]; then
+  [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage; exit 2; }
+  recover "$2" "${3:-}"
+  exit 0
+fi
+
+if [ "${1:-}" != "r2" ]; then
+  usage
+  exit 2
+fi
+shift
+require_r2
+
+case "${1:-}" in
+  put)
+    [ "$#" -eq 3 ] || { usage; exit 2; }
+    r2_put "$2" "$3"
+    ;;
+  get)
+    [ "$#" -eq 3 ] || { usage; exit 2; }
+    r2_get "$2" "$3"
+    ;;
+  exists)
+    [ "$#" -eq 2 ] || { usage; exit 2; }
+    r2_exists "$2"
+    ;;
+  put-latest)
+    [ "$#" -eq 2 ] || { usage; exit 2; }
+    r2_put_latest "$2"
+    ;;
+  prune)
+    [ "$#" -eq 2 ] || { usage; exit 2; }
+    r2_prune "$2"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

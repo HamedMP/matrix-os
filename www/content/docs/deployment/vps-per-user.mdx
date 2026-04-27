@@ -1,0 +1,107 @@
+---
+title: VPS-per-User
+description: Phase 1 operator notes for customer VPS provisioning, backup, and recovery.
+---
+
+# VPS-per-User
+
+Phase 1 provisions one Hetzner VPS for one opt-in customer while preserving the legacy container path for everyone else. Operators should treat this as a controlled rollout path, not the default hosting model.
+
+## Phase 1 Scope
+
+Included:
+
+- Lazy provisioning through `POST /vps/provision` for an authenticated internal operator request.
+- One-time host registration through `POST /vps/register`.
+- VPS-first routing for users with a `running` `user_machines` row.
+- Shared `code.matrix-os.com` routing to the authenticated user's VPS-hosted code-server gateway.
+- Customer host restore gate, hourly Postgres backups, and R2 metadata pointers.
+- Manual recovery through `POST /vps/recover` or `matrixctl recover`.
+
+Not included:
+
+- Automatic unreachable detection and replacement.
+- Sleep, warm pools, idle deletion, and geographic routing.
+- Existing-user migration automation.
+- In-place host-service upgrades for already-running VPSes.
+- Data deletion from R2 during phase-1 VPS deletion.
+
+## Cost And Quota
+
+The default server type is controlled by `HETZNER_SERVER_TYPE` and currently targets a small fixed shape such as `cpx21`. Before adding a customer, confirm:
+
+- The Hetzner customer project has quota for one additional server.
+- The expected monthly cost is accepted by the operator.
+- The customer is explicitly opted in.
+- `CUSTOMER_VPS_ENABLED=true` is set only in the intended environment.
+
+Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable users until recovery and rollback have been exercised for a non-production account.
+
+## Routing
+
+`code.matrix-os.com` is a single public entrypoint. The platform authenticates the Clerk session or `matrix_code_session`, resolves the user to a running VPS, strips user cookies and authorization headers, then forwards to that VPS over HTTPS with platform proof headers. If no running VPS exists, the legacy container code-server path remains the fallback for non-migrated users.
+
+## Backup Retention
+
+The customer host runs `matrix-db-backup.timer` hourly. The backup script must upload a timestamped snapshot before updating `system/db/latest`.
+
+R2 keys:
+
+- `system/vps-meta.json`: current machine metadata and heartbeat timestamp.
+- `system/db/latest`: latest successful snapshot pointer.
+- `system/db/snapshots/<timestamp>.dump`: Postgres custom-format snapshot restored directly with `pg_restore`.
+
+Retention pruning is deferred in this slice, so the hourly backup path uploads a new snapshot and updates `system/db/latest` without calling a no-op prune command.
+
+## Manual Recovery
+
+Use recovery when a customer VPS is failed, unrecoverable, or intentionally replaced.
+
+```bash
+curl -sS -X POST "$PLATFORM_PUBLIC_URL/vps/recover" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"clerkUserId":"user_test_vps"}'
+```
+
+Expected behavior:
+
+- The platform verifies `system/db/latest` unless `allowEmpty` is explicitly true.
+- The active machine row moves to `recovering` with a new `machineId`.
+- The old Hetzner server is deleted if it exists.
+- The replacement server boots from cloud-init and restores before gateway startup.
+- The VPS registers and eventually returns `running`.
+
+Use `allowEmpty` only for a new or intentionally empty user:
+
+```bash
+curl -sS -X POST "$PLATFORM_PUBLIC_URL/vps/recover" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"clerkUserId":"user_test_vps","allowEmpty":true}'
+```
+
+## Restored State
+
+Restored:
+
+- Postgres app data included in the latest successful snapshot.
+- VPS metadata needed for routing and operator checks.
+
+Not restored in this slice:
+
+- Any data that was never uploaded to R2.
+- In-memory process state.
+- A failed backup that did not update `system/db/latest`.
+
+If restore fails, `matrix-restore.service` exits non-zero and `matrix-gateway.service` remains gated by `ConditionPathExists=/opt/matrix/restore-complete`.
+
+## Rollback
+
+Rollback is a routing decision for phase 1:
+
+- Users without a `running` `user_machines` row continue using the legacy container path.
+- To stop serving a VPS user, delete or move the machine out of `running` state and verify the legacy container route is available.
+- `DELETE /vps/:machineId` soft-deletes the platform row and deletes the Hetzner server, but does not remove R2 data.
+
+Do not request review or rollout approval while still pushing commits to the branch.

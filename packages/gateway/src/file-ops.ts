@@ -45,7 +45,8 @@ export async function fileStat(
       created: new Date(stats.birthtimeMs).toISOString(),
       mime: type === "file" ? getMimeType(extname(name)) : undefined,
     };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[file-ops] Stat failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -60,7 +61,8 @@ export async function fileMkdir(
   try {
     await mkdir(resolved, { recursive: true });
     return { ok: true, path: requestedPath };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[file-ops] Mkdir failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, error: "Failed to create directory" };
   }
 }
@@ -107,7 +109,8 @@ export async function fileRename(
     await mkdir(dir, { recursive: true });
     await rename(resolvedFrom, resolvedTo);
     return { ok: true };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[file-ops] Rename failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, error: "Failed to rename" };
   }
 }
@@ -133,7 +136,8 @@ export async function fileCopy(
     await mkdir(dir, { recursive: true });
     await cp(resolvedFrom, resolvedTo, { recursive: true });
     return { ok: true };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[file-ops] Copy failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, error: "Failed to copy" };
   }
 }
@@ -181,7 +185,8 @@ export async function fileDuplicate(
   try {
     await cp(resolved, resolvedNew, { recursive: true });
     return { ok: true, newPath };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[file-ops] Duplicate failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, error: "Failed to duplicate" };
   }
 }

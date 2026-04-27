@@ -3,6 +3,8 @@ import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
+  isCodeDomainHost,
+  isSessionRoutedHost,
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from "../../packages/platform/src/ws-upgrade.js";
@@ -37,10 +39,18 @@ describe("isSafeWebSocketUpgradePath", () => {
     expect(getWebSocketUpgradeHost("app.matrix-os.com", undefined)).toBe("app.matrix-os.com");
   });
 
-  it("accepts only app-domain websocket hosts", () => {
+  it("accepts only app-domain websocket hosts for shell upgrades", () => {
     expect(isAppDomainHost("app.matrix-os.com")).toBe(true);
     expect(isAppDomainHost("app.localhost:3000")).toBe(true);
     expect(isAppDomainHost("legacy.matrix-os.com")).toBe(false);
     expect(isAppDomainHost("malicious.example.com")).toBe(false);
+  });
+
+  it("accepts app and code domains as session-routed websocket hosts", () => {
+    expect(isCodeDomainHost("code.matrix-os.com")).toBe(true);
+    expect(isCodeDomainHost("code.localhost:3000")).toBe(true);
+    expect(isSessionRoutedHost("app.matrix-os.com")).toBe(true);
+    expect(isSessionRoutedHost("code.matrix-os.com")).toBe(true);
+    expect(isSessionRoutedHost("legacy.matrix-os.com")).toBe(false);
   });
 });
