@@ -1570,6 +1570,28 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           })
         : createNoopCustomerVpsSystemStore(),
     });
+    const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
+    if (reconciliationIntervalMs > 0) {
+      let reconciliationRunning = false;
+      const runCustomerVpsReconciliation = async () => {
+        if (reconciliationRunning || !customerVpsService) return;
+        reconciliationRunning = true;
+        try {
+          const result = await customerVpsService.reconcileProvisioning();
+          if (result.checked > 0) {
+            console.log(
+              `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
+            );
+          }
+        } catch (err: unknown) {
+          logPlatformRouteError('customer VPS reconciliation', err);
+        } finally {
+          reconciliationRunning = false;
+        }
+      };
+      void runCustomerVpsReconciliation();
+      setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs).unref();
+    }
   }
 
   const app = createApp({

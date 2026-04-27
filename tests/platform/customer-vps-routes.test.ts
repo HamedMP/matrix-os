@@ -90,7 +90,11 @@ describe('platform/customer-vps-routes', () => {
       headers: { authorization: `Bearer ${platformSecret}` },
     });
     expect(status.status).toBe(200);
-    expect(await status.json()).toMatchObject({ status: 'running', handle: 'alice' });
+    const statusBody = await status.json();
+    expect(statusBody).toMatchObject({ status: 'running', handle: 'alice' });
+    expect(statusBody).not.toHaveProperty('registrationTokenHash');
+    expect(statusBody).not.toHaveProperty('registrationTokenExpiresAt');
+    expect(statusBody).not.toHaveProperty('hetznerServerId');
 
     const deleted = await app.request(`/vps/${provisionBody.machineId}`, {
       method: 'DELETE',

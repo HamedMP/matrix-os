@@ -58,11 +58,26 @@ export interface RecoverResponse {
   etaSeconds: number;
 }
 
+export interface StatusResponse {
+  machineId: string;
+  clerkUserId: string;
+  handle: string;
+  status: CustomerVpsStatus;
+  imageVersion: string | null;
+  publicIPv4: string | null;
+  publicIPv6: string | null;
+  provisionedAt: string;
+  lastSeenAt: string | null;
+  deletedAt: string | null;
+  failureCode: string | null;
+  failureAt: string | null;
+}
+
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
-  status(machineId: string): Promise<UserMachineRecord>;
+  status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
@@ -108,6 +123,23 @@ function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): Pr
   };
 }
 
+function statusResponse(row: UserMachineRecord): StatusResponse {
+  return {
+    machineId: row.machineId,
+    clerkUserId: row.clerkUserId,
+    handle: row.handle,
+    status: row.status as CustomerVpsStatus,
+    imageVersion: row.imageVersion,
+    publicIPv4: row.publicIPv4,
+    publicIPv6: row.publicIPv6,
+    provisionedAt: row.provisionedAt,
+    lastSeenAt: row.lastSeenAt,
+    deletedAt: row.deletedAt,
+    failureCode: row.failureCode,
+    failureAt: row.failureAt,
+  };
+}
+
 function toFailureCode(err: unknown): CustomerVpsFailureCode {
   return err instanceof CustomerVpsError ? err.code : genericProviderError(err).code;
 }
@@ -140,11 +172,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
   return {
     async provision(input) {
-      const existing = getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
-      if (existing) {
-        return activeProvisionResponse(existing, deps.config.provisionEtaSeconds);
-      }
-
       const currentTime = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
@@ -157,7 +184,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         postgresPassword,
       );
 
-      runInPlatformTransaction(deps.db, () => {
+      const provisionRow = runInPlatformTransaction(deps.db, () => {
+        const existing = getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+        if (existing) {
+          return { existing };
+        }
         insertUserMachine(deps.db, {
           machineId,
           clerkUserId: input.clerkUserId,
@@ -168,13 +199,18 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
         });
+        return { existing: null };
       });
+      if (provisionRow.existing) {
+        return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
+      }
 
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
         hostConfig,
       );
 
+      let serverIdForCompensation: number | null = null;
       try {
         const server = await deps.hetzner.createServer({
           name: `matrix-${input.handle}`,
@@ -185,6 +221,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             machine_id: machineId,
           },
         });
+        serverIdForCompensation = server.id;
         updateUserMachine(deps.db, machineId, {
           hetznerServerId: server.id,
           publicIPv4: server.publicIPv4,
@@ -192,11 +229,22 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         });
       } catch (err: unknown) {
         const mapped = genericProviderError(err);
-        updateUserMachine(deps.db, machineId, {
-          status: 'failed',
-          failureCode: toFailureCode(err),
-          failureAt: now().toISOString(),
-        });
+        if (serverIdForCompensation !== null) {
+          try {
+            await deps.hetzner.deleteServer(serverIdForCompensation);
+          } catch (cleanupErr: unknown) {
+            logCustomerVpsError('provision compensation delete failed', cleanupErr);
+          }
+        }
+        try {
+          updateUserMachine(deps.db, machineId, {
+            status: 'failed',
+            failureCode: toFailureCode(err),
+            failureAt: now().toISOString(),
+          });
+        } catch (statusErr: unknown) {
+          logCustomerVpsError('provision failure status update failed', statusErr);
+        }
         throw mapped;
       }
 
@@ -253,15 +301,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async recover(input) {
-      const existing = getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
-      if (!existing) {
-        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
-      }
-
+      const existing = runInPlatformTransaction(deps.db, () => {
+        const row = getActiveUserMachineByClerkId(deps.db, input.clerkUserId);
+        if (!row) {
+          throw new CustomerVpsError(404, 'not_found', 'Machine not found');
+        }
+        if (row.status === 'recovering') {
+          throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
+        }
+        return row;
+      });
       if (!input.allowEmpty && !(await deps.systemStore.hasDbLatest(input.clerkUserId))) {
         throw new CustomerVpsError(409, 'invalid_state', 'No backup snapshot available');
       }
-
       const oldMachineId = existing.machineId;
       const oldServerId = existing.hetznerServerId;
       const currentTime = now();
@@ -276,29 +328,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         postgresPassword,
       );
 
-      runInPlatformTransaction(deps.db, () => {
-        updateUserMachine(deps.db, oldMachineId, {
-          machineId,
-          status: 'recovering',
-          hetznerServerId: null,
-          publicIPv4: null,
-          publicIPv6: null,
-          imageVersion: deps.config.imageVersion,
-          registrationTokenHash: registration.hash,
-          registrationTokenExpiresAt: registration.expiresAt,
-          provisionedAt: currentTime.toISOString(),
-          lastSeenAt: null,
-          deletedAt: null,
-          failureCode: null,
-          failureAt: null,
-        });
-      });
-
+      let newServerId: number | null = null;
       try {
-        if (oldServerId) {
-          await deps.hetzner.deleteServer(oldServerId);
-        }
-
         const userData = renderCloudInitTemplate(
           deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
           hostConfig,
@@ -312,19 +343,51 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             machine_id: machineId,
           },
         });
-        updateUserMachine(deps.db, machineId, {
-          hetznerServerId: server.id,
-          publicIPv4: server.publicIPv4,
-          publicIPv6: server.publicIPv6,
+        newServerId = server.id;
+        runInPlatformTransaction(deps.db, () => {
+          updateUserMachine(deps.db, oldMachineId, {
+            machineId,
+            status: 'recovering',
+            hetznerServerId: server.id,
+            publicIPv4: server.publicIPv4,
+            publicIPv6: server.publicIPv6,
+            imageVersion: deps.config.imageVersion,
+            registrationTokenHash: registration.hash,
+            registrationTokenExpiresAt: registration.expiresAt,
+            provisionedAt: currentTime.toISOString(),
+            lastSeenAt: null,
+            deletedAt: null,
+            failureCode: null,
+            failureAt: null,
+          });
         });
       } catch (err: unknown) {
         const mapped = genericProviderError(err);
-        updateUserMachine(deps.db, machineId, {
-          status: 'failed',
-          failureCode: toFailureCode(err),
-          failureAt: now().toISOString(),
-        });
+        if (newServerId !== null) {
+          try {
+            await deps.hetzner.deleteServer(newServerId);
+          } catch (cleanupErr: unknown) {
+            logCustomerVpsError('recover compensation delete failed', cleanupErr);
+          }
+        }
+        try {
+          updateUserMachine(deps.db, oldMachineId, {
+            status: 'failed',
+            failureCode: toFailureCode(err),
+            failureAt: now().toISOString(),
+          });
+        } catch (statusErr: unknown) {
+          logCustomerVpsError('recover failure status update failed', statusErr);
+        }
         throw mapped;
+      }
+
+      if (oldServerId) {
+        try {
+          await deps.hetzner.deleteServer(oldServerId);
+        } catch (err: unknown) {
+          logCustomerVpsError('recover old server cleanup failed', err);
+        }
       }
 
       return {
@@ -340,7 +403,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      return row;
+      return statusResponse(row);
     },
 
     async delete(machineId) {
@@ -348,10 +411,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!row || row.deletedAt) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
+      softDeleteUserMachine(deps.db, machineId, now().toISOString());
       if (row.hetznerServerId) {
         await deps.hetzner.deleteServer(row.hetznerServerId);
       }
-      softDeleteUserMachine(deps.db, machineId, now().toISOString());
       return { deleted: true, machineId, status: 'deleted' };
     },
 

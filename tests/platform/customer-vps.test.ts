@@ -89,6 +89,31 @@ describe('platform/customer-vps', () => {
     expect(row?.failureCode).toBe('quota_exceeded');
   });
 
+  it('deletes a newly-created Hetzner server when recording it in the DB fails', async () => {
+    const deleteServer = vi.fn().mockResolvedValue(undefined);
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        createServer: vi.fn().mockImplementation(async () => {
+          (db as { $client: { close: () => void } }).$client.close();
+          return {
+            id: 654321,
+            status: 'running',
+            publicIPv4: '203.0.113.20',
+          };
+        }),
+        deleteServer,
+      }),
+    });
+
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice' })).rejects.toMatchObject({
+      status: 500,
+      code: 'provider_unavailable',
+    });
+
+    expect(hetzner.createServer).toHaveBeenCalledOnce();
+    expect(deleteServer).toHaveBeenCalledWith(654321);
+  });
+
   it('registers a provisioned machine and consumes the registration token', async () => {
     const { service, systemStore } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -250,6 +275,9 @@ describe('platform/customer-vps', () => {
       status: 'recovering',
     });
     expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
+    expect(
+      vi.mocked(hetzner.createServer).mock.invocationCallOrder[1],
+    ).toBeLessThan(vi.mocked(hetzner.deleteServer).mock.invocationCallOrder[0]);
     const row = getUserMachine(db, recovered.machineId)!;
     expect(row).toMatchObject({
       clerkUserId: 'user_123',
@@ -259,6 +287,74 @@ describe('platform/customer-vps', () => {
       publicIPv4: '203.0.113.11',
     });
     expect(getUserMachine(db, provisioned.machineId)).toBeUndefined();
+  });
+
+  it('deletes a replacement server when recovery cannot record it in the DB', async () => {
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+    ];
+    const deleteServer = vi.fn().mockResolvedValue(undefined);
+    const createServer = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'running',
+        publicIPv4: '203.0.113.10',
+      })
+      .mockImplementationOnce(async () => {
+        (db as { $client: { close: () => void } }).$client.close();
+        return {
+          id: 789012,
+          status: 'running',
+          publicIPv4: '203.0.113.11',
+        };
+      });
+    const { service } = createService({
+      hetzner: createMockHetznerClient({ createServer, deleteServer }),
+      systemStore: createMockCustomerVpsSystemStore({
+        hasDbLatest: vi.fn().mockResolvedValue(true),
+      }),
+      machineIdFactory: () => machineIds.shift()!,
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(service.recover({ clerkUserId: 'user_123' })).rejects.toMatchObject({
+      status: 500,
+      code: 'provider_unavailable',
+    });
+
+    expect(deleteServer).toHaveBeenCalledWith(789012);
+    expect(deleteServer).not.toHaveBeenCalledWith(123456);
+  });
+
+  it('soft-deletes the DB row before deleting the Hetzner server', async () => {
+    let deletedAtDuringProviderDelete: string | null | undefined;
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        deleteServer: vi.fn().mockImplementation(async () => {
+          deletedAtDuringProviderDelete = getUserMachine(db, '9f05824c-8d0a-4d83-9cb4-b312d43ff112')?.deletedAt;
+        }),
+      }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await service.delete(provisioned.machineId);
+
+    expect(hetzner.deleteServer).toHaveBeenCalledWith(123456);
+    expect(deletedAtDuringProviderDelete).toBe('2026-04-26T12:00:00.000Z');
   });
 
   it('documents first-customer rollout checks and recovery expectations', () => {
