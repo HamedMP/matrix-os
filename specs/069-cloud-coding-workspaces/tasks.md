@@ -139,7 +139,9 @@ Untracked support/spec files currently present:
 ### Review Loop Engine
 
 - [ ] T300 Add failing unit and integration tests for findings parsing, legal/illegal review transitions, convergence, stall, parse failure, verification failure, operator stop/approve, max-round limits, and recovery from partial writes.
-- [ ] T301 Implement `findings-parser.ts` for structured markdown findings and explicit parse failure states.
+  - Partial: `tests/gateway/findings-parser.test.ts` covers structured findings parsing, zero-finding convergence input, parse failure states, unsafe paths, and file parsing.
+- [x] T301 Implement `findings-parser.ts` for structured markdown findings and explicit parse failure states.
+  - Files: `packages/gateway/src/findings-parser.ts`, `tests/gateway/findings-parser.test.ts`
 - [ ] T302 Implement `review-loop.ts` state machine for reviewer/implementer rounds, control files, convergence gates, failures, stop/next/approve, and max rounds.
 - [ ] T303 Add review prompts and atomic `.matrix/review-round-{N}.json` control-file protocol.
 - [ ] T304 Persist review records under `~/system/reviews/{reviewId}.json`.
