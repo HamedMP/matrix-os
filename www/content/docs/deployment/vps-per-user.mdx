@@ -47,8 +47,8 @@ Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable 
 | --- | --- | --- |
 | `CUSTOMER_VPS_ENABLED` | Yes | Enables the VPS provisioning path for the intended environment. |
 | `CUSTOMER_VPS_IMAGE_VERSION` | Yes | Selects the host bundle key at `system-bundles/<imageVersion>/matrix-host-bundle.tar.gz`. |
-| `MATRIX_HOST_BUNDLE_URL` | No | Optional override for the exact bundle URL. CI publishes the default bundle and sidecar `.sha256` to R2. |
-| `MATRIX_HOST_BUNDLE_BASE_URL` | No | Optional public base URL for default bundle URL generation when not using `MATRIX_HOST_BUNDLE_URL`. |
+| `MATRIX_HOST_BUNDLE_URL` | No | Optional override for the exact bundle URL. By default cloud-init downloads through the platform tunnel at `/system-bundles/<imageVersion>/matrix-host-bundle.tar.gz`. |
+| `MATRIX_HOST_BUNDLE_BASE_URL` | No | Optional base URL for default bundle URL generation when not using `MATRIX_HOST_BUNDLE_URL`; defaults to `PLATFORM_PUBLIC_URL`. |
 | `CUSTOMER_VPS_TLS_VERIFY` | No | Defaults to `false` because phase-1 customer hosts use self-signed local TLS on :443. Set `true` only after installing publicly trusted host certificates. |
 | `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token for provisioning and deletion. |
 | `R2_BUCKET` / `S3_BUCKET` | Yes | Bucket used for metadata, DB snapshots, and host bundles. |

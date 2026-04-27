@@ -44,6 +44,7 @@ import {
 import type { CustomerVpsService } from './customer-vps.js';
 import { createCustomerVpsRoutes } from './customer-vps-routes.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
+import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -59,6 +60,12 @@ const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
+const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
+const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const HOST_BUNDLE_FILES = new Set([
+  'matrix-host-bundle.tar.gz',
+  'matrix-host-bundle.tar.gz.sha256',
+]);
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -104,6 +111,14 @@ function logPlatformRouteError(route: string, err: unknown): void {
     `[platform] ${route} failed:`,
     err instanceof Error ? err.message : String(err),
   );
+}
+
+function isObjectNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return candidate.name === 'NoSuchKey' ||
+    candidate.name === 'NotFound' ||
+    candidate.$metadata?.httpStatusCode === 404;
 }
 
 function bearerTokenEquals(authHeader: string | undefined, expected: string): boolean {
@@ -602,6 +617,7 @@ export function createApp(deps: {
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
+  customerVpsObjectStore?: CustomerVpsObjectStore;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
@@ -635,6 +651,48 @@ export function createApp(deps: {
     return c.text(metrics, 200, {
       'Content-Type': metricsRegistry.contentType,
     });
+  });
+
+  // Public, immutable host-service bundles used by customer VPS cloud-init.
+  // The platform serves these from private R2 through the existing Cloudflare
+  // tunnel, so bootstrapping does not require making the whole bucket public.
+  app.get('/system-bundles/:imageVersion/:file', async (c) => {
+    if (!deps.customerVpsObjectStore) {
+      return c.json({ error: 'Host bundle storage unavailable' }, 503);
+    }
+
+    const imageVersion = c.req.param('imageVersion');
+    const file = c.req.param('file');
+    if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(imageVersion) || !HOST_BUNDLE_FILES.has(file)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    try {
+      const object = await deps.customerVpsObjectStore.getObject(
+        `system-bundles/${imageVersion}/${file}`,
+        { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+      );
+      if (!object.body) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      const headers = new Headers({
+        'content-type': file.endsWith('.sha256') ? 'text/plain; charset=utf-8' : 'application/gzip',
+        'cache-control': 'public, max-age=31536000, immutable',
+        'cdn-cache-control': 'public, max-age=31536000, immutable',
+        'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
+      });
+      if (object.etag) headers.set('etag', object.etag);
+      if (typeof object.contentLength === 'number') {
+        headers.set('content-length', String(object.contentLength));
+      }
+      return new Response(object.body, { status: 200, headers });
+    } catch (err: unknown) {
+      if (isObjectNotFoundError(err)) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      logPlatformRouteError('/system-bundles/:imageVersion/:file', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
   });
 
   // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing
@@ -1642,6 +1700,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     internalIntegrationRoutes,
     internalSyncRoutes,
     customerVpsService,
+    customerVpsObjectStore,
   });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {

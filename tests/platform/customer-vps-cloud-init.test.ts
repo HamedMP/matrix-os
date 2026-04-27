@@ -13,7 +13,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     imageVersion: 'matrix-os-host-2026.04.26-1',
-    hostBundleUrl: 'https://assets.matrix-os.com/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+    hostBundleUrl: 'https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
     registrationToken: 'registration-secret',
     r2Bucket: 'matrixos-sync',
@@ -40,7 +40,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const rendered = renderCloudInitTemplate(cloudInit, input);
 
     expect(rendered).toContain(
-      'MATRIX_HOST_BUNDLE_URL=https://assets.matrix-os.com/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
+      'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     );
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });

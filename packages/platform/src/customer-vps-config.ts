@@ -24,12 +24,7 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
 export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): CustomerVpsConfig {
   const platformUrl = env.PLATFORM_PUBLIC_URL ?? `http://localhost:${env.PLATFORM_PORT ?? 9000}`;
   const imageVersion = env.CUSTOMER_VPS_IMAGE_VERSION ?? 'matrix-os-host-dev';
-  const bundleBaseUrl = (
-    env.MATRIX_HOST_BUNDLE_BASE_URL ??
-    env.R2_PUBLIC_ENDPOINT ??
-    env.S3_PUBLIC_ENDPOINT ??
-    'https://assets.matrix-os.com'
-  ).replace(/\/$/, '');
+  const bundleBaseUrl = (env.MATRIX_HOST_BUNDLE_BASE_URL ?? platformUrl).replace(/\/$/, '');
   return {
     hetznerApiToken: env.HETZNER_API_TOKEN ?? '',
     location: env.HETZNER_LOCATION ?? 'nbg1',
