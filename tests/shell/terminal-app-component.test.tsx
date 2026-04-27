@@ -49,6 +49,25 @@ describe("TerminalApp", () => {
     vi.useRealTimers();
   });
 
+  it("opens a canvas-provided terminal session without creating a fresh layout tab", async () => {
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Canvas Terminal")).toBeTruthy();
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: "canvas-session-123",
+    });
+  });
+
   it("persists attached session ids in the saved layout", async () => {
     render(<TerminalApp />);
 

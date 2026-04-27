@@ -77,3 +77,125 @@ export type SyncConflictEvent = {
 };
 
 export type SyncEvent = SyncChangeEvent | SyncConflictEvent;
+
+export const DAEMON_IPC_VERSION = 1;
+
+export const DaemonRequestSchema = z.object({
+  id: z.string().min(1).max(128),
+  v: z.literal(DAEMON_IPC_VERSION),
+  command: z.string().min(1).max(64),
+  args: z.record(z.string(), z.unknown()).default({}),
+});
+export type DaemonRequest = z.infer<typeof DaemonRequestSchema>;
+
+export const DaemonErrorSchema = z.object({
+  code: z.string().min(1).max(64),
+  message: z.string().min(1).max(256),
+});
+export type DaemonError = z.infer<typeof DaemonErrorSchema>;
+
+export const DaemonSuccessResponseSchema = z.object({
+  id: z.string().min(1).max(128),
+  v: z.literal(DAEMON_IPC_VERSION),
+  result: z.record(z.string(), z.unknown()),
+});
+export type DaemonSuccessResponse = z.infer<typeof DaemonSuccessResponseSchema>;
+
+export const DaemonErrorResponseSchema = z.object({
+  id: z.string().min(1).max(128),
+  v: z.literal(DAEMON_IPC_VERSION),
+  error: DaemonErrorSchema,
+});
+export type DaemonErrorResponse = z.infer<typeof DaemonErrorResponseSchema>;
+
+export type DaemonResponse = DaemonSuccessResponse | DaemonErrorResponse;
+
+const ALLOWED_DAEMON_COMMANDS = new Set([
+  "auth.whoami",
+  "auth.token",
+  "auth.refresh",
+  "shell.list",
+  "shell.create",
+  "shell.destroy",
+  "tab.list",
+  "tab.create",
+  "tab.go",
+  "tab.close",
+  "pane.split",
+  "pane.close",
+  "layout.list",
+  "layout.show",
+  "layout.save",
+  "layout.apply",
+  "layout.delete",
+  "status",
+  "pause",
+  "resume",
+  "getConfig",
+  "setSyncPath",
+  "setGatewayFolder",
+  "restart",
+  "logout",
+  "sync.status",
+  "sync.pause",
+  "sync.resume",
+  "sync.events",
+]);
+
+const DAEMON_ERROR_MESSAGES: Record<string, string> = {
+  invalid_request: "Invalid request",
+  unknown_command: "Unknown command",
+  unsupported_version: "Unsupported protocol version",
+};
+
+export function formatDaemonSuccess(
+  id: string,
+  result: Record<string, unknown>,
+): DaemonSuccessResponse {
+  return { id, v: DAEMON_IPC_VERSION, result };
+}
+
+export function formatDaemonError(
+  id: string,
+  code: string,
+  message = DAEMON_ERROR_MESSAGES[code] ?? "Request failed",
+): DaemonErrorResponse {
+  return {
+    id,
+    v: DAEMON_IPC_VERSION,
+    error: { code, message },
+  };
+}
+
+export function parseDaemonRequest(
+  raw: unknown,
+): { ok: true; request: DaemonRequest } | { ok: false; response: DaemonErrorResponse } {
+  const base = z.object({
+    id: z.string().min(1).max(128).catch("unknown"),
+    v: z.unknown(),
+    command: z.unknown(),
+    args: z.unknown().optional(),
+  }).safeParse(raw);
+
+  if (!base.success) {
+    return { ok: false, response: formatDaemonError("unknown", "invalid_request") };
+  }
+  if (base.data.v !== DAEMON_IPC_VERSION) {
+    return {
+      ok: false,
+      response: formatDaemonError(base.data.id, "unsupported_version"),
+    };
+  }
+
+  const parsed = DaemonRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, response: formatDaemonError(base.data.id, "invalid_request") };
+  }
+  if (!ALLOWED_DAEMON_COMMANDS.has(parsed.data.command)) {
+    return {
+      ok: false,
+      response: formatDaemonError(parsed.data.id, "unknown_command"),
+    };
+  }
+  return { ok: true, request: parsed.data };
+}

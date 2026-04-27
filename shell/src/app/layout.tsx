@@ -2,6 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "@xterm/xterm/css/xterm.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/fira-code/400.css";
+import "@fontsource/fira-code/500.css";
 import "./globals.css";
 
 const inter = Inter({

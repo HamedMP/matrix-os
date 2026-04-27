@@ -281,6 +281,8 @@ Read these on demand, not every session:
 ## Active Technologies
 - TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
 - User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, node-pty, zod/v4, citty, ws, Node child_process/fs/promises/path/crypto APIs, zellij 0.44.1 pinned in Docker images (068-zellij-cli)
+- Files under the owner-controlled Matrix home (`~/system/shell-sessions.json`, `~/system/layouts/*.kdl`) plus local CLI files under `~/.matrixos/profiles.json` and `~/.matrixos/profiles/<name>/` (068-zellij-cli)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -290,7 +292,5 @@ Read these on demand, not every session:
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read:
-`specs/071-tldraw-workspace-canvas/plan.md`
+Current Spec Kit plan: `specs/068-zellij-cli/plan.md`.
 <!-- SPECKIT END -->

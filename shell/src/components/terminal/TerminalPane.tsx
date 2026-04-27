@@ -7,15 +7,17 @@ import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
+import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
 import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
 import { closeStaleCachedSocket, getCachedTerminalRestorePlan } from "./terminal-restore";
 
-function buildXtermTheme(theme: Theme, terminalThemeId: import("@/stores/terminal-settings").TerminalThemeId) {
+function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
     return getTerminalThemePreset(terminalThemeId);
   }
@@ -40,10 +42,34 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
+  enableSizeReports: false,
+  pixelLimit: 4_194_304,
+  storageLimit: 32,
+  showPlaceholder: true,
+  sixelSupport: true,
+  sixelScrolling: true,
+  sixelPaletteLimit: 256,
+  sixelSizeLimit: 8_000_000,
+  iipSupport: true,
+  iipSizeLimit: 8_000_000,
+};
+
+const TERMINAL_FONT_STACKS: Record<TerminalFontFamily, string> = {
+  "Berkeley Mono": '"Berkeley Mono", "Berkeley Mono Variable", "JetBrains Mono"',
+  "JetBrains Mono": '"JetBrains Mono"',
+  "Fira Code": '"Fira Code", "JetBrains Mono"',
+};
+
+function buildTerminalFontStack(fontFamily: TerminalFontFamily, themeMono: string | undefined): string {
+  const fallback = themeMono || "ui-monospace, SFMono-Regular, Menlo, monospace";
+  return `${TERMINAL_FONT_STACKS[fontFamily]}, ${fallback}`;
+}
 
 type TerminalServerMessage =
   | { type: "attached"; sessionId: string; state: "running" | "exited"; exitCode: number | null }
   | { type: "output"; data: string; seq: number | null }
+  | { type: "block-mark"; seq: number | null; mark: { code: "A" | "B" | "C" | "D"; exitCode?: number } }
   | { type: "replay-start" }
   | { type: "replay-end" }
   | { type: "exit"; code: number | null }
@@ -90,6 +116,22 @@ function parseTerminalServerMessage(raw: string): TerminalServerMessage | null {
         data: msg.data,
         seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
       };
+    case "block-mark": {
+      const mark = msg.mark;
+      if (!mark || typeof mark !== "object" || !("code" in mark)) {
+        return null;
+      }
+      const code = (mark as { code?: unknown }).code;
+      if (code !== "A" && code !== "B" && code !== "C" && code !== "D") {
+        return null;
+      }
+      const exitCode = toFiniteNumber((mark as { exitCode?: unknown }).exitCode);
+      return {
+        type: "block-mark",
+        seq: Number.isInteger(msg.seq) && (msg.seq as number) >= 0 ? (msg.seq as number) : null,
+        mark: exitCode === null ? { code } : { code, exitCode },
+      };
+    }
     case "replay-start":
       return { type: "replay-start" };
     case "replay-end":
@@ -195,6 +237,10 @@ export function TerminalPane({
 }: TerminalPaneProps) {
   const terminalThemeId = useTerminalSettings((s) => s.themeId);
   const terminalFontSize = useTerminalSettings((s) => s.fontSize);
+  const terminalFontFamily = useTerminalSettings((s) => s.fontFamily);
+  const terminalLigatures = useTerminalSettings((s) => s.ligatures);
+  const terminalCursorStyle = useTerminalSettings((s) => s.cursorStyle);
+  const terminalSmoothScroll = useTerminalSettings((s) => s.smoothScroll);
   const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -217,6 +263,8 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const outputBufferRef = useRef("");
+  const commandBlockBufferRef = useRef("");
+  const activeCommandBlockRef = useRef(false);
   const authDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
@@ -362,9 +410,11 @@ export function TerminalPane({
 
         const xterm = new XTerm({
           cursorBlink,
+          cursorStyle: terminalCursorStyle,
+          smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
           allowProposedApi: true,
           fontSize: terminalFontSize,
-          fontFamily: theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           theme: xtermTheme,
           // Make ⌥ (Option) on macOS act as Meta — without this, Option+Left/Right
           // never reaches the shell as ESC-b / ESC-f, so word-jump is broken.
@@ -377,6 +427,10 @@ export function TerminalPane({
         const nextFitAddon = new FitAddon();
         xterm.loadAddon(nextFitAddon);
         xterm.open(container);
+        const xtermElement = (xterm as { element?: HTMLElement }).element;
+        if (xtermElement) {
+          xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
+        }
         nextFitAddon.fit();
 
         term = xterm;
@@ -400,6 +454,13 @@ export function TerminalPane({
           searchAddon = addon;
           searchAddonRef.current = addon;
         } catch (_e: unknown) { /* unavailable */ }
+
+        // Image protocol addon (sixel/iTerm2) with bounded client-side storage.
+        try {
+          xterm.loadAddon(new ImageAddon(IMAGE_ADDON_OPTIONS));
+        } catch (err: unknown) {
+          console.warn("Image addon initialization failed:", err instanceof Error ? err.message : err);
+        }
 
         // Serialize addon
         try {
@@ -642,6 +703,24 @@ export function TerminalPane({
                   outputBufferRef.current = "";
                 }, 300);
               }
+              if (activeCommandBlockRef.current) {
+                commandBlockBufferRef.current += msg.data;
+                if (commandBlockBufferRef.current.length > 1_000_000) {
+                  commandBlockBufferRef.current = commandBlockBufferRef.current.slice(-1_000_000);
+                }
+              }
+              break;
+
+            case "block-mark":
+              if (msg.seq !== null) {
+                lastSeqRef.current = Math.max(lastSeqRef.current, msg.seq + 1);
+              }
+              if (msg.mark.code === "B" || msg.mark.code === "C") {
+                activeCommandBlockRef.current = true;
+                commandBlockBufferRef.current = "";
+              } else if (msg.mark.code === "D") {
+                activeCommandBlockRef.current = false;
+              }
               break;
 
             case "replay-start":
@@ -785,6 +864,17 @@ export function TerminalPane({
           return true;
         }
 
+        if (ev.altKey && ev.shiftKey && ev.key.toUpperCase() === "C") {
+          const block = commandBlockBufferRef.current.trim();
+          if (block) {
+            navigator.clipboard.writeText(block).catch((err: unknown) => {
+              console.warn("Command block copy failed:", err instanceof Error ? err.message : err);
+            });
+            return false;
+          }
+          return true;
+        }
+
         if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
           navigator.clipboard.readText().then((text) => {
             const ws = wsRef.current;
@@ -900,19 +990,55 @@ export function TerminalPane({
       disposed = true;
       cleanup.then((fn) => fn?.());
     };
-  }, [claudeMode, cursorBlink, cwd, paneId, terminalFontSize, terminalThemeId, theme]);
+  }, [
+    claudeMode,
+    cursorBlink,
+    cwd,
+    paneId,
+    terminalCursorStyle,
+    terminalFontFamily,
+    terminalFontSize,
+    terminalLigatures,
+    terminalSmoothScroll,
+    terminalThemeId,
+    theme,
+  ]);
 
   useEffect(() => {
     if (termRef.current && fitAddonRef.current) {
-      const term = termRef.current as { options: { theme: unknown; fontFamily: string; fontSize: number; cursorBlink: boolean } };
+      const term = termRef.current as {
+        element?: HTMLElement;
+        options: {
+          theme: unknown;
+          fontFamily: string;
+          fontSize: number;
+          cursorBlink: boolean;
+          cursorStyle: "block" | "bar" | "underline";
+          smoothScrollDuration: number;
+        };
+      };
       const fitAddon = fitAddonRef.current as { fit: () => void };
       term.options.theme = buildXtermTheme(theme, terminalThemeId);
-      term.options.fontFamily = theme.fonts?.mono || "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace";
+      term.options.fontFamily = buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono);
       term.options.fontSize = terminalFontSize;
       term.options.cursorBlink = cursorBlink;
+      term.options.cursorStyle = terminalCursorStyle;
+      term.options.smoothScrollDuration = terminalSmoothScroll ? 125 : 0;
+      if (term.element) {
+        term.element.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
+      }
       fitAddon.fit();
     }
-  }, [cursorBlink, terminalFontSize, terminalThemeId, theme]);
+  }, [
+    cursorBlink,
+    terminalCursorStyle,
+    terminalFontFamily,
+    terminalFontSize,
+    terminalLigatures,
+    terminalSmoothScroll,
+    terminalThemeId,
+    theme,
+  ]);
 
   useEffect(() => {
     if (isFocused && termRef.current) {

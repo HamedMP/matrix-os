@@ -136,6 +136,15 @@ import {
   wsConnectionsActive,
   normalizePath,
 } from "./metrics.js";
+import {
+  createShellRoutes,
+  LayoutStore,
+  ScrollbackStore,
+  ShellPreferencesStore,
+  createShellWsHandler,
+  createZellijAdapter,
+  ShellRegistry as ZellijShellRegistry,
+} from "./shell/index.js";
 
 // Mirrors CallBodySchema in integrations/routes.ts so the dev-only
 // /api/bridge/service POST validates its body the same way the public
@@ -251,6 +260,21 @@ export async function createGateway(config: GatewayConfig) {
     maxSessions: 20,
     bufferSize: 5 * 1024 * 1024,
     persistPath: join(homePath, "system", "terminal-sessions.json"),
+  });
+  const shellScrollbackStore = new ScrollbackStore({ homePath });
+  const shellPreferencesStore = new ShellPreferencesStore({ homePath });
+  const zellijAdapter = createZellijAdapter();
+  const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
+  const zellijShellRegistry = new ZellijShellRegistry({
+    homePath,
+    adapter: zellijAdapter,
+    maxSessions: 20,
+    scrollbackStore: shellScrollbackStore,
+  });
+  const zellijShellWs = createShellWsHandler({
+    registry: zellijShellRegistry,
+    adapter: zellijAdapter,
+    scrollbackStore: shellScrollbackStore,
   });
 
   const dispatcher: Dispatcher = createDispatcher({
@@ -1144,6 +1168,12 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.route("/api", createShellRoutes({
+    registry: zellijShellRegistry,
+    preferences: shellPreferencesStore,
+    workspace: zellijAdapter,
+    layouts: shellLayoutStore,
+  }));
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -1644,7 +1674,11 @@ export async function createGateway(config: GatewayConfig) {
     "/ws/terminal",
     upgradeWebSocket((c) => {
       const cwdParam = c.req.query("cwd");
+      const namedSession = c.req.query("session");
+      const fromSeqParam = c.req.query("fromSeq");
       let handle: SessionHandle | null = null;
+      let namedHandle: { onMessage(raw: string): void; onClose(): void } | null = null;
+      let namedSocketClosed = false;
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
@@ -1671,6 +1705,7 @@ export async function createGateway(config: GatewayConfig) {
         onOpen(_evt, ws) {
           logTerminalDebug("ws-open", {
             cwdParam: cwdParam ?? null,
+            namedSession: namedSession ?? null,
           });
           const sendJson = (msg: PtyServerMessage) => {
             try {
@@ -1679,6 +1714,40 @@ export async function createGateway(config: GatewayConfig) {
               logUnexpectedWsSendFailure("Terminal WebSocket send failed", err);
             }
           };
+
+          if (namedSession) {
+            const fromSeq =
+              typeof fromSeqParam === "string" && /^\d+$/.test(fromSeqParam)
+                ? Number(fromSeqParam)
+                : 0;
+            void zellijShellWs.open({
+              ws,
+              session: namedSession,
+              fromSeq,
+            }).then((session) => {
+              if (namedSocketClosed) {
+                session.onClose();
+                return;
+              }
+              namedHandle = session;
+            }).catch((err: unknown) => {
+              console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
+              if (namedSocketClosed) {
+                return;
+              }
+              try {
+                ws.send(JSON.stringify({
+                  type: "error",
+                  code: "attach_failed",
+                  message: "Shell attach failed",
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+              }
+              ws.close();
+            });
+            return;
+          }
 
           // Backward compat: auto-create session if no attach message within 100ms
           if (cwdParam && cwdParam.length >= 1 && cwdParam.length <= 4096) {
@@ -1717,6 +1786,10 @@ export async function createGateway(config: GatewayConfig) {
 
         onMessage(evt, ws) {
           const raw = typeof evt.data === "string" ? evt.data : "";
+          if (namedSession) {
+            namedHandle?.onMessage(raw);
+            return;
+          }
           let parsed: unknown;
           try {
             parsed = JSON.parse(raw);
@@ -1848,6 +1921,11 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose() {
+          namedSocketClosed = true;
+          if (namedHandle) {
+            namedHandle.onClose();
+            namedHandle = null;
+          }
           logTerminalDebug("ws-close", {
             handleSessionId: handle?.sessionId ?? null,
             autoCreatedSessionId,

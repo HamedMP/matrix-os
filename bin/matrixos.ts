@@ -6,6 +6,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { resolvePublishedCliRedirect } from "../packages/cli/src/index.js";
 
 const args = parseArgs(process.argv.slice(2));
 const CLI_FETCH_TIMEOUT_MS = 10_000;
@@ -239,6 +240,11 @@ function runSyncCli(subArgs: string[]): Promise<void> {
 
 async function main() {
   const rawArgs = process.argv.slice(2);
+  const publishedRedirect = resolvePublishedCliRedirect(rawArgs);
+  if (publishedRedirect) {
+    await runSyncCli(publishedRedirect);
+    return;
+  }
 
   switch (args.command) {
     case "start":

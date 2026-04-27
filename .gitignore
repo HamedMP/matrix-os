@@ -7,6 +7,11 @@ build/
 .env.*
 !.env.example
 !.env.docker.example
+*.log
+*.tmp
+*.swp
+.vscode/
+.idea/
 
 .DS_Store
 coverage/

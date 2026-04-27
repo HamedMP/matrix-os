@@ -5,10 +5,17 @@ const URL_REGEX = /https?:\/\/[^\s<>"')\]]{1,2048}/g;
 
 const FILE_EXTENSIONS = /\.(ts|js|tsx|jsx|py|rs|go|md|json|yaml|yml|toml|css|html|sh|sql|rb|java|kt|swift|c|cpp|h)$/;
 const FILE_PATH_REGEX = /(?:\.{1,2}\/|\/)[^\s:]+(?::\d+(?::\d+)?)?/g;
+const COMMIT_SHA_REGEX = /\b[a-f0-9]{40}\b/g;
+const ISSUE_REF_REGEX = /(^|[\s([,{])#([1-9][0-9]{0,8})\b/g;
+const PACKAGE_SPECIFIER_REGEX = /\b(?:npm|pnpm):(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?:@[a-z0-9_.-]+)?\b/g;
 
 interface LinkMatch {
   text: string;
   startIndex: number;
+}
+
+interface SemanticLinkMatch extends LinkMatch {
+  kind: "commit" | "issue" | "package";
 }
 
 export function detectUrls(text: string): LinkMatch[] {
@@ -37,6 +44,35 @@ export function detectFilePaths(text: string): LinkMatch[] {
     if (FILE_EXTENSIONS.test(basePath)) {
       matches.push({ text: raw, startIndex: match.index });
     }
+  }
+  return matches;
+}
+
+export function detectGitReferences(text: string): SemanticLinkMatch[] {
+  const matches: SemanticLinkMatch[] = [];
+  let match: RegExpExecArray | null;
+  COMMIT_SHA_REGEX.lastIndex = 0;
+  while ((match = COMMIT_SHA_REGEX.exec(text)) !== null) {
+    matches.push({ kind: "commit", text: match[0], startIndex: match.index });
+  }
+  ISSUE_REF_REGEX.lastIndex = 0;
+  while ((match = ISSUE_REF_REGEX.exec(text)) !== null) {
+    const prefixLength = match[1]?.length ?? 0;
+    matches.push({
+      kind: "issue",
+      text: `#${match[2]}`,
+      startIndex: match.index + prefixLength,
+    });
+  }
+  return matches.sort((a, b) => a.startIndex - b.startIndex);
+}
+
+export function detectPackageSpecifiers(text: string): SemanticLinkMatch[] {
+  const matches: SemanticLinkMatch[] = [];
+  let match: RegExpExecArray | null;
+  PACKAGE_SPECIFIER_REGEX.lastIndex = 0;
+  while ((match = PACKAGE_SPECIFIER_REGEX.exec(text)) !== null) {
+    matches.push({ kind: "package", text: match[0], startIndex: match.index });
   }
   return matches;
 }
@@ -154,6 +190,25 @@ export class WebLinkProvider {
           activate: () => {
             navigator.clipboard.writeText(fp.text).catch((err: unknown) => {
               console.warn("Failed to copy file path:", err instanceof Error ? err.message : err);
+            });
+          },
+        });
+      }
+
+      const semanticLinks = [
+        ...detectGitReferences(text),
+        ...detectPackageSpecifiers(text),
+      ];
+      for (const link of semanticLinks) {
+        links.push({
+          range: {
+            start: { x: link.startIndex + 1, y: bufferLineNumber },
+            end: { x: link.startIndex + link.text.length + 1, y: bufferLineNumber },
+          },
+          text: link.text,
+          activate: () => {
+            navigator.clipboard.writeText(link.text).catch((err: unknown) => {
+              console.warn("Failed to copy terminal link:", err instanceof Error ? err.message : err);
             });
           },
         });

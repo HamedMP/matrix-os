@@ -194,6 +194,21 @@ User -> Shell (Settings UI / Conversation)
 | "Service unavailable" (503) | Pipedream is temporarily down | Try again in a few minutes |
 | "Missing required params" (400) | The action is missing required input | Check the action reference above |
 
+## CLI Migration Notes
+
+Older Matrix OS development commands such as `matrixos status` and `matrixos doctor` now redirect to the published `matrix` command tree. Use profiles instead of separate local-only command sets:
+
+```bash
+matrix profile ls
+matrix profile use cloud
+matrix status
+
+matrix login --dev
+matrix --dev status
+```
+
+If a command reports `unknown_command` or `unsupported_version`, update the CLI and restart the sync daemon so the local IPC contract and published command tree match.
+
 ## Common Workflows
 
 <Cards>
