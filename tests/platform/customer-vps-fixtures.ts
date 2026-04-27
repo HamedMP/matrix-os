@@ -13,6 +13,7 @@ export function createMockHetznerClient(overrides: Partial<HetznerClient> = {}):
     createServer: vi.fn().mockResolvedValue(defaultServer),
     getServer: vi.fn().mockResolvedValue(defaultServer),
     deleteServer: vi.fn().mockResolvedValue(undefined),
+    listServersByLabel: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
 }

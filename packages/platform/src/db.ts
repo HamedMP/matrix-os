@@ -800,6 +800,9 @@ export async function claimUserMachineRecovery(
     .updateTable('user_machines')
     .set({
       status: 'recovering',
+      hetzner_server_id: null,
+      public_ipv4: null,
+      public_ipv6: null,
       failure_code: null,
       failure_at: null,
     })
@@ -857,6 +860,22 @@ export async function listPendingProviderDeletions(
     .limit(limit)
     .execute();
   return rows.map(mapProviderDeletion);
+}
+
+export async function listRunningUserMachines(
+  db: PlatformDB,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .orderBy('last_seen_at', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
 }
 
 export async function markProviderDeletionCompleted(

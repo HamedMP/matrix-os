@@ -11,11 +11,11 @@ const DEFAULT_HOME = join(
   process.env.HOME ?? process.env.USERPROFILE ?? ".",
   "matrixos",
 );
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: string,
   data: string,
 ) => void;
-const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+const appendFileNow = fs.appendFileSync as (
   path: string,
   data: string,
 ) => void;

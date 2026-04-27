@@ -52,6 +52,7 @@ const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
+const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
@@ -78,6 +79,7 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
+const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
 
 const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
@@ -657,7 +659,7 @@ export function createApp(deps: {
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
-  app.use('*', async (c, next) => {
+  app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c, next) => {
     const host = c.req.header('host') ?? '';
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
@@ -1305,8 +1307,11 @@ export function createApp(deps: {
 
   // --- Subdomain proxy ---
 
-  app.all('/proxy/:handle/*', async (c) => {
+  app.all('/proxy/:handle/*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c) => {
     const handle = c.req.param('handle');
+    if (!HANDLE_PATTERN.test(handle)) {
+      return c.json({ error: 'Invalid handle' }, 400);
+    }
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
@@ -1319,7 +1324,8 @@ export function createApp(deps: {
         const headers = new Headers();
         const originalHost = c.req.header('host') ?? `${handle}.matrix-os.com`;
         for (const [key, value] of Object.entries(c.req.header())) {
-          if (key !== 'host' && value) headers.set(key, value);
+          const lowerKey = key.toLowerCase();
+          if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
         }
         headers.set('host', `${handle}.matrix-os.com`);
         headers.set('x-forwarded-host', originalHost);
@@ -1364,7 +1370,8 @@ export function createApp(deps: {
       const headers = new Headers();
       const originalHost = c.req.header('host') ?? '';
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && value) headers.set(key, value);
+        const lowerKey = key.toLowerCase();
+        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');
@@ -1567,6 +1574,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   let customerVpsService: CustomerVpsService | undefined;
   let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
+  let customerVpsReconciliationPromise: Promise<void> | undefined;
   if (process.env.CUSTOMER_VPS_ENABLED === 'true') {
     const [
       { createCustomerVpsService },
@@ -1601,18 +1609,22 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       const runCustomerVpsReconciliation = async () => {
         if (reconciliationRunning || !customerVpsService) return;
         reconciliationRunning = true;
-        try {
-          const result = await customerVpsService.reconcileProvisioning();
-          if (result.checked > 0) {
-            console.log(
-              `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
-            );
+        customerVpsReconciliationPromise = (async () => {
+          try {
+            const result = await customerVpsService!.reconcileProvisioning();
+            if (result.checked > 0) {
+              console.log(
+                `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
+              );
+            }
+          } catch (err: unknown) {
+            logPlatformRouteError('customer VPS reconciliation', err);
+          } finally {
+            reconciliationRunning = false;
+            customerVpsReconciliationPromise = undefined;
           }
-        } catch (err: unknown) {
-          logPlatformRouteError('customer VPS reconciliation', err);
-        } finally {
-          reconciliationRunning = false;
-        }
+        })();
+        await customerVpsReconciliationPromise;
       };
       void runCustomerVpsReconciliation();
       customerVpsReconciliationInterval = setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs);
@@ -1656,11 +1668,20 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         exitCode = 1;
         console.error('[platform] HTTP server close failed:', err.message);
       }
-      db.destroy()
+      (async () => {
+        if (customerVpsReconciliationPromise) {
+          await customerVpsReconciliationPromise;
+        }
+        await Promise.allSettled([
+          containerProxyDispatcher.close(),
+          customerVpsProxyDispatcher.close(),
+        ]);
+        await db.destroy();
+      })()
         .catch((destroyErr: unknown) => {
           exitCode = 1;
           console.error(
-            '[platform] Database shutdown failed:',
+            '[platform] Shutdown cleanup failed:',
             destroyErr instanceof Error ? destroyErr.message : String(destroyErr),
           );
         })

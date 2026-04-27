@@ -22,7 +22,7 @@ export interface SessionStore {
 
 const DEFAULT_PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const SAVE_DEBOUNCE_MS = 1000;
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
   options?: fs.WriteFileOptions,

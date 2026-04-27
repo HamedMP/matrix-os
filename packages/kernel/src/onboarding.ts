@@ -41,7 +41,7 @@ export interface PersonaSuggestions {
 }
 
 const PLAN_FILE = "setup-plan.json";
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: string,
   data: string,
 ) => void;

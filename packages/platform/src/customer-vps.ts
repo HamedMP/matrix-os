@@ -9,6 +9,7 @@ import {
   insertUserMachine,
   insertProviderDeletion,
   listPendingProviderDeletions,
+  listRunningUserMachines,
   listStaleUserMachines,
   markProviderDeletionCompleted,
   markProviderDeletionFailed,
@@ -247,6 +248,42 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  async function cleanupUntrackedServersForMachine(row: UserMachineRecord): Promise<void> {
+    if (!deps.hetzner.listServersByLabel) return;
+    let servers: Awaited<ReturnType<NonNullable<HetznerClient['listServersByLabel']>>>;
+    try {
+      servers = await deps.hetzner.listServersByLabel(`machine_id=${row.machineId}`);
+    } catch (err: unknown) {
+      logCustomerVpsError(`provider orphan scan failed machineId=${row.machineId}`, err);
+      return;
+    }
+    for (const server of servers) {
+      try {
+        await deps.hetzner.deleteServer(server.id);
+      } catch (err: unknown) {
+        logCustomerVpsError(`provider orphan cleanup failed orphanedHetznerServerId=${server.id}`, err);
+        await queueProviderDeletion({
+          providerServerId: server.id,
+          reason: 'stale_untracked_machine',
+          machineId: row.machineId,
+          handle: row.handle,
+          err,
+        });
+      }
+    }
+  }
+
+  async function retryRunningMachineMetadata(): Promise<void> {
+    const rows = await listRunningUserMachines(deps.db, deps.config.reconciliationBatchSize);
+    for (const row of rows) {
+      try {
+        await deps.systemStore.writeVpsMeta(buildVpsMeta(row, row.lastSeenAt ?? now().toISOString()));
+      } catch (err: unknown) {
+        logCustomerVpsError(`write vps-meta retry failed machineId=${row.machineId}`, err);
+      }
+    }
+  }
+
   return {
     async provision(input) {
       const currentTime = now();
@@ -418,7 +455,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
       const oldMachineId = existing.machineId;
-      const oldServerId = existing.hetznerServerId;
+      const oldServerId = active.hetznerServerId;
       const currentTime = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
@@ -557,6 +594,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       let running = 0;
       for (const row of rows) {
         if (!row.hetznerServerId) {
+          await cleanupUntrackedServersForMachine(row);
           await updateUserMachine(deps.db, row.machineId, {
             status: 'failed',
             failureCode: 'provider_unavailable',
@@ -586,6 +624,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
       }
       await retryProviderDeletions();
+      await retryRunningMachineMetadata();
       return { checked: rows.length, failed, running };
     },
   };

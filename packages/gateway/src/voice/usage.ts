@@ -15,7 +15,7 @@ export interface VoiceUsageEntry {
 export class VoiceUsageTracker {
   private filePath: string;
   private dirEnsured = false;
-  private appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+  private appendFileNow = fs.appendFileSync as (
     path: fs.PathOrFileDescriptor,
     data: string,
   ) => void;

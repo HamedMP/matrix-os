@@ -14,7 +14,7 @@ export interface SummaryEntry {
 }
 
 const MAX_SUMMARY_LENGTH = 300;
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
   options?: fs.WriteFileOptions,

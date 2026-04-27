@@ -15,7 +15,7 @@ const EMPTY_IDENTITY: Identity = {
   displayName: "",
   createdAt: "",
 };
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: string,
   data: string,
 ) => void;

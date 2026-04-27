@@ -25,12 +25,12 @@ interface QueueOptions {
 }
 
 const QUEUE_FILE = "system/outbound-queue.json";
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;
-const renameNow = fs[("rename" + "Sync") as keyof typeof fs] as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
-const unlinkNow = fs[("unlink" + "Sync") as keyof typeof fs] as (path: fs.PathLike) => void;
+const renameNow = fs.renameSync as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
+const unlinkNow = fs.unlinkSync as (path: fs.PathLike) => void;
 
 export function createOutboundQueue(
   homePath: string,

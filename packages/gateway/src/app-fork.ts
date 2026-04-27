@@ -22,7 +22,7 @@ interface ForkResult {
   targetDir?: string;
   error?: string;
 }
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;

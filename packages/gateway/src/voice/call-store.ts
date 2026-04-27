@@ -8,16 +8,16 @@ import { dirname } from "node:path";
 import { TerminalStates, type CallRecord } from "./types.js";
 
 const COMPACTION_THRESHOLD = 100;
-const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+const appendFileNow = fs.appendFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;
-const renameNow = fs[("rename" + "Sync") as keyof typeof fs] as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
-const unlinkNow = fs[("unlink" + "Sync") as keyof typeof fs] as (path: fs.PathLike) => void;
+const renameNow = fs.renameSync as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
+const unlinkNow = fs.unlinkSync as (path: fs.PathLike) => void;
 
 export class CallStore {
   private readonly path: string;

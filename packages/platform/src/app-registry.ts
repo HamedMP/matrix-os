@@ -236,7 +236,7 @@ export async function listApps(db: PlatformDB, options: ListAppsOptions): Promis
 
 export async function searchApps(db: PlatformDB, query: string): Promise<AppRegistryRecord[]> {
   await db.ready;
-  const pattern = `%${query}%`;
+  const pattern = `%${query.replace(/[%_\\]/g, '\\$&')}%`;
   const rows = await db.executor
     .selectFrom('apps_registry')
     .selectAll()

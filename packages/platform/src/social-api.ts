@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { PlatformDB } from './db.js';
 import {
   insertPost,
@@ -21,6 +22,7 @@ import {
 } from './social-feed.js';
 
 const VALID_POST_TYPES = ['text', 'image', 'link', 'app_share', 'activity'];
+const SOCIAL_BODY_LIMIT = 4096;
 
 export function createSocialFeedApi(db: PlatformDB): Hono {
   const api = new Hono();
@@ -54,7 +56,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   // --- Posts ---
 
-  api.post('/posts', async (c) => {
+  api.post('/posts', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const body = await c.req.json<{
       authorId?: string;
       content?: string;
@@ -86,7 +88,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     return c.json({ id }, 201);
   });
 
-  api.delete('/posts/:id', async (c) => {
+  api.delete('/posts/:id', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const id = c.req.param('id');
     const userId = c.req.query('userId') || c.req.header('x-user-id');
     if (!userId) return c.json({ error: 'userId is required' }, 401);
@@ -99,7 +101,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   // --- Likes ---
 
-  api.post('/posts/:id/like', async (c) => {
+  api.post('/posts/:id/like', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const postId = c.req.param('id');
     const body = await c.req.json<{ userId?: string }>();
     if (!body.userId) {
@@ -113,7 +115,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     });
   });
 
-  api.delete('/posts/:id/like', async (c) => {
+  api.delete('/posts/:id/like', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const postId = c.req.param('id');
     const body = await c.req.json<{ userId?: string }>();
     if (!body.userId) {
@@ -129,7 +131,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   // --- Comments ---
 
-  api.post('/posts/:id/comments', async (c) => {
+  api.post('/posts/:id/comments', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const postId = c.req.param('id');
     const body = await c.req.json<{ authorId?: string; content?: string }>();
     if (!body.authorId || !body.content) {
@@ -156,7 +158,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
 
   // --- Follow ---
 
-  api.post('/follow', async (c) => {
+  api.post('/follow', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const body = await c.req.json<{
       followerId?: string;
       followingId?: string;
@@ -171,7 +173,7 @@ export function createSocialFeedApi(db: PlatformDB): Hono {
     return c.json({ ok: true });
   });
 
-  api.delete('/follow', async (c) => {
+  api.delete('/follow', bodyLimit({ maxSize: SOCIAL_BODY_LIMIT }), async (c) => {
     const body = await c.req.json<{ followerId?: string; followingId?: string }>();
     if (!body.followerId || !body.followingId) {
       return c.json({ error: 'followerId and followingId are required' }, 400);

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import type { PlatformDB } from './db.js';
 import {
@@ -15,6 +16,9 @@ import {
   listCategories,
 } from './app-registry.js';
 
+const STORE_BODY_LIMIT = 8192;
+const MAX_STORE_LIMIT = 100;
+
 export function createStoreApi(db: PlatformDB): Hono {
   const api = new Hono();
 
@@ -22,7 +26,7 @@ export function createStoreApi(db: PlatformDB): Hono {
     const category = c.req.query('category');
     const authorId = c.req.query('author');
     const sort = c.req.query('sort') as 'new' | 'popular' | 'rated' | undefined;
-    const limit = Number(c.req.query('limit')) || 50;
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), MAX_STORE_LIMIT);
     const offset = Number(c.req.query('offset')) || 0;
 
     const result = await listApps(db, {
@@ -59,7 +63,7 @@ export function createStoreApi(db: PlatformDB): Hono {
     return c.json(app);
   });
 
-  api.post('/apps', async (c) => {
+  api.post('/apps', bodyLimit({ maxSize: STORE_BODY_LIMIT }), async (c) => {
     const body = await c.req.json<{
       name?: string;
       slug?: string;
@@ -95,7 +99,7 @@ export function createStoreApi(db: PlatformDB): Hono {
     return c.json({ id, slug }, 201);
   });
 
-  api.post('/apps/:id/rate', async (c) => {
+  api.post('/apps/:id/rate', bodyLimit({ maxSize: STORE_BODY_LIMIT }), async (c) => {
     const appId = c.req.param('id');
     const body = await c.req.json<{ userId: string; rating: number; review?: string }>();
 
@@ -118,7 +122,7 @@ export function createStoreApi(db: PlatformDB): Hono {
     return c.json({ rating: app?.rating ?? 0, ratingsCount: app?.ratingsCount ?? 0 });
   });
 
-  api.post('/apps/:id/install', async (c) => {
+  api.post('/apps/:id/install', bodyLimit({ maxSize: STORE_BODY_LIMIT }), async (c) => {
     const appId = c.req.param('id');
     let body: { userId?: string } = {};
     try {

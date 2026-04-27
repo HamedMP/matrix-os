@@ -5,7 +5,7 @@ import { join } from "node:path";
 const MAX_PROMPT_LENGTH = 500;
 const MAX_TOOL_INPUT_LENGTH = 500;
 const MAX_STACK_LENGTH = 1000;
-const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+const appendFileNow = fs.appendFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;

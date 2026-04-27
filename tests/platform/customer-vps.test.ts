@@ -154,6 +154,26 @@ describe('platform/customer-vps', () => {
     });
   });
 
+  it('retries metadata persistence for running machines during reconciliation', async () => {
+    const writeVpsMeta = vi.fn()
+      .mockRejectedValueOnce(new Error('r2 unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const { service } = createService({
+      systemStore: createMockCustomerVpsSystemStore({ writeVpsMeta }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await service.reconcileProvisioning();
+
+    expect(writeVpsMeta).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects invalid registration tokens without changing machine state', async () => {
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -572,6 +592,29 @@ describe('platform/customer-vps', () => {
 
     expect(deleteServer).toHaveBeenCalledTimes(2);
     expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
+  });
+
+  it('cleans up stale provider servers labeled for a machine that never recorded a Hetzner ID', async () => {
+    const deleteServer = vi.fn().mockResolvedValue(undefined);
+    const listServersByLabel = vi.fn().mockResolvedValue([
+      { id: 999999, status: 'running', publicIPv4: '203.0.113.99' },
+    ]);
+    const { service } = createService({
+      hetzner: createMockHetznerClient({ deleteServer, listServersByLabel }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await updateUserMachine(db, provisioned.machineId, {
+      hetznerServerId: null,
+      publicIPv4: null,
+      publicIPv6: null,
+      provisionedAt: '2026-04-26T10:00:00.000Z',
+    });
+
+    const result = await service.reconcileProvisioning();
+
+    expect(result.failed).toBe(1);
+    expect(listServersByLabel).toHaveBeenCalledWith(`machine_id=${provisioned.machineId}`);
+    expect(deleteServer).toHaveBeenCalledWith(999999);
   });
 
   it('can provision the same Clerk user after a soft-deleted VPS row', async () => {

@@ -30,7 +30,7 @@ export interface PostgresManager {
 }
 
 const SAFE_APP_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;

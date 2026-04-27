@@ -12,7 +12,7 @@ export interface StorageTracker {
   measure(): StorageUsage;
   record(): void;
 }
-const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+const appendFileNow = fs.appendFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
 ) => void;

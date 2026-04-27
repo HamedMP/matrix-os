@@ -54,7 +54,7 @@ export function createConversationStore(homePath: string): ConversationStore {
   mkdirSync(dir, { recursive: true });
   const active = new Map<string, ConversationFile>();
   const buffers = new Map<string, string>();
-  const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  const writeFileNow = fs.writeFileSync as (
     path: fs.PathOrFileDescriptor,
     data: string,
   ) => void;

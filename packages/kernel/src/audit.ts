@@ -16,7 +16,7 @@ export interface AuditLogEntry extends AuditEntry {
 export interface AuditLogger {
   log(entry: AuditEntry): void;
 }
-const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+const appendFileNow = fs.appendFileSync as (
   path: string,
   data: string,
 ) => void;

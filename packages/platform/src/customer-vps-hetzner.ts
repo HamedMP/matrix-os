@@ -15,12 +15,14 @@ export interface HetznerServer {
   status: string;
   publicIPv4?: string;
   publicIPv6?: string;
+  labels?: Record<string, string>;
 }
 
 export interface HetznerClient {
   createServer(input: CreateHetznerServerInput): Promise<HetznerServer>;
   getServer(serverId: number): Promise<HetznerServer | null>;
   deleteServer(serverId: number): Promise<void>;
+  listServersByLabel?(labelSelector: string): Promise<HetznerServer[]>;
 }
 
 function requireToken(config: CustomerVpsConfig): string {
@@ -30,8 +32,12 @@ function requireToken(config: CustomerVpsConfig): string {
   return config.hetznerApiToken;
 }
 
-function parseServer(body: unknown): HetznerServer {
-  const server = (body as { server?: { id?: unknown; status?: unknown; public_net?: { ipv4?: { ip?: unknown }; ipv6?: { ip?: unknown } } } }).server;
+function mapServer(server: {
+  id?: unknown;
+  status?: unknown;
+  public_net?: { ipv4?: { ip?: unknown }; ipv6?: { ip?: unknown } };
+  labels?: unknown;
+}): HetznerServer {
   if (!server || typeof server.id !== 'number' || typeof server.status !== 'string') {
     throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
   }
@@ -40,7 +46,29 @@ function parseServer(body: unknown): HetznerServer {
     status: server.status,
     publicIPv4: typeof server.public_net?.ipv4?.ip === 'string' ? server.public_net.ipv4.ip : undefined,
     publicIPv6: typeof server.public_net?.ipv6?.ip === 'string' ? server.public_net.ipv6.ip : undefined,
+    labels: server.labels && typeof server.labels === 'object'
+      ? Object.fromEntries(
+          Object.entries(server.labels as Record<string, unknown>)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        )
+      : undefined,
   };
+}
+
+function parseServer(body: unknown): HetznerServer {
+  const server = (body as { server?: Parameters<typeof mapServer>[0] }).server;
+  if (!server) {
+    throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+  }
+  return mapServer(server);
+}
+
+function parseServers(body: unknown): HetznerServer[] {
+  const servers = (body as { servers?: Parameters<typeof mapServer>[0][] }).servers;
+  if (!Array.isArray(servers)) {
+    throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+  }
+  return servers.map(mapServer);
 }
 
 async function parseJson(res: Response): Promise<unknown> {
@@ -109,6 +137,14 @@ export function createHetznerClient(
       if (!res.ok) {
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
+    },
+
+    async listServersByLabel(labelSelector) {
+      const res = await request(`/servers?label_selector=${encodeURIComponent(labelSelector)}`);
+      if (!res.ok) {
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+      return parseServers(await parseJson(res));
     },
   };
 }

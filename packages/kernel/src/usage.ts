@@ -31,7 +31,7 @@ export interface UsageTracker {
   getMonthly(month?: string): UsageSummary;
   checkLimit(action: string, policy?: UsagePolicy): LimitResult;
 }
-const appendFileNow = fs[("appendFile" + "Sync") as keyof typeof fs] as (
+const appendFileNow = fs.appendFileSync as (
   path: string,
   data: string,
 ) => void;

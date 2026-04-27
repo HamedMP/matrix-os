@@ -366,7 +366,7 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("adds a timeout on /proxy/:handle fetches", async () => {
+  it("adds a timeout and strips admin credentials on /proxy/:handle fetches", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("ok", { status: 200 }),
     );
@@ -384,6 +384,27 @@ describe("platform proxy routing", () => {
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.redirect).toBe("manual");
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("rejects invalid /proxy/:handle values before DNS interpolation", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/proxy/bad_handle/api/ping", {
+      headers: { authorization: "Bearer platform-secret-123" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs and returns 502 when the app-domain container proxy fetch fails", async () => {

@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { AppManifestSchema } from "./app-manifest.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
-const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
   options?: fs.WriteFileOptions,

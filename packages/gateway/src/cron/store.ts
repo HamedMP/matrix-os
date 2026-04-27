@@ -12,11 +12,11 @@ export interface CronStore {
 
 export function createCronStore(filePath: string): CronStore {
   let cache: CronJob[] | null = null;
-  const writeFileNow = fs[("writeFile" + "Sync") as keyof typeof fs] as (
+  const writeFileNow = fs.writeFileSync as (
     path: fs.PathOrFileDescriptor,
     data: string,
   ) => void;
-  const renameNow = fs[("rename" + "Sync") as keyof typeof fs] as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
+  const renameNow = fs.renameSync as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
 
   function load(): CronJob[] {
     if (!existsSync(filePath)) return [];

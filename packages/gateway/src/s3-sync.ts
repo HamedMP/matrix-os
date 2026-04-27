@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { rename, unlink, writeFile } from "node:fs/promises";
 import { join, relative, dirname } from "node:path";
 import {
   S3Client,
@@ -19,6 +19,19 @@ export interface S3SyncConfig {
   debounceMs?: number;
   reconcileIntervalMs?: number;
   maxConcurrentUploads?: number;
+}
+
+async function writeFileAtomic(path: string, data: Buffer): Promise<void> {
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await writeFile(tmpPath, data);
+    await rename(tmpPath, path);
+  } catch (err: unknown) {
+    await unlink(tmpPath).catch((cleanupErr: unknown) => {
+      console.warn("[s3-sync] Failed to remove temporary restore file:", cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr));
+    });
+    throw err;
+  }
 }
 
 export interface S3FileVersion {
@@ -223,7 +236,7 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
         const fullPath = join(homePath, relativePath);
         const dir = dirname(fullPath);
         if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        await writeFile(fullPath, Buffer.from(bytes));
+        await writeFileAtomic(fullPath, Buffer.from(bytes));
       }
 
       continuationToken = listResult.IsTruncated
@@ -305,7 +318,7 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
     const fullPath = join(homePath, relativePath);
     const dir = dirname(fullPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    await writeFile(fullPath, Buffer.from(bytes));
+    await writeFileAtomic(fullPath, Buffer.from(bytes));
   }
 
   function onFileChange(relativePath: string): void {
