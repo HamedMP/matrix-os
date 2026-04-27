@@ -61,6 +61,51 @@ describe("zellij adapter", () => {
     expect(child.kill).toHaveBeenCalled();
   });
 
+  it("creates sessions in the requested cwd using headless attach", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await adapter.createSession({ name: "main", cwd: "/home/alice/work" });
+
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "main", "attach", "--create-background", "main"],
+      expect.objectContaining({ timeout: 25, cwd: "/home/alice/work" }),
+      expect.any(Function),
+    );
+  });
+
+  it("splits multi-word commands into argv tokens for zellij actions", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await adapter.createTab("main", { cmd: "bun run test" });
+    await adapter.splitPane("main", { direction: "down", cmd: "tail -f '/tmp/my log'" });
+
+    expect(execFile).toHaveBeenNthCalledWith(
+      1,
+      "zellij",
+      ["--session", "main", "action", "new-tab", "--", "bun", "run", "test"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "zellij",
+      ["--session", "main", "action", "new-pane", "--down", "--", "tail", "-f", "/tmp/my log"],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
   it("redacts paths from zellij stderr", () => {
     expect(sanitizeZellijError("bad /home/alice/projects/app and /tmp/file")).toBe(
       "bad [path] and [path]",

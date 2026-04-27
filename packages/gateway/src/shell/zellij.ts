@@ -53,13 +53,13 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const spawn = deps.spawn ?? nodeSpawn;
   const timeoutMs = deps.timeoutMs ?? 10_000;
 
-  function run(args: string[], timeout = timeoutMs): Promise<string> {
+  function run(args: string[], timeout = timeoutMs, cwd?: string): Promise<string> {
     const controller = new AbortController();
     return new Promise((resolve, reject) => {
       const child = execFile(
         "zellij",
         args,
-        { timeout, signal: controller.signal },
+        { timeout, signal: controller.signal, cwd },
         (err, stdout, stderr) => {
           if (err) {
             const safe = shellError("zellij_failed", "Shell operation failed", 500);
@@ -88,9 +88,14 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     async createSession(options) {
       const args = ["--session", options.name];
       if (options.layout) args.push("--layout", options.layout);
-      args.push("attach", "--create", options.name);
-      if (options.cmd) args.push("--", options.cmd);
-      await run(args);
+      args.push("attach", "--create-background", options.name);
+      await run(args, timeoutMs, options.cwd);
+      if (options.cmd) {
+        const commandArgs = ["--session", options.name, "action", "new-pane"];
+        if (options.cwd) commandArgs.push("--cwd", options.cwd);
+        commandArgs.push("--", ...splitCommand(options.cmd));
+        await run(commandArgs);
+      }
     },
     async deleteSession(name, options = {}) {
       const args = ["delete-session", name];
@@ -126,7 +131,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       const args = ["--session", name, "action", "new-tab"];
       if (input.name) args.push("--name", input.name);
       if (input.cwd) args.push("--cwd", input.cwd);
-      if (input.cmd) args.push("--", input.cmd);
+      if (input.cmd) args.push("--", ...splitCommand(input.cmd));
       await run(args);
       return { ok: true };
     },
@@ -147,7 +152,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         input.direction === "right" ? "--right" : "--down",
       ];
       if (input.cwd) args.push("--cwd", input.cwd);
-      if (input.cmd) args.push("--", input.cmd);
+      if (input.cmd) args.push("--", ...splitCommand(input.cmd));
       await run(args);
       return { ok: true };
     },
@@ -164,4 +169,50 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       return { kdl };
     },
   };
+}
+
+function splitCommand(command: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: "\"" | "'" | null = null;
+  let escaping = false;
+
+  for (const char of command) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaping = true;
+      continue;
+    }
+    if ((char === "\"" || char === "'") && quote === null) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (quote === null && /\s/.test(char)) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaping || quote !== null) {
+    throw shellError("invalid_command", "Invalid command", 400);
+  }
+  if (current.length > 0) {
+    parts.push(current);
+  }
+  if (parts.length === 0) {
+    throw shellError("invalid_command", "Invalid command", 400);
+  }
+  return parts;
 }
