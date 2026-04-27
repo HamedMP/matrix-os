@@ -93,6 +93,19 @@ services:
       - PLATFORM_IMAGE=${PLATFORM_IMAGE:-ghcr.io/hamedmp/matrix-os:latest}
       - AUTH_SHELL_PORT=3200
       - AUTH_SHELL_HOST=auth-shell
+      # Customer VPS (spec 070)
+      - CUSTOMER_VPS_ENABLED=${CUSTOMER_VPS_ENABLED:-false}
+      - CUSTOMER_VPS_TLS_VERIFY=${CUSTOMER_VPS_TLS_VERIFY:-false}
+      - HETZNER_API_TOKEN=${HETZNER_API_TOKEN:-}
+      - HETZNER_LOCATION=${HETZNER_LOCATION:-fsn1}
+      - HETZNER_SERVER_TYPE=${HETZNER_SERVER_TYPE:-cpx22}
+      - HETZNER_IMAGE=${HETZNER_IMAGE:-ubuntu-24.04}
+      - HETZNER_SSH_KEY_NAME=${HETZNER_SSH_KEY_NAME:-}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-matrixos-sync}
+      - R2_PREFIX_ROOT=${R2_PREFIX_ROOT:-matrixos-sync}
     ports:
       - "9000:9000"
     volumes:
