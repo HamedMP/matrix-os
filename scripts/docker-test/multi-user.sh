@@ -22,7 +22,7 @@ begin_test "Multi-User (Alice + Bob)"
 # Clean slate
 echo -e "${YELLOW}[SETUP]${NC} Starting multi-user containers..."
 $COMPOSE --profile multi --profile full down -v --timeout 5 2>/dev/null || true
-$COMPOSE --profile multi --profile full up -d alice bob
+$COMPOSE --profile multi --profile full up $COMPOSE_UP_FLAGS -d alice bob
 
 # Wait for both instances
 wait_for_url "$ALICE_URL/health" 90

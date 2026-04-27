@@ -14,7 +14,7 @@ begin_test "Channel Adapter Lifecycle"
 # Clean slate and start
 echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 
@@ -37,7 +37,7 @@ INNEREOF'
 # Restart to pick up channel config
 echo -e "${YELLOW}[SETUP]${NC} Restarting to load channel config..."
 $COMPOSE stop dev
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 

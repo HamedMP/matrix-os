@@ -17,7 +17,7 @@ $COMPOSE down -v --timeout 5 2>/dev/null || true
 
 # Start fresh
 echo -e "${YELLOW}[SETUP]${NC} Starting dev container..."
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 

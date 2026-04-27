@@ -14,7 +14,7 @@ begin_test "Crash Recovery"
 # Clean slate and start
 echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 
@@ -54,7 +54,7 @@ sleep 2
 
 # Restart
 echo -e "${YELLOW}[ACTION]${NC} Restarting container..."
-$COMPOSE up -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" 90
 
