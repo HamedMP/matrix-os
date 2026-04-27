@@ -41,4 +41,3 @@ export function redactCloudInitSecrets(value: string, input: CustomerHostConfig)
   }
   return redacted;
 }
-

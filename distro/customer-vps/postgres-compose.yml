@@ -11,4 +11,3 @@ services:
 
 volumes:
   matrix-postgres:
-

@@ -36,4 +36,3 @@ fi
 matrixctl r2 put "$snapshot_path" "$snapshot_key"
 matrixctl r2 put-latest "$snapshot_key"
 matrixctl r2 prune system/db/snapshots/
-

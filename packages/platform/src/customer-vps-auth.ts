@@ -38,4 +38,3 @@ export function bearerTokenMatches(authHeader: string | undefined, expected: str
   if (!expected || !authHeader?.startsWith('Bearer ')) return false;
   return constantTimeEquals(authHeader.slice(7), expected);
 }
-

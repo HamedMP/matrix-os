@@ -33,4 +33,3 @@ export function logCustomerVpsError(context: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   console.error(`[customer-vps] ${context}: ${message}`);
 }
-

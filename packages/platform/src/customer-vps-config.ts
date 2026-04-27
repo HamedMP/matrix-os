@@ -32,4 +32,3 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     reconciliationStaleAfterMs: Number(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS ?? 10 * 60 * 1000),
   };
 }
-

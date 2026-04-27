@@ -119,4 +119,3 @@ describe('platform/profile-routing-vps', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://matrixos-alice:3000/api/ping');
   });
 });
-

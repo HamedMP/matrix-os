@@ -62,4 +62,3 @@ if ! gzip -dc "$snapshot_path" | timeout 300 pg_restore \
 fi
 
 touch "$restore_flag"
-
