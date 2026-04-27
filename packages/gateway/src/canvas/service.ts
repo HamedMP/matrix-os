@@ -184,6 +184,7 @@ export class CanvasService {
         updatedAt: record.updatedAt,
         nodeCounts: nodeCounts(record),
       })),
+      // Cursor pagination is deferred until canvas lists exceed the current bounded page size.
       nextCursor: null,
     };
   }
@@ -298,28 +299,30 @@ export class CanvasService {
     return { terminalSessions, pullRequests, reviewLoops, missingRefs };
   }
 
-  private createTerminal(action: CanvasAction) {
+  private createTerminal(action: Extract<CanvasAction, { type: "terminal.create" }>) {
     if (!this.terminalRegistry) throw new CanvasNotFoundError("terminal-registry");
-    const payload = action.payload as { cwd?: string; shell?: string };
-    const sessionId = this.terminalRegistry.create(payload.cwd ?? "projects", payload.shell);
+    const cwd = action.payload.cwd ?? "projects";
+    const safeCwd = this.homePath ? resolveWithinHome(this.homePath, cwd) : cwd;
+    if (!safeCwd) throw new CanvasNotFoundError("cwd");
+    const sessionId = this.terminalRegistry.create(safeCwd, action.payload.shell);
     return Promise.resolve({ ok: true as const, result: { kind: "terminal_session", sessionId } });
   }
 
-  private attachTerminal(action: CanvasAction) {
-    const sessionId = (action.payload as { sessionId: string }).sessionId;
+  private attachTerminal(action: Extract<CanvasAction, { type: "terminal.attach" | "terminal.observe" | "terminal.write" | "terminal.takeover" }>) {
+    const sessionId = action.payload.sessionId;
     const session = this.terminalRegistry?.getSession(sessionId);
     if (!session) throw new CanvasNotFoundError(sessionId);
     return Promise.resolve({ ok: true as const, result: { kind: "terminal_session", sessionId, state: session.state } });
   }
 
-  private killTerminal(action: CanvasAction) {
-    const sessionId = (action.payload as { sessionId: string }).sessionId;
+  private killTerminal(action: Extract<CanvasAction, { type: "terminal.kill" }>) {
+    const sessionId = action.payload.sessionId;
     this.terminalRegistry?.destroy(sessionId);
     return Promise.resolve({ ok: true as const, result: { kind: "terminal_session", sessionId, state: "killed" } });
   }
 
-  private async previewHealthCheck(action: CanvasAction) {
-    const url = String((action.payload as { url?: unknown }).url ?? "");
+  private async previewHealthCheck(action: Extract<CanvasAction, { type: "preview.healthCheck" }>) {
+    const url = action.payload.url;
     const response = await this.fetchImpl(url, {
       method: "HEAD",
       signal: AbortSignal.timeout(10_000),
@@ -327,15 +330,14 @@ export class CanvasService {
     return { ok: true as const, result: { kind: "preview_health", ok: response.ok, status: response.status } };
   }
 
-  private openFile(action: CanvasAction) {
-    const path = String((action.payload as { path?: unknown }).path ?? "");
-    if (this.homePath) {
-      const safePath = resolveWithinHome(this.homePath, path);
-      if (!safePath) {
-        throw new CanvasNotFoundError("file");
-      }
-      return Promise.resolve({ ok: true as const, result: { kind: "file", path: safePath } });
+  private openFile(action: Extract<CanvasAction, { type: "file.open" }>) {
+    if (!this.homePath) {
+      throw new CanvasNotFoundError("file");
     }
-    return Promise.resolve({ ok: true as const, result: { kind: "file", path } });
+    const safePath = resolveWithinHome(this.homePath, action.payload.path);
+    if (!safePath) {
+      throw new CanvasNotFoundError("file");
+    }
+    return Promise.resolve({ ok: true as const, result: { kind: "file", path: safePath } });
   }
 }

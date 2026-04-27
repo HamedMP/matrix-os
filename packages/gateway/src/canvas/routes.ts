@@ -1,8 +1,11 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
 import {
   CanvasActionSchema,
   CanvasIdSchema,
+  CanvasNodeIdSchema,
+  CanvasScopeTypeSchema,
   CreateCanvasRequestSchema,
   PatchCanvasNodeRequestSchema,
   ReplaceCanvasRequestSchema,
@@ -16,7 +19,7 @@ const CANVAS_WRITE_BODY_LIMIT = 256 * 1024;
 const CANVAS_ACTION_BODY_LIMIT = 64 * 1024;
 
 export interface CanvasRouteService {
-  listCanvases(userId: string, query?: { scopeType?: string; scopeId?: string; limit?: number; cursor?: string }): Promise<unknown>;
+  listCanvases(userId: string, query?: { scopeType?: string; scopeId?: string; limit?: number; cursor?: string; q?: string }): Promise<unknown>;
   createCanvas(userId: string, input: CreateCanvasRequest): Promise<unknown>;
   getCanvas(userId: string, canvasId: string): Promise<unknown>;
   replaceCanvas(userId: string, canvasId: string, input: { baseRevision: number; document: CanvasDocumentWrite }): Promise<unknown>;
@@ -28,21 +31,14 @@ export interface CanvasRouteService {
 
 export interface CanvasRouteDeps {
   service: CanvasRouteService;
-  getUserId: (c: any) => string;
+  getUserId: (c: Context) => string;
 }
 
 async function parseJson(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch (err: unknown) {
-    if (err instanceof SyntaxError) {
-      throw err;
-    }
-    throw err;
-  }
+  return c.req.json();
 }
 
-function getUserIdOrThrow(deps: CanvasRouteDeps, c: any): string {
+function getUserIdOrThrow(deps: CanvasRouteDeps, c: Context): string {
   try {
     const userId = deps.getUserId(c);
     if (!userId) throw new Error("missing user");
@@ -58,9 +54,17 @@ function getUserIdOrThrow(deps: CanvasRouteDeps, c: any): string {
   }
 }
 
-function parseCanvasId(c: any): string {
+function parseCanvasId(c: Context): string {
   return CanvasIdSchema.parse(c.req.param("canvasId"));
 }
+
+const CanvasListQuerySchema = z.object({
+  scopeType: CanvasScopeTypeSchema.optional(),
+  scopeId: z.string().trim().min(1).max(256).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().trim().min(1).max(256).optional(),
+  q: z.string().trim().min(1).max(120).optional(),
+});
 
 function bodyTooLarge(c: any) {
   return c.json({ error: "Request body too large" }, 413);
@@ -89,14 +93,15 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
   app.get("/", async (c) => {
     try {
       const userId = getUserIdOrThrow(deps, c);
-      const limitParam = c.req.query("limit");
-      const limit = limitParam ? Number(limitParam) : undefined;
-      return c.json(await deps.service.listCanvases(userId, {
+      const parsed = CanvasListQuerySchema.safeParse({
         scopeType: c.req.query("scopeType"),
         scopeId: c.req.query("scopeId"),
-        limit: Number.isFinite(limit) ? limit : undefined,
+        limit: c.req.query("limit"),
         cursor: c.req.query("cursor"),
-      }));
+        q: c.req.query("q"),
+      });
+      if (!parsed.success) return validationError(c);
+      return c.json(await deps.service.listCanvases(userId, parsed.data));
     } catch (err: unknown) {
       return handleError(c, err);
     }
@@ -137,7 +142,7 @@ export function createCanvasRoutes(deps: CanvasRouteDeps): Hono {
     try {
       const userId = getUserIdOrThrow(deps, c);
       const canvasId = parseCanvasId(c);
-      const nodeId = c.req.param("nodeId");
+      const nodeId = CanvasNodeIdSchema.parse(c.req.param("nodeId"));
       const parsed = PatchCanvasNodeRequestSchema.safeParse(await parseJson(c));
       if (!parsed.success) return validationError(c);
       if (!deps.service.patchCanvasNode) {

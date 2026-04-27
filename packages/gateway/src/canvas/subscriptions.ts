@@ -51,6 +51,7 @@ export class CanvasSubscriptionHub {
     CanvasIdSchema.parse(subscriber.canvasId);
     const authorized = this.authorize ? await this.authorize(subscriber) : true;
     if (!authorized) throw new Error("Unauthorized");
+    this.pruneExpiredPresence();
 
     if (!this.subscribers.has(subscriber.connectionId) && this.subscribers.size >= this.maxSubscribers) {
       throw new Error("Too many subscribers");
@@ -100,11 +101,9 @@ export class CanvasSubscriptionHub {
   presenceForCanvas(canvasId: string): Array<{ connectionId: string; userId: string; presence: Record<string, unknown> }> {
     const now = this.now();
     const result: Array<{ connectionId: string; userId: string; presence: Record<string, unknown> }> = [];
+    this.pruneExpiredPresence(now);
 
     for (const [connectionId, subscriber] of this.subscribers) {
-      if (subscriber.presence && now - subscriber.presenceUpdatedAt > this.presenceTtlMs) {
-        subscriber.presence = null;
-      }
       if (subscriber.canvasId === canvasId && subscriber.presence) {
         result.push({ connectionId, userId: subscriber.userId, presence: subscriber.presence });
       }
@@ -115,10 +114,15 @@ export class CanvasSubscriptionHub {
 
   broadcast(canvasId: string, message: unknown): void {
     const payload = JSON.stringify(message);
+    this.pruneExpiredPresence();
     for (const subscriber of this.subscribers.values()) {
       if (subscriber.canvasId === canvasId) {
-        subscriber.send(payload);
-        subscriber.lastTouched = this.now();
+        try {
+          subscriber.send(payload);
+          subscriber.lastTouched = this.now();
+        } catch (err: unknown) {
+          console.error("[canvas/realtime] Broadcast send failed:", err instanceof Error ? err.message : String(err));
+        }
       }
     }
   }
@@ -127,6 +131,18 @@ export class CanvasSubscriptionHub {
     const subscriber = this.subscribers.get(connectionId);
     if (!subscriber) return;
     console.error("[canvas/realtime] Realtime error:", err instanceof Error ? err.message : String(err));
-    subscriber.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+    try {
+      subscriber.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+    } catch (sendErr: unknown) {
+      console.error("[canvas/realtime] Error response send failed:", sendErr instanceof Error ? sendErr.message : String(sendErr));
+    }
+  }
+
+  private pruneExpiredPresence(now = this.now()): void {
+    for (const subscriber of this.subscribers.values()) {
+      if (subscriber.presence && now - subscriber.presenceUpdatedAt > this.presenceTtlMs) {
+        subscriber.presence = null;
+      }
+    }
   }
 }

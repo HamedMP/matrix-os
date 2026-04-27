@@ -246,29 +246,82 @@ export const CanvasActionTypeSchema = z.enum([
   "custom.validate",
 ]);
 
-export const CanvasActionSchema = z.object({
+const CanvasActionBaseSchema = z.object({
   nodeId: CanvasNodeIdSchema,
-  type: CanvasActionTypeSchema,
-  payload: boundedJson(64 * 1024).default({}),
-}).superRefine((value, ctx) => {
-  const payload = value.payload as Record<string, unknown>;
-  if (value.type === "terminal.create") {
-    if (payload.cwd !== undefined && typeof payload.cwd !== "string") {
-      ctx.addIssue({ code: "custom", message: "Invalid terminal cwd", path: ["payload", "cwd"] });
-    }
-  }
-  if (["terminal.attach", "terminal.kill", "terminal.observe", "terminal.write", "terminal.takeover"].includes(value.type)) {
-    if (typeof payload.sessionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.sessionId)) {
-      ctx.addIssue({ code: "custom", message: "Invalid terminal session", path: ["payload", "sessionId"] });
-    }
-  }
-  if (value.type === "terminal.write" && typeof payload.input !== "string") {
-    ctx.addIssue({ code: "custom", message: "Invalid terminal input", path: ["payload", "input"] });
-  }
-  if (value.type === "preview.healthCheck" && (typeof payload.url !== "string" || !safeUrl(payload.url))) {
-    ctx.addIssue({ code: "custom", message: "Invalid preview URL", path: ["payload", "url"] });
-  }
 });
+
+const ReviewActionPayloadSchema = boundedJson(64 * 1024);
+const TerminalSessionPayloadSchema = z.object({
+  sessionId: z.uuid(),
+}).strict();
+
+export const CanvasActionSchema = z.discriminatedUnion("type", [
+  CanvasActionBaseSchema.extend({
+    type: z.literal("terminal.create"),
+    payload: z.object({
+      cwd: z.string().min(1).max(512).optional(),
+      shell: z.string().min(1).max(120).optional(),
+    }).strict().default({}),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("terminal.attach"),
+    payload: TerminalSessionPayloadSchema,
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("terminal.observe"),
+    payload: TerminalSessionPayloadSchema,
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("terminal.takeover"),
+    payload: TerminalSessionPayloadSchema,
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("terminal.kill"),
+    payload: TerminalSessionPayloadSchema,
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("terminal.write"),
+    payload: TerminalSessionPayloadSchema.extend({
+      input: z.string().min(1).max(32 * 1024),
+    }),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("review.start"),
+    payload: ReviewActionPayloadSchema.default({}),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("review.stop"),
+    payload: ReviewActionPayloadSchema.default({}),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("review.next"),
+    payload: ReviewActionPayloadSchema.default({}),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("review.approve"),
+    payload: ReviewActionPayloadSchema.default({}),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("pr.refresh"),
+    payload: ReviewActionPayloadSchema.default({}),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("file.open"),
+    payload: z.object({
+      path: z.string().min(1).max(1024).refine(safeRelativePath, { message: "Unsafe file path" }),
+    }).strict(),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("preview.healthCheck"),
+    payload: z.object({
+      url: z.string().min(1).max(2048).refine(safeUrl, { message: "Invalid preview URL" }),
+    }).strict(),
+  }),
+  CanvasActionBaseSchema.extend({
+    type: z.literal("custom.validate"),
+    payload: boundedJson(64 * 1024).default({}),
+  }),
+]);
 
 export const CanvasErrorSchema = z.object({
   error: z.string().min(1).max(80).refine((message) => !UNSAFE_CLIENT_ERROR.test(message), {

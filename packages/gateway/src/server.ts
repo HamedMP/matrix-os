@@ -261,6 +261,7 @@ export async function createGateway(config: GatewayConfig) {
   let canvasRepository: CanvasRepository | null = null;
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
+  let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   if (databaseUrl) {
     try {
@@ -283,10 +284,17 @@ export async function createGateway(config: GatewayConfig) {
           return Boolean(record);
         },
       });
-      await cleanupCanvasTempFiles(join(homePath, "system", "canvas-exports"), {
+      const canvasExportDir = join(homePath, "system", "canvas-exports");
+      const canvasCleanupPolicy = {
         ttlMs: 7 * 24 * 60 * 60 * 1000,
         maxFiles: 100,
-      });
+      };
+      await cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy);
+      canvasCleanupTimer = setInterval(() => {
+        void cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy).catch((cleanupErr: unknown) => {
+          logBestEffortFailure("Canvas export cleanup failed", cleanupErr);
+        });
+      }, 6 * 60 * 60 * 1000);
       console.log("[app-db] Postgres connected, data layer ready");
 
       // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
@@ -3080,25 +3088,31 @@ export async function createGateway(config: GatewayConfig) {
         const connectionId = `canvas_${randomBytes(12).toString("hex")}`;
 
         return {
-          onOpen(_evt, ws) {
-            void canvasSubscriptionHub?.subscribe({
-              connectionId,
-              canvasId,
-              userId,
-              send: (message) => {
-                try {
-                  ws.send(message);
-                } catch (err: unknown) {
-                  logUnexpectedWsSendFailure("Canvas WebSocket send failed", err);
-                }
-              },
-            }).then(() => {
+          async onOpen(_evt, ws) {
+            try {
+              await canvasSubscriptionHub?.subscribe({
+                connectionId,
+                canvasId,
+                userId,
+                send: (message) => {
+                  try {
+                    ws.send(message);
+                  } catch (err: unknown) {
+                    logUnexpectedWsSendFailure("Canvas WebSocket send failed", err);
+                  }
+                },
+              });
               ws.send(JSON.stringify({ type: "canvas:subscribed", canvasId }));
-            }).catch((err: unknown) => {
+            } catch (err: unknown) {
               console.error("[canvas/ws] Subscribe failed:", err instanceof Error ? err.message : String(err));
-              ws.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
-              ws.close();
-            });
+              try {
+                ws.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Canvas WebSocket error send failed", sendErr);
+              } finally {
+                ws.close();
+              }
+            }
           },
           onMessage(evt) {
             try {
@@ -3267,6 +3281,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       await channelManager.stop();
       await processManager.shutdownAll();
       await sessionRegistry.shutdown();
@@ -3276,6 +3291,7 @@ export async function createGateway(config: GatewayConfig) {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
+      await canvasRepository?.destroy();
       await appDb?.destroy();
       server.close();
     },

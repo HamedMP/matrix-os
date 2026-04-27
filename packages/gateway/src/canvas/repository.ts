@@ -302,34 +302,62 @@ export class CanvasRepository {
   }
 
   async patchNode(owner: CanvasOwner, canvasId: string, input: PatchCanvasNodeInput): Promise<{ revision: number; updatedAt: string }> {
-    const current = await this.get(owner, canvasId);
-    if (!current) throw new CanvasNotFoundError(canvasId);
-    if (current.revision !== input.baseRevision) {
-      throw new CanvasConflictError(canvasId, current.revision);
-    }
-    const nodes = current.nodes.map((node) => {
-      if (typeof node !== "object" || node === null || (node as { id?: unknown }).id !== input.nodeId) {
-        return node;
+    const row = await this.kysely.transaction().execute(async (trx) => {
+      const current = await trx
+        .selectFrom("canvas_documents")
+        .selectAll()
+        .where("id", "=", canvasId)
+        .where("owner_scope", "=", owner.ownerScope)
+        .where("owner_id", "=", owner.ownerId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (!current) throw new CanvasNotFoundError(canvasId);
+      const record = toRecord(current);
+      if (record.revision !== input.baseRevision) {
+        throw new CanvasConflictError(canvasId, record.revision);
       }
-      return {
-        ...node,
-        ...input.updates,
-        updatedAt: new Date().toISOString(),
-      };
-    });
-    if (!nodes.some((node) => typeof node === "object" && node !== null && (node as { id?: unknown }).id === input.nodeId)) {
-      throw new CanvasNotFoundError(input.nodeId);
-    }
-    return this.replaceDocument(owner, canvasId, {
-      baseRevision: input.baseRevision,
-      document: {
+
+      const nodes = record.nodes.map((node) => {
+        if (typeof node !== "object" || node === null || (node as { id?: unknown }).id !== input.nodeId) {
+          return node;
+        }
+        return {
+          ...node,
+          ...input.updates,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      if (!nodes.some((node) => typeof node === "object" && node !== null && (node as { id?: unknown }).id === input.nodeId)) {
+        throw new CanvasNotFoundError(input.nodeId);
+      }
+
+      const document = CanvasDocumentWriteSchema.parse({
         schemaVersion: 1,
-        nodes: nodes as CanvasDocumentWrite["nodes"],
-        edges: current.edges as CanvasDocumentWrite["edges"],
-        viewStates: current.viewStates as CanvasDocumentWrite["viewStates"],
-        displayOptions: current.displayOptions,
-      },
+        nodes,
+        edges: record.edges,
+        viewStates: record.viewStates,
+        displayOptions: record.displayOptions,
+      });
+
+      return trx
+        .updateTable("canvas_documents")
+        .set({
+          revision: input.baseRevision + 1,
+          schema_version: document.schemaVersion,
+          nodes: jsonb(document.nodes),
+          edges: jsonb(document.edges),
+          view_states: jsonb(document.viewStates),
+          display_options: jsonb(document.displayOptions),
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", canvasId)
+        .where("owner_scope", "=", owner.ownerScope)
+        .where("owner_id", "=", owner.ownerId)
+        .returning(["revision", "updated_at"])
+        .executeTakeFirstOrThrow();
     });
+
+    return { revision: Number(row.revision), updatedAt: asIso(row.updated_at) ?? new Date().toISOString() };
   }
 
   async softDelete(owner: CanvasOwner, canvasId: string): Promise<void> {

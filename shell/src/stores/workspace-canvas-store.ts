@@ -5,7 +5,6 @@ import { getGatewayUrl } from "@/lib/gateway";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const SAVE_DEBOUNCE_MS = 500;
-const LIVE_NODE_BUDGET = 6;
 
 export type WorkspaceCanvasNodeType =
   | "terminal"
@@ -77,10 +76,9 @@ interface WorkspaceCanvasStore {
   selectedNodeId: string | null;
   focusedNodeId: string | null;
   query: string;
-  filters: Set<string>;
+  filters: string[];
   saveStatus: SaveStatus;
   error: string | null;
-  liveNodeBudget: number;
   loadSummaries: () => Promise<void>;
   openCanvas: (canvasId: string) => Promise<void>;
   openPrCanvas: (scopeRef: Record<string, unknown>, title?: string) => Promise<void>;
@@ -98,8 +96,6 @@ interface WorkspaceCanvasStore {
   toggleFilter: (type: string) => void;
   visibleNodes: () => WorkspaceCanvasNode[];
 }
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${getGatewayUrl()}${path}`, {
@@ -154,7 +150,10 @@ function createNode(type: WorkspaceCanvasNodeType, metadata: Record<string, unkn
   };
 }
 
-export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) => ({
+export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) => {
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  return {
   summaries: [],
   activeCanvasId: null,
   document: null,
@@ -162,10 +161,9 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
   selectedNodeId: null,
   focusedNodeId: null,
   query: "",
-  filters: new Set(),
+  filters: [],
   saveStatus: "idle",
   error: null,
-  liveNodeBudget: LIVE_NODE_BUDGET,
 
   async loadSummaries() {
     try {
@@ -195,6 +193,20 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
       method: "POST",
       body: JSON.stringify({ title, scopeType: "pull_request", scopeRef, template: "pr_workspace" }),
     });
+    set({
+      summaries: [
+        {
+          id: created.canvasId,
+          title,
+          scopeType: "pull_request",
+          scopeRef,
+          revision: created.revision,
+          updatedAt: new Date().toISOString(),
+          nodeCounts: { total: 0, stale: 0, live: 0 },
+        },
+        ...get().summaries.filter((summary) => summary.id !== created.canvasId),
+      ],
+    });
     await get().openCanvas(created.canvasId);
     await get().loadSummaries();
   },
@@ -211,7 +223,9 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
       const message = err instanceof Error ? err.message : "Canvas request failed";
       if (/conflict/i.test(message)) {
         set({ saveStatus: "conflict", error: "Canvas changed elsewhere. Reloaded latest version." });
-        await get().openCanvas(document.id);
+        if (get().activeCanvasId === document.id) {
+          await get().openCanvas(document.id);
+        }
         set({ saveStatus: "conflict" });
         return;
       }
@@ -303,9 +317,9 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
   },
 
   toggleFilter(type) {
-    const filters = new Set(get().filters);
-    if (filters.has(type)) filters.delete(type);
-    else filters.add(type);
+    const filters = get().filters.includes(type)
+      ? get().filters.filter((filter) => filter !== type)
+      : [...get().filters, type];
     set({ filters });
   },
 
@@ -314,9 +328,10 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
     if (!document) return [];
     const needle = query.trim().toLowerCase();
     return document.nodes.filter((node) => {
-      if (filters.size > 0 && !filters.has(node.type)) return false;
+      if (filters.length > 0 && !filters.includes(node.type)) return false;
       if (!needle) return true;
       return JSON.stringify(node).toLowerCase().includes(needle);
     });
   },
-}));
+  };
+});

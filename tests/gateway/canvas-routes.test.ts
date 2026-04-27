@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { CanvasConflictError } from "../../packages/gateway/src/canvas/repository.js";
 import { createCanvasRoutes, type CanvasRouteService } from "../../packages/gateway/src/canvas/routes.js";
@@ -26,6 +26,10 @@ const service: CanvasRouteService = {
 };
 
 describe("canvas routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("rejects unauthenticated requests", async () => {
     const app = createApp(service, null);
     const res = await app.request("/api/canvases");
@@ -86,5 +90,31 @@ describe("canvas routes", () => {
 
     const deleteRes = await app.request("/api/canvases/cnv_0123456789abcdef", { method: "DELETE" });
     expect(deleteRes.status).toBe(200);
+  });
+
+  it("validates list query parameters at the route boundary", async () => {
+    const listCanvases = vi.fn();
+    const app = createApp({ ...service, listCanvases });
+
+    const res = await app.request("/api/canvases?scopeType=../../system&q=x");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid request" });
+    expect(listCanvases).not.toHaveBeenCalled();
+  });
+
+  it("validates node ids from path parameters before patching", async () => {
+    const patchCanvasNode = vi.fn();
+    const app = createApp({ ...service, patchCanvasNode });
+
+    const res = await app.request("/api/canvases/cnv_0123456789abcdef/nodes/not_a_node", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseRevision: 1, updates: { metadata: { label: "bad" } } }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid request" });
+    expect(patchCanvasNode).not.toHaveBeenCalled();
   });
 });

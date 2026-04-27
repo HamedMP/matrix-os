@@ -1,4 +1,8 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { CanvasNotFoundError } from "../../packages/gateway/src/canvas/repository.js";
 import { CanvasService } from "../../packages/gateway/src/canvas/service.js";
 
 const now = "2026-04-27T00:00:00.000Z";
@@ -86,6 +90,33 @@ describe("CanvasService", () => {
       payload: { cwd: "projects/app" },
     })).resolves.toMatchObject({ result: { kind: "terminal_session" } });
     expect(terminalRegistry.create).toHaveBeenCalledWith("projects/app", undefined);
+  });
+
+  it("validates terminal cwd at the canvas action boundary", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "canvas-home-"));
+    const terminalRegistry = {
+      create: vi.fn().mockReturnValue("550e8400-e29b-41d4-a716-446655440000"),
+      getSession: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const service = new CanvasService(repository([record()]), { terminalRegistry, homePath });
+
+    await expect(service.executeAction("user_a", "cnv_0123456789abcdef", {
+      nodeId: "node_terminal",
+      type: "terminal.create",
+      payload: { cwd: "../outside" },
+    })).rejects.toBeInstanceOf(CanvasNotFoundError);
+    expect(terminalRegistry.create).not.toHaveBeenCalled();
+  });
+
+  it("requires homePath before resolving file.open actions", async () => {
+    const service = new CanvasService(repository([record()]));
+
+    await expect(service.executeAction("user_a", "cnv_0123456789abcdef", {
+      nodeId: "node_file",
+      type: "file.open",
+      payload: { path: "projects/app/README.md" },
+    })).rejects.toBeInstanceOf(CanvasNotFoundError);
   });
 
   it("uses a 10 second timeout for preview health checks", async () => {

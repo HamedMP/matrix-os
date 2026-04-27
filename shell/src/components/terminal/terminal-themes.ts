@@ -127,7 +127,7 @@ const palettes: Record<string, AnsiPalette> = {
     brightWhite: "#fdf6e3",
   },
   "solarized-light": {
-    black: "#073642",
+    black: "#eee8d5",
     red: "#dc322f",
     green: "#859900",
     yellow: "#b58900",

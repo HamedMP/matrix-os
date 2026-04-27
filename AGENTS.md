@@ -4,12 +4,12 @@ Matrix OS is **Web 4**: a unified AI operating system (OS + messaging + social +
 
 ## Constitution
 
-Read `.specify/memory/constitution.md`: the 8 non-negotiable principles. Re-read after compaction.
+Read `.specify/memory/constitution.md`: the 9 core principles. Re-read after compaction.
 
 Key principles:
 
-1. **Everything Is a File**: filesystem is the single source of truth
-2. **Agent Is the Kernel**: Agent SDK V1 `query()` with `resume`
+1. **Data Belongs to Its Owner**: files hold identity/config/export state; user/org app data lives in owner-controlled Postgres
+2. **AI Is the Kernel**: Agent SDK V1 `query()` with `resume`, model-agnostic routing over time
 3. **Headless Core, Multi-Shell**: core works without UI, shell is one renderer
 4. **Defense in Depth (NON-NEGOTIABLE)**: auth matrix, input validation, resource limits, timeouts
 5. **TDD (NON-NEGOTIABLE)**: tests first, 99-100% coverage target
@@ -65,12 +65,16 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 
 - **Use Hono `bodyLimit` middleware** on every mutating endpoint. Never check Content-Length after the body is already buffered.
 - **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Use `resolveWithinHome` for paths, `SAFE_SLUG` regex for identifiers.
+- **Validate URL path params and query params at the route boundary** with Zod schemas before calling services. This includes IDs embedded in paths (`nodeId`, `canvasId`), scope filters, cursors, limits, and search strings.
+- **Action endpoints need per-action payload schemas**. Use a Zod discriminated union keyed by `type`; do not accept a generic record and cast `action.payload as ...` in the service.
 - **No wildcard CORS** (`Access-Control-Allow-Origin: *`). Use explicit origin allowlist.
 
 ### Resource Management
 
 - **Every in-memory Map/Set MUST have a size cap and eviction policy**. No unbounded growth. Cap + LRU eviction or TTL-based cleanup.
 - **Every temp file MUST have a cleanup policy** (TTL, max count, or explicit deletion after use).
+- **Temp cleanup must be symlink-safe and recurring**. Use `lstat()` when sweeping attacker-named files, skip symlinks, schedule periodic cleanup, and clear timers on shutdown.
+- **Long-lived Postgres/Kysely resources must be destroyed on gateway shutdown**. If a repository wraps a pool or Kysely instance, add it to the close path.
 - **`appendFileSync`/`writeFileSync` are banned in request handlers**. Use async `fs/promises` to avoid blocking the event loop.
 
 ### Error Handling
@@ -78,6 +82,14 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 - **No bare `catch { return null }`**. Every catch must check error type -- DB connection failures and timeouts are not "not found."
 - **No `catch { }` (empty catch)**. At minimum, log the error.
 - **Webhook handlers must return appropriate status codes** -- 200 only on success, 4xx/5xx on failure so providers retry correctly.
+- **WebSocket broadcasts must isolate subscriber failures**. Wrap each per-subscriber send, log failures, and continue delivering to remaining subscribers.
+- **Async WebSocket subscription/auth setup must be awaited** before success messages are sent; failure paths should send a generic error best-effort and then close.
+
+### Concurrency and UI State
+
+- **Read-modify-write database operations must stay inside one transaction** or one targeted SQL update. Do not read outside a transaction and write inside a later transaction.
+- **Debounced saves must guard against active-document changes**. Conflict reloads should only reopen the document if it is still the active document when the save settles.
+- **Shared client store state should be serializable** unless there is a strong reason otherwise. Prefer arrays or records over `Set`/`Map` in Zustand state.
 
 ### Wiring Verification
 
@@ -236,7 +248,7 @@ Read these on demand, not every session:
 - Agents work on current branch in parallel, no feature branches
 
 ## Active Technologies
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), planned `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
 - User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)

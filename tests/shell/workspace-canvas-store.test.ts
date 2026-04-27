@@ -25,7 +25,7 @@ describe("workspace canvas store", () => {
       selectedNodeId: null,
       focusedNodeId: null,
       query: "",
-      filters: new Set(),
+      filters: [],
       saveStatus: "idle",
       error: null,
     });
@@ -54,7 +54,7 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().saveStatus).toBe("conflict");
   });
 
-  it("filters, focuses, and budgets live nodes", () => {
+  it("filters and focuses visible nodes", () => {
     useWorkspaceCanvasStore.setState({ document: { ...document, nodes: [
       { id: "node_terminal", type: "terminal", position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, zIndex: 0, displayState: "normal", sourceRef: null, metadata: { label: "Term" } },
       { id: "node_note", type: "note", position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, zIndex: 0, displayState: "normal", sourceRef: null, metadata: { text: "Alpha" } },
@@ -63,6 +63,21 @@ describe("workspace canvas store", () => {
     useWorkspaceCanvasStore.getState().setFocusedNode("node_note");
     expect(useWorkspaceCanvasStore.getState().visibleNodes()).toHaveLength(1);
     expect(useWorkspaceCanvasStore.getState().focusedNodeId).toBe("node_note");
-    expect(useWorkspaceCanvasStore.getState().liveNodeBudget).toBeGreaterThan(0);
+  });
+
+  it("does not switch back to a stale canvas after a save conflict", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas conflict" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceCanvasStore.setState({
+      activeCanvasId: "cnv_other123456789",
+      document: { ...document, id: "cnv_other123456789" } as any,
+    });
+
+    await useWorkspaceCanvasStore.getState().saveDocument(document as any);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(useWorkspaceCanvasStore.getState().activeCanvasId).toBe("cnv_other123456789");
+    expect(useWorkspaceCanvasStore.getState().saveStatus).toBe("conflict");
   });
 });

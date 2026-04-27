@@ -67,13 +67,9 @@ describe("CanvasSubscriptionHub", () => {
   });
 
   it("evicts expired presence and sends generic errors", async () => {
-    const now = vi.fn()
-      .mockReturnValueOnce(1_000)
-      .mockReturnValueOnce(1_000)
-      .mockReturnValueOnce(1_000)
-      .mockReturnValueOnce(40_001);
+    let currentTime = 1_000;
     const send = vi.fn();
-    const hub = new CanvasSubscriptionHub({ presenceTtlMs: 30_000, now });
+    const hub = new CanvasSubscriptionHub({ presenceTtlMs: 30_000, now: () => currentTime });
 
     await hub.subscribe({
       connectionId: "conn_1",
@@ -83,9 +79,39 @@ describe("CanvasSubscriptionHub", () => {
     });
     hub.updatePresence("conn_1", { cursor: { x: 1, y: 2 } });
     expect(hub.presenceForCanvas("cnv_0123456789abcdef")).toHaveLength(1);
+    currentTime = 40_001;
     expect(hub.presenceForCanvas("cnv_0123456789abcdef")).toHaveLength(0);
 
     hub.sendSafeError("conn_1", new Error("postgres://secret /home/deploy"));
     expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
+  });
+
+  it("isolates broadcast send failures to the failing subscriber", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const firstSend = vi.fn(() => {
+      throw new Error("socket closed");
+    });
+    const secondSend = vi.fn();
+    const hub = new CanvasSubscriptionHub();
+
+    await hub.subscribe({
+      connectionId: "conn_1",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_a",
+      send: firstSend,
+    });
+    await hub.subscribe({
+      connectionId: "conn_2",
+      canvasId: "cnv_0123456789abcdef",
+      userId: "user_b",
+      send: secondSend,
+    });
+
+    hub.broadcast("cnv_0123456789abcdef", { type: "canvas:updated" });
+
+    expect(firstSend).toHaveBeenCalled();
+    expect(secondSend).toHaveBeenCalledWith(JSON.stringify({ type: "canvas:updated" }));
+    expect(consoleSpy).toHaveBeenCalledWith("[canvas/realtime] Broadcast send failed:", "socket closed");
+    consoleSpy.mockRestore();
   });
 });

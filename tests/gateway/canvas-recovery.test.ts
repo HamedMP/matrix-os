@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,5 +44,19 @@ describe("canvas recovery", () => {
     await writeFile(join(dir, "canvas-old.json"), "{}");
     const removed = await cleanupCanvasTempFiles(dir, { ttlMs: 0, maxFiles: 0 }, Date.now() + 1);
     expect(removed).toBe(1);
+  });
+
+  it("skips symlinked export names during cleanup", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "canvas-cleanup-"));
+    const target = join(dir, "target.json");
+    const link = join(dir, "canvas-link.json");
+    await writeFile(target, "{}");
+    await symlink(target, link);
+
+    const removed = await cleanupCanvasTempFiles(dir, { ttlMs: 0, maxFiles: 0 }, Date.now() + 1);
+
+    expect(removed).toBe(0);
+    await expect(readFile(target, "utf8")).resolves.toBe("{}");
+    await expect(readFile(link, "utf8")).resolves.toBe("{}");
   });
 });

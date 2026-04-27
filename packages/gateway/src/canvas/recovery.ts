@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { CanvasRecord } from "./repository.js";
 
@@ -45,7 +45,8 @@ export async function cleanupCanvasTempFiles(dir: string, policy: CleanupPolicy,
   for (const entry of entries) {
     if (!entry.startsWith("canvas-")) continue;
     const path = join(dir, entry);
-    const info = await stat(path);
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) continue;
     candidates.push({ path, mtimeMs: info.mtimeMs });
   }
   candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
