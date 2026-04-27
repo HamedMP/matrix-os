@@ -97,6 +97,20 @@ interface WorkspaceCanvasStore {
   visibleNodes: () => WorkspaceCanvasNode[];
 }
 
+export function selectVisibleWorkspaceCanvasNodes(
+  document: WorkspaceCanvasDocument | null,
+  query: string,
+  filters: string[],
+): WorkspaceCanvasNode[] {
+  if (!document) return [];
+  const needle = query.trim().toLowerCase();
+  return document.nodes.filter((node) => {
+    if (filters.length > 0 && !filters.includes(node.type)) return false;
+    if (!needle) return true;
+    return JSON.stringify(node).toLowerCase().includes(needle);
+  });
+}
+
 async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${getGatewayUrl()}${path}`, {
     ...init,
@@ -184,31 +198,38 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
   },
 
   async openPrCanvas(scopeRef, title = "Pull Request Workspace") {
-    const existing = get().summaries.find((summary) => summary.scopeType === "pull_request" && JSON.stringify(summary.scopeRef) === JSON.stringify(scopeRef));
-    if (existing) {
-      await get().openCanvas(existing.id);
-      return;
+    try {
+      const existing = get().summaries.find((summary) => summary.scopeType === "pull_request" && JSON.stringify(summary.scopeRef) === JSON.stringify(scopeRef));
+      if (existing) {
+        await get().openCanvas(existing.id);
+        return;
+      }
+      const created = await requestJson<{ canvasId: string; revision: number }>("/api/canvases", {
+        method: "POST",
+        body: JSON.stringify({ title, scopeType: "pull_request", scopeRef, template: "pr_workspace" }),
+      });
+      set({
+        summaries: [
+          {
+            id: created.canvasId,
+            title,
+            scopeType: "pull_request",
+            scopeRef,
+            revision: created.revision,
+            updatedAt: new Date().toISOString(),
+            nodeCounts: { total: 0, stale: 0, live: 0 },
+          },
+          ...get().summaries.filter((summary) => summary.id !== created.canvasId),
+        ],
+      });
+      await get().openCanvas(created.canvasId);
+      await get().loadSummaries();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Canvas request failed";
+      set({ error: message });
+      await get().loadSummaries();
+      set({ error: message });
     }
-    const created = await requestJson<{ canvasId: string; revision: number }>("/api/canvases", {
-      method: "POST",
-      body: JSON.stringify({ title, scopeType: "pull_request", scopeRef, template: "pr_workspace" }),
-    });
-    set({
-      summaries: [
-        {
-          id: created.canvasId,
-          title,
-          scopeType: "pull_request",
-          scopeRef,
-          revision: created.revision,
-          updatedAt: new Date().toISOString(),
-          nodeCounts: { total: 0, stale: 0, live: 0 },
-        },
-        ...get().summaries.filter((summary) => summary.id !== created.canvasId),
-      ],
-    });
-    await get().openCanvas(created.canvasId);
-    await get().loadSummaries();
   },
 
   async saveDocument(document) {
@@ -325,13 +346,7 @@ export const useWorkspaceCanvasStore = create<WorkspaceCanvasStore>((set, get) =
 
   visibleNodes() {
     const { document, query, filters } = get();
-    if (!document) return [];
-    const needle = query.trim().toLowerCase();
-    return document.nodes.filter((node) => {
-      if (filters.length > 0 && !filters.includes(node.type)) return false;
-      if (!needle) return true;
-      return JSON.stringify(node).toLowerCase().includes(needle);
-    });
+    return selectVisibleWorkspaceCanvasNodes(document, query, filters);
   },
   };
 });

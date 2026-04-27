@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CanvasNotFoundError } from "../../packages/gateway/src/canvas/repository.js";
-import { CanvasService } from "../../packages/gateway/src/canvas/service.js";
+import { CanvasConfigurationError, CanvasService, mapCanvasError } from "../../packages/gateway/src/canvas/service.js";
 
 const now = "2026-04-27T00:00:00.000Z";
 
@@ -116,7 +116,7 @@ describe("CanvasService", () => {
       nodeId: "node_file",
       type: "file.open",
       payload: { path: "projects/app/README.md" },
-    })).rejects.toBeInstanceOf(CanvasNotFoundError);
+    })).rejects.toBeInstanceOf(CanvasConfigurationError);
   });
 
   it("requires homePath before accepting file source refs in node patches", async () => {
@@ -127,8 +127,15 @@ describe("CanvasService", () => {
       baseRevision: 1,
       nodeId: "node_file",
       updates: { sourceRef: { kind: "file", id: "projects/app/README.md" } },
-    })).rejects.toBeInstanceOf(CanvasNotFoundError);
+    })).rejects.toBeInstanceOf(CanvasConfigurationError);
     expect(repo.patchNode).not.toHaveBeenCalled();
+  });
+
+  it("maps canvas configuration failures to service unavailable", () => {
+    expect(mapCanvasError(new CanvasConfigurationError())).toEqual({
+      error: "Canvas service unavailable",
+      status: 503,
+    });
   });
 
   it("uses a 10 second timeout for preview health checks", async () => {

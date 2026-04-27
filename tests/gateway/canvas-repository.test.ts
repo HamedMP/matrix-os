@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import { CanvasConflictError, CanvasNotFoundError, CanvasRepository } from "../../packages/gateway/src/canvas/repository.js";
 
@@ -92,6 +92,44 @@ describe("CanvasRepository", () => {
       baseRevision: 1,
       document: document(),
     })).rejects.toBeInstanceOf(CanvasConflictError);
+  });
+
+  it("patches independent nodes without whole-document revision conflicts", async () => {
+    const created = await repository.create(owner, {
+      title: "Patchable",
+      scopeType: "global",
+      scopeRef: null,
+      document: document([node("node_a"), node("node_b")]),
+    });
+
+    const first = await repository.patchNode(owner, created.id, {
+      baseRevision: 1,
+      nodeId: "node_a",
+      updates: { metadata: { label: "A" } },
+    });
+    const second = await repository.patchNode(owner, created.id, {
+      baseRevision: 1,
+      nodeId: "node_b",
+      updates: { metadata: { label: "B" } },
+    });
+
+    expect(first.revision).toBe(2);
+    expect(second.revision).toBe(3);
+    await expect(repository.get(owner, created.id)).resolves.toMatchObject({
+      nodes: [
+        expect.objectContaining({ id: "node_a", metadata: { label: "A" } }),
+        expect.objectContaining({ id: "node_b", metadata: { label: "B" } }),
+      ],
+    });
+  });
+
+  it("does not end a shared pool from transaction-scoped wrappers", async () => {
+    const pool = { end: vi.fn() };
+    const wrapper = new CanvasRepository(repository.kysely, pool as any);
+
+    await wrapper.destroy();
+
+    expect(pool.end).not.toHaveBeenCalled();
   });
 
   it("excludes soft-deleted documents from normal and export reads", async () => {

@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { Tldraw } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
-import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
+import { selectVisibleWorkspaceCanvasNodes, useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import { WorkspaceCanvasNode } from "./WorkspaceCanvasNode";
 import { WorkspaceCanvasToolbar } from "./WorkspaceCanvasToolbar";
 import { WorkspaceCanvasInspector } from "./WorkspaceCanvasInspector";
@@ -17,15 +17,7 @@ export function WorkspaceCanvas() {
   const filters = useWorkspaceCanvasStore((s) => s.filters);
   const setSelectedNode = useWorkspaceCanvasStore((s) => s.setSelectedNode);
   const tldrawLayerEnabled = document?.displayOptions.tldrawLayer === true;
-  const visibleNodes = useMemo(() => {
-    if (!document) return [];
-    const needle = query.trim().toLowerCase();
-    return document.nodes.filter((node) => {
-      if (filters.length > 0 && !filters.includes(node.type)) return false;
-      if (!needle) return true;
-      return JSON.stringify(node).toLowerCase().includes(needle);
-    });
-  }, [document, filters, query]);
+  const visibleNodes = useMemo(() => selectVisibleWorkspaceCanvasNodes(document, query, filters), [document, filters, query]);
 
   useEffect(() => {
     void loadSummaries();

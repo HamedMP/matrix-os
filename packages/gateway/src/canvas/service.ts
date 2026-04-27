@@ -46,6 +46,13 @@ export interface CanvasSafeError {
   latestRevision?: number;
 }
 
+export class CanvasConfigurationError extends Error {
+  constructor(message = "Canvas service is not configured") {
+    super(message);
+    this.name = "CanvasConfigurationError";
+  }
+}
+
 export interface CanvasTerminalRegistry {
   create(cwd: string, shell?: string): string;
   getSession(sessionId: string): { sessionId: string; state: "running" | "exited"; attachedClients?: number } | null;
@@ -65,6 +72,10 @@ export function mapCanvasError(err: unknown): CanvasSafeError {
   }
   if (err instanceof CanvasNotFoundError) {
     return { error: "Canvas not found", status: 404 };
+  }
+  if (err instanceof CanvasConfigurationError) {
+    console.error("[canvas] Configuration error:", err.message);
+    return { error: "Canvas service unavailable", status: 503 };
   }
   if (err instanceof SyntaxError) {
     return { error: "Invalid JSON", status: 400 };
@@ -259,7 +270,7 @@ export class CanvasService {
       const sourceRef = input.updates.sourceRef as { kind?: unknown; id?: unknown };
       if (sourceRef.kind === "file" && typeof sourceRef.id === "string") {
         if (!this.homePath) {
-          throw new CanvasNotFoundError("file");
+          throw new CanvasConfigurationError("homePath is required for file source refs");
         }
         if (!resolveWithinHome(this.homePath, sourceRef.id)) {
           throw new CanvasNotFoundError("file");
@@ -397,7 +408,7 @@ export class CanvasService {
 
   private openFile(action: Extract<CanvasAction, { type: "file.open" }>) {
     if (!this.homePath) {
-      throw new CanvasNotFoundError("file");
+      throw new CanvasConfigurationError("homePath is required for file actions");
     }
     const safePath = resolveWithinHome(this.homePath, action.payload.path);
     if (!safePath) {

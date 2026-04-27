@@ -54,6 +54,19 @@ describe("workspace canvas store", () => {
     expect(useWorkspaceCanvasStore.getState().saveStatus).toBe("conflict");
   });
 
+  it("records PR canvas creation failures and refreshes summaries", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "Canvas request failed" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ canvases: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await useWorkspaceCanvasStore.getState().openPrCanvas({ projectId: "prj_1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(useWorkspaceCanvasStore.getState().error).toBe("Canvas request failed");
+    expect(useWorkspaceCanvasStore.getState().activeCanvasId).toBeNull();
+  });
+
   it("filters and focuses visible nodes", () => {
     useWorkspaceCanvasStore.setState({ document: { ...document, nodes: [
       { id: "node_terminal", type: "terminal", position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, zIndex: 0, displayState: "normal", sourceRef: null, metadata: { label: "Term" } },

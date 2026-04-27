@@ -189,8 +189,8 @@ export class CanvasRepository {
   async destroy(): Promise<void> {
     if (this.ownsConnection) {
       await this.kysely.destroy();
+      await this.pool?.end();
     }
-    await this.pool?.end();
   }
 
   async create(owner: CanvasOwner, input: CreateCanvasInput): Promise<CanvasRecord> {
@@ -320,72 +320,69 @@ export class CanvasRepository {
 
   async patchNode(owner: CanvasOwner, canvasId: string, input: PatchCanvasNodeInput): Promise<{ revision: number; updatedAt: string }> {
     const row = await this.kysely.transaction().execute(async (trx) => {
-      const current = await trx
-        .selectFrom("canvas_documents")
-        .selectAll()
-        .where("id", "=", canvasId)
-        .where("owner_scope", "=", owner.ownerScope)
-        .where("owner_id", "=", owner.ownerId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (!current) throw new CanvasNotFoundError(canvasId);
-      const record = toRecord(current);
-      if (record.revision !== input.baseRevision) {
-        throw new CanvasConflictError(canvasId, record.revision);
-      }
-
-      const nodes = record.nodes.map((node) => {
-        if (typeof node !== "object" || node === null || (node as { id?: unknown }).id !== input.nodeId) {
-          return node;
-        }
-        return {
-          ...node,
-          ...input.updates,
-          updatedAt: new Date().toISOString(),
-        };
-      });
-      if (!nodes.some((node) => typeof node === "object" && node !== null && (node as { id?: unknown }).id === input.nodeId)) {
-        throw new CanvasNotFoundError(input.nodeId);
-      }
-
-      const document = CanvasDocumentWriteSchema.parse({
-        schemaVersion: 1,
-        nodes,
-        edges: record.edges,
-        viewStates: record.viewStates,
-        displayOptions: record.displayOptions,
-      });
+      const patch = jsonb({ ...input.updates, updatedAt: new Date().toISOString() });
 
       const updated = await trx
         .updateTable("canvas_documents")
         .set({
-          revision: input.baseRevision + 1,
-          schema_version: document.schemaVersion,
-          nodes: jsonb(document.nodes),
-          edges: jsonb(document.edges),
-          view_states: jsonb(document.viewStates),
-          display_options: jsonb(document.displayOptions),
+          revision: sql<number>`revision + 1`,
+          nodes: sql`
+            jsonb_set(
+              nodes,
+              ARRAY[(
+                SELECT (elem.idx - 1)::text
+                FROM jsonb_array_elements(nodes) WITH ORDINALITY AS elem(node, idx)
+                WHERE elem.node->>'id' = ${input.nodeId}
+                LIMIT 1
+              )],
+              (
+                SELECT elem.node || ${patch}
+                FROM jsonb_array_elements(nodes) WITH ORDINALITY AS elem(node, idx)
+                WHERE elem.node->>'id' = ${input.nodeId}
+                LIMIT 1
+              ),
+              false
+            )
+          `,
           updated_at: sql`now()`,
         })
         .where("id", "=", canvasId)
         .where("owner_scope", "=", owner.ownerScope)
         .where("owner_id", "=", owner.ownerId)
-        .where("revision", "=", input.baseRevision)
-        .returning(["revision", "updated_at"])
+        .where("revision", ">=", input.baseRevision)
+        .where("deleted_at", "is", null)
+        .where(sql<boolean>`EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(nodes) AS elem(node)
+          WHERE elem.node->>'id' = ${input.nodeId}
+        )`)
+        .returning(["revision", "updated_at", "nodes", "edges", "view_states", "display_options"])
         .executeTakeFirst();
 
       if (!updated) {
-        const latest = await trx
+        const current = await trx
           .selectFrom("canvas_documents")
-          .select(["revision"])
+          .select(["revision", "nodes"])
           .where("id", "=", canvasId)
           .where("owner_scope", "=", owner.ownerScope)
           .where("owner_id", "=", owner.ownerId)
           .where("deleted_at", "is", null)
           .executeTakeFirst();
-        if (!latest) throw new CanvasNotFoundError(canvasId);
-        throw new CanvasConflictError(canvasId, Number(latest.revision));
+        if (!current) throw new CanvasNotFoundError(canvasId);
+        const nodes = parseJson<unknown[]>(current.nodes, []);
+        if (!nodes.some((node) => typeof node === "object" && node !== null && (node as { id?: unknown }).id === input.nodeId)) {
+          throw new CanvasNotFoundError(input.nodeId);
+        }
+        throw new CanvasConflictError(canvasId, Number(current.revision));
       }
+
+      CanvasDocumentWriteSchema.parse({
+        schemaVersion: 1,
+        nodes: parseJson<unknown[]>(updated.nodes, []),
+        edges: parseJson<unknown[]>(updated.edges, []),
+        viewStates: parseJson<unknown[]>(updated.view_states, []),
+        displayOptions: parseJson<Record<string, unknown>>(updated.display_options, {}),
+      });
 
       return updated;
     });
