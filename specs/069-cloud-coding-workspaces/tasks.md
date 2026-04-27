@@ -148,7 +148,8 @@ Untracked support/spec files currently present:
   - Files: `packages/gateway/src/review-loop.ts`, `tests/gateway/review-loop.test.ts`
 - [x] T303 Add review prompts and atomic `.matrix/review-round-{N}.json` control-file protocol.
   - Files: `packages/gateway/src/review-control.ts`, `tests/gateway/review-control.test.ts`
-- [ ] T304 Persist review records under `~/system/reviews/{reviewId}.json`.
+- [x] T304 Persist review records under `~/system/reviews/{reviewId}.json`.
+  - Files: `packages/gateway/src/review-store.ts`, `tests/gateway/review-store.test.ts`
 - [ ] T305 Add gateway API and CLI commands for review start/status/watch/next/approve/stop.
 - [ ] T306 Complete green/refactor coverage for convergence, stall, parse failure, verification failure, illegal transitions, and recovery from partial writes.
 
