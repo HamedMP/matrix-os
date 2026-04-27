@@ -145,7 +145,6 @@ interface TerminalAppProps {
 export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
-  const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
   const isLightTheme = isLightTerminalTheme(themeId, (theme as { slug?: string }).slug);
 
   // Match the padding around the xterm to the active terminal theme so the
@@ -264,6 +263,25 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
     },
     [],
   );
+
+  const addSessionTab = useCallback((label: string, sessionId: string, cwd = DEFAULT_CWD) => {
+    const id = genId();
+    const paneId = genId();
+    const tab: Tab = {
+      id,
+      label,
+      paneTree: {
+        type: "pane",
+        id: paneId,
+        cwd,
+        sessionId,
+      },
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(id);
+    setFocusedPaneId(paneId);
+    return id;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -509,7 +527,7 @@ export function TerminalApp({ initialCommand, initialSessionId }: TerminalAppPro
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId,
-    addTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
+    addTab, addSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
   };
@@ -571,6 +589,7 @@ interface TerminalAppContextType {
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
+  addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -861,7 +880,23 @@ interface ProjectInfo {
   modified: string | null;
 }
 
-type SidebarTab = "projects" | "files";
+type SidebarTab = "projects" | "files" | "sessions";
+
+interface WorkspaceSessionSummary {
+  id: string;
+  kind?: "shell" | "agent";
+  projectSlug?: string;
+  taskId?: string;
+  worktreeId?: string;
+  pr?: number;
+  agent?: "claude" | "codex" | "opencode" | "pi";
+  runtime?: {
+    status?: string;
+  };
+  status?: string;
+  nativeAttachCommand?: string[];
+  transcriptPath?: string;
+}
 
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
@@ -872,6 +907,9 @@ function LocalTerminalSidebar() {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
@@ -903,6 +941,33 @@ function LocalTerminalSidebar() {
   useEffect(() => {
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
+
+  const fetchSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/sessions?limit=100`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setSessionsError("Failed to load sessions");
+        setSessions([]);
+        return;
+      }
+      const data = (await res.json()) as { sessions?: WorkspaceSessionSummary[] };
+      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch (err: unknown) {
+      console.warn("Failed to load workspace sessions:", err instanceof Error ? err.message : err);
+      setSessionsError("Could not reach gateway");
+      setSessions([]);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "sessions") void fetchSessions();
+  }, [fetchSessions, tab]);
 
   const fetchDir = useCallback(async (path: string) => {
     try {
@@ -948,11 +1013,92 @@ function LocalTerminalSidebar() {
   const filteredProjects = filter
     ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
     : projects;
+  const normalizedFilter = filter.trim().toLowerCase();
+  const filteredSessions = normalizedFilter
+    ? sessions.filter((session) => [
+      session.id,
+      session.projectSlug,
+      session.taskId,
+      session.worktreeId,
+      session.agent,
+      session.runtime?.status,
+      session.status,
+      session.transcriptPath,
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
+    : sessions;
+
+  const openWorkspaceTransport = async (session: WorkspaceSessionSummary, mode: "observe" | "takeover") => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(session.id)}/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setSessionsError("Failed to attach session");
+        return;
+      }
+      const data = (await res.json()) as { terminalSessionId?: string };
+      if (data.terminalSessionId) {
+        ctx.addSessionTab(`${session.id} · ${mode}`, data.terminalSessionId);
+      }
+    } catch (err: unknown) {
+      console.warn("Failed to attach workspace session:", err instanceof Error ? err.message : err);
+      setSessionsError("Could not attach session");
+    }
+  };
+
+  const duplicateWorkspaceSession = async (session: WorkspaceSessionSummary) => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: session.kind ?? (session.agent ? "agent" : "shell"),
+          ...(session.agent ? { agent: session.agent } : {}),
+          ...(session.projectSlug ? { projectSlug: session.projectSlug } : {}),
+          ...(session.taskId ? { taskId: session.taskId } : {}),
+          ...(session.worktreeId ? { worktreeId: session.worktreeId } : {}),
+          ...(session.pr ? { pr: session.pr } : {}),
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setSessionsError("Failed to duplicate session");
+        return;
+      }
+      await fetchSessions();
+    } catch (err: unknown) {
+      console.warn("Failed to duplicate workspace session:", err instanceof Error ? err.message : err);
+      setSessionsError("Could not duplicate session");
+    }
+  };
+
+  const killWorkspaceSession = async (sessionId: string) => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setSessionsError("Failed to kill session");
+        return;
+      }
+      await fetchSessions();
+    } catch (err: unknown) {
+      console.warn("Failed to kill workspace session:", err instanceof Error ? err.message : err);
+      setSessionsError("Could not kill session");
+    }
+  };
 
   return (
     <div className="flex flex-col shrink-0 overflow-hidden" style={{ width: 240, background: "var(--card)", borderRight: "1px solid var(--border)", paddingLeft: 4 }}>
       <div className="flex items-stretch shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
         <button
+          aria-label="Projects"
           className="flex-1 flex items-center justify-center gap-1.5 text-[11px] cursor-pointer transition-colors"
           style={{
             padding: "8px 6px",
@@ -967,6 +1113,7 @@ function LocalTerminalSidebar() {
           <span style={{ fontSize: 12 }}>◆</span> Projects
         </button>
         <button
+          aria-label="Files"
           className="flex-1 flex items-center justify-center gap-1.5 text-[11px] cursor-pointer transition-colors"
           style={{
             padding: "8px 6px",
@@ -979,6 +1126,21 @@ function LocalTerminalSidebar() {
           onClick={() => setTab("files")}
         >
           <span style={{ fontSize: 12 }}>▤</span> Files
+        </button>
+        <button
+          aria-label="Sessions"
+          className="flex-1 flex items-center justify-center gap-1.5 text-[11px] cursor-pointer transition-colors"
+          style={{
+            padding: "8px 6px",
+            background: tab === "sessions" ? "var(--background)" : "transparent",
+            color: tab === "sessions" ? "var(--foreground)" : "var(--muted-foreground)",
+            borderBottom: tab === "sessions" ? "2px solid var(--primary)" : "2px solid transparent",
+            fontWeight: 500,
+            letterSpacing: "0.3px",
+          }}
+          onClick={() => setTab("sessions")}
+        >
+          <span style={{ fontSize: 12 }}>◉</span> Sessions
         </button>
         <button
           className="flex items-center justify-center cursor-pointer hover:bg-[var(--accent)] transition-colors"
@@ -1050,6 +1212,60 @@ function LocalTerminalSidebar() {
             ))}
           </div>
         </>
+      ) : tab === "sessions" ? (
+        <>
+          <div className="flex items-center gap-1.5 px-2 py-1.5 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+            <input
+              aria-label="Search sessions and transcripts"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search sessions..."
+              className="flex-1 text-[11px] outline-none"
+              style={{
+                background: "var(--background)",
+                color: "var(--foreground)",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                padding: "3px 6px",
+              }}
+            />
+            <button
+              onClick={() => void fetchSessions()}
+              className="cursor-pointer hover:bg-[var(--accent)] rounded transition-colors"
+              style={{ color: "var(--muted-foreground)", fontSize: 12, padding: "2px 6px" }}
+              title="Refresh sessions"
+            >
+              ↻
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-1">
+            {sessionsLoading && (
+              <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                Loading sessions…
+              </div>
+            )}
+            {!sessionsLoading && sessionsError && (
+              <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--destructive)" }}>
+                {sessionsError}
+              </div>
+            )}
+            {!sessionsLoading && !sessionsError && filteredSessions.length === 0 && (
+              <div className="px-3 py-6 text-center text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+                {filter ? "No sessions match" : "No coding sessions"}
+              </div>
+            )}
+            {!sessionsLoading && filteredSessions.map((session) => (
+              <SessionCard
+                key={session.id}
+                session={session}
+                onObserve={() => void openWorkspaceTransport(session, "observe")}
+                onTakeover={() => void openWorkspaceTransport(session, "takeover")}
+                onDuplicate={() => void duplicateWorkspaceSession(session)}
+                onKill={() => void killWorkspaceSession(session.id)}
+              />
+            ))}
+          </div>
+        </>
       ) : (
         <>
           <div className="flex items-center gap-1 px-2 py-1.5 text-[10px] shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
@@ -1090,6 +1306,97 @@ function LocalTerminalSidebar() {
         </>
       )}
     </div>
+  );
+}
+
+function SessionCard({
+  session,
+  onObserve,
+  onTakeover,
+  onDuplicate,
+  onKill,
+}: {
+  session: WorkspaceSessionSummary;
+  onObserve: () => void;
+  onTakeover: () => void;
+  onDuplicate: () => void;
+  onKill: () => void;
+}) {
+  const health = session.runtime?.status ?? session.status ?? "unknown";
+  return (
+    <div
+      style={{
+        margin: "3px 8px",
+        padding: "8px 10px 6px",
+        borderRadius: 6,
+        border: "1px solid var(--border)",
+        background: "var(--background)",
+      }}
+    >
+      <div className="flex items-center gap-1.5" style={{ marginBottom: 4 }}>
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: health === "running" ? "var(--success)" : "var(--muted-foreground)",
+            flexShrink: 0,
+          }}
+        />
+        <span className="text-[12px] truncate flex-1" style={{ color: "var(--foreground)", fontWeight: 500 }}>
+          {session.id}
+        </span>
+      </div>
+      <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
+        {health} health
+      </div>
+      <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
+        {[session.projectSlug, session.taskId, session.agent ?? session.kind ?? "shell"].filter(Boolean).join(" · ")}
+      </div>
+      {session.nativeAttachCommand && (
+        <div
+          className="text-[10px] truncate"
+          style={{ color: "var(--muted-foreground)", fontFamily: "var(--font-mono, ui-monospace, monospace)", paddingLeft: 12, marginTop: 4 }}
+        >
+          {session.nativeAttachCommand.join(" ")}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1" style={{ marginTop: 6, paddingLeft: 12 }}>
+        <SessionActionBtn label="Observe" sessionId={session.id} onClick={onObserve} />
+        <SessionActionBtn label="Take over" sessionId={session.id} onClick={onTakeover} />
+        <SessionActionBtn label="Duplicate" sessionId={session.id} onClick={onDuplicate} />
+        <SessionActionBtn label="Kill" sessionId={session.id} onClick={onKill} danger />
+      </div>
+    </div>
+  );
+}
+
+function SessionActionBtn({
+  label,
+  sessionId,
+  onClick,
+  danger,
+}: {
+  label: string;
+  sessionId: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      aria-label={`${label} ${sessionId}`}
+      onClick={onClick}
+      className="text-[10px] cursor-pointer transition-colors"
+      style={{
+        padding: "2px 6px",
+        borderRadius: 3,
+        background: danger ? "var(--destructive)" : "var(--card)",
+        color: danger ? "white" : "var(--foreground)",
+        border: danger ? "none" : "1px solid var(--border)",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
