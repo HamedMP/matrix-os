@@ -12,6 +12,11 @@ const GATEWAY = getGatewayUrl();
 interface SystemInfo {
   version?: string;
   image?: string;
+  build?: {
+    sha?: string;
+    ref?: string;
+    date?: string;
+  };
   homePath?: string;
   nodeVersion?: string;
   platform?: string;
@@ -202,6 +207,9 @@ export function SystemSection() {
           {[
             ["Version", info.version ?? "0.1.0"],
             ["Image", info.image],
+            ["Build Ref", info.build?.ref],
+            ["Build SHA", info.build?.sha],
+            ["Build Date", info.build?.date],
             ["Home Directory", info.homePath],
             ["Node.js", info.nodeVersion],
             ["Platform", info.platform],

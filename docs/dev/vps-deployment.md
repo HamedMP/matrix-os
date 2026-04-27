@@ -438,11 +438,11 @@ User containers are NOT affected -- they keep running on the old image.
 ### Update User Container Image
 
 ```bash
-# Rebuild image (Clerk key is baked in at build time)
-docker build \
-  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
-  -t ghcr.io/hamedmp/matrix-os:latest \
-  -f Dockerfile .
+# Rebuild image (Clerk key is baked in at build time). The helper stamps
+# VERSION, MATRIX_BUILD_SHA, MATRIX_BUILD_REF, and MATRIX_BUILD_DATE into the
+# image labels, env, startup logs, and /api/system/info.
+export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+MATRIX_TAG_LOCAL=0 MATRIX_IMAGE_TAG=ghcr.io/hamedmp/matrix-os:latest ./scripts/build-user-image.sh
 
 # New provisions use the new image automatically.
 # To update an existing container, use the upgrade API:
@@ -456,6 +456,32 @@ curl -X POST http://localhost:9000/containers/rolling-restart \
 
 The upgrade endpoint stops the old container, pulls the latest image, creates a new container with the same ports and volume mount, and starts it. User data in `/data/users/{handle}/matrixos` is preserved.
 
+#### Inspect Running Container Provenance
+
+Every user image built by `scripts/build-user-image.sh` carries build provenance:
+
+- Docker labels: `org.opencontainers.image.revision`, `org.opencontainers.image.ref.name`, `org.opencontainers.image.created`
+- Container env: `MATRIX_BUILD_SHA`, `MATRIX_BUILD_REF`, `MATRIX_BUILD_DATE`
+- Gateway API: `GET /api/system/info`
+- Startup logs: `docker logs matrixos-<handle> | head`
+
+Quick inventory:
+
+```bash
+./scripts/container-versions.sh
+```
+
+For a single container:
+
+```bash
+docker exec matrixos-<handle> wget -qO- http://localhost:4000/api/system/info | jq .
+docker inspect matrixos-<handle> \
+  --format '{{.Config.Image}} {{range .Config.Env}}{{println .}}{{end}}' \
+  | grep -E 'MATRIX_IMAGE|MATRIX_BUILD_'
+```
+
+If a row shows `unknown`, that container is running an image built before provenance stamping landed. Rebuild with `scripts/build-user-image.sh` and upgrade or rolling-restart it.
+
 #### Deploying a locally-built image (avoiding the pull-revert trap)
 
 **Important:** when `PLATFORM_IMAGE` points at a public registry ref like `ghcr.io/hamedmp/matrix-os:latest`, every call to `/upgrade` and `/containers/rolling-restart` runs `docker pull` on that ref. If the registry still holds an older image than the one you just built locally, **the pull will overwrite your local tag with the stale registry image** and silently deploy old code. The orchestrator guards against this by only pulling when the image ref looks remote (`host.tld/...`), but that only helps if you use a local-only tag.
@@ -464,10 +490,8 @@ The durable fix is to use a local-only tag for deploys-without-push:
 
 ```bash
 # 1. Build into a local-only tag (no registry host prefix)
-docker build \
-  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
-  -t matrixos-user:local \
-  -f Dockerfile .
+export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+MATRIX_IMAGE_TAG=matrixos-user:$(git rev-parse --short=12 HEAD) ./scripts/build-user-image.sh
 
 # 2. Tell the orchestrator to use it (one-time setup)
 echo 'PLATFORM_IMAGE=matrixos-user:local' >> .env
@@ -481,6 +505,25 @@ curl -X POST http://localhost:9000/containers/rolling-restart \
 ```
 
 Because `matrixos-user:local` has no registry host, the orchestrator's `pullImageIfRemote()` helper skips the pull entirely. `docker tag <new-sha> matrixos-user:local` after each build to advance the local tag.
+
+#### Recommended Dev / Prod Split
+
+Run three image tracks:
+
+- `ghcr.io/hamedmp/matrix-os:vX.Y.Z`: immutable production release. Customer containers should run this or a digest-pinned equivalent.
+- `ghcr.io/hamedmp/matrix-os:canary-<sha>`: shared team dogfood. Founders' own containers can run this after tests pass, before promoting a release.
+- `matrixos-user:local`: one-VPS live testing only. Never point customer containers at this tag.
+
+On the current shared VPS, keep customer containers on released registry tags and use dedicated founder handles for canary/local testing. When moving to VPS-per-user, keep the same rule: each VPS records its desired image tag, and upgrades only replace the container image while preserving `/data/users/{handle}/matrixos`.
+
+For team development inside Matrix itself:
+
+1. Each founder gets their own Matrix container and home volume.
+2. Code work happens in `~/projects/matrix-os` inside that container.
+3. Build a local image with `scripts/build-user-image.sh`.
+4. Upgrade only the founder's own dogfood container first.
+5. Promote to canary after pre-PR checks pass.
+6. Promote to `vX.Y.Z` only from a tagged commit.
 
 #### Known buildx gotcha: new build, stale tag
 

@@ -4,9 +4,30 @@ set -e
 MATRIX_HOME="${MATRIX_HOME:-/home/matrixos/home}"
 echo "Matrix OS starting..."
 echo "Home directory: $MATRIX_HOME"
+echo "Image: ${MATRIX_IMAGE:-unknown}"
+echo "Build: ref=${MATRIX_BUILD_REF:-unknown} sha=${MATRIX_BUILD_SHA:-unknown} date=${MATRIX_BUILD_DATE:-unknown}"
 
 # Ensure volume mount is owned by non-root user (skip /app -- already correct from build)
 chown -R matrixos:matrixos "$MATRIX_HOME" 2>/dev/null || true
+
+install_shell_config() {
+  target_home="$1"
+  mkdir -p "$target_home"
+
+  # zsh runs its first-use installer when no startup files exist. Seed the
+  # Matrix defaults into both the persistent Matrix home and passwd home, but
+  # do not overwrite a user's customized shell files.
+  if [ -f /app/distro/zshrc ] && [ ! -e "$target_home/.zshrc" ]; then
+    cp /app/distro/zshrc "$target_home/.zshrc"
+  fi
+  if [ -f /app/distro/p10k.zsh ] && [ ! -e "$target_home/.p10k.zsh" ]; then
+    cp /app/distro/p10k.zsh "$target_home/.p10k.zsh"
+  fi
+  chown matrixos:matrixos "$target_home/.zshrc" "$target_home/.p10k.zsh" 2>/dev/null || true
+}
+
+install_shell_config "$MATRIX_HOME"
+install_shell_config "/home/matrixos"
 
 # First boot: copy template into empty volume
 if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then

@@ -19,8 +19,13 @@ bindkey '^[[3~' delete-char
 export USER="${MATRIX_HANDLE//[\$\`]/}"
 export USER="${USER:-matrixos}"
 
-[[ -f "$ZSH_PLUGIN_ROOT/themes/powerlevel10k/powerlevel10k.zsh-theme" ]] && \
+if [[ -f "$ZSH_PLUGIN_ROOT/themes/powerlevel10k/powerlevel10k.zsh-theme" ]]; then
   source "$ZSH_PLUGIN_ROOT/themes/powerlevel10k/powerlevel10k.zsh-theme"
+else
+  autoload -Uz colors && colors
+  setopt prompt_subst
+  PROMPT='%F{green}${USER:-matrixos}%f %F{blue}%2~%f %# '
+fi
 
 # p10k config lives with the active shell home so Matrix terminal sessions can
 # keep using a remapped HOME directory.

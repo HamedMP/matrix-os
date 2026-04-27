@@ -13,6 +13,34 @@ function tmpHome(): string {
 }
 
 describe("T135: System info", () => {
+  it("includes image provenance from build environment", () => {
+    const homePath = tmpHome();
+    const previousSha = process.env.MATRIX_BUILD_SHA;
+    const previousRef = process.env.MATRIX_BUILD_REF;
+    const previousDate = process.env.MATRIX_BUILD_DATE;
+    process.env.MATRIX_BUILD_SHA = "abc1234";
+    process.env.MATRIX_BUILD_REF = "main";
+    process.env.MATRIX_BUILD_DATE = "2026-04-26T16:17:05Z";
+
+    try {
+      const info = getSystemInfo(homePath);
+
+      expect(info.build).toEqual({
+        sha: "abc1234",
+        ref: "main",
+        date: "2026-04-26T16:17:05Z",
+      });
+    } finally {
+      if (previousSha === undefined) delete process.env.MATRIX_BUILD_SHA;
+      else process.env.MATRIX_BUILD_SHA = previousSha;
+      if (previousRef === undefined) delete process.env.MATRIX_BUILD_REF;
+      else process.env.MATRIX_BUILD_REF = previousRef;
+      if (previousDate === undefined) delete process.env.MATRIX_BUILD_DATE;
+      else process.env.MATRIX_BUILD_DATE = previousDate;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("returns version and uptime", () => {
     const homePath = tmpHome();
     const info = getSystemInfo(homePath);

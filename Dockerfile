@@ -150,18 +150,33 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/shell ./shell
 COPY --from=builder /app/home ./home
 COPY --from=builder /app/package.json ./
+COPY distro/zshrc /app/distro/zshrc
+COPY distro/p10k.zsh /app/distro/p10k.zsh
 
 # Next.js needs writable cache dirs at runtime
 RUN chown -R matrixos:matrixos /app/shell/.next/cache /app/shell/.next/server
 
 ARG VERSION=dev
+ARG MATRIX_BUILD_SHA=unknown
+ARG MATRIX_BUILD_REF=unknown
+ARG MATRIX_BUILD_DATE=unknown
 RUN echo "$VERSION" > /app/VERSION
+
+LABEL org.opencontainers.image.title="Matrix OS" \
+      org.opencontainers.image.source="https://github.com/hamedmp/matrix-os" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$MATRIX_BUILD_SHA" \
+      org.opencontainers.image.ref.name="$MATRIX_BUILD_REF" \
+      org.opencontainers.image.created="$MATRIX_BUILD_DATE"
 
 # Default environment
 ENV NODE_ENV=production
 ENV PORT=4000
 ENV MATRIX_HOME=/home/matrixos/home
 ENV SHELL=/bin/zsh
+ENV MATRIX_BUILD_SHA=$MATRIX_BUILD_SHA
+ENV MATRIX_BUILD_REF=$MATRIX_BUILD_REF
+ENV MATRIX_BUILD_DATE=$MATRIX_BUILD_DATE
 ENV NEXT_PUBLIC_GATEWAY_WS=ws://localhost:4000/ws
 ENV NEXT_PUBLIC_GATEWAY_URL=http://localhost:4000
 ENV GATEWAY_URL=http://localhost:4000
