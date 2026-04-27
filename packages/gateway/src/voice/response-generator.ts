@@ -86,12 +86,15 @@ export async function generateVoiceResponse(
       // query continues in the background until it completes naturally.
       // This is a known cost trade-off: the API tokens are consumed but the
       // caller gets a timely response. Future: add signal support to dispatcher.
-      dispatchPromise.catch(() => {});
+      dispatchPromise.catch((err: unknown) => {
+        console.warn("[voice] Async response dispatch failed:", err instanceof Error ? err.message : String(err));
+      });
       return FALLBACK_MESSAGE;
     }
 
     return responseText || FALLBACK_MESSAGE;
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[voice] Response generation failed:", err instanceof Error ? err.message : String(err));
     return ERROR_MESSAGE;
   }
 }

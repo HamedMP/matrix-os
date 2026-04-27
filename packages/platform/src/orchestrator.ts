@@ -49,9 +49,9 @@ export interface Orchestrator {
   destroy(handle: string): Promise<void>;
   upgrade(handle: string): Promise<ContainerRecord>;
   rollingRestart(): Promise<RollingRestartResult>;
-  getInfo(handle: string): ContainerRecord | undefined;
+  getInfo(handle: string): Promise<ContainerRecord | undefined>;
   getImage(): string;
-  listAll(status?: string): ContainerRecord[];
+  listAll(status?: string): Promise<ContainerRecord[]>;
   syncStates(): Promise<void>;
 }
 
@@ -223,7 +223,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
   return {
     async provision(handle, clerkUserId, displayName) {
-      const existing = getContainer(db, handle);
+      const existing = await getContainer(db, handle);
       if (existing) throw new Error(`Container already exists for handle: ${handle}`);
 
       const end = provisionDuration.startTimer();
@@ -231,10 +231,10 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       await ensureNetwork();
       await createUserDatabase(handle);
 
-      const { gatewayPort, shellPort } = runInPlatformTransaction(db, () => {
-        const nextGatewayPort = allocatePort(db, baseGatewayPort, `${handle}-gw`);
-        const nextShellPort = allocatePort(db, baseShellPort, `${handle}-sh`);
-        insertContainer(db, {
+      const { gatewayPort, shellPort } = await runInPlatformTransaction(db, async (trx) => {
+        const nextGatewayPort = await allocatePort(trx, baseGatewayPort, `${handle}-gw`);
+        const nextShellPort = await allocatePort(trx, baseShellPort, `${handle}-sh`);
+        await insertContainer(trx, {
           handle,
           clerkUserId,
           containerId: null,
@@ -274,15 +274,15 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
           },
         });
 
-        updateContainerStatus(db, handle, 'provisioning', container.id);
+        await updateContainerStatus(db, handle, 'provisioning', container.id);
         await container.start();
 
-        updateContainerStatus(db, handle, 'running', container.id);
+        await updateContainerStatus(db, handle, 'running', container.id);
       } catch (err) {
-        runInPlatformTransaction(db, () => {
-          releasePort(db, `${handle}-gw`);
-          releasePort(db, `${handle}-sh`);
-          deleteContainer(db, handle);
+        await runInPlatformTransaction(db, async (trx) => {
+          await releasePort(trx, `${handle}-gw`);
+          await releasePort(trx, `${handle}-sh`);
+          await deleteContainer(trx, handle);
         });
         if (container) {
           await safeStopAndRemoveContainer(container, handle);
@@ -292,11 +292,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       end();
 
-      return getContainer(db, handle)!;
+      return (await getContainer(db, handle))!;
     },
 
     async start(handle) {
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
       if (record.status === 'running') return;
 
@@ -304,11 +304,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         const container = docker.getContainer(record.containerId);
         await container.start();
       }
-      updateContainerStatus(db, handle, 'running');
+      await updateContainerStatus(db, handle, 'running');
     },
 
     async stop(handle) {
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
       if (record.status === 'stopped') return;
 
@@ -316,11 +316,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         const container = docker.getContainer(record.containerId);
         await container.stop();
       }
-      updateContainerStatus(db, handle, 'stopped');
+      await updateContainerStatus(db, handle, 'stopped');
     },
 
     async destroy(handle) {
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
 
       if (record.containerId) {
@@ -328,16 +328,16 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         await safeStopAndRemoveContainer(container, handle);
       }
 
-      runInPlatformTransaction(db, () => {
-        releasePort(db, `${handle}-gw`);
-        releasePort(db, `${handle}-sh`);
-        deleteContainer(db, handle);
+      await runInPlatformTransaction(db, async (trx) => {
+        await releasePort(trx, `${handle}-gw`);
+        await releasePort(trx, `${handle}-sh`);
+        await deleteContainer(trx, handle);
       });
       await dropUserDatabase(handle);
     },
 
     async upgrade(handle) {
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
       // Silent-failure #12: buildEnv silently drops MATRIX_USER_ID when
       // clerkUserId is falsy, so the re-provisioned container would boot
@@ -382,16 +382,16 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         },
       });
 
-      updateContainerStatus(db, handle, 'provisioning', container.id);
+      await updateContainerStatus(db, handle, 'provisioning', container.id);
       await container.start();
-      updateContainerStatus(db, handle, 'running', container.id);
+      await updateContainerStatus(db, handle, 'running', container.id);
 
-      return getContainer(db, handle)!;
+      return (await getContainer(db, handle))!;
     },
 
     async rollingRestart() {
       const start = Date.now();
-      const all = listContainers(db);
+      const all = await listContainers(db);
       const running = all.filter((r) => r.status === 'running');
       const stopped = all.filter((r) => r.status !== 'running');
 
@@ -450,9 +450,9 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
             },
           });
 
-          updateContainerStatus(db, record.handle, 'provisioning', container.id);
+          await updateContainerStatus(db, record.handle, 'provisioning', container.id);
           await container.start();
-          updateContainerStatus(db, record.handle, 'running', container.id);
+          await updateContainerStatus(db, record.handle, 'running', container.id);
           results.push({ handle: record.handle, status: 'upgraded' });
         } catch (e) {
           results.push({
@@ -473,7 +473,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       };
     },
 
-    getInfo(handle) {
+    async getInfo(handle) {
       return getContainer(db, handle);
     },
 
@@ -481,19 +481,19 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       return image;
     },
 
-    listAll(status?) {
+    async listAll(status?) {
       return listContainers(db, status);
     },
 
     async syncStates() {
-      const records = listContainers(db);
+      const records = await listContainers(db);
       for (const record of records) {
         if (!record.containerId) continue;
         try {
           const info = await docker.getContainer(record.containerId).inspect();
           const actual = info.State?.Running ? 'running' : 'stopped';
           if (actual !== record.status) {
-            updateContainerStatus(db, record.handle, actual);
+            await updateContainerStatus(db, record.handle, actual);
           }
         } catch (err) {
           console.warn(
@@ -501,7 +501,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
             err instanceof Error ? err.message : String(err),
           );
           if (record.status !== 'stopped') {
-            updateContainerStatus(db, record.handle, 'stopped');
+            await updateContainerStatus(db, record.handle, 'stopped');
           }
         }
       }

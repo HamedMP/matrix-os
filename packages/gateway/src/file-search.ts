@@ -54,7 +54,8 @@ export async function fileSearch(
     let entries;
     try {
       entries = await readdir(dirPath, { withFileTypes: true });
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[file-search] Could not read directory:", err instanceof Error ? err.message : String(err));
       return;
     }
 
@@ -97,8 +98,8 @@ export async function fileSearch(
               );
               matches.push(...contentMatches);
             }
-          } catch {
-            // skip unreadable files
+          } catch (err: unknown) {
+            console.warn("[file-search] Could not inspect/search file:", err instanceof Error ? err.message : String(err));
           }
         }
 

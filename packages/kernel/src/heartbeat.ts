@@ -60,7 +60,8 @@ export function loadHealthCheckTargets(homePath: string): HealthTarget[] {
   let modules: ModuleEntry[];
   try {
     modules = JSON.parse(readFileSync(modulesPath, "utf-8")) as ModuleEntry[];
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[heartbeat] Could not load health targets:", err instanceof Error ? err.message : String(err));
     return [];
   }
 
@@ -80,8 +81,8 @@ export function loadHealthCheckTargets(homePath: string): HealthTarget[] {
           readFileSync(metaPath, "utf-8"),
         ) as ManifestEntry;
         if (manifest.health) healthPath = manifest.health;
-      } catch {
-        // use default
+      } catch (err: unknown) {
+        console.warn("[heartbeat] Could not parse module health manifest:", err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -202,7 +203,9 @@ export function createHeartbeat(config: HeartbeatConfig): Heartbeat {
   function start(): void {
     if (intervalHandle) return;
     intervalHandle = setInterval(() => {
-      check().catch(() => {});
+      check().catch((err: unknown) => {
+        console.warn("[heartbeat] Health check failed:", err instanceof Error ? err.message : String(err));
+      });
     }, intervalMs);
   }
 

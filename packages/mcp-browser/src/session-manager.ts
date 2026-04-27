@@ -114,7 +114,9 @@ export class SessionManager {
       this.idleTimer = undefined;
     }
     if (this.session) {
-      await this.session.browser.close().catch(() => {});
+      await this.session.browser.close().catch((err: unknown) => {
+        console.warn("[mcp-browser] Browser close failed:", err instanceof Error ? err.message : String(err));
+      });
       this.session = undefined;
     }
     this.consoleMessages = [];

@@ -1,9 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import {
-  createPlatformDb,
   type PlatformDB,
   insertContainer,
 } from "../../packages/platform/src/db.js";
@@ -33,19 +30,18 @@ function createMockDocker() {
 }
 
 describe("device routes", () => {
-  let tmpDir: string;
   let db: PlatformDB;
   let app: ReturnType<typeof createApp>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    tmpDir = mkdtempSync(join(tmpdir(), "device-routes-"));
-    db = createPlatformDb(join(tmpDir, "test.db"));
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_device_routes";
 
     const { docker } = createMockDocker();
     const orchestrator = createOrchestrator({ db, docker: docker as any });
 
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: "alice",
       clerkUserId: "user_alice",
       port: 5001,
@@ -64,8 +60,8 @@ describe("device routes", () => {
     app = createApp({ db, orchestrator, clerkAuth });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   });

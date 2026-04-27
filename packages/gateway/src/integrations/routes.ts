@@ -524,7 +524,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // Best-effort startup warm; the IIFE swallows individual errors via
   // Promise.allSettled, so this can't reject -- but attach .catch defensively
   // to satisfy lint and avoid any unhandled-rejection surprises.
-  loadLogos().catch(() => {});
+  loadLogos().catch((err: unknown) => {
+    console.warn("[integrations] Startup logo warm failed:", err instanceof Error ? err.message : String(err));
+  });
 
   app.get("/available", (c) => {
     const services = listServices().map((s) => ({
@@ -635,7 +637,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let body: unknown;
     try {
       body = await c.req.json();
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[integrations] Invalid connect JSON:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -683,7 +686,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let body: unknown;
     try {
       body = JSON.parse(rawBody);
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[integrations] Invalid connected webhook JSON:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -761,7 +765,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let body: unknown;
     try {
       body = await c.req.json();
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[integrations] Invalid call JSON:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -995,7 +1000,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let body: unknown;
     try {
       body = await c.req.json();
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[integrations] Invalid label JSON:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -1094,7 +1100,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let body: unknown;
     try {
       body = await c.req.json();
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[integrations] Invalid app JSON:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Invalid JSON" }, 400);
     }
 

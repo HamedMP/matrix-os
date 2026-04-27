@@ -26,7 +26,7 @@ export function createPlatformR2Client(config: {
     const res = await fetch(`${routeBase}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
     });
     return res;
   }
@@ -83,8 +83,9 @@ export function createPlatformR2Client(config: {
 
     async getObject(
       key: string,
+      options?: { signal?: AbortSignal },
     ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }> {
-      const res = await request(`/object?key=${encodeURIComponent(key)}`);
+      const res = await request(`/object?key=${encodeURIComponent(key)}`, { signal: options?.signal });
       if (res.status === 404) {
         throw noSuchKey();
       }
@@ -101,10 +102,12 @@ export function createPlatformR2Client(config: {
     async putObject(
       key: string,
       body: string | Uint8Array | ReadableStream<Uint8Array>,
+      options?: { signal?: AbortSignal },
     ): Promise<{ etag?: string }> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",
         body: body instanceof Uint8Array ? Buffer.from(body) : body,
+        signal: options?.signal,
       }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };

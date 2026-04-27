@@ -58,6 +58,7 @@ export function createPushAdapter(): ChannelAdapter & {
         Accept: "application/json",
       },
       body: JSON.stringify(messages),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {

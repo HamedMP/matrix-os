@@ -1,70 +1,275 @@
-import { mkdirSync, existsSync } from 'node:fs';
-import { dirname } from 'node:path';
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { eq, desc, sql, max } from 'drizzle-orm';
-import * as schema from './schema.js';
-import { containers, portAssignments } from './schema.js';
-import { runAppRegistryMigrations } from './app-registry.js';
-import { runMatrixUserMigrations } from './matrix-provisioning.js';
-import { runSocialFeedMigrations } from './social-feed.js';
+import { Kysely, PostgresDialect, sql, type Transaction } from 'kysely';
+import pg from 'pg';
 
-export type PlatformDB = ReturnType<typeof createPlatformDb>;
+const DEFAULT_PLATFORM_DB_URL =
+  process.env.PLATFORM_DATABASE_URL ??
+  (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
 
-const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
+type Executor = Kysely<PlatformDatabase> | Transaction<PlatformDatabase>;
 
-let _db: PlatformDB;
-let _sqlite: InstanceType<typeof Database>;
-
-export function createPlatformDb(path: string = DB_PATH) {
-  if (path !== ':memory:') {
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  }
-  const sqlite = new Database(path);
-  if (path !== ':memory:') {
-    sqlite.pragma('journal_mode = WAL');
-  }
-  const db = drizzle({ client: sqlite, schema });
-  runMigrations(sqlite);
-  return db;
+interface ContainersTable {
+  handle: string;
+  clerk_user_id: string;
+  container_id: string | null;
+  port: number;
+  shell_port: number;
+  status: string;
+  created_at: string;
+  last_active: string;
 }
 
-type BetterSqliteClient = InstanceType<typeof Database>;
-
-function sqliteClient(db: PlatformDB): BetterSqliteClient {
-  return (db as { $client: BetterSqliteClient }).$client;
+interface UserMachinesTable {
+  machine_id: string;
+  clerk_user_id: string;
+  handle: string;
+  hetzner_server_id: number | null;
+  public_ipv4: string | null;
+  public_ipv6: string | null;
+  status: string;
+  image_version: string | null;
+  registration_token_hash: string | null;
+  registration_token_expires_at: string | null;
+  provisioned_at: string;
+  last_seen_at: string | null;
+  deleted_at: string | null;
+  failure_code: string | null;
+  failure_at: string | null;
 }
 
-export function runInPlatformTransaction<T>(
-  db: PlatformDB,
-  fn: () => T,
-): T {
-  return sqliteClient(db).transaction(fn)();
+interface ProviderDeletionQueueTable {
+  id: string;
+  provider_server_id: number;
+  reason: string;
+  machine_id: string | null;
+  handle: string | null;
+  attempts: number;
+  next_attempt_at: string;
+  created_at: string;
+  last_error: string | null;
+  completed_at: string | null;
 }
 
-export function getDb(dbPath?: string): PlatformDB {
-  if (!_db) {
-    _sqlite = new Database(dbPath ?? DB_PATH);
-    if ((dbPath ?? DB_PATH) !== ':memory:') {
-      _sqlite.pragma('journal_mode = WAL');
-    }
-    _db = drizzle({ client: _sqlite, schema });
-    runMigrations(_sqlite);
-  }
-  return _db;
+interface PortAssignmentsTable {
+  port: number;
+  handle: string | null;
 }
 
-export function resetDb(): void {
-  if (_sqlite) {
-    _sqlite.close();
-    _sqlite = undefined!;
-    _db = undefined!;
-  }
+interface DeviceCodesTable {
+  device_code: string;
+  user_code: string;
+  clerk_user_id: string | null;
+  expires_at: number;
+  last_polled_at: number | null;
+  created_at: number;
 }
 
-function runMigrations(sqlite: InstanceType<typeof Database>): void {
-  sqlite.prepare(`
+interface MatrixUsersTable {
+  handle: string;
+  human_matrix_id: string;
+  ai_matrix_id: string;
+  human_access_token: string;
+  ai_access_token: string;
+  created_at: string;
+}
+
+interface AppsRegistryTable {
+  id: string;
+  name: string;
+  slug: string;
+  author_id: string;
+  description: string | null;
+  category: string | null;
+  tags: string | null;
+  version: string | null;
+  source_url: string | null;
+  manifest: string | null;
+  screenshots: string | null;
+  installs: number;
+  rating: number;
+  ratings_count: number;
+  forks_count: number;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AppRatingsTable {
+  app_id: string;
+  user_id: string;
+  rating: number;
+  review: string | null;
+  created_at: string;
+}
+
+interface AppInstallsTable {
+  app_id: string;
+  user_id: string;
+  installed_at: string;
+}
+
+interface SocialPostsTable {
+  id: string;
+  author_id: string;
+  content: string;
+  type: string;
+  media_urls: string | null;
+  app_ref: string | null;
+  likes_count: number;
+  comments_count: number;
+  created_at: string;
+}
+
+interface SocialCommentsTable {
+  id: string;
+  post_id: string;
+  author_id: string;
+  content: string;
+  created_at: string;
+}
+
+interface SocialLikesTable {
+  post_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+interface SocialFollowsTable {
+  follower_id: string;
+  following_id: string;
+  following_type: string;
+  created_at: string;
+}
+
+export interface PlatformDatabase {
+  containers: ContainersTable;
+  user_machines: UserMachinesTable;
+  provider_deletion_queue: ProviderDeletionQueueTable;
+  port_assignments: PortAssignmentsTable;
+  device_codes: DeviceCodesTable;
+  matrix_users: MatrixUsersTable;
+  apps_registry: AppsRegistryTable;
+  app_ratings: AppRatingsTable;
+  app_installs: AppInstallsTable;
+  social_posts: SocialPostsTable;
+  social_comments: SocialCommentsTable;
+  social_likes: SocialLikesTable;
+  social_follows: SocialFollowsTable;
+}
+
+export interface PlatformDB {
+  kysely: Kysely<PlatformDatabase>;
+  executor: Executor;
+  ready: Promise<void>;
+  transaction<T>(fn: (trx: PlatformDB) => Promise<T>): Promise<T>;
+  destroy(): Promise<void>;
+}
+
+export interface ContainerRecord {
+  handle: string;
+  clerkUserId: string;
+  containerId: string | null;
+  port: number;
+  shellPort: number;
+  status: string;
+  createdAt: string;
+  lastActive: string;
+}
+
+export interface NewContainer {
+  handle: string;
+  clerkUserId: string;
+  containerId: string | null;
+  port: number;
+  shellPort: number;
+  status: string;
+  createdAt?: string;
+  lastActive?: string;
+}
+
+export interface UserMachineRecord {
+  machineId: string;
+  clerkUserId: string;
+  handle: string;
+  hetznerServerId: number | null;
+  publicIPv4: string | null;
+  publicIPv6: string | null;
+  status: string;
+  imageVersion: string | null;
+  registrationTokenHash: string | null;
+  registrationTokenExpiresAt: string | null;
+  provisionedAt: string;
+  lastSeenAt: string | null;
+  deletedAt: string | null;
+  failureCode: string | null;
+  failureAt: string | null;
+}
+
+export interface ProviderDeletionQueueRecord {
+  id: string;
+  providerServerId: number;
+  reason: string;
+  machineId: string | null;
+  handle: string | null;
+  attempts: number;
+  nextAttemptAt: string;
+  createdAt: string;
+  lastError: string | null;
+  completedAt: string | null;
+}
+
+export interface NewUserMachine {
+  machineId: string;
+  clerkUserId: string;
+  handle: string;
+  hetznerServerId?: number | null;
+  publicIPv4?: string | null;
+  publicIPv6?: string | null;
+  status: string;
+  imageVersion?: string | null;
+  registrationTokenHash?: string | null;
+  registrationTokenExpiresAt?: string | null;
+  provisionedAt: string;
+  lastSeenAt?: string | null;
+  deletedAt?: string | null;
+  failureCode?: string | null;
+  failureAt?: string | null;
+}
+
+export interface NewProviderDeletionQueueRecord {
+  id: string;
+  providerServerId: number;
+  reason: string;
+  machineId?: string | null;
+  handle?: string | null;
+  attempts?: number;
+  nextAttemptAt: string;
+  createdAt: string;
+  lastError?: string | null;
+  completedAt?: string | null;
+}
+
+function wrapDb(
+  kysely: Kysely<PlatformDatabase>,
+  executor: Executor,
+  ready: Promise<void>,
+  destroyFn: () => Promise<void>,
+): PlatformDB {
+  return {
+    kysely,
+    executor,
+    ready,
+    async transaction(fn) {
+      await ready;
+      return kysely.transaction().execute((trx) =>
+        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn)),
+      );
+    },
+    destroy: destroyFn,
+  };
+}
+
+async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
+  await sql`
     CREATE TABLE IF NOT EXISTS containers (
       handle TEXT PRIMARY KEY,
       clerk_user_id TEXT UNIQUE NOT NULL,
@@ -75,114 +280,684 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
       created_at TEXT NOT NULL,
       last_active TEXT NOT NULL
     )
-  `).run();
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_containers_status ON containers(status)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_containers_clerk ON containers(clerk_user_id)`.execute(db);
 
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_containers_status ON containers(status)'
-  ).run();
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_machines (
+      machine_id TEXT PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL,
+      handle TEXT NOT NULL,
+      hetzner_server_id INTEGER,
+      public_ipv4 TEXT,
+      public_ipv6 TEXT,
+      status TEXT NOT NULL DEFAULT 'provisioning',
+      image_version TEXT,
+      registration_token_hash TEXT,
+      registration_token_expires_at TEXT,
+      provisioned_at TEXT NOT NULL,
+      last_seen_at TEXT,
+      deleted_at TEXT,
+      failure_code TEXT,
+      failure_at TEXT
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
+  await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
+  await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active
+    ON user_machines(clerk_user_id)
+    WHERE deleted_at IS NULL
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
 
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_containers_clerk ON containers(clerk_user_id)'
-  ).run();
+  await sql`
+    CREATE TABLE IF NOT EXISTS provider_deletion_queue (
+      id TEXT PRIMARY KEY,
+      provider_server_id INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      machine_id TEXT,
+      handle TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_error TEXT,
+      completed_at TEXT
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_provider_deletion_queue_pending
+    ON provider_deletion_queue(next_attempt_at)
+    WHERE completed_at IS NULL
+  `.execute(db);
 
-  sqlite.prepare(`
+  await sql`
     CREATE TABLE IF NOT EXISTS port_assignments (
       port INTEGER PRIMARY KEY,
-      handle TEXT
+      handle TEXT UNIQUE
     )
-  `).run();
+  `.execute(db);
 
-  sqlite.prepare(`
+  await sql`
     CREATE TABLE IF NOT EXISTS device_codes (
       device_code TEXT PRIMARY KEY,
       user_code TEXT NOT NULL UNIQUE,
       clerk_user_id TEXT,
-      expires_at INTEGER NOT NULL,
-      last_polled_at INTEGER,
-      created_at INTEGER NOT NULL
+      expires_at BIGINT NOT NULL,
+      last_polled_at BIGINT,
+      created_at BIGINT NOT NULL
     )
-  `).run();
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_device_codes_user_code ON device_codes(user_code)'
-  ).run();
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at ON device_codes(expires_at)'
-  ).run();
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_device_codes_user_code ON device_codes(user_code)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at ON device_codes(expires_at)`.execute(db);
 
-  runAppRegistryMigrations(sqlite);
-  runMatrixUserMigrations(sqlite);
-  runSocialFeedMigrations(sqlite);
+  await sql`
+    CREATE TABLE IF NOT EXISTS matrix_users (
+      handle TEXT PRIMARY KEY,
+      human_matrix_id TEXT NOT NULL,
+      ai_matrix_id TEXT NOT NULL,
+      human_access_token TEXT NOT NULL,
+      ai_access_token TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_matrix_human_id ON matrix_users(human_matrix_id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_matrix_ai_id ON matrix_users(ai_matrix_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS apps_registry (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      description TEXT,
+      category TEXT DEFAULT 'utility',
+      tags TEXT,
+      version TEXT DEFAULT '1.0.0',
+      source_url TEXT,
+      manifest TEXT,
+      screenshots TEXT,
+      installs INTEGER NOT NULL DEFAULT 0,
+      rating INTEGER NOT NULL DEFAULT 0,
+      ratings_count INTEGER NOT NULL DEFAULT 0,
+      forks_count INTEGER NOT NULL DEFAULT 0,
+      is_public BOOLEAN NOT NULL DEFAULT false,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(author_id, slug)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_apps_category ON apps_registry(category)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_apps_public ON apps_registry(is_public)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_apps_installs ON apps_registry(installs)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_ratings (
+      app_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      rating INTEGER NOT NULL,
+      review TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(app_id, user_id)
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_installs (
+      app_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      installed_at TEXT NOT NULL,
+      UNIQUE(app_id, user_id)
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS social_posts (
+      id TEXT PRIMARY KEY,
+      author_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      type TEXT NOT NULL,
+      media_urls TEXT,
+      app_ref TEXT,
+      likes_count INTEGER NOT NULL DEFAULT 0,
+      comments_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_posts_author ON social_posts(author_id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_posts_type ON social_posts(type)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_posts_created ON social_posts(created_at)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_posts_likes ON social_posts(likes_count)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS social_comments (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_comments_post ON social_comments(post_id)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS social_likes (
+      post_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(post_id, user_id)
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS social_follows (
+      follower_id TEXT NOT NULL,
+      following_id TEXT NOT NULL,
+      following_type TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(follower_id, following_id)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_follows_follower ON social_follows(follower_id)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_follows_following ON social_follows(following_id)`.execute(db);
 }
 
-export type ContainerRecord = typeof containers.$inferSelect;
-export type NewContainer = typeof containers.$inferInsert;
-
-export function insertContainer(db: PlatformDB, record: Omit<NewContainer, 'createdAt' | 'lastActive'>): void {
-  db.insert(containers).values({
-    ...record,
-    createdAt: new Date().toISOString(),
-    lastActive: new Date().toISOString(),
-  }).run();
-}
-
-export function getContainer(db: PlatformDB, handle: string): ContainerRecord | undefined {
-  return db.select().from(containers).where(eq(containers.handle, handle)).get();
-}
-
-export function getContainerByClerkId(db: PlatformDB, clerkUserId: string): ContainerRecord | undefined {
-  return db.select().from(containers).where(eq(containers.clerkUserId, clerkUserId)).get();
-}
-
-export function updateContainerStatus(db: PlatformDB, handle: string, status: string, containerId?: string): void {
-  const values: Partial<NewContainer> = { status };
-  if (containerId !== undefined) {
-    values.containerId = containerId;
+export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {
+  if (typeof opts === 'string' && !opts) {
+    throw new Error('Platform Postgres URL is required: set PLATFORM_DATABASE_URL or POSTGRES_URL');
   }
-  db.update(containers).set(values).where(eq(containers.handle, handle)).run();
-}
 
-export function updateLastActive(db: PlatformDB, handle: string): void {
-  db.update(containers)
-    .set({ lastActive: new Date().toISOString() })
-    .where(eq(containers.handle, handle))
-    .run();
-}
+  let pool: pg.Pool | null = null;
+  const kysely = typeof opts === 'string'
+    ? (() => {
+        pool = new pg.Pool({ connectionString: opts, max: 10 });
+        pool.on('error', (err) => {
+          console.error('[platform-db] Idle pool client error:', err.message);
+        });
+        return new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
+      })()
+    : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
 
-export function listContainers(db: PlatformDB, status?: string): ContainerRecord[] {
-  if (status) {
-    return db.select().from(containers)
-      .where(eq(containers.status, status))
-      .orderBy(desc(containers.createdAt))
-      .all();
-  }
-  return db.select().from(containers)
-    .orderBy(desc(containers.createdAt))
-    .all();
-}
-
-export function deleteContainer(db: PlatformDB, handle: string): void {
-  db.delete(containers).where(eq(containers.handle, handle)).run();
-}
-
-export function allocatePort(db: PlatformDB, basePort: number, handle: string): number {
-  return runInPlatformTransaction(db, () => {
-    const existing = db.select({ port: portAssignments.port })
-      .from(portAssignments)
-      .where(eq(portAssignments.handle, handle))
-      .get();
-    if (existing) return existing.port;
-
-    const result = db.select({ maxPort: max(portAssignments.port) })
-      .from(portAssignments)
-      .get();
-
-    const nextPort = result?.maxPort ? result.maxPort + 1 : basePort;
-
-    db.insert(portAssignments).values({ port: nextPort, handle }).run();
-    return nextPort;
+  const ready = migrate(kysely);
+  return wrapDb(kysely, kysely, ready, async () => {
+    await kysely.destroy();
+    await pool?.end();
   });
 }
 
-export function releasePort(db: PlatformDB, handle: string): void {
-  db.delete(portAssignments).where(eq(portAssignments.handle, handle)).run();
+let singleton: PlatformDB | undefined;
+
+export function getDb(dbUrl?: string): PlatformDB {
+  if (!singleton) {
+    singleton = createPlatformDb(dbUrl ?? DEFAULT_PLATFORM_DB_URL);
+  }
+  return singleton;
+}
+
+export async function resetDb(): Promise<void> {
+  if (singleton) {
+    await singleton.destroy();
+    singleton = undefined;
+  }
+}
+
+export async function runInPlatformTransaction<T>(
+  db: PlatformDB,
+  fn: (trx: PlatformDB) => Promise<T>,
+): Promise<T> {
+  return db.transaction(fn);
+}
+
+function mapContainer(row: ContainersTable): ContainerRecord {
+  return {
+    handle: row.handle,
+    clerkUserId: row.clerk_user_id,
+    containerId: row.container_id,
+    port: row.port,
+    shellPort: row.shell_port,
+    status: row.status,
+    createdAt: row.created_at,
+    lastActive: row.last_active,
+  };
+}
+
+function toContainerRow(record: NewContainer): ContainersTable {
+  const now = new Date().toISOString();
+  return {
+    handle: record.handle,
+    clerk_user_id: record.clerkUserId,
+    container_id: record.containerId,
+    port: record.port,
+    shell_port: record.shellPort,
+    status: record.status,
+    created_at: record.createdAt ?? now,
+    last_active: record.lastActive ?? now,
+  };
+}
+
+function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
+  return {
+    machineId: row.machine_id,
+    clerkUserId: row.clerk_user_id,
+    handle: row.handle,
+    hetznerServerId: row.hetzner_server_id,
+    publicIPv4: row.public_ipv4,
+    publicIPv6: row.public_ipv6,
+    status: row.status,
+    imageVersion: row.image_version,
+    registrationTokenHash: row.registration_token_hash,
+    registrationTokenExpiresAt: row.registration_token_expires_at,
+    provisionedAt: row.provisioned_at,
+    lastSeenAt: row.last_seen_at,
+    deletedAt: row.deleted_at,
+    failureCode: row.failure_code,
+    failureAt: row.failure_at,
+  };
+}
+
+function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
+  return {
+    machine_id: record.machineId,
+    clerk_user_id: record.clerkUserId,
+    handle: record.handle,
+    hetzner_server_id: record.hetznerServerId ?? null,
+    public_ipv4: record.publicIPv4 ?? null,
+    public_ipv6: record.publicIPv6 ?? null,
+    status: record.status,
+    image_version: record.imageVersion ?? null,
+    registration_token_hash: record.registrationTokenHash ?? null,
+    registration_token_expires_at: record.registrationTokenExpiresAt ?? null,
+    provisioned_at: record.provisionedAt,
+    last_seen_at: record.lastSeenAt ?? null,
+    deleted_at: record.deletedAt ?? null,
+    failure_code: record.failureCode ?? null,
+    failure_at: record.failureAt ?? null,
+  };
+}
+
+function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachinesTable> {
+  const update: Partial<UserMachinesTable> = {};
+  if (values.machineId !== undefined) update.machine_id = values.machineId;
+  if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
+  if (values.handle !== undefined) update.handle = values.handle;
+  if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
+  if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
+  if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
+  if (values.status !== undefined) update.status = values.status;
+  if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
+  if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
+  if (values.registrationTokenExpiresAt !== undefined) update.registration_token_expires_at = values.registrationTokenExpiresAt;
+  if (values.provisionedAt !== undefined) update.provisioned_at = values.provisionedAt;
+  if (values.lastSeenAt !== undefined) update.last_seen_at = values.lastSeenAt;
+  if (values.deletedAt !== undefined) update.deleted_at = values.deletedAt;
+  if (values.failureCode !== undefined) update.failure_code = values.failureCode;
+  if (values.failureAt !== undefined) update.failure_at = values.failureAt;
+  return update;
+}
+
+function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
+  return {
+    id: row.id,
+    providerServerId: row.provider_server_id,
+    reason: row.reason,
+    machineId: row.machine_id,
+    handle: row.handle,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at,
+    createdAt: row.created_at,
+    lastError: row.last_error,
+    completedAt: row.completed_at,
+  };
+}
+
+function toProviderDeletionRow(record: NewProviderDeletionQueueRecord): ProviderDeletionQueueTable {
+  return {
+    id: record.id,
+    provider_server_id: record.providerServerId,
+    reason: record.reason,
+    machine_id: record.machineId ?? null,
+    handle: record.handle ?? null,
+    attempts: record.attempts ?? 0,
+    next_attempt_at: record.nextAttemptAt,
+    created_at: record.createdAt,
+    last_error: record.lastError ?? null,
+    completed_at: record.completedAt ?? null,
+  };
+}
+
+export async function insertContainer(db: PlatformDB, record: NewContainer): Promise<void> {
+  await db.ready;
+  await db.executor.insertInto('containers').values(toContainerRow(record)).execute();
+}
+
+export async function getContainer(db: PlatformDB, handle: string): Promise<ContainerRecord | undefined> {
+  await db.ready;
+  const row = await db.executor.selectFrom('containers').selectAll().where('handle', '=', handle).executeTakeFirst();
+  return row ? mapContainer(row) : undefined;
+}
+
+export async function getContainerByClerkId(db: PlatformDB, clerkUserId: string): Promise<ContainerRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('containers')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .executeTakeFirst();
+  return row ? mapContainer(row) : undefined;
+}
+
+export async function updateContainerStatus(
+  db: PlatformDB,
+  handle: string,
+  status: string,
+  containerId?: string,
+): Promise<void> {
+  await db.ready;
+  const values: Partial<ContainersTable> = { status };
+  if (containerId !== undefined) values.container_id = containerId;
+  await db.executor.updateTable('containers').set(values).where('handle', '=', handle).execute();
+}
+
+export async function updateLastActive(db: PlatformDB, handle: string): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('containers')
+    .set({ last_active: new Date().toISOString() })
+    .where('handle', '=', handle)
+    .execute();
+}
+
+export async function listContainers(db: PlatformDB, status?: string): Promise<ContainerRecord[]> {
+  await db.ready;
+  let query = db.executor.selectFrom('containers').selectAll();
+  if (status) query = query.where('status', '=', status);
+  const rows = await query.orderBy('created_at', 'desc').execute();
+  return rows.map(mapContainer);
+}
+
+export async function deleteContainer(db: PlatformDB, handle: string): Promise<void> {
+  await db.ready;
+  await db.executor.deleteFrom('containers').where('handle', '=', handle).execute();
+}
+
+export async function insertUserMachine(db: PlatformDB, record: NewUserMachine): Promise<void> {
+  await db.ready;
+  await db.executor.insertInto('user_machines').values(toUserMachineRow(record)).execute();
+}
+
+export async function getUserMachine(db: PlatformDB, machineId: string): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('machine_id', '=', machineId)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function getActiveUserMachineByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function getActiveUserMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('handle', '=', handle)
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function getRunningUserMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('handle', '=', handle)
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function getRunningUserMachineByClerkId(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function updateUserMachine(
+  db: PlatformDB,
+  machineId: string,
+  values: Partial<NewUserMachine>,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('user_machines')
+    .set(toUserMachineUpdate(values))
+    .where('machine_id', '=', machineId)
+    .execute();
+}
+
+export async function completeUserMachineRegistration(
+  db: PlatformDB,
+  machineId: string,
+  hetznerServerId: number,
+  expectedRegistrationTokenHash: string,
+  expiresAfterIso: string,
+  values: Partial<NewUserMachine>,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set(toUserMachineUpdate(values))
+    .where('machine_id', '=', machineId)
+    .where('hetzner_server_id', '=', hetznerServerId)
+    .where('registration_token_hash', '=', expectedRegistrationTokenHash)
+    .where('registration_token_expires_at', '>=', expiresAfterIso)
+    .where('status', 'in', ['provisioning', 'recovering'])
+    .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function claimUserMachineRecovery(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({
+      status: 'recovering',
+      hetzner_server_id: null,
+      public_ipv4: null,
+      public_ipv6: null,
+      failure_code: null,
+      failure_at: null,
+    })
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('status', '!=', 'recovering')
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function claimUserMachineDelete(
+  db: PlatformDB,
+  machineId: string,
+  deletedAt: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({ status: 'deleted', deleted_at: deletedAt })
+    .where('machine_id', '=', machineId)
+    .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function softDeleteUserMachine(db: PlatformDB, machineId: string, deletedAt: string): Promise<void> {
+  await claimUserMachineDelete(db, machineId, deletedAt);
+}
+
+export async function insertProviderDeletion(
+  db: PlatformDB,
+  record: NewProviderDeletionQueueRecord,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('provider_deletion_queue')
+    .values(toProviderDeletionRow(record))
+    .execute();
+}
+
+export async function listPendingProviderDeletions(
+  db: PlatformDB,
+  nowIso: string,
+  limit: number,
+): Promise<ProviderDeletionQueueRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('provider_deletion_queue')
+    .selectAll()
+    .where('completed_at', 'is', null)
+    .where('next_attempt_at', '<=', nowIso)
+    .orderBy('next_attempt_at')
+    .limit(limit)
+    .execute();
+  return rows.map(mapProviderDeletion);
+}
+
+export async function listRunningUserMachines(
+  db: PlatformDB,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .orderBy('last_seen_at', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function markProviderDeletionCompleted(
+  db: PlatformDB,
+  id: string,
+  completedAt: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('provider_deletion_queue')
+    .set({ completed_at: completedAt, last_error: null })
+    .where('id', '=', id)
+    .execute();
+}
+
+export async function markProviderDeletionFailed(
+  db: PlatformDB,
+  id: string,
+  attempts: number,
+  nextAttemptAt: string,
+  lastError: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('provider_deletion_queue')
+    .set({
+      attempts,
+      next_attempt_at: nextAttemptAt,
+      last_error: lastError,
+    })
+    .where('id', '=', id)
+    .where('completed_at', 'is', null)
+    .execute();
+}
+
+export async function listStaleUserMachines(
+  db: PlatformDB,
+  statuses: string[],
+  olderThanIso: string,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  if (statuses.length === 0) return [];
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('status', 'in', statuses)
+    .where('provisioned_at', '<', olderThanIso)
+    .where('deleted_at', 'is', null)
+    .orderBy('provisioned_at')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function allocatePort(db: PlatformDB, basePort: number, handle: string): Promise<number> {
+  await db.ready;
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const existing = await db.executor
+      .selectFrom('port_assignments')
+      .select('port')
+      .where('handle', '=', handle)
+      .executeTakeFirst();
+    if (existing) return existing.port;
+
+    const result = await db.executor
+      .selectFrom('port_assignments')
+      .select((eb) => eb.fn.max<number>('port').as('max_port'))
+      .executeTakeFirst();
+    const nextPort = result?.max_port ? Number(result.max_port) + 1 : basePort;
+    const inserted = await db.executor
+      .insertInto('port_assignments')
+      .values({ port: nextPort, handle })
+      .onConflict((oc) => oc.doNothing())
+      .returning('port')
+      .executeTakeFirst();
+    if (inserted) return inserted.port;
+  }
+  throw new Error('Unable to allocate platform port after concurrent retries');
+}
+
+export async function releasePort(db: PlatformDB, handle: string): Promise<void> {
+  await db.ready;
+  await db.executor.deleteFrom('port_assignments').where('handle', '=', handle).execute();
 }

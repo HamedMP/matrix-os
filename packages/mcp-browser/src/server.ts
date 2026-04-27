@@ -15,7 +15,8 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
       const pw = await import("playwright");
       return (opts?: { headless?: boolean }) =>
         pw.chromium.launch({ headless: opts?.headless ?? config.headless ?? true });
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[mcp-browser] Playwright launcher unavailable:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }

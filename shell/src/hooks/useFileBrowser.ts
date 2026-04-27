@@ -82,12 +82,15 @@ interface FileBrowserActions {
 
 async function fetchEntries(path: string): Promise<FileEntry[]> {
   try {
-    const res = await fetch(`${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(path)}`);
+    const res = await fetch(`${GATEWAY_URL}/api/files/list?path=${encodeURIComponent(path)}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) return [];
     const data = await res.json();
     const entries = data.entries ?? data;
     return Array.isArray(entries) ? entries : [];
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[file-browser] Failed to fetch entries:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -282,12 +285,16 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       set({ searchQuery: query, searching: true });
       fetch(
         `${GATEWAY_URL}/api/files/search?q=${encodeURIComponent(query)}&content=true`,
+        { signal: AbortSignal.timeout(10_000) },
       )
         .then((res) => res.json())
         .then((data: { results: SearchResult[] }) =>
           set({ searchResults: data.results, searching: false }),
         )
-        .catch(() => set({ searchResults: [], searching: false }));
+        .catch((err: unknown) => {
+          console.warn("[file-browser] Failed to search files:", err instanceof Error ? err.message : String(err));
+          set({ searchResults: [], searching: false });
+        });
     },
 
     clearSearch() {
@@ -316,6 +323,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ from: sourcePath, to: destPath }),
+          signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) failed.push(sourcePath);
       }
@@ -335,6 +343,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ from, to }),
+        signal: AbortSignal.timeout(10_000),
       });
       const result = await res.json();
       if (result.ok) get().refresh();
@@ -347,6 +356,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path }),
+          signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) {
           set({ error: `Failed to delete ${path.split("/").pop()}` });
@@ -362,6 +372,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path }),
+          signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) {
           set({ error: `Failed to duplicate ${path.split("/").pop()}` });
@@ -377,6 +388,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) set({ error: "Failed to create folder" });
       get().refresh();
@@ -389,6 +401,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) set({ error: "Failed to create file" });
       get().refresh();

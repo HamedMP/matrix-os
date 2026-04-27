@@ -1,8 +1,14 @@
-import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import * as fs from "node:fs";
+import { mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { AppManifestSchema } from "./app-manifest.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
+const writeFileNow = fs.writeFileSync as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+  options?: fs.WriteFileOptions,
+) => void;
 
 export function validateUploadManifest(data: unknown): {
   valid: boolean;
@@ -41,7 +47,8 @@ export function handleAppUpload(
   if (files["matrix.json"]) {
     try {
       manifestData = JSON.parse(files["matrix.json"]);
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[app-upload] Invalid manifest JSON:", err instanceof Error ? err.message : String(err));
       return { success: false, error: "Invalid manifest: matrix.json is not valid JSON" };
     }
     const validation = validateUploadManifest(manifestData);
@@ -75,7 +82,7 @@ export function handleAppUpload(
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    writeFileSync(fullPath, content, "utf-8");
+    writeFileNow(fullPath, content, "utf-8");
   }
 
   if (!files["matrix.json"]) {
@@ -85,7 +92,7 @@ export function handleAppUpload(
       category: "utility",
       version: "1.0.0",
     };
-    writeFileSync(
+    writeFileNow(
       join(appDir, "matrix.json"),
       JSON.stringify(autoManifest, null, 2),
       "utf-8",

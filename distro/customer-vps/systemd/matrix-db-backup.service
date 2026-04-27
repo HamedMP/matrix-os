@@ -1,0 +1,15 @@
+[Unit]
+Description=Matrix OS customer database backup
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+EnvironmentFile=/opt/matrix/env/postgres.env
+EnvironmentFile=-/opt/matrix/env/r2.env
+ExecStart=/opt/matrix/bin/matrix-db-backup.sh
+TimeoutStartSec=600

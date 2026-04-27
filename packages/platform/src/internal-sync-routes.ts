@@ -47,8 +47,8 @@ interface MultipartPartInput extends MultipartCreateInput {
   expiresIn?: number;
 }
 
-function getAuthorizedUserId(db: PlatformDB, handle: string): string | null {
-  const record = getContainer(db, handle);
+async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
+  const record = await getContainer(db, handle);
   return record?.clerkUserId ?? null;
 }
 
@@ -167,7 +167,7 @@ export function createInternalSyncRoutes(opts: {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const userId = getAuthorizedUserId(opts.db, handle);
+    const userId = await getAuthorizedUserId(opts.db, handle);
     if (!userId) {
       return c.json({ error: "Unknown handle" }, 404);
     }

@@ -2,16 +2,20 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { createConnection } from 'node:net';
-import type { IncomingMessage } from 'node:http';
+import { createConnection, type Socket } from 'node:net';
+import { connect as createTlsConnection } from 'node:tls';
+import type { IncomingMessage, Server } from 'node:http';
 import Dockerode from 'dockerode';
 import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
   createPlatformDb,
+  type ContainerRecord,
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
+  getRunningUserMachineByClerkId,
+  getRunningUserMachineByHandle,
   updateLastActive,
   updateContainerStatus,
   listContainers,
@@ -28,6 +32,8 @@ import {
   getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
+  isCodeDomainHost,
+  isSessionRoutedHost,
   isSafeWebSocketUpgradePath,
   stripWebSocketUpgradeToken,
 } from './ws-upgrade.js';
@@ -35,18 +41,24 @@ import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
 } from './platform-token.js';
+import type { CustomerVpsService } from './customer-vps.js';
+import { createCustomerVpsRoutes } from './customer-vps-routes.js';
+import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
-const DB_PATH = process.env.PLATFORM_DB_PATH ?? '/data/platform.db';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
 const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
+const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
+const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
+const CODE_SESSION_COOKIE = 'matrix_code_session';
+const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -56,7 +68,18 @@ const containerProxyDispatcher = new Agent({
   keepAliveMaxTimeout: 1,
   connections: 64,
 });
+
+const customerVpsProxyDispatcher = new Agent({
+  pipelining: 0,
+  keepAliveTimeout: 1,
+  keepAliveMaxTimeout: 1,
+  connections: 64,
+  connect: {
+    rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY !== 'false',
+  },
+});
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
+const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
 
 const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
@@ -90,6 +113,80 @@ function bearerTokenEquals(authHeader: string | undefined, expected: string): bo
   return timingSafeTokenEquals(authHeader.slice(7), expected);
 }
 
+function readCookie(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]+)`));
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch (err: unknown) {
+    if (err instanceof URIError) {
+      return null;
+    }
+    console.warn('[platform] Failed to decode cookie value:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+function buildCodeSessionCookie(token: string): string {
+  return [
+    `${CODE_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
+  ].join('; ');
+}
+
+function applyNoStoreHeaders(c: import('hono').Context): void {
+  c.header('Cache-Control', 'no-store, private');
+  c.header('CDN-Cache-Control', 'no-store');
+  c.header('Cloudflare-CDN-Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  c.header('Expires', '0');
+}
+
+function applyCodeDomainStaticAssetHeaders(headers: Headers): Headers {
+  const next = new Headers(headers);
+  next.set('Cache-Control', 'no-store, private');
+  next.set('CDN-Cache-Control', 'no-store');
+  next.set('Cloudflare-CDN-Cache-Control', 'no-store');
+  next.set('Pragma', 'no-cache');
+  next.set('Expires', '0');
+  return next;
+}
+
+function isCodeDomainStaticAssetPath(path: string): boolean {
+  return (
+    path === '/favicon.ico' ||
+    path.startsWith('/_static/') ||
+    /^\/stable-[^/]+\/static\//.test(path)
+  );
+}
+
+function buildCodeDomainProxyHeaders(
+  requestHeaders: Record<string, string | undefined>,
+  host: string,
+): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(requestHeaders)) {
+    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+      headers.set(key, value);
+    }
+  }
+  headers.set('host', host);
+  headers.set('x-forwarded-host', host);
+  headers.set('x-forwarded-proto', 'https');
+  headers.set('connection', 'close');
+  return headers;
+}
+
+async function pickCodeDomainStaticAssetContainer(db: PlatformDB): Promise<ContainerRecord | null> {
+  return (await listContainers(db, 'running'))[0] ?? null;
+}
+
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
   const handleToken = buildPlatformVerificationToken(handle, platformSecret);
   return createHmac('sha256', handleToken).update(userId).digest('hex');
@@ -115,6 +212,7 @@ function applyAuthPageHeaders(
   c: import('hono').Context,
   scriptNonce: string,
 ): void {
+  applyNoStoreHeaders(c);
   c.header('X-Frame-Options', 'DENY');
   c.header(
     'Content-Security-Policy',
@@ -229,7 +327,7 @@ async function resolveContainerEndpoint(
 
   const { info, source } = inspected;
   if (info.Id && info.Id !== containerId) {
-    updateContainerStatus(db, handle, info.State?.Running ? 'running' : 'stopped', info.Id);
+    await updateContainerStatus(db, handle, info.State?.Running ? 'running' : 'stopped', info.Id);
   }
 
   return {
@@ -264,21 +362,29 @@ async function resolveAppDomainIdentity(opts: {
   platformJwtSecret: string;
   wsToken?: string | null;
 }): Promise<AppDomainIdentity | null> {
+  const codeSessionToken = readCookie(opts.cookieHeader, CODE_SESSION_COOKIE);
   const bearerToken =
     opts.authHeader?.startsWith('Bearer ')
       ? opts.authHeader.slice(7)
-      : opts.wsToken ?? null;
+      : opts.wsToken ?? codeSessionToken;
 
   if (bearerToken && opts.platformJwtSecret) {
     try {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
-      const record = getContainer(opts.db, claims.handle);
-      if (record?.clerkUserId !== claims.sub) {
+      const record = await getContainer(opts.db, claims.handle);
+      if (record?.clerkUserId === claims.sub) {
+        return {
+          handle: record.handle,
+          userId: record.clerkUserId,
+        };
+      }
+      const machine = await getRunningUserMachineByHandle(opts.db, claims.handle);
+      if (machine?.clerkUserId !== claims.sub) {
         return null;
       }
       return {
-        handle: record.handle,
-        userId: record.clerkUserId,
+        handle: machine.handle,
+        userId: machine.clerkUserId,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -302,13 +408,20 @@ async function resolveAppDomainIdentity(opts: {
     return null;
   }
 
-  const record = getContainerByClerkId(opts.db, result.userId);
-  if (!record) {
+  const record = await getContainerByClerkId(opts.db, result.userId);
+  if (record) {
+    return {
+      handle: record.handle,
+      userId: result.userId,
+    };
+  }
+  const machine = await getRunningUserMachineByClerkId(opts.db, result.userId);
+  if (!machine) {
     return null;
   }
 
   return {
-    handle: record.handle,
+    handle: machine.handle,
     userId: result.userId,
   };
 }
@@ -488,6 +601,7 @@ export function createApp(deps: {
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
+  customerVpsService?: CustomerVpsService;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
   const platformSecret = deps.platformSecret ?? process.env.PLATFORM_SECRET ?? '';
@@ -542,22 +656,25 @@ export function createApp(deps: {
     );
   }
 
-  // Session-based routing: app.matrix-os.com -> Clerk session -> container
-  app.use('*', async (c, next) => {
+  // Session-based routing:
+  // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
+  // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
+  app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c, next) => {
     const host = c.req.header('host') ?? '';
     const isAppDomain = isAppDomainHost(host);
-    if (!isAppDomain) return next();
+    const isCodeDomain = isCodeDomainHost(host);
+    if (!isAppDomain && !isCodeDomain) return next();
 
     // Device-flow paths are served directly by the platform's auth-routes.ts
     // (registered above). In normal dispatch they never reach this middleware,
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
-    if (
+    if (isAppDomain && (
       reqPath === '/auth/device' ||
       reqPath.startsWith('/auth/device/') ||
       reqPath.startsWith('/api/auth/device/')
-    ) {
+    )) {
       return next();
     }
     const isPublicIntegrationPath =
@@ -565,7 +682,7 @@ export function createApp(deps: {
       reqPath.startsWith('/api/integrations/webhook/');
     const isIntegrationPath =
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
-    if (isPublicIntegrationPath) {
+    if (isAppDomain && isPublicIntegrationPath) {
       return next();
     }
 
@@ -573,12 +690,13 @@ export function createApp(deps: {
     const cookieHeader = c.req.header('cookie');
 
     const path = c.req.path;
-    const isGatewayPath =
+    const isGatewayPath = isAppDomain && (
       path.startsWith('/api/') ||
       path.startsWith('/ws') ||
       path.startsWith('/files/') ||
       path.startsWith('/modules/') ||
-      path === '/health';
+      path === '/health'
+    );
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
 
@@ -592,7 +710,40 @@ export function createApp(deps: {
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
-      console.log(`[app] no token path=${path}`);
+      if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
+        const staticRecord = await pickCodeDomainStaticAssetContainer(db);
+        if (!staticRecord) {
+          applyNoStoreHeaders(c);
+          return c.text('Editor assets unavailable', 503);
+        }
+        const endpoint = await resolveContainerEndpoint(docker, db, staticRecord.handle, staticRecord.containerId);
+        if (!endpoint) {
+          applyNoStoreHeaders(c);
+          return c.text('Editor assets unavailable', 503);
+        }
+        const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+        const targetUrl = `http://${endpoint.host}:${CODE_SERVER_PORT}${path}${qs}`;
+        try {
+          const upstream = await fetch(targetUrl, {
+            method: c.req.method,
+            headers: buildCodeDomainProxyHeaders(c.req.header(), host),
+            redirect: 'manual',
+            signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+            body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+            dispatcher: containerProxyDispatcher,
+          } as RequestInit & { dispatcher: Agent });
+
+          return new Response(upstream.body, {
+            status: upstream.status,
+            headers: applyCodeDomainStaticAssetHeaders(upstream.headers),
+          });
+        } catch (err: unknown) {
+          logPlatformRouteError('code-domain static asset proxy', err);
+          applyNoStoreHeaders(c);
+          return c.text('Editor assets unavailable', 502);
+        }
+      }
+      console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
       if (isGatewayPath) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
@@ -604,19 +755,86 @@ export function createApp(deps: {
       return c.html(getAuthPage(publishableKey, authMode, scriptNonce));
     }
 
-    console.log(`[app] verified request path=${path}`);
-    const record = getContainer(db, identity.handle);
+    console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
+    const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+    if (runningMachine) {
+      const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
+      const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+      if (!isCodeDomain) {
+        for (const [key, value] of Object.entries(c.req.header())) {
+          if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+            headers.set(key, value);
+          }
+        }
+        const rawCookie = c.req.header('cookie');
+        if (rawCookie) {
+          const forwarded = rawCookie
+            .split(';')
+            .map((p) => p.trim())
+            .filter((p) => p.startsWith('matrix_app_session__'))
+            .join('; ');
+          if (forwarded) headers.set('cookie', forwarded);
+        }
+        headers.set('host', `${runningMachine.handle}.matrix-os.com`);
+        headers.set('x-forwarded-host', host);
+        headers.set('x-forwarded-proto', 'https');
+        headers.set('connection', 'close');
+      }
+      if (platformSecret) {
+        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
+        headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
+        headers.set('x-platform-user-id', identity.userId);
+      }
+
+      try {
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+          body,
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        const responseHeaders = new Headers(upstream.headers);
+        if (isCodeDomain && platformJwtSecret) {
+          const issued = await issueSyncJwt({
+            secret: platformJwtSecret,
+            clerkUserId: identity.userId,
+            handle: runningMachine.handle,
+            gatewayUrl: 'https://code.matrix-os.com',
+            expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+          });
+          responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
+        }
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: responseHeaders,
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError(isCodeDomain ? 'code-domain vps proxy' : 'app-domain vps proxy', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
+
+    const record = await getContainer(db, identity.handle);
     if (!record) {
       return c.html(getNoContainerPage());
     }
 
-    if (isIntegrationPath) {
+    if (isAppDomain && isIntegrationPath) {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', record.handle);
       return next();
     }
 
-    if (path === '/api/auth/ws-token') {
+    if (isAppDomain && path === '/api/auth/ws-token') {
       if (!platformJwtSecret) {
         return c.json({ error: 'WebSocket auth unavailable' }, 503);
       }
@@ -642,38 +860,42 @@ export function createApp(deps: {
       }
     }
 
-    updateLastActive(db, record.handle);
+    await updateLastActive(db, record.handle);
 
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const targetPort = isGatewayPath ? 4000 : 3000;
+    const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
-        headers.set(key, value);
+    const headers = isCodeDomain ? buildCodeDomainProxyHeaders(c.req.header(), host) : new Headers();
+    if (!isCodeDomain) {
+      for (const [key, value] of Object.entries(c.req.header())) {
+        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          headers.set(key, value);
+        }
       }
     }
     // Forward only the app-session cookies (spec 063). Clerk and other
     // cookies are stripped because gateway auth goes via the bearer token
     // set below; forwarding them would leak the user's Clerk session into
     // the container process.
-    const rawCookie = c.req.header('cookie');
-    if (rawCookie) {
-      const forwarded = rawCookie
-        .split(';')
-        .map((p) => p.trim())
-        .filter((p) => p.startsWith('matrix_app_session__'))
-        .join('; ');
-      if (forwarded) headers.set('cookie', forwarded);
+    if (!isCodeDomain) {
+      const rawCookie = c.req.header('cookie');
+      if (rawCookie) {
+        const forwarded = rawCookie
+          .split(';')
+          .map((p) => p.trim())
+          .filter((p) => p.startsWith('matrix_app_session__'))
+          .join('; ');
+        if (forwarded) headers.set('cookie', forwarded);
+      }
+      headers.set('x-forwarded-host', host);
+      headers.set('x-forwarded-proto', 'https');
+      headers.set('connection', 'close');
     }
-    headers.set('x-forwarded-host', host);
-    headers.set('x-forwarded-proto', 'https');
-    headers.set('connection', 'close');
-    if (platformSecret) {
+    if (platformSecret && isAppDomain) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
       headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
+      headers.set('x-platform-user-id', identity.userId);
     }
-    headers.set('x-platform-user-id', identity.userId);
 
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -696,19 +918,32 @@ export function createApp(deps: {
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
+        const responseHeaders = new Headers(upstream.headers);
+        if (isCodeDomain && platformJwtSecret) {
+          const issued = await issueSyncJwt({
+            secret: platformJwtSecret,
+            clerkUserId: identity.userId,
+            handle: record.handle,
+            gatewayUrl: 'https://code.matrix-os.com',
+            expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+          });
+          responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
+        }
+
         return new Response(upstream.body, {
           status: upstream.status,
-          headers: upstream.headers,
+          headers: responseHeaders,
         });
       } catch (err: unknown) {
         lastErr = err;
+        const routeName = isCodeDomain ? 'code-domain' : 'app-domain';
         console.warn(
-          `[platform] app-domain proxy retry attempt=${attempt + 1} handle=${record.handle} target=${targetUrl} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
+          `[platform] ${routeName} proxy retry attempt=${attempt + 1} handle=${record.handle} target=${targetUrl} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} error=${describeError(err)}`,
         );
       }
     }
 
-    logPlatformRouteError('app-domain proxy', lastErr);
+    logPlatformRouteError(isCodeDomain ? 'code-domain proxy' : 'app-domain proxy', lastErr);
     return c.json({ error: 'Container unreachable' }, 502);
   });
 
@@ -737,7 +972,7 @@ export function createApp(deps: {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
-      const record = getContainer(db, handle);
+      const record = await getContainer(db, handle);
       if (!record?.clerkUserId) {
         return c.json({ error: 'Unknown handle' }, 404);
       }
@@ -751,6 +986,12 @@ export function createApp(deps: {
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
+  if (deps.customerVpsService) {
+    app.route('/vps', createCustomerVpsRoutes({
+      service: deps.customerVpsService,
+      platformSecret,
+    }));
   }
 
   // Auth middleware for admin API routes below
@@ -918,17 +1159,17 @@ export function createApp(deps: {
   app.get('/containers', async (c) => {
     await orchestrator.syncStates();
     const status = c.req.query('status');
-    return c.json(orchestrator.listAll(status));
+    return c.json(await orchestrator.listAll(status));
   });
 
-  app.get('/containers/:handle', (c) => {
-    const info = orchestrator.getInfo(c.req.param('handle'));
+  app.get('/containers/:handle', async (c) => {
+    const info = await orchestrator.getInfo(c.req.param('handle'));
     if (!info) return c.json({ error: 'Not found' }, 404);
     return c.json({ ...info, image: orchestrator.getImage() });
   });
 
-  app.get('/containers/check-handle/:handle', (c) => {
-    const info = orchestrator.getInfo(c.req.param('handle'));
+  app.get('/containers/check-handle/:handle', async (c) => {
+    const info = await orchestrator.getInfo(c.req.param('handle'));
     if (!info) return c.json({ error: 'Not found' }, 404);
     return c.json({ exists: true, status: info.status });
   });
@@ -937,7 +1178,7 @@ export function createApp(deps: {
 
   app.get('/admin/dashboard', async (c) => {
     await orchestrator.syncStates();
-    const all = orchestrator.listAll();
+    const all = await orchestrator.listAll();
     const running = all.filter((r) => r.status === 'running');
     const stopped = all.filter((r) => r.status !== 'running');
 
@@ -1025,8 +1266,8 @@ export function createApp(deps: {
 
   const social = createSocialApi(db);
 
-  app.get('/social/users', (c) => {
-    return c.json(social.listUsers());
+  app.get('/social/users', async (c) => {
+    return c.json(await social.listUsers());
   });
 
   app.get('/social/profiles/:handle', async (c) => {
@@ -1066,9 +1307,50 @@ export function createApp(deps: {
 
   // --- Subdomain proxy ---
 
-  app.all('/proxy/:handle/*', async (c) => {
+  app.all('/proxy/:handle/*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c) => {
     const handle = c.req.param('handle');
-    const record = getContainer(db, handle);
+    if (!HANDLE_PATTERN.test(handle)) {
+      return c.json({ error: 'Invalid handle' }, 400);
+    }
+    const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
+    const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+    const runningMachine = await getRunningUserMachineByHandle(db, handle);
+    if (runningMachine) {
+      const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
+      if (!targetUrl) {
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      try {
+        const headers = new Headers();
+        const originalHost = c.req.header('host') ?? `${handle}.matrix-os.com`;
+        for (const [key, value] of Object.entries(c.req.header())) {
+          const lowerKey = key.toLowerCase();
+          if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+        }
+        headers.set('host', `${handle}.matrix-os.com`);
+        headers.set('x-forwarded-host', originalHost);
+        headers.set('x-forwarded-proto', 'https');
+
+        const upstream = await fetch(targetUrl, {
+          method: c.req.method,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(30_000),
+          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher: Agent });
+
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: upstream.headers,
+        });
+      } catch (err: unknown) {
+        logPlatformRouteError('/proxy/:handle/* vps', err);
+        return c.json({ error: 'VPS unreachable' }, 502);
+      }
+    }
+
+    const record = await getContainer(db, handle);
     if (!record) return c.json({ error: 'Unknown handle' }, 404);
 
     if (record.status === 'stopped') {
@@ -1080,16 +1362,16 @@ export function createApp(deps: {
       }
     }
 
-    updateLastActive(db, handle);
+    await updateLastActive(db, handle);
 
-    const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const targetUrl = `http://matrixos-${handle}:3000${path}`;
 
     try {
       const headers = new Headers();
       const originalHost = c.req.header('host') ?? '';
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && value) headers.set(key, value);
+        const lowerKey = key.toLowerCase();
+        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');
@@ -1120,7 +1402,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   if (checkUnsafeDefaultSecrets().length > 0) {
     process.exit(1);
   }
-  const db = createPlatformDb(DB_PATH);
+  const platformDatabaseUrl = process.env.PLATFORM_DATABASE_URL ??
+    (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
+  const db = platformDatabaseUrl ? createPlatformDb(platformDatabaseUrl) : createPlatformDb();
+  await db.ready;
   const docker = new Dockerode();
   const extraEnv: string[] = [];
   if (process.env.CLERK_SECRET_KEY) {
@@ -1159,8 +1444,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const statsCollector = createStatsCollector({
     docker,
     listRunning: () => listContainers(db, 'running'),
-    onResolvedContainerId: (handle, containerId) => {
-      updateContainerStatus(db, handle, 'running', containerId);
+    onResolvedContainerId: async (handle, containerId) => {
+      await updateContainerStatus(db, handle, 'running', containerId);
     },
   });
   statsCollector.start();
@@ -1247,6 +1532,19 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   }
 
   let internalSyncRoutes: Hono | undefined;
+  let customerVpsObjectStore:
+    | {
+        putObject(
+          key: string,
+          body: string | Uint8Array | ReadableStream<Uint8Array>,
+          options?: { signal?: AbortSignal },
+        ): Promise<{ etag?: string }>;
+        getObject(
+          key: string,
+          options?: { signal?: AbortSignal },
+        ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+      }
+    | undefined;
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
   const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
   const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
@@ -1271,6 +1569,67 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       r2,
       platformSecret: PLATFORM_SECRET,
     });
+    customerVpsObjectStore = r2;
+  }
+
+  let customerVpsService: CustomerVpsService | undefined;
+  let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
+  let customerVpsReconciliationPromise: Promise<void> | undefined;
+  if (process.env.CUSTOMER_VPS_ENABLED === 'true') {
+    const [
+      { createCustomerVpsService },
+      { loadCustomerVpsConfig },
+      { createHetznerClient },
+      { createCustomerVpsSystemStore, createNoopCustomerVpsSystemStore },
+    ] = await Promise.all([
+      import('./customer-vps.js'),
+      import('./customer-vps-config.js'),
+      import('./customer-vps-hetzner.js'),
+      import('./customer-vps-r2.js'),
+    ]);
+    const customerVpsConfig = loadCustomerVpsConfig();
+    customerVpsService = createCustomerVpsService({
+      db,
+      config: customerVpsConfig,
+      hetzner: createHetznerClient(customerVpsConfig),
+      systemStore: customerVpsObjectStore
+        ? createCustomerVpsSystemStore({
+            r2: customerVpsObjectStore,
+            r2PrefixRoot: customerVpsConfig.r2PrefixRoot,
+          })
+        : createNoopCustomerVpsSystemStore(),
+    });
+    const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
+    if (reconciliationIntervalMs > 0) {
+      // Customer VPS reconciliation currently assumes one active platform
+      // process. If the platform is horizontally scaled, replace this
+      // in-process guard with a DB advisory lock before enabling the interval
+      // on multiple instances.
+      let reconciliationRunning = false;
+      const runCustomerVpsReconciliation = async () => {
+        if (reconciliationRunning || !customerVpsService) return;
+        reconciliationRunning = true;
+        customerVpsReconciliationPromise = (async () => {
+          try {
+            const result = await customerVpsService!.reconcileProvisioning();
+            if (result.checked > 0) {
+              console.log(
+                `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
+              );
+            }
+          } catch (err: unknown) {
+            logPlatformRouteError('customer VPS reconciliation', err);
+          } finally {
+            reconciliationRunning = false;
+            customerVpsReconciliationPromise = undefined;
+          }
+        })();
+        await customerVpsReconciliationPromise;
+      };
+      void runCustomerVpsReconciliation();
+      customerVpsReconciliationInterval = setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs);
+      customerVpsReconciliationInterval.unref();
+    }
   }
 
   const app = createApp({
@@ -1282,19 +1641,67 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     integrationRoutes,
     internalIntegrationRoutes,
     internalSyncRoutes,
+    customerVpsService,
   });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
   });
 
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[platform] Received ${signal}, shutting down`);
+    if (customerVpsReconciliationInterval) {
+      clearInterval(customerVpsReconciliationInterval);
+    }
+    const shutdownTimer = setTimeout(() => {
+      console.error('[platform] Graceful shutdown timed out');
+      process.exit(1);
+    }, 10_000);
+    shutdownTimer.unref();
+
+    (server as Server).close((err?: Error) => {
+      let exitCode = 0;
+      if (err) {
+        exitCode = 1;
+        console.error('[platform] HTTP server close failed:', err.message);
+      }
+      (async () => {
+        if (customerVpsReconciliationPromise) {
+          await customerVpsReconciliationPromise;
+        }
+        await Promise.allSettled([
+          containerProxyDispatcher.close(),
+          customerVpsProxyDispatcher.close(),
+        ]);
+        await db.destroy();
+      })()
+        .catch((destroyErr: unknown) => {
+          exitCode = 1;
+          console.error(
+            '[platform] Shutdown cleanup failed:',
+            destroyErr instanceof Error ? destroyErr.message : String(destroyErr),
+          );
+        })
+        .finally(() => {
+          clearTimeout(shutdownTimer);
+          process.exit(exitCode);
+        });
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+
   // WebSocket upgrade handler
   (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
     const host = getWebSocketUpgradeHost(req.headers.host, req.headers['x-forwarded-host']);
-    if (!isAppDomainHost(host)) {
+    if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;
     }
+    const isCodeDomain = isCodeDomainHost(host);
 
     const path = req.url ?? '/';
     const wsToken = getWebSocketUpgradeToken(path);
@@ -1308,12 +1715,86 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     });
     if (!identity) { socket.destroy(); return; }
 
-    const record = getContainer(db, identity.handle);
-    if (!record) { socket.destroy(); return; }
-    let activeUpstream: ReturnType<typeof createConnection> | null = null;
+    const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
+    const record = await getContainer(db, identity.handle);
+    if (!runningMachine && !record) { socket.destroy(); return; }
+    let activeUpstream: Socket | null = null;
     const onSocketError = () => activeUpstream?.destroy();
     socket.on('error', onSocketError);
 
+    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => {
+      return Object.entries(req.headers)
+        .filter(([k]) => (
+          k !== 'host' &&
+          k !== 'authorization' &&
+          k !== 'cookie' &&
+          k !== 'x-forwarded-host' &&
+          k !== 'x-forwarded-proto'
+        ))
+        .flatMap(([k, v]) => {
+          if (v === undefined) return [];
+          return `${k}: ${Array.isArray(v) ? v.join(', ') : v}`;
+        })
+        .concat([
+          `x-forwarded-host: ${host}`,
+          'x-forwarded-proto: https',
+        ])
+        .concat(
+          PLATFORM_SECRET && includePlatformProof
+            ? [
+                `authorization: Bearer ${buildPlatformVerificationToken(handle, PLATFORM_SECRET)}`,
+                `x-platform-verified: ${buildPlatformUserProof(handle, identity.userId, PLATFORM_SECRET)}`,
+                `x-platform-user-id: ${identity.userId}`,
+              ]
+            : [],
+        )
+        .join('\r\n');
+    };
+
+    const writeUpgradeRequest = (
+      upstream: Socket,
+      upstreamHostHeader: string,
+      headers: string,
+    ): void => {
+      if (!isSafeWebSocketUpgradePath(path)) {
+        socket.destroy();
+        upstream.destroy();
+        return;
+      }
+      const upstreamPath = stripWebSocketUpgradeToken(path);
+      upstream.write(
+        `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`
+      );
+      if (head.length > 0) upstream.write(head);
+
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    };
+
+    if (runningMachine?.publicIPv4) {
+      const upstreamHostHeader = isCodeDomain ? host : `${runningMachine.handle}.matrix-os.com`;
+      const headers = buildUpgradeHeaders(runningMachine.handle, true);
+      const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
+      const upstream = createTlsConnection({
+        host: runningMachine.publicIPv4,
+        port: 443,
+        servername: upstreamServerName,
+        rejectUnauthorized: process.env.CUSTOMER_VPS_TLS_VERIFY === 'false' ? false : undefined,
+      }, () => {
+        activeUpstream = upstream;
+        writeUpgradeRequest(upstream, upstreamHostHeader, headers);
+      });
+      upstream.on('error', (err) => {
+        upstream.destroy();
+        console.warn(
+          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} path=${path} error=${describeError(err)}`,
+        );
+        socket.destroy();
+      });
+      return;
+    }
+
+    if (!record) { socket.destroy(); return; }
     const connectUpstream = async (attempt: number): Promise<void> => {
       const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
       if (!endpoint) {
@@ -1325,36 +1806,16 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       }
 
       let connected = false;
-      const upstream = createConnection({ host: endpoint.host, port: 4000 }, () => {
+      const targetPort = isCodeDomain ? CODE_SERVER_PORT : 4000;
+      const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
         connected = true;
         activeUpstream = upstream;
-        if (!isSafeWebSocketUpgradePath(path)) {
-          socket.destroy();
-          upstream.destroy();
-          return;
-        }
-        const upstreamPath = stripWebSocketUpgradeToken(path);
-        const headers = Object.entries(req.headers)
-          .filter(([k]) => k !== 'host' && k !== 'authorization' && k !== 'cookie')
-          .map(([k, v]) => `${k}: ${v}`)
-          .concat(
-            PLATFORM_SECRET
-              ? [
-                  `authorization: Bearer ${buildPlatformVerificationToken(record.handle, PLATFORM_SECRET)}`,
-                  `x-platform-verified: ${buildPlatformUserProof(record.handle, identity.userId, PLATFORM_SECRET)}`,
-                  `x-platform-user-id: ${identity.userId}`,
-                ]
-              : [],
-          )
-          .join('\r\n');
-
-        upstream.write(
-          `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${endpoint.host}:4000\r\n${headers}\r\n\r\n`
+        const upstreamHostHeader = isCodeDomain ? host : `${endpoint.host}:${targetPort}`;
+        writeUpgradeRequest(
+          upstream,
+          upstreamHostHeader,
+          buildUpgradeHeaders(record.handle, !isCodeDomain),
         );
-        if (head.length > 0) upstream.write(head);
-
-        upstream.pipe(socket);
-        socket.pipe(upstream);
       });
 
       upstream.on('error', (err) => {

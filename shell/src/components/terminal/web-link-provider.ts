@@ -131,8 +131,8 @@ export class WebLinkProvider {
                 return;
               }
               window.open(parsed.href, "_blank", "noopener,noreferrer");
-            } catch {
-              // Ignore malformed URLs from terminal output.
+            } catch (err: unknown) {
+              console.warn("[terminal] Ignoring malformed URL:", err instanceof Error ? err.message : String(err));
             }
           },
         });

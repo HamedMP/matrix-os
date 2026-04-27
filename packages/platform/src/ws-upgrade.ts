@@ -31,6 +31,14 @@ export function isAppDomainHost(host: string): boolean {
   return /^app\.matrix-os\.com(?::\d+)?$/i.test(host) || /^app\.localhost(?::\d+)?$/i.test(host);
 }
 
+export function isCodeDomainHost(host: string): boolean {
+  return /^code\.matrix-os\.com(?::\d+)?$/i.test(host) || /^code\.localhost(?::\d+)?$/i.test(host);
+}
+
+export function isSessionRoutedHost(host: string): boolean {
+  return isAppDomainHost(host) || isCodeDomainHost(host);
+}
+
 function parseWebSocketUpgradeUrl(path: string): URL | null {
   try {
     return new URL(path, "http://platform.invalid");

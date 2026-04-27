@@ -51,7 +51,8 @@ export function createChannelManager(
         try {
           await adapter.start(channelConfig);
           started.add(channelId);
-        } catch {
+        } catch (err: unknown) {
+          console.warn(`[channels] Failed to start ${channelId}:`, err instanceof Error ? err.message : String(err));
           errors.add(channelId);
         }
       }
@@ -74,7 +75,8 @@ export function createChannelManager(
       try {
         await adapter.start(newConfig);
         started.add(id);
-      } catch {
+      } catch (err: unknown) {
+        console.warn(`[channels] Failed to restart ${id}:`, err instanceof Error ? err.message : String(err));
         errors.add(id);
       }
     },

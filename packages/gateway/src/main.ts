@@ -1,12 +1,17 @@
 import { resolve, dirname } from "node:path";
 import { join } from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { ensureHome, loadHandle, saveIdentity, deriveAiHandle } from "@matrix-os/kernel";
 import type { SyncReport } from "@matrix-os/kernel";
 import { createGateway } from "./server.js";
 
-try { process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env")); } catch {}
+try {
+  process.loadEnvFile(resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"));
+} catch (err: unknown) {
+  console.warn("[gateway] Could not load .env:", err instanceof Error ? err.message : String(err));
+}
 
 const syncResult = ensureHome(process.env.MATRIX_HOME || undefined);
 const homePath = syncResult.homePath;
@@ -36,11 +41,13 @@ if (hasChanges) {
   const lastSyncPath = join(homePath, "system", "last-sync.json");
   try {
     mkdirSync(dirname(lastSyncPath), { recursive: true });
-    writeFileSync(lastSyncPath, JSON.stringify({
+    await writeFile(lastSyncPath, JSON.stringify({
       ...syncReport,
       timestamp: new Date().toISOString(),
     }, null, 2));
-  } catch { /* non-critical */ }
+  } catch (err: unknown) {
+    console.warn("[gateway] Could not write template sync report:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 const gateway = await createGateway({ homePath, port, syncReport: hasChanges ? syncReport : undefined });
@@ -61,6 +68,7 @@ if (proxyUrl) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ handle, gatewayUrl, shellPort }),
+    signal: AbortSignal.timeout(10_000),
   }).then(() => console.log(`Registered with proxy as "${handle}"`))
     .catch((e) => console.warn(`Proxy registration failed: ${(e as Error).message}`));
 }

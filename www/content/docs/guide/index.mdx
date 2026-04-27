@@ -31,7 +31,7 @@ sequenceDiagram
     User->>Shell: "Build me an expense tracker"
     Shell->>GW: WebSocket / REST / Channel
     GW->>Disp: dispatch(message)
-    Disp->>Disp: Queue + create task in SQLite
+    Disp->>Disp: Queue + create task in PostgreSQL
     Disp->>K: spawnKernel(message)
     K->>K: buildSystemPrompt(SOUL, skills, context)
     K->>Agent: Select Builder agent
@@ -73,7 +73,7 @@ Matrix OS maps the Claude Agent SDK to real computer architecture:
 | Syscalls | Read, Write, Edit, Bash |
 | Disk | `~/matrixos/` (apps, data, system, agents) |
 | Drivers | MCP servers (IPC tools) |
-| IPC | File coordination + SQLite task queue |
+| IPC | File coordination + PostgreSQL task queue |
 
 ## Next Steps
 
@@ -110,7 +110,7 @@ Matrix OS maps the Claude Agent SDK to real computer architecture:
   />
   <Card
     title="Storage"
-    description="S3 backup, git versioning, SQLite and PostgreSQL databases"
+    description="S3 backup, git versioning, and PostgreSQL databases"
     href="/docs/guide/storage"
   />
   <Card

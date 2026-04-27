@@ -1,4 +1,5 @@
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SessionManager, type BrowserLike } from "./session-manager.js";
 import { formatAccessibilityTree, type AXNode } from "./role-snapshot.js";
@@ -208,7 +209,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           mkdirSync(screenshotDir, { recursive: true });
           const filename = `${Date.now()}.png`;
           const filepath = input.path ?? join(screenshotDir, filename);
-          writeFileSync(filepath, buffer);
+          await writeFile(filepath, buffer);
 
           return { action, success: true, screenshotPath: filepath };
         }
@@ -221,7 +222,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           mkdirSync(screenshotDir, { recursive: true });
           const filename = `${Date.now()}.pdf`;
           const filepath = input.path ?? join(screenshotDir, filename);
-          writeFileSync(filepath, buffer);
+          await writeFile(filepath, buffer);
 
           return { action, success: true, screenshotPath: filepath };
         }

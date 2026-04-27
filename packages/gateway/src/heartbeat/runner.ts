@@ -80,7 +80,9 @@ export function createHeartbeatRunner(config: HeartbeatConfig): HeartbeatRunner 
     start() {
       if (intervalHandle) return;
       intervalHandle = setInterval(() => {
-        runOnce().catch(() => {});
+        runOnce().catch((err: unknown) => {
+          console.warn("[heartbeat-runner] Scheduled heartbeat failed:", err instanceof Error ? err.message : String(err));
+        });
       }, everyMinutes * 60 * 1000);
     },
 

@@ -124,7 +124,7 @@ cat ~/matrixos/system/handle.json
 **Expected** (once T222 kernel support is wired):
 - Kernel calls git sync operations to push/pull
 - Auto-sync debounces file changes (30s) and commits automatically
-- `.gitignore` excludes logs, sqlite, whatsapp-auth, large media
+- `.gitignore` excludes logs, local database dumps, whatsapp-auth, large media
 
 **Verify**:
 ```bash

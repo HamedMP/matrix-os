@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from "node:fs";
+import * as fs from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ConversationForSummary {
@@ -13,6 +14,11 @@ export interface SummaryEntry {
 }
 
 const MAX_SUMMARY_LENGTH = 300;
+const writeFileNow = fs.writeFileSync as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+  options?: fs.WriteFileOptions,
+) => void;
 
 export function summarizeConversation(conv: ConversationForSummary): string {
   if (conv.messages.length === 0) return "";
@@ -54,7 +60,11 @@ export function saveSummary(
   const safeId = sessionId.replace(/[^a-zA-Z0-9_:-]/g, "_");
   const content = `---\nsession: ${safeId}\ndate: ${timestamp.split("T")[0]}\ntimestamp: ${timestamp}\n---\n\n${summary}\n`;
 
-  writeFileSync(join(dir, `${safeId}.md`), content, "utf-8");
+  try {
+    writeFileNow(join(dir, `${safeId}.md`), content, "utf-8");
+  } catch (err: unknown) {
+    console.warn("[conversation-summary] Could not persist summary:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 export function loadRecentSummaries(

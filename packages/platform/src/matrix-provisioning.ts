@@ -1,76 +1,69 @@
 import { randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
-import { sqliteTable, text, index } from 'drizzle-orm/sqlite-core';
 import type { PlatformDB } from './db.js';
 
-// --- Schema ---
+const MATRIX_FETCH_TIMEOUT_MS = 10_000;
 
-export const matrixUsers = sqliteTable(
-  'matrix_users',
-  {
-    handle: text('handle').primaryKey(),
-    humanMatrixId: text('human_matrix_id').notNull(),
-    aiMatrixId: text('ai_matrix_id').notNull(),
-    humanAccessToken: text('human_access_token').notNull(),
-    aiAccessToken: text('ai_access_token').notNull(),
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    index('idx_matrix_human_id').on(table.humanMatrixId),
-    index('idx_matrix_ai_id').on(table.aiMatrixId),
-  ],
-);
-
-export type MatrixUserRecord = typeof matrixUsers.$inferSelect;
-
-// --- Migration ---
-
-export function runMatrixUserMigrations(sqlite: { prepare(sql: string): { run(): unknown } }): void {
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS matrix_users (
-      handle TEXT PRIMARY KEY,
-      human_matrix_id TEXT NOT NULL,
-      ai_matrix_id TEXT NOT NULL,
-      human_access_token TEXT NOT NULL,
-      ai_access_token TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_matrix_human_id ON matrix_users(human_matrix_id)'
-  ).run();
-
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_matrix_ai_id ON matrix_users(ai_matrix_id)'
-  ).run();
+export interface MatrixUserRecord {
+  handle: string;
+  humanMatrixId: string;
+  aiMatrixId: string;
+  humanAccessToken: string;
+  aiAccessToken: string;
+  createdAt: string;
 }
 
-// --- CRUD ---
-
-export function getMatrixUser(db: PlatformDB, handle: string): MatrixUserRecord | null {
-  return db.select().from(matrixUsers).where(eq(matrixUsers.handle, handle)).get() ?? null;
+function mapMatrixUser(row: {
+  handle: string;
+  human_matrix_id: string;
+  ai_matrix_id: string;
+  human_access_token: string;
+  ai_access_token: string;
+  created_at: string;
+}): MatrixUserRecord {
+  return {
+    handle: row.handle,
+    humanMatrixId: row.human_matrix_id,
+    aiMatrixId: row.ai_matrix_id,
+    humanAccessToken: row.human_access_token,
+    aiAccessToken: row.ai_access_token,
+    createdAt: row.created_at,
+  };
 }
 
-export function listMatrixUsers(db: PlatformDB): MatrixUserRecord[] {
-  return db.select().from(matrixUsers).all();
+export async function getMatrixUser(db: PlatformDB, handle: string): Promise<MatrixUserRecord | null> {
+  await db.ready;
+  const row = await db.executor.selectFrom('matrix_users').selectAll().where('handle', '=', handle).executeTakeFirst();
+  return row ? mapMatrixUser(row) : null;
 }
 
-function insertMatrixUser(
+export async function listMatrixUsers(db: PlatformDB): Promise<MatrixUserRecord[]> {
+  await db.ready;
+  const rows = await db.executor.selectFrom('matrix_users').selectAll().execute();
+  return rows.map(mapMatrixUser);
+}
+
+async function insertMatrixUser(
   db: PlatformDB,
   record: Omit<MatrixUserRecord, 'createdAt'>,
-): void {
-  db.insert(matrixUsers).values({
-    ...record,
-    createdAt: new Date().toISOString(),
-  }).run();
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('matrix_users')
+    .values({
+      handle: record.handle,
+      human_matrix_id: record.humanMatrixId,
+      ai_matrix_id: record.aiMatrixId,
+      human_access_token: record.humanAccessToken,
+      ai_access_token: record.aiAccessToken,
+      created_at: new Date().toISOString(),
+    })
+    .execute();
 }
 
-function deleteMatrixUser(db: PlatformDB, handle: string): void {
-  db.delete(matrixUsers).where(eq(matrixUsers.handle, handle)).run();
+async function deleteMatrixUser(db: PlatformDB, handle: string): Promise<void> {
+  await db.ready;
+  await db.executor.deleteFrom('matrix_users').where('handle', '=', handle).execute();
 }
-
-// --- Provisioner ---
 
 export interface MatrixProvisionerConfig {
   db: PlatformDB;
@@ -89,7 +82,7 @@ export interface ProvisionResult {
 
 export interface MatrixProvisioner {
   provisionUser(handle: string): Promise<ProvisionResult>;
-  deprovisionUser(handle: string): void;
+  deprovisionUser(handle: string): Promise<void>;
 }
 
 export function createMatrixProvisioner(config: MatrixProvisionerConfig): MatrixProvisioner {
@@ -101,14 +94,12 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
     username: string,
     displayname: string,
   ): Promise<{ userId: string; accessToken: string }> {
-    // Password is used once for register+login, then discarded. The access_token
-    // is stored in the DB. If it expires, recovery requires Conduit admin API
-    // (no password stored). TODO: persist encrypted password or use admin API.
     const password = randomBytes(32).toString('hex');
 
     const regRes = await fetchFn(`${homeserverUrl}/_matrix/client/v3/register`, {
       method: 'POST',
       headers: jsonHeaders,
+      signal: AbortSignal.timeout(MATRIX_FETCH_TIMEOUT_MS),
       body: JSON.stringify({
         username,
         password,
@@ -118,12 +109,16 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
     });
 
     if (!regRes.ok) {
-      const err = (await regRes.json().catch(() => ({}))) as { errcode?: string };
+      let err: { errcode?: string } = {};
+      try {
+        err = (await regRes.json()) as { errcode?: string };
+      } catch (parseErr: unknown) {
+        console.warn('[matrix] Failed to parse registration error response:', parseErr instanceof Error ? parseErr.message : String(parseErr));
+      }
       throw new Error(`Failed to register Matrix user ${username}: ${err.errcode ?? regRes.status}`);
     }
 
     const regBody = (await regRes.json()) as { user_id?: string; access_token?: string };
-
     if (!regBody.user_id) {
       throw new Error(`Matrix register: missing user_id in response for ${username}`);
     }
@@ -135,6 +130,7 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
     const loginRes = await fetchFn(`${homeserverUrl}/_matrix/client/v3/login`, {
       method: 'POST',
       headers: jsonHeaders,
+      signal: AbortSignal.timeout(MATRIX_FETCH_TIMEOUT_MS),
       body: JSON.stringify({
         type: 'm.login.password',
         identifier: { type: 'm.id.user', user: username },
@@ -169,7 +165,7 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
         aiAccessToken: ai.accessToken,
       };
 
-      insertMatrixUser(db, {
+      await insertMatrixUser(db, {
         handle,
         humanMatrixId: result.humanMatrixId,
         aiMatrixId: result.aiMatrixId,
@@ -180,8 +176,8 @@ export function createMatrixProvisioner(config: MatrixProvisionerConfig): Matrix
       return result;
     },
 
-    deprovisionUser(handle) {
-      deleteMatrixUser(db, handle);
+    async deprovisionUser(handle) {
+      await deleteMatrixUser(db, handle);
     },
   };
 }

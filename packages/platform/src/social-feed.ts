@@ -1,145 +1,87 @@
 import { randomUUID } from 'node:crypto';
-import { eq, and, desc, sql, inArray, lt, gt } from 'drizzle-orm';
-import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'kysely';
 import type { PlatformDB } from './db.js';
 
-// --- Schema ---
-
-export const posts = sqliteTable(
-  'social_posts',
-  {
-    id: text('id').primaryKey(),
-    authorId: text('author_id').notNull(),
-    content: text('content').notNull(),
-    type: text('type').notNull(), // text | image | link | app_share | activity
-    mediaUrls: text('media_urls'),
-    appRef: text('app_ref'),
-    likesCount: integer('likes_count').default(0).notNull(),
-    commentsCount: integer('comments_count').default(0).notNull(),
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    index('idx_posts_author').on(table.authorId),
-    index('idx_posts_type').on(table.type),
-    index('idx_posts_created').on(table.createdAt),
-    index('idx_posts_likes').on(table.likesCount),
-  ],
-);
-
-export const comments = sqliteTable(
-  'social_comments',
-  {
-    id: text('id').primaryKey(),
-    postId: text('post_id').notNull(),
-    authorId: text('author_id').notNull(),
-    content: text('content').notNull(),
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    index('idx_comments_post').on(table.postId),
-  ],
-);
-
-export const likes = sqliteTable(
-  'social_likes',
-  {
-    postId: text('post_id').notNull(),
-    userId: text('user_id').notNull(),
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    uniqueIndex('idx_likes_post_user').on(table.postId, table.userId),
-  ],
-);
-
-export const follows = sqliteTable(
-  'social_follows',
-  {
-    followerId: text('follower_id').notNull(),
-    followingId: text('following_id').notNull(),
-    followingType: text('following_type').notNull(), // user | ai
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    uniqueIndex('idx_follows_pair').on(table.followerId, table.followingId),
-    index('idx_follows_follower').on(table.followerId),
-    index('idx_follows_following').on(table.followingId),
-  ],
-);
-
-// --- Types ---
-
-export type PostRecord = typeof posts.$inferSelect;
-export type CommentRecord = typeof comments.$inferSelect;
-export type FollowRecord = typeof follows.$inferSelect;
-
-// --- Migration ---
-
-export function runSocialFeedMigrations(sqlite: { prepare(sql: string): { run(): unknown } }): void {
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS social_posts (
-      id TEXT PRIMARY KEY,
-      author_id TEXT NOT NULL,
-      content TEXT NOT NULL,
-      type TEXT NOT NULL,
-      media_urls TEXT,
-      app_ref TEXT,
-      likes_count INTEGER NOT NULL DEFAULT 0,
-      comments_count INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare('CREATE INDEX IF NOT EXISTS idx_posts_author ON social_posts(author_id)').run();
-  sqlite.prepare('CREATE INDEX IF NOT EXISTS idx_posts_type ON social_posts(type)').run();
-  sqlite.prepare('CREATE INDEX IF NOT EXISTS idx_posts_created ON social_posts(created_at)').run();
-  sqlite.prepare('CREATE INDEX IF NOT EXISTS idx_posts_likes ON social_posts(likes_count)').run();
-
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS social_comments (
-      id TEXT PRIMARY KEY,
-      post_id TEXT NOT NULL,
-      author_id TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare('CREATE INDEX IF NOT EXISTS idx_comments_post ON social_comments(post_id)').run();
-
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS social_likes (
-      post_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_likes_post_user ON social_likes(post_id, user_id)'
-  ).run();
-
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS social_follows (
-      follower_id TEXT NOT NULL,
-      following_id TEXT NOT NULL,
-      following_type TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_follows_pair ON social_follows(follower_id, following_id)'
-  ).run();
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_follows_follower ON social_follows(follower_id)'
-  ).run();
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_follows_following ON social_follows(following_id)'
-  ).run();
+export interface PostRecord {
+  id: string;
+  authorId: string;
+  content: string;
+  type: string;
+  mediaUrls: string | null;
+  appRef: string | null;
+  likesCount: number;
+  commentsCount: number;
+  createdAt: string;
 }
 
-// --- Posts CRUD ---
+export interface CommentRecord {
+  id: string;
+  postId: string;
+  authorId: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface FollowRecord {
+  followerId: string;
+  followingId: string;
+  followingType: string;
+  createdAt: string;
+}
+
+function mapPost(row: {
+  id: string;
+  author_id: string;
+  content: string;
+  type: string;
+  media_urls: string | null;
+  app_ref: string | null;
+  likes_count: number;
+  comments_count: number;
+  created_at: string;
+}): PostRecord {
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    content: row.content,
+    type: row.type,
+    mediaUrls: row.media_urls,
+    appRef: row.app_ref,
+    likesCount: row.likes_count,
+    commentsCount: row.comments_count,
+    createdAt: row.created_at,
+  };
+}
+
+function mapComment(row: {
+  id: string;
+  post_id: string;
+  author_id: string;
+  content: string;
+  created_at: string;
+}): CommentRecord {
+  return {
+    id: row.id,
+    postId: row.post_id,
+    authorId: row.author_id,
+    content: row.content,
+    createdAt: row.created_at,
+  };
+}
+
+function mapFollow(row: {
+  follower_id: string;
+  following_id: string;
+  following_type: string;
+  created_at: string;
+}): FollowRecord {
+  return {
+    followerId: row.follower_id,
+    followingId: row.following_id,
+    followingType: row.following_type,
+    createdAt: row.created_at,
+  };
+}
 
 let postSeq = 0;
 
@@ -150,50 +92,47 @@ function makePostId(): string {
   return `p_${ts}_${seq}_${rand}`;
 }
 
-export function insertPost(
+export async function insertPost(
   db: PlatformDB,
   input: { authorId: string; content: string; type: string; mediaUrls?: string; appRef?: string },
-): string {
+): Promise<string> {
+  await db.ready;
   const id = makePostId();
-  const now = new Date().toISOString();
-  db.insert(posts).values({
+  await db.executor.insertInto('social_posts').values({
     id,
-    authorId: input.authorId,
+    author_id: input.authorId,
     content: input.content,
     type: input.type,
-    mediaUrls: input.mediaUrls,
-    appRef: input.appRef,
-    likesCount: 0,
-    commentsCount: 0,
-    createdAt: now,
-  }).run();
+    media_urls: input.mediaUrls ?? null,
+    app_ref: input.appRef ?? null,
+    likes_count: 0,
+    comments_count: 0,
+    created_at: new Date().toISOString(),
+  }).execute();
   return id;
 }
 
-export function getPost(db: PlatformDB, id: string): PostRecord | null {
-  return db.select().from(posts).where(eq(posts.id, id)).get() ?? null;
+export async function getPost(db: PlatformDB, id: string): Promise<PostRecord | null> {
+  await db.ready;
+  const row = await db.executor.selectFrom('social_posts').selectAll().where('id', '=', id).executeTakeFirst();
+  return row ? mapPost(row) : null;
 }
 
-export function deletePost(db: PlatformDB, id: string): boolean {
-  const existing = getPost(db, id);
-  if (!existing) return false;
-
-  // better-sqlite3 is synchronous and single-connection, so sequential
-  // DELETEs are effectively atomic (no concurrent writes). Order matters:
-  // likes first, then comments, then the post itself.
-  // TODO: if migrated to Postgres/async DB, wrap in a real transaction.
-  db.delete(likes).where(eq(likes.postId, id)).run();
-  db.delete(comments).where(eq(comments.postId, id)).run();
-  db.delete(posts).where(eq(posts.id, id)).run();
-  return true;
+export async function deletePost(db: PlatformDB, id: string): Promise<boolean> {
+  return db.transaction(async (trx) => {
+    const existing = await getPost(trx, id);
+    if (!existing) return false;
+    await trx.executor.deleteFrom('social_likes').where('post_id', '=', id).execute();
+    await trx.executor.deleteFrom('social_comments').where('post_id', '=', id).execute();
+    await trx.executor.deleteFrom('social_posts').where('id', '=', id).execute();
+    return true;
+  });
 }
-
-// --- Feed ---
 
 interface FeedOptions {
   authorIds: string[];
   limit?: number;
-  cursor?: string; // post id for cursor-based pagination
+  cursor?: string;
 }
 
 interface FeedResult {
@@ -202,229 +141,225 @@ interface FeedResult {
   cursor?: string;
 }
 
-export function listFeed(db: PlatformDB, options: FeedOptions): FeedResult {
+export async function listFeed(db: PlatformDB, options: FeedOptions): Promise<FeedResult> {
+  await db.ready;
   const { authorIds, limit = 20, cursor } = options;
-
   if (authorIds.length === 0) {
     return { posts: [], hasMore: false };
   }
 
-  const conditions = [inArray(posts.authorId, authorIds)];
-  if (cursor) {
-    conditions.push(lt(posts.id, cursor));
-  }
+  let query = db.executor
+    .selectFrom('social_posts')
+    .selectAll()
+    .where('author_id', 'in', authorIds);
+  if (cursor) query = query.where('id', '<', cursor);
 
-  const result = db
-    .select()
-    .from(posts)
-    .where(and(...conditions))
-    .orderBy(desc(posts.id))
-    .limit(limit + 1)
-    .all();
-
+  const result = await query.orderBy('id', 'desc').limit(limit + 1).execute();
   const hasMore = result.length > limit;
   const page = hasMore ? result.slice(0, limit) : result;
-
+  const posts = page.map(mapPost);
   return {
-    posts: page,
+    posts,
     hasMore,
-    cursor: page.length > 0 ? page[page.length - 1].id : undefined,
+    cursor: posts.length > 0 ? posts[posts.length - 1].id : undefined,
   };
 }
 
-export function listTrendingPosts(db: PlatformDB, limit: number = 20): PostRecord[] {
-  return db
-    .select()
-    .from(posts)
-    .orderBy(desc(posts.likesCount), desc(posts.createdAt))
+export async function listTrendingPosts(db: PlatformDB, limit: number = 20): Promise<PostRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('social_posts')
+    .selectAll()
+    .orderBy('likes_count', 'desc')
+    .orderBy('created_at', 'desc')
     .limit(limit)
-    .all();
+    .execute();
+  return rows.map(mapPost);
 }
 
-// --- Likes ---
-
-// better-sqlite3 is synchronous and single-connection. The check-then-mutate
-// pattern (SELECT + INSERT + UPDATE) has no race window because concurrent
-// requests are serialized by the Node.js event loop.
-// TODO: if migrated to Postgres/async DB, wrap in a real transaction.
-export function likePost(db: PlatformDB, postId: string, userId: string): void {
-  const existing = db
-    .select()
-    .from(likes)
-    .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
-    .get();
-
-  if (existing) return;
-
-  db.insert(likes).values({
-    postId,
-    userId,
-    createdAt: new Date().toISOString(),
-  }).run();
-
-  db.update(posts)
-    .set({ likesCount: sql`${posts.likesCount} + 1` })
-    .where(eq(posts.id, postId))
-    .run();
+export async function likePost(db: PlatformDB, postId: string, userId: string): Promise<void> {
+  await db.transaction(async (trx) => {
+    const inserted = await trx.executor
+      .insertInto('social_likes')
+      .values({ post_id: postId, user_id: userId, created_at: new Date().toISOString() })
+      .onConflict((oc) => oc.columns(['post_id', 'user_id']).doNothing())
+      .returning('post_id')
+      .executeTakeFirst();
+    if (!inserted) return;
+    await trx.executor
+      .updateTable('social_posts')
+      .set({ likes_count: sql<number>`likes_count + 1` })
+      .where('id', '=', postId)
+      .execute();
+  });
 }
 
-export function unlikePost(db: PlatformDB, postId: string, userId: string): void {
-  const existing = db
-    .select()
-    .from(likes)
-    .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
-    .get();
-
-  if (!existing) return;
-
-  db.delete(likes)
-    .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
-    .run();
-
-  db.update(posts)
-    .set({ likesCount: sql`MAX(${posts.likesCount} - 1, 0)` })
-    .where(eq(posts.id, postId))
-    .run();
+export async function unlikePost(db: PlatformDB, postId: string, userId: string): Promise<void> {
+  await db.transaction(async (trx) => {
+    const deleted = await trx.executor
+      .deleteFrom('social_likes')
+      .where('post_id', '=', postId)
+      .where('user_id', '=', userId)
+      .returning('post_id')
+      .executeTakeFirst();
+    if (!deleted) return;
+    await trx.executor
+      .updateTable('social_posts')
+      .set({ likes_count: sql<number>`GREATEST(likes_count - 1, 0)` })
+      .where('id', '=', postId)
+      .execute();
+  });
 }
 
-export function getLikeCount(db: PlatformDB, postId: string): number {
-  const result = db
-    .select({ count: sql<number>`count(*)` })
-    .from(likes)
-    .where(eq(likes.postId, postId))
-    .get();
-  return result?.count ?? 0;
+export async function getLikeCount(db: PlatformDB, postId: string): Promise<number> {
+  await db.ready;
+  const result = await db.executor
+    .selectFrom('social_likes')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('post_id', '=', postId)
+    .executeTakeFirst();
+  return Number(result?.count ?? 0);
 }
 
-export function isLikedBy(db: PlatformDB, postId: string, userId: string): boolean {
-  const result = db
-    .select()
-    .from(likes)
-    .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
-    .get();
+export async function isLikedBy(db: PlatformDB, postId: string, userId: string): Promise<boolean> {
+  await db.ready;
+  const result = await db.executor
+    .selectFrom('social_likes')
+    .select('post_id')
+    .where('post_id', '=', postId)
+    .where('user_id', '=', userId)
+    .executeTakeFirst();
   return !!result;
 }
 
-// --- Comments ---
-
-export function addComment(
+export async function addComment(
   db: PlatformDB,
   input: { postId: string; authorId: string; content: string },
-): string {
+): Promise<string> {
   const id = `comment_${randomUUID().slice(0, 12)}`;
-  db.insert(comments).values({
-    id,
-    postId: input.postId,
-    authorId: input.authorId,
-    content: input.content,
-    createdAt: new Date().toISOString(),
-  }).run();
-
-  db.update(posts)
-    .set({ commentsCount: sql`${posts.commentsCount} + 1` })
-    .where(eq(posts.id, input.postId))
-    .run();
-
+  await db.transaction(async (trx) => {
+    await trx.executor.insertInto('social_comments').values({
+      id,
+      post_id: input.postId,
+      author_id: input.authorId,
+      content: input.content,
+      created_at: new Date().toISOString(),
+    }).execute();
+    await trx.executor
+      .updateTable('social_posts')
+      .set({ comments_count: sql<number>`comments_count + 1` })
+      .where('id', '=', input.postId)
+      .execute();
+  });
   return id;
 }
 
-export function listComments(db: PlatformDB, postId: string): CommentRecord[] {
-  return db
-    .select()
-    .from(comments)
-    .where(eq(comments.postId, postId))
-    .orderBy(comments.createdAt)
-    .all();
+export async function listComments(db: PlatformDB, postId: string): Promise<CommentRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('social_comments')
+    .selectAll()
+    .where('post_id', '=', postId)
+    .orderBy('created_at')
+    .execute();
+  return rows.map(mapComment);
 }
 
-// --- Follows ---
-
-export function followUser(
+export async function followUser(
   db: PlatformDB,
   followerId: string,
   followingId: string,
   followingType: 'user' | 'ai',
-): void {
-  const existing = db
-    .select()
-    .from(follows)
-    .where(and(eq(follows.followerId, followerId), eq(follows.followingId, followingId)))
-    .get();
-
-  if (existing) return;
-
-  db.insert(follows).values({
-    followerId,
-    followingId,
-    followingType,
-    createdAt: new Date().toISOString(),
-  }).run();
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('social_follows')
+    .values({
+      follower_id: followerId,
+      following_id: followingId,
+      following_type: followingType,
+      created_at: new Date().toISOString(),
+    })
+    .onConflict((oc) => oc.columns(['follower_id', 'following_id']).doNothing())
+    .execute();
 }
 
-export function unfollowUser(db: PlatformDB, followerId: string, followingId: string): void {
-  db.delete(follows)
-    .where(and(eq(follows.followerId, followerId), eq(follows.followingId, followingId)))
-    .run();
+export async function unfollowUser(db: PlatformDB, followerId: string, followingId: string): Promise<void> {
+  await db.ready;
+  await db.executor
+    .deleteFrom('social_follows')
+    .where('follower_id', '=', followerId)
+    .where('following_id', '=', followingId)
+    .execute();
 }
 
-export function isFollowing(db: PlatformDB, followerId: string, followingId: string): boolean {
-  const result = db
-    .select()
-    .from(follows)
-    .where(and(eq(follows.followerId, followerId), eq(follows.followingId, followingId)))
-    .get();
+export async function isFollowing(db: PlatformDB, followerId: string, followingId: string): Promise<boolean> {
+  await db.ready;
+  const result = await db.executor
+    .selectFrom('social_follows')
+    .select('follower_id')
+    .where('follower_id', '=', followerId)
+    .where('following_id', '=', followingId)
+    .executeTakeFirst();
   return !!result;
 }
 
-export function getFollowers(db: PlatformDB, handle: string): FollowRecord[] {
-  return db
-    .select()
-    .from(follows)
-    .where(eq(follows.followingId, handle))
-    .orderBy(desc(follows.createdAt))
-    .all();
+export async function getFollowers(db: PlatformDB, handle: string): Promise<FollowRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('social_follows')
+    .selectAll()
+    .where('following_id', '=', handle)
+    .orderBy('created_at', 'desc')
+    .execute();
+  return rows.map(mapFollow);
 }
 
-export function getFollowing(db: PlatformDB, handle: string): FollowRecord[] {
-  return db
-    .select()
-    .from(follows)
-    .where(eq(follows.followerId, handle))
-    .orderBy(desc(follows.createdAt))
-    .all();
+export async function getFollowing(db: PlatformDB, handle: string): Promise<FollowRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('social_follows')
+    .selectAll()
+    .where('follower_id', '=', handle)
+    .orderBy('created_at', 'desc')
+    .execute();
+  return rows.map(mapFollow);
 }
 
-export function getFollowCounts(
+export async function getFollowCounts(
   db: PlatformDB,
   handle: string,
-): { followers: number; following: number } {
-  const followersResult = db
-    .select({ count: sql<number>`count(*)` })
-    .from(follows)
-    .where(eq(follows.followingId, handle))
-    .get();
-
-  const followingResult = db
-    .select({ count: sql<number>`count(*)` })
-    .from(follows)
-    .where(eq(follows.followerId, handle))
-    .get();
+): Promise<{ followers: number; following: number }> {
+  await db.ready;
+  const [followersResult, followingResult] = await Promise.all([
+    db.executor
+      .selectFrom('social_follows')
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .where('following_id', '=', handle)
+      .executeTakeFirst(),
+    db.executor
+      .selectFrom('social_follows')
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .where('follower_id', '=', handle)
+      .executeTakeFirst(),
+  ]);
 
   return {
-    followers: followersResult?.count ?? 0,
-    following: followingResult?.count ?? 0,
+    followers: Number(followersResult?.count ?? 0),
+    following: Number(followingResult?.count ?? 0),
   };
 }
 
-export function getFollowingIds(db: PlatformDB, handle: string): string[] {
-  return db
-    .select({ followingId: follows.followingId })
-    .from(follows)
-    .where(eq(follows.followerId, handle))
-    .all()
-    .map((r) => r.followingId);
+export async function getFollowingIds(db: PlatformDB, handle: string): Promise<string[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('social_follows')
+    .select('following_id')
+    .where('follower_id', '=', handle)
+    .execute();
+  return rows.map((r) => r.following_id);
 }
 
-export function searchUsers(_db: PlatformDB, _query: string): unknown[] {
+export async function searchUsers(_db: PlatformDB, _query: string): Promise<unknown[]> {
   return [];
 }

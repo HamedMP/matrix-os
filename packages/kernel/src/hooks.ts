@@ -111,8 +111,8 @@ export function createGitSnapshotHook(
         cwd: homePath,
         stdio: "ignore",
       });
-    } catch {
-      // Not a git repo or nothing to commit -- silently continue
+    } catch (err: unknown) {
+      console.warn("[hooks] Pre-mutation snapshot skipped:", err instanceof Error ? err.message : String(err));
     }
 
     return {};
@@ -198,7 +198,8 @@ export function createApprovalHook(
         hookSpecificOutput: { permissionDecision: "deny" },
         systemMessage: `User denied approval for ${input.tool_name}`,
       };
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[hooks] Approval failed:", err instanceof Error ? err.message : String(err));
       return {
         hookSpecificOutput: { permissionDecision: "deny" },
         systemMessage: `Approval timed out for ${input.tool_name} -- auto-denied`,

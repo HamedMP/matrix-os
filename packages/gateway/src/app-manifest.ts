@@ -46,7 +46,8 @@ export function loadAppManifest(appDir: string): AppManifest | null {
     try {
       const raw = JSON.parse(readFileSync(jsonPath, "utf-8"));
       return parseAppManifest(raw);
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[app-manifest] Could not parse matrix.json:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -66,7 +67,8 @@ export function loadAppManifest(appDir: string): AppManifest | null {
         version: fm.version != null ? String(fm.version) : undefined,
         runtime: "static",
       });
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[app-manifest] Could not parse matrix.md:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }

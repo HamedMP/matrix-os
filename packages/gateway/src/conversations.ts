@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import * as fs from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -53,13 +54,21 @@ export function createConversationStore(homePath: string): ConversationStore {
   mkdirSync(dir, { recursive: true });
   const active = new Map<string, ConversationFile>();
   const buffers = new Map<string, string>();
+  const writeFileNow = fs.writeFileSync as (
+    path: fs.PathOrFileDescriptor,
+    data: string,
+  ) => void;
 
   function filePath(id: string) {
     return join(dir, `${id}.json`);
   }
 
   function writeToDisk(conv: ConversationFile) {
-    writeFileSync(filePath(conv.id), JSON.stringify(conv, null, 2));
+    try {
+      writeFileNow(filePath(conv.id), JSON.stringify(conv, null, 2));
+    } catch (err: unknown) {
+      console.warn("[conversations] Could not persist conversation:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   function readFromDisk(id: string): ConversationFile | null {

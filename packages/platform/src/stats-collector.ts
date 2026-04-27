@@ -21,8 +21,8 @@ interface RunningContainer {
 
 export interface StatsCollectorConfig {
   docker: Dockerode;
-  listRunning: () => RunningContainer[];
-  onResolvedContainerId?: (handle: string, containerId: string) => void;
+  listRunning: () => Promise<RunningContainer[]>;
+  onResolvedContainerId?: (handle: string, containerId: string) => Promise<void> | void;
   intervalMs?: number;
 }
 
@@ -69,7 +69,7 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
   let timer: ReturnType<typeof setInterval> | null = null;
 
   async function collectOnce(): Promise<ContainerStats[]> {
-    const containers = listRunning();
+    const containers = await listRunning();
     const results: ContainerStats[] = [];
 
     for (const row of containers) {
@@ -84,7 +84,7 @@ export function createStatsCollector(config: StatsCollectorConfig): StatsCollect
           try {
             container = docker.getContainer(`matrixos-${row.handle}`);
             const inspect = await container.inspect();
-            onResolvedContainerId?.(row.handle, inspect.Id);
+            await onResolvedContainerId?.(row.handle, inspect.Id);
             const raw = await container.stats({ stream: false } as any) as any;
             results.push(buildAndRecordEntry(row.handle, raw));
             continue;

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createPlatformDb, type PlatformDB } from "../../packages/platform/src/db.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { type PlatformDB } from "../../packages/platform/src/db.js";
 import {
   createDeviceFlow,
   USER_CODE_ALPHABET,
@@ -7,26 +7,27 @@ import {
   normalizeUserCode,
   type DeviceFlow,
 } from "../../packages/platform/src/device-flow.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const VERIFY_BASE = "http://localhost:9000";
-
-function newDb(): PlatformDB {
-  return createPlatformDb(":memory:");
-}
 
 describe("device flow: code generation", () => {
   let db: PlatformDB;
   let flow: DeviceFlow;
   let now: number;
 
-  beforeEach(() => {
-    db = newDb();
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     now = 1_000_000_000_000;
     flow = createDeviceFlow({
       db,
       now: () => now,
       verificationBase: VERIFY_BASE,
     });
+  });
+
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   it("issues an 8-character user_code from the RFC 8628 consonant alphabet", async () => {
@@ -70,8 +71,8 @@ describe("device flow: polling", () => {
   let flow: DeviceFlow;
   let now: number;
 
-  beforeEach(() => {
-    db = newDb();
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     now = 1_000_000_000_000;
     flow = createDeviceFlow({
       db,
@@ -83,6 +84,10 @@ describe("device flow: polling", () => {
         handle: clerkUserId.replace("user_", "@"),
       }),
     });
+  });
+
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   it("returns pending before approval", async () => {
@@ -141,10 +146,12 @@ describe("device flow: polling", () => {
     now += 5_000;
     const firstPoll = flow.pollDeviceCode(issued.deviceCode);
 
-    await vi.waitFor(() => {
-      const row = (db as any).$client
-        .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
-        .get(issued.deviceCode);
+    await vi.waitFor(async () => {
+      const row = await db.executor
+        .selectFrom("device_codes")
+        .select("device_code")
+        .where("device_code", "=", issued.deviceCode)
+        .executeTakeFirst();
       expect(row).toBeUndefined();
     });
 
@@ -154,9 +161,11 @@ describe("device flow: polling", () => {
       token: "jwt-for-user_alice",
     });
 
-    const consumed = (db as any).$client
-      .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
-      .get(issued.deviceCode);
+    const consumed = await db.executor
+      .selectFrom("device_codes")
+      .select("device_code")
+      .where("device_code", "=", issued.deviceCode)
+      .executeTakeFirst();
     expect(consumed).toBeUndefined();
   });
 
@@ -201,9 +210,11 @@ describe("device flow: polling", () => {
     expect(secondResult).toEqual(firstResult);
     expect(issueCalls).toBe(1);
 
-    const consumed = (db as any).$client
-      .prepare("SELECT device_code FROM device_codes WHERE device_code = ?")
-      .get(issued.deviceCode);
+    const consumed = await db.executor
+      .selectFrom("device_codes")
+      .select("device_code")
+      .where("device_code", "=", issued.deviceCode)
+      .executeTakeFirst();
     expect(consumed).toBeUndefined();
   });
 
@@ -376,8 +387,8 @@ describe("device flow: approval", () => {
   let flow: DeviceFlow;
   let now: number;
 
-  beforeEach(() => {
-    db = newDb();
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
     now = 1_000_000_000_000;
     flow = createDeviceFlow({
       db,
@@ -389,6 +400,10 @@ describe("device flow: approval", () => {
         handle: clerkUserId,
       }),
     });
+  });
+
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   it("approveDeviceCode tolerates the dashed user_code form", async () => {

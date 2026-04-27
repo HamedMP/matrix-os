@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { MatrixDB } from "./db.js";
@@ -307,8 +308,14 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             switch (action) {
               case "status": {
                 const porcelain = await git("status", "--porcelain");
-                const branch = await git("rev-parse", "--abbrev-ref", "HEAD").catch(() => "unknown");
-                const remotes = await git("remote", "-v").catch(() => "none");
+                const branch = await git("rev-parse", "--abbrev-ref", "HEAD").catch((err: unknown) => {
+                  console.warn("[ipc] Could not read git branch:", err instanceof Error ? err.message : String(err));
+                  return "unknown";
+                });
+                const remotes = await git("remote", "-v").catch((err: unknown) => {
+                  console.warn("[ipc] Could not read git remotes:", err instanceof Error ? err.message : String(err));
+                  return "none";
+                });
                 return { content: [{ type: "text" as const, text: `Branch: ${branch}\nClean: ${porcelain === ""}\nRemotes:\n${remotes}\n${porcelain ? `Changes:\n${porcelain}` : ""}` }] };
               }
               case "commit": {
@@ -373,11 +380,18 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
 
           function readJobs(): unknown[] {
             if (!existsSync(cronPath)) return [];
-            try { return JSON.parse(readFileSync(cronPath, "utf-8")); } catch { return []; }
+            try {
+              return JSON.parse(readFileSync(cronPath, "utf-8"));
+            } catch (err: unknown) {
+              console.warn("[ipc] Could not read cron jobs:", err instanceof Error ? err.message : String(err));
+              return [];
+            }
           }
 
           function writeJobs(jobs: unknown[]) {
-            writeFileSync(cronPath, JSON.stringify(jobs, null, 2) + "\n");
+            void writeFile(cronPath, JSON.stringify(jobs, null, 2) + "\n").catch((err: unknown) => {
+              console.warn("[ipc] Could not persist cron jobs:", err instanceof Error ? err.message : String(err));
+            });
           }
 
           switch (action) {
@@ -390,7 +404,10 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
                 return { content: [{ type: "text" as const, text: "add requires name, message, and schedule" }] };
               }
               let parsed: unknown;
-              try { parsed = JSON.parse(schedule); } catch {
+              try {
+                parsed = JSON.parse(schedule);
+              } catch (err: unknown) {
+                console.warn("[ipc] Invalid cron schedule JSON:", err instanceof Error ? err.message : String(err));
                 return { content: [{ type: "text" as const, text: "Invalid schedule JSON" }] };
               }
               const job = {
@@ -438,7 +455,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
           const id = channel ? `${channel}:${uuid}` : uuid;
           const now = Date.now();
           const conv = { id, createdAt: now, updatedAt: now, messages: [] };
-          writeFileSync(join(convDir, `${id}.json`), JSON.stringify(conv, null, 2));
+          await writeFile(join(convDir, `${id}.json`), JSON.stringify(conv, null, 2));
           return { content: [{ type: "text" as const, text: `Created conversation: ${id}` }] };
         },
       ),
@@ -488,8 +505,8 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
                   });
                 }
               }
-            } catch {
-              // skip malformed files
+            } catch (err: unknown) {
+              console.warn("[ipc] Skipping malformed conversation file:", err instanceof Error ? err.message : String(err));
             }
           }
 
@@ -605,7 +622,9 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
                   return generateWithKey(config.media.gemini_api_key);
                 }
               }
-            } catch {}
+            } catch (err: unknown) {
+              console.warn("[ipc] Could not read image generation config:", err instanceof Error ? err.message : String(err));
+            }
             return { content: [{ type: "text" as const, text: "Image generation not configured. Set GEMINI_API_KEY or add media.gemini_api_key to config.json." }] };
           }
 
@@ -664,7 +683,9 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
               voiceConfig = cfg.voice ?? {};
             }
-          } catch {}
+          } catch (err: unknown) {
+            console.warn("[ipc] Could not read voice config:", err instanceof Error ? err.message : String(err));
+          }
 
           const apiKey = process.env.ELEVENLABS_API_KEY ?? voiceConfig.elevenlabs_key ?? "";
           if (!apiKey) {
@@ -688,6 +709,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
                 model_id: model,
                 voice_settings: { stability: 0.5, similarity_boost: 0.75 },
               }),
+              signal: AbortSignal.timeout(30_000),
             });
 
             if (!response.ok) {
@@ -699,7 +721,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             mkdirSync(audioDir, { recursive: true });
             const fileName = `${Date.now()}-tts.mp3`;
             const localPath = join(audioDir, fileName);
-            writeFileSync(localPath, Buffer.from(arrayBuffer));
+            await writeFile(localPath, Buffer.from(arrayBuffer));
 
             const cost = text.length * 0.0003;
             const tracker = createUsageTracker(homePath);
@@ -734,7 +756,9 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
               voiceConfig = cfg.voice ?? {};
             }
-          } catch {}
+          } catch (err: unknown) {
+            console.warn("[ipc] Could not read transcription config:", err instanceof Error ? err.message : String(err));
+          }
 
           const apiKey = process.env.ELEVENLABS_API_KEY ?? voiceConfig.elevenlabs_key ?? "";
           if (!apiKey) {
@@ -757,6 +781,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
               method: "POST",
               headers: { "xi-api-key": apiKey },
               body: formData,
+              signal: AbortSignal.timeout(30_000),
             });
 
             if (!response.ok) {
@@ -1026,7 +1051,8 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
             ).join("\n---\n");
 
             return { content: [{ type: "text" as const, text: formatted }] };
-          } catch {
+          } catch (err: unknown) {
+            console.warn("[ipc] QMD search failed:", err instanceof Error ? err.message : String(err));
             return { content: [{ type: "text" as const, text: "QMD search unavailable (not installed or not indexed)" }] };
           }
         },
@@ -1212,7 +1238,8 @@ function loadWebConfig(homePath?: string): WebConfig {
         firecrawlApiKey: resolveEnvVar(web.fetch?.firecrawlApiKey),
       },
     };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[ipc] Could not load web config:", err instanceof Error ? err.message : String(err));
     return defaults;
   }
 }

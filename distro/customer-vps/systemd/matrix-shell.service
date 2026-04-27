@@ -1,0 +1,16 @@
+[Unit]
+Description=Matrix OS customer shell
+After=matrix-gateway.service
+Requires=matrix-gateway.service
+
+[Service]
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/opt/matrix
+ExecStart=/opt/matrix/bin/matrix-shell
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

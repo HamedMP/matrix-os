@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createPlatformDb, type PlatformDB, insertContainer, getContainer, updateContainerStatus } from '../../packages/platform/src/db.js';
+import { type PlatformDB, insertContainer, getContainer, updateContainerStatus } from '../../packages/platform/src/db.js';
 import { createLifecycleManager } from '../../packages/platform/src/lifecycle.js';
 import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
 
@@ -17,8 +18,8 @@ function createMockOrchestrator(): Orchestrator {
     }),
     destroy: vi.fn(),
     upgrade: vi.fn(),
-    getInfo: vi.fn(),
-    listAll: vi.fn(),
+    getInfo: vi.fn().mockResolvedValue(undefined),
+    listAll: vi.fn().mockResolvedValue([]),
     syncStates: vi.fn(),
   };
 }
@@ -27,13 +28,12 @@ describe('platform/lifecycle', () => {
   let tmpDir: string;
   let db: PlatformDB;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'platform-lc-'));
-    db = createPlatformDb(join(tmpDir, 'test.db'));
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
   });
 
   it('stops idle containers past timeout', async () => {
@@ -44,7 +44,7 @@ describe('platform/lifecycle', () => {
       idleTimeoutMs: 1000,
     });
 
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       containerId: 'ctr1',
@@ -55,10 +55,11 @@ describe('platform/lifecycle', () => {
 
     // Set last_active to 2 seconds ago (past the 1s timeout)
     const oldTime = new Date(Date.now() - 2000).toISOString();
-    const drizzle = db;
-    const { containers } = await import('../../packages/platform/src/schema.js');
-    const { eq } = await import('drizzle-orm');
-    drizzle.update(containers).set({ lastActive: oldTime }).where(eq(containers.handle, 'alice')).run();
+    await db.executor
+      .updateTable('containers')
+      .set({ last_active: oldTime })
+      .where('handle', '=', 'alice')
+      .execute();
 
     const stopped = await lm.checkIdle();
     expect(stopped).toEqual(['alice']);
@@ -73,7 +74,7 @@ describe('platform/lifecycle', () => {
       idleTimeoutMs: 60000,
     });
 
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       containerId: 'ctr1',
@@ -87,11 +88,11 @@ describe('platform/lifecycle', () => {
     expect(orchestrator.stop).not.toHaveBeenCalled();
   });
 
-  it('touchActivity updates last_active', () => {
+  it('touchActivity updates last_active', async () => {
     const orchestrator = createMockOrchestrator();
     const lm = createLifecycleManager({ db, orchestrator });
 
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       containerId: 'ctr1',
@@ -100,9 +101,10 @@ describe('platform/lifecycle', () => {
       status: 'running',
     });
 
-    const before = getContainer(db, 'alice')!.lastActive;
+    const before = (await getContainer(db, 'alice'))!.lastActive;
     lm.touchActivity('alice');
-    const after = getContainer(db, 'alice')!.lastActive;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const after = (await getContainer(db, 'alice'))!.lastActive;
     expect(after >= before).toBe(true);
   });
 
@@ -110,7 +112,7 @@ describe('platform/lifecycle', () => {
     const orchestrator = createMockOrchestrator();
     const lm = createLifecycleManager({ db, orchestrator });
 
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       containerId: 'ctr1',
@@ -127,7 +129,7 @@ describe('platform/lifecycle', () => {
     const orchestrator = createMockOrchestrator();
     const lm = createLifecycleManager({ db, orchestrator });
 
-    insertContainer(db, {
+    await insertContainer(db, {
       handle: 'alice',
       clerkUserId: 'c1',
       containerId: 'ctr1',
@@ -147,7 +149,7 @@ describe('platform/lifecycle', () => {
     await expect(lm.ensureRunning('ghost')).rejects.toThrow('No container');
   });
 
-  it('start and stop manage interval', () => {
+  it('start and stop manage interval', async () => {
     vi.useFakeTimers();
     const orchestrator = createMockOrchestrator();
     const lm = createLifecycleManager({
@@ -159,7 +161,7 @@ describe('platform/lifecycle', () => {
     lm.start();
     lm.start(); // double-start is no-op
 
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
 
     lm.stop();
     lm.stop(); // double-stop is no-op

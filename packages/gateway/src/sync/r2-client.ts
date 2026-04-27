@@ -27,10 +27,14 @@ export interface R2Client {
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
-  getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+  getObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
   putObject(
     key: string,
     body: string | Uint8Array | ReadableStream<Uint8Array>,
+    options?: { signal?: AbortSignal },
   ): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
   destroy(): void;
@@ -125,10 +129,11 @@ export function createR2Client(config: R2ClientConfig): R2Client {
 
     async getObject(
       key: string,
+      options?: { signal?: AbortSignal },
     ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }> {
       const command = new GetObjectCommand({ Bucket: bucket, Key: key });
       const response = await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+        abortSignal: options?.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
       });
       return {
         body: (response.Body as ReadableStream | undefined) ?? null,
@@ -140,6 +145,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
     async putObject(
       key: string,
       body: string | Uint8Array | ReadableStream<Uint8Array>,
+      options?: { signal?: AbortSignal },
     ): Promise<{ etag?: string }> {
       const command = new PutObjectCommand({
         Bucket: bucket,
@@ -147,7 +153,7 @@ export function createR2Client(config: R2ClientConfig): R2Client {
         Body: body,
       });
       const response = await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
+        abortSignal: options?.signal ?? AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
       return { etag: response.ETag ?? undefined };
     },

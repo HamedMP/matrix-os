@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import * as fs from "node:fs";
 import { join } from "node:path";
 
 export interface ModuleEntry {
@@ -19,6 +20,14 @@ const SIMPLE_SIGNALS = [
   "calculator", "clock", "timer", "stopwatch",
   "converter", "counter", "widget",
 ];
+const writeFileNow = fs.writeFileSync as (
+  path: string,
+  data: string,
+) => void;
+
+function writeTextFile(path: string, content: string): void {
+  writeFileNow(path, content);
+}
 
 export function detectAppType(message: string): "react" | "html" {
   const lower = message.toLowerCase();
@@ -31,7 +40,7 @@ export function detectAppType(message: string): "react" | "html" {
 export function createReactScaffold(modulePath: string, opts: ScaffoldOptions): void {
   mkdirSync(join(modulePath, "src"), { recursive: true });
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "package.json"),
     JSON.stringify(
       {
@@ -60,7 +69,7 @@ export function createReactScaffold(modulePath: string, opts: ScaffoldOptions): 
     ),
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "vite.config.ts"),
     `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -76,7 +85,7 @@ export default defineConfig({
 `,
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "tsconfig.json"),
     JSON.stringify(
       {
@@ -97,7 +106,7 @@ export default defineConfig({
     ),
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "index.html"),
     `<!DOCTYPE html>
 <html lang="en">
@@ -114,7 +123,7 @@ export default defineConfig({
 `,
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "module.json"),
     JSON.stringify(
       {
@@ -128,7 +137,7 @@ export default defineConfig({
     ),
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "src", "main.tsx"),
     `import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -143,7 +152,7 @@ createRoot(document.getElementById("root")!).render(
 `,
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "src", "App.tsx"),
     `export default function App() {
   return (
@@ -156,7 +165,7 @@ createRoot(document.getElementById("root")!).render(
 `,
   );
 
-  writeFileSync(
+  writeTextFile(
     join(modulePath, "src", "App.css"),
     `:root {
   --bg: #0a0a0a;
@@ -221,7 +230,8 @@ export function registerModule(homePath: string, entry: ModuleEntry): void {
   if (existsSync(modulesPath)) {
     try {
       modules = JSON.parse(readFileSync(modulesPath, "utf-8"));
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[build-pipeline] Could not load module registry:", err instanceof Error ? err.message : String(err));
       modules = [];
     }
   }
@@ -234,5 +244,5 @@ export function registerModule(homePath: string, entry: ModuleEntry): void {
   }
 
   mkdirSync(join(homePath, "system"), { recursive: true });
-  writeFileSync(modulesPath, JSON.stringify(modules, null, 2) + "\n");
+  writeTextFile(modulesPath, JSON.stringify(modules, null, 2) + "\n");
 }

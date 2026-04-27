@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { rename, unlink, writeFile } from "node:fs/promises";
 import { join, relative, dirname } from "node:path";
 import {
   S3Client,
@@ -18,6 +19,19 @@ export interface S3SyncConfig {
   debounceMs?: number;
   reconcileIntervalMs?: number;
   maxConcurrentUploads?: number;
+}
+
+async function writeFileAtomic(path: string, data: Buffer): Promise<void> {
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await writeFile(tmpPath, data);
+    await rename(tmpPath, path);
+  } catch (err: unknown) {
+    await unlink(tmpPath).catch((cleanupErr: unknown) => {
+      console.warn("[s3-sync] Failed to remove temporary restore file:", cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr));
+    });
+    throw err;
+  }
 }
 
 export interface S3FileVersion {
@@ -151,7 +165,9 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
 
       activeUploads++;
       uploadWithRetry(path)
-        .catch(() => {})
+        .catch((err: unknown) => {
+          console.warn("[s3-sync] Queued upload failed:", err instanceof Error ? err.message : String(err));
+        })
         .finally(() => {
           activeUploads--;
           processUploadQueue();
@@ -220,7 +236,7 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
         const fullPath = join(homePath, relativePath);
         const dir = dirname(fullPath);
         if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        writeFileSync(fullPath, Buffer.from(bytes));
+        await writeFileAtomic(fullPath, Buffer.from(bytes));
       }
 
       continuationToken = listResult.IsTruncated
@@ -259,7 +275,9 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
     const missing = localFiles.filter((f) => !s3Keys.has(f));
 
     for (const file of missing) {
-      await uploadWithRetry(file).catch(() => {});
+      await uploadWithRetry(file).catch((err: unknown) => {
+        console.warn("[s3-sync] Reconcile upload failed:", err instanceof Error ? err.message : String(err));
+      });
     }
 
     return {
@@ -300,7 +318,7 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
     const fullPath = join(homePath, relativePath);
     const dir = dirname(fullPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(fullPath, Buffer.from(bytes));
+    await writeFileAtomic(fullPath, Buffer.from(bytes));
   }
 
   function onFileChange(relativePath: string): void {
@@ -312,7 +330,9 @@ export function createS3SyncDaemon(config: S3SyncConfig): S3SyncDaemon {
   return {
     start() {
       reconcileTimer = setInterval(() => {
-        reconcile().catch(() => {});
+        reconcile().catch((err: unknown) => {
+          console.warn("[s3-sync] Scheduled reconcile failed:", err instanceof Error ? err.message : String(err));
+        });
       }, reconcileIntervalMs);
     },
     stop() {

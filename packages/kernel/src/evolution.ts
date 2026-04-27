@@ -96,7 +96,8 @@ export function createWatchdog(config: WatchdogConfig): Watchdog {
 
       onRevert?.(commitMsg);
       return true;
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[evolution] Revert failed:", err instanceof Error ? err.message : String(err));
       return false;
     }
   }

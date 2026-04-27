@@ -49,7 +49,8 @@ export function parseContentSegments(markdown: string): ContentSegment[] {
       } else {
         segments.push({ type: "markdown", content: match[0] });
       }
-    } catch {
+    } catch (err: unknown) {
+      console.warn("[ui-blocks] Invalid UI block JSON:", err instanceof Error ? err.message : String(err));
       segments.push({ type: "markdown", content: match[0] });
     }
 

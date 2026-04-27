@@ -36,7 +36,9 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
   let stopped = false;
 
   function sendTypingAction() {
-    bot.sendChatAction(chatId, "typing").catch(() => {});
+    bot.sendChatAction(chatId, "typing").catch((err: unknown) => {
+      console.warn("[telegram] Could not send typing action:", err instanceof Error ? err.message : String(err));
+    });
   }
 
   function startTyping() {
@@ -68,8 +70,8 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
       const result = await bot.sendMessage(chatId, text, undefined);
       messageId = result.message_id;
       lastSentText = text;
-    } catch {
-      // sendMessage failed, messageId stays undefined
+    } catch (err: unknown) {
+      console.warn("[telegram] Initial stream send failed:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -82,8 +84,8 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
         message_id: messageId,
       });
       lastSentText = text;
-    } catch {
-      // edit failed, continue
+    } catch (err: unknown) {
+      console.warn("[telegram] Stream edit failed:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -133,8 +135,8 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
       // Never sent during streaming, send final message
       try {
         await bot.sendMessage(chatId, formatted, { parse_mode: "MarkdownV2" });
-      } catch {
-        // final send failed
+      } catch (err: unknown) {
+        console.warn("[telegram] Final stream send failed:", err instanceof Error ? err.message : String(err));
       }
       return;
     }
@@ -146,8 +148,8 @@ export function createTelegramStream(opts: TelegramStreamOptions): TelegramStrea
         message_id: messageId,
         parse_mode: "MarkdownV2",
       });
-    } catch {
-      // final edit failed
+    } catch (err: unknown) {
+      console.warn("[telegram] Final stream edit failed:", err instanceof Error ? err.message : String(err));
     }
   }
 

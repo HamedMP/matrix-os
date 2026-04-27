@@ -49,13 +49,18 @@ export function createConnectorRegistry(homePath: string): ConnectorRegistry {
     if (!existsSync(connectionsPath)) return [];
     try {
       return JSON.parse(readFileSync(connectionsPath, 'utf-8'));
-    } catch {
+    } catch (err: unknown) {
+      console.warn('[social-connectors] Could not load connections:', err instanceof Error ? err.message : String(err));
       return [];
     }
   }
 
   function writeConnections(connections: SocialConnection[]): void {
-    writeFileSync(connectionsPath, JSON.stringify(connections, null, 2));
+    try {
+      writeFileSync(connectionsPath, JSON.stringify(connections, null, 2));
+    } catch (err: unknown) {
+      console.warn('[social-connectors] Could not persist connections:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   return {
@@ -165,7 +170,8 @@ export function createGitHubConnector(options?: GitHubConnectorOptions): SocialC
             timestamp: ev.created_at,
           };
         });
-      } catch {
+      } catch (err: unknown) {
+        console.warn('[social-connectors] GitHub fetch failed:', err instanceof Error ? err.message : String(err));
         return [];
       }
     },
@@ -189,7 +195,8 @@ function isPublicUrl(url: string): boolean {
       host === '[::1]'
     ) return false;
     return true;
-  } catch {
+  } catch (err: unknown) {
+    console.warn('[social-connectors] Invalid public URL:', err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -246,7 +253,8 @@ export function createMastodonConnector(options?: MastodonConnectorOptions): Soc
           timestamp: status.created_at,
           metadata: { author: status.account.acct },
         }));
-      } catch {
+      } catch (err: unknown) {
+        console.warn('[social-connectors] Mastodon fetch failed:', err instanceof Error ? err.message : String(err));
         return [];
       }
     },

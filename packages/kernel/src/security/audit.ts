@@ -33,7 +33,9 @@ export async function runSecurityAudit(homePath: string): Promise<SecurityAuditR
   let config: Record<string, unknown> = {};
   try {
     config = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch { /* config may not exist */ }
+  } catch (err: unknown) {
+    console.warn("[security-audit] Could not read config:", err instanceof Error ? err.message : String(err));
+  }
 
   checkConfigPermissions(configPath, findings);
   checkAuthToken(config, findings);
@@ -68,7 +70,9 @@ function checkConfigPermissions(
         remediation: "chmod 600 system/config.json",
       });
     }
-  } catch { /* file doesn't exist */ }
+  } catch (err: unknown) {
+    console.warn("[security-audit] Could not inspect config permissions:", err instanceof Error ? err.message : String(err));
+  }
 }
 
 function checkAuthToken(

@@ -34,7 +34,9 @@ export function buildSafeModePrompt(homePath: string): string {
         sections.push(recent);
         sections.push("```\n");
       }
-    } catch { /* no log */ }
+    } catch (err: unknown) {
+      console.warn("[safe-mode] Could not read recent activity:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   return sections.join("\n");

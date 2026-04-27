@@ -42,6 +42,10 @@ export interface SkillDefinition {
 const skillBodyCache = new Map<string, string>();
 const knowledgeCache = new Map<string, string>();
 
+function warnSkillFallback(context: string, err: unknown): void {
+  console.warn(`[skills] ${context}: ${err instanceof Error ? err.message : String(err)}`);
+}
+
 export function clearSkillCache(): void {
   skillBodyCache.clear();
 }
@@ -79,7 +83,8 @@ function skillSources(homePath: string): Source[] {
 function tryRealpath(path: string): string | null {
   try {
     return realpathSync(path);
-  } catch {
+  } catch (err: unknown) {
+    warnSkillFallback(`Could not resolve realpath for ${path}`, err);
     return null;
   }
 }
@@ -92,7 +97,8 @@ function parseSkillFile(
   let content: string;
   try {
     content = readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (err: unknown) {
+    warnSkillFallback(`Could not read ${filePath}`, err);
     return null;
   }
 
@@ -136,7 +142,8 @@ function scanDirectory(source: Source): SkillDefinition[] {
   let entries: string[];
   try {
     entries = readdirSync(source.dir);
-  } catch {
+  } catch (err: unknown) {
+    warnSkillFallback(`Could not scan ${source.dir}`, err);
     return [];
   }
   const out: SkillDefinition[] = [];
@@ -145,7 +152,8 @@ function scanDirectory(source: Source): SkillDefinition[] {
     let stat;
     try {
       stat = lstatSync(entryPath);
-    } catch {
+    } catch (err: unknown) {
+      warnSkillFallback(`Could not inspect ${entryPath}`, err);
       continue;
     }
     // Accept both real dirs and symlinks to dirs.
@@ -163,7 +171,8 @@ function scanFlat(source: Source): SkillDefinition[] {
   let files: string[];
   try {
     files = readdirSync(source.dir).filter((f) => f.endsWith(".md"));
-  } catch {
+  } catch (err: unknown) {
+    warnSkillFallback(`Could not scan ${source.dir}`, err);
     return [];
   }
   const out: SkillDefinition[] = [];
@@ -229,7 +238,8 @@ export function loadSkillBody(
       let entries: string[];
       try {
         entries = readdirSync(source.dir);
-      } catch {
+      } catch (err: unknown) {
+        warnSkillFallback(`Could not scan ${source.dir}`, err);
         continue;
       }
       for (const entry of entries) {
@@ -250,7 +260,8 @@ export function loadSkillBody(
     let files: string[];
     try {
       files = readdirSync(source.dir).filter((f) => f.endsWith(".md"));
-    } catch {
+    } catch (err: unknown) {
+      warnSkillFallback(`Could not scan ${source.dir}`, err);
       continue;
     }
     for (const file of files) {
@@ -287,7 +298,8 @@ export function ensureSdkSkillsMirror(homePath: string): void {
   let entries: string[];
   try {
     entries = readdirSync(canonical);
-  } catch {
+  } catch (err: unknown) {
+    warnSkillFallback(`Could not scan canonical skills ${canonical}`, err);
     return;
   }
 
@@ -310,7 +322,8 @@ export function ensureSdkSkillsMirror(homePath: string): void {
     let srcStat;
     try {
       srcStat = lstatSync(source);
-    } catch {
+    } catch (err: unknown) {
+      warnSkillFallback(`Could not inspect ${source}`, err);
       continue;
     }
     if (!srcStat.isDirectory()) continue;
@@ -322,7 +335,8 @@ export function ensureSdkSkillsMirror(homePath: string): void {
       let targetStat;
       try {
         targetStat = lstatSync(target);
-      } catch {
+      } catch (err: unknown) {
+        warnSkillFallback(`Could not inspect ${target}`, err);
         continue;
       }
       if (!targetStat.isSymbolicLink()) {
@@ -365,7 +379,8 @@ export function cacheKnowledgeFiles(homePath: string): void {
   let files: string[];
   try {
     files = readdirSync(knowledgeDir).filter((f) => f.endsWith(".md"));
-  } catch {
+  } catch (err: unknown) {
+    warnSkillFallback(`Could not scan knowledge directory ${knowledgeDir}`, err);
     return;
   }
 

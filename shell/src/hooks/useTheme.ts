@@ -109,16 +109,19 @@ export async function saveTheme(theme: Theme): Promise<void> {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(theme),
+    signal: AbortSignal.timeout(10_000),
   });
 }
 
 async function fetchTheme(): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
-    const res = await fetch(`${gatewayUrl}/api/theme`);
+    const res = await fetch(`${gatewayUrl}/api/theme`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (res.ok) return res.json();
-  } catch {
-    // fall through
+  } catch (err: unknown) {
+    console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }
   return DEFAULT_THEME;
 }

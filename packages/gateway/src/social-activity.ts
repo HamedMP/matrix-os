@@ -28,7 +28,8 @@ export function loadSocialConfig(homePath: string): SocialConfig {
     const raw = readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(raw);
     return { ...DEFAULT_SOCIAL_CONFIG, ...parsed };
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[social-activity] Could not load social config:", err instanceof Error ? err.message : String(err));
     return { ...DEFAULT_SOCIAL_CONFIG };
   }
 }

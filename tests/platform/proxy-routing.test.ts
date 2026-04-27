@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { createPlatformDb, type PlatformDB, getContainer, insertContainer } from "../../packages/platform/src/db.js";
+import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import type Dockerode from "dockerode";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -20,7 +18,7 @@ function stubOrchestrator(): Orchestrator {
     destroy: vi.fn(),
     upgrade: vi.fn(),
     rollingRestart: vi.fn(),
-    getInfo: vi.fn((handle: string) => ({
+    getInfo: vi.fn(async (handle: string) => ({
       handle,
       clerkUserId: "user_alice",
       containerId: "ctr-1",
@@ -29,7 +27,7 @@ function stubOrchestrator(): Orchestrator {
       status: "running",
     })),
     getImage: vi.fn(),
-    listAll: vi.fn().mockReturnValue([]),
+    listAll: vi.fn().mockResolvedValue([]),
     syncStates: vi.fn(),
   };
 }
@@ -58,13 +56,11 @@ function stubDocker(inspectInfo: { id?: string; ipAddress?: string; running?: bo
 }
 
 describe("platform proxy routing", () => {
-  let tmpDir: string;
   let db: PlatformDB;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "platform-proxy-"));
-    db = createPlatformDb(join(tmpDir, "test.db"));
-    insertContainer(db, {
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await insertContainer(db, {
       handle: "alice",
       clerkUserId: "user_alice",
       port: 5001,
@@ -73,8 +69,8 @@ describe("platform proxy routing", () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await destroyTestPlatformDb(db);
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
   });
@@ -145,6 +141,208 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
   });
 
+  it("routes code.matrix-os.com to the authenticated user's VPS gateway first", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123456,
+      publicIPv4: "203.0.113.10",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const docker = stubDocker();
+    const app = createApp({
+      db,
+      docker,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?folder=/home/matrixos/home", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "__session=clerk-cookie; code-server=session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("editor");
+    expect(docker.getContainer).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.10:443/?folder=/home/matrixos/home");
+    expect(init?.dispatcher).toBeDefined();
+    const headers = init?.headers as Headers;
+    expect(headers.get("host")).toBe("code.matrix-os.com");
+    expect(headers.get("x-forwarded-host")).toBe("code.matrix-os.com");
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("authorization")).not.toBe("Bearer clerk-session");
+    expect(headers.get("x-platform-user-id")).toBe("user_alice");
+    expect(headers.get("cookie")).toBeNull();
+    expect(res.headers.get("set-cookie")).toContain("matrix_code_session=");
+    expect(res.headers.get("set-cookie")).toContain("SameSite=Lax");
+  });
+
+  it("does not send an unverified platform user header to a VPS without a platform secret", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff115",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123459,
+      publicIPv4: "203.0.113.13",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("x-platform-verified")).toBeNull();
+    expect(headers.get("x-platform-user-id")).toBeNull();
+  });
+
+  it("routes new VPS-only users on code.matrix-os.com without a legacy container", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff114",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123458,
+      publicIPv4: "203.0.113.12",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.12:443/");
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
+  });
+
+  it("falls back to the legacy container code-server when no running VPS exists", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?folder=/home/matrixos/home", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        cookie: "__session=clerk-cookie; code-server=session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://matrixos-alice:8787/?folder=/home/matrixos/home");
+    const headers = init?.headers as Headers;
+    expect(headers.get("host")).toBe("code.matrix-os.com");
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("accepts the short-lived code-domain session cookie for follow-up VPS editor requests", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff113",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123457,
+      publicIPv4: "203.0.113.11",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    const verifyToken = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://code.matrix-os.com",
+    });
+
+    const res = await app.request("/stable/static/out/vs/code/browser/workbench/workbench.js", {
+      headers: {
+        host: "code.matrix-os.com",
+        cookie: `matrix_code_session=${encodeURIComponent(issued.token)}; __session=ignored`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(verifyToken).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.11:443/stable/static/out/vs/code/browser/workbench/workbench.js");
+    const headers = init?.headers as Headers;
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("authorization")).not.toContain("matrix_code_session");
+  });
+
   it("returns 500 when sync JWT verification fails unexpectedly", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     vi.spyOn(syncJwt, "verifySyncJwt").mockRejectedValueOnce(new Error("db unavailable"));
@@ -168,7 +366,7 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("adds a timeout on /proxy/:handle fetches", async () => {
+  it("adds a timeout and strips admin credentials on /proxy/:handle fetches", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("ok", { status: 200 }),
     );
@@ -186,6 +384,27 @@ describe("platform proxy routing", () => {
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.redirect).toBe("manual");
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("rejects invalid /proxy/:handle values before DNS interpolation", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/proxy/bad_handle/api/ping", {
+      headers: { authorization: "Bearer platform-secret-123" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs and returns 502 when the app-domain container proxy fetch fails", async () => {
@@ -251,6 +470,6 @@ describe("platform proxy routing", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("[platform] app-domain proxy retry attempt=1 handle=alice"),
     );
-    expect(getContainer(db, "alice")?.containerId).toBe("docker-ctr-2");
+    expect((await getContainer(db, "alice"))?.containerId).toBe("docker-ctr-2");
   });
 });

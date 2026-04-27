@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -29,6 +30,10 @@ export interface PostgresManager {
 }
 
 const SAFE_APP_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+const writeFileNow = fs.writeFileSync as (
+  path: fs.PathOrFileDescriptor,
+  data: string,
+) => void;
 
 function sanitizeForPg(appName: string): string {
   return appName.replace(/-/g, "_");
@@ -50,7 +55,8 @@ export function createPostgresManager(config: PostgresConfig): PostgresManager {
     if (existsSync(credentialsPath)) {
       try {
         credentials = JSON.parse(readFileSync(credentialsPath, "utf-8"));
-      } catch {
+      } catch (err: unknown) {
+        console.warn("[postgres-manager] Could not load credentials:", err instanceof Error ? err.message : String(err));
         credentials = {};
       }
     }
@@ -59,7 +65,11 @@ export function createPostgresManager(config: PostgresConfig): PostgresManager {
   function saveCredentials(): void {
     const dir = join(homePath, "system", "postgres");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2));
+    try {
+      writeFileNow(credentialsPath, JSON.stringify(credentials, null, 2));
+    } catch (err: unknown) {
+      console.warn("[postgres-manager] Could not persist credentials:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   function validateAppName(appName: string): void {

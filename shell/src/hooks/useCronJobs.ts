@@ -22,10 +22,12 @@ export function useCronJobs() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
 
   useEffect(() => {
-    fetch(`${GATEWAY_URL}/api/cron`)
+    fetch(`${GATEWAY_URL}/api/cron`, { signal: AbortSignal.timeout(10_000) })
       .then((res) => res.json())
       .then((data: CronJob[]) => setJobs(data))
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[cron] Failed to fetch jobs:", err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   return { jobs };

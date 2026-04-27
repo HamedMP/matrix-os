@@ -158,12 +158,12 @@ docker compose -f distro/docker-compose.platform.yml logs cloudflared -f
 
 ### Database
 
-The platform SQLite database lives at `/data/platform.db` inside the platform container (mapped to the `platform-data` volume).
+The platform database is PostgreSQL and is configured with `PLATFORM_DATABASE_URL` or `POSTGRES_URL`.
 
 ```bash
 # Enter platform container
 docker compose -f distro/docker-compose.platform.yml exec platform sh
 
 # Query DB
-sqlite3 /data/platform.db "SELECT handle, status, last_active FROM containers"
+psql "$PLATFORM_DATABASE_URL" -c "SELECT handle, status, last_active FROM containers"
 ```

@@ -1,8 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { eq, lt } from 'drizzle-orm';
 import type { PlatformDB } from './db.js';
-import { deviceCodes } from './schema.js';
-import Database from 'better-sqlite3';
 
 // RFC 8628 §6.1 example alphabet: 20-char consonants only.
 // Excludes vowels (no offensive accidental words) and visually
@@ -54,12 +51,6 @@ export interface DeviceFlow {
   approveDeviceCode(userCode: string, clerkUserId: string): Promise<void>;
 }
 
-type BetterSqliteClient = InstanceType<typeof Database>;
-
-function sqliteClient(db: PlatformDB): BetterSqliteClient {
-  return (db as { $client: BetterSqliteClient }).$client;
-}
-
 export function formatUserCode(raw: string): string {
   if (raw.length !== USER_CODE_LENGTH) {
     return raw;
@@ -107,31 +98,35 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
       );
     });
 
-  function gcExpired(threshold: number): void {
-    config.db.delete(deviceCodes).where(lt(deviceCodes.expiresAt, threshold)).run();
+  async function gcExpired(threshold: number): Promise<void> {
+    await config.db.ready;
+    await config.db.executor
+      .deleteFrom('device_codes')
+      .where('expires_at', '<', threshold)
+      .execute();
   }
 
   return {
     async createDeviceCode(): Promise<DeviceCodeIssue> {
       const ts = now();
-      gcExpired(ts);
+      await gcExpired(ts);
 
       // Retry on user_code collision (extremely rare but possible).
       for (let attempt = 0; attempt < 5; attempt++) {
         const userCodeRaw = generateUserCode(random);
         const deviceCode = generateDeviceCode(random);
         try {
-          config.db
-            .insert(deviceCodes)
+          await config.db.executor
+            .insertInto('device_codes')
             .values({
-              deviceCode,
-              userCode: userCodeRaw,
-              clerkUserId: null,
-              expiresAt: ts + expiresInSec * 1000,
-              lastPolledAt: null,
-              createdAt: ts,
+              device_code: deviceCode,
+              user_code: userCodeRaw,
+              clerk_user_id: null,
+              expires_at: ts + expiresInSec * 1000,
+              last_polled_at: null,
+              created_at: ts,
             })
-            .run();
+            .execute();
 
           const userCode = formatUserCode(userCodeRaw);
           return {
@@ -161,54 +156,6 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
       if (existingPoll) {
         return existingPoll;
       }
-
-      const claimed = sqliteClient(config.db).transaction(() => {
-        const row = config.db
-          .select()
-          .from(deviceCodes)
-          .where(eq(deviceCodes.deviceCode, deviceCode))
-          .get();
-
-        if (!row || row.expiresAt < ts) {
-          if (row) {
-            config.db
-              .delete(deviceCodes)
-              .where(eq(deviceCodes.deviceCode, deviceCode))
-              .run();
-          }
-          return { status: 'expired' } as DevicePollResult;
-        }
-
-        if (row.lastPolledAt && ts - row.lastPolledAt < intervalSec * 1000) {
-          return { status: 'slow_down' } as DevicePollResult;
-        }
-
-        if (!row.clerkUserId) {
-          config.db
-            .update(deviceCodes)
-            .set({ lastPolledAt: ts })
-            .where(eq(deviceCodes.deviceCode, deviceCode))
-            .run();
-          return { status: 'pending' } as DevicePollResult;
-        }
-
-        return {
-          status: 'approved',
-          clerkUserId: row.clerkUserId,
-        } as const;
-      })();
-
-      if (claimed.status !== 'approved') {
-        return claimed;
-      }
-
-      // Fail closed when the dedupe map is saturated. Evicting another
-      // approved device code's in-flight promise would allow a later poll
-      // for that code to issue a duplicate token.
-      if (inFlightPolls.size >= maxInFlightPolls) {
-        return { status: 'slow_down' };
-      }
-
       let resolveIssue!: (value: DevicePollResult) => void;
       let rejectIssue!: (reason?: unknown) => void;
       const issuePromise = new Promise<DevicePollResult>((resolve, reject) => {
@@ -217,36 +164,92 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
       });
       inFlightPolls.set(deviceCode, issuePromise);
 
+      const claimed = await config.db.transaction(async (trx) => {
+        const row = await trx.executor
+          .selectFrom('device_codes')
+          .selectAll()
+          .where('device_code', '=', deviceCode)
+          .executeTakeFirst();
+
+        if (!row || row.expires_at < ts) {
+          if (row) {
+            await trx.executor
+              .deleteFrom('device_codes')
+              .where('device_code', '=', deviceCode)
+              .execute();
+          }
+          return { status: 'expired' } as DevicePollResult;
+        }
+
+        if (row.last_polled_at && ts - row.last_polled_at < intervalSec * 1000) {
+          return { status: 'slow_down' } as DevicePollResult;
+        }
+
+        if (!row.clerk_user_id) {
+          await trx.executor
+            .updateTable('device_codes')
+            .set({ last_polled_at: ts })
+            .where('device_code', '=', deviceCode)
+            .execute();
+          return { status: 'pending' } as DevicePollResult;
+        }
+
+        return {
+          status: 'approved',
+          clerkUserId: row.clerk_user_id,
+        } as const;
+      });
+
+      if (claimed.status !== 'approved') {
+        resolveIssue(claimed);
+        if (inFlightPolls.get(deviceCode) === issuePromise) {
+          inFlightPolls.delete(deviceCode);
+        }
+        return issuePromise;
+      }
+
+      // Fail closed when the dedupe map is saturated. Evicting another
+      // approved device code's in-flight promise would allow a later poll
+      // for that code to issue a duplicate token.
+      if (inFlightPolls.size > maxInFlightPolls) {
+        const result = { status: 'slow_down' } as const;
+        resolveIssue(result);
+        if (inFlightPolls.get(deviceCode) === issuePromise) {
+          inFlightPolls.delete(deviceCode);
+        }
+        return issuePromise;
+      }
+
       void (async () => {
         try {
-          const consumeResult = sqliteClient(config.db).transaction(() => {
-            const row = config.db
-              .select()
-              .from(deviceCodes)
-              .where(eq(deviceCodes.deviceCode, deviceCode))
-              .get();
+          const consumeResult = await config.db.transaction(async (trx) => {
+            const row = await trx.executor
+              .selectFrom('device_codes')
+              .selectAll()
+              .where('device_code', '=', deviceCode)
+              .executeTakeFirst();
 
-            if (!row || row.expiresAt < ts) {
+            if (!row || row.expires_at < ts) {
               if (row) {
-                config.db
-                  .delete(deviceCodes)
-                  .where(eq(deviceCodes.deviceCode, deviceCode))
-                  .run();
+                await trx.executor
+                  .deleteFrom('device_codes')
+                  .where('device_code', '=', deviceCode)
+                  .execute();
               }
               return { status: 'expired' } as DevicePollResult;
             }
 
-            if (row.clerkUserId !== claimed.clerkUserId) {
+            if (row.clerk_user_id !== claimed.clerkUserId) {
               return { status: 'expired' } as DevicePollResult;
             }
 
-            config.db
-              .delete(deviceCodes)
-              .where(eq(deviceCodes.deviceCode, deviceCode))
-              .run();
+            await trx.executor
+              .deleteFrom('device_codes')
+              .where('device_code', '=', deviceCode)
+              .execute();
 
             return null;
-          })();
+          });
 
           if (consumeResult) {
             resolveIssue(consumeResult);
@@ -290,33 +293,33 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
     async approveDeviceCode(userCode: string, clerkUserId: string): Promise<void> {
       const ts = now();
       const normalized = normalizeUserCode(userCode);
-      sqliteClient(config.db).transaction(() => {
-        const row = config.db
-          .select()
-          .from(deviceCodes)
-          .where(eq(deviceCodes.userCode, normalized))
-          .get();
+      await config.db.transaction(async (trx) => {
+        const row = await trx.executor
+          .selectFrom('device_codes')
+          .selectAll()
+          .where('user_code', '=', normalized)
+          .executeTakeFirst();
 
         if (!row) {
           throw new Error('Unknown user_code');
         }
-        if (row.expiresAt < ts) {
-          config.db
-            .delete(deviceCodes)
-            .where(eq(deviceCodes.userCode, normalized))
-            .run();
+        if (row.expires_at < ts) {
+          await trx.executor
+            .deleteFrom('device_codes')
+            .where('user_code', '=', normalized)
+            .execute();
           throw new Error('Expired user_code');
         }
-        if (row.clerkUserId && row.clerkUserId !== clerkUserId) {
+        if (row.clerk_user_id && row.clerk_user_id !== clerkUserId) {
           throw new Error('Device code already approved');
         }
 
-        config.db
-          .update(deviceCodes)
-          .set({ clerkUserId })
-          .where(eq(deviceCodes.userCode, normalized))
-          .run();
-      })();
+        await trx.executor
+          .updateTable('device_codes')
+          .set({ clerk_user_id: clerkUserId })
+          .where('user_code', '=', normalized)
+          .execute();
+      });
     },
   };
 }

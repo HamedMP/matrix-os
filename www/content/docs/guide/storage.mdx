@@ -1,11 +1,11 @@
 ---
 title: Storage
-description: S3-backed file system, git versioning, SQLite and PostgreSQL databases, and storage tracking.
+description: S3-backed file system, git versioning, PostgreSQL databases, and storage tracking.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Matrix OS provides durable, portable storage. Your files are backed up to S3 (like a personal iCloud), versioned with git, and apps can use SQLite or PostgreSQL databases with zero configuration.
+Matrix OS provides durable, portable storage. Your files are backed up to S3 (like a personal iCloud), versioned with git, and apps can use PostgreSQL databases with zero configuration.
 
 ## S3 Backup
 
@@ -118,59 +118,9 @@ S3 bucket versioning is enabled, so every file has version history in S3 indepen
 | `/api/files/snapshot` | POST | Create a named snapshot |
 | `/api/files/snapshots` | GET | List all snapshots |
 
-## SQLite for Apps
+## PostgreSQL for Apps
 
-Every app gets a SQLite database at `~/data/{appName}/db.sqlite` with zero setup. Apps access it through the Bridge SQL API.
-
-### Bridge SQL API
-
-```
-POST /api/bridge/sql
-{
-  "appName": "budget-tracker",
-  "sql": "SELECT * FROM expenses WHERE month = ?",
-  "params": ["2026-03"]
-}
--> { "rows": [...], "changes": 0, "lastInsertRowid": null }
-```
-
-All queries are parameterized to prevent SQL injection. The database file is auto-created on the first query.
-
-### Security
-
-- **App scoping**: apps can only access their own database (validated by request origin)
-- **SQL safety**: `ATTACH DATABASE` and dangerous PRAGMAs are rejected
-- **Size limits**: 1MB max query result, 100MB max database size per app (configurable)
-
-### Client Library
-
-A copy-paste client snippet is available at `~/templates/sqlite-client.js`:
-
-```js
-const db = {
-  async query(sql, params = []) {
-    const res = await fetch('/api/bridge/sql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ appName: 'my-app', sql, params })
-    });
-    return res.json();
-  }
-};
-
-// Usage
-const { rows } = await db.query('SELECT * FROM items WHERE status = ?', ['active']);
-```
-
-### Backup
-
-- **Hourly**: `.dump` (text SQL) for git-friendly snapshots
-- **Daily**: full `.sqlite` file copy to S3
-- Backup status tracked in `~/system/logs/backup.jsonl`
-
-## PostgreSQL Addon
-
-For advanced apps that need a full relational database with concurrent access:
+Every app that requests a database gets an isolated PostgreSQL database and role. Apps access it through a scoped connection string.
 
 ### Activation
 
@@ -222,7 +172,6 @@ GET /api/storage/usage
 -> {
   "disk": { "bytes": 2400000000, "human": "2.3 GB" },
   "s3": { "bytes": 2400000000, "human": "2.3 GB" },
-  "sqlite": { "bytes": 5000000, "human": "5 MB" },
   "postgres": { "bytes": 150000000, "human": "150 MB" }
 }
 ```

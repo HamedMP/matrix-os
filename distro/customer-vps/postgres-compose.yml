@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    env_file:
+      - /opt/matrix/env/postgres.env
+    volumes:
+      - matrix-postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+volumes:
+  matrix-postgres:

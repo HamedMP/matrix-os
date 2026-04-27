@@ -1,191 +1,191 @@
-import { eq, and, desc, sql, like, or } from 'drizzle-orm';
-import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'kysely';
 import type { PlatformDB } from './db.js';
 
-// --- Schema ---
-
-export const appsRegistry = sqliteTable(
-  'apps_registry',
-  {
-    id: text('id').primaryKey(),
-    name: text('name').notNull(),
-    slug: text('slug').notNull(),
-    authorId: text('author_id').notNull(),
-    description: text('description'),
-    category: text('category').default('utility'),
-    tags: text('tags'),
-    version: text('version').default('1.0.0'),
-    sourceUrl: text('source_url'),
-    manifest: text('manifest'),
-    screenshots: text('screenshots'),
-    installs: integer('installs').default(0).notNull(),
-    rating: integer('rating').default(0).notNull(),
-    ratingsCount: integer('ratings_count').default(0).notNull(),
-    forksCount: integer('forks_count').default(0).notNull(),
-    isPublic: integer('is_public', { mode: 'boolean' }).default(false).notNull(),
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-    updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    uniqueIndex('idx_apps_author_slug').on(table.authorId, table.slug),
-    index('idx_apps_category').on(table.category),
-    index('idx_apps_public').on(table.isPublic),
-    index('idx_apps_installs').on(table.installs),
-  ],
-);
-
-export const appRatings = sqliteTable(
-  'app_ratings',
-  {
-    appId: text('app_id').notNull(),
-    userId: text('user_id').notNull(),
-    rating: integer('rating').notNull(),
-    review: text('review'),
-    createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    uniqueIndex('idx_ratings_app_user').on(table.appId, table.userId),
-  ],
-);
-
-export const appInstalls = sqliteTable(
-  'app_installs',
-  {
-    appId: text('app_id').notNull(),
-    userId: text('user_id').notNull(),
-    installedAt: text('installed_at').notNull().$defaultFn(() => new Date().toISOString()),
-  },
-  (table) => [
-    uniqueIndex('idx_installs_app_user').on(table.appId, table.userId),
-  ],
-);
-
-// --- Types ---
-
-export type AppRegistryRecord = typeof appsRegistry.$inferSelect;
-export type NewAppRegistry = typeof appsRegistry.$inferInsert;
-export type AppRatingRecord = typeof appRatings.$inferSelect;
-export type AppInstallRecord = typeof appInstalls.$inferSelect;
-
-// --- Migration ---
-
-export function runAppRegistryMigrations(sqlite: { prepare(sql: string): { run(): unknown } }): void {
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS apps_registry (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL,
-      author_id TEXT NOT NULL,
-      description TEXT,
-      category TEXT DEFAULT 'utility',
-      tags TEXT,
-      version TEXT DEFAULT '1.0.0',
-      source_url TEXT,
-      manifest TEXT,
-      screenshots TEXT,
-      installs INTEGER NOT NULL DEFAULT 0,
-      rating INTEGER NOT NULL DEFAULT 0,
-      ratings_count INTEGER NOT NULL DEFAULT 0,
-      forks_count INTEGER NOT NULL DEFAULT 0,
-      is_public INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_apps_author_slug ON apps_registry(author_id, slug)'
-  ).run();
-
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_apps_category ON apps_registry(category)'
-  ).run();
-
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_apps_public ON apps_registry(is_public)'
-  ).run();
-
-  sqlite.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_apps_installs ON apps_registry(installs)'
-  ).run();
-
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS app_ratings (
-      app_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      rating INTEGER NOT NULL,
-      review TEXT,
-      created_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_ratings_app_user ON app_ratings(app_id, user_id)'
-  ).run();
-
-  sqlite.prepare(`
-    CREATE TABLE IF NOT EXISTS app_installs (
-      app_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      installed_at TEXT NOT NULL
-    )
-  `).run();
-
-  sqlite.prepare(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_installs_app_user ON app_installs(app_id, user_id)'
-  ).run();
+export interface AppRegistryRecord {
+  id: string;
+  name: string;
+  slug: string;
+  authorId: string;
+  description: string | null;
+  category: string | null;
+  tags: string | null;
+  version: string | null;
+  sourceUrl: string | null;
+  manifest: string | null;
+  screenshots: string | null;
+  installs: number;
+  rating: number;
+  ratingsCount: number;
+  forksCount: number;
+  isPublic: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
-// --- CRUD ---
+export interface NewAppRegistry {
+  id: string;
+  name: string;
+  slug: string;
+  authorId: string;
+  description?: string | null;
+  category?: string | null;
+  tags?: string | null;
+  version?: string | null;
+  sourceUrl?: string | null;
+  manifest?: string | null;
+  screenshots?: string | null;
+  isPublic?: boolean;
+}
 
-export function insertApp(
+export interface AppRatingRecord {
+  appId: string;
+  userId: string;
+  rating: number;
+  review: string | null;
+  createdAt: string;
+}
+
+function mapApp(row: {
+  id: string;
+  name: string;
+  slug: string;
+  author_id: string;
+  description: string | null;
+  category: string | null;
+  tags: string | null;
+  version: string | null;
+  source_url: string | null;
+  manifest: string | null;
+  screenshots: string | null;
+  installs: number;
+  rating: number;
+  ratings_count: number;
+  forks_count: number;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
+}): AppRegistryRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    authorId: row.author_id,
+    description: row.description,
+    category: row.category,
+    tags: row.tags,
+    version: row.version,
+    sourceUrl: row.source_url,
+    manifest: row.manifest,
+    screenshots: row.screenshots,
+    installs: row.installs,
+    rating: row.rating,
+    ratingsCount: row.ratings_count,
+    forksCount: row.forks_count,
+    isPublic: row.is_public,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRating(row: {
+  app_id: string;
+  user_id: string;
+  rating: number;
+  review: string | null;
+  created_at: string;
+}): AppRatingRecord {
+  return {
+    appId: row.app_id,
+    userId: row.user_id,
+    rating: row.rating,
+    review: row.review,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertApp(
   db: PlatformDB,
   record: Omit<NewAppRegistry, 'createdAt' | 'updatedAt' | 'installs' | 'rating' | 'ratingsCount' | 'forksCount'>,
-): void {
+): Promise<void> {
+  await db.ready;
   const now = new Date().toISOString();
-  db.insert(appsRegistry)
+  await db.executor
+    .insertInto('apps_registry')
     .values({
-      ...record,
+      id: record.id,
+      name: record.name,
+      slug: record.slug,
+      author_id: record.authorId,
+      description: record.description ?? null,
+      category: record.category ?? 'utility',
+      tags: record.tags ?? null,
+      version: record.version ?? '1.0.0',
+      source_url: record.sourceUrl ?? null,
+      manifest: record.manifest ?? null,
+      screenshots: record.screenshots ?? null,
       installs: 0,
       rating: 0,
-      ratingsCount: 0,
-      forksCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      ratings_count: 0,
+      forks_count: 0,
+      is_public: record.isPublic ?? false,
+      created_at: now,
+      updated_at: now,
     })
-    .run();
+    .execute();
 }
 
-export function getApp(db: PlatformDB, id: string): AppRegistryRecord | undefined {
-  return db.select().from(appsRegistry).where(eq(appsRegistry.id, id)).get();
+export async function getApp(db: PlatformDB, id: string): Promise<AppRegistryRecord | undefined> {
+  await db.ready;
+  const row = await db.executor.selectFrom('apps_registry').selectAll().where('id', '=', id).executeTakeFirst();
+  return row ? mapApp(row) : undefined;
 }
 
-export function getAppBySlug(db: PlatformDB, authorId: string, slug: string): AppRegistryRecord | undefined {
-  return db
-    .select()
-    .from(appsRegistry)
-    .where(and(eq(appsRegistry.authorId, authorId), eq(appsRegistry.slug, slug)))
-    .get();
+export async function getAppBySlug(
+  db: PlatformDB,
+  authorId: string,
+  slug: string,
+): Promise<AppRegistryRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('apps_registry')
+    .selectAll()
+    .where('author_id', '=', authorId)
+    .where('slug', '=', slug)
+    .executeTakeFirst();
+  return row ? mapApp(row) : undefined;
 }
 
-export function updateApp(
+export async function updateApp(
   db: PlatformDB,
   id: string,
   updates: Partial<Pick<NewAppRegistry, 'name' | 'description' | 'category' | 'tags' | 'version' | 'sourceUrl' | 'manifest' | 'screenshots' | 'isPublic'>>,
-): void {
-  db.update(appsRegistry)
-    .set({ ...updates, updatedAt: new Date().toISOString() })
-    .where(eq(appsRegistry.id, id))
-    .run();
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('apps_registry')
+    .set({
+      ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.description !== undefined ? { description: updates.description } : {}),
+      ...(updates.category !== undefined ? { category: updates.category } : {}),
+      ...(updates.tags !== undefined ? { tags: updates.tags } : {}),
+      ...(updates.version !== undefined ? { version: updates.version } : {}),
+      ...(updates.sourceUrl !== undefined ? { source_url: updates.sourceUrl } : {}),
+      ...(updates.manifest !== undefined ? { manifest: updates.manifest } : {}),
+      ...(updates.screenshots !== undefined ? { screenshots: updates.screenshots } : {}),
+      ...(updates.isPublic !== undefined ? { is_public: updates.isPublic } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .where('id', '=', id)
+    .execute();
 }
 
-export function deleteApp(db: PlatformDB, id: string): void {
-  db.delete(appsRegistry).where(eq(appsRegistry.id, id)).run();
-  db.delete(appRatings).where(eq(appRatings.appId, id)).run();
-  db.delete(appInstalls).where(eq(appInstalls.appId, id)).run();
+export async function deleteApp(db: PlatformDB, id: string): Promise<void> {
+  await db.transaction(async (trx) => {
+    await trx.executor.deleteFrom('app_ratings').where('app_id', '=', id).execute();
+    await trx.executor.deleteFrom('app_installs').where('app_id', '=', id).execute();
+    await trx.executor.deleteFrom('apps_registry').where('id', '=', id).execute();
+  });
 }
-
-// --- Listing ---
 
 interface ListAppsOptions {
   category?: string;
@@ -202,30 +202,30 @@ interface ListAppsResult {
   hasMore: boolean;
 }
 
-export function listApps(db: PlatformDB, options: ListAppsOptions): ListAppsResult {
+export async function listApps(db: PlatformDB, options: ListAppsOptions): Promise<ListAppsResult> {
+  await db.ready;
   const { category, authorId, publicOnly, sort = 'new', limit = 50, offset = 0 } = options;
+  let countQuery = db.executor.selectFrom('apps_registry').select((eb) => eb.fn.countAll<number>().as('count'));
+  let listQuery = db.executor.selectFrom('apps_registry').selectAll();
 
-  const conditions = [];
-  if (publicOnly) conditions.push(eq(appsRegistry.isPublic, true));
-  if (category) conditions.push(eq(appsRegistry.category, category));
-  if (authorId) conditions.push(eq(appsRegistry.authorId, authorId));
+  if (publicOnly) {
+    countQuery = countQuery.where('is_public', '=', true);
+    listQuery = listQuery.where('is_public', '=', true);
+  }
+  if (category) {
+    countQuery = countQuery.where('category', '=', category);
+    listQuery = listQuery.where('category', '=', category);
+  }
+  if (authorId) {
+    countQuery = countQuery.where('author_id', '=', authorId);
+    listQuery = listQuery.where('author_id', '=', authorId);
+  }
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const countResult = db
-    .select({ count: sql<number>`count(*)` })
-    .from(appsRegistry)
-    .where(where)
-    .get();
-  const total = countResult?.count ?? 0;
-
-  const query = sort === 'popular'
-    ? db.select().from(appsRegistry).where(where).orderBy(desc(appsRegistry.installs))
-    : sort === 'rated'
-      ? db.select().from(appsRegistry).where(where).orderBy(desc(appsRegistry.rating))
-      : db.select().from(appsRegistry).where(where).orderBy(desc(appsRegistry.createdAt));
-
-  const apps = query.limit(limit).offset(offset).all();
+  const countResult = await countQuery.executeTakeFirst();
+  const total = Number(countResult?.count ?? 0);
+  const orderColumn = sort === 'popular' ? 'installs' : sort === 'rated' ? 'rating' : 'created_at';
+  const rows = await listQuery.orderBy(orderColumn, 'desc').limit(limit).offset(offset).execute();
+  const apps = rows.map(mapApp);
 
   return {
     apps,
@@ -234,134 +234,135 @@ export function listApps(db: PlatformDB, options: ListAppsOptions): ListAppsResu
   };
 }
 
-// --- Search ---
-
-export function searchApps(db: PlatformDB, query: string): AppRegistryRecord[] {
-  const pattern = `%${query}%`;
-  return db
-    .select()
-    .from(appsRegistry)
-    .where(
-      and(
-        eq(appsRegistry.isPublic, true),
-        or(
-          like(appsRegistry.name, pattern),
-          like(appsRegistry.description, pattern),
-          like(appsRegistry.tags, pattern),
-        ),
-      ),
+export async function searchApps(db: PlatformDB, query: string): Promise<AppRegistryRecord[]> {
+  await db.ready;
+  const pattern = `%${query.replace(/[%_\\]/g, '\\$&')}%`;
+  const rows = await db.executor
+    .selectFrom('apps_registry')
+    .selectAll()
+    .where('is_public', '=', true)
+    .where((eb) =>
+      eb.or([
+        eb('name', 'ilike', pattern),
+        eb('description', 'ilike', pattern),
+        eb('tags', 'ilike', pattern),
+      ]),
     )
-    .all();
+    .execute();
+  return rows.map(mapApp);
 }
 
-// --- Installs ---
-
-export function incrementInstalls(db: PlatformDB, appId: string): void {
-  db.update(appsRegistry)
+export async function incrementInstalls(db: PlatformDB, appId: string): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('apps_registry')
     .set({
-      installs: sql`${appsRegistry.installs} + 1`,
-      updatedAt: new Date().toISOString(),
+      installs: sql<number>`installs + 1`,
+      updated_at: new Date().toISOString(),
     })
-    .where(eq(appsRegistry.id, appId))
-    .run();
+    .where('id', '=', appId)
+    .execute();
 }
 
-export function recordInstall(db: PlatformDB, appId: string, userId: string): void {
-  const existing = db
-    .select()
-    .from(appInstalls)
-    .where(and(eq(appInstalls.appId, appId), eq(appInstalls.userId, userId)))
-    .get();
-
-  if (existing) return;
-
-  db.insert(appInstalls)
-    .values({ appId, userId, installedAt: new Date().toISOString() })
-    .run();
-
-  incrementInstalls(db, appId);
+export async function recordInstall(db: PlatformDB, appId: string, userId: string): Promise<void> {
+  await db.transaction(async (trx) => {
+    const inserted = await trx.executor
+      .insertInto('app_installs')
+      .values({ app_id: appId, user_id: userId, installed_at: new Date().toISOString() })
+      .onConflict((oc) => oc.columns(['app_id', 'user_id']).doNothing())
+      .returning('app_id')
+      .executeTakeFirst();
+    if (inserted) {
+      await incrementInstalls(trx, appId);
+    }
+  });
 }
 
-// --- Ratings ---
-
-export function submitRating(
+export async function submitRating(
   db: PlatformDB,
   input: { appId: string; userId: string; rating: number; review?: string },
-): void {
+): Promise<void> {
   const { appId, userId, rating, review } = input;
-  const now = new Date().toISOString();
-
-  const existing = db
-    .select()
-    .from(appRatings)
-    .where(and(eq(appRatings.appId, appId), eq(appRatings.userId, userId)))
-    .get();
-
-  if (existing) {
-    db.update(appRatings)
-      .set({ rating, review, createdAt: now })
-      .where(and(eq(appRatings.appId, appId), eq(appRatings.userId, userId)))
-      .run();
-  } else {
-    db.insert(appRatings)
-      .values({ appId, userId, rating, review, createdAt: now })
-      .run();
-  }
-
-  recalculateRating(db, appId);
+  await db.transaction(async (trx) => {
+    await trx.executor
+      .insertInto('app_ratings')
+      .values({
+        app_id: appId,
+        user_id: userId,
+        rating,
+        review: review ?? null,
+        created_at: new Date().toISOString(),
+      })
+      .onConflict((oc) =>
+        oc.columns(['app_id', 'user_id']).doUpdateSet({
+          rating,
+          review: review ?? null,
+          created_at: new Date().toISOString(),
+        }),
+      )
+      .execute();
+    await recalculateRating(trx, appId);
+  });
 }
 
-function recalculateRating(db: PlatformDB, appId: string): void {
-  const result = db
-    .select({
-      avg: sql<number>`CAST(ROUND(AVG(${appRatings.rating})) AS INTEGER)`,
-      count: sql<number>`count(*)`,
-    })
-    .from(appRatings)
-    .where(eq(appRatings.appId, appId))
-    .get();
+async function recalculateRating(db: PlatformDB, appId: string): Promise<void> {
+  const result = await db.executor
+    .selectFrom('app_ratings')
+    .select((eb) => [
+      eb.fn.avg<number>('rating').as('avg'),
+      eb.fn.countAll<number>().as('count'),
+    ])
+    .where('app_id', '=', appId)
+    .executeTakeFirst();
 
-  db.update(appsRegistry)
+  await db.executor
+    .updateTable('apps_registry')
     .set({
-      rating: result?.avg ?? 0,
-      ratingsCount: result?.count ?? 0,
-      updatedAt: new Date().toISOString(),
+      rating: Math.round(Number(result?.avg ?? 0)),
+      ratings_count: Number(result?.count ?? 0),
+      updated_at: new Date().toISOString(),
     })
-    .where(eq(appsRegistry.id, appId))
-    .run();
+    .where('id', '=', appId)
+    .execute();
 }
 
-export function getAppRating(
+export async function getAppRating(
   db: PlatformDB,
   appId: string,
   userId: string,
-): AppRatingRecord | undefined {
-  return db
-    .select()
-    .from(appRatings)
-    .where(and(eq(appRatings.appId, appId), eq(appRatings.userId, userId)))
-    .get();
+): Promise<AppRatingRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('app_ratings')
+    .selectAll()
+    .where('app_id', '=', appId)
+    .where('user_id', '=', userId)
+    .executeTakeFirst();
+  return row ? mapRating(row) : undefined;
 }
 
-export function listAppRatings(db: PlatformDB, appId: string): AppRatingRecord[] {
-  return db
-    .select()
-    .from(appRatings)
-    .where(eq(appRatings.appId, appId))
-    .orderBy(desc(appRatings.createdAt))
-    .all();
+export async function listAppRatings(db: PlatformDB, appId: string): Promise<AppRatingRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('app_ratings')
+    .selectAll()
+    .where('app_id', '=', appId)
+    .orderBy('created_at', 'desc')
+    .execute();
+  return rows.map(mapRating);
 }
 
-// --- Categories ---
-
-export function listCategories(db: PlatformDB): Array<{ category: string; count: number }> {
-  return db
-    .select({
-      category: appsRegistry.category,
-      count: sql<number>`count(*)`,
-    })
-    .from(appsRegistry)
-    .where(eq(appsRegistry.isPublic, true))
-    .groupBy(appsRegistry.category)
-    .all() as Array<{ category: string; count: number }>;
+export async function listCategories(db: PlatformDB): Promise<Array<{ category: string; count: number }>> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('apps_registry')
+    .select((eb) => [
+      'category',
+      eb.fn.countAll<number>().as('count'),
+    ])
+    .where('is_public', '=', true)
+    .where('category', 'is not', null)
+    .groupBy('category')
+    .execute();
+  return rows.map((row) => ({ category: row.category ?? 'utility', count: Number(row.count) }));
 }
