@@ -110,7 +110,13 @@ async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> 
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch((err: unknown) => {
+    if (err instanceof SyntaxError) {
+      return {};
+    }
+    console.warn("[workspace-canvas] Failed to parse gateway response:", err);
+    return {};
+  });
   if (!response.ok) {
     throw new Error(typeof body.error === "string" ? body.error : "Canvas request failed");
   }

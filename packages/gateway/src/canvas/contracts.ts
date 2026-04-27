@@ -32,7 +32,11 @@ function safeUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof TypeError) {
+      return false;
+    }
+    console.error("[canvas/contracts] Unexpected URL parse failure:", err);
     return false;
   }
 }

@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { resolveWithinHome } from "../path-security.js";
 import {
   CanvasNodeSchema,
@@ -330,9 +329,13 @@ export class CanvasService {
 
   private openFile(action: CanvasAction) {
     const path = String((action.payload as { path?: unknown }).path ?? "");
-    if (this.homePath && !resolveWithinHome(this.homePath, path)) {
-      throw new CanvasNotFoundError("file");
+    if (this.homePath) {
+      const safePath = resolveWithinHome(this.homePath, path);
+      if (!safePath) {
+        throw new CanvasNotFoundError("file");
+      }
+      return Promise.resolve({ ok: true as const, result: { kind: "file", path: safePath } });
     }
-    return Promise.resolve({ ok: true as const, result: { kind: "file", path: resolve(path) } });
+    return Promise.resolve({ ok: true as const, result: { kind: "file", path } });
   }
 }

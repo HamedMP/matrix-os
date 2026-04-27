@@ -81,7 +81,10 @@ export class CanvasSubscriptionHub {
     }
     try {
       return JSON.parse(frame) as unknown;
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.error("[canvas/realtime] Unexpected frame parse failure:", err);
+      }
       throw new Error("Invalid frame");
     }
   }

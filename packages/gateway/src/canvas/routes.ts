@@ -47,7 +47,10 @@ function getUserIdOrThrow(deps: CanvasRouteDeps, c: any): string {
     const userId = deps.getUserId(c);
     if (!userId) throw new Error("missing user");
     return userId;
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof Error && /missing/i.test(err.message))) {
+      console.error("[canvas/routes] User resolution failed:", err);
+    }
     throw new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
