@@ -122,6 +122,22 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 30 "${MATRIX_HOST_BUNDLE_URL}.sha256"');
   });
 
+  it('exposes bundled coding agent CLIs on customer hosts', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
+    const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+
+    expect(buildScript).toContain('@openai/codex@0.118.0');
+    expect(buildScript).toContain('opencode-ai@1.14.25');
+    expect(buildScript).toContain('@mariozechner/pi-coding-agent@0.70.2');
+    expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
+    expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
+    expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi; do');
+    expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
+    expect(gateway).toContain('export PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+  });
+
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
       'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nr2={{r2SecretAccessKey}}\n',

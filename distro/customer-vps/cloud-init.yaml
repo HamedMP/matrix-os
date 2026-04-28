@@ -7,11 +7,17 @@ users:
   - name: matrix
     primary_group: matrix
     system: true
-    shell: /usr/sbin/nologin
+    home: /home/matrix
+    shell: /bin/bash
     groups:
       - docker
 
 write_files:
+  - path: /etc/profile.d/matrix-runtime.sh
+    owner: root:root
+    permissions: "0644"
+    content: |
+      export PATH="/opt/matrix/runtime/node/bin:$PATH"
   - path: /opt/matrix/postgres-compose.yml
     owner: root:root
     permissions: "0644"
@@ -574,6 +580,7 @@ runcmd:
 
     install -d -o root -g matrix -m 0770 /opt/matrix
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
+    install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config
     install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
@@ -587,6 +594,11 @@ runcmd:
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
     chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-sync-agent
+    for cli in node npm npx claude codex opencode pi; do
+      if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then
+        ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"
+      fi
+    done
     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
     chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
     chmod 0640 /opt/matrix/tls/key.pem

@@ -27,6 +27,11 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 (cd "$DIST_DIR" && sha256sum -c "${NODE_ARCHIVE}.sha256")
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
+"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node" \
+  @anthropic-ai/claude-code@2.1.91 \
+  @openai/codex@0.118.0 \
+  opencode-ai@1.14.25 \
+  @mariozechner/pi-coding-agent@0.70.2
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 chmod 0750 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-sync-agent"
