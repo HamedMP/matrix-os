@@ -25,6 +25,7 @@ describe('platform/customer-vps-routes', () => {
       db,
       config: loadCustomerVpsConfig({
         PLATFORM_PORT: '9000',
+        PLATFORM_SECRET: platformSecret,
         HETZNER_API_TOKEN: 'token',
         R2_BUCKET: 'matrixos-sync',
       }),

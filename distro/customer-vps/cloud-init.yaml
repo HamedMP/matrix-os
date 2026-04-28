@@ -515,6 +515,8 @@ write_files:
       MATRIX_HANDLE={{handle}}
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
+      UPGRADE_TOKEN={{platformVerificationToken}}
+      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}

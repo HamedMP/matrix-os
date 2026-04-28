@@ -46,39 +46,44 @@ function getPublicOrigin(request: NextRequest) {
   return `${proto}://${host}`;
 }
 
-// Clerk handler for authenticated routes
-const withClerk = clerkMiddleware(async (auth, request) => {
+function rewriteGatewayRequest(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const target = pathname.startsWith("/gateway/")
+    ? pathname.replace("/gateway", "")
+    : pathname;
+  const url = new URL(target + request.nextUrl.search, gatewayUrl);
+  const headers = new Headers(request.headers);
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+  return NextResponse.rewrite(url, { request: { headers } });
+}
 
-  // Platform already verified the Clerk session -- skip re-verification.
-  // The platform signs the proxy with `Authorization: Bearer <UPGRADE_TOKEN>`
-  // (HMAC(handle, PLATFORM_SECRET)) and sets x-platform-user-id to the
-  // Clerk userId it resolved. Trust that bearer + enforce the owner pin.
+function platformVerifiedResponse(request: NextRequest): NextResponse | null {
   const platformAuthHeader = request.headers.get("authorization");
   const platformBearer = platformAuthHeader?.startsWith("Bearer ")
     ? platformAuthHeader.slice(7)
     : null;
-  const platformUserId = request.headers.get("x-platform-user-id");
-  if (platformUpgradeToken && platformBearer === platformUpgradeToken) {
-    if (expectedClerkUserId && platformUserId !== expectedClerkUserId) {
-      return new NextResponse("Forbidden: you do not own this instance", {
-        status: 403,
-      });
-    }
-    if (isGatewayProxy(request)) {
-      const target = pathname.startsWith("/gateway/")
-        ? pathname.replace("/gateway", "")
-        : pathname;
-      const url = new URL(target + request.nextUrl.search, gatewayUrl);
-      const headers = new Headers(request.headers);
-      if (authToken) {
-        headers.set("Authorization", `Bearer ${authToken}`);
-      }
-      return NextResponse.rewrite(url, { request: { headers } });
-    }
-    return NextResponse.next();
+  if (!platformUpgradeToken || platformBearer !== platformUpgradeToken) {
+    return null;
   }
 
+  const platformUserId = request.headers.get("x-platform-user-id");
+  if (expectedClerkUserId && platformUserId !== expectedClerkUserId) {
+    return new NextResponse("Forbidden: you do not own this instance", {
+      status: 403,
+    });
+  }
+
+  if (isGatewayProxy(request)) {
+    return rewriteGatewayRequest(request);
+  }
+
+  return NextResponse.next();
+}
+
+// Clerk handler for authenticated routes
+const withClerk = clerkMiddleware(async (auth, request) => {
   // Layer 1: Clerk authentication (skip public routes)
   if (!isPublicRoute(request)) {
     const { userId } = await auth();
@@ -106,18 +111,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
 
   // Proxy gateway API and file requests
   if (isGatewayProxy(request)) {
-    const target = pathname.startsWith("/gateway/")
-      ? pathname.replace("/gateway", "")
-      : pathname;
-    const url = new URL(target + request.nextUrl.search, gatewayUrl);
-
-    // Layer 3: Inject bearer token for gateway auth
-    const headers = new Headers(request.headers);
-    if (authToken) {
-      headers.set("Authorization", `Bearer ${authToken}`);
-    }
-
-    return NextResponse.rewrite(url, { request: { headers } });
+    return rewriteGatewayRequest(request);
   }
 
   return NextResponse.next();
@@ -133,11 +127,16 @@ export function proxy(
   if (process.env.E2E_TEST_BYPASS === "1") {
     return NextResponse.next();
   }
+  // Platform already verified the Clerk session. Handle this before invoking
+  // Clerk so customer VPS shells do not require CLERK_SECRET_KEY.
+  const platformResponse = platformVerifiedResponse(request);
+  if (platformResponse) {
+    return platformResponse;
+  }
   // All requests — including gateway-proxy paths — flow through Clerk so the
   // admin bearer token is never injected onto an unauthenticated request. The
-  // platform-verified fast-path inside withClerk covers the pre-authenticated
-  // backend-to-backend case; unauthenticated XHRs get redirected to /sign-in,
-  // which is the correct outcome (client must reauthenticate).
+  // platform-verified fast-path above covers the pre-authenticated
+  // backend-to-backend case.
   return withClerk(request, event);
 }
 

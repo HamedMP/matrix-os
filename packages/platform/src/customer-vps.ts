@@ -22,6 +22,7 @@ import {
   registrationTokenMatches,
   type RegistrationToken,
 } from './customer-vps-auth.js';
+import { buildPlatformVerificationToken } from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
 import {
   CustomerVpsError,
@@ -113,6 +114,8 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
+  '      UPGRADE_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_R2_BUCKET={{r2Bucket}}',
   '      MATRIX_R2_PREFIX={{r2Prefix}}',
   '  - path: /opt/matrix/env/registration.env',
@@ -170,6 +173,7 @@ function buildHostConfig(
     imageVersion: config.imageVersion,
     hostBundleUrl: config.hostBundleUrl,
     platformRegisterUrl: config.platformRegisterUrl,
+    platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
     registrationToken,
     r2Bucket: config.r2Bucket,
     r2Prefix: `${config.r2PrefixRoot}/${input.clerkUserId}/` as `matrixos-sync/${string}/`,

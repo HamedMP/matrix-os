@@ -8,13 +8,14 @@ export interface CustomerHostConfig {
   imageVersion: string;
   hostBundleUrl: string;
   platformRegisterUrl: string;
+  platformVerificationToken: string;
   registrationToken: string;
   r2Bucket: string;
   r2Prefix: `matrixos-sync/${string}/`;
   postgresPassword: string;
 }
 
-const SECRET_KEYS = ['registrationToken', 'postgresPassword'] as const;
+const SECRET_KEYS = ['registrationToken', 'postgresPassword', 'platformVerificationToken'] as const;
 const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
 
 function assertRenderable(input: CustomerHostConfig): void {

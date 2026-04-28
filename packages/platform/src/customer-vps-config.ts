@@ -7,6 +7,7 @@ export interface CustomerVpsConfig {
   imageVersion: string;
   hostBundleUrl: string;
   platformRegisterUrl: string;
+  platformSecret: string;
   r2Bucket: string;
   r2PrefixRoot: string;
   provisionEtaSeconds: number;
@@ -36,6 +37,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
       env.MATRIX_HOST_BUNDLE_URL ??
       `${bundleBaseUrl}/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`,
     platformRegisterUrl: `${platformUrl.replace(/\/$/, '')}/vps/register`,
+    platformSecret: env.PLATFORM_SECRET ?? '',
     r2Bucket: env.S3_BUCKET ?? env.R2_BUCKET ?? 'matrixos-sync',
     r2PrefixRoot: env.R2_PREFIX_ROOT ?? 'matrixos-sync',
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),

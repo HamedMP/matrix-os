@@ -17,6 +17,7 @@ describe('platform/customer-vps-cloud-init', () => {
     imageVersion: 'matrix-os-host-2026.04.26-1',
     hostBundleUrl: 'https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
+    platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
     r2Bucket: 'matrixos-sync',
     r2Prefix: 'matrixos-sync/user_123/',
@@ -47,6 +48,17 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
 
+  it('renders a non-empty platform verification token into customer cloud-init', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const rendered = renderCloudInitTemplate(cloudInit, input);
+
+    expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
+    expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
+    expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
+    expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
+  });
+
   it('renders valid YAML for the production customer cloud-init', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
@@ -73,6 +85,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('runcmd:');
     expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
+    expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
+    expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
   });
 
   it('copies customer VPS cloud-init assets into the runtime image', () => {
@@ -92,7 +106,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\n',
       input,
     );
 
@@ -100,6 +114,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
     expect(redacted).not.toContain('registration-secret');
     expect(redacted).not.toContain('postgres-secret');
+    expect(redacted).not.toContain('platform-verification-secret');
     expect(redacted).toContain('[redacted]');
   });
 

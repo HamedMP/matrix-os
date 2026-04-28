@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import {
   claimUserMachineDelete,
   completeUserMachineRegistration,
@@ -40,6 +41,7 @@ describe('platform/customer-vps', () => {
       db,
       config: loadCustomerVpsConfig({
         PLATFORM_PORT: '9000',
+        PLATFORM_SECRET: 'platform-secret',
         HETZNER_API_TOKEN: 'token',
         R2_BUCKET: 'matrixos-sync',
       }),
@@ -70,6 +72,17 @@ describe('platform/customer-vps', () => {
     const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
+  });
+
+  it('templates the platform verification token into provisioned customer hosts', async () => {
+    const { service, hetzner } = createService();
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const expected = createHmac('sha256', 'platform-secret').update('alice').digest('hex');
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain(`UPGRADE_TOKEN=${expected}`);
+    expect(createInput?.userData).toContain(`MATRIX_CODE_PROXY_TOKEN=${expected}`);
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {
