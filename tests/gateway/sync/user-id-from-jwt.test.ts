@@ -80,6 +80,7 @@ afterEach(() => {
   delete process.env.MATRIX_AUTH_TOKEN;
   delete process.env.MATRIX_HANDLE;
   delete process.env.MATRIX_USER_ID;
+  delete process.env.NODE_ENV;
 });
 
 describe("getUserIdFromContext (helper)", () => {
@@ -117,17 +118,22 @@ describe("getUserIdFromContext (helper)", () => {
     expect(() => getUserIdFromContext(ctx)).toThrow(MissingSyncUserIdentityError);
   });
 
-  it("treats an empty claims.sub as missing and falls back to MATRIX_HANDLE", () => {
-    // Defense-in-depth: an empty string in `sub` must not silently become
-    // the R2 prefix. `validateSyncJwt` should reject these at the gate,
-    // but the helper must also refuse to use a zero-length user id.
+  it("rejects an empty claims.sub instead of falling back to MATRIX_HANDLE", () => {
     const ctx = {
       get: (key: string) =>
         key === "jwtClaims"
           ? { sub: "", handle: HANDLE, gateway_url: "https://app" }
           : undefined,
     } as any;
-    expect(getUserIdFromContext(ctx)).toBe(HANDLE);
+    expect(() => getUserIdFromContext(ctx)).toThrow(MissingSyncUserIdentityError);
+  });
+
+  it("throws in production when no configured identity is available", () => {
+    delete process.env.MATRIX_AUTH_TOKEN;
+    delete process.env.MATRIX_HANDLE;
+    process.env.NODE_ENV = "production";
+    const ctx = { get: () => undefined } as any;
+    expect(() => getUserIdFromContext(ctx)).toThrow(MissingSyncUserIdentityError);
   });
 });
 
@@ -179,6 +185,17 @@ describe("sync routes: userId resolution from JWT", () => {
     });
 
     expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when configured sync identity is malformed", async () => {
+    process.env.MATRIX_USER_ID = "../secret";
+    const app = buildApp(getUserIdFromContext);
+    const res = await app.request("/api/sync/manifest", {
+      headers: { Authorization: `Bearer ${LEGACY_TOKEN}` },
+    });
+
+    expect(res.status).toBe(401);
+    expect(mockR2.getObject).not.toHaveBeenCalled();
   });
 
   it("tampered JWT falls through to legacy bearer path and uses MATRIX_HANDLE", async () => {

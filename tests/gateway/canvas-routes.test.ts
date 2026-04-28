@@ -2,14 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { CanvasConflictError } from "../../packages/gateway/src/canvas/repository.js";
 import { createCanvasRoutes, type CanvasRouteService } from "../../packages/gateway/src/canvas/routes.js";
+import {
+  InvalidRequestPrincipalError,
+  MissingRequestPrincipalError,
+  RequestPrincipalMisconfiguredError,
+} from "../../packages/gateway/src/request-principal.js";
 
-function createApp(service: CanvasRouteService, userId: string | null = "user_a", broadcastCanvasUpdate?: Parameters<typeof createCanvasRoutes>[0]["broadcastCanvasUpdate"]) {
+function createApp(
+  service: CanvasRouteService,
+  userIdOrResolver: string | null | (() => string) = "user_a",
+  broadcastCanvasUpdate?: Parameters<typeof createCanvasRoutes>[0]["broadcastCanvasUpdate"],
+) {
   const app = new Hono();
   app.route("/api/canvases", createCanvasRoutes({
     service,
     getUserId: () => {
-      if (!userId) throw new Error("missing auth");
-      return userId;
+      if (typeof userIdOrResolver === "function") return userIdOrResolver();
+      if (!userIdOrResolver) throw new Error("missing auth");
+      return userIdOrResolver;
     },
     broadcastCanvasUpdate,
   }));
@@ -33,6 +43,33 @@ describe("canvas routes", () => {
 
   it("rejects unauthenticated requests", async () => {
     const app = createApp(service, null);
+    const res = await app.request("/api/canvases");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("maps request principal missing identity to generic unauthorized", async () => {
+    const app = createApp(service, () => {
+      throw new MissingRequestPrincipalError();
+    });
+    const res = await app.request("/api/canvases");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("maps request principal misconfiguration to a generic server error", async () => {
+    const app = createApp(service, () => {
+      throw new RequestPrincipalMisconfiguredError();
+    });
+    const res = await app.request("/api/canvases");
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Canvas request failed" });
+  });
+
+  it("does not expose malformed principal values to clients", async () => {
+    const app = createApp(service, () => {
+      throw new InvalidRequestPrincipalError("jwt");
+    });
     const res = await app.request("/api/canvases");
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "Unauthorized" });

@@ -115,6 +115,17 @@ Hono HTTP/WebSocket gateway. Key files:
 | `cron.ts` | `createCronService()` -- scheduled task execution |
 | `heartbeat.ts` | `createHeartbeatRunner()` -- periodic kernel health checks |
 | `conversations.ts` | `createConversationStore()` -- multi-session persistence |
+| `request-principal.ts` | Canonical protected-route principal resolution, source precedence, owner-scope conversion, and generic auth error mapping |
+
+#### Request Principal
+
+Protected gateway routes should resolve owner identity through `request-principal.ts` instead of reading JWT claims or environment fallback values directly. The resolver accepts sources in this order:
+
+1. Validated JWT `sub` stored on the Hono context by auth middleware.
+2. Platform-controlled configured container identity for trusted single-user/container gateways, using `MATRIX_USER_ID` as the canonical configured user id.
+3. `dev-default`, only in open local development when auth is disabled, production is false, and no configured identity exists.
+
+The principal user id is validated before it reaches owner scope, database queries, storage keys, or rate-limit keys. Missing identity maps to a generic unauthorized response; reading the principal before auth middleware marks request context readiness maps to a generic server misconfiguration response.
 
 ### `packages/platform/`
 
