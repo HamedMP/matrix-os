@@ -10,6 +10,10 @@ NODE_DIST="node-v${NODE_VERSION}-linux-x64"
 NODE_ARCHIVE="${NODE_DIST}.tar.xz"
 NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
 NODE_URL="${NODE_BASE_URL}/${NODE_ARCHIVE}"
+CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
+CODE_SERVER_DIST="code-server-${CODE_SERVER_VERSION}-linux-amd64"
+CODE_SERVER_ARCHIVE="${CODE_SERVER_DIST}.tar.gz"
+CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime"
@@ -27,6 +31,15 @@ grep "  ${NODE_ARCHIVE}$" "$DIST_DIR/SHASUMS256.txt" > "$DIST_DIR/${NODE_ARCHIVE
 (cd "$DIST_DIR" && sha256sum -c "${NODE_ARCHIVE}.sha256")
 tar -xJf "$DIST_DIR/$NODE_ARCHIVE" -C "$STAGE_DIR/runtime"
 mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
+
+curl --fail --location --max-time 180 "$CODE_SERVER_URL" -o "$DIST_DIR/$CODE_SERVER_ARCHIVE"
+tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE" -C "$STAGE_DIR/runtime"
+mv "$STAGE_DIR/runtime/$CODE_SERVER_DIST" "$STAGE_DIR/runtime/code-server"
+cat > "$STAGE_DIR/runtime/node/bin/code-server" <<'EOS'
+#!/usr/bin/env sh
+exec /opt/matrix/runtime/code-server/bin/code-server "$@"
+EOS
+chmod 0755 "$STAGE_DIR/runtime/node/bin/code-server"
 "$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node" \
   @anthropic-ai/claude-code@2.1.91 \
   @openai/codex@0.118.0 \
@@ -34,7 +47,7 @@ mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
   @mariozechner/pi-coding-agent@0.70.2
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
-chmod 0750 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-sync-agent"
+chmod 0750 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"

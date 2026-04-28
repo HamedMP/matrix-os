@@ -99,12 +99,21 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
     expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
+  });
+
+  it('routes code.matrix-os.com to the customer host code proxy', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('server_name code.matrix-os.com');
+    expect(cloudInit).toContain('proxy_pass http://127.0.0.1:8787');
+    expect(cloudInit).toContain('proxy_set_header X-Matrix-Code-Proxy-Token $http_x_matrix_code_proxy_token');
   });
 
   it('copies customer VPS cloud-init assets into the runtime image', () => {
@@ -131,11 +140,29 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(buildScript).toContain('@openai/codex@0.118.0');
     expect(buildScript).toContain('opencode-ai@1.14.25');
     expect(buildScript).toContain('@mariozechner/pi-coding-agent@0.70.2');
+    expect(buildScript).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
+    expect(buildScript).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
+    expect(buildScript).toContain('runtime/code-server');
+    expect(buildScript).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config');
-    expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi; do');
+    expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
+    expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(gateway).toContain('export PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+  });
+
+  it('installs a customer host code-server service behind restore completion', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
+
+    expect(cloudInit).toContain('Description=Matrix OS customer code editor');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
+    expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
+    expect(code).toContain('MATRIX_CODE_PROXY_TOKEN');
+    expect(code).toContain('code-server');
+    expect(code).toContain('crypto.timingSafeEqual');
   });
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
@@ -221,7 +248,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

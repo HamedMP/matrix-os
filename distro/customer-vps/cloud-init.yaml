@@ -97,6 +97,28 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-code.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS customer code editor
+      After=matrix-restore.service
+      Requires=matrix-restore.service
+      ConditionPathExists=/opt/matrix/restore-complete
+      ConditionPathExists=/opt/matrix/bin/matrix-code
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-code
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /etc/systemd/system/matrix-sync-agent.service
     owner: root:root
     permissions: "0644"
@@ -155,6 +177,29 @@ write_files:
     owner: root:root
     permissions: "0644"
     content: |
+      server {
+        listen 443 ssl http2;
+        server_name code.matrix-os.com;
+
+        ssl_certificate /opt/matrix/tls/cert.pem;
+        ssl_certificate_key /opt/matrix/tls/key.pem;
+
+        client_max_body_size 10m;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Matrix-Code-Proxy-Token $http_x_matrix_code_proxy_token;
+
+        location / {
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_pass http://127.0.0.1:8787;
+        }
+      }
+
       server {
         listen 443 ssl http2 default_server;
         server_name _;
@@ -582,6 +627,8 @@ runcmd:
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
     install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config
     install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o root -g root -m 0755 /home/matrixos
+    ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
     . /opt/matrix/env/host.env
@@ -593,8 +640,8 @@ runcmd:
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
-    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-sync-agent
-    for cli in node npm npx claude codex opencode pi; do
+    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent
+    for cli in node npm npx claude codex opencode pi code-server; do
       if [ -x "/opt/matrix/runtime/node/bin/${cli}" ]; then
         ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"
       fi
@@ -622,7 +669,7 @@ runcmd:
     fi
 
     systemctl daemon-reload
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer nginx
+    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service
     systemctl restart nginx
     systemctl start matrix-db-backup.timer

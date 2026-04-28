@@ -3,16 +3,21 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('customer VPS host bundle', () => {
-  it('build script packages the three systemd entrypoint binaries', () => {
+  it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
 
     expect(script).toContain('matrix-host-bundle.tar.gz');
     expect(script).toContain('matrix-gateway');
     expect(script).toContain('matrix-shell');
+    expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild better-sqlite3 node-pty');
+    expect(script).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
+    expect(script).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
+    expect(script).toContain('runtime/code-server');
+    expect(script).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {
