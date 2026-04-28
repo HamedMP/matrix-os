@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseDocument } from 'yaml';
 import {
   loadCustomerVpsCloudInitTemplate,
   redactCloudInitSecrets,
@@ -44,6 +45,15 @@ describe('platform/customer-vps-cloud-init', () => {
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     );
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
+  });
+
+  it('renders valid YAML for the production customer cloud-init', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const rendered = renderCloudInitTemplate(cloudInit, input);
+    const document = parseDocument(rendered);
+
+    expect(document.errors).toEqual([]);
   });
 
   it('loads the production customer VPS cloud-init template', async () => {
