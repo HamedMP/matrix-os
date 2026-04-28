@@ -53,6 +53,12 @@ import { ChatPopover } from "./ChatPopover";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import {
+  DEFAULT_PINNED_APPS,
+  isBuiltInAppPath,
+  normalizeBuiltInAppPath,
+  normalizeBuiltInLayoutWindow,
+} from "@/lib/builtin-apps";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -766,19 +772,25 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
       const savedLayout: { windows?: LayoutWindow[] } =
         layoutRes?.ok ? await layoutRes.json() : {};
-      const savedWindows = savedLayout.windows ?? [];
+      const savedWindows = (savedLayout.windows ?? []).map(normalizeBuiltInLayoutWindow);
       const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
 
       const layoutToLoad: LayoutWindow[] = [];
+      const queuedLayoutPaths = new Set<string>();
+      const queueSavedLayout = (saved: LayoutWindow | undefined) => {
+        if (!saved || queuedLayoutPaths.has(saved.path)) return;
+        queuedLayoutPaths.add(saved.path);
+        layoutToLoad.push(saved);
+      };
 
       // Register built-in apps
       addApp("Terminal", "__terminal__");
       addApp("Workspace", "__workspace__");
       addApp("Files", "__file-browser__");
       addApp("Chat", "__chat__");
-      const savedTerminals = savedWindows.filter((w) => w.path.startsWith("__terminal__"));
-      for (const saved of savedTerminals) {
-        layoutToLoad.push(saved);
+      const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
+      for (const saved of savedBuiltIns) {
+        queueSavedLayout(saved);
       }
 
       // Load pre-installed apps from /api/apps (apps/ directory)
@@ -787,13 +799,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
         for (const app of appsList) {
           // path from API is like "/files/apps/calculator/index.html"
           // strip leading "/files/" to get relative path for AppViewer
-          const relativePath = app.path.replace(/^\/files\//, "");
+          const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
           addApp(app.name, relativePath);
 
           const saved = layoutMap.get(relativePath);
-          if (saved) {
-            layoutToLoad.push(saved);
-          }
+          queueSavedLayout(saved);
           // Don't auto-open pre-installed apps - let users open from dock/store
         }
       }
@@ -838,24 +848,23 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             let appName = mod.name;
 
             if (!metaRes?.ok) {
+              path = normalizeBuiltInAppPath(path);
               addApp(appName, path);
               const saved = layoutMap.get(path);
-              if (saved) {
-                layoutToLoad.push(saved);
-              }
+              queueSavedLayout(saved);
               continue;
             }
 
             const meta: ModuleMeta = await metaRes.json();
             const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
-            path = `${relativeBasePath}/${entryFile}`;
+            path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
             appName = meta.name ?? mod.name;
 
             addApp(appName, path);
 
             const saved = layoutMap.get(path);
             if (saved) {
-              layoutToLoad.push(saved);
+              queueSavedLayout(saved);
             } else {
               openWindow(appName, path);
             }
@@ -1256,7 +1265,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             saveDesktopConfig({
               background: { type: "wallpaper", name: "moraine-lake.jpg" },
               dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-              pinnedApps: [],
+              pinnedApps: [...DEFAULT_PINNED_APPS],
             }).catch((err: unknown) => {
               console.warn("[desktop] failed to persist onboarding completion desktop config:", err instanceof Error ? err.message : String(err));
             });

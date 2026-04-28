@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
+import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 export type { DockConfig };
 
 export interface DesktopConfig {
@@ -31,7 +32,7 @@ const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-  pinnedApps: [],
+  pinnedApps: [...DEFAULT_PINNED_APPS],
 };
 
 // Page background mesh gradient — uses --gradient-* tokens from :root.

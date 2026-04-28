@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
+import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 
 export interface DockConfig {
   position: "left" | "right" | "bottom";
@@ -50,7 +51,7 @@ async function persistDesktopPatch(patch: Record<string, unknown>): Promise<void
 
 export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   dock: { position: "left", size: 44, iconSize: 30, autoHide: false },
-  pinnedApps: [],
+  pinnedApps: [...DEFAULT_PINNED_APPS],
   dockOrder: undefined,
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),

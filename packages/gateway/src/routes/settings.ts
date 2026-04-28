@@ -17,7 +17,7 @@ import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from
 const DESKTOP_DEFAULTS = {
   background: { type: "wallpaper", name: "moraine-lake.jpg" },
   dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
-  pinnedApps: [] as string[],
+  pinnedApps: ["__workspace__", "__terminal__", "__file-browser__", "__chat__"] as string[],
   iconStyle: "Realistic 3D rendered app icon, soft gradient background, subtle drop shadow, rounded square shape, Apple macOS style",
 };
 
@@ -72,6 +72,15 @@ async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tempPath, JSON.stringify(data, null, 2) + "\n");
   await rename(tempPath, path);
+}
+
+function mergeDesktopDefaults(config: Record<string, unknown>): Record<string, unknown> {
+  const dock = typeof config.dock === "object" && config.dock !== null ? config.dock : {};
+  return {
+    ...DESKTOP_DEFAULTS,
+    ...config,
+    dock: { ...DESKTOP_DEFAULTS.dock, ...dock },
+  };
 }
 
 export function createSettingsRoutes(opts: {
@@ -161,7 +170,8 @@ export function createSettingsRoutes(opts: {
   const desktopPath = join(homePath, "system/desktop.json");
 
   app.get("/desktop", async (c) => {
-    return c.json(await readJson(desktopPath, DESKTOP_DEFAULTS, "desktop config"));
+    const config = await readJson<Record<string, unknown>>(desktopPath, {}, "desktop config");
+    return c.json(mergeDesktopDefaults(config));
   });
 
   app.put("/desktop", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {

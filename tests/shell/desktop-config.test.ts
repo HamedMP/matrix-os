@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useDesktopConfigStore, type DockConfig } from "../../shell/src/stores/desktop-config";
+import { DEFAULT_PINNED_APPS } from "../../shell/src/lib/builtin-apps";
 import {
   buildMeshGradient,
   saveDesktopConfig,
@@ -10,6 +11,7 @@ describe("Desktop config", () => {
   beforeEach(() => {
     useDesktopConfigStore.setState({
       dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+      pinnedApps: [...DEFAULT_PINNED_APPS],
     });
     vi.restoreAllMocks();
   });
@@ -80,9 +82,9 @@ describe("Desktop config", () => {
     expect(buildMeshGradient).toBeTypeOf("function");
   });
 
-  it("default pinnedApps is empty array", () => {
+  it("default pinnedApps includes built-in launchers", () => {
     const { pinnedApps } = useDesktopConfigStore.getState();
-    expect(pinnedApps).toEqual([]);
+    expect(pinnedApps).toEqual(DEFAULT_PINNED_APPS);
   });
 
   it("setPinnedApps updates store state", () => {
