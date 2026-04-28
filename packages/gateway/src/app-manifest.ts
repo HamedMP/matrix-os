@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 export const AppManifestSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
-  runtime: z.enum(["static", "node", "python", "rust", "docker"]).default("static"),
+  runtime: z.enum(["static", "vite", "node", "python", "rust", "docker"]).default("static"),
   entry: z.string().optional(),
   port: z.number().int().min(1024).max(65535).optional(),
   framework: z.string().optional(),

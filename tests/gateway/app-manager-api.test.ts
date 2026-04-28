@@ -96,6 +96,25 @@ describe("T1402: App lifecycle API", () => {
       expect(status.status).toBe("stopped");
     });
 
+    it("registers Vite apps discovered from default app manifests", async () => {
+      const dir = join(homePath, "apps", "whiteboard");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "matrix.json"),
+        JSON.stringify({
+          name: "Whiteboard",
+          slug: "whiteboard",
+          runtime: "vite",
+          runtimeVersion: "^1.0.0",
+          build: { command: "pnpm build", output: "dist" },
+        }),
+      );
+
+      const status = await manager.register("whiteboard");
+      expect(status.runtime).toBe("vite");
+      expect(status.status).toBe("stopped");
+    });
+
     it("stop changes status to stopped", async () => {
       const dir = join(homePath, "apps", "x");
       mkdirSync(dir, { recursive: true });
