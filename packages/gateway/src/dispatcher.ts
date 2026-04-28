@@ -70,6 +70,13 @@ export interface Dispatcher {
   homePath: string;
 }
 
+function hasClaudeOauthConfig(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const account = (value as { oauthAccount?: unknown }).oauthAccount;
+  if (!account || typeof account !== "object") return false;
+  return typeof (account as { accountUuid?: unknown }).accountUuid === "string";
+}
+
 type InternalEntry =
   | {
       kind: "serial";
@@ -102,6 +109,39 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
   function logNonFatal(label: string, err: unknown) {
     console.warn(label, err instanceof Error ? err.message : String(err));
+  }
+
+  async function buildKernelEnv(): Promise<Record<string, string | undefined> | undefined> {
+    const env = { ...process.env };
+    try {
+      const raw = await readFile(join(homePath, "system/config.json"), "utf-8");
+      const userConfig = JSON.parse(raw);
+      const byokKey = userConfig?.kernel?.anthropicApiKey;
+      if (byokKey && typeof byokKey === "string") {
+        env.ANTHROPIC_API_KEY = byokKey;
+        return env;
+      }
+    } catch (err: unknown) {
+      if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logNonFatal("[dispatcher] failed to read user API key config:", err);
+      }
+    }
+
+    try {
+      const raw = await readFile(join(homePath, ".claude.json"), "utf-8");
+      if (hasClaudeOauthConfig(JSON.parse(raw))) {
+        env.HOME = homePath;
+        delete env.ANTHROPIC_API_KEY;
+        delete env.ANTHROPIC_BASE_URL;
+        return env;
+      }
+    } catch (err: unknown) {
+      if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logNonFatal("[dispatcher] failed to read Claude OAuth config:", err);
+      }
+    }
+
+    return undefined;
   }
 
   function processQueue() {
@@ -158,44 +198,17 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         sessionId: entry.sessionId,
         model: opts.model,
         maxTurns: opts.maxTurns,
+        env: await buildKernelEnv(),
       };
 
-      // BYOK: read user's API key from config.json and inject into env for kernel
-      let savedApiKey: string | undefined;
-      let didSetKey = false;
-      try {
-        const raw = await readFile(join(homePath, "system/config.json"), "utf-8");
-        const userConfig = JSON.parse(raw);
-        const byokKey = userConfig?.kernel?.anthropicApiKey;
-        if (byokKey && typeof byokKey === "string") {
-          savedApiKey = process.env.ANTHROPIC_API_KEY;
-          process.env.ANTHROPIC_API_KEY = byokKey;
-          didSetKey = true;
-        }
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-          logNonFatal("[dispatcher] failed to read user API key config:", err);
-        }
-      }
-
-      try {
-        for await (const event of spawnFn(message, config, entry.abortController)) {
-          entry.onEvent(event);
-          if (event.type === "init") {
-            resultSessionId = event.sessionId;
-          } else if (event.type === "tool_start") {
-            toolsUsed.push(event.tool);
-          } else if (event.type === "result") {
-            resultData = event.data;
-          }
-        }
-      } finally {
-        if (didSetKey) {
-          if (savedApiKey !== undefined) {
-            process.env.ANTHROPIC_API_KEY = savedApiKey;
-          } else {
-            delete process.env.ANTHROPIC_API_KEY;
-          }
+      for await (const event of spawnFn(message, config, entry.abortController)) {
+        entry.onEvent(event);
+        if (event.type === "init") {
+          resultSessionId = event.sessionId;
+        } else if (event.type === "tool_start") {
+          toolsUsed.push(event.tool);
+        } else if (event.type === "result") {
+          resultData = event.data;
         }
       }
 
@@ -302,6 +315,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             homePath,
             model: opts.model,
             maxTurns: opts.maxTurns,
+            env: await buildKernelEnv(),
           };
 
           for await (const event of spawnFn(batchEntry.message, config)) {

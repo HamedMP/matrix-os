@@ -78,6 +78,7 @@ export interface KernelConfig {
   model?: string;
   effort?: string;
   maxTurns?: number;
+  env?: Record<string, string | undefined>;
 }
 
 export function kernelOptions(config: KernelConfig) {
@@ -114,6 +115,7 @@ export function kernelOptions(config: KernelConfig) {
     model: config.model ?? "claude-opus-4-6",
     systemPrompt,
     cwd: homePath,
+    ...(config.env ? { env: config.env } : {}),
     settingSources: ["project"] as ("user" | "project" | "local")[],
     permissionMode: "bypassPermissions" as const,
     allowDangerouslySkipPermissions: true,

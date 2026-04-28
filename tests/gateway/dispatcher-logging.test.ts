@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -176,5 +176,58 @@ describe("T1355: Batch dispatch logging", () => {
     expect(errorEntries[0].batch).toBe(true);
     expect(errorEntries[0].error).toBeDefined();
     expect(errorEntries[0].error.message).toBe("batch item failed");
+  });
+});
+
+describe("Dispatcher Claude auth environment", () => {
+  let homePath: string;
+
+  beforeEach(() => {
+    homePath = makeHomePath();
+  });
+
+  it("prefers a Claude OAuth login in the Matrix home over the platform proxy key", async () => {
+    writeFileSync(
+      join(homePath, ".claude.json"),
+      JSON.stringify({
+        oauthAccount: {
+          accountUuid: "595e4216-edcf-4fa3-80ed-8e2e2e6b9d9c",
+          emailAddress: "user@example.com",
+        },
+      }),
+      "utf-8",
+    );
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
+    const previousBaseUrl = process.env.ANTHROPIC_BASE_URL;
+    const previousHome = process.env.HOME;
+    process.env.ANTHROPIC_API_KEY = "sk-proxy-hamedmp";
+    process.env.ANTHROPIC_BASE_URL = "http://proxy:8080";
+    process.env.HOME = "/root";
+
+    let observedEnv: Record<string, string | undefined> | undefined;
+    const spawn: SpawnFn = async function* (_message, config) {
+      observedEnv = config.env;
+      yield { type: "init", sessionId: "oauth-session" } as KernelEvent;
+      yield {
+        type: "result",
+        data: { sessionId: "oauth-session", cost: 0, turns: 1, tokensIn: 0, tokensOut: 0 },
+      } as KernelEvent;
+    };
+
+    try {
+      const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
+      await dispatcher.dispatch("hello", undefined, () => {});
+    } finally {
+      if (previousApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousApiKey;
+      if (previousBaseUrl === undefined) delete process.env.ANTHROPIC_BASE_URL;
+      else process.env.ANTHROPIC_BASE_URL = previousBaseUrl;
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+
+    expect(observedEnv?.HOME).toBe(homePath);
+    expect(observedEnv?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(observedEnv?.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 });
