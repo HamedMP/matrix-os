@@ -6,6 +6,9 @@ Dockerfile*
 *.log*
 .env*
 coverage
+dist
+dist/
+.next
 tests
 specs
 docs
