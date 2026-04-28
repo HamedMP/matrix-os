@@ -1,9 +1,15 @@
 #cloud-config
+groups:
+  - matrix
+  - docker
+
 users:
   - name: matrix
+    primary_group: matrix
     system: true
     shell: /usr/sbin/nologin
-    groups: docker
+    groups:
+      - docker
 
 write_files:
   - path: /opt/matrix/postgres-compose.yml

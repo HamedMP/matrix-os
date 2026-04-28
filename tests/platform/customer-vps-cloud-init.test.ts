@@ -56,6 +56,15 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(document.errors).toEqual([]);
   });
 
+  it('declares the matrix group before write_files ownership uses it', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit.indexOf('groups:\n  - matrix')).toBeGreaterThanOrEqual(0);
+    expect(cloudInit.indexOf('groups:\n  - matrix')).toBeLessThan(cloudInit.indexOf('write_files:'));
+    expect(cloudInit).toContain('primary_group: matrix');
+  });
+
   it('loads the production customer VPS cloud-init template', async () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
