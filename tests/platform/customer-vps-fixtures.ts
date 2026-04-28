@@ -7,7 +7,7 @@ export function createMockHetznerClient(overrides: Partial<HetznerClient> = {}):
     id: 123456,
     status: 'running',
     publicIPv4: '203.0.113.10',
-    publicIPv6: '2001:db8::10',
+    publicIPv6: '2001:db8::/64',
   };
   return {
     createServer: vi.fn().mockResolvedValue(defaultServer),

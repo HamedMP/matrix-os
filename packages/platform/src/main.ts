@@ -724,6 +724,9 @@ export function createApp(deps: {
     )) {
       return next();
     }
+    if ((isAppDomain || isCodeDomain) && (reqPath === '/vps' || reqPath.startsWith('/vps/'))) {
+      return next();
+    }
     const isPublicIntegrationPath =
       reqPath === '/api/integrations/available' ||
       reqPath.startsWith('/api/integrations/webhook/');

@@ -9,6 +9,7 @@ import {
 import { createApp } from "../../packages/platform/src/main.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
+import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -126,6 +127,44 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
     const body = await res.json().catch(() => ({}));
     expect(body.error).not.toBe("Clerk not configured");
     expect(body.error).not.toBe("Container unreachable");
+  });
+
+  it("POST /vps/register on Host app.matrix-os.com reaches customer VPS routes without Clerk auth", async () => {
+    const customerVpsService = {
+      register: vi.fn().mockResolvedValue({ registered: true, status: "running" }),
+    } as unknown as CustomerVpsService;
+    app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("clerk not reachable")),
+      }),
+      customerVpsService,
+    });
+
+    const res = await app.request("/vps/register", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer registration-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+        hetznerServerId: 123456,
+        publicIPv4: "203.0.113.10",
+        imageVersion: "matrix-os-host-dev",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ registered: true, status: "running" });
+    expect(customerVpsService.register).toHaveBeenCalledWith("registration-token", {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+      hetznerServerId: 123456,
+      publicIPv4: "203.0.113.10",
+      imageVersion: "matrix-os-host-dev",
+    });
   });
 
   it("non-device /api/* path on Host app.matrix-os.com WITHOUT a token is rejected by the middleware (401)", async () => {

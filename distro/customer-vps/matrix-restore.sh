@@ -13,17 +13,17 @@ snapshot_path="/var/lib/matrix/db/latest.dump"
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
 rm -f "$restore_flag"
 
-if ! matrixctl r2 exists system/vps-meta.json; then
+if ! /opt/matrix/bin/matrixctl r2 exists system/vps-meta.json; then
   touch "$restore_flag"
   exit 0
 fi
 
-if ! matrixctl r2 exists system/db/latest; then
+if ! /opt/matrix/bin/matrixctl r2 exists system/db/latest; then
   touch "$restore_flag"
   exit 0
 fi
 
-if ! matrixctl r2 get system/db/latest "$latest_file"; then
+if ! /opt/matrix/bin/matrixctl r2 get system/db/latest "$latest_file"; then
   echo "matrix-restore: failed to fetch latest pointer" >&2
   exit 1
 fi
@@ -37,7 +37,7 @@ case "$latest_key" in
     ;;
 esac
 
-if ! matrixctl r2 get "$latest_key" "$snapshot_path"; then
+if ! /opt/matrix/bin/matrixctl r2 get "$latest_key" "$snapshot_path"; then
   echo "matrix-restore: failed to fetch snapshot" >&2
   exit 1
 fi

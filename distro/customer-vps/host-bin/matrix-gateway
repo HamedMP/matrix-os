@@ -29,6 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+cd "$APP_DIR"
 "$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
 gateway_pid="$!"
 

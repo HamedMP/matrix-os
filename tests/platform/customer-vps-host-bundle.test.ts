@@ -12,6 +12,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
+    expect(script).toContain('pnpm rebuild better-sqlite3 node-pty');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {
@@ -24,5 +25,14 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('/vps/register');
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(launcher).toContain('cd "$APP_DIR"');
+  });
+
+  it('restore script resolves matrixctl from the installed host bin directory', () => {
+    const root = process.cwd();
+    const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
+
+    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 exists system/vps-meta.json');
+    expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get system/db/latest "$latest_file"');
   });
 });

@@ -12,7 +12,7 @@ export const VpsMetaSchema = z.object({
   provisionedAt: z.string().datetime(),
   lastSyncAt: z.string().datetime(),
   publicIPv4: z.ipv4(),
-  publicIPv6: z.ipv6().optional(),
+  publicIPv6: z.union([z.ipv6(), z.cidrv6()]).optional(),
 });
 
 export type VpsMeta = z.infer<typeof VpsMetaSchema>;
