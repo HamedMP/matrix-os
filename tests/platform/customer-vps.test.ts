@@ -43,6 +43,9 @@ describe('platform/customer-vps', () => {
         PLATFORM_PORT: '9000',
         PLATFORM_SECRET: 'platform-secret',
         HETZNER_API_TOKEN: 'token',
+        S3_ACCESS_KEY_ID: 'r2-access-key',
+        S3_SECRET_ACCESS_KEY: 'r2-secret-key',
+        S3_ENDPOINT: 'https://r2.example',
         R2_BUCKET: 'matrixos-sync',
       }),
       hetzner,
@@ -83,6 +86,17 @@ describe('platform/customer-vps', () => {
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain(`UPGRADE_TOKEN=${expected}`);
     expect(createInput?.userData).toContain(`MATRIX_CODE_PROXY_TOKEN=${expected}`);
+  });
+
+  it('templates R2 credentials into provisioned customer hosts for backups', async () => {
+    const { service, hetzner } = createService();
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
+    expect(createInput?.userData).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
+    expect(createInput?.userData).toContain("R2_ENDPOINT='https://r2.example'");
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {

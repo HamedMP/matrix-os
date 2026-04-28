@@ -198,11 +198,19 @@ write_files:
       set -euo pipefail
 
       if [ -f /opt/matrix/env/r2.env ]; then
+        set +u
         source /opt/matrix/env/r2.env
+        set -u
       fi
       if [ -f /opt/matrix/env/host.env ]; then
+        set +u
         source /opt/matrix/env/host.env
+        set -u
       fi
+      export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+      export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+      export AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
+      export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
 
       R2_BUCKET="${R2_BUCKET:-${MATRIX_R2_BUCKET:-matrixos-sync}}"
       R2_PREFIX="${R2_PREFIX:-${MATRIX_R2_PREFIX:-}}"
@@ -296,9 +304,9 @@ write_files:
           system/db/snapshots/*.dump) ;;
           *) fail "invalid latest pointer" ;;
         esac
-        local tmp
-        tmp="$(mktemp)"
-        trap 'rm -f "$tmp"' EXIT
+      local tmp
+      tmp="$(mktemp)"
+      trap 'rm -f "${tmp:-}"' EXIT
         printf '%s\n' "$snapshot_key" > "$tmp"
         r2_put "$tmp" "system/db/latest"
       }
@@ -520,6 +528,14 @@ write_files:
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
+  - path: /opt/matrix/env/r2.env
+    owner: root:matrix
+    permissions: "0640"
+    content: |
+      AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'
+      AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'
+      R2_ENDPOINT='{{r2Endpoint}}'
+      R2_ACCOUNT_ID='{{r2AccountId}}'
   - path: /opt/matrix/env/postgres.env
     owner: root:root
     permissions: "0640"

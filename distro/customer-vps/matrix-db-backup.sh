@@ -33,8 +33,8 @@ if [ ! -s "$snapshot_path" ]; then
   exit 1
 fi
 
-matrixctl r2 put "$snapshot_path" "$snapshot_key"
-matrixctl r2 put-latest "$snapshot_key"
+/opt/matrix/bin/matrixctl r2 put "$snapshot_path" "$snapshot_key"
+/opt/matrix/bin/matrixctl r2 put-latest "$snapshot_key"
 
 find "$snapshot_dir" -maxdepth 1 -type f -name '*.dump' -printf '%T@ %p\n' \
   | sort -rn \

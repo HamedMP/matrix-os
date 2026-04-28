@@ -19,6 +19,10 @@ describe('platform/customer-vps-cloud-init', () => {
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
+    r2AccessKeyId: 'r2-access-key',
+    r2SecretAccessKey: 'r2-secret-key',
+    r2Endpoint: 'https://r2.example',
+    r2AccountId: 'account-id',
     r2Bucket: 'matrixos-sync',
     r2Prefix: 'matrixos-sync/user_123/',
     postgresPassword: 'postgres-secret',
@@ -59,6 +63,18 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
   });
 
+  it('renders R2 credentials for customer host backups into customer cloud-init', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const rendered = renderCloudInitTemplate(cloudInit, input);
+
+    expect(rendered).toContain("AWS_ACCESS_KEY_ID='r2-access-key'");
+    expect(rendered).toContain("AWS_SECRET_ACCESS_KEY='r2-secret-key'");
+    expect(rendered).toContain("R2_ENDPOINT='https://r2.example'");
+    expect(rendered).not.toContain("AWS_ACCESS_KEY_ID=''\n");
+    expect(rendered).not.toContain("AWS_SECRET_ACCESS_KEY=''\n");
+  });
+
   it('renders valid YAML for the production customer cloud-init', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
@@ -75,7 +91,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit.indexOf('groups:\n  - matrix')).toBeGreaterThanOrEqual(0);
     expect(cloudInit.indexOf('groups:\n  - matrix')).toBeLessThan(cloudInit.indexOf('write_files:'));
     expect(cloudInit).toContain('primary_group: matrix');
-    expect(cloudInit).not.toContain('owner: root:matrix');
+    expect(cloudInit).toContain('owner: root:matrix');
     expect(cloudInit).toContain('chown root:matrix /opt/matrix/postgres-compose.yml');
   });
 
@@ -87,6 +103,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
+    expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
+    expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
   });
 
   it('copies customer VPS cloud-init assets into the runtime image', () => {
@@ -106,7 +124,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nr2={{r2SecretAccessKey}}\n',
       input,
     );
 
@@ -115,6 +133,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(redacted).not.toContain('registration-secret');
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
+    expect(redacted).not.toContain('r2-secret-key');
     expect(redacted).toContain('[redacted]');
   });
 
@@ -139,8 +158,8 @@ describe('platform/customer-vps-cloud-init', () => {
     const root = process.cwd();
     const backup = readFileSync(join(root, 'distro/customer-vps/matrix-db-backup.sh'), 'utf8');
 
-    expect(backup.indexOf('matrixctl r2 put "$snapshot_path" "$snapshot_key"')).toBeLessThan(
-      backup.indexOf('matrixctl r2 put-latest "$snapshot_key"'),
+    expect(backup.indexOf('/opt/matrix/bin/matrixctl r2 put "$snapshot_path" "$snapshot_key"')).toBeLessThan(
+      backup.indexOf('/opt/matrix/bin/matrixctl r2 put-latest "$snapshot_key"'),
     );
     expect(backup).not.toContain('matrixctl r2 prune system/db/snapshots/');
     expect(backup).toContain('--format=custom');
@@ -197,6 +216,9 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
     expect(matrixctl).toContain('${MATRIX_PLATFORM_URL%/}/vps/recover');
     expect(matrixctl).toContain('curl --fail --silent --show-error --max-time 10');
+    expect(matrixctl).toContain('set +u');
+    expect(matrixctl).toContain('export AWS_ACCESS_KEY_ID=');
+    expect(matrixctl).toContain('rm -f "${tmp:-}"');
     expect(cloudInit).toContain('matrixctl recover <clerk-user-id> [--allow-empty]');
   });
 });

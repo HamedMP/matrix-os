@@ -10,17 +10,30 @@ export interface CustomerHostConfig {
   platformRegisterUrl: string;
   platformVerificationToken: string;
   registrationToken: string;
+  r2AccessKeyId: string;
+  r2SecretAccessKey: string;
+  r2Endpoint: string;
+  r2AccountId: string;
   r2Bucket: string;
   r2Prefix: `matrixos-sync/${string}/`;
   postgresPassword: string;
 }
 
-const SECRET_KEYS = ['registrationToken', 'postgresPassword', 'platformVerificationToken'] as const;
+const SECRET_KEYS = [
+  'registrationToken',
+  'postgresPassword',
+  'platformVerificationToken',
+  'r2AccessKeyId',
+  'r2SecretAccessKey',
+] as const;
 const REQUIRED_KEYS = ['hostBundleUrl', ...SECRET_KEYS] as const;
 
 function assertRenderable(input: CustomerHostConfig): void {
   for (const key of REQUIRED_KEYS) {
     if (!input[key]) throw new Error(`Missing ${key}`);
+  }
+  if (!input.r2Endpoint && !input.r2AccountId) {
+    throw new Error('Missing r2Endpoint or r2AccountId');
   }
 }
 
