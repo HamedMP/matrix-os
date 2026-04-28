@@ -56,13 +56,15 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(document.errors).toEqual([]);
   });
 
-  it('declares the matrix group before write_files ownership uses it', () => {
+  it('keeps write_files independent of the matrix group creation order', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
     expect(cloudInit.indexOf('groups:\n  - matrix')).toBeGreaterThanOrEqual(0);
     expect(cloudInit.indexOf('groups:\n  - matrix')).toBeLessThan(cloudInit.indexOf('write_files:'));
     expect(cloudInit).toContain('primary_group: matrix');
+    expect(cloudInit).not.toContain('owner: root:matrix');
+    expect(cloudInit).toContain('chown root:matrix /opt/matrix/postgres-compose.yml');
   });
 
   it('loads the production customer VPS cloud-init template', async () => {
@@ -139,6 +141,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(restore).toContain('restore-complete');
     expect(restore).toContain('pg_isready');
     expect(restore.indexOf('pg_isready')).toBeLessThan(restore.indexOf('pg_restore'));
+    expect(restore).toContain('docker run -d');
+    expect(restore).not.toContain('docker compose');
     expect(restore).toContain('pg_restore');
     expect(restore).toContain('exit 1');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
@@ -163,7 +167,10 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('permissions: "0750"');
-    expect(cloudInit).toContain('awscli postgresql-client');
+    expect(cloudInit).toContain('docker.io postgresql-client nginx openssl unzip');
+    expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
+    expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
+    expect(cloudInit).toContain('docker run -d');
     expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
   });
 

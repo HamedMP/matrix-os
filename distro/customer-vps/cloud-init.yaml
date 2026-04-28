@@ -13,7 +13,7 @@ users:
 
 write_files:
   - path: /opt/matrix/postgres-compose.yml
-    owner: root:matrix
+    owner: root:root
     permissions: "0644"
     content: |
       services:
@@ -191,7 +191,7 @@ write_files:
         }
       }
   - path: /opt/matrix/bin/matrixctl
-    owner: root:matrix
+    owner: root:root
     permissions: "0750"
     content: |
       #!/usr/bin/env bash
@@ -379,7 +379,7 @@ write_files:
           ;;
       esac
   - path: /opt/matrix/bin/matrix-db-backup.sh
-    owner: root:matrix
+    owner: root:root
     permissions: "0750"
     content: |
       #!/usr/bin/env bash
@@ -419,7 +419,7 @@ write_files:
       matrixctl r2 put "$snapshot_path" "$snapshot_key"
       matrixctl r2 put-latest "$snapshot_key"
   - path: /opt/matrix/bin/matrix-restore.sh
-    owner: root:matrix
+    owner: root:root
     permissions: "0750"
     content: |
       #!/usr/bin/env bash
@@ -472,7 +472,20 @@ write_files:
 
       export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
 
-      docker compose -f /opt/matrix/postgres-compose.yml up -d postgres
+      if docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+        :
+      elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
+        docker start matrix-postgres >/dev/null
+      else
+        docker volume create matrix-postgres >/dev/null
+        docker run -d \
+          --name matrix-postgres \
+          --restart unless-stopped \
+          --env-file /opt/matrix/env/postgres.env \
+          -v matrix-postgres:/var/lib/postgresql/data \
+          -p 127.0.0.1:5432:5432 \
+          postgres:16 >/dev/null
+      fi
 
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         if pg_isready --host=127.0.0.1 --username="${POSTGRES_USER:-matrix}" --dbname="${POSTGRES_DB:-matrix}" >/dev/null 2>&1; then
@@ -494,7 +507,7 @@ write_files:
 
       touch "$restore_flag"
   - path: /opt/matrix/env/host.env
-    owner: root:matrix
+    owner: root:root
     permissions: "0640"
     content: |
       MATRIX_MACHINE_ID={{machineId}}
@@ -506,24 +519,28 @@ write_files:
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
   - path: /opt/matrix/env/postgres.env
-    owner: root:matrix
+    owner: root:root
     permissions: "0640"
     content: |
       POSTGRES_DB=matrix
       POSTGRES_USER=matrix
       POSTGRES_PASSWORD={{postgresPassword}}
   - path: /opt/matrix/env/registration.env
-    owner: root:matrix
+    owner: root:root
     permissions: "0640"
     content: |
       MATRIX_REGISTRATION_TOKEN={{registrationToken}}
 
 runcmd:
   - apt-get update
-  - apt-get install -y ca-certificates curl docker.io docker-compose-plugin awscli postgresql-client nginx openssl
+  - apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl unzip
+  - curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+  - unzip -q /tmp/awscliv2.zip -d /tmp
+  - /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
   - install -d -o root -g matrix -m 0770 /opt/matrix
   - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
   - install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+  - chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
   - |
     . /opt/matrix/env/host.env
     [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
@@ -541,7 +558,21 @@ runcmd:
   - rm -f /etc/nginx/sites-enabled/default
   - ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
   - nginx -t
-  - docker compose -f /opt/matrix/postgres-compose.yml up -d
+  - |
+    if docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+      :
+    elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
+      docker start matrix-postgres >/dev/null
+    else
+      docker volume create matrix-postgres >/dev/null
+      docker run -d \
+        --name matrix-postgres \
+        --restart unless-stopped \
+        --env-file /opt/matrix/env/postgres.env \
+        -v matrix-postgres:/var/lib/postgresql/data \
+        -p 127.0.0.1:5432:5432 \
+        postgres:16 >/dev/null
+    fi
   - systemctl daemon-reload
   - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer nginx
   - systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service

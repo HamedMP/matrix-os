@@ -49,7 +49,20 @@ fi
 
 export PGPASSWORD="${POSTGRES_PASSWORD:?postgres password missing}"
 
-docker compose -f /opt/matrix/postgres-compose.yml up -d postgres
+if docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+  :
+elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
+  docker start matrix-postgres >/dev/null
+else
+  docker volume create matrix-postgres >/dev/null
+  docker run -d \
+    --name matrix-postgres \
+    --restart unless-stopped \
+    --env-file /opt/matrix/env/postgres.env \
+    -v matrix-postgres:/var/lib/postgresql/data \
+    -p 127.0.0.1:5432:5432 \
+    postgres:16 >/dev/null
+fi
 
 echo "matrix-restore: waiting for postgres..."
 for _ in $(seq 1 30); do
