@@ -8,6 +8,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
+const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
 
 interface SystemInfo {
   version?: string;
@@ -31,9 +32,22 @@ interface HealthStatus {
   plugins?: number;
 }
 
-function isNewer(latest: string, current: string): boolean {
-  const a = latest.split(".").map(Number);
-  const b = current.split(".").map(Number);
+function parseSemver(value: string): [number, number, number] | null {
+  const match = value.match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+export function normalizeMatrixReleaseTag(tagName: string): string | null {
+  if (tagName.startsWith("cli-")) return null;
+  const parsed = parseSemver(tagName);
+  return parsed ? parsed.join(".") : null;
+}
+
+export function isNewer(latest: string, current: string): boolean {
+  const a = parseSemver(latest);
+  const b = parseSemver(current);
+  if (!a || !b) return false;
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const av = a[i] ?? 0;
     const bv = b[i] ?? 0;
@@ -49,24 +63,36 @@ export function SystemSection() {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${GATEWAY}/api/system/info`)
+    fetch(`${GATEWAY}/api/system/info`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
       .then((r) => r.ok ? r.json() : {})
       .then(setInfo)
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[system-settings] failed to load system info:", err instanceof Error ? err.message : String(err));
+      });
 
-    fetch(`${GATEWAY}/health`)
+    fetch(`${GATEWAY}/health`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
       .then((r) => r.ok ? r.json() : null)
       .then(setHealth)
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[system-settings] failed to load health:", err instanceof Error ? err.message : String(err));
+      });
 
-    fetch("https://api.github.com/repos/HamedMP/matrix-os/releases/latest")
+    fetch("https://api.github.com/repos/HamedMP/matrix-os/releases?per_page=20", {
+      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+    })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (data?.tag_name) {
-          setLatestVersion(data.tag_name.replace(/^v/, ""));
-        }
+        if (!Array.isArray(data)) return;
+        const appRelease = data
+          .map((release: { tag_name?: unknown }) =>
+            typeof release.tag_name === "string" ? normalizeMatrixReleaseTag(release.tag_name) : null,
+          )
+          .find((version: string | null): version is string => version !== null);
+        setLatestVersion(appRelease ?? null);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.warn("[system-settings] failed to load release metadata:", err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   const [upgrading, setUpgrading] = useState(false);
