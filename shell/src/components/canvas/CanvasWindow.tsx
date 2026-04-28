@@ -46,11 +46,9 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   const focusWindow = useWindowManager((s) => s.focusWindow);
   const moveWindow = useWindowManager((s) => s.moveWindow);
   const resizeWindow = useWindowManager((s) => s.resizeWindow);
+  const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const iconUrl = useWindowManager((s) => s.apps.find((a) => a.path === win.path)?.iconUrl);
-  const maxZ = useWindowManager((s) =>
-    s.windows.reduce((m, w) => (!w.minimized && w.zIndex > m ? w.zIndex : m), 0),
-  );
-  const isFocused = win.zIndex === maxZ;
+  const isFocused = focusedWindowId === win.id;
   const showTitles = useCanvasSettings((s) => s.showTitles);
   const themeStyle = useThemeStyle();
   const isNeumorphic = themeStyle === "neumorphic";

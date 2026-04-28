@@ -117,6 +117,7 @@ export function CanvasTransform({
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type !== "os:wheel-zoom") return;
+      if (!panEnabled) return;
       const { deltaY, clientX, clientY } = e.data;
       const iframes = document.querySelectorAll("iframe");
       let parentX = clientX;
@@ -136,7 +137,7 @@ export function CanvasTransform({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [panEnabled]);
 
   // Track space (for pan) and ctrl/cmd (for zoom overlay over iframes)
   useEffect(() => {

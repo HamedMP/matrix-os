@@ -49,4 +49,18 @@ describe("CanvasTransform app focus interactions", () => {
 
     expect(useCanvasTransform.getState().panY).toBe(-80);
   });
+
+  it("ignores iframe-forwarded zoom while app focus owns input", () => {
+    render(
+      <CanvasTransform panEnabled={false}>
+        <div>App content</div>
+      </CanvasTransform>,
+    );
+
+    window.dispatchEvent(new MessageEvent("message", {
+      data: { type: "os:wheel-zoom", deltaY: -100, clientX: 200, clientY: 100 },
+    }));
+
+    expect(useCanvasTransform.getState().zoom).toBe(1);
+  });
 });

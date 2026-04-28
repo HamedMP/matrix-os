@@ -718,6 +718,19 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     }
   }, [wmOpenWindow, dockXOffset]);
 
+  const focusCanvasWindow = useCallback((winId: string) => {
+    if (useDesktopMode.getState().mode !== "canvas") return;
+    requestAnimationFrame(() => {
+      const win = useWindowManager.getState().getWindow(winId);
+      if (!win || win.minimized) return;
+      useCanvasTransform.getState().focusOnWindow(
+        win,
+        window.innerWidth,
+        window.innerHeight,
+      );
+    });
+  }, []);
+
   const focusOrOpen = useCallback((name: string, path: string) => {
     const existing = useWindowManager.getState().windows.find(
       (w) => w.path === path || w.path.startsWith(path + ":"),
@@ -725,10 +738,11 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
     if (existing) {
       wmRestoreAndFocusWindow(existing.id);
+      focusCanvasWindow(existing.id);
     } else {
       openWindow(name, path);
     }
-  }, [openWindow, wmRestoreAndFocusWindow]);
+  }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
 
   // Vocal mode's open_app tool and auto-open-after-build both go through
   // this. Fuzzy-matches `query` against the current apps list and focuses
@@ -1407,6 +1421,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                       active={false}
                       onClick={() => {
                         wmRestoreAndFocusWindow(win.id);
+                        focusCanvasWindow(win.id);
                       }}
                       iconSize={Math.round(dock.iconSize * 0.8)}
                       tooltipSide={tooltipSide}

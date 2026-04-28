@@ -102,6 +102,9 @@ export function MissionControl({
           opacity: visible ? 1 : 0,
           transform: visible ? "scale(1) translateY(0)" : "scale(0.97) translateY(12px)",
         }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
       >
         <div className="flex items-center justify-between px-6 py-4">
           <h2 className="text-lg font-semibold text-white">Launcher</h2>
@@ -232,13 +235,23 @@ function LauncherGrid({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 pb-6">
+    <div
+      className="flex-1 overflow-y-auto px-6 pb-6"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       {mainApps.length > 0 && (
         <>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
             Main
           </div>
-          <div className="flex flex-wrap gap-1 justify-start">
+          <div
+            className="flex flex-wrap gap-1 justify-start"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) onClose();
+            }}
+          >
             {mainApps.map((app, i) => renderTile(app, i))}
           </div>
         </>
@@ -261,7 +274,12 @@ function LauncherGrid({
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
             My Apps
           </div>
-          <div className="flex flex-wrap gap-1 justify-start">
+          <div
+            className="flex flex-wrap gap-1 justify-start"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) onClose();
+            }}
+          >
             {generatedApps.map((app, i) => renderTile(app, mainApps.length + i))}
           </div>
         </>

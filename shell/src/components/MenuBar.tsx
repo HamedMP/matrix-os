@@ -164,16 +164,18 @@ function MenuDropdown({
 export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, children }: { onOpenCommandPalette: () => void; onNewWindow: () => void; onMinimizeWindow?: (id: string) => void; children?: React.ReactNode }) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
+  const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const closeWindow = useWindowManager((s) => s.closeWindow);
   const wmMinimize = useWindowManager((s) => s.minimizeWindow);
   const minimizeWindow = onMinimizeWindow ?? wmMinimize;
-  const focusedWindow = windows
-    .filter((w) => !w.minimized)
-    .sort((a, b) => b.zIndex - a.zIndex)[0];
+  const focusedWindow = focusedWindowId
+    ? windows.find((w) => w.id === focusedWindowId && !w.minimized)
+    : undefined;
   const focusedAppPath = getBaseAppPath(focusedWindow?.path);
   const focusedApp = apps.find((app) => app.path === focusedAppPath);
   const activeAppName = focusedApp?.name ?? focusedWindow?.title ?? "Matrix OS";
   const activeAppIconUrl = focusedApp?.iconUrl ?? FALLBACK_APP_ICON;
+  const focusLabel = focusedWindow ? activeAppName : "Canvas";
 
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
@@ -259,6 +261,12 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
         {/* Center: contextual toolbar controls — always centered via grid */}
         <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
           {children}
+          <span
+            data-testid="menu-focus-indicator"
+            className="ml-1 rounded-full border border-foreground/10 bg-foreground/[0.04] px-2 py-0.5 text-[11px] leading-4 text-foreground/55"
+          >
+            {focusLabel}
+          </span>
         </div>
 
         {/* Right: Search + clock + user */}
