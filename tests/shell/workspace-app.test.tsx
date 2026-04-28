@@ -16,6 +16,16 @@ describe("WorkspaceApp", () => {
           github: { owner: "owner", repo: index === 0 ? "repo" : `repo-${index}` },
         })) });
       }
+      if (url.endsWith("/api/projects") && init?.method === "POST") {
+        return json({
+          project: {
+            slug: "new-repo",
+            name: "new-repo",
+            localPath: "/home/matrixos/home/projects/new-repo/repo",
+            github: { owner: "owner", repo: "new-repo" },
+          },
+        });
+      }
       if (url.includes("/api/projects/repo/tasks")) {
         return json({ tasks: Array.from({ length: 1000 }, (_, index) => ({
           id: `task_${index}`,
@@ -140,6 +150,43 @@ describe("WorkspaceApp", () => {
     expect(screen.getByTestId("workspace-task-grid").className).toContain("grid-cols-1");
     expect(screen.getByTestId("workspace-task-grid").className).toContain("md:grid-cols-2");
     expect(screen.getByTestId("workspace-task-grid").className).toContain("xl:grid-cols-3");
+  });
+
+  it("creates a project from the Workspace sidebar", async () => {
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("Repo").length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByLabelText("GitHub repository URL"), { target: { value: "github.com/owner/new-repo" } });
+    fireEvent.change(screen.getByLabelText("Project slug"), { target: { value: "new-repo" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add/i }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/projects"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ url: "github.com/owner/new-repo", slug: "new-repo" }),
+      }),
+    );
+  });
+
+  it("shows an actionable empty state when no managed projects exist", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [] });
+      }
+      return json({});
+    }));
+
+    render(<WorkspaceApp />);
+
+    expect(await screen.findByTestId("workspace-empty")).toBeTruthy();
+    expect(screen.getByLabelText("GitHub repository URL")).toBeTruthy();
+    expect(screen.getByText("No projects yet")).toBeTruthy();
   });
 });
 

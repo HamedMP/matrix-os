@@ -100,6 +100,9 @@ bun run docker:full       # + proxy, platform, conduit
 
 ## Shell Gotchas
 
+- **Canvas mode is the primary shell experience**: users may only see Canvas in the sidebar. Build and verify new shell features in Canvas first, then Desktop. Desktop compatibility still matters, but Canvas is the main product surface.
+- **Wire built-ins in every renderer**: built-in app paths like `__workspace__`, `__terminal__`, `__file-browser__`, `__preview-window__`, and `__chat__` must be handled in both `Desktop.tsx` and `canvas/CanvasWindow.tsx`. Never let `__...` paths fall through to `AppViewer`, because that turns them into `/files/__...` 404s.
+- **Canvas and Desktop share state**: window/app paths, layout persistence, dock pins, app icons, and restore/focus behavior must work in both modes. Add tests around shared helpers when possible, and manually check Canvas mode first for user-visible shell changes.
 - **Never mutate state in reducers**: `reduceChat` etc. must create new objects via spread, not mutate in-place. Shallow copies share refs; mutating causes streaming text duplication.
 - **Never use `meta.icon` as image URL**: always use generated PNG at `/files/system/icons/{slug}.png`
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
@@ -112,11 +115,12 @@ bun run docker:full       # + proxy, platform, conduit
 
 Read `specs/ux-guide.md`. Key rules:
 
-1. Toggle consistency: click to open, click same spot to close. Light dismiss. Escape.
-2. No layout shift: transient panels overlay, never push content.
-3. Spatial memory: window positions persist across reloads.
-4. Progressive disclosure: clean defaults, details one click away.
-5. Empty states are onboarding: icon + headline + description + CTA.
+1. Canvas-first: primary shell workflows must work in Canvas mode before Desktop mode.
+2. Toggle consistency: click to open, click same spot to close. Light dismiss. Escape.
+3. No layout shift: transient panels overlay, never push content.
+4. Spatial memory: window positions persist across reloads.
+5. Progressive disclosure: clean defaults, details one click away.
+6. Empty states are onboarding: icon + headline + description + CTA.
 
 ## Spec Quality Gates
 

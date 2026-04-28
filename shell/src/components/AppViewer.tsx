@@ -16,6 +16,7 @@ import { openAppSession } from "@/lib/app-session";
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
 const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
+export const APP_IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
 
 interface AppViewerProps {
   path: string;
@@ -260,7 +261,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       key={refreshKey}
       src={iframeSrc}
       className="h-full w-full border-0"
-      sandbox="allow-scripts allow-forms allow-popups"
+      sandbox={APP_IFRAME_SANDBOX}
       title={path}
     />
   );

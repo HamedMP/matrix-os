@@ -112,6 +112,22 @@ Discoverability comes in layers, each reaching a different user type:
 
 ## Part 2: Desktop Shell Patterns
 
+### Shell Modes
+
+Matrix OS has multiple shell renderers over the same window/app model.
+
+**Canvas mode is primary.** It is the main user-facing shell surface and may be the only visible mode for some users. New shell features, built-in apps, launch flows, window restore behavior, and settings panels must be designed and verified in Canvas first.
+
+**Desktop mode is compatibility.** The classic floating-window renderer must keep working, but it is secondary to Canvas for product behavior.
+
+**Renderer parity rule:** Any built-in app path handled in one renderer must be handled in all window renderers. This includes `__workspace__`, `__terminal__`, `__file-browser__`, `__preview-window__`, and `__chat__`. Built-in `__...` paths must never fall through to generic app/file viewers; otherwise the shell will request invalid URLs such as `/files/__workspace__`.
+
+**Verification checklist for shell changes:**
+- Open the feature in Canvas mode first.
+- Confirm Desktop mode still renders the same built-in path or app path.
+- Check network logs for accidental `/files/__...` requests.
+- Confirm layout restore, icon rendering, focus/bring-to-front, minimize/close, and reload behavior.
+
 ### Dock (Left Sidebar)
 
 The dock is a launcher and task indicator. It shows pinned system functions + running apps.

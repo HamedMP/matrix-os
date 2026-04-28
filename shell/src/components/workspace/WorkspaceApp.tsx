@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, RefreshCwIcon } from "lucide-react";
+import type { FormEvent, ReactNode } from "react";
+import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const GATEWAY_URL = getGatewayUrl();
@@ -13,6 +13,7 @@ const PROJECT_RENDER_LIMIT = 100;
 interface ProjectSummary {
   slug?: string;
   name?: string;
+  localPath?: string;
   github?: { owner?: string; repo?: string };
 }
 
@@ -100,6 +101,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
   const [attachMessage, setAttachMessage] = useState("");
   const [sessionSearch, setSessionSearch] = useState("");
+  const [newProjectUrl, setNewProjectUrl] = useState("");
+  const [newProjectSlug, setNewProjectSlug] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
   const [error, setError] = useState("");
 
   const selectedProject = useMemo(
@@ -192,6 +196,37 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     await loadProjectDetail(activeSlug);
   }, [activeSlug, loadProjectDetail]);
 
+  const createProject = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const url = newProjectUrl.trim();
+    const slug = newProjectSlug.trim();
+    if (!url) {
+      setError("Enter a GitHub repository URL");
+      return;
+    }
+
+    setCreatingProject(true);
+    try {
+      const data = await fetchJson<{ project?: ProjectSummary }>("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          url,
+          ...(slug ? { slug } : {}),
+        }),
+      });
+      const createdSlug = data.project?.slug ?? slug;
+      setNewProjectUrl("");
+      setNewProjectSlug("");
+      if (createdSlug) setSelectedSlug(createdSlug);
+      await loadProjects();
+      setError("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Project import failed");
+    } finally {
+      setCreatingProject(false);
+    }
+  }, [loadProjects, newProjectSlug, newProjectUrl]);
+
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);
   const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
@@ -201,7 +236,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       .filter((value): value is string => typeof value === "string")
       .some((value) => value.toLowerCase().includes(normalizedSessionSearch));
   });
-  const ideFolder = activeSlug ? `/home/matrixos/home/projects/${activeSlug}` : "/home/matrixos/home";
+  const ideFolder = selectedProject?.localPath ?? (activeSlug ? `/home/matrixos/home/projects/${activeSlug}` : "/home/matrixos/home");
   const ideHref = `https://code.matrix-os.com/?folder=${encodeURIComponent(ideFolder)}`;
 
   return (
@@ -251,6 +286,32 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       >
         <aside className="min-h-0 overflow-auto border-b border-border lg:border-b-0 lg:border-r">
           <div className="px-3 py-2 text-xs font-medium text-muted-foreground">Projects</div>
+          <form onSubmit={createProject} className="mx-2 mb-3 space-y-2 rounded-md border border-border p-2">
+            <input
+              aria-label="GitHub repository URL"
+              value={newProjectUrl}
+              onChange={(event) => setNewProjectUrl(event.target.value)}
+              placeholder="github.com/owner/repo"
+              className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+            />
+            <div className="flex gap-2">
+              <input
+                aria-label="Project slug"
+                value={newProjectSlug}
+                onChange={(event) => setNewProjectSlug(event.target.value)}
+                placeholder="slug"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+              />
+              <button
+                type="submit"
+                disabled={creatingProject}
+                className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <PlusIcon className="size-3.5" />
+                {creatingProject ? "Adding" : "Add"}
+              </button>
+            </div>
+          </form>
           <div className="space-y-1 px-2 pb-3">
             {visibleProjects.map((project) => (
               <button
@@ -278,22 +339,32 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               <span className="text-xs text-muted-foreground">{formatCount(tasks.length)} tasks</span>
             </div>
           </section>
-          <section
-            data-testid="workspace-task-grid"
-            className="grid grid-cols-1 gap-px bg-border md:grid-cols-2 xl:grid-cols-3"
-          >
-            {visibleTasks.map((task) => (
-              <article key={task.id} className="min-h-[96px] bg-background p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="line-clamp-2 text-sm font-medium">{task.title ?? task.id}</h3>
-                  <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    {task.priority ?? "normal"}
-                  </span>
-                </div>
-                <p className="mt-3 text-xs text-muted-foreground">{task.status ?? "todo"}</p>
-              </article>
-            ))}
-          </section>
+          {!selectedProject ? (
+            <section data-testid="workspace-empty" className="flex min-h-[280px] items-center justify-center p-6">
+              <div className="max-w-sm text-center">
+                <CodeIcon className="mx-auto mb-3 size-8 text-muted-foreground" />
+                <h2 className="text-sm font-semibold">No projects yet</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Add a GitHub repository from the Projects panel.</p>
+              </div>
+            </section>
+          ) : (
+            <section
+              data-testid="workspace-task-grid"
+              className="grid grid-cols-1 gap-px bg-border md:grid-cols-2 xl:grid-cols-3"
+            >
+              {visibleTasks.map((task) => (
+                <article key={task.id} className="min-h-[96px] bg-background p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="line-clamp-2 text-sm font-medium">{task.title ?? task.id}</h3>
+                    <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                      {task.priority ?? "normal"}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">{task.status ?? "todo"}</p>
+                </article>
+              ))}
+            </section>
+          )}
         </main>
 
         <aside className="min-h-0 overflow-auto border-t border-border lg:border-l lg:border-t-0">

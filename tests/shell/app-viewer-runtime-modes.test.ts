@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { APP_IFRAME_SANDBOX } from "../../shell/src/components/AppViewer.js";
 
 // These tests verify the AppViewer decision logic without rendering React components.
 // The actual AppViewer.tsx modification is tested here by verifying the URL construction
@@ -131,9 +132,10 @@ describe("AppViewer unified /apps/:slug/ navigation", () => {
   });
 
   describe("iframe sandbox", () => {
-    it("does not allow runtime apps to share the shell origin", () => {
-      const sandbox = "allow-scripts allow-forms allow-popups";
-      expect(sandbox).not.toContain("allow-same-origin");
+    it("allows default apps to use same-origin browser APIs", () => {
+      expect(APP_IFRAME_SANDBOX).toContain("allow-scripts");
+      expect(APP_IFRAME_SANDBOX).toContain("allow-same-origin");
+      expect(APP_IFRAME_SANDBOX).toContain("allow-forms");
     });
   });
 });
