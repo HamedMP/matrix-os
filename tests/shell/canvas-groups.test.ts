@@ -8,7 +8,14 @@ import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 function resetStores() {
   useCanvasGroups.setState({ groups: [] });
-  useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), apps: [] });
+  useWindowManager.setState({
+    windows: [],
+    nextZ: 1,
+    closedPaths: new Set(),
+    closedLayouts: new Map(),
+    apps: [],
+    focusedWindowId: null,
+  });
 }
 
 describe("Canvas Groups Store", () => {

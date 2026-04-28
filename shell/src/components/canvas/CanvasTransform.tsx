@@ -8,9 +8,17 @@ interface CanvasTransformProps {
   children: ReactNode;
   className?: string;
   onDoubleClick?: (e: React.MouseEvent) => void;
+  panEnabled?: boolean;
+  onBackgroundPointerDown?: () => void;
 }
 
-export function CanvasTransform({ children, className, onDoubleClick }: CanvasTransformProps) {
+export function CanvasTransform({
+  children,
+  className,
+  onDoubleClick,
+  panEnabled = true,
+  onBackgroundPointerDown,
+}: CanvasTransformProps) {
   const zoom = useCanvasTransform((s) => s.zoom);
   const panX = useCanvasTransform((s) => s.panX);
   const panY = useCanvasTransform((s) => s.panY);
@@ -30,6 +38,8 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
 
   const onWheel = useCallback(
     (e: WheelEvent) => {
+      if (!panEnabled) return;
+
       e.preventDefault();
 
       // Disable pointer events on children while scrolling so iframes/app
@@ -55,7 +65,7 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         panBy(-e.deltaX / zoom, -e.deltaY / zoom);
       }
     },
-    [zoom, zoomAtPoint, panBy, navMode],
+    [zoom, zoomAtPoint, panBy, navMode, panEnabled],
   );
 
   useEffect(() => {
@@ -72,17 +82,20 @@ export function CanvasTransform({ children, className, onDoubleClick }: CanvasTr
         e.target === containerRef.current ||
         e.target === zoomOverlayRef.current ||
         e.target === transformRef.current;
+      if (isCanvasBackground) {
+        onBackgroundPointerDown?.();
+      }
       const isGrabOnBackground =
         navMode === "grab" && e.button === 0 && isCanvasBackground;
 
-      if (isMiddleOrSpace || isGrabOnBackground) {
+      if (panEnabled && (isMiddleOrSpace || isGrabOnBackground)) {
         e.preventDefault();
         isPanning.current = true;
         lastPointer.current = { x: e.clientX, y: e.clientY };
         containerRef.current?.setPointerCapture(e.pointerId);
       }
     },
-    [navMode],
+    [navMode, onBackgroundPointerDown, panEnabled],
   );
 
   const onPointerMove = useCallback(

@@ -48,6 +48,7 @@ interface WindowManagerState {
   closedPaths: Set<string>;
   closedLayouts: Map<string, ClosedLayout>;
   apps: AppEntry[];
+  focusedWindowId: string | null;
   /** Per-app last-launched timestamp (ms since epoch). Drives the dock's
       default sort when the user hasn't manually reordered. In-memory only
       for now -- survives navigation but not full reload. */
@@ -64,6 +65,7 @@ interface WindowManagerActions {
   moveWindow: (id: string, x: number, y: number) => void;
   resizeWindow: (id: string, width: number, height: number) => void;
   focusWindow: (id: string) => void;
+  clearFocus: () => void;
   getWindow: (id: string) => AppWindow | undefined;
   getFocusedWindow: () => AppWindow | undefined;
   loadLayout: (saved: LayoutWindow[]) => void;
@@ -147,6 +149,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     closedPaths: new Set<string>(),
     closedLayouts: new Map<string, ClosedLayout>(),
     apps: [],
+    focusedWindowId: null,
     appLaunchTimes: {},
 
     openWindow: (name, path, dockXOffset) => {
@@ -161,6 +164,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
                 : w,
             ),
             nextZ: state.nextZ + 1,
+            focusedWindowId: existing.id,
             appLaunchTimes: launchTimes,
           };
         }
@@ -177,12 +181,11 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           fallbackY = rightmost.y;
         }
 
+        const nextWindow = createWindowRecord(state, name, path, fallbackX, fallbackY);
         return {
-          windows: [
-            ...state.windows,
-            createWindowRecord(state, name, path, fallbackX, fallbackY),
-          ],
+          windows: [...state.windows, nextWindow],
           nextZ: state.nextZ + 1,
+          focusedWindowId: nextWindow.id,
           appLaunchTimes: launchTimes,
         };
       });
@@ -206,15 +209,15 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
                 : w,
             ),
             nextZ: state.nextZ + 1,
+            focusedWindowId: existing.id,
           };
         }
 
+        const nextWindow = createWindowRecord(state, name, path, dockXOffset + 20, 48);
         return {
-          windows: [
-            ...withMinimized,
-            createWindowRecord(state, name, path, dockXOffset + 20, 48),
-          ],
+          windows: [...withMinimized, nextWindow],
           nextZ: state.nextZ + 1,
+          focusedWindowId: nextWindow.id,
         };
       });
     },
@@ -238,6 +241,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           windows: state.windows.filter((w) => w.id !== id),
           closedPaths: newClosed,
           closedLayouts: newLayouts,
+          focusedWindowId: state.focusedWindowId === id ? null : state.focusedWindowId,
         };
       });
     },
@@ -247,6 +251,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, minimized: true } : w,
         ),
+        focusedWindowId: state.focusedWindowId === id ? null : state.focusedWindowId,
       }));
     },
 
@@ -264,6 +269,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           w.id === id ? { ...w, minimized: false, zIndex: state.nextZ } : w,
         ),
         nextZ: state.nextZ + 1,
+        focusedWindowId: id,
       }));
     },
 
@@ -295,7 +301,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           w.id === id ? { ...w, zIndex: state.nextZ } : w,
         ),
         nextZ: state.nextZ + 1,
+        focusedWindowId: id,
       }));
+    },
+
+    clearFocus: () => {
+      set({ focusedWindowId: null });
     },
 
     getWindow: (id) => {
@@ -303,9 +314,9 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     getFocusedWindow: () => {
-      const visible = get().windows.filter((w) => !w.minimized);
-      if (visible.length === 0) return undefined;
-      return visible.reduce((best, w) => (w.zIndex > best.zIndex ? w : best));
+      const { focusedWindowId, windows } = get();
+      if (!focusedWindowId) return undefined;
+      return windows.find((w) => w.id === focusedWindowId && !w.minimized);
     },
 
     loadLayout: (saved) => {
@@ -334,19 +345,32 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           });
         }
 
+        const windows = [...state.windows.filter((w) => !saved.some((s) => s.path === w.path)), ...newWindows];
+        const visibleFocused = windows
+          .filter((w) => !w.minimized)
+          .reduce<AppWindow | null>((best, w) => !best || w.zIndex > best.zIndex ? w : best, null);
+
         return {
-          windows: [...state.windows.filter((w) => !saved.some((s) => s.path === w.path)), ...newWindows],
+          windows,
           nextZ: z,
           closedPaths: newClosed,
           closedLayouts: newLayouts,
+          focusedWindowId: visibleFocused?.id ?? null,
         };
       });
     },
 
     setWindows: (updater) => {
-      set((state) => ({
-        windows: typeof updater === "function" ? updater(state.windows) : updater,
-      }));
+      set((state) => {
+        const windows = typeof updater === "function" ? updater(state.windows) : updater;
+        const focusedWindow = state.focusedWindowId
+          ? windows.find((w) => w.id === state.focusedWindowId && !w.minimized)
+          : null;
+        return {
+          windows,
+          focusedWindowId: focusedWindow ? state.focusedWindowId : null,
+        };
+      });
     },
 
     setApps: (updater) => {

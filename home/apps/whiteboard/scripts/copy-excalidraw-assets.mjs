@@ -7,4 +7,8 @@ const src = join(appDir, "node_modules", "@excalidraw", "excalidraw", "dist", "p
 const dest = join(appDir, "public", "excalidraw-assets");
 
 await mkdir(dest, { recursive: true });
-await cp(src, dest, { recursive: true });
+try {
+  await cp(src, dest, { recursive: true });
+} catch (err) {
+  if (!err || err.code !== "ENOENT") throw err;
+}

@@ -35,6 +35,16 @@ COPY packages/ packages/
 COPY shell/ shell/
 COPY home/ home/
 
+# Build bundled Vite default apps so seeded homes and existing homes can serve
+# them without asking the user to run a first-open build step.
+RUN cd home/apps/whiteboard && \
+    cp -a . /tmp/whiteboard && \
+    cd /tmp/whiteboard && \
+    pnpm install --frozen-lockfile && \
+    pnpm build && \
+    cp -a dist /app/home/apps/whiteboard/dist && \
+    rm -rf /tmp/whiteboard
+
 # Build shell (Next.js) -- Clerk key is baked in at build time (NEXT_PUBLIC_*)
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY

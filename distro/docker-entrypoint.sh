@@ -40,6 +40,17 @@ if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
   cd /app
 fi
 
+echo "Ensuring bundled default app builds..."
+for built_app in /app/home/apps/*; do
+  [ -d "$built_app/dist" ] || continue
+  app_name=$(basename "$built_app")
+  target_app="$MATRIX_HOME/apps/$app_name"
+  [ -d "$target_app" ] || continue
+  if [ ! -d "$target_app/dist" ]; then
+    su-exec matrixos cp -R "$built_app/dist" "$target_app/dist"
+  fi
+done
+
 echo "Ensuring cloud workspace runtime directories..."
 mkdir -p \
   "$MATRIX_HOME/projects" \

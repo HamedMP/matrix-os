@@ -30,6 +30,8 @@ const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#e
 
 export function CanvasRenderer() {
   const windows = useWindowManager((s) => s.windows);
+  const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
+  const clearFocus = useWindowManager((s) => s.clearFocus);
   const setTransform = useCanvasTransform((s) => s.setTransform);
   const fitAll = useCanvasTransform((s) => s.fitAll);
   const groups = useCanvasGroups((s) => s.groups);
@@ -228,7 +230,12 @@ export function CanvasRenderer() {
 
   return (
     <div className="relative w-full h-full">
-      <CanvasTransform className="w-full h-full" onDoubleClick={onCanvasDoubleClick}>
+      <CanvasTransform
+        className="w-full h-full"
+        onDoubleClick={onCanvasDoubleClick}
+        panEnabled={!focusedWindowId}
+        onBackgroundPointerDown={clearFocus}
+      >
         <SelectionRect onSelect={onSelect} />
         {labels.map((label) => (
           <CanvasTextLabel key={label.id} label={label} />

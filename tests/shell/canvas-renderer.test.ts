@@ -7,7 +7,14 @@ import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }));
 
 function resetStores() {
-  useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), apps: [] });
+  useWindowManager.setState({
+    windows: [],
+    nextZ: 1,
+    closedPaths: new Set(),
+    closedLayouts: new Map(),
+    apps: [],
+    focusedWindowId: null,
+  });
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
   useDesktopMode.setState({ mode: "canvas", previousMode: null });
 }

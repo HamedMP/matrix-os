@@ -14,7 +14,9 @@ function resetStore() {
     windows: [],
     nextZ: 1,
     closedPaths: new Set(),
+    closedLayouts: new Map(),
     apps: [],
+    focusedWindowId: null,
   });
 }
 
@@ -141,6 +143,16 @@ describe("Window Manager Store", () => {
       useWindowManager.getState().focusWindow(w1Id);
       const [w1, w2] = useWindowManager.getState().windows;
       expect(w1.zIndex).toBeGreaterThan(w2.zIndex);
+      expect(useWindowManager.getState().getFocusedWindow()?.id).toBe(w1Id);
+    });
+
+    it("clears focused window when clicking the canvas background", () => {
+      useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
+      expect(useWindowManager.getState().getFocusedWindow()).toBeDefined();
+
+      useWindowManager.getState().clearFocus();
+
+      expect(useWindowManager.getState().getFocusedWindow()).toBeUndefined();
     });
   });
 

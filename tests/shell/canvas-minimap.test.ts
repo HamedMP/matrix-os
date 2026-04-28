@@ -7,7 +7,14 @@ import { useCanvasGroups } from "../../shell/src/stores/canvas-groups.js";
 function resetStores() {
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
   useCanvasGroups.setState({ groups: [] });
-  useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), apps: [] });
+  useWindowManager.setState({
+    windows: [],
+    nextZ: 1,
+    closedPaths: new Set(),
+    closedLayouts: new Map(),
+    apps: [],
+    focusedWindowId: null,
+  });
 }
 
 describe("Canvas Minimap", () => {
