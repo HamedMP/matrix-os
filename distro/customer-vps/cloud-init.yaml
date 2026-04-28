@@ -532,16 +532,33 @@ write_files:
       MATRIX_REGISTRATION_TOKEN={{registrationToken}}
 
 runcmd:
-  - apt-get update
-  - apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl unzip
-  - curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-  - unzip -q /tmp/awscliv2.zip -d /tmp
-  - /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
-  - install -d -o root -g matrix -m 0770 /opt/matrix
-  - install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
-  - install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
-  - chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
   - |
+    set -eu
+    apt_get_update() {
+      apt-get update \
+        -o Acquire::Retries=5 \
+        -o Acquire::http::Timeout=20 \
+        -o Acquire::https::Timeout=20
+    }
+
+    if ! apt_get_update; then
+      find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i \
+          -e 's|https://mirror.hetzner.com/ubuntu/packages|http://archive.ubuntu.com/ubuntu|g' \
+          -e 's|https://mirror.hetzner.com/ubuntu/security|http://security.ubuntu.com/ubuntu|g' \
+          {} +
+      apt_get_update
+    fi
+
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl unzip
+    curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+
+    install -d -o root -g matrix -m 0770 /opt/matrix
+    install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
+    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+
     . /opt/matrix/env/host.env
     [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 900 "$MATRIX_HOST_BUNDLE_URL" -o /tmp/matrix-host.tgz
@@ -551,14 +568,14 @@ runcmd:
     [ "$expected" = "$actual" ] || { echo "matrix-host: bundle sha256 mismatch" >&2; exit 1; }
     tar -xzf /tmp/matrix-host.tgz -C /opt/matrix
     chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
-  - chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-sync-agent
-  - openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
-  - chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
-  - chmod 0640 /opt/matrix/tls/key.pem
-  - rm -f /etc/nginx/sites-enabled/default
-  - ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
-  - nginx -t
-  - |
+    chmod 0750 /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-sync-agent
+    openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
+    chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
+    chmod 0640 /opt/matrix/tls/key.pem
+    rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
+    nginx -t
+
     if docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
       :
     elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
@@ -573,8 +590,9 @@ runcmd:
         -p 127.0.0.1:5432:5432 \
         postgres:16 >/dev/null
     fi
-  - systemctl daemon-reload
-  - systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer nginx
-  - systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
-  - systemctl restart nginx
-  - systemctl start matrix-db-backup.timer
+
+    systemctl daemon-reload
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer nginx
+    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service
+    systemctl restart nginx
+    systemctl start matrix-db-backup.timer
