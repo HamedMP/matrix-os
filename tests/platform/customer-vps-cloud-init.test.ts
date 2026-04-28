@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  loadCustomerVpsCloudInitTemplate,
   redactCloudInitSecrets,
   renderCloudInitTemplate,
   type CustomerHostConfig,
@@ -43,6 +44,21 @@ describe('platform/customer-vps-cloud-init', () => {
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     );
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
+  });
+
+  it('loads the production customer VPS cloud-init template', async () => {
+    const cloudInit = await loadCustomerVpsCloudInitTemplate();
+
+    expect(cloudInit).toContain('runcmd:');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
+  });
+
+  it('copies customer VPS cloud-init assets into the runtime image', () => {
+    const root = process.cwd();
+    const dockerfile = readFileSync(join(root, 'Dockerfile'), 'utf8');
+
+    expect(dockerfile).toContain('COPY distro/customer-vps /app/distro/customer-vps');
   });
 
   it('uses a retrying bounded download for the host bundle and sha sidecar', () => {

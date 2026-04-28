@@ -183,6 +183,7 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/shell ./shell
 COPY --from=builder /app/home ./home
 COPY --from=builder /app/package.json ./
+COPY distro/customer-vps /app/distro/customer-vps
 COPY distro/zshrc /app/distro/zshrc
 COPY distro/p10k.zsh /app/distro/p10k.zsh
 

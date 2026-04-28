@@ -1611,13 +1611,16 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       { loadCustomerVpsConfig },
       { createHetznerClient },
       { createCustomerVpsSystemStore, createNoopCustomerVpsSystemStore },
+      { loadCustomerVpsCloudInitTemplate },
     ] = await Promise.all([
       import('./customer-vps.js'),
       import('./customer-vps-config.js'),
       import('./customer-vps-hetzner.js'),
       import('./customer-vps-r2.js'),
+      import('./customer-vps-cloud-init.js'),
     ]);
     const customerVpsConfig = loadCustomerVpsConfig();
+    const cloudInitTemplate = await loadCustomerVpsCloudInitTemplate();
     customerVpsService = createCustomerVpsService({
       db,
       config: customerVpsConfig,
@@ -1628,6 +1631,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
             r2PrefixRoot: customerVpsConfig.r2PrefixRoot,
           })
         : createNoopCustomerVpsSystemStore(),
+      cloudInitTemplate,
     });
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (reconciliationIntervalMs > 0) {

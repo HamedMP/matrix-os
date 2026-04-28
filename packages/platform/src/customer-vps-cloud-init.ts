@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 export interface CustomerHostConfig {
   machineId: string;
@@ -34,6 +35,12 @@ export function renderCloudInitTemplate(template: string, input: CustomerHostCon
 
 export async function renderCloudInitFile(path: string, input: CustomerHostConfig): Promise<string> {
   return renderCloudInitTemplate(await readFile(path, 'utf8'), input);
+}
+
+export async function loadCustomerVpsCloudInitTemplate(
+  path = process.env.CUSTOMER_VPS_CLOUD_INIT_PATH ?? 'distro/customer-vps/cloud-init.yaml',
+): Promise<string> {
+  return await readFile(resolve(process.cwd(), path), 'utf8');
 }
 
 export function redactCloudInitSecrets(value: string, input: CustomerHostConfig): string {
