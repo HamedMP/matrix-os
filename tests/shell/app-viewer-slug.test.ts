@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractSlug } from "../../shell/src/components/AppViewer.js";
+import { extractSlug, shouldRenderAppIframe } from "../../shell/src/components/AppViewer.js";
 
 describe("AppViewer extractSlug (spec 063 regression)", () => {
   it("extracts slug from top-level app paths", () => {
@@ -22,6 +22,13 @@ describe("AppViewer extractSlug (spec 063 regression)", () => {
     expect(extractSlug("modules/foo")).toBeNull();
     expect(extractSlug("/files/apps/calculator/index.html")).toBeNull();
     expect(extractSlug("system/icons/foo.png")).toBeNull();
+  });
+
+  it("does not iframe built-in shell apps as files", () => {
+    expect(shouldRenderAppIframe("__workspace__")).toBe(false);
+    expect(shouldRenderAppIframe("__file-browser__")).toBe(false);
+    expect(shouldRenderAppIframe("__terminal__:abc")).toBe(false);
+    expect(shouldRenderAppIframe("apps/notes/index.html")).toBe(true);
   });
 
   it("enforces SAFE_SLUG character set", () => {

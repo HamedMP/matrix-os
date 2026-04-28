@@ -8,6 +8,7 @@ import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
+import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
 import { useChatContext } from "@/stores/chat-context";
 import { Minus, Maximize2 } from "lucide-react";
@@ -411,6 +412,8 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
       >
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp />
+        ) : win.path === "__workspace__" ? (
+          <WorkspaceApp />
         ) : win.path === "__file-browser__" ? (
           <FileBrowser windowId={win.id} />
         ) : win.path === "__preview-window__" ? (

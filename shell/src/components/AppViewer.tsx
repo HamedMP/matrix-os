@@ -41,6 +41,10 @@ export function extractSlug(path: string): string | null {
   return match ? match[1] : null;
 }
 
+export function shouldRenderAppIframe(path: string): boolean {
+  return !path.startsWith("__");
+}
+
 function readCurrentTheme(): ThemeVars {
   if (typeof document === "undefined") return {};
   const style = getComputedStyle(document.documentElement);
@@ -245,6 +249,10 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     : sessionReady
       ? `/apps/${slug}/`
       : "about:blank";
+
+  if (!shouldRenderAppIframe(path)) {
+    return null;
+  }
 
   return (
     <iframe
