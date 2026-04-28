@@ -202,6 +202,20 @@ Read these on demand, not every session:
 - 063-react-app-runtime: React app runtime with three modes (static, vite, node), build orchestrator with source-hash caching, process manager with idle shutdown, pnpm install flow, distribution policy (owner-only/installable/featured), HMAC-signed per-app auth cookies, CLI publish command
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
+## Agent skills
+
+### Backlog
+
+GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.
+
+### Triage labels
+
+Five canonical roles using default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
+
 # SlayZone Environment
 
 You are running inside [SlayZone](https://slayzone.com), a desktop development environment built around a kanban board. Each task on the board is a full workspace with terminal panels, a file editor, a browser panel, and git integration. Your session is one of potentially many agents working in parallel on different tasks. A human or another agent may interact with you through the terminal.

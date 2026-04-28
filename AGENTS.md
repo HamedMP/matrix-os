@@ -291,6 +291,20 @@ Read these on demand, not every session:
 
 - 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
+## Agent skills
+
+### Backlog
+
+GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.
+
+### Triage labels
+
+Five canonical roles using default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
+
 <!-- SPECKIT START -->
 Current Spec Kit plan: `specs/068-zellij-cli/plan.md`.
 <!-- SPECKIT END -->
