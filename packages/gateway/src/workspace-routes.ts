@@ -17,7 +17,9 @@ import { createReviewStore } from "./review-store.js";
 import { createTaskManager } from "./task-manager.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
-import { isRequestPrincipalError, mapRequestPrincipalError } from "./request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrincipal, requireRequestPrincipal } from "./request-principal.js";
+import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
+import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
@@ -158,10 +160,6 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
   return { ok: true, value: parsed.data };
 }
 
-function defaultOwnerScopeFromContext(): OwnerScope {
-  return { type: "user", id: "local" };
-}
-
 export function createWorkspaceRoutes(options: {
   homePath: string;
   projectManager?: ProjectManager;
@@ -174,6 +172,8 @@ export function createWorkspaceRoutes(options: {
   taskManager?: TaskManager;
   previewManager?: PreviewManager;
   eventStore?: WorkspaceEventStore;
+  eventPublisher?: WorkspaceEventPublisher;
+  sessionOrchestrator?: WorkspaceSessionOrchestrator;
   getOwnerScope?: (c: Context) => OwnerScope;
 }) {
   const app = new Hono();
@@ -197,9 +197,19 @@ export function createWorkspaceRoutes(options: {
   const taskManager = options.taskManager ?? createTaskManager({ homePath: options.homePath });
   const previewManager = options.previewManager ?? createPreviewManager({ homePath: options.homePath });
   const eventStore = options.eventStore ?? createWorkspaceEventStore({ homePath: options.homePath });
+  const eventPublisher = options.eventPublisher ?? createWorkspaceEventPublisher({ eventStore });
+  const sessionOrchestrator = options.sessionOrchestrator ?? createWorkspaceSessionOrchestrator({
+    worktreeManager,
+    agentSessionManager,
+    agentSandbox,
+    sessionRuntimeBridge,
+    eventPublisher,
+  });
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
-  const getOwnerScope = options.getOwnerScope ?? (() => defaultOwnerScopeFromContext());
+  const getOwnerScope = options.getOwnerScope ?? ((c: Context) => ownerScopeFromPrincipal(requireRequestPrincipal(c, {
+    requireAuthContextReady: false,
+  })));
 
   function principalError(c: Context, err: unknown) {
     if (!isRequestPrincipalError(err)) throw err;
@@ -209,13 +219,6 @@ export function createWorkspaceRoutes(options: {
       return c.json(errorBody("unauthorized", "Unauthorized"), 401);
     }
     return c.json(errorBody("server_misconfigured", mapped.body.error), 500);
-  }
-
-  async function publishWorkspaceEvent(input: Parameters<WorkspaceEventStore["publishEvent"]>[0]): Promise<void> {
-    const result = await eventStore.publishEvent(input);
-    if (!result.ok) {
-      console.warn("[workspace-routes] Failed to publish workspace event:", result.error.code);
-    }
   }
 
   app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
@@ -303,11 +306,7 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     const result = await taskManager.createTask(projectSlug, body.value);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await publishWorkspaceEvent({
-      type: "task.created",
-      scope: { projectSlug, taskId: result.task.id },
-      payload: { title: result.task.title, status: result.task.status },
-    });
+    await eventPublisher.publishTaskCreated(result.task);
     return c.json({ task: result.task }, status(result.status ?? 201));
   });
 
@@ -328,11 +327,7 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await publishWorkspaceEvent({
-      type: "task.updated",
-      scope: { projectSlug, taskId: result.task.id },
-      payload: { status: result.task.status, updatedAt: result.task.updatedAt },
-    });
+    await eventPublisher.publishTaskUpdated(result.task);
     return c.json({ task: result.task });
   });
 
@@ -343,11 +338,7 @@ export function createWorkspaceRoutes(options: {
     const taskId = c.req.param("taskId");
     const result = await taskManager.deleteTask(projectSlug, taskId);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await publishWorkspaceEvent({
-      type: "task.deleted",
-      scope: { projectSlug, taskId },
-      payload: {},
-    });
+    await eventPublisher.publishTaskDeleted(projectSlug, taskId);
     return c.json({ ok: true });
   });
 
@@ -357,11 +348,7 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     const result = await previewManager.createPreview(projectSlug, body.value);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await publishWorkspaceEvent({
-      type: "preview.created",
-      scope: { projectSlug, taskId: result.preview.taskId, sessionId: result.preview.sessionId, previewId: result.preview.id },
-      payload: { url: result.preview.url, lastStatus: result.preview.lastStatus },
-    });
+    await eventPublisher.publishPreviewCreated(result.preview);
     return c.json({ preview: result.preview }, status(result.status ?? 201));
   });
 
@@ -383,11 +370,7 @@ export function createWorkspaceRoutes(options: {
     const projectSlug = c.req.param("slug");
     const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await publishWorkspaceEvent({
-      type: "preview.updated",
-      scope: { projectSlug, taskId: result.preview.taskId, sessionId: result.preview.sessionId, previewId: result.preview.id },
-      payload: { lastStatus: result.preview.lastStatus, updatedAt: result.preview.updatedAt },
-    });
+    await eventPublisher.publishPreviewUpdated(result.preview);
     return c.json({ preview: result.preview });
   });
 
@@ -398,56 +381,36 @@ export function createWorkspaceRoutes(options: {
     const previewId = c.req.param("previewId");
     const result = await previewManager.deletePreview(projectSlug, previewId);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    await publishWorkspaceEvent({
-      type: "preview.deleted",
-      scope: { projectSlug, previewId },
-      payload: {},
-    });
+    await eventPublisher.publishPreviewDeleted(projectSlug, previewId);
     return c.json({ ok: true });
   });
 
   app.post("/api/sessions", limited, async (c) => {
     const body = await parseJson(c, StartSessionSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const sessionId = body.value.sessionId ?? `sess_${randomUUID()}`;
-    let sandbox;
-    if (body.value.agent === "codex") {
-      if (!body.value.projectSlug || !body.value.worktreeId) {
-        return c.json(errorBody("sandbox_unavailable", "Agent sandbox is unavailable"), 400);
-      }
-      const worktrees = await worktreeManager.listWorktrees(body.value.projectSlug);
-      if (!worktrees.ok) return c.json({ error: worktrees.error }, status(worktrees.status));
-      const worktree = worktrees.worktrees.find((entry) => entry.id === body.value.worktreeId);
-      if (!worktree) return c.json(errorBody("not_found", "Worktree was not found"), 404);
-      const preflight = await agentSandbox.preflight({
-        agent: "codex",
-        sessionId,
-        worktreePath: worktree.path,
-        adminOverride: body.value.adminSandboxOverride,
-      });
-      if (!preflight.ok) return c.json({ error: preflight.error, sandboxStatus: preflight.sandboxStatus }, status(preflight.status));
-      sandbox = preflight.sandbox;
-    }
     let ownerScope: OwnerScope;
     try {
       ownerScope = getOwnerScope(c);
     } catch (err: unknown) {
       return principalError(c, err);
     }
-    const result = await agentSessionManager.startSession({
-      ...body.value,
-      sessionId,
-      ownerId: ownerScope.id,
-      sandbox,
+    const result = await sessionOrchestrator.startSession({
+      ownerScope,
+      request: body.value,
     });
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ session: result.session }, result.status);
+    if (!result.ok) {
+      if ("sandboxStatus" in result) {
+        return c.json({ error: result.error, sandboxStatus: result.sandboxStatus }, status(result.status));
+      }
+      return c.json({ error: result.error }, status(result.status));
+    }
+    return c.json({ session: result.session }, status(result.status));
   });
 
   app.get("/api/sessions", async (c) => {
     const prRaw = c.req.query("pr");
     const limitRaw = c.req.query("limit");
-    const result = await agentSessionManager.listSessions({
+    const result = await sessionOrchestrator.listSessions({
       projectSlug: c.req.query("projectSlug"),
       taskId: c.req.query("taskId"),
       status: c.req.query("status"),
@@ -460,7 +423,7 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.get("/api/sessions/:sessionId", async (c) => {
-    const result = await agentSessionManager.getSession(c.req.param("sessionId"));
+    const result = await sessionOrchestrator.getSession(c.req.param("sessionId"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ session: result.session });
   });
@@ -468,7 +431,7 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/sessions/:sessionId/send", limited, async (c) => {
     const body = await parseJson(c, SendSessionInputSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await agentSessionManager.sendInput(c.req.param("sessionId"), body.value.input);
+    const result = await sessionOrchestrator.sendInput(c.req.param("sessionId"), body.value.input);
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ session: result.session });
   });
@@ -476,9 +439,7 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/sessions/:sessionId/observe", limited, async (c) => {
     const body = await parseJson(c, EmptyObjectSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const session = await agentSessionManager.getSession(c.req.param("sessionId"));
-    if (!session.ok) return c.json({ error: session.error }, status(session.status));
-    const result = sessionRuntimeBridge.registerSession(session.session, { mode: "observe" });
+    const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "observe");
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json(result);
   });
@@ -486,9 +447,7 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/sessions/:sessionId/takeover", limited, async (c) => {
     const body = await parseJson(c, EmptyObjectSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const session = await agentSessionManager.getSession(c.req.param("sessionId"));
-    if (!session.ok) return c.json({ error: session.error }, status(session.status));
-    const result = sessionRuntimeBridge.registerSession(session.session, { mode: "owner" });
+    const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "owner");
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json(result);
   });
@@ -496,7 +455,7 @@ export function createWorkspaceRoutes(options: {
   app.delete("/api/sessions/:sessionId", limited, async (c) => {
     const body = await parseJson(c, EmptyObjectSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const result = await agentSessionManager.killSession(c.req.param("sessionId"));
+    const result = await sessionOrchestrator.stopSession(c.req.param("sessionId"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ session: result.session });
   });
