@@ -19,6 +19,7 @@ type AgentSessionManager = Pick<
 type AgentSandbox = Pick<ReturnType<typeof createAgentSandbox>, "preflight">;
 type SessionRuntimeBridge = Pick<ReturnType<typeof createSessionRuntimeBridge>, "registerSession">;
 type SessionAttachMode = "observe" | "owner";
+type ListSessionsInput = Parameters<AgentSessionManager["listSessions"]>[0];
 
 type Failure = {
   ok: false;
@@ -54,10 +55,11 @@ async function resolveRequestedWorktree(
   worktreeManager: WorktreeManager,
   projectSlug: string,
   worktreeId: string,
-): Promise<WorktreeRecord | Failure> {
+): Promise<{ ok: true; worktree: WorktreeRecord } | Failure> {
   const listed = await worktreeManager.listWorktrees(projectSlug);
   if (!listed.ok) return listed;
-  return listed.worktrees.find((entry) => entry.id === worktreeId) ?? failure(404, "not_found", "Worktree was not found");
+  const worktree = listed.worktrees.find((entry) => entry.id === worktreeId);
+  return worktree ? { ok: true, worktree } : failure(404, "not_found", "Worktree was not found");
 }
 
 async function resolveCodexSandbox(options: {
@@ -88,10 +90,32 @@ export function createWorkspaceSessionOrchestrator(options: {
   agentSessionManager: AgentSessionManager;
   agentSandbox: AgentSandbox;
   sessionRuntimeBridge: SessionRuntimeBridge;
-  eventPublisher?: Pick<WorkspaceEventPublisher, "publishSessionStarted">;
+  eventPublisher?: Pick<WorkspaceEventPublisher, "publishSessionStarted" | "publishSessionStopped">;
   idGenerator?: () => string;
 }) {
   const idGenerator = options.idGenerator ?? (() => `sess_${randomUUID()}`);
+
+  async function publishSessionStarted(session: WorkspaceSessionView): Promise<void> {
+    try {
+      await options.eventPublisher?.publishSessionStarted(session);
+    } catch (err: unknown) {
+      console.warn(
+        "[workspace-session-orchestrator] Failed to publish session start event:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  async function publishSessionStopped(session: WorkspaceSessionView): Promise<void> {
+    try {
+      await options.eventPublisher?.publishSessionStopped(session);
+    } catch (err: unknown) {
+      console.warn(
+        "[workspace-session-orchestrator] Failed to publish session stop event:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
 
   return {
     async startSession(input: StartWorkspaceSessionInput): Promise<
@@ -109,12 +133,12 @@ export function createWorkspaceSessionOrchestrator(options: {
           input.request.projectSlug,
           input.request.worktreeId,
         );
-        if (!("path" in worktree)) return worktree;
+        if (!worktree.ok) return worktree;
         const preflight = await resolveCodexSandbox({
           agentSandbox: options.agentSandbox,
           request: input.request,
           sessionId,
-          worktree,
+          worktree: worktree.worktree,
         });
         if (!preflight.ok) return preflight;
         sandbox = preflight.sandbox;
@@ -128,11 +152,11 @@ export function createWorkspaceSessionOrchestrator(options: {
       });
       if (!result.ok) return result;
 
-      await options.eventPublisher?.publishSessionStarted(result.session);
+      await publishSessionStarted(result.session);
       return result;
     },
 
-    async listSessions(input: unknown = {}) {
+    async listSessions(input: ListSessionsInput = {}) {
       return options.agentSessionManager.listSessions(input);
     },
 
@@ -151,11 +175,14 @@ export function createWorkspaceSessionOrchestrator(options: {
     },
 
     async stopSession(sessionId: string) {
-      return options.agentSessionManager.killSession(sessionId);
+      const result = await options.agentSessionManager.killSession(sessionId);
+      if (!result.ok) return result;
+      await publishSessionStopped(result.session);
+      return result;
     },
 
     async recoverSessions() {
-      return this.listSessions({ status: "running" });
+      return options.agentSessionManager.listSessions({ status: "running" });
     },
   };
 }

@@ -29,9 +29,16 @@ export function createWorkspaceEventPublisher(options: {
   eventStore: WorkspaceEventStore;
 }) {
   async function publish(input: PublishEventInput): Promise<void> {
-    const result = await options.eventStore.publishEvent(input);
-    if (isPublishFailure(result)) {
-      console.warn("[workspace-event-publisher] Failed to publish workspace event:", result.error.code);
+    try {
+      const result = await options.eventStore.publishEvent(input);
+      if (isPublishFailure(result)) {
+        console.warn("[workspace-event-publisher] Failed to publish workspace event:", result.error.code);
+      }
+    } catch (err: unknown) {
+      console.warn(
+        "[workspace-event-publisher] Unexpected workspace event publish error:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 
@@ -92,6 +99,24 @@ export function createWorkspaceEventPublisher(options: {
     >): Promise<void> {
       await publish({
         type: "session.started",
+        scope: { projectSlug: session.projectSlug, taskId: session.taskId, sessionId: session.id },
+        payload: {
+          agent: session.agent,
+          kind: session.kind,
+          pr: session.pr,
+          runtimeStatus: session.runtime.status,
+          terminalSessionId: session.terminalSessionId,
+          worktreeId: session.worktreeId,
+        },
+      });
+    },
+
+    async publishSessionStopped(session: Pick<
+      WorkspaceSessionView,
+      "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId"
+    >): Promise<void> {
+      await publish({
+        type: "session.stopped",
         scope: { projectSlug: session.projectSlug, taskId: session.taskId, sessionId: session.id },
         payload: {
           agent: session.agent,

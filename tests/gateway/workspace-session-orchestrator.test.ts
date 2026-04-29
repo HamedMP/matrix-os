@@ -43,6 +43,7 @@ describe("workspace session orchestrator", () => {
     };
     const eventPublisher = {
       publishSessionStarted: vi.fn(async () => undefined),
+      publishSessionStopped: vi.fn(async () => undefined),
     };
     return {
       worktreeManager,
@@ -88,6 +89,35 @@ describe("workspace session orchestrator", () => {
       sessionId: "sess_fixed",
     }));
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);
+  });
+
+  it("does not fail a started session when session event publication throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const d = deps({
+      eventPublisher: {
+        publishSessionStarted: vi.fn(async () => {
+          throw new Error("event write failed");
+        }),
+        publishSessionStopped: vi.fn(async () => undefined),
+      },
+    });
+    const orchestrator = createWorkspaceSessionOrchestrator({
+      ...d,
+      idGenerator: () => "sess_fixed",
+    });
+
+    const result = await orchestrator.startSession({
+      ownerScope: { type: "user", id: "user_workspace" },
+      request: {
+        projectSlug: "repo",
+        worktreeId: "wt_abc123def456",
+        kind: "agent",
+        agent: "codex",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: 201, session: { id: "sess_fixed" } });
+    expect(warn).toHaveBeenCalledWith("[workspace-session-orchestrator] Failed to publish session start event:", "event write failed");
   });
 
   it("returns a safe sandbox failure before launching a session", async () => {
@@ -177,5 +207,18 @@ describe("workspace session orchestrator", () => {
       session: expect.objectContaining({ id: "sess_fixed" }),
     });
     expect(d.sessionRuntimeBridge.registerSession).toHaveBeenCalledWith(session, { mode: "observe" });
+    expect(d.eventPublisher.publishSessionStopped).toHaveBeenCalledWith(expect.objectContaining({ id: "sess_fixed" }));
+  });
+
+  it("recovers active sessions without relying on object method this binding", async () => {
+    const d = deps();
+    const orchestrator = createWorkspaceSessionOrchestrator({ ...d });
+    const recoverSessions = orchestrator.recoverSessions;
+
+    await expect(recoverSessions()).resolves.toMatchObject({
+      ok: true,
+      sessions: [expect.objectContaining({ id: "sess_fixed" })],
+    });
+    expect(d.agentSessionManager.listSessions).toHaveBeenCalledWith({ status: "running" });
   });
 });
