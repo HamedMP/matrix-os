@@ -44,6 +44,7 @@ import {
 } from "./sharing.js";
 import { createSyncRateLimiter } from "./rate-limiter.js";
 import { MissingSyncUserIdentityError } from "../auth.js";
+import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
 
 const SYNC_BODY_LIMIT = 65536;
 
@@ -71,7 +72,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     try {
       return deps.getUserId(c);
     } catch (err) {
-      if (err instanceof MissingSyncUserIdentityError) {
+      if (err instanceof MissingSyncUserIdentityError || (isRequestPrincipalError(err) && !(err instanceof RequestPrincipalMisconfiguredError))) {
         throw new HTTPException(401, { message: "Unauthorized" });
       }
       throw err;

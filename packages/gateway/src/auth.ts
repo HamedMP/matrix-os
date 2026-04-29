@@ -5,13 +5,17 @@ import {
   looksLikeJwt,
   readJwtKeyConfig,
   validateSyncJwt,
-  type SyncJwtClaims,
 } from "./auth-jwt.js";
+import {
+  AUTH_CONTEXT_READY_CONTEXT_KEY,
+  InvalidRequestPrincipalError,
+  JWT_CLAIMS_CONTEXT_KEY,
+  MissingRequestPrincipalError,
+  markAuthContextReady,
+  requireRequestPrincipal,
+} from "./request-principal.js";
 
-// Hono context key for a validated sync JWT's claims. Routes that need the
-// authenticated Clerk userId read `c.get("jwtClaims")?.sub`. See
-// `getUserIdFromContext` below for the canonical helper.
-export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
+export { AUTH_CONTEXT_READY_CONTEXT_KEY, JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady };
 
 export class MissingSyncUserIdentityError extends Error {
   constructor() {
@@ -21,52 +25,43 @@ export class MissingSyncUserIdentityError extends Error {
 }
 
 /**
- * Canonical resolver for the "who is this request for?" question used by
- * sync routes. Prefers the Clerk userId embedded in a validated JWT's
- * `sub` claim; falls back to `MATRIX_USER_ID` / `MATRIX_HANDLE` so the
- * container-side home-mirror and legacy bearer-token (dev) mode stay aligned,
- * then `"default"` as a last resort.
+ * Compatibility resolver for older sync call sites that still need only the
+ * user id string. New protected routes should use request-principal helpers
+ * directly so they preserve source and typed failure information.
  *
- * MUST be used by every sync code path (manifest, presign, commit,
- * resolve-conflict, share, WS `sync:subscribe`) so they all key off the
- * same identity. Do not read `process.env.MATRIX_HANDLE` directly from
- * sync handlers.
+ * Do not add new route-handler calls to this wrapper; keep it only as a
+ * migration target for remaining legacy compatibility.
  */
-let warnedDefaultUserIdOnce = false;
-
-function allowDefaultSyncUserIdFallback(): boolean {
-  return !process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production";
+export function getUserIdFromContext(c: Context): string {
+  const configuredUserId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
+  try {
+    return requireRequestPrincipal(c, {
+      configuredUserId,
+      isTrustedSingleUserGateway: Boolean(configuredUserId),
+      requireAuthContextReady: false,
+    }).userId;
+  } catch (err: unknown) {
+    if (err instanceof MissingRequestPrincipalError || err instanceof InvalidRequestPrincipalError) {
+      console.error("[auth] Missing or invalid request principal for legacy user id compatibility");
+      throw new MissingSyncUserIdentityError();
+    }
+    throw err;
+  }
 }
 
-export function getUserIdFromContext(c: Context): string {
-  const claims = c.get(JWT_CLAIMS_CONTEXT_KEY) as SyncJwtClaims | undefined;
-  if (claims && typeof claims.sub === "string" && claims.sub.length > 0) {
-    return claims.sub;
-  }
-  const matrixUserId = process.env.MATRIX_USER_ID;
-  if (matrixUserId && matrixUserId.length > 0) {
-    return matrixUserId;
-  }
-  const handle = process.env.MATRIX_HANDLE;
-  if (handle && handle.length > 0) {
-    return handle;
-  }
-  if (!allowDefaultSyncUserIdFallback()) {
-    if (!warnedDefaultUserIdOnce) {
-      warnedDefaultUserIdOnce = true;
-      console.error(
-        "[auth] No JWT claims and no MATRIX_HANDLE env var — refusing to fall back to userId='default' while sync auth is enabled.",
-      );
-    }
-    throw new MissingSyncUserIdentityError();
-  }
-  if (!warnedDefaultUserIdOnce) {
-    warnedDefaultUserIdOnce = true;
-    console.warn(
-      "[auth] No JWT claims and no MATRIX_HANDLE env var — falling back to userId='default' in open local-dev mode only.",
-    );
-  }
-  return "default";
+async function nextWithReady(c: Context, next: () => Promise<void>): Promise<void> {
+  markAuthContextReady(c);
+  await next();
+}
+
+function unauthorized(c: Context) {
+  markAuthContextReady(c);
+  return c.json({ error: "Unauthorized" }, 401);
+}
+
+function tooManyRequests(c: Context) {
+  markAuthContextReady(c);
+  return c.json({ error: "Too many requests" }, 429);
 }
 
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
@@ -153,7 +148,7 @@ export function authMiddleware(
     // already required by MATRIX_AUTH_TOKEN. To enforce auth in dev, set
     // MATRIX_AUTH_TOKEN to any value (and optionally PLATFORM_JWT_SECRET to
     // also accept platform-issued JWTs).
-    if (!token) return next();
+    if (!token) return nextWithReady(c, next);
 
     // Read JWT config + handle per-call so env-var changes during tests
     // are picked up without recreating the middleware.
@@ -163,14 +158,14 @@ export function authMiddleware(
     const normalizedPath = c.req.path;
     if (PUBLIC_PATHS.some((p) => normalizedPath === p) ||
         PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
-      return next();
+      return nextWithReady(c, next);
     }
 
     // App iframe paths are authenticated by app-session cookie middleware,
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
-      return next();
+      return nextWithReady(c, next);
     }
 
     // HMAC-authenticated paths (Pipedream integrations webhook): bypass
@@ -181,9 +176,9 @@ export function authMiddleware(
     if (HMAC_WEBHOOK_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       const ip = getClientIp(c);
       if (!webhookRateLimiter.check(ip)) {
-        return c.json({ error: "Too many requests" }, 429);
+        return tooManyRequests(c);
       }
-      return next();
+      return nextWithReady(c, next);
     }
 
     // Voice webhook paths use provider-level HMAC verification, not bearer
@@ -196,9 +191,9 @@ export function authMiddleware(
     if (isWebhook) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {
-        return c.json({ error: "Too many requests" }, 429);
+        return tooManyRequests(c);
       }
-      return next();
+      return nextWithReady(c, next);
     }
 
     const authHeader = c.req.header("Authorization");
@@ -236,9 +231,9 @@ export function authMiddleware(
           expectedHandle,
         });
         // Stash claims on the Hono context so downstream handlers can
-        // resolve the authenticated Clerk userId via getUserIdFromContext.
+        // resolve the authenticated Clerk userId through the request principal.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
-        return next();
+        return nextWithReady(c, next);
       } catch (err) {
         // Fall through. We don't expose JWT failure reasons to the client,
         // but a debug log here prevents a misconfigured PLATFORM_JWT_SECRET
@@ -250,9 +245,9 @@ export function authMiddleware(
         );
         const ip = getClientIp(c);
         if (!rateLimiter.check(ip)) {
-          return c.json({ error: "Too many requests" }, 429);
+          return tooManyRequests(c);
         }
-        return c.json({ error: "Unauthorized" }, 401);
+        return unauthorized(c);
       }
     }
 
@@ -262,15 +257,15 @@ export function authMiddleware(
       token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
 
     if (legacyHeaderOk || legacyQueryOk) {
-      return next();
+      return nextWithReady(c, next);
     }
 
     // Only rate-limit failed auth attempts
     const ip = getClientIp(c);
     if (!rateLimiter.check(ip)) {
-      return c.json({ error: "Too many requests" }, 429);
+      return tooManyRequests(c);
     }
 
-    return c.json({ error: "Unauthorized" }, 401);
+    return unauthorized(c);
   };
 }

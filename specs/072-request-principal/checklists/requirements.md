@@ -33,3 +33,4 @@
 
 - This spec intentionally preserves the existing local-development fallback concept while requiring protected production/auth-enabled routes to fail closed.
 - The workspace owner-scope requirement is included because workspace orchestration depends on this principal seam.
+- Revalidated after 2026-04-28 clarifications for trusted single-user/container identity, development default gating, principal validation, wiring failure behavior, and legacy resolver migration scope.

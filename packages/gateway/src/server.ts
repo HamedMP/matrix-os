@@ -55,9 +55,8 @@ import {
 import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
-  getUserIdFromContext,
-  MissingSyncUserIdentityError,
 } from "./auth.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
@@ -461,10 +460,10 @@ export async function createGateway(config: GatewayConfig) {
         db: manifestDb,
         peerRegistry: syncPeerRegistry,
         sharing: syncSharing,
-        // Resolve userId per-request from the JWT's `sub` claim (Clerk
-        // userId); falls back to MATRIX_HANDLE only when no JWT is present
-        // (legacy bearer / dev mode).
-        getUserId: (c) => getUserIdFromContext(c),
+        // Resolve userId per request through the canonical principal seam so
+        // sync storage keys follow the same source precedence as other
+        // protected owner-scoped routes.
+        getUserId: (c) => requireRequestPrincipal(c).userId,
         getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
       };
 
@@ -1384,15 +1383,14 @@ export async function createGateway(config: GatewayConfig) {
   app.get(
     "/ws",
     upgradeWebSocket((c) => {
-      // Capture the authenticated sync userId (Clerk userId from JWT
-      // claims.sub when present, else MATRIX_HANDLE) at upgrade time so
-      // the sync:subscribe branch below keys peers off the same identity
-      // the HTTP sync routes use. authMiddleware ran on the upgrade
-      // request and stashed claims if a JWT was presented.
+      // Capture the authenticated sync userId at upgrade time so the
+      // sync:subscribe branch below keys peers off the same principal as the
+      // HTTP sync routes. authMiddleware ran on the upgrade request and
+      // stashed claims if a JWT was presented.
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
       try {
-        const wsSyncUserId = getUserIdFromContext(c);
+        const wsSyncUserId = requireRequestPrincipal(c).userId;
         syncPeerLifecycle = syncPeerRegistry
           ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
               send: (data: string) => syncPeerSocket?.send(data),
@@ -1402,10 +1400,10 @@ export async function createGateway(config: GatewayConfig) {
             })
           : null;
       } catch (err) {
-        if (!(err instanceof MissingSyncUserIdentityError)) {
+        if (!isRequestPrincipalError(err)) {
           throw err;
         }
-        console.warn("[sync/ws] Missing sync user identity on websocket upgrade");
+        console.warn("[sync/ws] Missing or invalid sync request principal on websocket upgrade");
       }
       let pendingText: string | undefined;
       let activeSessionId: string | undefined;
@@ -2117,7 +2115,10 @@ export async function createGateway(config: GatewayConfig) {
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
-  app.route("/", createWorkspaceRoutes({ homePath }));
+  app.route("/", createWorkspaceRoutes({
+    homePath,
+    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+  }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
@@ -2791,7 +2792,7 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
     }
     try {
-      const userId = getUserIdFromContext(c);
+      const userId = requireRequestPrincipal(c).userId;
       const result = await canvasService.listCanvases(userId);
       return c.json({
         legacy: true,
@@ -2799,6 +2800,13 @@ export async function createGateway(config: GatewayConfig) {
         canvases: result.canvases,
       });
     } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Canvas request failed");
+        if (mapped.log) {
+          console.error("[canvas] Legacy canvas route request principal misconfigured:", err.name);
+        }
+        return c.json(mapped.body, mapped.status);
+      }
       logBestEffortFailure("Failed to read Postgres-backed canvas summaries", err);
       return c.json({ error: "Canvas request failed" }, 500);
     }
@@ -3200,7 +3208,7 @@ export async function createGateway(config: GatewayConfig) {
     // Global authMiddleware is mounted before route registration; routes still resolve user IDs defensively.
     app.route("/api/canvases", createCanvasRoutes({
       service: canvasService,
-      getUserId: (c) => getUserIdFromContext(c),
+      getUserId: (c) => requireRequestPrincipal(c).userId,
       broadcastCanvasUpdate: (canvasId, message) => canvasSubscriptionHub?.broadcast(canvasId, message),
     }));
 
@@ -3212,7 +3220,7 @@ export async function createGateway(config: GatewayConfig) {
         let userId: string;
         try {
           canvasId = CanvasIdSchema.parse(c.req.param("canvasId"));
-          userId = getUserIdFromContext(c);
+          userId = requireRequestPrincipal(c).userId;
         } catch (err: unknown) {
           console.error("[canvas/ws] Upgrade rejected:", err instanceof Error ? err.message : String(err));
           return {

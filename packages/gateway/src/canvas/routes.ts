@@ -15,6 +15,7 @@ import {
   type CreateCanvasRequest,
 } from "./contracts.js";
 import { mapCanvasError } from "./service.js";
+import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
 
 const CANVAS_WRITE_BODY_LIMIT = 256 * 1024;
 const CANVAS_ACTION_BODY_LIMIT = 64 * 1024;
@@ -53,6 +54,7 @@ function getUserIdOrThrow(deps: CanvasRouteDeps, c: Context): string {
     if (!userId) throw new Error("missing user");
     return userId;
   } catch (err: unknown) {
+    if (isRequestPrincipalError(err)) throw err;
     if (!(err instanceof Error && /missing/i.test(err.message))) {
       console.error("[canvas/routes] User resolution failed:", err);
     }
@@ -81,6 +83,11 @@ function validationError(c: any) {
 }
 
 function handleError(c: any, err: unknown) {
+  if (isRequestPrincipalError(err)) {
+    const mapped = mapRequestPrincipalError(err, "Canvas request failed");
+    if (mapped.log) console.error("[canvas/routes] Request principal misconfigured:", err.name);
+    return c.json(mapped.body, mapped.status);
+  }
   if (err instanceof CanvasUnauthorizedError) {
     return c.json({ error: "Unauthorized" }, 401);
   }

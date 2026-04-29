@@ -51,6 +51,23 @@ export type {
   RestoreResult,
 } from "./git-versioning.js";
 export { authMiddleware } from "./auth.js";
+export {
+  AUTH_CONTEXT_READY_CONTEXT_KEY,
+  JWT_CLAIMS_CONTEXT_KEY,
+  InvalidRequestPrincipalError,
+  MissingRequestPrincipalError,
+  RequestPrincipalMisconfiguredError,
+  SAFE_PRINCIPAL_USER_ID,
+  getOptionalRequestPrincipal,
+  isAuthContextReady,
+  isRequestPrincipalError,
+  mapRequestPrincipalError,
+  markAuthContextReady,
+  ownerScopeFromPrincipal,
+  readPrincipalRuntimeConfig,
+  requireRequestPrincipal,
+} from "./request-principal.js";
+export type { PrincipalRuntimeConfig, PrincipalSource, RequestPrincipal, RequestPrincipalError } from "./request-principal.js";
 export { getSystemInfo } from "./system-info.js";
 export type { SystemInfo } from "./system-info.js";
 export {

@@ -118,25 +118,30 @@ async function migrate(table) {
   return { name, copied, total: rows.length };
 }
 
-(async () => {
+async function main() {
   console.log(`Source:  sqlite ${SQLITE_PATH}`);
   console.log(`Target:  postgres matrixos_platform`);
-  const results = [];
-  for (const table of TABLES) {
-    try {
-      const r = await migrate(table);
-      results.push(r);
-      console.log(`[ok] ${r.name}: copied=${r.copied} total=${r.total}`);
-    } catch (err) {
-      console.error(`[fail] ${table.name}: ${err.message}`);
-      throw err;
+  try {
+    const results = [];
+    for (const table of TABLES) {
+      try {
+        const r = await migrate(table);
+        results.push(r);
+        console.log(`[ok] ${r.name}: copied=${r.copied} total=${r.total}`);
+      } catch (err) {
+        console.error(`[fail] ${table.name}: ${err.message}`);
+        throw err;
+      }
     }
+    console.log('\nSummary:');
+    for (const r of results) console.log(`  ${r.name}: copied=${r.copied}/${r.total}`);
+  } finally {
+    await pool.end();
+    sqlite.close();
   }
-  console.log('\nSummary:');
-  for (const r of results) console.log(`  ${r.name}: copied=${r.copied}/${r.total}`);
-  await pool.end();
-  sqlite.close();
-})().catch((err) => {
+}
+
+main().catch((err) => {
   console.error(err);
   process.exit(1);
 });

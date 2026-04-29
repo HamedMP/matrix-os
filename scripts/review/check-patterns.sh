@@ -222,6 +222,17 @@ if [[ -n "$MATCHES" ]]; then
   printf '%s\n' "$MATCHES" | head -20 || true
 fi
 
+header "8. Auth Boundaries — legacy request principal resolver"
+
+MATCHES=$(rg_scan 'getUserIdFromContext\s*\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
+if [[ -n "$MATCHES" ]]; then
+  MATCHES=$(printf '%s\n' "$MATCHES" | grep -Ev '^packages/gateway/src/auth\.ts:' || true)
+fi
+if [[ -n "$MATCHES" ]]; then
+  violation "Legacy getUserIdFromContext() used outside auth compatibility wrapper; use request-principal helpers"
+  printf '%s\n' "$MATCHES" | head -20 || true
+fi
+
 # ═══════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════

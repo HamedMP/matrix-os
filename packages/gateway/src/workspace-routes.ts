@@ -17,6 +17,7 @@ import { createReviewStore } from "./review-store.js";
 import { createTaskManager } from "./task-manager.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
+import { isRequestPrincipalError, mapRequestPrincipalError } from "./request-principal.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 type WorktreeManager = ReturnType<typeof createWorktreeManager>;
@@ -157,7 +158,7 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
   return { ok: true, value: parsed.data };
 }
 
-function ownerScopeFromContext(): OwnerScope {
+function defaultOwnerScopeFromContext(): OwnerScope {
   return { type: "user", id: "local" };
 }
 
@@ -173,6 +174,7 @@ export function createWorkspaceRoutes(options: {
   taskManager?: TaskManager;
   previewManager?: PreviewManager;
   eventStore?: WorkspaceEventStore;
+  getOwnerScope?: (c: Context) => OwnerScope;
 }) {
   const app = new Hono();
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
@@ -197,6 +199,17 @@ export function createWorkspaceRoutes(options: {
   const eventStore = options.eventStore ?? createWorkspaceEventStore({ homePath: options.homePath });
   const stateOps = createStateOps({ homePath: options.homePath });
   const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
+  const getOwnerScope = options.getOwnerScope ?? (() => defaultOwnerScopeFromContext());
+
+  function principalError(c: Context, err: unknown) {
+    if (!isRequestPrincipalError(err)) throw err;
+    const mapped = mapRequestPrincipalError(err, "Workspace request failed");
+    if (mapped.log) console.error("[workspace-routes] Request principal misconfigured:", err.name);
+    if (mapped.status === 401) {
+      return c.json(errorBody("unauthorized", "Unauthorized"), 401);
+    }
+    return c.json(errorBody("server_misconfigured", mapped.body.error), 500);
+  }
 
   async function publishWorkspaceEvent(input: Parameters<WorkspaceEventStore["publishEvent"]>[0]): Promise<void> {
     const result = await eventStore.publishEvent(input);
@@ -210,10 +223,16 @@ export function createWorkspaceRoutes(options: {
   app.post("/api/projects", limited, async (c) => {
     const body = await parseJson(c, CreateProjectSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
     const result = await projectManager.createProject({
       url: body.value.url,
       slug: body.value.slug,
-      ownerScope: body.value.ownerScope ?? ownerScopeFromContext(),
+      ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ project: result.project }, 201);
@@ -409,10 +428,16 @@ export function createWorkspaceRoutes(options: {
       if (!preflight.ok) return c.json({ error: preflight.error, sandboxStatus: preflight.sandboxStatus }, status(preflight.status));
       sandbox = preflight.sandbox;
     }
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
     const result = await agentSessionManager.startSession({
       ...body.value,
       sessionId,
-      ownerId: ownerScopeFromContext().id,
+      ownerId: ownerScope.id,
       sandbox,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));

@@ -287,6 +287,8 @@ Read these on demand, not every session:
 - User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
 - TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, node-pty, zod/v4, citty, ws, Node child_process/fs/promises/path/crypto APIs, zellij 0.44.1 pinned in Docker images (068-zellij-cli)
 - Files under the owner-controlled Matrix home (`~/system/shell-sessions.json`, `~/system/layouts/*.kdl`) plus local CLI files under `~/.matrixos/profiles.json` and `~/.matrixos/profiles/<name>/` (068-zellij-cli)
+- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, Zod 4 via `zod/v4`, existing `jose` JWT validation, Vitest (072-request-principal)
+- No new persistence; request principal is request-scoped. Existing consumers continue to use owner-controlled PostgreSQL/Kysely and sync R2/object storage through existing repositories. (072-request-principal)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
 - Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
@@ -310,5 +312,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/068-zellij-cli/plan.md`.
+Current Spec Kit plan: `specs/072-request-principal/plan.md`.
 <!-- SPECKIT END -->

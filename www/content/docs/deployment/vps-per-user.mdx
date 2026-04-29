@@ -43,6 +43,12 @@ Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable 
 
 `code.matrix-os.com` is a single public entrypoint. The platform authenticates the Clerk session or `matrix_code_session`, resolves the user to a running VPS, strips user cookies and authorization headers, then forwards to that VPS over HTTPS with platform proof headers. If no running VPS exists, the legacy container code-server path remains the fallback for non-migrated users.
 
+## Gateway Identity
+
+Gateway routes resolve owner identity through the request principal seam. A validated JWT subject wins first. If no JWT is present, a trusted single-user/container gateway may use the platform-provisioned configured identity from runtime configuration, with `MATRIX_USER_ID` as the canonical user id. This value must come from Matrix OS provisioning, not from request headers, query params, cookies, route params, or request bodies.
+
+Open local development may use the `dev-default` principal only when auth is disabled, production is false, the environment is local/development, and no configured container identity exists. Production and auth-enabled deployments refuse that fallback.
+
 ## Required Environment
 
 | Variable | Required | Notes |
@@ -54,6 +60,7 @@ Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable 
 | `CUSTOMER_VPS_TLS_VERIFY` | No | Defaults to `false` because phase-1 customer hosts use self-signed local TLS on :443. Set `true` only after installing publicly trusted host certificates. |
 | `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token for provisioning and deletion. |
 | `R2_BUCKET` / `S3_BUCKET` | Yes | Bucket used for metadata, DB snapshots, and host bundles. |
+| `MATRIX_USER_ID` | Yes for trusted single-user/container gateways | Platform-provisioned stable owner id used as the configured container identity when no validated JWT principal is present. |
 
 ## Backup Retention
 

@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -108,6 +109,57 @@ describe("workspace API routes", () => {
     expect(worktreeManager.createWorktree).toHaveBeenCalledWith({ projectSlug: "repo", branch: "main" });
   });
 
+  it("derives project owner scope from the injected principal owner scope", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(async () => ({ ok: true, status: 201, project: { slug: "repo" } })),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
+    });
+
+    const res = await app.request(jsonRequest("/api/projects", { url: "github.com/owner/repo", ownerScope: { type: "user", id: "attacker" } }));
+
+    expect(res.status).toBe(201);
+    expect(projectManager.createProject).toHaveBeenCalledWith({
+      url: "github.com/owner/repo",
+      slug: undefined,
+      ownerScope: { type: "user", id: "user_workspace" },
+    });
+  });
+
+  it("returns unauthorized before creating workspace data when no principal is available", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      getOwnerScope: () => {
+        throw new MissingRequestPrincipalError();
+      },
+    });
+
+    const res = await app.request(jsonRequest("/api/projects", { url: "github.com/owner/repo" }));
+
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: { code: "unauthorized", message: "Unauthorized" } });
+    expect(projectManager.createProject).not.toHaveBeenCalled();
+  });
+
   it("routes session lifecycle, observe, takeover, and sandbox status through injected managers", async () => {
     const session = {
       id: "sess_abc123",
@@ -158,6 +210,7 @@ describe("workspace API routes", () => {
       agentLauncher,
       agentSandbox,
       sessionRuntimeBridge,
+      getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
     });
 
     const created = await app.request(jsonRequest("/api/sessions", {
@@ -171,7 +224,7 @@ describe("workspace API routes", () => {
     expect(agentSandbox.preflight).toHaveBeenCalled();
     expect(agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
-      ownerId: "local",
+      ownerId: "user_workspace",
       sandbox: { enabled: true, writableRoots: [homePath] },
     }));
 

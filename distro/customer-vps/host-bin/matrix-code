@@ -52,6 +52,10 @@ const net = require("node:net");
 const crypto = require("node:crypto");
 
 const token = process.env.MATRIX_CODE_PROXY_TOKEN || "";
+if (!token) {
+  console.error("matrix-code: MATRIX_CODE_PROXY_TOKEN is not set");
+  process.exit(1);
+}
 const listenPort = Number(process.env.MATRIX_CODE_PROXY_LISTEN || "8787");
 const upstreamPort = Number(process.env.MATRIX_CODE_PROXY_UPSTREAM || "8788");
 
@@ -84,7 +88,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
     upstreamRes.pipe(res);
   });
-  upstream.on("error", () => {
+  upstream.on("error", (err) => {
+    console.error("[matrix-code] upstream error:", err.message);
     res.writeHead(502, { "cache-control": "no-store" });
     res.end("Editor unavailable");
   });
@@ -107,6 +112,7 @@ server.on("upgrade", (req, socket, head) => {
     if (head.length > 0) upstream.write(head);
     socket.pipe(upstream).pipe(socket);
   });
+  socket.on("error", () => upstream.destroy());
   upstream.on("error", () => socket.destroy());
 });
 

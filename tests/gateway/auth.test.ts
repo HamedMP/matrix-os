@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 
 const WEBHOOK_PROVIDERS = new Set(["twilio", "mock"]);
 const TEST_TOKEN = "test-bearer-token-for-auth-tests";
@@ -339,5 +340,57 @@ describe("authMiddleware app iframe exemption", () => {
       headers: { "X-Forwarded-For": "203.0.113.14" },
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("authMiddleware request principal readiness", () => {
+  it("allows a canvas WebSocket query-token path to read the configured request principal", async () => {
+    process.env.MATRIX_USER_ID = "user_ws";
+    try {
+      const app = new Hono();
+      app.use("*", authMiddleware(TEST_TOKEN));
+      app.get("/api/canvases/:canvasId/ws", (c) => c.json(requireRequestPrincipal(c)));
+
+      const res = await app.request(`/api/canvases/cnv_0123456789abcdef/ws?token=${TEST_TOKEN}`);
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ userId: "user_ws", source: "configured-container" });
+    } finally {
+      delete process.env.MATRIX_USER_ID;
+    }
+  });
+
+  it("rejects a canvas WebSocket query-token path before principal resolution when token is missing", async () => {
+    process.env.MATRIX_USER_ID = "user_ws";
+    try {
+      const app = new Hono();
+      app.use("*", authMiddleware(TEST_TOKEN));
+      app.get("/api/canvases/:canvasId/ws", (c) => c.json(requireRequestPrincipal(c)));
+
+      const res = await app.request("/api/canvases/cnv_0123456789abcdef/ws");
+
+      expect(res.status).toBe(401);
+      await expect(res.json()).resolves.toEqual({ error: "Unauthorized" });
+    } finally {
+      delete process.env.MATRIX_USER_ID;
+    }
+  });
+
+  it("maps missing auth-context readiness to a generic server error", async () => {
+    const app = new Hono();
+    app.get("/api/canvases/:canvasId/ws", (c) => {
+      try {
+        return c.json(requireRequestPrincipal(c));
+      } catch (err: unknown) {
+        if (!isRequestPrincipalError(err)) throw err;
+        const mapped = mapRequestPrincipalError(err, "Gateway request failed");
+        return c.json(mapped.body, mapped.status);
+      }
+    });
+
+    const res = await app.request("/api/canvases/cnv_0123456789abcdef/ws");
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: "Gateway request failed" });
   });
 });
