@@ -1,16 +1,17 @@
 {
   "name": "Notes",
-  "description": "Quick notes with rich text",
+  "description": "Rich markdown notes with Tiptap editing, tags, search, and pinning",
   "category": "productivity",
   "icon": "notes",
   "author": "system",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "storage": {
     "tables": {
       "notes": {
         "columns": {
           "title": "text",
           "content": "text",
+          "content_json": "jsonb",
           "pinned": "boolean"
         },
         "indexes": [
@@ -19,8 +20,15 @@
       }
     }
   },
-  "runtime": "static",
   "slug": "notes",
+  "runtime": "vite",
   "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180
+  },
   "listingTrust": "first_party"
 }

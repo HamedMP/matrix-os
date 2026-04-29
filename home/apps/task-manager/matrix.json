@@ -1,12 +1,19 @@
 {
   "name": "Task Manager",
-  "description": "Manage kernel tasks with kanban and list views",
+  "description": "Project boards with Trello-style columns, cards, checklists, and drag-and-drop planning",
   "category": "productivity",
   "icon": "task-manager",
   "author": "system",
-  "version": "1.0.0",
-  "runtime": "static",
+  "version": "2.0.0",
+  "runtime": "vite",
   "slug": "task-manager",
   "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180
+  },
   "listingTrust": "first_party"
 }
