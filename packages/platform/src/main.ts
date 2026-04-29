@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
 import { createConnection, type Socket } from 'node:net';
@@ -100,6 +100,78 @@ const SocialSendBodySchema = z.object({
     displayName: z.string().min(1).max(100).optional(),
   }),
 });
+
+interface GatewayPlatformUser {
+  id: string;
+}
+
+interface GatewayPlatformDb {
+  migrate(): Promise<void>;
+  getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
+}
+
+interface GatewayPlatformDbModule {
+  createPlatformDb(databaseUrl: string): GatewayPlatformDb;
+}
+
+interface GatewayPipedreamConfig {
+  clientId: string;
+  clientSecret: string;
+  projectId: string;
+  environment?: string;
+}
+
+interface GatewayPipedreamModule {
+  createPipedreamClient(config: GatewayPipedreamConfig): unknown;
+}
+
+interface GatewayIntegrationRoutesModule {
+  createIntegrationRoutes(opts: {
+    db: GatewayPlatformDb;
+    pipedream: unknown;
+    webhookSecret: string;
+    resolveUserId: (c: Context) => Promise<string | null>;
+  }): Hono;
+}
+
+interface GatewayR2Client {
+  getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
+  getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
+  createMultipartUpload(key: string): Promise<string>;
+  getPresignedPartUrl(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresIn?: number,
+  ): Promise<string>;
+  getObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
+  putObject(
+    key: string,
+    body: string | Uint8Array | ReadableStream<Uint8Array>,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ etag?: string }>;
+  deleteObject(key: string): Promise<void>;
+  destroy(): void;
+}
+
+interface GatewayR2ClientModule {
+  createR2Client(config: {
+    accountId?: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    bucket: string;
+    endpoint?: string;
+    publicEndpoint?: string;
+    forcePathStyle?: boolean;
+  }): GatewayR2Client;
+}
+
+async function importRuntimeModule<T>(specifier: string): Promise<T> {
+  return import(specifier) as Promise<T>;
+}
 
 function isMissingContainerError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith('No container for handle:');
@@ -1526,9 +1598,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
     ] = await Promise.all([
-      import('../../gateway/src/integrations/routes.js'),
-      import('../../gateway/src/integrations/pipedream.js'),
-      import('../../gateway/src/platform-db.js'),
+      importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/src/integrations/routes.js'),
+      importRuntimeModule<GatewayPipedreamModule>('../../gateway/src/integrations/pipedream.js'),
+      importRuntimeModule<GatewayPlatformDbModule>('../../gateway/src/platform-db.js'),
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
@@ -1585,7 +1657,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
   if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
     const [{ createR2Client }, { createInternalSyncRoutes }] = await Promise.all([
-      import('../../gateway/src/sync/r2-client.js'),
+      importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
     const r2 = createR2Client({
