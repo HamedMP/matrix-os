@@ -29,6 +29,19 @@ install_shell_config() {
 install_shell_config "$MATRIX_HOME"
 install_shell_config "/home/matrixos"
 
+# Unify AI CLI auth directories. Terminal panes use HOME=$MATRIX_HOME, while
+# gateway/kernel processes run with HOME=/home/matrixos. Without this, a
+# `claude login` completed in the web terminal can write credentials to a
+# different directory than the process that later invokes Claude Code.
+mkdir -p /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME"
+for tool in .claude .codex; do
+  if [ -e "$MATRIX_HOME/$tool" ] && [ ! -L "$MATRIX_HOME/$tool" ]; then
+    cp -an "$MATRIX_HOME/$tool/." "/home/matrixos/$tool/" 2>/dev/null || true
+    rm -rf "$MATRIX_HOME/$tool"
+  fi
+  ln -sfn "/home/matrixos/$tool" "$MATRIX_HOME/$tool"
+done
+
 # First boot: copy template into empty volume
 if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
   echo "First boot: initializing home directory from template..."
