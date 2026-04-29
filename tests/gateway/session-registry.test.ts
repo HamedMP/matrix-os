@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  MIN_TERMINAL_SESSION_TTL_MS,
   SessionRegistry,
   type SessionHandle,
   type PtyServerMessage,
@@ -247,14 +248,26 @@ describe("SessionRegistry", () => {
   });
 
   describe("session cap and eviction", () => {
-    it("evicts oldest orphaned session when hitting max", () => {
+    it("keeps recent orphaned sessions for at least the minimum TTL", () => {
+      const registry = createRegistry({ maxSessions: 3 });
+
+      registry.create("/home");
+      registry.create("/home");
+      registry.create("/home");
+
+      expect(() => registry.create("/home")).toThrow("Session limit reached");
+      expect(registry.list()).toHaveLength(3);
+    });
+
+    it("evicts expired orphaned sessions when hitting max", () => {
       const registry = createRegistry({ maxSessions: 3 });
 
       const id1 = registry.create("/home");
       const id2 = registry.create("/home");
       const id3 = registry.create("/home");
+      const sessionMap = (registry as unknown as { sessions: Map<string, { lastAttachedAt: number }> }).sessions;
+      sessionMap.get(id1)!.lastAttachedAt = Date.now() - MIN_TERMINAL_SESSION_TTL_MS - 1;
 
-      // All 3 sessions exist, none attached -- creating 4th should evict id1
       const id4 = registry.create("/home");
 
       expect(registry.getSession(id1)).toBeNull();
@@ -269,11 +282,13 @@ describe("SessionRegistry", () => {
       const id1 = registry.create("/home");
       const id2 = registry.create("/home");
       const id3 = registry.create("/home");
+      const sessionMap = (registry as unknown as { sessions: Map<string, { lastAttachedAt: number }> }).sessions;
+      sessionMap.get(id2)!.lastAttachedAt = Date.now() - MIN_TERMINAL_SESSION_TTL_MS - 1;
 
       // Attach to id1, making it non-evictable
       registry.attach(id1)!.subscribe(() => {});
 
-      // Creating 4th should skip id1 and evict id2
+      // Creating 4th should skip attached id1 and evict expired id2
       const id4 = registry.create("/home");
 
       expect(registry.getSession(id1)).not.toBeNull();
@@ -590,6 +605,57 @@ describe("SessionRegistry", () => {
 
       expect(warnSpy).toHaveBeenCalledWith("Stale terminal sessions file has invalid entries, ignoring");
       warnSpy.mockRestore();
+      rmSync(homePath, { recursive: true, force: true });
+    });
+
+    it("restores running persisted sessions that are younger than one week", () => {
+      const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+      const persistPath = join(homePath, "system", "terminal-sessions.json");
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+      writeFileSync(persistPath, JSON.stringify([{
+        sessionId,
+        cwd: homePath,
+        shell: "/bin/bash",
+        state: "running",
+        createdAt: Date.now() - 60_000,
+        lastAttachedAt: Date.now() - 60_000,
+        attachedClients: 0,
+      }]));
+      const mockSpawn = createMockSpawn();
+
+      const registry = new SessionRegistry(homePath, { persistPath }, mockSpawn);
+
+      expect(mockSpawn).toHaveBeenCalledOnce();
+      expect(registry.getSession(sessionId)).toMatchObject({
+        sessionId,
+        cwd: homePath,
+        state: "running",
+      });
+      expect(registry.attach(sessionId)).not.toBeNull();
+      rmSync(homePath, { recursive: true, force: true });
+    });
+
+    it("does not restore persisted sessions older than the minimum TTL", () => {
+      const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+      const persistPath = join(homePath, "system", "terminal-sessions.json");
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+      writeFileSync(persistPath, JSON.stringify([{
+        sessionId,
+        cwd: homePath,
+        shell: "/bin/bash",
+        state: "running",
+        createdAt: Date.now() - MIN_TERMINAL_SESSION_TTL_MS - 1,
+        lastAttachedAt: Date.now() - MIN_TERMINAL_SESSION_TTL_MS - 1,
+        attachedClients: 0,
+      }]));
+      const mockSpawn = createMockSpawn();
+
+      const registry = new SessionRegistry(homePath, { persistPath }, mockSpawn);
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(registry.getSession(sessionId)).toBeNull();
       rmSync(homePath, { recursive: true, force: true });
     });
   });

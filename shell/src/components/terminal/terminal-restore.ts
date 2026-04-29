@@ -20,13 +20,14 @@ export function getCachedTerminalRestorePlan(cached: CachedTerminal | null): Cac
   }
 
   const reuseSocket = cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING;
+  const hasTerminalElement = Boolean((cached.terminal as { element?: HTMLElement }).element);
 
   return {
     cached,
-    reuseTerminal: true,
+    reuseTerminal: reuseSocket && hasTerminalElement,
     reuseSocket,
     sessionId: cached.sessionId || null,
-    lastSeq: cached.lastSeq,
+    lastSeq: reuseSocket && hasTerminalElement ? cached.lastSeq : 0,
   };
 }
 
@@ -36,4 +37,17 @@ export function closeStaleCachedSocket(cached: CachedTerminal | null): void {
   }
 
   cached.ws.close();
+}
+
+export function discardStaleCachedTerminal(cached: CachedTerminal | null): void {
+  if (!cached) {
+    return;
+  }
+
+  closeStaleCachedSocket(cached);
+  try {
+    cached.terminal.dispose();
+  } catch (err: unknown) {
+    console.warn("Stale terminal dispose:", err instanceof Error ? err.message : err);
+  }
 }

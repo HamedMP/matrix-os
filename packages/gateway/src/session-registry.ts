@@ -9,6 +9,7 @@ import { resolveWithinHome } from "./path-security.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
+export const MIN_TERMINAL_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
   if (!TERMINAL_DEBUG_ENABLED) {
@@ -116,6 +117,7 @@ export interface SessionRegistryOptions {
   bufferSize?: number;
   persistPath?: string;
   allowedShells?: string[];
+  sessionTtlMs?: number;
 }
 
 type SubscriberFn = (msg: PtyServerMessage) => void;
@@ -179,14 +181,15 @@ class PtySession {
     buffer: RingBuffer,
     cwd: string,
     shell: string,
+    metadata?: Pick<SessionInfo, "createdAt" | "lastAttachedAt">,
   ) {
     this.sessionId = sessionId;
     this.ptyProcess = ptyProcess;
     this.buffer = buffer;
     this.cwd = cwd;
     this.shell = shell;
-    this.createdAt = Date.now();
-    this.lastAttachedAt = this.createdAt;
+    this.createdAt = metadata?.createdAt ?? Date.now();
+    this.lastAttachedAt = metadata?.lastAttachedAt ?? this.createdAt;
 
     this.ptyProcess.onData((data: string) => {
       for (const chunk of splitByUtf8Bytes(data, this.buffer.capacityBytes)) {
@@ -288,6 +291,7 @@ export class SessionRegistry {
   private readonly persistPath: string;
   private readonly spawnFn: SpawnFn;
   private readonly allowedShells: Set<string>;
+  private readonly sessionTtlMs: number;
   private persistTimer?: ReturnType<typeof setTimeout>;
   private persistQueue: Promise<void> = Promise.resolve();
 
@@ -300,6 +304,7 @@ export class SessionRegistry {
     this.maxSessions = options?.maxSessions ?? 20;
     this.bufferSize = options?.bufferSize ?? 5 * 1024 * 1024;
     this.persistPath = options?.persistPath ?? join(homePath, "system", "terminal-sessions.json");
+    this.sessionTtlMs = normalizeSessionTtl(options?.sessionTtlMs);
     this.allowedShells = options?.allowedShells
       ? new Set(options.allowedShells)
       : DEFAULT_ALLOWED_SHELLS;
@@ -321,6 +326,7 @@ export class SessionRegistry {
   }
 
   create(cwd: string, shell?: string): string {
+    this.evictExpiredSessions();
     this.evictIfNeeded();
 
     if (this.sessions.size >= this.maxSessions) {
@@ -361,6 +367,7 @@ export class SessionRegistry {
   }
 
   registerExternal(input: ExternalSessionRegistration): string {
+    this.evictExpiredSessions();
     this.evictIfNeeded();
 
     if (this.sessions.size >= this.maxSessions) {
@@ -498,10 +505,12 @@ export class SessionRegistry {
   }
 
   list(): SessionInfo[] {
+    this.evictExpiredSessions();
     return Array.from(this.sessions.values()).map((s) => s.toInfo());
   }
 
   getSession(sessionId: string): SessionInfo | null {
+    this.evictExpiredSessions();
     const session = this.sessions.get(sessionId);
     return session ? session.toInfo() : null;
   }
@@ -519,8 +528,10 @@ export class SessionRegistry {
     if (this.sessions.size < this.maxSessions) return;
 
     let candidate: PtySession | null = null;
+    const now = Date.now();
     for (const session of this.sessions.values()) {
       if (session.attachedClients > 0) continue;
+      if (!this.isExpired(session, now)) continue;
       if (!candidate) { candidate = session; continue; }
       // Prefer exited over running, then oldest
       if (session.state === "exited" && candidate.state !== "exited") {
@@ -538,6 +549,24 @@ export class SessionRegistry {
       });
       this.destroy(candidate.sessionId);
     }
+  }
+
+  private evictExpiredSessions(now = Date.now()): void {
+    for (const session of this.sessions.values()) {
+      if (session.attachedClients > 0) continue;
+      if (!this.isExpired(session, now)) continue;
+      logTerminalDebug("evict-expired", {
+        sessionId: session.sessionId,
+        state: session.state,
+        lastAttachedAt: session.lastAttachedAt,
+        sessionTtlMs: this.sessionTtlMs,
+      });
+      this.destroy(session.sessionId);
+    }
+  }
+
+  private isExpired(session: Pick<PtySession, "lastAttachedAt">, now: number): boolean {
+    return now - session.lastAttachedAt >= this.sessionTtlMs;
   }
 
   private schedulePersist(): void {
@@ -604,18 +633,66 @@ export class SessionRegistry {
           sessions = parsed.data;
         }
       }
-      // Only log info about stale sessions; don't re-create PTY processes
-      if (sessions.length > 0) {
-        console.log(`Found ${sessions.length} stale terminal session(s) from previous run (cleaned up)`);
+
+      const now = Date.now();
+      let restored = 0;
+      let expired = 0;
+      for (const session of sessions) {
+        if (session.state !== "running" || this.isExpired(session, now)) {
+          expired += 1;
+          continue;
+        }
+        if (this.sessions.size >= this.maxSessions) {
+          break;
+        }
+        if (this.restorePersistedSession(session)) {
+          restored += 1;
+        }
       }
-      // Clean up the stale persist file (fire-and-forget async)
-      void writeFile(this.persistPath, "[]").catch((e: unknown) => {
-        if (e instanceof Error) console.warn("Failed to clean stale sessions file:", e.message);
-      });
+
+      if (restored > 0 || expired > 0) {
+        console.log(`Restored ${restored} terminal session(s); cleaned up ${expired} expired/stale session(s)`);
+      }
+      this.schedulePersist();
     } catch (err: unknown) {
       if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.error("Failed to load persisted terminal sessions:", err.message);
       }
     }
   }
+
+  private restorePersistedSession(info: SessionInfo): boolean {
+    try {
+      const shell = this.allowedShells.has(info.shell) ? info.shell : "/bin/bash";
+      const validatedCwd = resolveWithinHome(this.homePath, info.cwd);
+      const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : this.homePath;
+      const ptyProcess = this.spawnFn(shell, [], this.spawnOptions(targetCwd, shell));
+      const session = new PtySession(
+        info.sessionId,
+        ptyProcess,
+        new RingBuffer(this.bufferSize),
+        targetCwd,
+        shell,
+        {
+          createdAt: info.createdAt,
+          lastAttachedAt: info.lastAttachedAt,
+        },
+      );
+      this.sessions.set(info.sessionId, session);
+      return true;
+    } catch (err: unknown) {
+      console.warn(
+        "Failed to restore terminal session:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return false;
+    }
+  }
+}
+
+function normalizeSessionTtl(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return MIN_TERMINAL_SESSION_TTL_MS;
+  }
+  return Math.max(value, MIN_TERMINAL_SESSION_TTL_MS);
 }

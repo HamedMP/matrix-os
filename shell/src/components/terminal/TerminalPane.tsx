@@ -15,7 +15,7 @@ import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
-import { closeStaleCachedSocket, getCachedTerminalRestorePlan } from "./terminal-restore";
+import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./terminal-restore";
 
 function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   if (terminalThemeId !== "system") {
@@ -268,10 +268,12 @@ export function TerminalPane({
   const authDetectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
+  const isFocusedRef = useRef(isFocused);
 
   onSessionAttachedRef.current = onSessionAttached;
   shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
   shouldDestroyOnUnmountRef.current = shouldDestroyOnUnmount;
+  isFocusedRef.current = isFocused;
 
   const handleFocus = useCallback(() => {
     onFocus?.(paneId);
@@ -334,6 +336,10 @@ export function TerminalPane({
       const cached = cachedRestore.cached;
       const canReuseCachedTerminal = cachedRestore.reuseTerminal;
       const canReuseCachedSocket = cachedRestore.reuseSocket;
+      if (cached && !canReuseCachedTerminal) {
+        sessionIdRef.current = cachedRestore.sessionId;
+        lastSeqRef.current = cachedRestore.lastSeq;
+      }
       log("init", {
         cached: !!cached,
         reuseTerminal: canReuseCachedTerminal,
@@ -532,6 +538,13 @@ export function TerminalPane({
       }
 
       attachWebglContextLostHandler();
+      if (isFocusedRef.current) {
+        requestAnimationFrame(() => {
+          if (!disposed) {
+            term.focus();
+          }
+        });
+      }
 
       function bindWs(ws: WebSocket, attachOnOpen: boolean) {
         wsRef.current = ws;
@@ -797,7 +810,7 @@ export function TerminalPane({
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING);
       } else {
-        closeStaleCachedSocket(cached);
+        discardStaleCachedTerminal(cached);
         connectWs();
       }
 
@@ -992,16 +1005,8 @@ export function TerminalPane({
     };
   }, [
     claudeMode,
-    cursorBlink,
     cwd,
     paneId,
-    terminalCursorStyle,
-    terminalFontFamily,
-    terminalFontSize,
-    terminalLigatures,
-    terminalSmoothScroll,
-    terminalThemeId,
-    theme,
   ]);
 
   useEffect(() => {

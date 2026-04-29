@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  closeStaleCachedSocket,
+  discardStaleCachedTerminal,
   getCachedTerminalRestorePlan,
 } from "../../shell/src/components/terminal/terminal-restore.js";
 import type { CachedTerminal } from "../../shell/src/components/terminal/terminal-cache.js";
 
 describe("getCachedTerminalRestorePlan", () => {
-  it("preserves cached session state even when the cached socket can no longer be reused", () => {
+  it("keeps the session id but does not reuse terminal DOM when the cached socket is stale", () => {
     const cached = {
-      terminal: {} as CachedTerminal["terminal"],
+      terminal: { element: {} as HTMLElement } as CachedTerminal["terminal"],
       fitAddon: {} as CachedTerminal["fitAddon"],
       webglAddon: null,
       searchAddon: null,
@@ -19,16 +19,17 @@ describe("getCachedTerminalRestorePlan", () => {
 
     const plan = getCachedTerminalRestorePlan(cached);
 
-    expect(plan.reuseTerminal).toBe(true);
+    expect(plan.reuseTerminal).toBe(false);
     expect(plan.reuseSocket).toBe(false);
     expect(plan.sessionId).toBe("session-123");
-    expect(plan.lastSeq).toBe(42);
+    expect(plan.lastSeq).toBe(0);
   });
 
-  it("closes a stale cached socket before reconnecting", () => {
+  it("closes and disposes a stale cached terminal before reconnecting", () => {
     const close = vi.fn();
+    const dispose = vi.fn();
     const cached = {
-      terminal: {} as CachedTerminal["terminal"],
+      terminal: { dispose } as unknown as CachedTerminal["terminal"],
       fitAddon: {} as CachedTerminal["fitAddon"],
       webglAddon: null,
       searchAddon: null,
@@ -40,15 +41,17 @@ describe("getCachedTerminalRestorePlan", () => {
       sessionId: "session-456",
     } satisfies CachedTerminal;
 
-    closeStaleCachedSocket(cached);
+    discardStaleCachedTerminal(cached);
 
     expect(close).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it("does not re-close an already closed cached socket", () => {
+  it("disposes an already closed cached terminal without re-closing the socket", () => {
     const close = vi.fn();
+    const dispose = vi.fn();
     const cached = {
-      terminal: {} as CachedTerminal["terminal"],
+      terminal: { dispose } as unknown as CachedTerminal["terminal"],
       fitAddon: {} as CachedTerminal["fitAddon"],
       webglAddon: null,
       searchAddon: null,
@@ -60,8 +63,9 @@ describe("getCachedTerminalRestorePlan", () => {
       sessionId: "session-456",
     } satisfies CachedTerminal;
 
-    closeStaleCachedSocket(cached);
+    discardStaleCachedTerminal(cached);
 
     expect(close).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });

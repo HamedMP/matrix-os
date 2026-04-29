@@ -223,6 +223,61 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     return env;
   }
 
+  function assertCanRecreate(record: ContainerRecord): void {
+    // Silent-failure #12: buildEnv silently drops MATRIX_USER_ID when
+    // clerkUserId is falsy, so the re-provisioned container would boot
+    // with a handle-prefixed R2 key and split the bucket. Refuse early
+    // with a clear operator message before touching Docker.
+    if (typeof record.clerkUserId !== 'string' || record.clerkUserId.length === 0) {
+      throw new Error(
+        `No clerkUserId in container record for handle '${record.handle}'. Cannot safely provision — run \`orch destroy\` and re-provision with a Clerk userId.`,
+      );
+    }
+  }
+
+  async function recreateContainer(record: ContainerRecord): Promise<ContainerRecord> {
+    assertCanRecreate(record);
+
+    if (record.containerId) {
+      const old = docker.getContainer(record.containerId);
+      await safeStopAndRemoveContainer(old, record.handle);
+    }
+
+    await pullImageIfRemote(image);
+    await ensureNetwork();
+    await createUserDatabase(record.handle);
+
+    const containerName = `matrixos-${record.handle}`;
+    const container = await docker.createContainer({
+      Image: image,
+      name: containerName,
+      Env: buildEnv(record.handle, undefined, record.clerkUserId),
+      HostConfig: {
+        Memory: memoryLimit,
+        MemorySwap: memoryLimit * 2,
+        CpuQuota: cpuQuota,
+        PortBindings: {
+          '4000/tcp': [{ HostPort: String(record.port) }],
+          '3000/tcp': [{ HostPort: String(record.shellPort) }],
+        },
+        Binds: [`${dataDir}/${record.handle}/matrixos:/home/matrixos/home`],
+        NetworkMode: network,
+        RestartPolicy: { Name: 'unless-stopped' },
+        Init: true,
+      },
+      ExposedPorts: {
+        '4000/tcp': {},
+        '3000/tcp': {},
+      },
+    });
+
+    await updateContainerStatus(db, record.handle, 'provisioning', container.id);
+    await container.start();
+    await updateContainerStatus(db, record.handle, 'running', container.id);
+
+    return (await getContainer(db, record.handle))!;
+  }
+
   return {
     async provision(handle, clerkUserId, displayName) {
       const existing = await getContainer(db, handle);
@@ -303,11 +358,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
       if (!record) throw new Error(`No container for handle: ${handle}`);
       if (record.status === 'running') return;
 
-      if (record.containerId) {
-        const container = docker.getContainer(record.containerId);
-        await container.start();
-      }
-      await updateContainerStatus(db, handle, 'running');
+      await recreateContainer(record);
     },
 
     async stop(handle) {
@@ -342,54 +393,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
     async upgrade(handle) {
       const record = await getContainer(db, handle);
       if (!record) throw new Error(`No container for handle: ${handle}`);
-      // Silent-failure #12: buildEnv silently drops MATRIX_USER_ID when
-      // clerkUserId is falsy, so the re-provisioned container would boot
-      // with a handle-prefixed R2 key and split the bucket. Refuse early
-      // with a clear operator message before touching Docker.
-      if (typeof record.clerkUserId !== 'string' || record.clerkUserId.length === 0) {
-        throw new Error(
-          `No clerkUserId in container record for handle '${handle}'. Cannot safely provision — run \`orch destroy\` and re-provision with a Clerk userId.`,
-        );
-      }
-
-      if (record.containerId) {
-        const old = docker.getContainer(record.containerId);
-        await safeStopAndRemoveContainer(old, handle);
-      }
-
-      await pullImageIfRemote(image);
-      await ensureNetwork();
-      await createUserDatabase(handle);
-
-      const containerName = `matrixos-${handle}`;
-      const container = await docker.createContainer({
-        Image: image,
-        name: containerName,
-        Env: buildEnv(handle, undefined, record.clerkUserId),
-        HostConfig: {
-          Memory: memoryLimit,
-          MemorySwap: memoryLimit * 2,
-          CpuQuota: cpuQuota,
-          PortBindings: {
-            '4000/tcp': [{ HostPort: String(record.port) }],
-            '3000/tcp': [{ HostPort: String(record.shellPort) }],
-          },
-          Binds: [`${dataDir}/${handle}/matrixos:/home/matrixos/home`],
-          NetworkMode: network,
-          RestartPolicy: { Name: 'unless-stopped' },
-          Init: true,
-        },
-        ExposedPorts: {
-          '4000/tcp': {},
-          '3000/tcp': {},
-        },
-      });
-
-      await updateContainerStatus(db, handle, 'provisioning', container.id);
-      await container.start();
-      await updateContainerStatus(db, handle, 'running', container.id);
-
-      return (await getContainer(db, handle))!;
+      return recreateContainer(record);
     },
 
     async rollingRestart() {

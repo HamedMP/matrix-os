@@ -291,15 +291,19 @@ describe('platform/orchestrator', () => {
     clientSpy.mockRestore();
   });
 
-  it('starts a stopped container', async () => {
+  it('recreates a stopped container on start so it uses the current default image', async () => {
     const { docker, mockContainer } = createMockDocker();
     const orch = createOrchestrator({ db, docker: docker as any });
 
     await orch.provision('alice', 'clerk_1');
     await orch.stop('alice');
+    docker.createContainer.mockClear();
     mockContainer.start.mockClear();
+    mockContainer.remove.mockClear();
 
     await orch.start('alice');
+    expect(mockContainer.remove).toHaveBeenCalledOnce();
+    expect(docker.createContainer).toHaveBeenCalledOnce();
     expect(mockContainer.start).toHaveBeenCalledOnce();
     expect((await orch.getInfo('alice'))!.status).toBe('running');
   });
