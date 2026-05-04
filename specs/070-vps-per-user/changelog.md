@@ -5,6 +5,51 @@ It is intentionally operator-focused: what changed, why it changed, and what was
 
 For the product-wide Matrix OS changelog, see `CHANGELOG.md`.
 
+## 2026-05-04 — Agent CLI Self-Update Permissions and Dev VPS
+
+### Summary
+
+Customer VPS host bundles now keep `/opt/matrix/runtime/node/lib/node_modules`
+and `/opt/matrix/runtime/node/bin` group-writable with setgid directories. The
+`matrix` service user can update bundled global agent CLIs in place with
+`npm install -g --prefix /opt/matrix/runtime/node ...` instead of hitting
+`EACCES` on rename.
+
+The dedicated hot-reload dev VPS is also live at `dev.matrix-os.com`. It runs
+Postgres, MinIO, the gateway, shell, and cloudflared on `matrix-dev`, with shell
+and gateway source bind-mounted for HMR/watch reload.
+
+### Host Bundle
+
+Published:
+
+```text
+system-bundles/matrix-os-host-dev/matrix-host-bundle.tar.gz
+system-bundles/matrix-os-host-dev/matrix-host-bundle.tar.gz.sha256
+```
+
+Verified checksum:
+
+```text
+fff28027768362dcdfe82c8cd4f50903cc2942a8bfd872b74b3968046ba8662c  matrix-host-bundle.tar.gz
+```
+
+### Live Verification
+
+- Patched and verified `codex` and `claude` self-update on founder VPSes:
+  - `hamedmp`: `178.105.110.52`
+  - `arian`: `178.105.101.129`
+- Verified both report:
+  - `codex-cli 0.118.0`
+  - `Claude Code 2.1.91`
+- Verified `dev.matrix-os.com` returns a Clerk signed-out redirect and loads
+  Clerk from `clerk.matrix-os.com`.
+- Verified dev VPS services are healthy:
+  - `matrixos-dev-vps`
+  - `matrix-os-cloudflared-1`
+  - `matrix-os-postgres-1`
+  - `matrix-os-minio-1`
+
 ## 2026-05-04 — Deterministic Default Icons and Founder VPS Refresh
 
 ### Summary
