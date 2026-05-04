@@ -1,4 +1,4 @@
-tunnel: matrix-os-dev
+tunnel: 7861f713-a63a-46eb-876b-be065f2fb721
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:

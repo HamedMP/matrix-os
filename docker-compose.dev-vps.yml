@@ -77,6 +77,7 @@ services:
       - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
       - ./tsconfig.json:/app/tsconfig.json
       - ./vitest.config.ts:/app/vitest.config.ts
+      - ./.env:/app/.env:ro
       - dev-vps-node-modules:/app/node_modules
       - dev-vps-home:/home/matrixos/home
       - dev-vps-ai-auth:/home/matrixos/.ai-auth
@@ -108,7 +109,7 @@ services:
       S3_BUCKET: ${DEV_VPS_S3_BUCKET:-matrixos-sync}
       S3_FORCE_PATH_STYLE: "true"
       PLATFORM_JWT_SECRET: ${PLATFORM_JWT_SECRET:-dev-platform-jwt-secret-please-change-32}
-      MATRIX_HOME_MIRROR: ${MATRIX_HOME_MIRROR:-true}
+      MATRIX_HOME_MIRROR: ${DEV_VPS_MATRIX_HOME_MIRROR:-false}
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
     healthcheck:
@@ -120,7 +121,8 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel run
+    user: "0:0"
+    command: tunnel --config /etc/cloudflared/config.yml run
     depends_on:
       dev:
         condition: service_started

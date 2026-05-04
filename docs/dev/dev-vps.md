@@ -6,7 +6,7 @@
 
 - Hetzner server: `matrix-dev`
 - Public hostname: `dev.matrix-os.com`
-- Cloudflare tunnel: `matrix-os-dev`
+- Cloudflare tunnel: `matrix-os-dev` (`7861f713-a63a-46eb-876b-be065f2fb721`)
 - Compose file: `docker-compose.dev-vps.yml`
 - Cloudflared config: `distro/cloudflared-dev-vps.yml`
 
@@ -15,6 +15,10 @@ The VPS runs Postgres, MinIO, the dev Matrix container, and cloudflared. The she
 - Shell runs `next dev` with Turbopack HMR.
 - Gateway runs `node --import=tsx --watch packages/gateway/src/main.ts`.
 - Source code is bind-mounted from the repo on the VPS.
+- Home mirror is disabled by default with `DEV_VPS_MATRIX_HOME_MIRROR=false`
+  because a standalone dev database has no platform user row until one is
+  intentionally seeded. The sync API, Postgres, MinIO, shell, and gateway still
+  run.
 
 ## Auth
 
@@ -25,6 +29,12 @@ Access goes through `dev.matrix-os.com` to the Next shell. Non-public routes are
 - app/API keys needed for realistic dev behavior
 
 Do not expose Docker ports publicly. Cloudflared is the public ingress.
+The compose file mounts `.env` into the dev container as `/app/.env` so the
+hot-reload gateway and shell use the same auth configuration.
+The cloudflared config must reference the tunnel UUID, not the name; otherwise
+`cloudflared tunnel run` looks for an origin cert instead of using the mounted
+credentials JSON. The cloudflared container runs as root only so it can read the
+0600 tunnel credentials bind mount.
 
 ## Deploy
 
