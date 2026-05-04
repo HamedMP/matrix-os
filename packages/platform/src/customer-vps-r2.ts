@@ -19,6 +19,7 @@ export type VpsMeta = z.infer<typeof VpsMetaSchema>;
 
 const CUSTOMER_VPS_R2_READ_TIMEOUT_MS = 10_000;
 const CUSTOMER_VPS_R2_WRITE_TIMEOUT_MS = 30_000;
+const StrictIsoDateTimeSchema = z.string().datetime();
 
 export interface CustomerVpsSystemStore {
   writeVpsMeta(meta: VpsMeta): Promise<void>;
@@ -45,12 +46,25 @@ export function buildVpsMeta(machine: UserMachineRecord, nowIso: string): VpsMet
     hetznerServerId: machine.hetznerServerId,
     imageVersion: machine.imageVersion,
     status: 'running',
-    provisionedAt: machine.provisionedAt,
-    lastSyncAt: nowIso,
+    provisionedAt: normalizeStrictIsoDateTime(machine.provisionedAt),
+    lastSyncAt: normalizeStrictIsoDateTime(nowIso),
     publicIPv4: machine.publicIPv4,
     publicIPv6: machine.publicIPv6 ?? undefined,
   };
   return VpsMetaSchema.parse(meta);
+}
+
+function normalizeStrictIsoDateTime(value: string): string {
+  if (StrictIsoDateTimeSchema.safeParse(value).success) return value;
+
+  const normalizedPostgresText = value
+    .trim()
+    .replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T')
+    .replace(/([+-]\d{2})$/, '$1:00')
+    .replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  const parsed = new Date(normalizedPostgresText);
+  if (!Number.isFinite(parsed.getTime())) return value;
+  return parsed.toISOString();
 }
 
 export function validateDbLatestPointer(value: string): boolean {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useId } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -63,6 +63,11 @@ import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+
+function iconUrlForSlug(slug: string | undefined): string | undefined {
+  if (!slug) return undefined;
+  return `/icons/${encodeURIComponent(slug)}.png`;
+}
 
 // Forgiving app-name lookup used by vocal mode's `open_app` tool and the
 // auto-open after a build finishes. Handles exact, substring, reverse
@@ -500,7 +505,6 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
   const dockXOffset = dock.position === "left" ? dock.size + 16 : 20;
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const iconVersion = useId().replace(/:/g, "");
   const focusedWindow = windows
     .filter((w) => !w.minimized)
     .sort((a, b) => b.zIndex - a.zIndex)[0];
@@ -568,30 +572,13 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           );
         }
       } else {
-        generatingRef.current.add(slug);
-        fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
-          method: "POST",
-          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-        })
-          .then((r) => {
-            if (!r.ok) {
-              r.json()
-                .then((d: { error?: string }) => console.warn(`Icon gen failed for "${slug}":`, d.error))
-                .catch((err) => console.warn(`[desktop] Failed to parse icon generation error for "${slug}":`, err));
-              return;
-            }
-            return r.json().then((data: { iconUrl: string; etag?: string }) => {
-              wmSetApps((prev) =>
-                prev.map((a) =>
-                  nameToSlug(a.name) === slug
-                    ? { ...a, iconUrl: versionedIconUrl(`${GATEWAY_URL}${data.iconUrl}`, data.etag) }
-                    : a,
-                ),
-              );
-            });
-          })
-          .catch((err) => console.warn(`Icon gen request failed for "${slug}":`, err))
-          .finally(() => generatingRef.current.delete(slug));
+        wmSetApps((prev) =>
+          prev.map((a) =>
+            nameToSlug(a.name) === slug && a.iconUrl
+              ? { ...a, iconUrl: undefined }
+              : a,
+          ),
+        );
       }
     }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
   }, [wmSetApps]);
@@ -681,17 +668,15 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
     wmSetWindows((prev) => prev.filter((w) => w.path !== appPath && !w.path.startsWith(appPath + ":")));
   }, [wmSetWindows]);
 
-  const addApp = useCallback((name: string, path: string) => {
+  const addApp = useCallback((name: string, path: string, iconSlug?: string) => {
     const slug = nameToSlug(name);
-    // Always prefer generated PNG icon over module-provided icon (which can be
-    // invalid, e.g. an emoji). checkAndGenerateIcon will generate if missing.
-    const optimisticUrl = `/icons/${slug}.png?v=${iconVersion}`;
+    const iconUrl = iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
       if (prev.find((a) => a.path === path)) return prev;
-      return [...prev, { name, path, iconUrl: optimisticUrl }];
+      return [...prev, { name, path, iconUrl }];
     });
-    checkAndGenerateIcon(slug);
-  }, [iconVersion, wmSetApps, checkAndGenerateIcon]);
+    if (iconSlug) checkAndGenerateIcon(iconSlug);
+  }, [wmSetApps, checkAndGenerateIcon]);
 
 
   const openWindow = useCallback((name: string, path: string) => {
@@ -798,10 +783,10 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
       };
 
       // Register built-in apps
-      addApp("Terminal", "__terminal__");
-      addApp("Workspace", "__workspace__");
-      addApp("Files", "__file-browser__");
-      addApp("Chat", "__chat__");
+      addApp("Terminal", "__terminal__", "terminal");
+      addApp("Workspace", "__workspace__", "code");
+      addApp("Files", "__file-browser__", "folder");
+      addApp("Chat", "__chat__", "chat");
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -814,7 +799,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           // path from API is like "/files/apps/calculator/index.html"
           // strip leading "/files/" to get relative path for AppViewer
           const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
-          addApp(app.name, relativePath);
+          addApp(app.name, relativePath, app.icon);
 
           const saved = layoutMap.get(relativePath);
           queueSavedLayout(saved);
@@ -863,7 +848,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
 
             if (!metaRes?.ok) {
               path = normalizeBuiltInAppPath(path);
-              addApp(appName, path);
+              addApp(appName, path, nameToSlug(appName));
               const saved = layoutMap.get(path);
               queueSavedLayout(saved);
               continue;
@@ -874,7 +859,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
             appName = meta.name ?? mod.name;
 
-            addApp(appName, path);
+            addApp(appName, path, meta.icon ?? nameToSlug(appName));
 
             const saved = layoutMap.get(path);
             if (saved) {

@@ -579,8 +579,9 @@ write_files:
       MATRIX_R2_BUCKET={{r2Bucket}}
       MATRIX_R2_PREFIX={{r2Prefix}}
       MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}
+      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/r2.env
-    owner: root:matrix
+    owner: root:root
     permissions: "0640"
     content: |
       AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'

@@ -66,6 +66,7 @@ function tooManyRequests(c: Context) {
 
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
+  "/icons/",
   "/files/system/icons/",
 ];
 // Paths that are authenticated by app-session cookie (HMAC-signed per-slug

@@ -2902,6 +2902,36 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(listApps(homePath));
   });
 
+  function resolveSystemIconUrl(requestedFile: string): string | null {
+    const match = requestedFile.match(/^([a-zA-Z0-9_-]+)\.(png|svg)$/);
+    if (!match) return null;
+    const [, stem, requestedExt] = match;
+    const candidates = [
+      `${stem}.${requestedExt}`,
+      `${stem}.png`,
+      `${stem}.svg`,
+      "game-center.png",
+      "game.svg",
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(join(homePath, "system/icons", candidate))) {
+        return `/files/system/icons/${candidate}`;
+      }
+    }
+    return null;
+  }
+
+  const redirectIconRequest = (c: Context) => {
+    const file = c.req.param("file");
+    if (!file) return c.text("Icon not found", 404);
+    const target = resolveSystemIconUrl(file);
+    if (!target) return c.text("Icon not found", 404);
+    return c.redirect(target, 307);
+  };
+
+  app.on("HEAD", "/icons/:file", redirectIconRequest);
+  app.get("/icons/:file", redirectIconRequest);
+
   app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     const { name } = await c.req.json<{ name: string }>();
@@ -2930,7 +2960,10 @@ export async function createGateway(config: GatewayConfig) {
     }
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
-      return c.json({ error: "GEMINI_API_KEY not configured" }, 503);
+      return c.json({
+        iconUrl: resolveSystemIconUrl(`${slug}.png`) ?? "/files/system/icons/game.svg",
+        generated: false,
+      });
     }
     try {
       let body: { style?: string } = {};
@@ -2984,7 +3017,7 @@ export async function createGateway(config: GatewayConfig) {
   app.post("/api/icons/regenerate-all", async (c) => {
     const geminiKey = process.env.GEMINI_API_KEY ?? "";
     if (!geminiKey) {
-      return c.json({ error: "GEMINI_API_KEY not configured" }, 503);
+      return c.json({ regenerated: 0, failed: [], generated: false });
     }
 
     let iconStyle = "";

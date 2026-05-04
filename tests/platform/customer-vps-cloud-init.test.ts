@@ -91,7 +91,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit.indexOf('groups:\n  - matrix')).toBeGreaterThanOrEqual(0);
     expect(cloudInit.indexOf('groups:\n  - matrix')).toBeLessThan(cloudInit.indexOf('write_files:'));
     expect(cloudInit).toContain('primary_group: matrix');
-    expect(cloudInit).toContain('owner: root:matrix');
+    expect(cloudInit).not.toContain('owner: root:matrix');
     expect(cloudInit).toContain('chown root:matrix /opt/matrix/postgres-compose.yml');
   });
 
@@ -150,6 +150,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(gateway).toContain('export PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
+    expect(cloudInit).not.toContain('owner: root:matrix');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {

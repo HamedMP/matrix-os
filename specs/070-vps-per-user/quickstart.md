@@ -21,6 +21,8 @@ HETZNER_LOCATION=nbg1
 HETZNER_SERVER_TYPE=cpx22
 HETZNER_SSH_KEY_NAME=matrix-ops
 PLATFORM_SECRET=...
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_or_pk_test_...
+CUSTOMER_VPS_IMAGE_VERSION=matrix-os-host-dev
 R2_ACCOUNT_ID=...
 R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
@@ -28,6 +30,29 @@ R2_BUCKET=matrixos-sync
 ```
 
 Do not run real Hetzner tests without an explicit opt-in env flag in the test command.
+
+## 1.1 Host Bundle Release Checklist
+
+Customer VPSes download a host bundle, not the per-user Docker image. Before provisioning or refreshing a VPS-hosted user:
+
+```bash
+set -a
+source .env
+set +a
+./scripts/build-host-bundle.sh
+sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
+```
+
+The build must fail if `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is missing. A bundle that serves `clerk.example.com` is invalid and must not be published.
+
+Publish:
+
+```text
+system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz
+system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/matrix-host-bundle.tar.gz.sha256
+```
+
+For new provisions, bump `CUSTOMER_VPS_IMAGE_VERSION` when the bundle is meant to become the default. For already-running VPSes, refresh the bundle in place or run recovery/reprovisioning until automated bundle upgrades exist.
 
 ## 2. Test-First Checklist
 
@@ -130,6 +155,8 @@ Use this checklist before enabling a real opt-in customer.
 - **Quota ceiling**: Hetzner project has capacity for exactly the intended test user count.
 - **Cost approval**: server type, monthly estimate, and backup storage expectations are accepted.
 - **Backup observation**: `matrix-db-backup.timer` is active and R2 has `system/db/latest` after the first hourly run.
+- **Host-bundle observation**: shell HTML served by the VPS does not contain `clerk.example.com`, gateway reads `DATABASE_URL` from host/Postgres env, and `/api/canvas` is not called by a fresh browser load.
+- **Console observation**: icon misses resolve to `/icons/*` fallbacks without automatic Gemini 503 loops, `/api/auth/ws-token` is present, and selected app windows do not trigger canvas panning on wheel events.
 - **Recovery observation**: a non-production `POST /vps/recover` replaces the server and returns to `running`.
 - **Rollback**: legacy container fallback has been verified for the same handle before rollout.
 - **Deletion policy**: operator understands `DELETE /vps/:machineId` does not delete R2 user data.

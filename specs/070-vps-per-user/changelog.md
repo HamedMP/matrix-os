@@ -5,6 +5,52 @@ It is intentionally operator-focused: what changed, why it changed, and what was
 
 For the product-wide Matrix OS changelog, see `CHANGELOG.md`.
 
+## 2026-05-04 — Founder VPS Refresh Lessons
+
+### Summary
+
+The first founder VPS migrations exposed a split between legacy user-container deploys and customer VPS host-bundle deploys. Updating the platform or Docker user image is not enough for VPS-hosted users; their shell/gateway/runtime assets come from the R2 host bundle downloaded at boot or manually refreshed in place.
+
+This follow-up hardened the release path and documented the operator checks:
+
+- `scripts/build-host-bundle.sh` now requires `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` so a bundle cannot silently bake the Clerk example frontend API.
+- Customer VPS gateway startup reads `DATABASE_URL` from host env or assembles it from `/opt/matrix/env/postgres.env`, keeping runtime state in owner-controlled Postgres.
+- Cloud-init writes host/Postgres env in a way that does not depend on a pre-existing `matrix` group during `write_files`.
+- The gateway serves `/icons/<slug>.png` through system-icon fallbacks and avoids browser-visible Gemini 503 loops when `GEMINI_API_KEY` is intentionally absent.
+- The shell no longer auto-posts icon generation on missing icons, no longer calls legacy `/api/canvas`, and only pans the canvas from canvas-surface events instead of bubbled events from selected app windows.
+
+### Host Bundle
+
+Fresh local bundle built during this slice:
+
+```text
+7ac0c0ddf5f78980190bfa14e9fd41bd7108e4b48d029844eb4623bffe4f8a5a  matrix-host-bundle.tar.gz
+```
+
+Publish target remains:
+
+```text
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+```
+
+### Console Error Triage
+
+Use these signatures before changing code:
+
+- `clerk.example.com`: stale or invalid shell bundle; rebuild with real `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`.
+- `/api/auth/ws-token 404`: stale shell/gateway routing on the served host; deploy the fresh bundle and restart services.
+- `/api/canvas 410`: legacy client still served; fresh shell should not call this endpoint.
+- `/icons/*.png 404` plus icon POST 503: old auto-generation flow with missing Gemini; fresh flow uses stable fallbacks.
+- Cloudflare beacon `ERR_BLOCKED_BY_CLIENT`, SES notices, and MetaMask extension errors are usually browser/extension noise unless paired with a Matrix-owned failure.
+
+### Follow-Ups
+
+- Automate in-place host-bundle upgrades for running customer VPSes.
+- Add inventory/drift reporting for container images and VPS host-bundle checksums.
+- Add migration automation for legacy containers to customer VPSes with data validation and rollback.
+- Add browser-level smoke coverage for the customer VPS shell console.
+
 ## 2026-04-28 — Customer Host Provisioning Completion
 
 ### Summary

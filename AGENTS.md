@@ -192,6 +192,9 @@ bun run docker:build      # full rebuild (no cache)
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
 - **Shell changes need Docker rebuild**: shell is built into the image. `docker compose up --build` only rebuilds platform/proxy.
 - **`docker build` needs `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...`**
+- **Customer VPS shell changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes or bump `CUSTOMER_VPS_IMAGE_VERSION` for new provisions.
+- **Never publish a shell bundle with the example Clerk key**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is baked at build time for both Docker images and customer host bundles. If production logs show `clerk.example.com`, the served shell bundle was built with the placeholder key and must be rebuilt and redeployed.
+- **Canvas panning must be target-gated**: wheel/pointer pan handlers should only accept events from the canvas surface/zoom overlay, not bubbled events from selected app windows. Add regression tests for scrolling inside an active app window.
 
 ## UX Guide
 

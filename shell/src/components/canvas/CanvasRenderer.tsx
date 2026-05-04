@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
-import { useCanvasGroups, type CanvasGroup } from "@/stores/canvas-groups";
-import { useCanvasLabels, type CanvasLabel } from "@/stores/canvas-labels";
-import { useCanvasSettings, type CanvasNavMode } from "@/stores/canvas-settings";
+import { useCanvasGroups } from "@/stores/canvas-groups";
+import { useCanvasLabels } from "@/stores/canvas-labels";
 import { CanvasTransform } from "./CanvasTransform";
 import { CanvasWindow } from "./CanvasWindow";
 import { WorkspaceCanvas } from "./WorkspaceCanvas";
@@ -14,17 +13,6 @@ import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./CanvasToolbar";
 import { CanvasMinimap } from "./CanvasMinimap";
-import { getGatewayUrl } from "@/lib/gateway";
-
-const GATEWAY_URL = getGatewayUrl();
-const CANVAS_FETCH_TIMEOUT_MS = 10_000;
-
-interface CanvasData {
-  transform?: { zoom: number; panX: number; panY: number };
-  groups?: CanvasGroup[];
-  labels?: CanvasLabel[];
-  settings?: { navMode?: CanvasNavMode; showTitles?: boolean };
-}
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
@@ -32,56 +20,11 @@ export function CanvasRenderer() {
   const windows = useWindowManager((s) => s.windows);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
   const clearFocus = useWindowManager((s) => s.clearFocus);
-  const setTransform = useCanvasTransform((s) => s.setTransform);
   const fitAll = useCanvasTransform((s) => s.fitAll);
   const groups = useCanvasGroups((s) => s.groups);
-  const setGroups = useCanvasGroups((s) => s.setGroups);
   const createGroup = useCanvasGroups((s) => s.createGroup);
   const addToGroup = useCanvasGroups((s) => s.addToGroup);
   const labels = useCanvasLabels((s) => s.labels);
-  const setLabels = useCanvasLabels((s) => s.setLabels);
-  const setNavMode = useCanvasSettings((s) => s.setNavMode);
-  const setShowTitles = useCanvasSettings((s) => s.setShowTitles);
-  const loadedRef = useRef(false);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
-
-    fetch(`${GATEWAY_URL}/api/canvas`, {
-      signal: AbortSignal.timeout(CANVAS_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: CanvasData | null) => {
-        if (data?.groups && data.groups.length > 0) {
-          setGroups(data.groups);
-        }
-        if (data?.labels && data.labels.length > 0) {
-          setLabels(data.labels);
-        }
-        if (data?.settings) {
-          if (data.settings.navMode) setNavMode(data.settings.navMode);
-          if (data.settings.showTitles !== undefined) setShowTitles(data.settings.showTitles);
-        }
-        // Always fitAll on mount to ensure windows are visible.
-        // Previously we restored saved transform, but that causes users
-        // to get stuck in a zoomed-in state after mode switching.
-        const currentWindows = useWindowManager.getState().windows;
-        if (currentWindows.length > 0) {
-          fitAll(
-            currentWindows.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
-            window.innerWidth,
-            window.innerHeight,
-          );
-        } else {
-          setTransform(1, 0, 0);
-        }
-      })
-      .catch((err: unknown) => {
-        console.warn("[canvas] failed to load canvas state:", err instanceof Error ? err.message : String(err));
-      });
-  }, [setTransform, fitAll, setGroups, setLabels, setNavMode, setShowTitles, windows]);
 
   const autoArrange = useCallback(
     (wins: typeof windows) => {
@@ -105,61 +48,6 @@ export function CanvasRenderer() {
     },
     [fitAll],
   );
-
-  // Debounced save of canvas state (transform + groups)
-  useEffect(() => {
-    const unsubTransform = useCanvasTransform.subscribe(
-      (state) => ({ zoom: state.zoom, panX: state.panX, panY: state.panY }),
-      (transform) => scheduleSave(transform),
-    );
-    const unsubGroups = useCanvasGroups.subscribe(
-      (state) => state.groups,
-      () => scheduleSave(),
-    );
-    const unsubLabels = useCanvasLabels.subscribe(
-      (state) => state.labels,
-      () => scheduleSave(),
-    );
-    const unsubSettings = useCanvasSettings.subscribe(
-      (state) => ({ navMode: state.navMode, showTitles: state.showTitles }),
-      () => scheduleSave(),
-    );
-
-    function scheduleSave(transformOverride?: { zoom: number; panX: number; panY: number }) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
-        const transform = transformOverride ?? {
-          zoom: useCanvasTransform.getState().zoom,
-          panX: useCanvasTransform.getState().panX,
-          panY: useCanvasTransform.getState().panY,
-        };
-        const currentGroups = useCanvasGroups.getState().groups;
-        const currentLabels = useCanvasLabels.getState().labels;
-        const { navMode, showTitles } = useCanvasSettings.getState();
-        fetch(`${GATEWAY_URL}/api/canvas`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(CANVAS_FETCH_TIMEOUT_MS),
-          body: JSON.stringify({
-            transform,
-            groups: currentGroups,
-            labels: currentLabels,
-            settings: { navMode, showTitles },
-          }),
-        }).catch((err: unknown) => {
-          console.warn("[canvas] failed to save canvas state:", err instanceof Error ? err.message : String(err));
-        });
-      }, 500);
-    }
-
-    return () => {
-      unsubTransform();
-      unsubGroups();
-      unsubLabels();
-      unsubSettings();
-      clearTimeout(saveTimerRef.current);
-    };
-  }, []);
 
   const onSelect = useCallback(
     (windowIds: string[]) => {

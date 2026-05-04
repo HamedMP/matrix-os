@@ -284,6 +284,29 @@ describe('platform/customer-vps', () => {
     });
   });
 
+  it('normalizes Postgres timestamp text when building VPS metadata', async () => {
+    const { service } = createService();
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const row = (await getUserMachine(db, provisioned.machineId))!;
+    const meta = buildVpsMeta(
+      {
+        ...row,
+        provisionedAt: '2026-04-26 12:00:00+00',
+      },
+      '2026-05-04 10:31:31.81222+00',
+    );
+
+    expect(meta.provisionedAt).toBe('2026-04-26T12:00:00.000Z');
+    expect(meta.lastSyncAt).toBe('2026-05-04T10:31:31.812Z');
+  });
+
   it('validates R2 latest pointers without accepting paths or URLs', () => {
     expect(validateDbLatestPointer('system/db/snapshots/2026-04-26T1800Z.dump')).toBe(true);
     expect(validateDbLatestPointer('../system/db/snapshots/2026-04-26T1800Z.dump')).toBe(false);

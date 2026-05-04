@@ -50,6 +50,26 @@ describe("CanvasTransform app focus interactions", () => {
     expect(useCanvasTransform.getState().panY).toBe(-80);
   });
 
+  it("does not pan bubbled wheel input from app content even when canvas panning is enabled", () => {
+    const { getByText } = render(
+      <CanvasTransform panEnabled>
+        <div>App content</div>
+      </CanvasTransform>,
+    );
+    const appContent = getByText("App content");
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 80,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+
+    appContent.dispatchEvent(event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(useCanvasTransform.getState().panY).toBe(0);
+  });
+
   it("ignores iframe-forwarded zoom while app focus owns input", () => {
     render(
       <CanvasTransform panEnabled={false}>

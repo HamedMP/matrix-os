@@ -36,9 +36,18 @@ export function CanvasTransform({
   const spaceDown = useRef(false);
   const [grabCursor, setGrabCursor] = useState(false);
 
+  const isCanvasSurfaceEvent = useCallback((target: EventTarget | null) => {
+    return (
+      target === containerRef.current ||
+      target === zoomOverlayRef.current ||
+      target === transformRef.current
+    );
+  }, []);
+
   const onWheel = useCallback(
     (e: WheelEvent) => {
       if (!panEnabled) return;
+      if (!isCanvasSurfaceEvent(e.target)) return;
 
       e.preventDefault();
 
@@ -65,7 +74,7 @@ export function CanvasTransform({
         panBy(-e.deltaX / zoom, -e.deltaY / zoom);
       }
     },
-    [zoom, zoomAtPoint, panBy, navMode, panEnabled],
+    [zoom, zoomAtPoint, panBy, navMode, panEnabled, isCanvasSurfaceEvent],
   );
 
   useEffect(() => {
@@ -78,10 +87,7 @@ export function CanvasTransform({
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       const isMiddleOrSpace = e.button === 1 || (e.button === 0 && spaceDown.current);
-      const isCanvasBackground =
-        e.target === containerRef.current ||
-        e.target === zoomOverlayRef.current ||
-        e.target === transformRef.current;
+      const isCanvasBackground = isCanvasSurfaceEvent(e.target);
       if (isCanvasBackground) {
         onBackgroundPointerDown?.();
       }
@@ -95,7 +101,7 @@ export function CanvasTransform({
         containerRef.current?.setPointerCapture(e.pointerId);
       }
     },
-    [navMode, onBackgroundPointerDown, panEnabled],
+    [navMode, onBackgroundPointerDown, panEnabled, isCanvasSurfaceEvent],
   );
 
   const onPointerMove = useCallback(

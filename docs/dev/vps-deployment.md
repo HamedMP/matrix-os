@@ -508,6 +508,55 @@ curl -X POST http://localhost:9000/containers/rolling-restart \
 
 Because `matrixos-user:local` has no registry host, the orchestrator's `pullImageIfRemote()` helper skips the pull entirely. `docker tag <new-sha> matrixos-user:local` after each build to advance the local tag.
 
+### Update Customer VPS Host Bundle
+
+Customer VPSes do not run the per-user Docker image. They boot from a host bundle downloaded from R2 at:
+
+```text
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+```
+
+Use this path whenever shell, gateway, bundled apps, host scripts, Postgres env wiring, or agent CLI versions change for VPS-hosted users:
+
+```bash
+set -a
+source .env
+set +a
+
+# Fails fast if NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is missing.
+./scripts/build-host-bundle.sh
+
+sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
+```
+
+Publish both generated files to R2 under `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`. New VPS provisions use that key automatically. Existing VPSes do not update themselves yet; refresh them in place by copying the tarball to the host, extracting it under `/opt/matrix`, and restarting `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
+
+Operational rules:
+
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is build-time, not runtime. If the browser tries to load `https://clerk.example.com/...`, the served shell bundle was built with the placeholder Clerk key and must be rebuilt with the real key.
+- `DATABASE_URL` must exist in `/opt/matrix/env/host.env` or be assembled by `/opt/matrix/bin/matrix-gateway` from `/opt/matrix/env/postgres.env`. Without it, gateway state can drift away from owner-controlled Postgres.
+- Do not use `owner: root:matrix` in cloud-init `write_files` before the `matrix` group exists. Prefer `root:root` for env files unless the file must be group-readable.
+- Preserve `/opt/matrix/env`, `/home/matrix/home`, and the `matrix-postgres` volume during in-place refreshes.
+- Record the checksum in `specs/070-vps-per-user/changelog.md` after publishing and mention which customer VPSes were refreshed.
+
+Verification after deploying a host bundle:
+
+```bash
+curl -fsS http://127.0.0.1:4000/health
+
+source /opt/matrix/env/host.env
+curl -fsSI \
+  -H "Authorization: Bearer $UPGRADE_TOKEN" \
+  -H "X-Platform-User-Id: $MATRIX_CLERK_USER_ID" \
+  http://127.0.0.1:3000
+
+curl -fsS \
+  -H "Authorization: Bearer $UPGRADE_TOKEN" \
+  -H "X-Platform-User-Id: $MATRIX_CLERK_USER_ID" \
+  http://127.0.0.1:3000 | grep -q clerk.example.com && echo bad || echo no_example_clerk
+```
+
 #### Recommended Dev / Prod Split
 
 Run three image tracks:
@@ -944,6 +993,27 @@ Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`
 4. **Shell not rebuilt**: Icon-related shell changes require rebuilding the Docker image (`docker build`) and upgrading the container. `docker compose up --build` only rebuilds platform services.
 
 5. **Pinned dock icon stuck on fallback letter**: The `imgFailed` state in DockIcon/AppTile components needs to reset when `iconUrl` changes. If icons show a letter instead of the image after regeneration, this reset logic may be broken.
+
+For customer VPSes, `/icons/<slug>.png` is the system-icon compatibility path. It should redirect to `/files/system/icons/<candidate>` for known icon filenames. The shell should not automatically POST `/api/apps/:slug/icon` on every missing icon, because VPS hosts may intentionally run without `GEMINI_API_KEY`; missing Gemini should return a stable fallback instead of a browser-visible 503 loop.
+
+### Browser console shows stale production bundle errors
+
+Map repeated console errors before changing code:
+
+| Console symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `clerk.example.com` / `failed_to_load_clerk_js` | Shell bundle was built without the real `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. | Rebuild and republish the Docker image or customer VPS host bundle with the real Clerk publishable key. |
+| `GET /api/auth/ws-token 404` | Browser is still serving an old shell bundle or host shell routes were not refreshed. | Deploy the fresh bundle/image, restart shell/gateway, and hard-refresh. |
+| `PUT /api/canvas 410` | Legacy canvas layout persistence client is still in the served bundle. | Fresh shell bundle should no longer call `/api/canvas`; deploy and hard-refresh. |
+| `HEAD /icons/*.png 404` followed by icon POST 503 | Old shell auto-generates missing icons and gateway lacks Gemini. | Use `/icons/*` compatibility redirect and stable icon fallbacks; avoid automatic POST generation. |
+| `Access-Control-Allow-Origin` from origin `null` inside apps | App iframe was loaded as an opaque/file-like origin or app bridge is calling the public origin directly. | Serve apps through Matrix origin and keep bridge/API calls relative when possible; explicit allowlists only, no wildcard CORS. |
+| `ERR_BLOCKED_BY_CLIENT` for Cloudflare beacon | Browser extension or privacy blocker. | Not a Matrix OS bug. |
+| `SES Removing unpermitted intrinsics` | Lockdown/SES runtime notice from sandboxed app dependencies. | Usually informational unless paired with app failure. |
+| MetaMask restore errors | Extension-injected provider code. | Not a Matrix OS bug unless Matrix code explicitly invoked the wallet. |
+
+### Canvas pans while an app window is selected
+
+Canvas panning must be gated by event target, not only by the current focus state. Wheel and pointer pan handlers should accept events only from the canvas surface, transform root, or zoom overlay. Events bubbling from a selected app window must not call `preventDefault()` and must not update pan state. Keep a regression test that dispatches a wheel event from app content while `panEnabled=true` and asserts the transform remains unchanged.
 
 ### API routes return 404 (e.g. /api/layout, /files/...)
 

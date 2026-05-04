@@ -71,6 +71,20 @@ describe("T711: GET /api/apps", () => {
     expect(apps[0].file).toBe("todo.html");
   });
 
+  it("does not list app templates as installed apps", () => {
+    mkdirSync(join(homePath, "apps/_template-next"), { recursive: true });
+    writeFileSync(join(homePath, "apps/_template-next/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/_template-next/matrix.json"),
+      JSON.stringify({ name: "My Next App", runtime: "node" }),
+    );
+    writeFileSync(join(homePath, "apps/real.html"), "<html></html>");
+
+    const apps = listApps(homePath);
+
+    expect(apps.map((app) => app.name)).toEqual(["real"]);
+  });
+
   it("returns empty when apps directory does not exist", () => {
     rmSync(join(homePath, "apps"), { recursive: true, force: true });
     const apps = listApps(homePath);

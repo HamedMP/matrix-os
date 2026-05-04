@@ -20,7 +20,16 @@ export function listApps(homePath: string): AppEntry[] {
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", ".cache", ".vite"]);
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  ".next",
+  ".cache",
+  ".vite",
+  "_template-next",
+  "_template-vite",
+]);
 
 function scanAppsDir(
   baseDir: string,

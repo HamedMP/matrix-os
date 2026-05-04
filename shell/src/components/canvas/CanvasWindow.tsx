@@ -393,6 +393,7 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
   return (
     <div
       className="absolute"
+      data-canvas-window
       style={{
         left: win.x,
         top: win.y,

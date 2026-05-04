@@ -14,6 +14,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-sync-agent');
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild better-sqlite3 node-pty');
+    expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
     expect(script).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(script).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(script).toContain('runtime/code-server');
@@ -30,6 +31,7 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('/vps/register');
     expect(launcher).toContain('curl --fail --silent --show-error --max-time 10');
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
+    expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
     expect(launcher).toContain('cd "$APP_DIR"');
   });
 

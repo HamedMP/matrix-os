@@ -197,6 +197,14 @@
 - [ ] T076 Run `bun run test` for the repository from `package.json`
 - [X] T077 Update implementation notes and any changed manual verification steps in `specs/070-vps-per-user/quickstart.md`
 
+## Follow-Up TODOs From First Founder VPS Migrations
+
+- [ ] T078 Add in-place customer VPS host-bundle upgrade automation that downloads, verifies, extracts, restarts services, and records the deployed checksum without touching `/opt/matrix/env`, `/home/matrix/home`, or Postgres data.
+- [ ] T079 Add platform inventory showing each user container/VPS image or host-bundle version, build SHA, bundle checksum, and whether it matches the desired release.
+- [ ] T080 Add existing-user migration automation from legacy container to customer VPS, including Postgres/app data validation, R2 backup preflight, rollback to legacy route, and founder canary mode.
+- [ ] T081 Add a browser console smoke test for customer VPS shell loads covering Clerk frontend API, `/api/auth/ws-token`, `/icons/*`, absence of legacy `/api/canvas`, app bridge CORS, and selected-window canvas panning.
+- [ ] T082 Add a one-command bundle publish helper for `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/` that refuses missing Clerk publishable keys and writes the checksum to the operator log/changelog.
+
 ---
 
 ## Dependencies & Execution Order
