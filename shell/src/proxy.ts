@@ -25,6 +25,7 @@ function isGatewayProxy(request: NextRequest): boolean {
   return (
     p.startsWith("/gateway/") ||
     p.startsWith("/api/") ||
+    p.startsWith("/icons/") ||
     p.startsWith("/files/") ||
     p.startsWith("/modules/") ||
     p.startsWith("/apps/") ||
@@ -143,6 +144,7 @@ export function proxy(
 export const config = {
   matcher: [
     "/gateway/:path*",
+    "/icons/:path*",
     "/files/:path*",
     "/modules/:path*",
     "/apps/:path*",

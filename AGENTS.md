@@ -187,6 +187,7 @@ bun run docker:build      # full rebuild (no cache)
 - **Canvas and Desktop share state**: window/app paths, layout persistence, dock pins, app icons, and restore/focus behavior must work in both modes. Add tests around shared helpers when possible, and manually check Canvas mode first for user-visible shell changes.
 - **Never mutate state in reducers**: `reduceChat` etc. must create new objects via spread, not mutate in-place. Shallow copies share refs; mutating causes streaming text duplication.
 - **Never use `meta.icon` as image URL**: always use generated PNG at `/files/system/icons/{slug}.png`
+- **Default app manifest icons must be shipped icons**: every `home/apps/**/matrix.json` `icon` value must have a matching `.png` or `.svg` in `home/system/icons/`. Games use the shared `game-center` icon unless a concrete shipped icon exists. Keep `tests/gateway/apps.test.ts` passing so new users and VPS restores start with deterministic icons and do not fall into Gemini icon-generation loops.
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
 - **Reset `imgFailed` when `iconUrl` changes**: track prev URL with `useRef`, reset on differ
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently

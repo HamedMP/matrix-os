@@ -19,6 +19,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(script).toContain('runtime/code-server');
     expect(script).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
+    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-gateway"');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

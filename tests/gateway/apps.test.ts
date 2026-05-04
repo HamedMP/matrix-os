@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { listApps } from "../../packages/gateway/src/apps.js";
 
 describe("T711: GET /api/apps", () => {
@@ -139,5 +140,41 @@ describe("T711: GET /api/apps", () => {
     const names = apps.map((a) => a.name);
     expect(names).toContain("Notes");
     expect(names).toContain("Timer");
+  });
+
+  it("ships icons for every default app manifest", () => {
+    const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+    const appsRoot = join(repoRoot, "home/apps");
+    const iconsRoot = join(repoRoot, "home/system/icons");
+    const shippedIcons = new Set(
+      readdirSync(iconsRoot)
+        .filter((file) => file.endsWith(".png") || file.endsWith(".svg"))
+        .map((file) => file.replace(/\.(?:png|svg)$/, "")),
+    );
+    const missing: string[] = [];
+
+    const visit = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        if (entry.startsWith("_template-")) {
+          continue;
+        }
+        const fullPath = join(dir, entry);
+        if (statSync(fullPath).isDirectory()) {
+          visit(fullPath);
+          continue;
+        }
+        if (entry !== "matrix.json") {
+          continue;
+        }
+        const manifest = JSON.parse(readFileSync(fullPath, "utf8")) as { icon?: unknown };
+        if (typeof manifest.icon === "string" && !shippedIcons.has(manifest.icon)) {
+          missing.push(`${fullPath.replace(`${repoRoot}/`, "")}: ${manifest.icon}`);
+        }
+      }
+    };
+
+    visit(appsRoot);
+
+    expect(missing).toEqual([]);
   });
 });

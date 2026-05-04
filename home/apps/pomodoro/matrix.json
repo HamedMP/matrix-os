@@ -2,7 +2,7 @@
   "name": "Pomodoro Timer",
   "description": "Focus timer with session tracking",
   "category": "productivity",
-  "icon": "pomodoro",
+  "icon": "pomodoro-timer",
   "author": "system",
   "version": "2.0.0",
   "storage": {

@@ -3,7 +3,7 @@
   "slug": "whiteboard",
   "description": "Excalidraw sketching and diagramming canvas",
   "category": "productivity",
-  "icon": "whiteboard",
+  "icon": "document",
   "author": "system",
   "version": "1.0.0",
   "runtime": "vite",

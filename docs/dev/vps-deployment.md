@@ -537,6 +537,7 @@ Operational rules:
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is build-time, not runtime. If the browser tries to load `https://clerk.example.com/...`, the served shell bundle was built with the placeholder Clerk key and must be rebuilt with the real key.
 - `DATABASE_URL` must exist in `/opt/matrix/env/host.env` or be assembled by `/opt/matrix/bin/matrix-gateway` from `/opt/matrix/env/postgres.env`. Without it, gateway state can drift away from owner-controlled Postgres.
 - Do not use `owner: root:matrix` in cloud-init `write_files` before the `matrix` group exists. Prefer `root:root` for env files unless the file must be group-readable.
+- During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
 - Preserve `/opt/matrix/env`, `/home/matrix/home`, and the `matrix-postgres` volume during in-place refreshes.
 - Record the checksum in `specs/070-vps-per-user/changelog.md` after publishing and mention which customer VPSes were refreshed.
 
@@ -995,6 +996,8 @@ Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`
 5. **Pinned dock icon stuck on fallback letter**: The `imgFailed` state in DockIcon/AppTile components needs to reset when `iconUrl` changes. If icons show a letter instead of the image after regeneration, this reset logic may be broken.
 
 For customer VPSes, `/icons/<slug>.png` is the system-icon compatibility path. It should redirect to `/files/system/icons/<candidate>` for known icon filenames. The shell should not automatically POST `/api/apps/:slug/icon` on every missing icon, because VPS hosts may intentionally run without `GEMINI_API_KEY`; missing Gemini should return a stable fallback instead of a browser-visible 503 loop.
+
+Default app manifests must only reference shipped icons in `home/system/icons/`. The default game apps share `game-center`, `social` uses `social`, `pomodoro` uses `pomodoro-timer`, and `whiteboard` uses `document` until a dedicated icon is added. `tests/gateway/apps.test.ts` enforces this so new VPS homes and restored user homes do not depend on runtime icon generation for first paint.
 
 ### Browser console shows stale production bundle errors
 

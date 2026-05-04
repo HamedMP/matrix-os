@@ -3,7 +3,7 @@
   "description": "Social network: feed, profiles, follows, posts",
   "runtime": "static",
   "category": "social",
-  "icon": "users",
+  "icon": "social",
   "author": "system",
   "version": "2.0.0",
   "permissions": [
