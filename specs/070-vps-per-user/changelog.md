@@ -5,6 +5,42 @@ It is intentionally operator-focused: what changed, why it changed, and what was
 
 For the product-wide Matrix OS changelog, see `CHANGELOG.md`.
 
+## 2026-05-04 — Deterministic Default Icons and Founder VPS Refresh
+
+### Summary
+
+Default app manifests now reference only icons shipped in `home/system/icons/`, so new homes and restored VPS homes no longer depend on Gemini icon generation for first paint. The shell proxy also routes `/icons/*` through the gateway compatibility redirect, and customer host wrapper scripts are executable by the `matrix` service user after root-owned in-place bundle extraction.
+
+### Host Bundle
+
+Published for the current default image version:
+
+```text
+system-bundles/matrix-os-host-dev/matrix-host-bundle.tar.gz
+system-bundles/matrix-os-host-dev/matrix-host-bundle.tar.gz.sha256
+```
+
+Verified checksum:
+
+```text
+e9cf006eeead7557f337d395fd835710ad10fe8fcdaf43a8f18797a3480c5474  matrix-host-bundle.tar.gz
+```
+
+### Live Verification
+
+Refreshed in place and verified:
+
+- `hamedmp` VPS: `178.105.110.52`
+- `arian` VPS: `178.105.101.129`
+
+Checks performed on both hosts:
+
+- `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service` are active.
+- Gateway `/health` returns `status: ok`.
+- Platform-verified shell requests return Next HTML with no `clerk.example.com` script reference.
+- Shell `/icons/2048.png` reaches the gateway `/icons/*` redirect path.
+- Gateway `/api/apps` reports only shipped default icons: app-specific shipped icons plus shared `game-center` for default game apps.
+
 ## 2026-05-04 — Founder VPS Refresh Lessons
 
 ### Summary
