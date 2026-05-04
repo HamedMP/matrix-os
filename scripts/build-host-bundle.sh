@@ -45,6 +45,10 @@ chmod 0755 "$STAGE_DIR/runtime/node/bin/code-server"
   @openai/codex@0.118.0 \
   opencode-ai@1.14.25 \
   @mariozechner/pi-coding-agent@0.70.2
+# Customer VPS terminals run as the matrix user. Keep global CLI packages and
+# bin shims group-writable so Codex/Claude/opencode/pi can self-update in place.
+chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"
+find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 # The bundle is usually extracted as root:root during in-place upgrades, while

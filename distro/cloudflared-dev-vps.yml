@@ -1,0 +1,7 @@
+tunnel: matrix-os-dev
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: dev.matrix-os.com
+    service: http://dev:3000
+  - service: http_status:404

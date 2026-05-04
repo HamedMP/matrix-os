@@ -20,6 +20,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('runtime/code-server');
     expect(script).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-gateway"');
+    expect(script).toContain('chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"');
+    expect(script).toContain('find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

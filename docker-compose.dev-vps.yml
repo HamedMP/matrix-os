@@ -1,0 +1,137 @@
+# Matrix OS -- dedicated dev VPS
+#
+# Runs infra services in Docker, while the shell and gateway run from the
+# bind-mounted repo with hot reload:
+#   - shell: `next dev` on port 3000 inside the dev container
+#   - gateway: `node --import=tsx --watch packages/gateway/src/main.ts`
+#
+# Public access goes only through cloudflared at dev.matrix-os.com. The shell's
+# Clerk middleware still requires login for non-public routes.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - dev-vps-pgdata:/var/lib/postgresql/data
+      - ./distro/init-postgres.sh:/docker-entrypoint-initdb.d/init-postgres.sh:ro
+    environment:
+      POSTGRES_USER: ${DEV_VPS_POSTGRES_USER:-matrixos}
+      POSTGRES_PASSWORD: ${DEV_VPS_POSTGRES_PASSWORD:-matrixos}
+      POSTGRES_DB: ${DEV_VPS_POSTGRES_DB:-matrixos}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DEV_VPS_POSTGRES_USER:-matrixos}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    volumes:
+      - dev-vps-minio-data:/data
+    environment:
+      MINIO_ROOT_USER: ${DEV_VPS_MINIO_ROOT_USER:-matrixos}
+      MINIO_ROOT_PASSWORD: ${DEV_VPS_MINIO_ROOT_PASSWORD:-matrixos123}
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${DEV_VPS_MINIO_ROOT_USER:-matrixos} ${DEV_VPS_MINIO_ROOT_PASSWORD:-matrixos123} &&
+      mc mb local/${DEV_VPS_S3_BUCKET:-matrixos-sync} --ignore-existing &&
+      echo 'Bucket ${DEV_VPS_S3_BUCKET:-matrixos-sync} ready'
+      "
+    restart: "no"
+
+  dev:
+    container_name: matrixos-dev-vps
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./packages:/app/packages
+      - ./shell:/app/shell
+      - ./home:/app/home
+      - ./tests:/app/tests
+      - ./specs:/app/specs
+      - ./docs:/app/docs
+      - ./distro:/app/distro
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vitest.config.ts:/app/vitest.config.ts
+      - dev-vps-node-modules:/app/node_modules
+      - dev-vps-home:/home/matrixos/home
+      - dev-vps-ai-auth:/home/matrixos/.ai-auth
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      PIPEDREAM_CLIENT_ID: ${PIPEDREAM_CLIENT_ID:-}
+      PIPEDREAM_CLIENT_SECRET: ${PIPEDREAM_CLIENT_SECRET:-}
+      PIPEDREAM_PROJECT_ID: ${PIPEDREAM_PROJECT_ID:-}
+      PIPEDREAM_ENVIRONMENT: ${PIPEDREAM_ENVIRONMENT:-production}
+      PIPEDREAM_WEBHOOK_SECRET: ${PIPEDREAM_WEBHOOK_SECRET:-}
+      NODE_ENV: development
+      MATRIX_HOME: /home/matrixos/home
+      MATRIX_HANDLE: ${DEV_VPS_HANDLE:-dev}
+      MATRIX_DISPLAY_NAME: ${DEV_VPS_DISPLAY_NAME:-Matrix Dev}
+      PORT: "4000"
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_GATEWAY_WS: wss://dev.matrix-os.com/ws
+      NEXT_PUBLIC_GATEWAY_URL: https://dev.matrix-os.com
+      GATEWAY_URL: http://localhost:4000
+      DATABASE_URL: postgresql://${DEV_VPS_POSTGRES_USER:-matrixos}:${DEV_VPS_POSTGRES_PASSWORD:-matrixos}@postgres:5432/${DEV_VPS_POSTGRES_DB:-matrixos}
+      PLATFORM_DATABASE_URL: postgresql://${DEV_VPS_POSTGRES_USER:-matrixos}:${DEV_VPS_POSTGRES_PASSWORD:-matrixos}@postgres:5432/${DEV_VPS_PLATFORM_DB:-matrixos_platform}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: https://dev.matrix-os.com
+      S3_ACCESS_KEY_ID: ${DEV_VPS_MINIO_ROOT_USER:-matrixos}
+      S3_SECRET_ACCESS_KEY: ${DEV_VPS_MINIO_ROOT_PASSWORD:-matrixos123}
+      S3_BUCKET: ${DEV_VPS_S3_BUCKET:-matrixos-sync}
+      S3_FORCE_PATH_STYLE: "true"
+      PLATFORM_JWT_SECRET: ${PLATFORM_JWT_SECRET:-dev-platform-jwt-secret-please-change-32}
+      MATRIX_HOME_MIRROR: ${MATRIX_HOME_MIRROR:-true}
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    healthcheck:
+      test: wget -qO- http://localhost:4000/health || exit 1
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    depends_on:
+      dev:
+        condition: service_started
+    volumes:
+      - ./distro/cloudflared-dev-vps.yml:/etc/cloudflared/config.yml:ro
+      - ./.cloudflared/matrix-os-dev.json:/etc/cloudflared/credentials.json:ro
+    restart: unless-stopped
+
+volumes:
+  dev-vps-pgdata:
+  dev-vps-minio-data:
+  dev-vps-node-modules:
+  dev-vps-home:
+  dev-vps-ai-auth:
