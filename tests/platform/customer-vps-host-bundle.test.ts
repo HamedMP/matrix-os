@@ -37,6 +37,10 @@ describe('customer VPS host bundle', () => {
     expect(launcher).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(launcher).toContain('/opt/matrix/app/node_modules/.bin');
     expect(launcher).toContain('export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"');
+    expect(launcher).toContain('sync_bundled_home_assets');
+    expect(launcher).toContain('$MATRIX_HOME/system/icons');
+    expect(launcher).toContain('find "$bundled_home/apps" -type f -name matrix.json');
+    expect(launcher).toContain('matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp');
     expect(launcher).toContain('cd "$APP_DIR"');
   });
 

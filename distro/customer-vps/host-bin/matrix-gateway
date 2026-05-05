@@ -29,6 +29,36 @@ export NEXT_PUBLIC_GATEWAY_URL="${NEXT_PUBLIC_GATEWAY_URL:-http://127.0.0.1:${GA
 export NEXT_PUBLIC_GATEWAY_WS="${NEXT_PUBLIC_GATEWAY_WS:-wss://code.matrix-os.com/ws}"
 export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 
+sync_bundled_home_assets() {
+  local bundled_home="$APP_DIR/home"
+  [ -d "$bundled_home" ] || return 0
+
+  mkdir -p "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
+  if [ -d "$bundled_home/system/icons" ]; then
+    find "$bundled_home/system/icons" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \) -exec cp -a {} "$MATRIX_HOME/system/icons/" \;
+  fi
+
+  if [ -d "$bundled_home/apps" ]; then
+    while IFS= read -r manifest; do
+      local rel app_rel src_app dst_app
+      rel="${manifest#"$bundled_home/apps/"}"
+      app_rel="${rel%/matrix.json}"
+      src_app="$bundled_home/apps/$app_rel"
+      dst_app="$MATRIX_HOME/apps/$app_rel"
+      mkdir -p "$dst_app"
+      for path in matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp; do
+        [ -e "$src_app/$path" ] || continue
+        rm -rf "$dst_app/$path"
+        cp -a "$src_app/$path" "$dst_app/$path"
+      done
+    done < <(find "$bundled_home/apps" -type f -name matrix.json)
+  fi
+
+  if id matrix >/dev/null 2>&1; then
+    chown -R matrix:matrix "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
+  fi
+}
+
 gateway_pid=""
 cleanup() {
   if [ -n "$gateway_pid" ] && kill -0 "$gateway_pid" 2>/dev/null; then
@@ -38,6 +68,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+sync_bundled_home_assets
 cd "$APP_DIR"
 "$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
 gateway_pid="$!"

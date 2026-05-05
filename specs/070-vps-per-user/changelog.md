@@ -5,6 +5,51 @@ It is intentionally operator-focused: what changed, why it changed, and what was
 
 For the product-wide Matrix OS changelog, see `CHANGELOG.md`.
 
+## 2026-05-05 — Vite Default Apps and Founder VPS Refresh
+
+### Summary
+
+Default home apps are now shipped as Vite builds instead of plain static HTML.
+The customer host bundle build runs `scripts/build-default-apps.mjs` before
+packaging, and customer gateway startup syncs bundled app source/build outputs
+plus default system icons into existing VPS homes. This prevents existing homes
+from serving stale app manifests or `needs_build` responses after an in-place
+host bundle refresh.
+
+### Host Bundle
+
+Published:
+
+```text
+system-bundles/matrix-os-host-dev/matrix-host-bundle.tar.gz
+system-bundles/matrix-os-host-dev/matrix-host-bundle.tar.gz.sha256
+```
+
+Verified checksum:
+
+```text
+261547365f256b05704deafa6e545b0fb3897e80a74e33e67574e8ad444b290b  matrix-host-bundle.tar.gz
+```
+
+### Live Verification
+
+Refreshed in place and verified:
+
+- `hamedmp` VPS: `178.105.110.52`
+- `arian` VPS: `178.105.101.129`
+
+Checks performed on both hosts:
+
+- `matrix-gateway.service`, `matrix-shell.service`, `matrix-code.service`, and
+  `matrix-sync-agent.service` are active.
+- Gateway `/health` returns `status: ok`.
+- Platform-verified shell requests return Next HTML with no
+  `clerk.example.com` script reference.
+- Existing homes contain built Vite app output for `whiteboard` and nested game
+  apps such as `games/2048`.
+- Existing homes contain the shipped `workspace`, `files`, `chat`, `whiteboard`,
+  and `terminal` SVG icons.
+
 ## 2026-05-04 — Agent CLI Self-Update Permissions and Dev VPS
 
 ### Summary
