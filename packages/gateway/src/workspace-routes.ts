@@ -27,6 +27,7 @@ type AgentLauncher = ReturnType<typeof createAgentLauncher>;
 type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
 type AgentSandbox = ReturnType<typeof createAgentSandbox>;
 type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
+type ZellijRuntime = ReturnType<typeof createZellijRuntime>;
 type ReviewStore = ReturnType<typeof createReviewStore>;
 type TaskManager = ReturnType<typeof createTaskManager>;
 type PreviewManager = ReturnType<typeof createPreviewManager>;
@@ -167,6 +168,7 @@ export function createWorkspaceRoutes(options: {
   agentLauncher?: AgentLauncher;
   agentSessionManager?: AgentSessionManager;
   agentSandbox?: AgentSandbox;
+  zellijRuntime?: ZellijRuntime;
   sessionRuntimeBridge?: SessionRuntimeBridge;
   reviewStore?: ReviewStore;
   taskManager?: TaskManager;
@@ -180,7 +182,7 @@ export function createWorkspaceRoutes(options: {
   const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
   const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
   const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath });
-  const zellijRuntime = createZellijRuntime({ homePath: options.homePath });
+  const zellijRuntime = options.zellijRuntime ?? createZellijRuntime({ homePath: options.homePath });
   const agentSessionManager = options.agentSessionManager ?? createAgentSessionManager({
     homePath: options.homePath,
     worktreeManager,
@@ -188,9 +190,14 @@ export function createWorkspaceRoutes(options: {
     zellijRuntime,
   });
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
+  // Defense in depth: when the caller forgets to inject sessionRuntimeBridge,
+  // construct a bridge whose registry does NOT auto-restore from the persist
+  // file. Otherwise this fallback races server.ts's primary registry on the
+  // same `<home>/system/terminal-sessions.json`, double-spawning bash children
+  // for every persisted session on every gateway boot.
   const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge({
     homePath: options.homePath,
-    registry: new SessionRegistry(options.homePath),
+    registry: new SessionRegistry(options.homePath, { autoRestore: false }),
     zellijRuntime,
   });
   const reviewStore = options.reviewStore ?? createReviewStore({ homePath: options.homePath });

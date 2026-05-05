@@ -38,8 +38,8 @@ export class ConversationRunRegistry {
   private readonly maxSubscribersPerRun: number;
 
   constructor(options?: ConversationRunRegistryOptions) {
-    this.maxRuns = options?.maxRuns ?? 50;
-    this.maxEventsPerRun = options?.maxEventsPerRun ?? 5_000;
+    this.maxRuns = options?.maxRuns ?? 20;
+    this.maxEventsPerRun = options?.maxEventsPerRun ?? 2_000;
     this.maxSubscribersPerRun = options?.maxSubscribersPerRun ?? 10;
   }
 

@@ -658,6 +658,38 @@ describe("SessionRegistry", () => {
       expect(registry.getSession(sessionId)).toBeNull();
       rmSync(homePath, { recursive: true, force: true });
     });
+
+    it("does not restore persisted sessions when autoRestore is false", () => {
+      // Regression: a second SessionRegistry constructed in workspace-routes.ts
+      // (the SessionRuntimeBridge fallback) used to share the prod registry's
+      // persist file and double-spawn a bash child for every "running" session
+      // on every gateway boot. autoRestore: false defangs that fallback.
+      const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+      const persistPath = join(homePath, "system", "terminal-sessions.json");
+      mkdirSync(join(homePath, "system"), { recursive: true });
+      const sessionId = "550e8400-e29b-41d4-a716-446655440001";
+      writeFileSync(persistPath, JSON.stringify([{
+        sessionId,
+        cwd: homePath,
+        shell: "/bin/bash",
+        state: "running",
+        createdAt: Date.now() - 60_000,
+        lastAttachedAt: Date.now() - 60_000,
+        attachedClients: 0,
+      }]));
+      const mockSpawn = createMockSpawn();
+
+      const registry = new SessionRegistry(
+        homePath,
+        { persistPath, autoRestore: false },
+        mockSpawn,
+      );
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(registry.getSession(sessionId)).toBeNull();
+      expect(registry.list()).toEqual([]);
+      rmSync(homePath, { recursive: true, force: true });
+    });
   });
 
   describe("getSession", () => {

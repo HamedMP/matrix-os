@@ -95,8 +95,11 @@ type InternalEntry =
       reject: (error: Error) => void;
     };
 
+const DEFAULT_MAX_CONCURRENCY = 8;
+const MAX_QUEUE_SIZE = 64;
+
 export function createDispatcher(opts: DispatchOptions): Dispatcher {
-  const { homePath, spawnFn = spawnKernel, maxConcurrency = Infinity } = opts;
+  const { homePath, spawnFn = spawnKernel, maxConcurrency = DEFAULT_MAX_CONCURRENCY } = opts;
 
   ensureHome(homePath);
   const db = createDB(`${homePath}/system/matrix.db`);
@@ -414,6 +417,9 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     },
 
     dispatch(message, sessionId, onEvent, context, abortController) {
+      if (queue.length >= MAX_QUEUE_SIZE) {
+        return Promise.reject(new Error("Dispatch queue full — try again later"));
+      }
       return new Promise<void>((resolve, reject) => {
         queue.push({
           kind: "serial",
