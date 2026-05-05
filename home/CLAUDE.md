@@ -4,10 +4,12 @@ You are building apps for Matrix OS, a web-based AI operating system. Apps run i
 
 ## Quick Start
 
-To create an app, make a directory in `~/apps/{slug}/` with two files:
+To create an app, make a Vite app directory in `~/apps/{slug}/`. First-party and polished apps should be React + TypeScript with the Matrix theme; avoid plain one-file HTML apps unless you are making a throwaway prototype.
 
 1. `matrix.json` - App manifest
-2. `index.html` - App UI
+2. `index.html` - Vite root with `<div id="root">`
+3. `src/main.tsx` - React entrypoint
+4. `vite.config.ts` - Vite build config
 
 The slug must match: `[a-z0-9][a-z0-9_-]*`
 
@@ -17,11 +19,18 @@ The slug must match: `[a-z0-9][a-z0-9_-]*`
 {
   "name": "My App",
   "description": "What this app does",
-  "runtime": "static",
+  "runtime": "vite",
   "category": "utility",
   "icon": "my-app",
   "author": "user",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "runtimeVersion": "^1.0.0",
+  "build": {
+    "install": "pnpm install --frozen-lockfile",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180
+  }
 }
 ```
 
@@ -53,9 +62,9 @@ Apps can declare database tables in the manifest:
 
 Column types: `text`, `integer`, `float`, `boolean`, `timestamptz`, `uuid`, `jsonb`
 
-## App UI (`index.html`)
+## App UI
 
-Apps are single HTML files with inline CSS and JS. They run in an iframe inside the OS shell.
+Apps run in an iframe inside the OS shell, but they should be built by Vite into `dist/`. Use React components and shadcn-style primitives (Button, Card, Input, Badge, Tabs, Dialog) styled with Matrix theme tokens.
 
 ### Theme Integration (Required)
 
@@ -144,11 +153,18 @@ localStorage.setItem('myapp-data', JSON.stringify(data));
 {
   "name": "Counter",
   "description": "Simple click counter",
-  "category": "utility"
+  "category": "utility",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "build": {
+    "install": "pnpm install --frozen-lockfile",
+    "command": "pnpm build",
+    "output": "dist"
+  }
 }
 
 ~/apps/counter/index.html:
-(single HTML file with inline style and script)
+<div id="root"></div><script type="module" src="/src/main.tsx"></script>
 ```
 
 ## Example: App with Storage

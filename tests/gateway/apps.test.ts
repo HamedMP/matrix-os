@@ -177,4 +177,40 @@ describe("T711: GET /api/apps", () => {
 
     expect(missing).toEqual([]);
   });
+
+  it("ships default apps as Vite apps with explicit build output", () => {
+    const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+    const appsRoot = join(repoRoot, "home/apps");
+    const staticApps: string[] = [];
+    const missingBuild: string[] = [];
+
+    const visit = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        if (entry.startsWith("_")) continue;
+        const fullPath = join(dir, entry);
+        if (!statSync(fullPath).isDirectory()) continue;
+        const manifestPath = join(fullPath, "matrix.json");
+        try {
+          const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+            runtime?: unknown;
+            build?: { output?: unknown };
+          };
+          if (manifest.runtime !== "vite") {
+            staticApps.push(manifestPath.replace(`${repoRoot}/`, ""));
+          }
+          if (manifest.build?.output !== "dist") {
+            missingBuild.push(manifestPath.replace(`${repoRoot}/`, ""));
+          }
+        } catch {
+          // Directories without manifests are not launchable default apps.
+        }
+        visit(fullPath);
+      }
+    };
+
+    visit(appsRoot);
+
+    expect(staticApps).toEqual([]);
+    expect(missingBuild).toEqual([]);
+  });
 });

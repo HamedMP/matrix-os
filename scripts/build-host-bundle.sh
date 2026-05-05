@@ -24,6 +24,7 @@ pnpm --filter '@matrix-os/gateway' build
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
 pnpm --filter './shell' build
 pnpm --filter '@finnaai/matrix' build
+node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
 
 curl --fail --location --max-time 120 "$NODE_URL" -o "$DIST_DIR/$NODE_ARCHIVE"
 curl --fail --location --max-time 30 "$NODE_BASE_URL/SHASUMS256.txt" -o "$DIST_DIR/SHASUMS256.txt"
@@ -59,6 +60,8 @@ cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
+mkdir -p "$STAGE_DIR/app/scripts"
+cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-default-apps.mjs"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
 if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"

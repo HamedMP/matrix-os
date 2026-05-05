@@ -3,14 +3,14 @@
   "slug": "whiteboard",
   "description": "Excalidraw sketching and diagramming canvas",
   "category": "productivity",
-  "icon": "document",
+  "icon": "whiteboard",
   "author": "system",
   "version": "1.0.0",
   "runtime": "vite",
   "runtimeVersion": "^1.0.0",
   "scope": "personal",
   "build": {
-    "install": "pnpm install --prefer-offline",
+    "install": "pnpm install --ignore-workspace --prefer-offline",
     "command": "pnpm build",
     "output": "dist",
     "timeout": 180

@@ -12,11 +12,22 @@ import { AppManifestSchema } from "../../packages/gateway/src/app-runtime/manife
 const SEED_APPS_DIR = join(process.cwd(), "home/apps");
 
 function listAppDirs(): string[] {
-  return readdirSync(SEED_APPS_DIR)
-    .map((name) => join(SEED_APPS_DIR, name))
-    .filter((path) => {
-      try { return statSync(path).isDirectory(); } catch { return false; }
-    });
+  const dirs: string[] = [];
+  const visit = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith("_")) continue;
+      const fullPath = join(dir, name);
+      try {
+        if (!statSync(fullPath).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      dirs.push(fullPath);
+      visit(fullPath);
+    }
+  };
+  visit(SEED_APPS_DIR);
+  return dirs;
 }
 
 describe("home/apps seed manifests", () => {

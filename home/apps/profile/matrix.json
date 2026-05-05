@@ -1,10 +1,24 @@
 {
   "name": "Profile",
   "description": "Your public profile page at handle.matrix-os.com",
-  "runtime": "static",
+  "runtime": "vite",
   "category": "social",
   "version": "1.0.0",
   "slug": "profile",
   "runtimeVersion": "^1.0.0",
-  "listingTrust": "first_party"
+  "listingTrust": "first_party",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
 }

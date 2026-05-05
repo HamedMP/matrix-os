@@ -2,6 +2,7 @@
 set -e
 
 cd /app
+export PATH="/app/node_modules/.bin:$PATH"
 
 # Install deps as root (volume may be root-owned)
 if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-lock-hash" ]; then
@@ -26,6 +27,22 @@ fi
 for dir in agents system apps; do
   if [ -d "/app/home/$dir" ] && [ ! -d "$MATRIX_HOME/$dir" ]; then
     cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"
+  fi
+done
+
+echo "[matrix-os-dev] Building bundled default apps..."
+node /app/scripts/build-default-apps.mjs /app/home/apps
+find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do
+  built_app=$(dirname "$(dirname "$built_index")")
+  app_rel=${built_app#/app/home/apps/}
+  target_app="$MATRIX_HOME/apps/$app_rel"
+  [ -d "$target_app" ] || continue
+  if [ ! -d "$target_app/dist" ]; then
+    mkdir -p "$target_app"
+    cp -R "$built_app/dist" "$target_app/dist"
+    if [ -f "$built_app/.build-stamp" ]; then
+      cp "$built_app/.build-stamp" "$target_app/.build-stamp"
+    fi
   fi
 done
 
@@ -172,6 +189,7 @@ echo "[matrix-os-dev] Starting gateway + shell as matrixos user..."
 # Drop to matrixos user for services (Agent SDK refuses bypassPermissions as root)
 exec su-exec matrixos bash -c '
   export SHELL=/bin/zsh
+  export PATH="/app/node_modules/.bin:$PATH"
   cd /app
 
   # QMD: register collections + start MCP server (best-effort, background)

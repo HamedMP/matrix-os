@@ -1,10 +1,29 @@
 {
   "name": "Minesweeper",
   "description": "Classic mine-clearing puzzle",
-  "runtime": "static",
+  "runtime": "vite",
   "category": "games",
   "icon": "game-center",
   "author": "system",
   "version": "1.0.0",
-  "tags": ["puzzle"]
+  "tags": [
+    "puzzle"
+  ],
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "slug": "minesweeper",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
 }

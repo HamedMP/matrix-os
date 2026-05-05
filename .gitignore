@@ -3,6 +3,8 @@ dist/
 build/
 .next/
 *.tsbuildinfo
+.build-stamp
+home/apps/whiteboard/public/excalidraw-assets/
 .env
 .env.*
 !.env.example

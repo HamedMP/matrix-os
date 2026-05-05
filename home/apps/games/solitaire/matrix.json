@@ -1,10 +1,29 @@
 {
   "name": "Solitaire",
   "description": "Classic Klondike solitaire card game",
-  "runtime": "static",
+  "runtime": "vite",
   "category": "games",
   "icon": "game-center",
   "author": "system",
   "version": "1.0.0",
-  "tags": ["card"]
+  "tags": [
+    "card"
+  ],
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "slug": "solitaire",
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts"
+    ]
+  }
 }

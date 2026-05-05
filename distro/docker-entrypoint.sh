@@ -2,6 +2,7 @@
 set -e
 
 MATRIX_HOME="${MATRIX_HOME:-/home/matrixos/home}"
+export PATH="/app/node_modules/.bin:$PATH"
 echo "Matrix OS starting..."
 echo "Home directory: $MATRIX_HOME"
 echo "Image: ${MATRIX_IMAGE:-unknown}"
@@ -54,13 +55,18 @@ if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
 fi
 
 echo "Ensuring bundled default app builds..."
-for built_app in /app/home/apps/*; do
-  [ -d "$built_app/dist" ] || continue
-  app_name=$(basename "$built_app")
-  target_app="$MATRIX_HOME/apps/$app_name"
+find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do
+  built_app=$(dirname "$(dirname "$built_index")")
+  app_rel=${built_app#/app/home/apps/}
+  target_app="$MATRIX_HOME/apps/$app_rel"
   [ -d "$target_app" ] || continue
   if [ ! -d "$target_app/dist" ]; then
-    su-exec matrixos cp -R "$built_app/dist" "$target_app/dist"
+    mkdir -p "$target_app"
+    cp -R "$built_app/dist" "$target_app/dist"
+    if [ -f "$built_app/.build-stamp" ]; then
+      cp "$built_app/.build-stamp" "$target_app/.build-stamp"
+    fi
+    chown -R matrixos:matrixos "$target_app/dist" "$target_app/.build-stamp" 2>/dev/null || true
   fi
 done
 

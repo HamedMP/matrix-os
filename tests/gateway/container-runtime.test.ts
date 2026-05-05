@@ -16,6 +16,16 @@ describe("container runtime image", () => {
     expect(entrypoint).toContain('install_shell_config "/home/matrixos"');
   });
 
+  it("builds and copies bundled Vite default app output", () => {
+    const dockerfile = readFileSync("Dockerfile", "utf-8");
+    const entrypoint = readFileSync("distro/docker-entrypoint.sh", "utf-8");
+
+    expect(dockerfile).toContain("scripts/build-default-apps.mjs");
+    expect(entrypoint).toContain("Ensuring bundled default app builds");
+    expect(entrypoint).toContain("*/dist/index.html");
+    expect(entrypoint).toContain(".build-stamp");
+  });
+
   it("provides a readable zsh prompt without optional theme assets", () => {
     const zshrc = readFileSync("distro/zshrc", "utf-8");
 

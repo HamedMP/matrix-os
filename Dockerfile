@@ -27,6 +27,7 @@ RUN echo "shamefully-hoist=true" > .npmrc
 
 # Copy postinstall helper before install (package.json postinstall references it)
 COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
+COPY scripts/build-default-apps.mjs scripts/build-default-apps.mjs
 
 RUN pnpm install --frozen-lockfile
 
@@ -37,23 +38,7 @@ COPY home/ home/
 
 # Build bundled Vite default apps so seeded homes and existing homes can serve
 # them without asking the user to run a first-open build step.
-RUN set -eux; \
-    for app in home/apps/*; do \
-      [ -f "$app/matrix.json" ] || continue; \
-      grep -q '"runtime"[[:space:]]*:[[:space:]]*"vite"' "$app/matrix.json" || continue; \
-      grep -q '"build"[[:space:]]*:' "$app/matrix.json" || continue; \
-      app_name="$(basename "$app")"; \
-      case "$app_name" in _*) continue ;; esac; \
-      cp -a "$app" "/tmp/$app_name"; \
-      rm -rf "/tmp/$app_name/node_modules"; \
-      cd "/tmp/$app_name"; \
-      CI=1 pnpm install --frozen-lockfile; \
-      pnpm build; \
-      rm -rf "/app/home/apps/$app_name/dist"; \
-      cp -a dist "/app/home/apps/$app_name/dist"; \
-      rm -rf "/tmp/$app_name"; \
-      cd /app; \
-    done
+RUN node scripts/build-default-apps.mjs home/apps
 
 # Build shell (Next.js) -- Clerk key is baked in at build time (NEXT_PUBLIC_*)
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -202,6 +187,7 @@ COPY --from=builder /app/.npmrc ./
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/shell ./shell
 COPY --from=builder /app/home ./home
+COPY --from=builder /app/scripts/build-default-apps.mjs ./scripts/build-default-apps.mjs
 COPY --from=builder /app/package.json ./
 COPY distro/customer-vps /app/distro/customer-vps
 COPY distro/zshrc /app/distro/zshrc
