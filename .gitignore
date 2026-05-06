@@ -81,13 +81,19 @@ www/next-env.d.ts
 .vibe/
 .windsurf/
 .zencoder/
-skills/
+.agents/skills/
+.claude/skills/
+/skills/
 skills-lock.json
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**
 !home/.agents/skills/
 !home/.agents/skills/**
+# Hermes-installable Matrix skills published from this repo
+!/skills/
+!/skills/matrix/
+!/skills/matrix/**
 
 # Xcode per-user state (do NOT track these -- they contain local paths
 # and window positions, and constantly show up as noise in diffs)
