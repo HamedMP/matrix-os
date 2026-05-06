@@ -141,6 +141,11 @@ export function createConversationStore(homePath: string): ConversationStore {
     appendAssistantText(sessionId, text) {
       const current = buffers.get(sessionId) ?? "";
       buffers.set(sessionId, current + text);
+      // Refresh TTL on every streaming chunk: a long assistant turn (>30 min
+      // of tool use + text) would otherwise be evicted mid-stream by the next
+      // begin()/create() call, dropping the in-memory buffer before
+      // finalize() can persist it.
+      touch(sessionId);
     },
 
     addToolStart(sessionId, tool) {
@@ -160,6 +165,7 @@ export function createConversationStore(homePath: string): ConversationStore {
         timestamp: Date.now(),
       });
       conv.updatedAt = Date.now();
+      touch(sessionId);
       writeToDisk(conv);
     },
 
@@ -179,6 +185,7 @@ export function createConversationStore(homePath: string): ConversationStore {
         }
       }
       conv.updatedAt = Date.now();
+      touch(sessionId);
       writeToDisk(conv);
     },
 
