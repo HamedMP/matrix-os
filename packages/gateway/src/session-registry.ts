@@ -118,6 +118,14 @@ export interface SessionRegistryOptions {
   persistPath?: string;
   allowedShells?: string[];
   sessionTtlMs?: number;
+  /**
+   * When false, the registry skips reading and restoring persisted sessions
+   * from `persistPath` on construction. Defense-in-depth for callers that
+   * only need a session map (e.g. the SessionRuntimeBridge fallback in
+   * `workspace-routes.ts`) — prevents two registries from racing on the
+   * same persist file and double-spawning bash children.
+   */
+  autoRestore?: boolean;
 }
 
 type SubscriberFn = (msg: PtyServerMessage) => void;
@@ -322,7 +330,9 @@ export class SessionRegistry {
       }
     }
 
-    this.loadPersistedSessions();
+    if (options?.autoRestore !== false) {
+      this.loadPersistedSessions();
+    }
   }
 
   create(cwd: string, shell?: string): string {

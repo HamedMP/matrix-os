@@ -1,8 +1,9 @@
 import { resolve, dirname } from "node:path";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { writeHeapSnapshot } from "node:v8";
 import { ensureHome, loadHandle, saveIdentity, deriveAiHandle } from "@matrix-os/kernel";
 import type { SyncReport } from "@matrix-os/kernel";
 import { createGateway } from "./server.js";
@@ -76,4 +77,51 @@ if (proxyUrl) {
 process.on("SIGINT", async () => {
   await gateway.close();
   process.exit(0);
+});
+
+// Heap snapshot on SIGUSR2 — `kill -USR2 <gateway-pid>` writes a .heapsnapshot
+// file under <home>/system/heap-snapshots/ that Chrome DevTools can load.
+// Lets us profile a leaking live process without restarting under --inspect.
+// Retention: keep only the most recent MAX_HEAP_SNAPSHOTS files so a stuck
+// SIGUSR2 loop or a long profiling session can't fill the owner home and
+// take the gateway down — each snapshot is a full V8 heap (often 100MB+).
+const MAX_HEAP_SNAPSHOTS = 5;
+
+function pruneOldHeapSnapshots(dir: string): void {
+  let entries: { path: string; mtimeMs: number }[];
+  try {
+    entries = readdirSync(dir)
+      .filter((f) => f.startsWith("gateway-") && f.endsWith(".heapsnapshot"))
+      .map((f) => {
+        const path = join(dir, f);
+        return { path, mtimeMs: statSync(path).mtimeMs };
+      });
+  } catch (err: unknown) {
+    console.warn("[gateway] Could not enumerate heap snapshots for pruning:", err instanceof Error ? err.message : String(err));
+    return;
+  }
+  entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  while (entries.length >= MAX_HEAP_SNAPSHOTS) {
+    const oldest = entries.shift()!;
+    try {
+      unlinkSync(oldest.path);
+    } catch (err: unknown) {
+      console.warn("[gateway] Could not delete old heap snapshot:", err instanceof Error ? err.message : String(err));
+    }
+  }
+}
+
+process.on("SIGUSR2", () => {
+  try {
+    const dir = join(homePath, "system", "heap-snapshots");
+    mkdirSync(dir, { recursive: true });
+    pruneOldHeapSnapshots(dir);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const file = join(dir, `gateway-${process.pid}-${stamp}.heapsnapshot`);
+    console.log(`[gateway] Writing heap snapshot to ${file}`);
+    const written = writeHeapSnapshot(file);
+    console.log(`[gateway] Heap snapshot written: ${written}`);
+  } catch (err: unknown) {
+    console.error("[gateway] Failed to write heap snapshot:", err instanceof Error ? err.message : String(err));
+  }
 });

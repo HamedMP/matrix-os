@@ -49,11 +49,41 @@ export interface ConversationStore {
   search(query: string, opts?: { limit?: number }): SearchResult[];
 }
 
+const CONVERSATION_IDLE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_ACTIVE_CONVERSATIONS = 20;
+
 export function createConversationStore(homePath: string): ConversationStore {
   const dir = join(homePath, "system", "conversations");
   mkdirSync(dir, { recursive: true });
   const active = new Map<string, ConversationFile>();
   const buffers = new Map<string, string>();
+  const lastTouched = new Map<string, number>();
+
+  function evictStale() {
+    const now = Date.now();
+    for (const [id, ts] of lastTouched) {
+      if (now - ts > CONVERSATION_IDLE_TTL_MS) {
+        active.delete(id);
+        buffers.delete(id);
+        lastTouched.delete(id);
+      }
+    }
+    while (active.size > MAX_ACTIVE_CONVERSATIONS) {
+      let oldestId: string | undefined;
+      let oldestTs = Infinity;
+      for (const [id, ts] of lastTouched) {
+        if (ts < oldestTs) { oldestTs = ts; oldestId = id; }
+      }
+      if (!oldestId) break;
+      active.delete(oldestId);
+      buffers.delete(oldestId);
+      lastTouched.delete(oldestId);
+    }
+  }
+
+  function touch(id: string) {
+    lastTouched.set(id, Date.now());
+  }
   const writeFileNow = fs.writeFileSync as (
     path: fs.PathOrFileDescriptor,
     data: string,
@@ -79,9 +109,11 @@ export function createConversationStore(homePath: string): ConversationStore {
 
   return {
     begin(sessionId) {
+      evictStale();
       const existing = readFromDisk(sessionId);
       if (existing) {
         active.set(sessionId, existing);
+        touch(sessionId);
         return;
       }
 
@@ -93,6 +125,7 @@ export function createConversationStore(homePath: string): ConversationStore {
         messages: [],
       };
       active.set(sessionId, conv);
+      touch(sessionId);
     },
 
     addUserMessage(sessionId, content) {
@@ -101,12 +134,18 @@ export function createConversationStore(homePath: string): ConversationStore {
 
       conv.messages.push({ role: "user", content, timestamp: Date.now() });
       conv.updatedAt = Date.now();
+      touch(sessionId);
       writeToDisk(conv);
     },
 
     appendAssistantText(sessionId, text) {
       const current = buffers.get(sessionId) ?? "";
       buffers.set(sessionId, current + text);
+      // Refresh TTL on every streaming chunk: a long assistant turn (>30 min
+      // of tool use + text) would otherwise be evicted mid-stream by the next
+      // begin()/create() call, dropping the in-memory buffer before
+      // finalize() can persist it.
+      touch(sessionId);
     },
 
     addToolStart(sessionId, tool) {
@@ -126,6 +165,7 @@ export function createConversationStore(homePath: string): ConversationStore {
         timestamp: Date.now(),
       });
       conv.updatedAt = Date.now();
+      touch(sessionId);
       writeToDisk(conv);
     },
 
@@ -145,6 +185,7 @@ export function createConversationStore(homePath: string): ConversationStore {
         }
       }
       conv.updatedAt = Date.now();
+      touch(sessionId);
       writeToDisk(conv);
     },
 
@@ -164,6 +205,8 @@ export function createConversationStore(homePath: string): ConversationStore {
       }
 
       writeToDisk(conv);
+      active.delete(sessionId);
+      lastTouched.delete(sessionId);
     },
 
     list() {
@@ -191,6 +234,7 @@ export function createConversationStore(homePath: string): ConversationStore {
     },
 
     create(channel?) {
+      evictStale();
       const uuid = randomUUID();
       const id = channel ? `${channel}:${uuid}` : uuid;
       const now = Date.now();
@@ -201,6 +245,7 @@ export function createConversationStore(homePath: string): ConversationStore {
         messages: [],
       };
       active.set(id, conv);
+      touch(id);
       writeToDisk(conv);
       return id;
     },

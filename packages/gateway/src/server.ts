@@ -23,6 +23,8 @@ import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createZellijRuntime } from "./zellij-runtime.js";
+import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -259,8 +261,14 @@ export async function createGateway(config: GatewayConfig) {
 
   const sessionRegistry = new SessionRegistry(homePath, {
     maxSessions: 20,
-    bufferSize: 5 * 1024 * 1024,
+    bufferSize: 1024 * 1024,
     persistPath: join(homePath, "system", "terminal-sessions.json"),
+  });
+  const workspaceZellijRuntime = createZellijRuntime({ homePath });
+  const workspaceSessionRuntimeBridge = createSessionRuntimeBridge({
+    homePath,
+    registry: sessionRegistry,
+    zellijRuntime: workspaceZellijRuntime,
   });
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
@@ -2117,6 +2125,8 @@ export async function createGateway(config: GatewayConfig) {
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
   app.route("/", createWorkspaceRoutes({
     homePath,
+    zellijRuntime: workspaceZellijRuntime,
+    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
