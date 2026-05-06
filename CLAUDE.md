@@ -111,6 +111,7 @@ bun run docker:full       # + proxy, platform, conduit
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
 - **Shell changes need Docker rebuild**: shell is built into the image. `docker compose up --build` only rebuilds platform/proxy.
 - **`docker build` needs `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...`**
+- **Pipedream stays platform-owned**: never put `PIPEDREAM_*` secrets on customer VPSes. VPS gateways need `PLATFORM_INTERNAL_URL` plus their existing `UPGRADE_TOKEN`/`MATRIX_HANDLE` so `/api/integrations*` proxies to platform-owned routes.
 
 ## UX Guide
 

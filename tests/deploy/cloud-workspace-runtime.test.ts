@@ -8,11 +8,22 @@ describe("cloud workspace runtime gates", () => {
   it("ships required coding workspace tools in the final container", () => {
     const dockerfile = readFileSync(join(root, "Dockerfile"), "utf-8");
 
-    for (const tool of ["zellij", "tmux", "gh", "openssh-client", "bubblewrap", "git", "code-server"]) {
+    for (const tool of ["zellij", "tmux", "gh", "openssh-client", "bubblewrap", "git", "sudo", "code-server"]) {
       expect(dockerfile).toContain(tool);
     }
     for (const agentCli of ["@anthropic-ai/claude-code", "@openai/codex", "opencode-ai", "@mariozechner/pi-coding-agent"]) {
       expect(dockerfile).toContain(agentCli);
+    }
+  });
+
+  it("lets the non-root Matrix user run sudo-based project installers", () => {
+    const dockerfile = readFileSync(join(root, "Dockerfile"), "utf-8");
+    const devDockerfile = readFileSync(join(root, "Dockerfile.dev"), "utf-8");
+
+    for (const source of [dockerfile, devDockerfile]) {
+      expect(source).toContain("sudo");
+      expect(source).toContain("matrixos ALL=(ALL) NOPASSWD:ALL");
+      expect(source).toContain("chmod 0440 /etc/sudoers.d/matrixos");
     }
   });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { Hono } from "hono";
 import { type PlatformDB, deleteContainer, getContainer, insertContainer, insertUserMachine } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
@@ -107,6 +108,52 @@ describe("platform proxy routing", () => {
     expect(headers.get("authorization")).not.toBe("Bearer platform-secret-123");
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
     expect(headers.get("cookie")).toBeNull();
+  });
+
+  it("serves authenticated integration routes on the platform before VPS proxying", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const integrationRoutes = new Hono();
+    integrationRoutes.get("/", (c) =>
+      c.json({
+        platformUserId: c.get("platformUserId"),
+        platformHandle: c.get("platformHandle"),
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      integrationRoutes,
+    });
+
+    const res = await app.request("/api/integrations", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      platformUserId: "user_alice",
+      platformHandle: "alice",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes sync JWT bearer requests through app.matrix-os.com to the matching container", async () => {

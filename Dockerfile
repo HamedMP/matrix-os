@@ -106,6 +106,7 @@ RUN apk add --no-cache \
     krb5-libs \
     strace \
     su-exec \
+    sudo \
     tar \
     tmux \
     tree \
@@ -167,6 +168,11 @@ RUN set -eux; \
 RUN adduser -D -u 1001 -h /home/matrixos -s /bin/zsh matrixos && \
     su-exec matrixos git config --global user.name "Matrix OS" && \
     su-exec matrixos git config --global user.email "os@matrix-os.com"
+
+# Matrix is a user-owned OS environment. Some user-installed project tools
+# expect sudo even though the container account has no password.
+RUN printf '%s\n' 'matrixos ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/matrixos && \
+    chmod 0440 /etc/sudoers.d/matrixos
 
 # Give matrixos write access to global npm so claude/codex/opencode
 # can auto-update themselves from inside the container.

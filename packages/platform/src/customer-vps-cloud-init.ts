@@ -8,6 +8,7 @@ export interface CustomerHostConfig {
   imageVersion: string;
   hostBundleUrl: string;
   platformRegisterUrl: string;
+  platformInternalUrl: string;
   platformVerificationToken: string;
   registrationToken: string;
   r2AccessKeyId: string;

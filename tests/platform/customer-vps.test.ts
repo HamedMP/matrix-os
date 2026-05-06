@@ -86,6 +86,8 @@ describe('platform/customer-vps', () => {
     const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
     expect(createInput?.userData).toContain(`UPGRADE_TOKEN=${expected}`);
     expect(createInput?.userData).toContain(`MATRIX_CODE_PROXY_TOKEN=${expected}`);
+    expect(createInput?.userData).toContain('PLATFORM_INTERNAL_URL=http://localhost:9000');
+    expect(createInput?.userData).not.toContain('PIPEDREAM_CLIENT_SECRET');
   });
 
   it('templates R2 credentials into provisioned customer hosts for backups', async () => {

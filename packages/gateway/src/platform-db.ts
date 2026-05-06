@@ -121,6 +121,7 @@ export interface PlatformDb {
   migrate(): Promise<void>;
 
   createUser(input: CreateUserInput): Promise<UsersTable>;
+  ensureUser(input: CreateUserInput): Promise<UsersTable>;
   getUserByClerkId(clerkId: string): Promise<UsersTable | null>;
   getUserById(id: string): Promise<UsersTable | null>;
   getUserByPipedreamExternalId(externalId: string): Promise<UsersTable | null>;
@@ -270,6 +271,41 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           created_at: sql`now()`,
           updated_at: sql`now()`,
         })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return result;
+    },
+
+    async ensureUser(input: CreateUserInput): Promise<UsersTable> {
+      const result = await kysely
+        .insertInto("users")
+        .values({
+          id: randomUUID(),
+          clerk_id: input.clerkId,
+          handle: input.handle,
+          display_name: input.displayName,
+          email: input.email,
+          container_id: input.containerId,
+          container_version: input.containerVersion ?? null,
+          plan: input.plan ?? "free",
+          status: "active",
+          pipedream_external_id: input.pipedreamExternalId ?? null,
+          created_at: sql`now()`,
+          updated_at: sql`now()`,
+        })
+        .onConflict((oc) =>
+          oc.column("clerk_id").doUpdateSet({
+            handle: input.handle,
+            display_name: input.displayName,
+            email: input.email,
+            container_id: input.containerId,
+            container_version: input.containerVersion ?? null,
+            plan: input.plan ?? "free",
+            status: "active",
+            pipedream_external_id: sql`COALESCE(users.pipedream_external_id, EXCLUDED.pipedream_external_id)`,
+            updated_at: sql`now()`,
+          })
+        )
         .returningAll()
         .executeTakeFirstOrThrow();
       return result;

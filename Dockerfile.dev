@@ -54,6 +54,7 @@ RUN apk add --no-cache \
     shadow \
     strace \
     su-exec \
+    sudo \
     tar \
     tree \
     tzdata \
@@ -114,6 +115,11 @@ RUN set -eux; \
 
 # Non-root user (Agent SDK refuses bypassPermissions as root)
 RUN addgroup -S matrixos && adduser -S matrixos -G matrixos -h /home/matrixos -s /bin/zsh
+
+# Matrix is a user-owned OS environment. Some user-installed project tools
+# expect sudo even though the container account has no password.
+RUN printf '%s\n' 'matrixos ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/matrixos && \
+    chmod 0440 /etc/sudoers.d/matrixos
 
 # Give matrixos write access to global npm so claude/codex/opencode
 # can auto-update themselves from inside the container.

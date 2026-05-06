@@ -17,6 +17,7 @@ describe('platform/customer-vps-cloud-init', () => {
     imageVersion: 'matrix-os-host-2026.04.26-1',
     hostBundleUrl: 'https://platform.example/system-bundles/matrix-os-host-2026.04.26-1/matrix-host-bundle.tar.gz',
     platformRegisterUrl: 'https://platform.example/vps/register',
+    platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
     registrationToken: 'registration-secret',
     r2AccessKeyId: 'r2-access-key',
@@ -59,8 +60,10 @@ describe('platform/customer-vps-cloud-init', () => {
 
     expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
+    expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
     expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');
+    expect(rendered).not.toContain('PLATFORM_INTERNAL_URL=\n');
   });
 
   it('renders R2 credentials for customer host backups into customer cloud-init', () => {
@@ -103,6 +106,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
+    expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain("AWS_ACCESS_KEY_ID='{{r2AccessKeyId}}'");
     expect(cloudInit).toContain("AWS_SECRET_ACCESS_KEY='{{r2SecretAccessKey}}'");
   });
@@ -149,9 +153,24 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
-    expect(gateway).toContain('export PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
+  });
+
+  it('grants the customer matrix user passwordless sudo for host installers', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('sudo');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl sudo unzip');
+    expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
+    expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
+    expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
+    expect(cloudInit).toContain('visudo -cf /etc/sudoers.d/matrix');
+    expect(cloudInit).toContain('loginctl enable-linger matrix');
+    expect(cloudInit).toContain('systemctl start "user@$(id -u matrix).service"');
+    expect(cloudInit).toContain('ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user');
   });
 
   it('installs a customer host code-server service behind restore completion', () => {
@@ -246,7 +265,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('permissions: "0750"');
-    expect(cloudInit).toContain('docker.io postgresql-client nginx openssl unzip');
+    expect(cloudInit).toContain('docker.io postgresql-client nginx openssl sudo unzip');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');

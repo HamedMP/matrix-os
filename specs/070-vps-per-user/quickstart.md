@@ -70,6 +70,7 @@ tests/platform/ws-upgrade.test.ts
 Minimum assertions:
 
 - `/vps/provision` is idempotent by `clerkUserId`.
+- `/containers/provision` delegates signup/onboarding to `/vps/provision` when the customer VPS service is configured, so new users get one active VPS instead of a legacy Docker container.
 - Mutating routes reject bodies over 4096 bytes.
 - Invalid platform secret and invalid registration token fail closed.
 - Registration consumes token and clears token fields.

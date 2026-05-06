@@ -574,6 +574,7 @@ write_files:
       MATRIX_HANDLE={{handle}}
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
+      PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_R2_BUCKET={{r2Bucket}}
@@ -619,7 +620,7 @@ runcmd:
       apt_get_update
     fi
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl unzip
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl docker.io postgresql-client nginx openssl sudo unzip
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
@@ -627,7 +628,14 @@ runcmd:
     install -d -o root -g matrix -m 0770 /opt/matrix
     install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
     install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/.local /home/matrix/.cache /home/matrix/.config
+    install -d -o matrix -g matrix -m 0755 /home/matrix/.config/systemd /home/matrix/home/.config/systemd/user
+    install -d -o root -g root -m 0750 /etc/sudoers.d
+    printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
+    chmod 0440 /etc/sudoers.d/matrix
+    visudo -cf /etc/sudoers.d/matrix
     install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/projects /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    ln -sfn /home/matrix/home/.config/systemd/user /home/matrix/.config/systemd/user
+    chown -h matrix:matrix /home/matrix/.config/systemd/user
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
@@ -670,6 +678,8 @@ runcmd:
     fi
 
     systemctl daemon-reload
+    loginctl enable-linger matrix
+    systemctl start "user@$(id -u matrix).service"
     systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-db-backup.timer nginx
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service
     systemctl restart nginx

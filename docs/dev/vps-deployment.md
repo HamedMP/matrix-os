@@ -199,8 +199,33 @@ EOF
 | `S3_BUCKET` | user containers | runtime | R2 bucket name, default `matrixos-sync` |
 | `S3_FORCE_PATH_STYLE` | user containers | runtime | `false` for R2, `true` for MinIO |
 | `MATRIX_HOME_MIRROR` | user containers | runtime | `true` enables three-way sync (container ↔ R2 ↔ peer) |
+| `PLATFORM_INTERNAL_URL` | customer VPS gateway | runtime | Base URL for platform-owned internal APIs; customer VPSes use it with their per-host token for sync and integrations |
 
 **Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available as Docker build args. All other vars are passed at container runtime via `docker-compose.platform.yml` environment section and the orchestrator's `extraEnv` mechanism.
+
+### Platform-Owned Integrations
+
+Pipedream integration credentials stay only on the platform process. Do not copy `PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, or `PIPEDREAM_PROJECT_ID` into customer VPS host env files.
+
+Customer VPS gateways proxy integration traffic back to the platform:
+
+- Public catalog/webhook routes use `${PLATFORM_INTERNAL_URL}/api/integrations`.
+- User-scoped integration routes use `${PLATFORM_INTERNAL_URL}/internal/containers/{handle}/integrations` with the per-host `UPGRADE_TOKEN`.
+- Existing VPSes provisioned before this wiring need `PLATFORM_INTERNAL_URL=https://app.matrix-os.com` added to `/opt/matrix/env/host.env`, then `systemctl restart matrix-gateway.service`.
+
+Smoke checks:
+
+```bash
+curl -fsS http://127.0.0.1:4000/api/integrations/available
+
+TOKEN="$(grep '^UPGRADE_TOKEN=' /opt/matrix/env/host.env | cut -d= -f2-)"
+HANDLE="$(grep '^MATRIX_HANDLE=' /opt/matrix/env/host.env | cut -d= -f2-)"
+curl -fsS \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://app.matrix-os.com/internal/containers/$HANDLE/integrations"
+```
+
+The second check should return `[]` for a user with no connected services, not `404`. It also lazily ensures the platform integrations DB has a user row for migrated VPS users.
 
 ### Sync Storage (Cloudflare R2)
 
@@ -350,17 +375,18 @@ curl https://api.matrix-os.com/health
 ```
 1. matrix-os.com -> Clerk signup (choose handle)
 2. Clerk webhook -> Inngest -> POST api.matrix-os.com/containers/provision
-3. Platform: allocate ports -> create Docker container -> start
+3. Platform: with CUSTOMER_VPS_ENABLED=true, create/reuse the user's single active customer VPS
 4. Dashboard: "Open Matrix OS" -> https://app.matrix-os.com
-5. app.matrix-os.com -> platform reads Clerk session cookie -> resolves user -> proxy to container
-6. After 30 min idle -> container auto-stops
-7. Next visit -> platform auto-wakes container
+5. app.matrix-os.com -> platform reads Clerk session cookie -> resolves user -> proxy to that VPS
+6. code.matrix-os.com -> same Clerk session -> proxy to the user's VPS code gateway
 ```
 
+`/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `clerk_user_id`, so repeated onboarding calls reuse the same active VPS for that user.
+
 **Two routing modes:**
-- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header, looks up container by `clerkUserId`, proxies to the shell/gateway. No handle in URL. Redirects to `/login` if no session.
-- `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the private code-server port inside the user's container. No handle, SSH, or server IP is exposed.
-- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain, proxies to container. No auth required (public access).
+- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header, prefers a running customer VPS by `clerkUserId`, and falls back to a legacy container. No handle in URL. Redirects to `/login` if no session.
+- `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway first and legacy code-server only as a fallback. No handle, SSH, or server IP is exposed.
+- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain, proxies to a running customer VPS first and legacy container second. No auth required (public access).
 
 ## Container Management
 
@@ -380,6 +406,8 @@ curl $BASE/containers
 curl $BASE/containers/alice
 
 # Provision
+# With CUSTOMER_VPS_ENABLED=true this creates/reuses the user's single active VPS.
+# Without it, this creates the legacy Docker container.
 curl -X POST $BASE/containers/provision \
   -H "content-type: application/json" \
   -d '{"handle":"alice","clerkUserId":"user_123"}'

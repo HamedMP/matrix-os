@@ -42,6 +42,7 @@ import {
 } from './platform-token.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { createCustomerVpsRoutes } from './customer-vps-routes.js';
+import { CustomerVpsError } from './customer-vps-errors.js';
 import { buildCustomerVpsProxyUrl } from './profile-routing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 
@@ -108,6 +109,16 @@ interface GatewayPlatformUser {
 interface GatewayPlatformDb {
   migrate(): Promise<void>;
   getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
+  ensureUser(input: {
+    clerkId: string;
+    handle: string;
+    displayName: string;
+    email: string;
+    containerId: string;
+    containerVersion?: string;
+    plan?: string;
+    pipedreamExternalId?: string;
+  }): Promise<GatewayPlatformUser>;
 }
 
 interface GatewayPlatformDbModule {
@@ -799,6 +810,9 @@ export function createApp(deps: {
     if ((isAppDomain || isCodeDomain) && (reqPath === '/vps' || reqPath.startsWith('/vps/'))) {
       return next();
     }
+    if ((isAppDomain || isCodeDomain) && reqPath.startsWith('/internal/containers/')) {
+      return next();
+    }
     const isPublicIntegrationPath =
       reqPath === '/api/integrations/available' ||
       reqPath.startsWith('/api/integrations/webhook/');
@@ -849,6 +863,12 @@ export function createApp(deps: {
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
+    if (isAppDomain && isIntegrationPath) {
+      c.set('platformUserId', identity.userId);
+      c.set('platformHandle', identity.handle);
+      return next();
+    }
+
     const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
     if (runningMachine) {
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
@@ -925,12 +945,6 @@ export function createApp(deps: {
     const record = await getContainer(db, identity.handle);
     if (!record) {
       return c.html(getNoContainerPage());
-    }
-
-    if (isAppDomain && isIntegrationPath) {
-      c.set('platformUserId', identity.userId);
-      c.set('platformHandle', record.handle);
-      return next();
     }
 
     if (isAppDomain && path === '/api/auth/ws-token') {
@@ -1141,6 +1155,26 @@ export function createApp(deps: {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
+      if (deps.customerVpsService) {
+        const machine = await deps.customerVpsService.provision({ handle, clerkUserId });
+
+        // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
+        if (matrixProvisioner) {
+          try {
+            await matrixProvisioner.provisionUser(handle);
+          } catch (matrixErr) {
+            console.error(`[matrix] Failed to provision Matrix accounts for ${handle}:`, matrixErr instanceof Error ? matrixErr.message : String(matrixErr));
+          }
+        }
+
+        return c.json({
+          runtime: 'customer_vps',
+          handle,
+          clerkUserId,
+          ...machine,
+        }, 202);
+      }
+
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
 
       // Provision Matrix accounts (non-blocking: log error but don't fail container provision)
@@ -1156,6 +1190,9 @@ export function createApp(deps: {
     } catch (e: unknown) {
       if (e instanceof Error && e.message.startsWith('Container already exists for handle:')) {
         return c.json({ error: 'Container already exists' }, 409);
+      }
+      if (e instanceof CustomerVpsError) {
+        return c.json({ error: e.publicMessage }, e.status as never);
       }
       logPlatformRouteError('/containers/provision', e);
       return c.json({ error: 'Provision failed' }, 500);
@@ -1612,15 +1649,37 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       environment: process.env.PIPEDREAM_ENVIRONMENT ?? 'production',
     });
     const webhookSecret = process.env.PIPEDREAM_WEBHOOK_SECRET ?? '';
+    const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
+      if (!clerkUserId) return null;
+      const existing = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
+      if (existing) return existing.id;
+      if (!handle) return null;
+
+      const owner =
+        (await getRunningUserMachineByHandle(db, handle)) ??
+        (await getContainer(db, handle));
+      if (!owner || owner.clerkUserId !== clerkUserId) {
+        return null;
+      }
+
+      const user = await trustedPlatformDb!.ensureUser({
+        clerkId: clerkUserId,
+        handle,
+        displayName: handle,
+        email: `${handle}@matrix-os.local`,
+        containerId: `platform:${clerkUserId}`,
+      });
+      return user.id;
+    };
+
     integrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('platformUserId') as string | undefined;
-        if (!clerkUserId) return null;
-        const user = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
-        return user?.id ?? null;
+        const handle = c.get('platformHandle') as string | undefined;
+        return await resolveIntegrationUserId(clerkUserId, handle);
       },
     });
     internalIntegrationRoutes = createIntegrationRoutes({
@@ -1629,9 +1688,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       webhookSecret,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
-        if (!clerkUserId) return null;
-        const user = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
-        return user?.id ?? null;
+        const handle = c.get('internalContainerHandle') as string | undefined;
+        return await resolveIntegrationUserId(clerkUserId, handle);
       },
     });
   }

@@ -60,6 +60,43 @@ describe('platform/api', () => {
     expect(body.status).toBe('running');
   });
 
+  it('POST /containers/provision delegates onboarding to one customer VPS when configured', async () => {
+    const { docker } = createMockDocker();
+    const orchestrator = createOrchestrator({ db, docker: docker as any });
+    const provisionSpy = vi.spyOn(orchestrator, 'provision');
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        status: 'provisioning',
+        etaSeconds: 90,
+      }),
+    };
+    const vpsApp = createApp({
+      db,
+      orchestrator,
+      platformSecret,
+      customerVpsService: customerVpsService as any,
+    });
+
+    const res = await vpsApp.request('/containers/provision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({ handle: 'alice', clerkUserId: 'clerk_1', displayName: 'Alice' }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({
+      runtime: 'customer_vps',
+      handle: 'alice',
+      clerkUserId: 'clerk_1',
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'provisioning',
+      etaSeconds: 90,
+    });
+    expect(customerVpsService.provision).toHaveBeenCalledWith({ handle: 'alice', clerkUserId: 'clerk_1' });
+    expect(provisionSpy).not.toHaveBeenCalled();
+  });
+
   it('POST /containers/provision rejects missing fields', async () => {
     const res = await app.request('/containers/provision', {
       method: 'POST',

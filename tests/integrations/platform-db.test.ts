@@ -85,6 +85,29 @@ describe("PlatformDb", () => {
       expect(found!.email).toBe("alice@example.com");
     });
 
+    it("upserts a user by clerk_id for platform-owned integrations", async () => {
+      const first = await db.ensureUser({
+        clerkId: "clerk_vps",
+        handle: "alice",
+        displayName: "Alice",
+        email: "alice@example.com",
+        containerId: "platform:clerk_vps",
+        pipedreamExternalId: "external-alice",
+      });
+      const second = await db.ensureUser({
+        clerkId: "clerk_vps",
+        handle: "alice",
+        displayName: "Alice Cooper",
+        email: "alice2@example.com",
+        containerId: "platform:clerk_vps",
+      });
+
+      expect(second.id).toBe(first.id);
+      expect(second.display_name).toBe("Alice Cooper");
+      expect(second.email).toBe("alice2@example.com");
+      expect(second.pipedream_external_id).toBe("external-alice");
+    });
+
     it("retrieves a user by id", async () => {
       const user = await db.createUser({
         clerkId: "clerk_456",
