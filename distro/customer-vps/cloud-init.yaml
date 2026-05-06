@@ -655,6 +655,9 @@ runcmd:
         ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"
       fi
     done
+    if [ -x /opt/matrix/bin/zellij ]; then
+      ln -sf /opt/matrix/bin/zellij /usr/local/bin/zellij
+    fi
     openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=customer-vps.matrix-os.local" -keyout /opt/matrix/tls/key.pem -out /opt/matrix/tls/cert.pem
     chown root:matrix /opt/matrix/tls/key.pem /opt/matrix/tls/cert.pem
     chmod 0640 /opt/matrix/tls/key.pem

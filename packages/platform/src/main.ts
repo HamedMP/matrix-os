@@ -1922,14 +1922,23 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const path = req.url ?? '/';
     const wsToken = getWebSocketUpgradeToken(path);
-    const identity = await resolveAppDomainIdentity({
-      authHeader: req.headers.authorization as string | undefined,
-      cookieHeader: req.headers.cookie,
-      clerkAuth,
-      db,
-      platformJwtSecret: PLATFORM_JWT_SECRET,
-      wsToken,
-    });
+    let identity: AppDomainIdentity | null;
+    try {
+      identity = await resolveAppDomainIdentity({
+        authHeader: req.headers.authorization as string | undefined,
+        cookieHeader: req.headers.cookie,
+        clerkAuth,
+        db,
+        platformJwtSecret: PLATFORM_JWT_SECRET,
+        wsToken,
+      });
+    } catch (err: unknown) {
+      console.warn(
+        `[platform] websocket auth failed host=${host} path=${path} error=${describeError(err)}`,
+      );
+      socket.destroy();
+      return;
+    }
     if (!identity) {
       console.warn(`[platform] websocket unauthenticated host=${host} path=${path} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
       socket.destroy();
