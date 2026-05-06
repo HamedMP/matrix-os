@@ -13,6 +13,8 @@ import {
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
+  getActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   updateLastActive,
@@ -502,7 +504,7 @@ async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
     };
   }
-  const machine = await getRunningUserMachineByClerkId(opts.db, result.userId);
+  const machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
   if (!machine) {
     return null;
   }
@@ -633,6 +635,40 @@ function getNoContainerPage() {
     <h1>No instance yet</h1>
     <p>Your account doesn't have a Matrix OS instance provisioned. Visit the <a href="https://matrix-os.com/dashboard">dashboard</a> to set one up.</p>
   </div>
+</body>
+</html>`;
+}
+
+function getVpsBootPage(input: { handle: string; status: string }) {
+  const title = input.status === 'recovering' ? 'Restoring Matrix OS' : 'Booting Matrix OS';
+  const detail = input.status === 'recovering'
+    ? 'Your Matrix instance is restoring its workspace. This page will refresh automatically.'
+    : 'Your Matrix instance is starting for the first time. This usually takes a couple of minutes.';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="8">
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    main { width: min(520px, calc(100vw - 48px)); padding: 32px; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; background: rgba(15, 23, 42, 0.92); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32); }
+    .row { display: flex; align-items: center; gap: 14px; }
+    .spinner { width: 22px; height: 22px; border: 3px solid rgba(148, 163, 184, 0.45); border-top-color: #38bdf8; border-radius: 999px; animation: spin 1s linear infinite; }
+    h1 { font-size: 24px; line-height: 1.2; margin: 0; }
+    p { color: #cbd5e1; line-height: 1.55; margin: 16px 0 0; }
+    code { display: inline-block; margin-top: 18px; color: #93c5fd; background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 8px; padding: 7px 10px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="row"><div class="spinner"></div><h1>${title}</h1></div>
+    <p>${detail}</p>
+    <code>${input.handle}.matrix-os.com - ${input.status}</code>
+  </main>
 </body>
 </html>`;
 }
@@ -944,6 +980,19 @@ export function createApp(deps: {
 
     const record = await getContainer(db, identity.handle);
     if (!record) {
+      const activeMachine = await getActiveUserMachineByHandle(db, identity.handle);
+      if (activeMachine) {
+        if (isCodeDomain || isGatewayPath) {
+          return c.json({
+            error: 'VPS provisioning',
+            status: activeMachine.status,
+          }, 503);
+        }
+        return c.html(getVpsBootPage({
+          handle: activeMachine.handle,
+          status: activeMachine.status,
+        }), 503);
+      }
       return c.html(getNoContainerPage());
     }
 

@@ -156,6 +156,44 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "machine-alice-provisioning",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "provisioning",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    expect(html).toContain("Booting Matrix OS");
+    expect(html).toContain("alice.matrix-os.com - provisioning");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("routes sync JWT bearer requests through app.matrix-os.com to the matching container", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
