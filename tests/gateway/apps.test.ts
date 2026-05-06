@@ -109,7 +109,7 @@ describe("T711: GET /api/apps", () => {
     writeFileSync(join(homePath, "apps/good-app/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/good-app/matrix.json"),
-      JSON.stringify({ name: "Good App", category: "utility", runtime: "static" }),
+      JSON.stringify({ name: "Good App", slug: "good-app", version: "1.0.0", runtimeVersion: "^1.0.0", category: "utility", runtime: "static" }),
     );
 
     const apps = await listApps(homePath);
@@ -130,21 +130,21 @@ describe("T711: GET /api/apps", () => {
     mkdirSync(join(homePath, "apps/games"), { recursive: true });
     writeFileSync(
       join(homePath, "apps/games/matrix.json"),
-      JSON.stringify({ name: "Game Center", category: "utilities", runtime: "static" }),
+      JSON.stringify({ name: "Game Center", slug: "games", version: "1.0.0", runtimeVersion: "^1.0.0", category: "utilities", runtime: "static" }),
     );
 
     mkdirSync(join(homePath, "apps/games/snake"), { recursive: true });
     writeFileSync(join(homePath, "apps/games/snake/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/games/snake/matrix.json"),
-      JSON.stringify({ name: "Snake", category: "games", runtime: "static" }),
+      JSON.stringify({ name: "Snake", slug: "snake", version: "1.0.0", runtimeVersion: "^1.0.0", category: "games", runtime: "static" }),
     );
 
     mkdirSync(join(homePath, "apps/games/2048"), { recursive: true });
     writeFileSync(join(homePath, "apps/games/2048/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/games/2048/matrix.json"),
-      JSON.stringify({ name: "2048", category: "games", runtime: "static" }),
+      JSON.stringify({ name: "2048", slug: "2048", version: "1.0.0", runtimeVersion: "^1.0.0", category: "games", runtime: "static" }),
     );
 
     const apps = await listApps(homePath);
@@ -157,6 +157,62 @@ describe("T711: GET /api/apps", () => {
     expect(snake.path).toBe("/files/apps/games/snake/index.html");
     expect(snake.file).toBe("games/snake/index.html");
     expect(snake.category).toBe("games");
+    expect(snake.slug).toBe("snake");
+    expect(snake.runtime).toBe("static");
+    expect(snake.runtimeState).toEqual({ status: "ready" });
+    expect(snake.launchUrl).toBe("/apps/snake/");
+  });
+
+  it("uses manifest slug for nested launch URLs and reports vite build readiness", async () => {
+    mkdirSync(join(homePath, "apps/games/chess/dist"), { recursive: true });
+    writeFileSync(join(homePath, "apps/games/chess/dist/index.html"), "<html>built</html>");
+    writeFileSync(
+      join(homePath, "apps/games/chess/matrix.json"),
+      JSON.stringify({
+        name: "Chess",
+        slug: "chess",
+        category: "games",
+        runtime: "vite",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        build: { command: "vite build --base ./ --outDir dist", output: "dist" },
+      }),
+    );
+
+    const apps = await listApps(homePath);
+    expect(apps).toEqual([
+      expect.objectContaining({
+        name: "Chess",
+        slug: "chess",
+        runtime: "vite",
+        runtimeState: { status: "ready" },
+        launchUrl: "/apps/chess/",
+        path: "/files/apps/games/chess/index.html",
+      }),
+    ]);
+  });
+
+  it("reports needs_build for vite apps without built output", async () => {
+    mkdirSync(join(homePath, "apps/games/chess"), { recursive: true });
+    writeFileSync(
+      join(homePath, "apps/games/chess/matrix.json"),
+      JSON.stringify({
+        name: "Chess",
+        slug: "chess",
+        category: "games",
+        runtime: "vite",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        build: { command: "vite build --base ./ --outDir dist", output: "dist" },
+      }),
+    );
+
+    const apps = await listApps(homePath);
+    expect(apps[0]).toMatchObject({
+      slug: "chess",
+      runtimeState: { status: "needs_build" },
+      launchUrl: "/apps/chess/",
+    });
   });
 
   it("lists nested apps alongside top-level apps", async () => {
@@ -167,7 +223,7 @@ describe("T711: GET /api/apps", () => {
     writeFileSync(join(homePath, "apps/tools/timer/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/tools/timer/matrix.json"),
-      JSON.stringify({ name: "Timer", category: "utilities", runtime: "static" }),
+      JSON.stringify({ name: "Timer", slug: "timer", version: "1.0.0", runtimeVersion: "^1.0.0", category: "utilities", runtime: "static" }),
     );
 
     const apps = await listApps(homePath);

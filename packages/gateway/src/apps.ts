@@ -1,9 +1,15 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadAppMeta, type AppMeta } from "@matrix-os/kernel";
-import { loadAppManifest } from "./app-manifest.js";
+import { listUniqueAppManifests } from "./app-runtime/app-index.js";
+import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
+import type { AppManifest } from "./app-runtime/manifest-schema.js";
 
 export interface AppEntry extends AppMeta {
+  slug?: string;
+  runtime?: AppManifest["runtime"];
+  runtimeState?: RuntimeState | { status: "error"; message: string };
+  launchUrl?: string;
   file: string;
   path: string;
 }
@@ -15,6 +21,7 @@ export async function listApps(homePath: string): Promise<AppEntry[]> {
   const seen = new Set<string>();
 
   await scanAppsDir(appsDir, "", result, seen);
+  await scanRuntimeApps(appsDir, result, seen);
 
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -46,22 +53,6 @@ function scanAppsDir(
         const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
 
         if (entry.isDirectory()) {
-          const manifest = safeLoadAppManifest(fullPath, relativePath);
-          if (manifest) {
-            if (!seen.has(relativePath)) {
-              seen.add(relativePath);
-              result.push({
-                name: manifest.name,
-                description: manifest.description,
-                icon: manifest.icon,
-                category: manifest.category,
-                author: manifest.author,
-                version: manifest.version,
-                file: `${relativePath}/index.html`,
-                path: `/files/apps/${relativePath}/index.html`,
-              });
-            }
-          }
           // Always recurse to discover nested apps (e.g. games/snake inside games/)
           await scanAppsDir(baseDir, relativePath, result, seen);
           continue;
@@ -89,12 +80,46 @@ function scanAppsDir(
     });
 }
 
-function safeLoadAppManifest(appDir: string, relativePath: string): ReturnType<typeof loadAppManifest> {
+async function scanRuntimeApps(
+  appsDir: string,
+  result: AppEntry[],
+  seen: Set<string>,
+): Promise<void> {
   try {
-    return loadAppManifest(appDir);
+    const apps = await listUniqueAppManifests(appsDir);
+    for (const app of apps) {
+      if (seen.has(app.slug)) continue;
+      seen.add(app.slug);
+      result.push({
+        name: app.manifest.name,
+        description: app.manifest.description,
+        icon: app.manifest.icon,
+        category: app.manifest.category ?? "utility",
+        author: app.manifest.author,
+        version: app.manifest.version,
+        slug: app.slug,
+        runtime: app.manifest.runtime,
+        runtimeState: await safeComputeRuntimeState(app.manifest, app.appDir, app.relativePath),
+        launchUrl: `/apps/${app.slug}/`,
+        file: `${app.relativePath}/index.html`,
+        path: `/files/apps/${app.relativePath}/index.html`,
+      });
+    }
+  } catch (err: unknown) {
+    logAppScanSkip(".", err);
+  }
+}
+
+async function safeComputeRuntimeState(
+  manifest: AppManifest,
+  appDir: string,
+  relativePath: string,
+): Promise<RuntimeState | { status: "error"; message: string }> {
+  try {
+    return await computeRuntimeState(manifest, appDir);
   } catch (err: unknown) {
     logAppScanSkip(relativePath, err);
-    return null;
+    return { status: "error", message: "App runtime unavailable" };
   }
 }
 

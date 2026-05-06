@@ -17,9 +17,11 @@ import {
   getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
+  listUserMachines,
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  type UserMachineRecord,
 } from './db.js';
 import type { Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
@@ -58,9 +60,11 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
+const APP_ROUTE_COOKIE = 'matrix_app_route';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -232,6 +236,53 @@ function readCookie(cookieHeader: string | undefined, name: string): string | nu
   }
 }
 
+function readMobileAppSessionRoutingHandle(path: string, rawUrl: string): string | null {
+  if (!(path === '/apps' || path.startsWith('/apps/'))) {
+    return null;
+  }
+  let token: string | null = null;
+  try {
+    token = new URL(rawUrl).searchParams.get('session');
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn('[platform] Failed to parse app session URL:', err instanceof Error ? err.message : String(err));
+    }
+    return null;
+  }
+  if (!token) return null;
+  const separator = token.indexOf('.');
+  if (separator <= 0) return null;
+  const handle = token.slice(0, separator);
+  return HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function readMobileAppRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!(path === '/apps' || path.startsWith('/apps/'))) {
+    return null;
+  }
+  const handle = readCookie(cookieHeader, APP_ROUTE_COOKIE);
+  return handle && HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function getAppRouteCookiePath(path: string): string | null {
+  const match = path.match(/^\/apps\/([^/?#]+)/);
+  if (!match?.[1]) return null;
+  return `/apps/${match[1]}/`;
+}
+
+function buildAppRouteCookie(handle: string, path: string): string | null {
+  const cookiePath = getAppRouteCookiePath(path);
+  if (!cookiePath) return null;
+  return [
+    `${APP_ROUTE_COOKIE}=${encodeURIComponent(handle)}`,
+    `Path=${cookiePath}`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=600',
+  ].join('; ');
+}
+
 function buildCodeSessionCookie(token: string): string {
   return [
     `${CODE_SESSION_COOKIE}=${encodeURIComponent(token)}`,
@@ -343,6 +394,7 @@ export function checkUnsafeDefaultSecrets(
 interface AppDomainIdentity {
   handle: string;
   userId: string;
+  source?: 'auth' | 'mobile-session';
 }
 
 interface ResolvedContainerEndpoint {
@@ -439,9 +491,15 @@ function describeError(err: unknown): string {
 }
 function isSyncJwtAuthError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  const errorWithCode = err as Error & { code?: unknown };
+  const errorCode = typeof errorWithCode.code === 'string'
+    ? errorWithCode.code
+    : '';
   return (
     err.name.startsWith("JWT") ||
     err.name.startsWith("JWS") ||
+    err.name.startsWith("JOSE") ||
+    errorCode.startsWith("ERR_JOSE_") ||
     err.message === "Invalid sync JWT claims" ||
     err.message.startsWith("JWT handle ")
   );
@@ -517,6 +575,53 @@ async function resolveAppDomainIdentity(opts: {
     handle: machine.handle,
     userId: result.userId,
   };
+}
+
+async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string): Promise<{
+  reachable: boolean;
+  statusCode?: number;
+  release?: unknown;
+  startedAt?: string;
+  error?: string;
+}> {
+  const targetUrl = buildCustomerVpsProxyUrl(machine, '/api/system/info');
+  if (!targetUrl) {
+    return { reachable: false, error: 'VPS unreachable' };
+  }
+  if (!platformSecret) {
+    return { reachable: false, error: 'Platform auth unavailable' };
+  }
+  const headers = new Headers({
+    authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`,
+    host: `${machine.handle}.matrix-os.com`,
+    'x-forwarded-host': 'app.matrix-os.com',
+    'x-forwarded-proto': 'https',
+    connection: 'close',
+  });
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(VPS_RELEASE_PROBE_TIMEOUT_MS),
+      dispatcher: customerVpsProxyDispatcher,
+    } as RequestInit & { dispatcher: Agent });
+    if (!response.ok) {
+      return { reachable: false, statusCode: response.status, error: 'System info unavailable' };
+    }
+    const info = await response.json() as { release?: unknown; startedAt?: string };
+    return {
+      reachable: true,
+      statusCode: response.status,
+      release: info.release,
+      startedAt: info.startedAt,
+    };
+  } catch (err: unknown) {
+    console.warn(
+      `[platform] VPS release probe failed handle=${machine.handle} machine=${machine.machineId} error=${describeError(err)}`,
+    );
+    return { reachable: false, error: 'VPS release probe failed' };
+  }
 }
 
 function getGatewayUrlForHandle(handle: string): string {
@@ -950,13 +1055,25 @@ export function createApp(deps: {
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
 
-    const identity = await resolveAppDomainIdentity({
+    let identity = await resolveAppDomainIdentity({
       authHeader,
       cookieHeader,
       clerkAuth,
       db,
       platformJwtSecret,
     });
+    if (!identity && isAppDomain) {
+      const mobileSessionHandle =
+        readMobileAppSessionRoutingHandle(path, c.req.url) ??
+        readMobileAppRouteCookie(path, cookieHeader);
+      if (mobileSessionHandle) {
+        identity = {
+          handle: mobileSessionHandle,
+          userId: '',
+          source: 'mobile-session',
+        };
+      }
+    }
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
@@ -1037,8 +1154,10 @@ export function createApp(deps: {
       }
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
-        headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
-        headers.set('x-platform-user-id', identity.userId);
+        if (identity.source !== 'mobile-session') {
+          headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
+          headers.set('x-platform-user-id', identity.userId);
+        }
       }
 
       try {
@@ -1052,6 +1171,10 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = new Headers(upstream.headers);
+        if (identity.source === 'mobile-session') {
+          const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
+          if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
+        }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({
             secret: platformJwtSecret,
@@ -1103,7 +1226,7 @@ export function createApp(deps: {
     await updateLastActive(db, record.handle);
 
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
+    const targetPort = isCodeDomain ? CODE_SERVER_PORT : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
       ? buildCodeDomainProxyHeaders(
@@ -1139,8 +1262,10 @@ export function createApp(deps: {
     }
     if (platformSecret && isAppDomain) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
-      headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
-      headers.set('x-platform-user-id', identity.userId);
+      if (identity.source !== 'mobile-session') {
+        headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
+        headers.set('x-platform-user-id', identity.userId);
+      }
     }
 
     let lastErr: unknown = null;
@@ -1165,6 +1290,10 @@ export function createApp(deps: {
         } as RequestInit & { dispatcher: Agent });
 
         const responseHeaders = new Headers(upstream.headers);
+        if (identity.source === 'mobile-session') {
+          const routeCookie = buildAppRouteCookie(record.handle, path);
+          if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
+        }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({
             secret: platformJwtSecret,
@@ -1233,6 +1362,36 @@ export function createApp(deps: {
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }
+  app.get('/vps/releases', async (c) => {
+    if (!platformSecret) {
+      return c.json({ error: 'VPS tracking not configured' }, 503);
+    }
+    const auth = c.req.header('authorization');
+    const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    if (!timingSafeTokenEquals(token, platformSecret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const machines = await listUserMachines(db);
+    const rows = await Promise.all(machines.map(async (machine) => {
+      const probe = machine.status === 'running'
+        ? await probeCustomerVpsRelease(machine, platformSecret)
+        : { reachable: false, error: 'VPS not running' };
+      return {
+        machineId: machine.machineId,
+        handle: machine.handle,
+        status: machine.status,
+        publicIPv4: machine.publicIPv4,
+        imageVersion: machine.imageVersion,
+        lastSeenAt: machine.lastSeenAt,
+        provisionedAt: machine.provisionedAt,
+        release: probe,
+      };
+    }));
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      machines: rows,
+    });
+  });
   if (deps.customerVpsService) {
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
