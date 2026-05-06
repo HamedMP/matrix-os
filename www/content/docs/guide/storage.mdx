@@ -1,179 +1,129 @@
 ---
 title: Storage
-description: S3-backed file system, git versioning, PostgreSQL databases, and storage tracking.
+description: Where your Matrix files, app data, memories, and workspace state live.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 
-Matrix OS provides durable, portable storage. Your files are backed up to S3 (like a personal iCloud), versioned with git, and apps can use PostgreSQL databases with zero configuration.
+Matrix OS keeps your workspace durable and recoverable without asking you to manage infrastructure.
 
-## S3 Backup
+Your Matrix environment has two main kinds of state:
 
-The VPS has local disk for fast reads and writes, but S3 is the durable backing store. If your container dies, everything is recoverable.
+- **Files**: apps, documents, settings, agent instructions, exports, icons, and project files.
+- **Database records**: app tables, canvas documents, social data, task data, and structured workspace state.
 
-### How Sync Works
-
-```
-~/matrixos/ (local disk)
-  |
-  +-- sync daemon ---> S3 bucket (s3://matrix-users/{handle}/)
-                         |
-                         +-- versioned objects (S3 versioning)
-                         +-- daily snapshots
-```
-
-- **Write-through**: file writes go to local disk immediately, then async-upload to S3
-- **Periodic reconciliation**: every 5 minutes, local and S3 are compared to catch missed writes
-- **Boot recovery**: if local disk is empty (new container), the full home directory is pulled from S3
-- **Debouncing**: rapid changes are batched (2-second debounce before upload)
-
-### .syncignore
-
-Control what gets synced with `~/.syncignore` (same syntax as `.gitignore`):
-
-```
-node_modules/
-.cache/
-tmp/
-*.log
-```
-
-Default exclusions: `node_modules/`, `.cache/`, `tmp/`, running process state.
-
-### Recovery Flow
-
-1. Container dies or user migrates to a new VPS
-2. New container boots, detects empty home directory
-3. Gateway triggers S3 pull (`fullRestore()`)
-4. Full home directory restored
-5. Apps restart, user continues where they left off
-
-### S3 Configuration
-
-| Variable | Description |
-|----------|-------------|
-| `S3_BUCKET` | S3 bucket name |
-| `S3_PREFIX` | Prefix within bucket (default: user handle) |
-| `AWS_ACCESS_KEY_ID` | AWS credentials |
-| `AWS_SECRET_ACCESS_KEY` | AWS credentials |
-
-Configure the bucket and prefix in `~/system/config.json`.
-
-## Git Versioning
-
-All text files in `~/matrixos/` are git-tracked. Beyond the existing `gitSnapshotHook` (which commits after every file write), enhanced versioning features include:
-
-### Auto-Commit
-
-Every 10 minutes, uncommitted changes are committed with a summary (count of files changed, top 3 filenames). This catches changes made outside the kernel (e.g., manual edits, app writes).
-
-### Named Snapshots
-
-Create a tagged checkpoint:
-
-> Save a snapshot called "before-redesign"
-
-The `create_snapshot` IPC tool creates a git tag:
-
-```
-create_snapshot({ name: "before-redesign" })
-```
-
-### File History
-
-Browse the commit history for any file:
-
-```
-GET /api/files/history/apps/chess/index.html?limit=20&offset=0
--> [{ commit: "abc123", message: "Auto-save: updated chess", date: "2026-03-01", author: "matrixos" }]
-```
-
-### File Restore
-
-Restore any file to a previous version:
-
-```
-POST /api/files/restore/apps/chess/index.html
-{ "commit": "abc123" }
-```
-
-This checks out the file from git history, creates a new commit ("Restored \{path\} from \{commit\}"), and triggers an S3 sync.
-
-### S3 Versioning
-
-S3 bucket versioning is enabled, so every file has version history in S3 independently of git:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/files/s3-versions/:path` | GET | List S3 versions for a file |
-| `/api/files/s3-restore/:path?versionId=...` | POST | Restore a specific S3 version |
-
-### Git History API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/files/history/:path` | GET | Commit log for a file (paginated) |
-| `/api/files/diff/:path?commit=...` | GET | Diff for a file at a commit |
-| `/api/files/restore/:path` | POST | Restore a file from a commit |
-| `/api/files/snapshot` | POST | Create a named snapshot |
-| `/api/files/snapshots` | GET | List all snapshots |
-
-## PostgreSQL for Apps
-
-Every app that requests a database gets an isolated PostgreSQL database and role. Apps access it through a scoped connection string.
-
-### Activation
-
-Activate PostgreSQL via the API or chat:
-
-> Activate PostgreSQL
-
-```
-POST /api/postgres/activate
--> { "status": "running", "version": "16" }
-```
-
-A single PostgreSQL 16 instance starts in the user's container. Data is stored at `~/system/postgres/data/`.
-
-### Per-App Databases
-
-Each app that requests `"database": "postgres"` in its `matrix.json` gets its own database and role:
-
-- Database: `{appName}_db`
-- Role: `app_{appName}` (limited to its own database)
-- Connection string injected as `DATABASE_URL` environment variable
-
-Apps access Postgres directly (not through the bridge API) since they are server-side processes.
-
-### PostgreSQL API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/postgres/activate` | POST | Start PostgreSQL |
-| `/api/postgres/deactivate` | POST | Stop PostgreSQL (data preserved) |
-| `/api/postgres/status` | GET | Status, databases, storage used |
-
-### PostgreSQL Backup
-
-- **Daily**: `pg_dump` per database to S3
-- **Hourly**: WAL archiving for point-in-time recovery
-- Restore via `pg_restore` from S3
-
-<Callout type="info" title="Resource limits">
-  Default PostgreSQL limits: 1GB storage, 100 connections. Configurable via platform config.
+<Callout type="info" title="Simple mental model">
+  Files are for things you can inspect and move around. Postgres is for structured app and workspace data that needs search, filters, relationships, and reliable updates.
 </Callout>
 
-## Storage Usage Tracking
+## Where Your Data Lives
 
-Monitor your storage consumption:
+In production, each active user gets a customer VPS. That VPS has:
 
-```
-GET /api/storage/usage
--> {
-  "disk": { "bytes": 2400000000, "human": "2.3 GB" },
-  "s3": { "bytes": 2400000000, "human": "2.3 GB" },
-  "postgres": { "bytes": 150000000, "human": "150 MB" }
-}
-```
+- your Matrix home at `/home/matrix/home`;
+- your apps under `/home/matrix/home/apps`;
+- your system files under `/home/matrix/home/system`;
+- a local Postgres database endpoint at `127.0.0.1:5432`;
+- backup and recovery scripts that upload database snapshots and metadata to R2.
 
-Storage measurements are recorded daily in `~/system/logs/storage.jsonl`.
+The platform keeps control-plane data such as authentication, routing, provisioning status, and integration metadata. Your personal app and workspace data is stored in your Matrix environment.
+
+## What Uses Files
+
+Files are used for:
+
+- app source and built app assets;
+- settings and preferences;
+- icons, images, documents, and exports;
+- agent instructions and skills;
+- project files and workspace material;
+- recovery artifacts and snapshots.
+
+You can ask Matrix to find, summarize, organize, rename, export, or transform files for you.
+
+## What Uses Postgres
+
+Postgres is used for data that needs structure:
+
+- app records such as notes, tasks, expenses, leads, habits, and saved items;
+- workspace canvas documents and references;
+- social and collaboration state;
+- app registry metadata;
+- key-value app state migrated from older file storage.
+
+Apps do not need to handle database credentials directly. Matrix's gateway connects to the local Postgres database and exposes scoped app access through `/api/bridge/query`.
+
+## App Data
+
+When Matrix builds or installs an app with structured storage, the app declares tables in `matrix.json`. The gateway creates those tables in the user's local Postgres database using a schema-per-app model.
+
+For example, a task app can declare a `tasks` table. The app then uses the Matrix bridge to create, list, update, and delete tasks. You experience this as a normal app; Matrix handles the database behind the scenes.
+
+Benefits:
+
+- app data survives reloads and upgrades;
+- lists and dashboards can filter, sort, and count records;
+- multiple apps can use reliable structured data;
+- recovery can restore data from Postgres snapshots;
+- the platform does not need to own your app data.
+
+## Backups And Recovery
+
+Customer VPSes run scheduled database backups. The backup flow uploads a timestamped Postgres snapshot before updating the `system/db/latest` pointer used for recovery.
+
+If a VPS has to be replaced, Matrix can provision a new one, restore the latest database snapshot, reload the host bundle, and bring the workspace back online.
+
+Recovered:
+
+- structured app and workspace data from the latest successful Postgres snapshot;
+- machine metadata needed for routing and recovery;
+- files and app assets that are part of the Matrix home and backup materialization flow.
+
+Not recovered:
+
+- unsaved in-memory process state;
+- changes made after the last successful backup;
+- data from external services that lives outside Matrix unless it is synced or imported.
+
+## Privacy And Control
+
+Matrix is designed so user data is not casually mixed into the platform:
+
+- personal files live in the user's Matrix home;
+- app/workspace records live in the user's Matrix database;
+- platform-owned integrations keep provider credentials on the platform;
+- customer VPSes call platform integration routes through a per-host token;
+- apps use scoped APIs instead of raw platform secrets.
+
+## What Users Need To Do
+
+Most users do not need to do anything technical. Use Matrix normally:
+
+- create apps;
+- connect services;
+- organize files;
+- ask Matrix to save important information;
+- export or delete data when needed.
+
+For power users and developers, Matrix can expose more detail through files, app manifests, and developer tooling, but that is optional.
+
+## Related Guides
+
+<Cards>
+  <Card
+    title="Apps"
+    description="How apps use Matrix storage and what you can build."
+    href="/docs/guide/apps"
+  />
+  <Card
+    title="Integrations"
+    description="How connected services work without copying provider secrets into apps."
+    href="/docs/guide/integrations"
+  />
+  <Card
+    title="Workspace Canvas"
+    description="How visual workspace state is saved and restored."
+    href="/docs/workspace-canvas"
+  />
+</Cards>

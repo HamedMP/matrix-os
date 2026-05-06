@@ -1,6 +1,6 @@
 # VPS Deployment Guide
 
-Complete guide for deploying Matrix OS on Hetzner. Production Matrix OS is VPS-native: one VPS per user, host-level systemd services, local owner-controlled Postgres, Cloudflare routing, R2 backups, and no user runtime containers.
+Complete guide for deploying Matrix OS on Hetzner. Production Matrix OS is VPS-native: one VPS per user, host-level Matrix services, local owner-controlled Postgres, Cloudflare routing, R2 backups, and no user runtime containers.
 
 ## Production Rule: VPS-Native Only
 
@@ -8,7 +8,8 @@ Effective 2026-05-06, production user runtime is **per-user VPS only**.
 
 - Do not deploy customer runtime by rebuilding a Docker image.
 - Do not use `docker compose` or rolling container restarts as a production rollout path for user-facing Matrix OS.
-- Do not put Matrix gateway, shell, code-server, Postgres, or default apps inside a per-user container.
+- Do not put Matrix gateway, shell, code-server, or default apps inside a per-user runtime container.
+- Each customer VPS must have its own local PostgreSQL database endpoint at `127.0.0.1:5432`. The current bootstrap runs this as a single local `postgres:16` service container named `matrix-postgres` with a machine-local Docker volume; it is not the legacy shared user-runtime container model.
 - Build and publish the customer host bundle, refresh the target VPS in place, and restart `matrix-gateway.service`, `matrix-shell.service`, `matrix-code.service`, and related systemd units.
 - Docker/Compose references in older notes are legacy/local-development history. They are not the current production route.
 
@@ -16,7 +17,7 @@ Effective 2026-05-06, production user runtime is **per-user VPS only**.
 
 ### Current Production Mode: Platform Control Plane + Customer VPSes
 
-Matrix OS runs production users on one customer VPS per active user. The platform VPS is the control plane: it owns Clerk routing, Pipedream credentials, provisioning, R2 bundle publication, and upgrade orchestration. Each customer VPS runs Matrix natively under systemd with owner-controlled Postgres on the host. Matrix shell/gateway/code/default-app assets are not containers.
+Matrix OS runs production users on one customer VPS per active user. The platform VPS is the control plane: it owns Clerk routing, Pipedream credentials, provisioning, R2 bundle publication, and upgrade orchestration. Each customer VPS runs Matrix shell/gateway/code under systemd with owner-controlled Postgres on the same machine. Matrix shell/gateway/code/default-app assets are not containers.
 
 ```
 Internet
@@ -42,7 +43,7 @@ Internet
                      +-- matrix-gateway.service :4000
                      +-- matrix-shell.service :3000
                      +-- matrix-code.service :8787
-                     +-- postgresql.service + local data directory
+                     +-- matrix-postgres on 127.0.0.1:5432 + local data volume
                      +-- /home/matrix/home and /opt/matrix/env
 ```
 

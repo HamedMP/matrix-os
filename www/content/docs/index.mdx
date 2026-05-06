@@ -1,171 +1,145 @@
 ---
 title: Matrix OS Documentation
-description: The AI operating system where software writes itself.
+description: A practical guide to using Matrix OS as your personal AI operating system.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-Matrix OS is an AI-native operating system built on the Claude Agent SDK. You describe what you need in natural language -- it writes the software, saves it as files you own, and runs it on your desktop.
+Matrix OS is your AI operating system in the cloud. You sign in, connect the tools you already use, and ask Matrix to help you work, organize, communicate, build, remember, and automate.
 
-<Callout type="info" title="Built on Claude Agent SDK">
-  The Agent SDK's `query()` with `resume` IS the kernel. Five specialized agents handle building, researching, deploying, healing, and evolving the system. Everything is persisted as files in `~/matrixos/`.
+It is not a dashboard you have to configure by hand. It is a computer with an AI kernel: it can create apps for you, use your integrations with permission, keep your files and data in your own workspace, and show up through the web, chat, and social surfaces.
+
+<Callout type="info" title="Start with what you want done">
+  You do not need to understand servers, databases, or deployment. Use plain language: "plan my week", "summarize these emails", "make me a budget tracker", "help me ship this project", or "turn this idea into an app".
 </Callout>
 
 ## Quick Start
 
 <Steps>
   <Step>
-    ### Clone and install
+    ### Create your account
 
-    ```bash
-    git clone https://github.com/hamedmp/matrix-os.git
-    cd matrix-os && pnpm install
-    ```
+    Sign up with your Matrix OS handle. Your handle becomes your personal Matrix identity and your workspace address.
   </Step>
   <Step>
-    ### Set your API key
+    ### Open your workspace
 
-    ```bash
-    export ANTHROPIC_API_KEY=sk-ant-...
-    ```
+    Use the web shell to chat with Matrix, open apps, browse files, connect services, and keep work organized on Canvas.
   </Step>
   <Step>
-    ### Start the OS
+    ### Connect your tools
 
-    ```bash
-    bun run dev
-    ```
+    Connect Gmail, Calendar, Drive, GitHub, Slack, Discord, and other services from Integrations. Matrix asks for permission before acting on connected accounts.
+  </Step>
+  <Step>
+    ### Ask for an outcome
 
-    Open `http://localhost:3000` and start talking to your OS.
+    Try: "show me what needs attention today", "draft replies for important emails", "make a task board for my move", or "build a habit tracker app".
   </Step>
 </Steps>
 
-## Choose Your Path
+## What You Can Use Matrix For
+
+<Cards>
+  <Card title="Daily Command Center" href="/docs/guide/getting-started">
+    See what matters today, ask questions across your connected tools, and turn loose thoughts into tasks, notes, reminders, or apps.
+  </Card>
+  <Card title="Apps Made For You" href="/docs/guide/apps">
+    Ask Matrix to create a tracker, planner, CRM, game, dashboard, or personal tool. Apps appear in your workspace and store data in your own Matrix database.
+  </Card>
+  <Card title="Connected Services" href="/docs/guide/integrations">
+    Connect Gmail, Calendar, Drive, GitHub, Slack, Discord, and more so Matrix can search, summarize, draft, schedule, post, and organize with your approval.
+  </Card>
+  <Card title="Personal Knowledge" href="/docs/guide/storage">
+    Keep files, app data, notes, memories, and workspace state in your own Matrix environment with backups and recovery.
+  </Card>
+  <Card title="Messaging And Channels" href="/docs/guide/channels">
+    Use Matrix from the web and, over time, from chat channels like Telegram, WhatsApp, Discord, Slack, and Matrix protocol.
+  </Card>
+  <Card title="Social And Sharing" href="/docs/guide/social">
+    Publish a profile, share apps, collaborate with other people, and let your AI communicate with other AIs when you allow it.
+  </Card>
+</Cards>
+
+## Common Use Cases
+
+### For Everyone
+
+- Organize your day from email, calendar, notes, and tasks.
+- Ask Matrix to remember preferences, recurring plans, and project context.
+- Create personal apps like budget trackers, meal planners, travel checklists, habit trackers, study tools, and family dashboards.
+- Turn screenshots, files, and rough ideas into structured notes or working tools.
+- Keep a searchable workspace instead of scattering work across tabs and documents.
+
+### For Creators
+
+- Plan content calendars and campaigns.
+- Draft posts, scripts, newsletters, and outlines.
+- Track sponsorships, expenses, publishing status, and ideas.
+- Build simple audience tools, landing pages, calculators, and galleries.
+- Reuse your voice and preferences across projects.
+
+### For Small Businesses
+
+- Track leads, customers, orders, invoices, tasks, and follow-ups.
+- Summarize customer conversations and turn them into next actions.
+- Build lightweight internal tools without waiting on custom software.
+- Connect shared services and automate repetitive admin work.
+- Keep company knowledge in one searchable workspace.
+
+### For Students And Families
+
+- Plan assignments, study schedules, chores, trips, and household tasks.
+- Summarize long documents and turn them into flashcards or action lists.
+- Build small apps for routines, goals, budgets, and events.
+- Keep important files and notes in one place.
+
+### For Developers And Technical Users
+
+- Use cloud coding workspaces, terminal sessions, project canvases, and GitHub integrations.
+- Ask Matrix to inspect code, create issues, draft PRs, run tests, and manage review loops.
+- Keep project context, sessions, files, and app state recoverable in your Matrix workspace.
+
+## How Matrix Is Different
+
+<Cards>
+  <Card title="AI Is The Kernel">
+    Matrix does not bolt chat onto an app. The AI is the main way the system decides what to do, which app to use, what to build, and how to keep context.
+  </Card>
+  <Card title="Your Workspace Is Yours">
+    Your files live in your Matrix home, and app/workspace data lives in your Matrix database. The platform handles routing, auth, integrations, and recovery.
+  </Card>
+  <Card title="Apps Are Real Apps">
+    Matrix builds usable Vite + React apps, not disposable mockups. Apps can have screens, state, tables, and data that persists.
+  </Card>
+  <Card title="One OS, Many Surfaces">
+    The web workspace is the main shell, but the same AI and state can work through messaging channels, social features, and developer tools.
+  </Card>
+</Cards>
+
+## Next Steps
 
 <Cards>
   <Card
     title="Getting Started"
-    description="Prerequisites, installation, and your first conversation with the AI kernel."
+    description="Create your account, open your workspace, and make your first useful request."
     href="/docs/guide/getting-started"
   />
   <Card
-    title="Agent System"
-    description="The five core agents, SOUL identity, and the skills system."
-    href="/docs/guide/agents"
+    title="Integrations"
+    description="Connect email, calendar, files, GitHub, Slack, Discord, and more."
+    href="/docs/guide/integrations"
   />
   <Card
     title="Apps"
-    description="App runtime, pre-installed games, utilities, bundled desktop apps, and AI skills for building."
+    description="Use built-in apps and ask Matrix to create new ones for your life or work."
     href="/docs/guide/apps"
   />
   <Card
     title="App Store"
-    description="Browse, install, publish, and fork apps. Personal websites."
+    description="Discover, install, share, and publish Matrix apps."
     href="/docs/guide/app-store"
   />
-  <Card
-    title="Storage"
-    description="S3 backup, git versioning, and PostgreSQL databases."
-    href="/docs/guide/storage"
-  />
-  <Card
-    title="Social"
-    description="Social feed, follow system, messaging, Matrix protocol federation."
-    href="/docs/guide/social"
-  />
-  <Card
-    title="Architecture"
-    description="How the kernel, gateway, dispatcher, and shell fit together."
-    href="/docs/developer/architecture"
-  />
-  <Card
-    title="IPC Tools & Hooks"
-    description="The 26 tools agents use to interact with the system, and the hook lifecycle."
-    href="/docs/developer/ipc-tools"
-  />
 </Cards>
-
-## Core Principles
-
-<Cards>
-  <Card title="Everything Is a File">
-    Apps, config, agents, skills, themes, SOUL identity -- all stored as real files in `~/matrixos/`. Back up your OS by copying a folder.
-  </Card>
-  <Card title="Agent Is the Kernel">
-    Claude Agent SDK `query()` with `resume` IS the kernel. Every user action flows through AI agents that understand context and take action.
-  </Card>
-  <Card title="Headless Core, Multi-Shell">
-    The core works without a UI. The web desktop, Telegram, WhatsApp, Discord, Slack, and CLI are all shells that connect to the same kernel.
-  </Card>
-  <Card title="Self-Healing and Self-Expanding">
-    The Healer agent detects and repairs failures from git snapshots. The Evolver agent creates new agents, skills, and capabilities on demand.
-  </Card>
-</Cards>
-
-## Architecture at a Glance
-
-```mermaid
-graph TD
-    subgraph Shells
-        Web[Web Desktop :3000]
-        TG[Telegram]
-        DC[Discord]
-        SL[Slack]
-        WA[WhatsApp]
-        CLI[CLI]
-    end
-
-    subgraph Gateway[Gateway - Hono :4000]
-        CM[ChannelManager]
-        Disp[Dispatcher]
-        Cron[CronService]
-        HB[HeartbeatRunner]
-        FW[FileWatcher]
-        FS["/files/* static serving"]
-    end
-
-    subgraph Kernel[Kernel - Agent SDK]
-        Spawn["spawnKernel()"]
-        Agents["5 Agents"]
-        IPC["26 IPC Tools"]
-        Hooks["8 Hooks"]
-        Soul["SOUL + Skills"]
-    end
-
-    subgraph Home["~/matrixos/"]
-        Apps[apps/]
-        AgentFiles[agents/]
-        System[system/]
-        Data[data/]
-    end
-
-    Web --> Disp
-    TG --> CM --> Disp
-    DC --> CM
-    SL --> CM
-    WA --> CM
-    CLI --> Disp
-    Cron --> Disp
-    HB --> Disp
-    Disp --> Spawn
-    Spawn --> Agents
-    Spawn --> IPC
-    Spawn --> Hooks
-    Spawn --> Soul
-    IPC --> Home
-    FW --> Home
-```
-
-## Web 4 Vision
-
-Matrix OS is the foundation for **Web 4**: your AI runs on all your devices, syncs via peer-to-peer git, communicates through federated identity (`@you:matrix-os.com`), and your AI agent has its own identity (`@you_ai:matrix-os.com`) that negotiates with other AIs on your behalf via the Matrix protocol.
-
-Read the full [Web 4 vision](/whitepaper).
-
-## More Resources
-
-- [DeepWiki](https://deepwiki.com/HamedMP/matrix-os/) -- AI-generated documentation from source code
-- [GitHub](https://github.com/hamedmp/matrix-os) -- Source code and issues
-- [Whitepaper](/whitepaper) -- The full Web 4 vision

@@ -84,7 +84,7 @@ Always use CSS custom properties so the app matches the OS theme:
 
 ### Data Access
 
-If your manifest declares `storage`, use the MatrixOS database API:
+If your manifest declares `storage`, use the MatrixOS database bridge. It writes to the user's local Postgres database through the gateway; app code should not read `DATABASE_URL` directly.
 
 ```javascript
 // The gateway URL is the parent origin
@@ -92,10 +92,10 @@ const API = window.location.origin;
 
 async function dbRequest(action, table, data = {}) {
   const app = 'my-app'; // must match your app slug
-  const res = await fetch(`${API}/api/apps/${app}/data`, {
+  const res = await fetch(`${API}/api/bridge/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, table, ...data })
+    body: JSON.stringify({ action, app, table, ...data })
   });
   return res.json();
 }
@@ -214,7 +214,7 @@ After creating the files, the app appears automatically in the OS launcher (F3) 
 
 ## Rules
 
-- All UI must be in a single `index.html` file (inline CSS and JS)
+- First-party and polished apps should be Vite + React apps with UI in `src/`; avoid single-file inline HTML except for throwaway prototypes
 - Always use theme CSS variables with fallback values
 - Apps must work in an iframe context
 - Keep apps self-contained - no external CDN dependencies unless essential

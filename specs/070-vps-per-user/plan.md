@@ -69,7 +69,7 @@ packages/platform/src/
 
 distro/customer-vps/
 ├── cloud-init.yaml              # NEW: rendered template for Ubuntu 24.04 bootstrap
-├── postgres-host.env            # NEW: single-user host Postgres configuration
+├── postgres-compose.yml         # NEW: single-user local Postgres service container configuration
 ├── matrix-db-backup.sh          # NEW: pg_dump + R2 upload + retention pruning
 ├── matrix-restore.sh            # NEW: restore-or-fresh boot gate
 ├── matrixctl                    # NEW: host shim for R2 put/get/prune and backup trigger

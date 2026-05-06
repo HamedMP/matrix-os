@@ -2,7 +2,7 @@
 
 ## Overview
 
-The platform service (`packages/platform/`) is the multi-tenant orchestrator for Matrix OS. It manages user containers, handles authentication via Clerk, and routes traffic through Cloudflare Tunnels.
+The platform service (`packages/platform/`) is the Matrix OS control plane. It handles Clerk authentication, customer VPS provisioning, Cloudflare routing, R2 host-bundle publication, upgrade orchestration, and platform-owned integrations. Production user runtime is VPS-native: one customer VPS per active user.
 
 ```
 Vercel (www/)
@@ -10,19 +10,27 @@ Vercel (www/)
   |-- Clerk auth + Inngest provisioning
   |
 Cloudflare Edge
-  |-- *.matrix-os.com (wildcard DNS + TLS)
+  |-- app.matrix-os.com / code.matrix-os.com / *.matrix-os.com
   |
-  +-- Cloudflare Tunnel (outbound only from VPS)
+  +-- Cloudflare Tunnel (outbound only from platform VPS)
       |-- api.matrix-os.com -> localhost:9000 (platform API)
-      |-- *.matrix-os.com  -> localhost:9000 (subdomain routing)
+      |-- app/code/*       -> localhost:9000 (auth + routing)
 
-VPS (no public ports)
-  |-- cloudflared (tunnel daemon)
-  |-- platform :9000 (orchestrator + reverse proxy)
-  |-- proxy :8080 (shared API key, cost tracking)
-  +-- Docker containers (per-user Matrix OS instances)
-      |-- matrixos-alice (gateway:4000 -> :4001, shell:3000 -> :3001)
-      |-- matrixos-bob   (gateway:4000 -> :4002, shell:3000 -> :3002)
+Platform VPS
+  |-- cloudflared
+  |-- platform :9000
+  |-- platform Postgres
+  |-- Pipedream credentials and integration routes
+  |-- R2 host-bundle publisher
+  +-- HTTPS proxy to customer VPS public IPs with per-host verification
+
+Customer VPS: alice
+  |-- matrix-gateway.service :4000
+  |-- matrix-shell.service :3000
+  |-- matrix-code.service :8787
+  |-- local Postgres on 127.0.0.1:5432
+  |-- /home/matrix/home
+  +-- /opt/matrix/app + /opt/matrix/runtime from host bundle
 ```
 
 ## Components
@@ -31,66 +39,93 @@ VPS (no public ports)
 
 Kysely with PostgreSQL. Core tables:
 
-- **containers** -- one row per user. PK is `handle`, stores clerk_user_id, container_id, port mappings, status, timestamps.
-- **user_machines** -- one row per customer VPS. Stores Clerk identity, handle, Hetzner IDs, registration metadata, status, and recovery timestamps.
-- **port_assignments** -- tracks which host ports are allocated. Sequential allocation starting from base ports (4001 for gateway, 3001 for shell).
+- **user_machines** -- one row per customer VPS. Stores Clerk identity, handle, Hetzner IDs, registration metadata, status, recovery timestamps, and routing IPs.
+- **containers** -- legacy/shared-container fallback rows. This is historical/local-development compatibility, not the current production customer runtime.
+- **port_assignments** -- legacy container port allocation metadata.
 
 Factory: `createPlatformDb(connectionString)` returns a Kysely-backed platform database. All query functions take `db` as their first argument for testability.
 
-### Orchestrator (`src/orchestrator.ts`)
+### Customer VPS Service (`src/customer-vps.ts`)
 
-Wraps dockerode with a clean interface. Factory: `createOrchestrator(config)`.
+Wraps Hetzner provisioning, cloud-init rendering, R2 metadata, and platform registration. Factory: `createCustomerVpsService(config)`.
 
 Methods:
-- `provision(handle, clerkUserId)` -- allocate ports, create container, start, insert DB record
-- `start(handle)` -- start a stopped container
-- `stop(handle)` -- stop a running container
-- `destroy(handle)` -- stop, remove container, release ports, delete DB record
-- `getInfo(handle)` / `listAll(status?)` -- read from DB
 
-Container config:
-- Image: `ghcr.io/hamedmp/matrix-os:latest`
-- Network: `matrixos-net` (bridge, created if missing)
-- Resources: 256MB memory, 0.5 CPU
-- Restart: `unless-stopped`
-- Volume: `/data/users/{handle}/matrixos` -> `/home/matrixos/home`
-- Env: MATRIX_HANDLE, PROXY_URL, ANTHROPIC_BASE_URL, PORT, SHELL_PORT
+- `provision({ handle, clerkUserId })` -- create or return the active customer VPS row, render cloud-init, and create a Hetzner server.
+- `register(token, input)` -- customer VPS callback after boot; verifies machine/server/token and marks the row `running`.
+- `recover({ clerkUserId })` -- replace the active customer VPS from the latest R2 DB snapshot.
+- `delete(machineId)` / `status(machineId)` -- operator lifecycle and status paths.
 
-### Lifecycle Manager (`src/lifecycle.ts`)
+Customer host config:
 
-Interval-based idle checker. Factory: `createLifecycleManager(config)`.
+- `MATRIX_HANDLE`, `MATRIX_CLERK_USER_ID`, `MATRIX_USER_ID`
+- `DATABASE_URL=postgresql://matrix:<password>@127.0.0.1:5432/matrix`
+- `PLATFORM_INTERNAL_URL` and per-host `UPGRADE_TOKEN`
+- R2 prefix and credentials for backup/sync
+- Host bundle URL for `/opt/matrix/app`, `/opt/matrix/runtime`, and `/opt/matrix/bin`
 
-- Checks every 5 minutes (configurable)
-- Stops containers idle > 30 minutes (configurable)
-- `touchActivity(handle)` -- called on every proxied request
-- `ensureRunning(handle)` -- lazy wake for stopped containers
+### Local Customer Postgres
 
-### Social API (`src/social.ts`)
+Every customer VPS owns its own Postgres database endpoint on `127.0.0.1:5432`. The gateway reads `DATABASE_URL` from `/opt/matrix/env/host.env` or assembles it from `/opt/matrix/env/postgres.env`, then bootstraps the app data layer in that local database.
 
-Cross-instance social features. Factory: `createSocialApi(db, proxyUrl?)`.
+The current bootstrap starts Postgres as a single machine-local `postgres:16` service container named `matrix-postgres` with a local Docker volume. That is an implementation detail of the customer VPS; it is not the legacy model where the whole Matrix OS user runtime lived in a shared platform container.
 
-- `listUsers()` -- all users with online status
-- `getProfile(handle)` / `getAiProfile(handle)` -- fetch from container's gateway
-- `sendMessage(handle, text, from)` -- route via proxy or direct
+### Host Bundle
+
+Customer VPSes download and extract:
+
+```text
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+```
+
+The bundle includes:
+
+- `/opt/matrix/app`: gateway package, shell build, shared packages, and the bundled `home/` app template/default apps.
+- `/opt/matrix/runtime`: Node, code-server, and bundled coding-agent CLIs.
+- `/opt/matrix/bin`: launchers for gateway, shell, code, sync, and updates.
+
+### App Data Layer
+
+Gateway app storage is Postgres-backed when `DATABASE_URL` is set. On customer VPSes, that URL points to the local customer Postgres database. The gateway:
+
+- bootstraps shared tables such as `_apps`, `_kv`, and `users`;
+- registers every installed app manifest with `storage.tables`;
+- creates schema-per-app tables through Kysely;
+- exposes app CRUD through `/api/bridge/query`.
+
+App processes do not receive raw `DATABASE_URL`. The app runtime strips database credentials from child-process environments; browser apps and server apps should use the bridge API for scoped access to the owner-local Postgres database.
+
+### Platform-Owned Integrations
+
+Pipedream credentials and provider secrets stay on the platform. Customer VPS gateways proxy integration traffic back through `PLATFORM_INTERNAL_URL`:
+
+- public integration catalog/webhook routes use `/api/integrations`;
+- user-scoped integration routes use `/internal/containers/{handle}/integrations` with the per-host `UPGRADE_TOKEN`.
+
+Do not copy `PIPEDREAM_*`, platform DB credentials, Clerk secrets, or `PLATFORM_SECRET` into customer VPS env files.
 
 ### API Routes (`src/main.ts`)
 
-Hono app created via `createApp({ db, orchestrator })`. Routes:
+Hono app created via `createApp({ db, customerVpsService })`. Key routes:
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | /health | Health check |
-| POST | /containers/provision | Create new container |
-| POST | /containers/:handle/start | Wake container |
-| POST | /containers/:handle/stop | Sleep container |
-| DELETE | /containers/:handle | Destroy container |
-| GET | /containers | List all containers |
-| GET | /containers/:handle | Get container info |
+| POST | /vps/provision | Provision a customer VPS |
+| POST | /vps/register | Customer VPS boot registration callback |
+| POST | /vps/recover | Replace a customer VPS from backup |
+| GET | /vps/:machineId/status | Get customer VPS status |
+| DELETE | /vps/:machineId | Delete customer VPS server and soft-delete platform row |
+| GET | /system-bundles/:imageVersion/:file | Serve host bundles from R2 |
+| GET | /system-bundles/channels/:channel | Serve host-bundle channel manifests |
 | GET | /social/users | List users with status |
 | GET | /social/profiles/:handle | Get user profile |
 | GET | /social/profiles/:handle/ai | Get AI profile |
 | POST | /social/send/:handle | Send cross-instance message |
-| ALL | /proxy/:handle/* | Reverse proxy to container |
+| ALL | app/code/handle domains | Resolve Clerk/handle identity and proxy to the customer VPS |
+
+Legacy `/containers/*` routes remain for local development and old fallback paths. Do not use them for new production customer runtime.
 
 ## Data Flow
 
@@ -101,39 +136,40 @@ Hono app created via `createApp({ db, orchestrator })`. Routes:
 2. Clerk handles registration (choose username = handle)
 3. Clerk fires user.created webhook -> Inngest
 4. Inngest function calls POST /containers/provision
-5. Platform: allocate ports -> create container -> start -> insert DB
-6. User redirected to dashboard -> link to {handle}.matrix-os.com
+5. When customer VPS provisioning is enabled, platform delegates to POST /vps/provision
+6. Platform inserts a user_machines row, renders cloud-init, and asks Hetzner to create the server
+7. The customer VPS downloads the host bundle, starts local Postgres and Matrix services, then calls POST /vps/register
+8. Platform marks the machine running; app.matrix-os.com, code.matrix-os.com, and {handle}.matrix-os.com route to it
 ```
 
 ### Request Routing
 
 ```
-1. Browser: https://alice.matrix-os.com/some/path
-2. Cloudflare: resolve DNS -> tunnel to VPS
-3. cloudflared: forward to localhost:9000
-4. Platform: extract handle from Host header -> lookup container
-5. If stopped: wake container (lazy start)
-6. Reverse proxy to http://localhost:{shell_port}/some/path
-7. Touch last_active timestamp
+1. Browser: https://app.matrix-os.com or https://alice.matrix-os.com
+2. Cloudflare: resolve DNS -> tunnel to platform
+3. Platform verifies Clerk/session identity or handle route
+4. Platform looks up a running user_machines row
+5. Platform proxies over HTTPS to https://<customer-vps-ip>:443
+6. Customer nginx routes to matrix-shell, matrix-gateway, or matrix-code on localhost
 ```
 
-### Idle Shutdown
+### Updates And Backup
 
 ```
-1. Lifecycle manager checks every 5 min
-2. For each running container: compare last_active to now
-3. If idle > 30 min: orchestrator.stop(handle)
-4. Container stays in DB, can be woken on next request
+1. Platform publishes matrix-host-bundle.tar.gz and .sha256 under system-bundles/<version>/
+2. New VPSes download the selected CUSTOMER_VPS_IMAGE_VERSION during cloud-init
+3. Existing VPSes refresh in place with matrix-update or recovery/reprovision
+4. matrix-db-backup.timer uploads hourly custom-format pg_dump snapshots to the user's R2 prefix
 ```
 
 ## Testing
 
-All components are designed for testability:
-- DB functions take `db` as first arg (inject test DB)
-- Orchestrator takes `docker` in config (inject mock)
-- Lifecycle takes `orchestrator` in config (inject mock)
-- API uses `createApp()` factory (test with Hono's built-in test client)
+Focused platform/customer VPS tests:
 
 ```bash
-bun run test -- tests/platform/     # 40 tests, ~400ms
+bun run test tests/platform/customer-vps.test.ts
+bun run test tests/platform/customer-vps-routes.test.ts
+bun run test tests/platform/customer-vps-cloud-init.test.ts
+bun run test tests/platform/profile-routing-vps.test.ts
+bun run test tests/platform/proxy-routing.test.ts tests/platform/ws-upgrade.test.ts
 ```

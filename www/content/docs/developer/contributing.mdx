@@ -41,7 +41,7 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 - **TypeScript strict mode**: No `any` types, full type safety
 - **ES modules**: `"type": "module"` everywhere
 - **Minimal comments**: Code should be self-documenting
-- **No over-engineering**: Solve the current problem, not hypothetical future ones
+- **Production topology**: customer runtime is per-user VPS with host services and local Postgres, not the legacy shared user-container path
 - **No emojis** in code or docs unless explicitly requested
 - **Kysely/PostgreSQL** for all database access (never add SQLite, Drizzle ORM, or better-sqlite3)
 - **pnpm** for installing, **bun** for running scripts
@@ -100,13 +100,13 @@ When working on a spec:
 ```
 packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
 packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
-packages/platform/   # Multi-tenant orchestrator (Hono :9000, Kysely/PostgreSQL, dockerode)
+packages/platform/   # Control plane: Clerk auth, VPS provisioning/routing, integrations
 shell/               # Next.js 16 web desktop (one of many shells)
 www/                 # matrix-os.com website
 home/                # File system template (copied on first boot)
 tests/               # Vitest test suites (993+ tests)
 specs/               # Architecture specifications
-distro/              # Docker, cloudflared, systemd deployment configs
+distro/              # customer VPS, cloudflared, systemd, and local dev configs
 ```
 
 ## Environment Variables

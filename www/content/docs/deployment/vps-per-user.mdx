@@ -1,15 +1,15 @@
 ---
 title: VPS-per-User
-description: Phase 1 operator notes for customer VPS provisioning, backup, and recovery.
+description: Operator notes for customer VPS provisioning, backup, and recovery.
 ---
 
 # VPS-per-User
 
-Phase 1 provisions one Hetzner VPS for one opt-in customer while preserving the legacy container path for everyone else. Operators should treat this as a controlled rollout path, not the default hosting model.
+Matrix OS production user runtime is VPS-native: one customer VPS per active user. The platform remains the control plane for auth, routing, provisioning, integrations, R2 host-bundle publication, upgrades, and recovery.
 
 Implementation history and production verification notes are tracked in `specs/070-vps-per-user/changelog.md`.
 
-## Phase 1 Scope
+## Production Scope
 
 Included:
 
@@ -19,13 +19,13 @@ Included:
 - Shared `code.matrix-os.com` routing to the authenticated user's VPS-hosted code-server gateway.
 - Customer host restore gate, hourly Postgres backups, and R2 metadata pointers.
 - Manual recovery through `POST /vps/recover` or `matrixctl recover`.
+- Host-bundle based updates for shell, gateway, code, default apps, and runtime CLIs.
+- Local owner-controlled Postgres on each customer VPS at `127.0.0.1:5432`.
 
 Not included:
 
 - Automatic unreachable detection and replacement.
 - Sleep, warm pools, idle deletion, and geographic routing.
-- Existing-user migration automation.
-- In-place host-service upgrades for already-running VPSes.
 - Data deletion from R2 during phase-1 VPS deletion.
 
 ## Cost And Quota
@@ -37,11 +37,25 @@ The default server type is controlled by `HETZNER_SERVER_TYPE` and currently tar
 - The customer is explicitly opted in.
 - `CUSTOMER_VPS_ENABLED=true` is set only in the intended environment.
 
-Quota ceiling for phase 1: one VPS per opted-in Clerk user. Do not batch-enable users until recovery and rollback have been exercised for a non-production account.
+Quota ceiling: one VPS per active Clerk user. Do not batch-enable users until recovery and rollback have been exercised for a non-production account.
 
 ## Routing
 
-`code.matrix-os.com` is a single public entrypoint. The platform authenticates the Clerk session or `matrix_code_session`, resolves the user to a running VPS, strips user cookies and authorization headers, then forwards to that VPS over HTTPS with platform proof headers. If no running VPS exists, the legacy container code-server path remains the fallback for non-migrated users.
+`code.matrix-os.com` is a single public entrypoint. The platform authenticates the Clerk session or `matrix_code_session`, resolves the user to a running VPS, strips user cookies and authorization headers, then forwards to that VPS over HTTPS with platform proof headers. If no running VPS exists, the platform returns an unavailable response or uses explicitly configured legacy fallback paths for old deployments only. New production users should be provisioned as customer VPSes.
+
+## Customer VPS Runtime
+
+Each customer VPS gets:
+
+- `/opt/matrix/env/host.env` with machine ID, Clerk user ID, handle, `DATABASE_URL`, `PLATFORM_INTERNAL_URL`, and per-host `UPGRADE_TOKEN`.
+- `/opt/matrix/env/r2.env` with R2 credentials scoped for backup/sync.
+- `/opt/matrix/app` from the host bundle: gateway package, shell build, shared packages, and bundled default apps.
+- `/opt/matrix/runtime` from the host bundle: Node, code-server, and bundled coding-agent CLIs.
+- `/opt/matrix/bin` launchers for `matrix-gateway`, `matrix-shell`, `matrix-code`, `matrix-sync-agent`, and `matrix-update`.
+- `/home/matrix/home` for owner files and apps.
+- A local Postgres database endpoint at `127.0.0.1:5432`.
+
+The current bootstrap runs Postgres as a single local `postgres:16` service container named `matrix-postgres` with a machine-local volume. Gateway/shell/code/default apps are not user runtime containers; they run through systemd host services from the host bundle.
 
 ## Gateway Identity
 
@@ -62,6 +76,9 @@ Open local development may use the `dev-default` principal only when auth is dis
 | `R2_BUCKET` / `S3_BUCKET` | Yes | Bucket used for metadata, DB snapshots, and host bundles. |
 | `MATRIX_USER_ID` | Yes for trusted single-user/container gateways | Platform-provisioned stable owner id used as the configured container identity when no validated JWT principal is present. |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes when building a host bundle | Baked into the Next.js shell bundle. If missing, production browsers may try to load `clerk.example.com`. |
+| `PLATFORM_INTERNAL_URL` | Yes on customer VPSes | Base URL used by customer gateways for platform-owned integration and bundle/update APIs. |
+| `UPGRADE_TOKEN` | Yes on customer VPSes | Per-host bearer token used for platform internal calls. |
+| `DATABASE_URL` | Yes on customer VPSes | Points the gateway at the customer-local Postgres database. |
 
 ## Host Bundle Updates
 
@@ -78,9 +95,31 @@ Before rollout, verify:
 
 - Served shell HTML and client chunks do not reference `clerk.example.com`.
 - Gateway health returns OK and uses the VPS Postgres database.
+- `/api/bridge/query` can list app schemas from the customer-local Postgres database.
 - Fresh browser loads do not call legacy `/api/canvas`.
 - Missing app icons resolve through stable fallbacks rather than a repeated Gemini 503 loop.
 - Canvas pan/zoom starts only from the canvas surface, not from wheel events inside a selected app window.
+
+## App Runtime And Postgres
+
+First-party and polished default apps are Vite + React apps with `runtime: "vite"` and `build.output: "dist"` in `matrix.json`. The host-bundle build runs `scripts/build-default-apps.mjs`, and customer VPS startup copies the built app `dist/` assets plus manifests into `/home/matrix/home/apps`.
+
+Apps use the local Postgres database through the gateway bridge:
+
+```ts
+await fetch("/api/bridge/query", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    action: "insert",
+    app: "todo",
+    table: "tasks",
+    data: { text: "Ship it", done: false },
+  }),
+});
+```
+
+The gateway registers manifest-declared `storage.tables` into schema-per-app Postgres tables. App child processes do not receive raw `DATABASE_URL`; the bridge is the intended scoped API for easy, safe access to the owner-local database.
 
 ## Backup Retention
 
@@ -139,10 +178,10 @@ If restore fails, `matrix-restore.service` exits non-zero and `matrix-gateway.se
 
 ## Rollback
 
-Rollback is a routing decision for phase 1:
+Rollback is a routing/operator decision:
 
-- Users without a `running` `user_machines` row continue using the legacy container path.
-- To stop serving a VPS user, delete or move the machine out of `running` state and verify the legacy container route is available.
+- Users without a `running` `user_machines` row should not be treated as successfully provisioned production users.
+- To stop serving a VPS user, delete or move the machine out of `running` state and verify the user sees the intended unavailable/reprovisioning path.
 - `DELETE /vps/:machineId` soft-deletes the platform row and deletes the Hetzner server, but does not remove R2 data.
 
 Do not request review or rollout approval while still pushing commits to the branch.

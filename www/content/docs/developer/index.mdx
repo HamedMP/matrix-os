@@ -6,7 +6,7 @@ description: Technical reference for building on and contributing to Matrix OS.
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This section covers the technical internals of Matrix OS for developers who want to understand the architecture, contribute to the project, or build extensions.
+This section covers the technical internals of Matrix OS for developers who want to understand the architecture, contribute to the project, build apps, or extend the system.
 
 <Callout type="info" title="AI-generated documentation">
   For a comprehensive, always-up-to-date reference generated from the source code, see the [Matrix OS DeepWiki](https://deepwiki.com/HamedMP/matrix-os/).
@@ -20,10 +20,10 @@ This section covers the technical internals of Matrix OS for developers who want
 | Runtime | Node.js 24+ |
 | AI | Claude Agent SDK V1 (`query()` + `resume`) with Opus 4.6 |
 | Frontend | Next.js 16, React 19 |
-| Backend | Hono (HTTP/WebSocket gateway) |
+| Backend | Hono (platform control plane + customer gateway) |
 | Channels | node-telegram-bot-api, @whiskeysockets/baileys, discord.js, @slack/bolt |
 | Federation | Matrix protocol (matrix-js-sdk) |
-| Database | PostgreSQL via Kysely |
+| Database | PostgreSQL via Kysely for platform and customer-local app/workspace data |
 | Validation | Zod 4 (`zod/v4` import) |
 | Scheduling | node-cron + native timers |
 | Testing | Vitest (99-100% coverage target, `@vitest/coverage-v8`) |
@@ -34,6 +34,16 @@ This section covers the technical internals of Matrix OS for developers who want
 ### Kernel = Agent SDK
 
 The `spawnKernel()` function in `packages/kernel/src/spawn.ts` is the entry point. It calls `query()` for initial prompts and `resume` for multi-turn conversations. The `kernelOptions()` function in `packages/kernel/src/options.ts` configures the kernel with the system prompt, IPC servers, agent definitions, and hooks.
+
+### Platform + Customer VPS Runtime
+
+Production Matrix OS has a shared platform control plane and one customer VPS per active user. The platform owns Clerk auth, routing, provisioning, integrations, and host-bundle publication. The customer VPS runs the user's gateway, shell, code editor, apps, local Postgres, sync, and backups.
+
+### Apps = Vite + React By Default
+
+First-party and polished apps should be Vite + React projects with `runtime: "vite"` and `build.output: "dist"` in `matrix.json`. Apps that need structured data declare `storage.tables`; the gateway creates schema-per-app Postgres tables and exposes access through `/api/bridge/query`.
+
+App processes should not receive raw `DATABASE_URL`. The bridge API is the intended scoped route into the user's local Postgres database.
 
 ### IPC via MCP
 

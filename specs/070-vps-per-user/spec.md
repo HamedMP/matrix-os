@@ -51,7 +51,7 @@ Control-plane VPS (this box, Hetzner project "matrix-os-infra")
 
 Customer VPSes (Hetzner project "matrix-os-customers", one per user)
    matrix-os-host services (gateway, shell, agent runtime) -- systemd
-   postgres           host service, one DB for this user    -- systemd
+   postgres           local endpoint, one DB for this user  -- 127.0.0.1:5432
    user app/runtime processes                               -- host services/processes
    sync-agent           pulls/pushes R2                     -- systemd
    db-backup            pg_dump on schedule + on demand     -- systemd timer
@@ -66,7 +66,9 @@ Cloudflare R2 (existing matrixos-sync bucket, extended layout)
 
 ### Why services-on-host instead of Matrix-in-a-container
 
-On the user's own VPS, the gateway, shell, code server, Postgres, sync agent, and backup jobs run as host services/processes, not inside another container. This is the whole point of the VPS-per-user move: use the VM boundary as the user boundary and stop fighting Docker-in-Docker.
+On the user's own VPS, the gateway, shell, code server, sync agent, and backup jobs run as host services/processes, not inside another user-runtime container. This is the whole point of the VPS-per-user move: use the VM boundary as the user boundary.
+
+Current implementation note: customer Postgres is a single machine-local `postgres:16` service container named `matrix-postgres` with a local Docker volume and `127.0.0.1:5432` binding. It is per-VPS and owner-local, but it is not the old shared platform container runtime. The no-container rule applies to Matrix gateway/shell/code/default-app runtime.
 
 The control-plane VPS is not user-facing compute. Any remaining containerized control-plane implementation is legacy/operator infrastructure and must not be used as the production user runtime path.
 
@@ -123,10 +125,10 @@ Provisioning model: **cloud-init from a base Ubuntu 24.04 image**, not a Hetzner
 The cloud-init recipe lives at `distro/customer-vps/cloud-init.yaml`. It:
 
 1. Creates `matrix` system user.
-2. Installs the Matrix host runtime dependencies needed by the bundled gateway, shell, code service, sync agent, and local Postgres.
+2. Installs the Matrix host runtime dependencies needed by the bundled gateway, shell, code service, sync agent, and local Postgres endpoint.
 3. Pulls the matrix-os-host bundle (a tarball published to R2 by CI, not a Docker image).
-4. Installs systemd units: `matrix-gateway.service`, `matrix-shell.service`, `matrix-sync-agent.service`, `matrix-db-backup.timer`, and local Postgres service dependencies.
-5. Initializes local owner-controlled Postgres on the host. No production customer Postgres runs in a container.
+4. Installs systemd units: `matrix-gateway.service`, `matrix-shell.service`, `matrix-sync-agent.service`, `matrix-db-backup.timer`, and local Postgres dependencies.
+5. Initializes local owner-controlled Postgres at `127.0.0.1:5432`.
 6. On first boot, calls back to control plane (`POST /vps/register`) with its public IP, server ID, image version. Control plane updates `userMachines` row to `running`.
 7. If `system/db/latest` exists in R2, sync-agent restores DB before gateway starts (gateway start is gated on `matrix-restore-complete` flag file).
 
