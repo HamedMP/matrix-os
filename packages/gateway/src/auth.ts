@@ -84,7 +84,7 @@ const APP_IFRAME_PREFIXES = ["/apps/"];
 const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
 ];
-const WS_QUERY_TOKEN_PATHS = ["/ws/voice", "/ws/terminal", "/ws/onboarding", "/ws/vocal"];
+const WS_QUERY_TOKEN_PATHS = ["/ws", "/ws/voice", "/ws/terminal", "/ws/onboarding", "/ws/vocal"];
 const WS_QUERY_TOKEN_PATH_PATTERNS = [/^\/api\/canvases\/[^/]+\/ws$/];
 
 // Constant-time string compare. Previously, the length-mismatch branch ran

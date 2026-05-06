@@ -905,6 +905,23 @@ export function createApp(deps: {
       return next();
     }
 
+    if (isAppDomain && path === '/api/auth/ws-token') {
+      if (!platformJwtSecret) {
+        return c.json({ error: 'WebSocket auth unavailable' }, 503);
+      }
+      const issued = await issueSyncJwt({
+        secret: platformJwtSecret,
+        clerkUserId: identity.userId,
+        handle: identity.handle,
+        gatewayUrl: getGatewayUrlForHandle(identity.handle),
+        expiresInSec: WS_TOKEN_EXPIRES_IN_SEC,
+      });
+      return c.json({
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+      });
+    }
+
     const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
     if (runningMachine) {
       const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
@@ -994,23 +1011,6 @@ export function createApp(deps: {
         }), 503);
       }
       return c.html(getNoContainerPage());
-    }
-
-    if (isAppDomain && path === '/api/auth/ws-token') {
-      if (!platformJwtSecret) {
-        return c.json({ error: 'WebSocket auth unavailable' }, 503);
-      }
-      const issued = await issueSyncJwt({
-        secret: platformJwtSecret,
-        clerkUserId: identity.userId,
-        handle: record.handle,
-        gatewayUrl: getGatewayUrlForHandle(record.handle),
-        expiresInSec: WS_TOKEN_EXPIRES_IN_SEC,
-      });
-      return c.json({
-        token: issued.token,
-        expiresAt: issued.expiresAt,
-      });
     }
 
     if (record.status === 'stopped') {

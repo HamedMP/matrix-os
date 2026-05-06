@@ -215,6 +215,30 @@ describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("accepts a valid sync JWT in the main websocket query string", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://app.matrix-os.com",
+    });
+
+    const mw = authMiddleware("legacy-shared-secret");
+    let nextCalled = false;
+    await mw(
+      mockContext(
+        "/ws",
+        undefined,
+        undefined,
+        `http://localhost:4000/ws?token=${encodeURIComponent(issued.token)}`,
+      ),
+      async () => {
+        nextCalled = true;
+      },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
   it("rejects a JWT issued for a different handle (cross-tenant defense)", async () => {
     const issued = await issueSyncJwt({
       secret: JWT_SECRET,

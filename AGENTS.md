@@ -128,8 +128,7 @@ These patterns were identified as recurring defects across 4+ PRs (~317 unresolv
 ```bash
 git clone https://github.com/hamedmp/matrix-os.git && cd matrix-os
 flox activate        # provisions Node 24, pnpm 10, bun, git + runs pnpm install
-# Edit .env.docker -- set ANTHROPIC_API_KEY
-bun run docker       # start dev environment
+bun run dev          # local source dev only; production runs on per-user VPS host services
 ```
 
 Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full guide: `docs/dev/onboarding.md`
@@ -140,7 +139,7 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 |-----------|------------|
 | `packages/kernel/` | AI kernel -- Agent SDK, agents, hooks, SOUL, skills |
 | `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
-| `packages/platform/` | Multi-tenant orchestrator (Clerk auth, Docker provisioning) |
+| `packages/platform/` | Multi-tenant orchestrator (Clerk auth, per-user VPS provisioning and routing) |
 | `packages/proxy/` | Shared API proxy, usage tracking |
 | `packages/ui/` | Shared UI components |
 | `shell/` | Next.js 16 desktop shell frontend |
@@ -166,7 +165,7 @@ bun run dev:platform      # platform only
 bun run dev:www           # matrix-os.com website only
 bun run dev:kernel        # kernel package only
 
-bun run docker            # Docker dev (primary, requires OrbStack on macOS)
+bun run docker            # Legacy/local Docker dev only; not production customer runtime
 bun run docker:full       # + proxy, platform, conduit
 bun run docker:all        # + observability stack
 bun run docker:multi      # + alice & bob multi-user
@@ -177,7 +176,7 @@ bun run docker:shell      # shell into container as matrixos user
 bun run docker:build      # full rebuild (no cache)
 ```
 
-**IMPORTANT**: Never `docker compose down -v` unless explicitly resetting. Volumes hold OS state, node_modules, and .next cache.
+**IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
 
 ## Shell Gotchas
@@ -192,11 +191,10 @@ bun run docker:build      # full rebuild (no cache)
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
 - **Reset `imgFailed` when `iconUrl` changes**: track prev URL with `useRef`, reset on differ
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
-- **Shell changes need Docker rebuild**: shell is built into the image. `docker compose up --build` only rebuilds platform/proxy.
-- **`docker build` needs `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...`**
-- **Customer VPS shell changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes or bump `CUSTOMER_VPS_IMAGE_VERSION` for new provisions.
+- **Production is VPS-native only**: user-facing Matrix OS runs on one VPS per user with host systemd services. Do not use Docker image rebuilds, `docker compose`, or rolling container restarts as the production rollout path for customer runtime.
+- **Customer VPS shell/gateway changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes in place and restart `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
 - **Pipedream stays platform-owned**: never put `PIPEDREAM_*` secrets on customer VPSes. VPS gateways need `PLATFORM_INTERNAL_URL` plus their existing `UPGRADE_TOKEN`/`MATRIX_HANDLE` so `/api/integrations*` proxies to platform-owned routes.
-- **Never publish a shell bundle with the example Clerk key**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is baked at build time for both Docker images and customer host bundles. If production logs show `clerk.example.com`, the served shell bundle was built with the placeholder key and must be rebuilt and redeployed.
+- **Never publish a shell bundle with the example Clerk key**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is baked at host-bundle build time. If production logs show `clerk.example.com`, the served shell bundle was built with the placeholder key and must be rebuilt and redeployed.
 - **Canvas panning must be target-gated**: wheel/pointer pan handlers should only accept events from the canvas surface/zoom overlay, not bubbled events from selected app windows. Add regression tests for scrolling inside an active app window.
 
 ## UX Guide

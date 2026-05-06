@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -17,19 +17,19 @@ describe("T711: GET /api/apps", () => {
     rmSync(homePath, { recursive: true, force: true });
   });
 
-  it("returns empty array when no apps exist", () => {
-    const apps = listApps(homePath);
+  it("returns empty array when no apps exist", async () => {
+    const apps = await listApps(homePath);
     expect(apps).toEqual([]);
   });
 
-  it("lists HTML apps with metadata from matrix.md", () => {
+  it("lists HTML apps with metadata from matrix.md", async () => {
     writeFileSync(join(homePath, "apps/todo.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/todo.matrix.md"),
       "---\nname: Todo\ndescription: Task manager\ncategory: productivity\nicon: check\n---\n",
     );
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(1);
     expect(apps[0]).toEqual({
       name: "Todo",
@@ -41,38 +41,38 @@ describe("T711: GET /api/apps", () => {
     });
   });
 
-  it("lists multiple apps sorted by name", () => {
+  it("lists multiple apps sorted by name", async () => {
     writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
     writeFileSync(join(homePath, "apps/calc.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/calc.matrix.md"), "---\nname: Calculator\ncategory: utility\n---\n");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(2);
     expect(apps[0].name).toBe("Calculator");
     expect(apps[1].name).toBe("Notes");
   });
 
-  it("uses defaults when matrix.md is missing", () => {
+  it("uses defaults when matrix.md is missing", async () => {
     writeFileSync(join(homePath, "apps/widget.html"), "<html></html>");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(1);
     expect(apps[0].name).toBe("widget");
     expect(apps[0].category).toBe("utility");
     expect(apps[0].path).toBe("/files/apps/widget.html");
   });
 
-  it("ignores non-HTML files", () => {
+  it("ignores non-HTML files", async () => {
     writeFileSync(join(homePath, "apps/readme.md"), "# readme");
     writeFileSync(join(homePath, "apps/todo.html"), "<html></html>");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(1);
     expect(apps[0].file).toBe("todo.html");
   });
 
-  it("does not list app templates as installed apps", () => {
+  it("does not list app templates as installed apps", async () => {
     mkdirSync(join(homePath, "apps/_template-next"), { recursive: true });
     writeFileSync(join(homePath, "apps/_template-next/index.html"), "<html></html>");
     writeFileSync(
@@ -81,18 +81,52 @@ describe("T711: GET /api/apps", () => {
     );
     writeFileSync(join(homePath, "apps/real.html"), "<html></html>");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
 
     expect(apps.map((app) => app.name)).toEqual(["real"]);
   });
 
-  it("returns empty when apps directory does not exist", () => {
+  it("returns empty when apps directory does not exist", async () => {
     rmSync(join(homePath, "apps"), { recursive: true, force: true });
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toEqual([]);
   });
 
-  it("discovers apps in nested subdirectories", () => {
+  it("skips broken filesystem entries and still returns readable apps", async () => {
+    writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
+    writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
+    symlinkSync(join(homePath, "apps/missing-target"), join(homePath, "apps/broken-link"));
+
+    const apps = await listApps(homePath);
+
+    expect(apps.map((app) => app.name)).toEqual(["Notes"]);
+  });
+
+  it("skips malformed app manifests and keeps scanning siblings", async () => {
+    mkdirSync(join(homePath, "apps/bad-app"), { recursive: true });
+    writeFileSync(join(homePath, "apps/bad-app/matrix.json"), "{ bad json");
+    mkdirSync(join(homePath, "apps/good-app"), { recursive: true });
+    writeFileSync(join(homePath, "apps/good-app/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/good-app/matrix.json"),
+      JSON.stringify({ name: "Good App", category: "utility", runtime: "static" }),
+    );
+
+    const apps = await listApps(homePath);
+
+    expect(apps.map((app) => app.name)).toEqual(["Good App"]);
+  });
+
+  it("returns empty when the apps directory is not a readable directory", async () => {
+    rmSync(join(homePath, "apps"), { recursive: true, force: true });
+    symlinkSync(join(homePath, "missing-apps"), join(homePath, "apps"));
+
+    const apps = await listApps(homePath);
+
+    expect(apps).toEqual([]);
+  });
+
+  it("discovers apps in nested subdirectories", async () => {
     mkdirSync(join(homePath, "apps/games"), { recursive: true });
     writeFileSync(
       join(homePath, "apps/games/matrix.json"),
@@ -113,7 +147,7 @@ describe("T711: GET /api/apps", () => {
       JSON.stringify({ name: "2048", category: "games", runtime: "static" }),
     );
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     const names = apps.map((a) => a.name);
     expect(names).toContain("Game Center");
     expect(names).toContain("Snake");
@@ -125,7 +159,7 @@ describe("T711: GET /api/apps", () => {
     expect(snake.category).toBe("games");
   });
 
-  it("lists nested apps alongside top-level apps", () => {
+  it("lists nested apps alongside top-level apps", async () => {
     writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
 
@@ -136,7 +170,7 @@ describe("T711: GET /api/apps", () => {
       JSON.stringify({ name: "Timer", category: "utilities", runtime: "static" }),
     );
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     const names = apps.map((a) => a.name);
     expect(names).toContain("Notes");
     expect(names).toContain("Timer");
@@ -155,7 +189,7 @@ describe("T711: GET /api/apps", () => {
 
     const visit = (dir: string) => {
       for (const entry of readdirSync(dir)) {
-        if (entry.startsWith("_template-")) {
+        if (entry === "node_modules" || entry.startsWith("_template-")) {
           continue;
         }
         const fullPath = join(dir, entry);
@@ -186,7 +220,7 @@ describe("T711: GET /api/apps", () => {
 
     const visit = (dir: string) => {
       for (const entry of readdirSync(dir)) {
-        if (entry.startsWith("_")) continue;
+        if (entry === "node_modules" || entry.startsWith("_")) continue;
         const fullPath = join(dir, entry);
         if (!statSync(fullPath).isDirectory()) continue;
         const manifestPath = join(fullPath, "matrix.json");

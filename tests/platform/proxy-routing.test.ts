@@ -156,6 +156,45 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("issues websocket tokens for Clerk-authenticated customer VPS users before proxying", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await insertUserMachine(db, {
+      machineId: "machine-alice-ws",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 124,
+      publicIPv4: "203.0.113.12",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/ws-token", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      token: expect.any(String),
+      expiresAt: expect.any(Number),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {

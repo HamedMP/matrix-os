@@ -377,7 +377,7 @@ export async function createGateway(config: GatewayConfig) {
       // Register apps with storage declarations
       try {
         const { loadAppManifest } = await import("./app-manifest.js");
-        const apps = listApps(homePath);
+        const apps = await listApps(homePath);
         let registered = 0;
         for (const app of apps) {
           const appDir = app.file.includes("/")
@@ -2908,8 +2908,8 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(task);
   });
 
-  app.get("/api/apps", (c) => {
-    return c.json(listApps(homePath));
+  app.get("/api/apps", async (c) => {
+    return c.json(await listApps(homePath));
   });
 
   function resolveSystemIconUrl(requestedFile: string): string | null {
