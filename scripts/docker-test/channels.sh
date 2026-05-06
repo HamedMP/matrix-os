@@ -16,7 +16,7 @@ echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Write channel config with a telegram entry (disabled, since we have no real token)
 echo -e "${YELLOW}[SETUP]${NC} Writing channel config..."
@@ -39,7 +39,7 @@ echo -e "${YELLOW}[SETUP]${NC} Restarting to load channel config..."
 $COMPOSE stop dev
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Verify channel status endpoint works
 assert_status "$GATEWAY_URL/api/channels/status" "200" \

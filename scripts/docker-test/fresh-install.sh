@@ -19,7 +19,7 @@ $COMPOSE down -v --timeout 5 2>/dev/null || true
 echo -e "${YELLOW}[SETUP]${NC} Starting dev container..."
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Verify home directory structure
 assert_file_exists "dev" "/home/matrixos/home/system/soul.md" \

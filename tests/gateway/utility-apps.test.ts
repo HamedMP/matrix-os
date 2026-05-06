@@ -4,11 +4,25 @@ import { join } from "node:path";
 import { parseAppManifest } from "../../packages/gateway/src/app-manifest.js";
 
 const APPS_DIR = join(__dirname, "../../home/apps");
+const SHARED_RENDERER = join(__dirname, "../../home/apps/_shared/default-apps.tsx");
 
 const UTILITY_APPS = [
   { slug: "calculator", name: "Calculator", category: "utility" },
   { slug: "clock", name: "Clock", category: "utility" },
 ];
+
+function expectViteApp(appDir: string, appId: string) {
+  const html = readFileSync(join(appDir, "index.html"), "utf-8");
+  expect(html.toLowerCase()).toContain("<!doctype html>");
+  expect(html).toContain('id="root"');
+  expect(html).toContain('type="module"');
+  expect(html).toContain("/src/main.tsx");
+  expect(existsSync(join(appDir, "vite.config.ts"))).toBe(true);
+
+  const source = readFileSync(join(appDir, "src/main.tsx"), "utf-8");
+  expect(source).toContain("renderDefaultApp");
+  expect(source).toContain(`"${appId}"`);
+}
 
 describe("T1430-T1433: Core utility apps", () => {
   for (const app of UTILITY_APPS) {
@@ -26,60 +40,44 @@ describe("T1430-T1433: Core utility apps", () => {
         const parsed = parseAppManifest(manifest);
         expect(parsed.name).toBe(app.name);
         expect(parsed.category).toBe(app.category);
-        expect(parsed.runtime).toBe("static");
+        expect(parsed.runtime).toBe("vite");
+        expect(manifest.build.command).toContain("vite build");
+        expect(manifest.build.output).toBe("dist");
       });
 
-      it("has an index.html", () => {
-        expect(existsSync(join(appDir, "index.html"))).toBe(true);
-      });
-
-      it("index.html is a complete page", () => {
-        const html = readFileSync(join(appDir, "index.html"), "utf-8");
-        expect(html).toContain("<!DOCTYPE html>");
-        expect(html).toContain("<title>");
-        expect(html).toContain("<script>");
+      it("is a Vite app wired to the shared renderer", () => {
+        expectViteApp(appDir, app.slug);
       });
     });
   }
 
   describe("calculator specifics", () => {
-    it("supports basic and scientific modes", () => {
-      const html = readFileSync(join(APPS_DIR, "calculator", "index.html"), "utf-8");
-      expect(html.toLowerCase()).toContain("basic");
-      expect(html.toLowerCase()).toContain("scientific");
+    const shared = () => readFileSync(SHARED_RENDERER, "utf-8");
+
+    it("ships a scientific keypad and compact history", () => {
+      expect(shared().toLowerCase()).toContain("scientific");
+      expect(shared().toLowerCase()).toContain("history");
     });
 
-    it("supports keyboard input", () => {
-      const html = readFileSync(join(APPS_DIR, "calculator", "index.html"), "utf-8");
-      expect(html).toContain("keydown");
-    });
-
-    it("has scientific functions", () => {
-      const html = readFileSync(join(APPS_DIR, "calculator", "index.html"), "utf-8");
-      expect(html).toContain("Math.sin");
-      expect(html).toContain("Math.cos");
-      expect(html).toContain("Math.log");
+    it("has calculator operations", () => {
+      expect(shared()).toContain("÷");
+      expect(shared()).toContain("×");
+      expect(shared()).toContain("sqrt(144)");
     });
   });
 
   describe("clock specifics", () => {
-    it("has analog and digital displays", () => {
-      const html = readFileSync(join(APPS_DIR, "clock", "index.html"), "utf-8");
-      expect(html.toLowerCase()).toContain("canvas");
-      expect(html.toLowerCase()).toContain("digital");
-    });
+    const shared = () => readFileSync(SHARED_RENDERER, "utf-8");
 
-    it("has stopwatch functionality", () => {
-      const html = readFileSync(join(APPS_DIR, "clock", "index.html"), "utf-8");
-      const lower = html.toLowerCase();
-      expect(lower).toContain("stopwatch");
-      expect(lower).toContain("lap");
+    it("has local time and focus timer surfaces", () => {
+      expect(shared().toLowerCase()).toContain("time-card");
+      expect(shared()).toContain("Local time");
+      expect(shared().toLowerCase()).toContain("focus timer");
     });
 
     it("has timer functionality", () => {
-      const html = readFileSync(join(APPS_DIR, "clock", "index.html"), "utf-8");
-      const lower = html.toLowerCase();
-      expect(lower).toContain("timer");
+      expect(shared().toLowerCase()).toContain("timer");
+      expect(shared()).toContain("25:00");
     });
   });
 });

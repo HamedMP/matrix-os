@@ -43,6 +43,8 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || secrets.S3_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
+      HOST_BUNDLE_PUBLISHABLE_CLERK_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +69,7 @@ jobs:
         run: ./scripts/build-host-bundle.sh
 
       - name: Upload to R2
+        if: ${{ env.HOST_BUNDLE_PUBLISHABLE_CLERK_KEY != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && (env.R2_ENDPOINT != '' || env.R2_ACCOUNT_ID != '') }}
         run: |
           set -euo pipefail
           endpoint="${R2_ENDPOINT:-}"
@@ -80,3 +83,8 @@ jobs:
           key="system-bundles/${IMAGE_VERSION}"
           aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz"
           aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz.sha256 "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz.sha256"
+
+      - name: Skip R2 upload when credentials are absent
+        if: ${{ env.HOST_BUNDLE_PUBLISHABLE_CLERK_KEY == '' || env.AWS_ACCESS_KEY_ID == '' || env.AWS_SECRET_ACCESS_KEY == '' || (env.R2_ENDPOINT == '' && env.R2_ACCOUNT_ID == '') }}
+        run: |
+          echo "Publish credentials are not fully configured; built host bundle but skipped publish."
