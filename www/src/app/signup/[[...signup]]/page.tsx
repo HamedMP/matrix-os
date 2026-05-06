@@ -1,6 +1,7 @@
 import { SignUp } from "@clerk/nextjs";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
+import { getSignupFallbackRedirectUrl } from "@/inngest/provision-status";
 
 export default function SignUpPage() {
   return (
@@ -13,7 +14,7 @@ export default function SignUpPage() {
       }
       formContent={
         <SignUp
-          fallbackRedirectUrl="/dashboard"
+          fallbackRedirectUrl={getSignupFallbackRedirectUrl()}
           appearance={{
             elements: {
               rootBox: "w-full",
