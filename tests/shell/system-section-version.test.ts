@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isNewer,
   normalizeMatrixReleaseTag,
+  resolveSystemUpdateState,
 } from "../../shell/src/components/settings/sections/SystemSection";
 
 describe("SystemSection version helpers", () => {
@@ -18,5 +19,17 @@ describe("SystemSection version helpers", () => {
     expect(isNewer("0.2.4", "0.2.3")).toBe(true);
     expect(isNewer("0.2.4", "0.2.4")).toBe(false);
     expect(isNewer("0.2.3", "0.2.4")).toBe(false);
+  });
+
+  it("uses VPS host-bundle update metadata before GitHub release tags", () => {
+    expect(resolveSystemUpdateState({
+      installedVersion: "v2026.05.06-1",
+      latestVersion: "v2026.05.06-2",
+      updateAvailable: true,
+    })).toEqual({
+      currentVersion: "v2026.05.06-1",
+      latestVersion: "v2026.05.06-2",
+      updateAvailable: true,
+    });
   });
 });

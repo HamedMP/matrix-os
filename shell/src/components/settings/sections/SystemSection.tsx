@@ -13,6 +13,15 @@ const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
 interface SystemInfo {
   version?: string;
   image?: string;
+  release?: {
+    version?: string;
+    channel?: string;
+    gitCommit?: string;
+    gitRef?: string;
+    buildTime?: string;
+    bundleSha256?: string;
+    installedAt?: string;
+  };
   build?: {
     sha?: string;
     ref?: string;
@@ -22,6 +31,7 @@ interface SystemInfo {
   nodeVersion?: string;
   platform?: string;
   uptime?: number;
+  startedAt?: string;
   todayCost?: number;
 }
 
@@ -30,6 +40,20 @@ interface HealthStatus {
   cronJobs: number;
   channels: Record<string, string>;
   plugins?: number;
+}
+
+interface SystemUpdateStatus {
+  channel?: string;
+  latest?: {
+    version?: string;
+    channel?: string;
+    gitCommit?: string;
+    buildTime?: string;
+    bundleSha256?: string;
+  } | null;
+  updateAvailable?: boolean;
+  checkedAt?: string;
+  error?: string;
 }
 
 function parseSemver(value: string): [number, number, number] | null {
@@ -57,10 +81,22 @@ export function isNewer(latest: string, current: string): boolean {
   return false;
 }
 
+export function resolveSystemUpdateState(input: {
+  installedVersion?: string;
+  latestVersion?: string | null;
+  updateAvailable?: boolean;
+}) {
+  return {
+    currentVersion: input.installedVersion ?? "unknown",
+    latestVersion: input.latestVersion ?? null,
+    updateAvailable: Boolean(input.updateAvailable && input.latestVersion),
+  };
+}
+
 export function SystemSection() {
   const [info, setInfo] = useState<SystemInfo>({});
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null);
 
   useEffect(() => {
     fetch(`${GATEWAY}/api/system/info`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
@@ -77,21 +113,11 @@ export function SystemSection() {
         console.warn("[system-settings] failed to load health:", err instanceof Error ? err.message : String(err));
       });
 
-    fetch("https://api.github.com/repos/HamedMP/matrix-os/releases?per_page=20", {
-      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-    })
+    fetch(`${GATEWAY}/api/system/update`, { signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS) })
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (!Array.isArray(data)) return;
-        const appRelease = data
-          .map((release: { tag_name?: unknown }) =>
-            typeof release.tag_name === "string" ? normalizeMatrixReleaseTag(release.tag_name) : null,
-          )
-          .find((version: string | null): version is string => version !== null);
-        setLatestVersion(appRelease ?? null);
-      })
+      .then(setUpdateStatus)
       .catch((err: unknown) => {
-        console.warn("[system-settings] failed to load release metadata:", err instanceof Error ? err.message : String(err));
+        console.warn("[system-settings] failed to load update metadata:", err instanceof Error ? err.message : String(err));
       });
   }, []);
 
@@ -103,7 +129,11 @@ export function SystemSection() {
     setUpgradeError(null);
 
     try {
-      const res = await fetch(`${GATEWAY}/api/system/upgrade`, { method: "POST" });
+      const res = await fetch(`${GATEWAY}/api/system/update`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ channel: updateStatus?.channel ?? info.release?.channel ?? "stable" }),
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpgradeError((data as Record<string, string>).error ?? "Upgrade failed");
@@ -116,10 +146,16 @@ export function SystemSection() {
 
     // Container will restart; reload after 15s
     setTimeout(() => window.location.reload(), 15000);
-  }, []);
+  }, [info.release?.channel, updateStatus?.channel]);
 
-  const currentVersion = info.version ?? "0.0.0";
-  const updateAvailable = latestVersion ? isNewer(latestVersion, currentVersion) : false;
+  const resolvedUpdate = resolveSystemUpdateState({
+    installedVersion: info.release?.version ?? info.version,
+    latestVersion: updateStatus?.latest?.version ?? null,
+    updateAvailable: updateStatus?.updateAvailable,
+  });
+  const currentVersion = resolvedUpdate.currentVersion;
+  const latestVersion = resolvedUpdate.latestVersion;
+  const updateAvailable = resolvedUpdate.updateAvailable;
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -189,7 +225,7 @@ export function SystemSection() {
           </div>
           {latestVersion && (
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Latest release</span>
+              <span className="text-muted-foreground">Latest {updateStatus?.channel ?? "stable"} release</span>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-xs">{latestVersion}</span>
                 {updateAvailable && (
@@ -199,6 +235,9 @@ export function SystemSection() {
                 )}
               </div>
             </div>
+          )}
+          {updateStatus?.error && (
+            <p className="text-xs text-muted-foreground">{updateStatus.error}</p>
           )}
           {updateAvailable && (
             <div className="pt-1 space-y-2">
@@ -232,6 +271,14 @@ export function SystemSection() {
         <CardContent className="space-y-2">
           {[
             ["Version", info.version ?? "0.1.0"],
+            ["Host Bundle", info.release?.version],
+            ["Channel", info.release?.channel],
+            ["Git Commit", info.release?.gitCommit],
+            ["Git Ref", info.release?.gitRef],
+            ["Bundle Build Time", info.release?.buildTime],
+            ["Installed At", info.release?.installedAt],
+            ["Bundle SHA256", info.release?.bundleSha256],
+            ["Service Started", info.startedAt],
             ["Image", info.image],
             ["Build Ref", info.build?.ref],
             ["Build SHA", info.build?.sha],

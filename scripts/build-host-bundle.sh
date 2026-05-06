@@ -60,7 +60,7 @@ find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -t
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/zellij"
+chmod 0755 "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/zellij"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
@@ -73,10 +73,9 @@ if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi
 
-tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime
-(
-  cd "$DIST_DIR"
-  sha256sum "$BUNDLE_NAME" > "$BUNDLE_NAME.sha256"
-)
+# Writes release.json into the bundle and manifest.json beside the tarball.
+node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
+tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME" bin app runtime release.json
+node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-manifest
 
 printf '%s\n' "$DIST_DIR/$BUNDLE_NAME"

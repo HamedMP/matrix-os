@@ -63,6 +63,12 @@ import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
+import {
+  checkForSystemUpdate,
+  parseUpdateChannel,
+  startSystemUpdate,
+  type UpdateChannel,
+} from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
@@ -3155,6 +3161,31 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
+  function resolveUpdateChannel(value: unknown): UpdateChannel | null {
+    return parseUpdateChannel(
+      typeof value === "string" && value.length > 0
+        ? value
+        : process.env.MATRIX_UPDATE_CHANNEL ?? "stable",
+    );
+  }
+
+  app.get("/api/system/update", async (c) => {
+    const channel = resolveUpdateChannel(c.req.query("channel"));
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    const info = getSystemInfo(homePath);
+    const result = await checkForSystemUpdate({
+      installed: info.release ?? {
+        version: info.version,
+        gitCommit: info.build.sha,
+        gitRef: info.build.ref,
+        buildTime: info.build.date,
+      },
+      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
+      channel,
+    });
+    return c.json(result);
+  });
+
   app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
     const token = process.env.MATRIX_SYSTEM_BACKUP_TOKEN;
     if (!token) {
@@ -3168,43 +3199,31 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ error: "Backup trigger not implemented" }, 501);
   });
 
-  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
-    const handle = process.env.MATRIX_HANDLE;
-    const token = process.env.UPGRADE_TOKEN;
-    const platformUrl = process.env.PLATFORM_INTERNAL_URL;
-
-    if (!handle || !token || !platformUrl) {
-      return c.json({ error: "Upgrade not configured" }, 503);
-    }
-
+  async function startUpdateFromRequest(c: Context) {
+    let body: unknown = {};
     try {
-      const res = await fetch(`${platformUrl}/containers/${handle}/self-upgrade`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(30_000),
-      });
-
-      if (!res.ok) {
-        let data: unknown = {};
-        try {
-          data = await res.json();
-        } catch (err: unknown) {
-          if (!(err instanceof SyntaxError)) {
-            console.warn("[system/upgrade] Failed to parse platform error response:", err);
-          }
-        }
-        return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status as 400);
-      }
-
-      return c.json({ ok: true });
+      body = await c.req.json();
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") {
-        console.error("[system/upgrade] Platform self-upgrade request timed out");
-        return c.json({ error: "Upgrade timed out" }, 504);
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[system-update] Failed to parse update request:", err);
       }
-      // Connection drop likely means the container is being replaced
-      return c.json({ ok: true });
     }
+    const requestedChannel =
+      body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
+    const channel = resolveUpdateChannel(requestedChannel);
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+
+    const result = await startSystemUpdate({ channel });
+    if (!result.ok) {
+      return c.json({ error: "Update not configured" }, 503);
+    }
+    return c.json({ ok: true, status: result.status, channel }, 202);
+  }
+
+  app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
+
+  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
+    return startUpdateFromRequest(c);
   });
 
   const usageTracker = createUsageTracker(homePath);

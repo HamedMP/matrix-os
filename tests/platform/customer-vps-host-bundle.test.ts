@@ -15,6 +15,11 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild better-sqlite3 node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
+    expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
+    expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
+    expect(script).toContain('bin app runtime release.json');
+    expect(script).toContain('manifest.json');
+    expect(script).toContain('release.json');
     expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
     expect(script).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(script).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
@@ -23,6 +28,19 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-gateway"');
     expect(script).toContain('chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin"');
     expect(script).toContain('find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +');
+    expect(script).toContain('matrix-update');
+  });
+
+  it('update launcher installs a verified host bundle through the platform bundle route', () => {
+    const root = process.cwd();
+    const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
+
+    expect(updater).toContain('system-bundles/channels/${channel}.json');
+    expect(updater).toContain('matrix-host-bundle.tar.gz');
+    expect(updater).toContain('sha256sum -c');
+    expect(updater).toContain('tar -xzf');
+    expect(updater).toContain('/opt/matrix/release.json');
+    expect(updater).toContain('systemctl restart matrix-gateway.service matrix-shell.service matrix-code.service');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

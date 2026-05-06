@@ -67,7 +67,11 @@ const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
   'matrix-host-bundle.tar.gz',
   'matrix-host-bundle.tar.gz.sha256',
+  'manifest.json',
+  'release.json',
 ]);
+const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev)$/;
+const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev)\.json$/;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -771,6 +775,38 @@ export function createApp(deps: {
 
     const imageVersion = c.req.param('imageVersion');
     const file = c.req.param('file');
+    if (imageVersion === 'channels') {
+      if (!HOST_BUNDLE_CHANNEL_FILE_PATTERN.test(file)) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      try {
+        const object = await deps.customerVpsObjectStore.getObject(
+          `system-bundles/channels/${file}`,
+          { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+        );
+        if (!object.body) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        const headers = new Headers({
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'public, max-age=60',
+          'cdn-cache-control': 'public, max-age=60',
+          'cloudflare-cdn-cache-control': 'public, max-age=60',
+        });
+        if (object.etag) headers.set('etag', object.etag);
+        if (typeof object.contentLength === 'number') {
+          headers.set('content-length', String(object.contentLength));
+        }
+        return new Response(object.body, { status: 200, headers });
+      } catch (err: unknown) {
+        if (isObjectNotFoundError(err)) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        logPlatformRouteError('/system-bundles/channels/:channel', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
+    }
+
     if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(imageVersion) || !HOST_BUNDLE_FILES.has(file)) {
       return c.json({ error: 'Invalid request' }, 400);
     }
@@ -784,7 +820,11 @@ export function createApp(deps: {
         return c.json({ error: 'Not found' }, 404);
       }
       const headers = new Headers({
-        'content-type': file.endsWith('.sha256') ? 'text/plain; charset=utf-8' : 'application/gzip',
+        'content-type': file.endsWith('.json')
+          ? 'application/json; charset=utf-8'
+          : file.endsWith('.sha256')
+            ? 'text/plain; charset=utf-8'
+            : 'application/gzip',
         'cache-control': 'public, max-age=31536000, immutable',
         'cdn-cache-control': 'public, max-age=31536000, immutable',
         'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
@@ -799,6 +839,44 @@ export function createApp(deps: {
         return c.json({ error: 'Not found' }, 404);
       }
       logPlatformRouteError('/system-bundles/:imageVersion/:file', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
+  app.get('/system-bundles/channels/:channel', async (c) => {
+    if (!deps.customerVpsObjectStore) {
+      return c.json({ error: 'Host bundle storage unavailable' }, 503);
+    }
+
+    const channel = c.req.param('channel');
+    if (!HOST_BUNDLE_CHANNEL_PATTERN.test(channel)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    try {
+      const object = await deps.customerVpsObjectStore.getObject(
+        `system-bundles/channels/${channel}`,
+        { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+      );
+      if (!object.body) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      const headers = new Headers({
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'public, max-age=60',
+        'cdn-cache-control': 'public, max-age=60',
+        'cloudflare-cdn-cache-control': 'public, max-age=60',
+      });
+      if (object.etag) headers.set('etag', object.etag);
+      if (typeof object.contentLength === 'number') {
+        headers.set('content-length', String(object.contentLength));
+      }
+      return new Response(object.body, { status: 200, headers });
+    } catch (err: unknown) {
+      if (isObjectNotFoundError(err)) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      logPlatformRouteError('/system-bundles/channels/:channel', err);
       return c.json({ error: 'Host bundle unavailable' }, 502);
     }
   });

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+channel="${1:-${MATRIX_UPDATE_CHANNEL:-stable}}"
+case "$channel" in
+  stable|canary|dev) ;;
+  *) echo "matrix-update: invalid channel" >&2; exit 2 ;;
+esac
+
+if [ -f /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+
+: "${PLATFORM_INTERNAL_URL:?matrix-update: PLATFORM_INTERNAL_URL is required}"
+
+workdir="$(mktemp -d /opt/matrix/update.XXXXXX)"
+cleanup() {
+  rm -rf "$workdir"
+}
+trap cleanup EXIT
+
+manifest_url="${PLATFORM_INTERNAL_URL%/}/system-bundles/channels/${channel}.json"
+manifest_path="$workdir/manifest.json"
+bundle_path="$workdir/matrix-host-bundle.tar.gz"
+checksum_path="$workdir/matrix-host-bundle.tar.gz.sha256"
+
+curl --fail --silent --show-error --location --max-time 30 \
+  "$manifest_url" \
+  -o "$manifest_path"
+
+version="$(
+  /opt/matrix/runtime/node/bin/node -e '
+    const fs = require("node:fs");
+    const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(String(manifest.version || ""))) process.exit(2);
+    process.stdout.write(manifest.version);
+  ' "$manifest_path"
+)"
+sha="$(
+  /opt/matrix/runtime/node/bin/node -e '
+    const fs = require("node:fs");
+    const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const sha = String(manifest.bundleSha256 || manifest.files?.bundle?.sha256 || "");
+    if (!/^[a-f0-9]{64}$/.test(sha)) process.exit(2);
+    process.stdout.write(sha);
+  ' "$manifest_path"
+)"
+
+bundle_url="${PLATFORM_INTERNAL_URL%/}/system-bundles/${version}/matrix-host-bundle.tar.gz"
+curl --fail --silent --show-error --location --max-time 180 \
+  "$bundle_url" \
+  -o "$bundle_path"
+
+printf '%s  matrix-host-bundle.tar.gz\n' "$sha" > "$checksum_path"
+(cd "$workdir" && sha256sum -c "$checksum_path")
+
+install -d -o root -g root -m 0755 /opt/matrix
+tar -xzf "$bundle_path" -C /opt/matrix
+cp "$manifest_path" /opt/matrix/release.json
+chmod 0644 /opt/matrix/release.json
+chmod 0755 /opt/matrix/bin/matrix-gateway /opt/matrix/bin/matrix-shell /opt/matrix/bin/matrix-code /opt/matrix/bin/matrix-sync-agent /opt/matrix/bin/matrix-update
+
+systemctl restart matrix-gateway.service matrix-shell.service matrix-code.service

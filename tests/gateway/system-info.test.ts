@@ -41,6 +41,44 @@ describe("T135: System info", () => {
     }
   });
 
+  it("includes installed host bundle release provenance", () => {
+    const homePath = tmpHome();
+    const releasePath = join(homePath, "release.json");
+    const previousReleasePath = process.env.MATRIX_RELEASE_FILE;
+    process.env.MATRIX_RELEASE_FILE = releasePath;
+    writeFileSync(
+      releasePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "matrix-os-host-bundle",
+        version: "v2026.05.06-1",
+        channel: "stable",
+        gitCommit: "db20de65abcdef",
+        gitRef: "refs/tags/v2026.05.06-1",
+        buildTime: "2026-05-06T20:15:00.000Z",
+        bundleSha256: "a".repeat(64),
+        installedAt: "2026-05-06T20:20:00.000Z",
+      }),
+    );
+
+    try {
+      const info = getSystemInfo(homePath);
+
+      expect(info.release).toMatchObject({
+        version: "v2026.05.06-1",
+        channel: "stable",
+        gitCommit: "db20de65abcdef",
+        buildTime: "2026-05-06T20:15:00.000Z",
+        installedAt: "2026-05-06T20:20:00.000Z",
+      });
+      expect(info.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    } finally {
+      if (previousReleasePath === undefined) delete process.env.MATRIX_RELEASE_FILE;
+      else process.env.MATRIX_RELEASE_FILE = previousReleasePath;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("returns version and uptime", () => {
     const homePath = tmpHome();
     const info = getSystemInfo(homePath);

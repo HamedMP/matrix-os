@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
     paths:
       - "distro/customer-vps/**"
       - "packages/gateway/**"
@@ -19,9 +21,18 @@ on:
     inputs:
       imageVersion:
         description: "Host image version key under system-bundles/"
-        required: true
+        required: false
         default: "matrix-os-host-dev"
         type: string
+      channel:
+        description: "Release channel pointer to update"
+        required: false
+        default: "dev"
+        type: choice
+        options:
+          - stable
+          - canary
+          - dev
 
 permissions:
   contents: read
@@ -36,7 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      IMAGE_VERSION: ${{ inputs.imageVersion || 'matrix-os-host-dev' }}
+      IMAGE_VERSION_INPUT: ${{ inputs.imageVersion || '' }}
+      CHANNEL_INPUT: ${{ inputs.channel || '' }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || vars.R2_ACCOUNT_ID }}
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT || secrets.S3_ENDPOINT || vars.R2_ENDPOINT || vars.S3_ENDPOINT }}
       R2_BUCKET: ${{ secrets.R2_BUCKET || secrets.S3_BUCKET || vars.R2_BUCKET || vars.S3_BUCKET || 'matrixos-sync' }}
@@ -56,6 +68,31 @@ jobs:
           cache: pnpm
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Resolve release metadata
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            image_version="${GITHUB_REF_NAME}"
+            channel="${CHANNEL_INPUT:-stable}"
+          else
+            image_version="${IMAGE_VERSION_INPUT:-matrix-os-host-dev}"
+            channel="${CHANNEL_INPUT:-canary}"
+          fi
+          if ! [[ "$image_version" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
+            echo "Invalid image version: $image_version" >&2
+            exit 1
+          fi
+          if ! [[ "$channel" =~ ^(stable|canary|dev)$ ]]; then
+            echo "Invalid channel: $channel" >&2
+            exit 1
+          fi
+          echo "IMAGE_VERSION=$image_version" >> "$GITHUB_ENV"
+          echo "HOST_BUNDLE_VERSION=$image_version" >> "$GITHUB_ENV"
+          echo "HOST_BUNDLE_CHANNEL=$channel" >> "$GITHUB_ENV"
+          echo "MATRIX_BUILD_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "MATRIX_BUILD_REF=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "MATRIX_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Validate image version
         run: |
@@ -83,6 +120,9 @@ jobs:
           key="system-bundles/${IMAGE_VERSION}"
           aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz"
           aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz.sha256 "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz.sha256"
+          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/manifest.json "s3://${R2_BUCKET}/${key}/manifest.json" --content-type "application/json"
+          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/release.json "s3://${R2_BUCKET}/${key}/release.json" --content-type "application/json"
+          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/manifest.json "s3://${R2_BUCKET}/system-bundles/channels/${HOST_BUNDLE_CHANNEL}.json" --content-type "application/json"
 
       - name: Skip R2 upload when credentials are absent
         if: ${{ env.HOST_BUNDLE_PUBLISHABLE_CLERK_KEY == '' || env.AWS_ACCESS_KEY_ID == '' || env.AWS_SECRET_ACCESS_KEY == '' || (env.R2_ENDPOINT == '' && env.R2_ACCOUNT_ID == '') }}
