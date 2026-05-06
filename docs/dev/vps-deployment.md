@@ -1,10 +1,51 @@
 # VPS Deployment Guide
 
-Complete guide for deploying Matrix OS on a Hetzner VPS. Covers: server setup, platform service, container management, Cloudflare Tunnel, horizontal scaling, and backups.
+Complete guide for deploying Matrix OS on Hetzner. Covers the current VPS-per-user production path, the legacy shared Docker-container path, platform service, Cloudflare Tunnel, updates, integrations, and backups.
 
 ## Architecture
 
-### Single Node (start here)
+### Current Production Mode: Platform Control Plane + Customer VPSes
+
+Matrix OS now runs production users on one customer VPS per active user. The platform VPS is the control plane: it owns Clerk routing, Pipedream credentials, provisioning, R2 bundle publication, and upgrade orchestration. Each customer VPS runs Matrix natively under systemd with owner-controlled Postgres. Docker still exists on customer VPSes for the local Postgres service, but the Matrix shell/gateway/code services are not Docker containers there.
+
+```
+Internet
+  |
+  +-- app.matrix-os.com ----+  Clerk session -> platform resolves current user
+  +-- code.matrix-os.com ---+  Clerk session -> platform resolves current user
+  +-- {handle}.matrix-os.com   handle route -> platform resolves machine
+                            |
+                     Cloudflare Tunnel
+                            |
+                     Platform VPS
+                     |
+                     +-- platform :9000
+                     +-- auth shell
+                     +-- platform Postgres
+                     +-- Pipedream credentials and integration routes
+                     +-- R2 host-bundle publisher
+                     |
+                     +-- HTTPS proxy with per-host token
+                            |
+                     Customer VPS: matrix-hamedmp-...
+                     |
+                     +-- matrix-gateway.service :4000
+                     +-- matrix-shell.service :3000
+                     +-- matrix-code.service :8787
+                     +-- matrix-postgres Docker volume
+                     +-- /home/matrix/home and /opt/matrix/env
+```
+
+New VPS provisions download the host bundle from R2:
+
+```text
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+```
+
+The per-user Docker image is still useful for local development, legacy shared-container users, and quick image dogfooding. It is not what customer VPSes boot.
+
+### Legacy Shared-Container Mode
 
 ```
 Internet
@@ -23,8 +64,8 @@ Internet
                      +-- cloudflared (tunnel daemon)
                      +-- platform :9000 (orchestrator + routing)
                      +-- proxy :8080 (shared Anthropic API key + cost tracking)
-                     +-- matrixos-alice :4001/:3001 (user container)
-                     +-- matrixos-bob :4002/:3002 (user container)
+                     +-- matrixos-alice :4001/:3001 (legacy user container)
+                     +-- matrixos-bob :4002/:3002 (legacy user container)
                      +-- ...
 ```
 
@@ -54,13 +95,15 @@ Internet
 
 ### Server Selection
 
-| Users    | Server | Specs              | Cost   |
-|----------|--------|--------------------|--------|
-| 1-20     | CPX21  | 3 vCPU, 4GB RAM    | ~5/mo  |
-| 20-50    | CPX31  | 4 vCPU, 8GB RAM    | ~9/mo  |
-| 50-100   | CPX41  | 8 vCPU, 16GB RAM   | ~17/mo |
+For the platform control plane, size for routing, builds, platform Postgres, and Cloudflare. For customer workloads, provision a separate customer VPS per user.
 
-Each user container is capped at 256MB RAM + 0.5 CPU. With 30-min idle timeout, most containers are stopped. A 4GB box can run ~10 concurrent users.
+| Role | Server | Specs | Notes |
+|------|--------|-------|-------|
+| Platform control plane | CPX31+ | 4 vCPU, 8GB RAM | Handles platform, auth shell, builds, R2 publishing, Pipedream, and routing |
+| Build-heavy control plane | CPX41+ | 8 vCPU, 16GB RAM | Prefer this while building platform + user images + host bundles on the same box |
+| Customer VPS | CX/CPX small | 2-3 vCPU, 2-4GB RAM | One active user per VPS; Matrix runs under systemd, Postgres runs locally |
+
+Legacy shared-container mode can still run multiple users on one box. In that mode each user container is capped at 256MB RAM + 0.5 CPU, with idle stop after 30 minutes. A 4GB box can run roughly 10 concurrent legacy containers.
 
 ### Create Server
 
@@ -125,6 +168,8 @@ curl -fsSL https://get.docker.com | sh
 
 ### Clone and Build
 
+For current production, build and deploy the platform services plus the customer VPS host bundle. Build the per-user Docker image only for legacy shared-container users or local canary testing.
+
 ```bash
 git clone https://github.com/HamedMP/matrix-os.git
 cd matrix-os
@@ -167,9 +212,10 @@ cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
 |-------|------|-------------------------------|-------|
 | CNAME | api  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | app  | `<tunnel-id>.cfargotunnel.com` | Yes   |
+| CNAME | code | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | *    | `<tunnel-id>.cfargotunnel.com` | Yes   |
 
-Root `matrix-os.com` stays pointed at Vercel. The `app` subdomain handles session-based routing (Clerk JWT -> user container). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
+Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains handle session-based routing (Clerk JWT -> customer VPS first, legacy container fallback). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
 
 ## Step 3: Environment Variables
 
@@ -262,11 +308,13 @@ EOF
 
 Replace the placeholders with the real values. `S3_ENDPOINT` and `S3_PUBLIC_ENDPOINT` are the same URL in prod — the split exists for dev where gateway reaches MinIO at `minio:9000` internally but presigned URLs need `localhost:9100` (see `docs/dev/sync-testing.md`).
 
-#### How the env vars reach user containers
+#### How the env vars reach legacy containers and customer VPSes
 
-The Platform orchestrator reads these vars from its own process env and forwards them into every per-user container via `extraEnv`. Code path: `packages/platform/src/main.ts:626–641` builds the `extraEnv` array; `packages/platform/src/orchestrator.ts:146–173` (`buildEnv`) appends it to each container's env. The gateway inside the container then reads `S3_ENDPOINT` etc. at `packages/gateway/src/server.ts:294–311` and boots the R2 client.
+Legacy Docker containers get sync env through the platform orchestrator's `extraEnv` list. The gateway inside the container reads `S3_ENDPOINT`, `S3_BUCKET`, and related vars at startup.
 
-After editing `.env`, restart the platform + roll every user container so the new env is in effect:
+Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env` plus `/opt/matrix/env/r2.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, `DATABASE_URL`, and R2 prefix metadata. It must not include platform-only secrets like `PIPEDREAM_CLIENT_SECRET`. Platform-owned integration routes stay on the platform and are reached from the customer VPS gateway through `PLATFORM_INTERNAL_URL`.
+
+After editing `.env`, restart the platform. For legacy containers, roll every user container so the new env is in effect:
 
 ```bash
 docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build platform
@@ -274,7 +322,7 @@ curl -X POST http://localhost:9000/containers/rolling-restart \
   -H "Authorization: Bearer $PLATFORM_SECRET"
 ```
 
-Verify one container has the vars:
+Verify one legacy container has the vars:
 
 ```bash
 CANARY=$(docker ps --filter "name=matrixos-" --format "{{.Names}}" | head -1)
@@ -285,7 +333,7 @@ docker exec $CANARY env | grep -E '^(S3_|MATRIX_HOME_MIRROR)='
 #### Verify R2 upload round-trip
 
 ```bash
-# Inside a running user container, force home-mirror to push a file:
+# Inside a running legacy user container, force home-mirror to push a file:
 docker exec $CANARY sh -c 'echo test > /home/matrixos/home/r2-smoke.md'
 sleep 5
 
@@ -390,6 +438,8 @@ curl https://api.matrix-os.com/health
 
 ## Container Management
 
+This section documents the legacy shared-container API and direct Docker operations. `/containers/provision` is still the compatibility entry point for onboarding; with `CUSTOMER_VPS_ENABLED=true` it delegates to customer VPS provisioning and returns `runtime: "customer_vps"`.
+
 ### Admin Dashboard
 
 `https://matrix-os.com/admin` (requires Clerk `publicMetadata.role = "admin"`).
@@ -425,6 +475,8 @@ curl "$BASE/containers?status=running"
 
 ### Docker (direct)
 
+Direct Docker commands apply to legacy shared-container users only. Customer VPS-hosted users are inspected through SSH/systemd on their own VPS.
+
 ```bash
 docker ps --filter "name=matrixos-"          # list user containers
 docker logs matrixos-alice -f                 # logs
@@ -433,6 +485,8 @@ docker stats --filter "name=matrixos-"        # resource usage
 ```
 
 ### Container Lifecycle
+
+Legacy shared-container lifecycle:
 
 - **Provision**: image pulled, ports allocated, volume mounted at `/data/users/{handle}/matrixos`
 - **Running**: 256MB memory, 0.5 CPU, restart unless-stopped
@@ -812,6 +866,22 @@ Until then, single node is simpler and cheaper. Resize the Hetzner server (CPX21
 ## Proxy Architecture
 
 Understanding the request flow is critical for debugging:
+
+Current customer VPS route:
+
+```
+Browser -> app.matrix-os.com / code.matrix-os.com / {handle}.matrix-os.com
+  -> Cloudflare Tunnel -> platform :9000
+    -> session-based: Clerk JWT -> running customer VPS by clerkUserId
+    -> handle-based: subdomain -> running customer VPS by handle
+      -> HTTPS customer VPS gateway with per-host token
+        -> nginx on customer VPS
+          -> matrix-shell.service :3000 for shell paths
+          -> matrix-gateway.service :4000 for /api, /ws, /files, /icons
+          -> matrix-code.service :8787 for code.matrix-os.com
+```
+
+Legacy shared-container route:
 
 ```
 Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
