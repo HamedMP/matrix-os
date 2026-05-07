@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -115,6 +115,36 @@ describe("T711: GET /api/apps", () => {
     const apps = await listApps(homePath);
 
     expect(apps.map((app) => app.name)).toEqual(["Good App"]);
+  });
+
+  it("does not warn for ordinary nested directories without manifests", async () => {
+    mkdirSync(join(homePath, "apps/generated/app/api/health"), { recursive: true });
+    mkdirSync(join(homePath, "apps/generated/src/components"), { recursive: true });
+    mkdirSync(join(homePath, "apps/ready/dist"), { recursive: true });
+    writeFileSync(join(homePath, "apps/ready/dist/index.html"), "<html>built</html>");
+    writeFileSync(
+      join(homePath, "apps/ready/matrix.json"),
+      JSON.stringify({
+        name: "Ready",
+        slug: "ready",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        category: "utility",
+        runtime: "vite",
+        build: { command: "pnpm build", output: "dist" },
+      }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.name)).toEqual(["Ready"]);
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("generated/app/api"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("generated/src"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("returns empty when the apps directory is not a readable directory", async () => {

@@ -29,7 +29,7 @@ test -f dist/index.html
 If `dist/index.html` is missing, build the app:
 
 ```bash
-pnpm install
+pnpm install --prefer-offline
 pnpm build
 test -f dist/index.html
 ```
@@ -40,8 +40,8 @@ test -f dist/index.html
 
 Fix:
 
-1. Check `matrix.json` has `runtime: "vite"` and `entry: "dist/index.html"`.
-2. Run `pnpm install`.
+1. Check `matrix.json` has `runtime: "vite"` and `build.output: "dist"`.
+2. Run `pnpm install --prefer-offline`.
 3. Run `pnpm build`.
 4. Verify `dist/index.html`.
 5. Reload the app window.
@@ -53,13 +53,18 @@ Good baseline:
 ```json
 {
   "name": "Whiteboard",
+  "slug": "whiteboard",
   "description": "Collaborative drawing and notes",
+  "version": "1.0.0",
   "runtime": "vite",
-  "entry": "dist/index.html",
-  "framework": "react",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
   "category": "productivity",
   "icon": "whiteboard",
-  "version": "1.0.0"
+  "build": {
+    "command": "pnpm build",
+    "output": "dist"
+  }
 }
 ```
 

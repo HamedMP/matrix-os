@@ -226,6 +226,10 @@ write_files:
           proxy_pass http://127.0.0.1:4000;
         }
 
+        location /apps/ {
+          proxy_pass http://127.0.0.1:4000;
+        }
+
         location /health {
           proxy_pass http://127.0.0.1:4000;
         }

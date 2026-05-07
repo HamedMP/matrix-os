@@ -16,6 +16,8 @@ cp -r ~/apps/_template-vite ~/apps/{slug}
 Edit `matrix.json`:
 - Set `name`, `slug`, `description`, `category`
 - Keep `runtime: "vite"` and `runtimeVersion: "^1.0.0"`
+- Keep `listingTrust: "first_party"` and `build.output: "dist"`
+- Do not convert CRM, roadmap, dashboard, or CRUD apps to Next.js/node runtime unless the user explicitly asks for Next.js or a custom server.
 
 ## Edit src/App.tsx
 
@@ -44,7 +46,7 @@ border: 1px solid var(--border-default);
 
 ```bash
 cd ~/apps/{slug}
-pnpm install
+pnpm install --prefer-offline
 pnpm build
 ```
 

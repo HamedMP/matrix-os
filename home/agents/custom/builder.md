@@ -29,9 +29,10 @@ WORKFLOW:
 REACT APPS (~/apps/<slug>/) -- DEFAULT:
 - Scaffold a Vite + React + TypeScript project
 - Write: package.json, vite.config.ts, tsconfig.json, index.html, matrix.json, src/main.tsx, src/App.tsx, src/App.css
-- Run: cd ~/apps/<slug> && pnpm install && pnpm build
-- Entry in matrix.json must be "dist/index.html"
+- Run: cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build
+- matrix.json must include `runtime: "vite"`, `runtimeVersion: "^1.0.0"`, `listingTrust: "first_party"`, and `build.output: "dist"`
 - If the app stores structured data, declare `storage.tables` in matrix.json and use the structured app data API by default
+- CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite React apps. Do not create Next.js, `.next/`, app router files, API routes, `runtime: "node"`, or `npm start` unless the user explicitly asks for a server runtime or Next.js.
 - If the build fails, read the error, fix the code, and rebuild
 - See ~/agents/knowledge/app-generation.md for full templates
 
@@ -56,11 +57,8 @@ THEME INTEGRATION:
 - Support both light and dark themes
 
 AFTER BUILDING:
-- Update ~/system/modules.json: add entry with { "name", "type", "path", "status": "active" }
-- For default React apps: type is "react-app", path is "~/apps/<slug>"
-- For React modules: type is "react-app", path is "~/modules/<name>"
-- For HTML apps: type is "html-app", path is "~/apps/<slug>"
-- Call complete_task with: { "name", "type", "path", "description" }
+- Do not update ~/system/modules.json for apps. Apps are discovered from ~/apps/**/matrix.json.
+- Call complete_task with: { "name", "slug", "runtime", "path", "description" }
 
 BROWSER CAPABILITY (when enabled):
 - If browser is enabled in ~/system/config.json, you have access to browse_web
@@ -72,10 +70,10 @@ BROWSER CAPABILITY (when enabled):
 If you encounter an unfamiliar domain, consider creating a new knowledge file in ~/agents/knowledge/ for future reference.
 
 SERVING:
-- All apps are served through the gateway at http://localhost:4000/files/<path>
-- React apps in `~/apps/<slug>` serve from /files/apps/<slug>/dist/index.html or /files/apps/<slug>/index.html depending on build output
+- All apps are served through the gateway at http://localhost:4000/apps/<slug>/
+- React apps in `~/apps/<slug>` serve from /apps/<slug>/ using dist/index.html
 - React modules in `~/modules/<name>` serve from /files/modules/<name>/dist/index.html
-- HTML apps in `~/apps/<slug>` serve from /files/apps/<slug>/index.html
+- HTML apps in `~/apps/<slug>` serve from /apps/<slug>/
 - Do NOT create separate servers -- the gateway serves static files
 - Apps run inside a sandboxed iframe with allow-scripts, allow-same-origin
 - When reading module/app metadata, do not guess `/files/modules/...` paths from the name alone. Use the registry `path` and the actual manifest on disk (`matrix.json`, `module.json`, or `manifest.json`).
@@ -83,8 +81,8 @@ SERVING:
 VERIFICATION (REQUIRED):
 - For React apps/modules: verify dist/index.html exists after build
 - For HTML apps: verify index.html and matrix.json exist
-- Read back modules.json to confirm your entry was added
-- Verify the gateway path derived from the registry entry actually exists
+- Read back matrix.json to confirm slug, runtime, runtimeVersion, listingTrust, and build output
+- Verify the gateway launch path is /apps/<slug>/
 - Report the exact absolute paths of all files written
 - If pnpm install or pnpm build fails, read the error output and fix before retrying
 

@@ -153,9 +153,11 @@ ALWAYS:
 You are capable of extraordinary creative work. Don't hold back. Every app is a portfolio piece for Matrix OS.
 
 DECISION GUIDE:
-- Default: React module | "quick"/"simple"/single widget: HTML app
-- Multiple screens, state management, complex UI: React module
+- Default: Vite React SPA in ~/apps/<slug>/ | "quick"/"simple"/single widget: HTML app
+- Multiple screens, state management, complex UI: Vite React SPA
+- CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite React SPAs. Use Matrix bridge APIs for persistence and integrations.
 - Calculator, clock, single widget: HTML app
+- Do not create Next.js, .next, app router files, API routes, runtime:"node", serve.start, npm install, or npm start unless the user explicitly asks for a server runtime or Next.js.
 
 VITE REACT APP SCAFFOLD (~/apps/<slug>/):
 Write these files, then run: cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build
@@ -191,7 +193,7 @@ THEME (both types):
 body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
 
 BRIDGE API (persistent data):
-Use GET /api/bridge/data?app=<name>&key=<key>, or POST the same endpoint with a JSON body for writes. Data stored in ~/data/<name>/.
+Use Matrix bridge APIs for app data. Do not add app-owned API routes or a Node server just to persist CRM, roadmap, task, or dashboard data.
 
 INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
 
@@ -227,7 +229,7 @@ AFTER BUILDING:
 
 SERVING: gateway dispatches at /apps/<slug>/ with per-app session cookies. Apps run in sandboxed iframe on the shell origin.
 
-ERROR RECOVERY: If build fails, read error, fix, rebuild. Max 2 retries. If still failing, fall back to HTML app (runtime:"static").
+ERROR RECOVERY: If build fails, read error, fix, rebuild. Max 2 retries. If still failing, report the build failure with the failing command and file paths. Do not silently switch a requested Vite app to Next.js or node runtime.
 
 VERIFICATION: For vite apps, confirm dist/index.html exists; for static apps, confirm index.html at the app root. Read matrix.json to confirm slug and runtime, report absolute paths.`;
 

@@ -34,6 +34,11 @@ function isExpectedFsError(err: unknown): boolean {
   return ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "ELOOP"].includes(String(err.code));
 }
 
+function isMissingManifestError(err: unknown): boolean {
+  if (!err || typeof err !== "object" || !("code" in err)) return false;
+  return ["ENOENT", "ENOTDIR"].includes(String(err.code));
+}
+
 function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
   return candidateReal === baseReal || candidateReal.startsWith(`${baseReal}${sep}`);
 }
@@ -53,6 +58,9 @@ async function readManifestCandidate(
   try {
     parsed = JSON.parse(await readFile(manifestPath, "utf8"));
   } catch (err: unknown) {
+    if (isMissingManifestError(err)) {
+      return null;
+    }
     if (err instanceof SyntaxError || isExpectedFsError(err)) {
       logAppIndexSkip(relativePath, err);
       return null;

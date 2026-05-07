@@ -21,6 +21,8 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 
 - Build user-facing apps in `~/apps/<slug>/`.
 - Default to Vite, React 19, TypeScript, and `runtime: "vite"`.
+- CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite React SPAs by default. Use Matrix/Postgres bridge APIs for data instead of creating Next.js API routes.
+- Do not create Next.js, `.next/`, `app/` router files, `runtime: "node"`, `serve.start`, or `npm start` unless the user explicitly requests a server runtime or Next.js.
 - Do not create plain HTML apps unless the user explicitly asks for a plain HTML app.
 - Always create or update `matrix.json`.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
@@ -54,12 +56,17 @@ Use this baseline and adjust the app name, description, category, icon, and stor
 {
   "name": "My App",
   "description": "A concise app description",
-  "runtime": "vite",
-  "entry": "dist/index.html",
-  "framework": "react",
-  "category": "productivity",
-  "icon": "my-app",
+  "slug": "my-app",
   "version": "1.0.0",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "icon": "my-app",
+  "category": "productivity",
+  "build": {
+    "command": "pnpm build",
+    "output": "dist"
+  },
   "storage": {
     "tables": {}
   }
@@ -75,7 +82,7 @@ Prefer copying Matrix's bundled Vite template when it exists:
 ```bash
 cp -a ~/apps/_template-vite ~/apps/<slug>
 cd ~/apps/<slug>
-pnpm install
+pnpm install --prefer-offline
 pnpm build
 test -f dist/index.html
 ```
@@ -120,6 +127,7 @@ Before reporting done:
 cd ~/apps/<slug>
 pnpm build
 test -f dist/index.html
+node -e 'const m=require("./matrix.json"); if (m.runtime !== "vite" || m.build?.output !== "dist") process.exit(1)'
 ```
 
 Then open the app in Matrix and check browser console for:
