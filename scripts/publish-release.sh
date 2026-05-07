@@ -41,16 +41,13 @@ R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
 PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-BUNDLE_URL="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET}/system-bundles/${CHANNEL}/matrix-host-bundle.tar.gz"
-
 MANIFEST=$(printf '{
   "version": "%s",
   "sha256": "%s",
-  "url": "%s",
   "size": %s,
   "published": "%s",
   "channel": "%s"
-}' "$VERSION" "$SHA256" "$BUNDLE_URL" "$SIZE" "$PUBLISHED" "$CHANNEL")
+}' "$VERSION" "$SHA256" "$SIZE" "$PUBLISHED" "$CHANNEL")
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
