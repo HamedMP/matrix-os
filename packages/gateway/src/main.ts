@@ -113,7 +113,7 @@ process.on("SIGUSR2", () => {
     mkdirSync(dir, { recursive: true });
     pruneOldHeapSnapshots(dir);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const file = join(dir, `gateway-${process.pid}-${stamp}.heapsnapshot`);
+    const file = join(dir, `gateway-${stamp}-${process.pid}.heapsnapshot`);
     console.log(`[gateway] Writing heap snapshot to ${file}`);
     const written = writeHeapSnapshot(file);
     console.log(`[gateway] Heap snapshot written: ${written}`);

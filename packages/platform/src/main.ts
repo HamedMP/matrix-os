@@ -1765,6 +1765,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           })
         : createNoopCustomerVpsSystemStore(),
       cloudInitTemplate,
+      fetchDispatcher: customerVpsProxyDispatcher,
     });
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (reconciliationIntervalMs > 0) {

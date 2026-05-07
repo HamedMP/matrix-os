@@ -108,6 +108,7 @@ export interface CustomerVpsServiceDeps {
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
   postgresPasswordFactory?: () => string;
   now?: () => Date;
+  fetchDispatcher?: import('undici').Dispatcher;
 }
 
 const DEFAULT_CLOUD_INIT_TEMPLATE = [
@@ -640,7 +641,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
         const body = version ? JSON.stringify({ version }) : '{}';
         try {
-          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, {
+          const fetchOpts: RequestInit & { dispatcher?: import('undici').Dispatcher } = {
             method: 'POST',
             headers: {
               'authorization': `Bearer ${token}`,
@@ -648,7 +649,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             },
             body,
             signal: AbortSignal.timeout(10_000),
-          });
+          };
+          if (deps.fetchDispatcher) fetchOpts.dispatcher = deps.fetchDispatcher;
+          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, fetchOpts as RequestInit);
           if (res.ok) {
             results.push({ machineId: machine.machineId, handle: machine.handle, status: 'triggered' });
             triggered++;
