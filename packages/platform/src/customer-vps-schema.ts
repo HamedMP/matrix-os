@@ -45,6 +45,11 @@ export const MachineIdParamSchema = z.object({
   machineId: z.uuid(),
 });
 
+export const DeployRequestSchema = z.object({
+  version: z.string().min(1).max(128).optional(),
+});
+
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
+export type DeployRequest = z.infer<typeof DeployRequestSchema>;

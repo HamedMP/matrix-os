@@ -3412,6 +3412,17 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
 
+  app.post("/api/internal/upgrade", async (c) => {
+    const upgradeToken = process.env.UPGRADE_TOKEN;
+    if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
+    const auth = c.req.header("authorization");
+    const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
+    if (!token || token !== upgradeToken) return c.json({ error: "Unauthorized" }, 401);
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile("/opt/matrix/app/.update-now", "");
+    return c.json({ status: "upgrading" }, 202);
+  });
+
   // Load plugins and mount their HTTP routes
   async function initPlugins() {
     try {
