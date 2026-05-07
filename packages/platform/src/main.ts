@@ -97,6 +97,32 @@ const customerVpsProxyDispatcher = new Agent({
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
 const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'trailers',
+  'transfer-encoding',
+  'upgrade',
+]);
+const DECODED_FETCH_RESPONSE_HEADERS = new Set([
+  'content-encoding',
+  'content-length',
+]);
+
+function sanitizeProxyResponseHeaders(headers: Headers): Headers {
+  const sanitized = new Headers(headers);
+  for (const header of HOP_BY_HOP_RESPONSE_HEADERS) {
+    sanitized.delete(header);
+  }
+  for (const header of DECODED_FETCH_RESPONSE_HEADERS) {
+    sanitized.delete(header);
+  }
+  return sanitized;
+}
 
 const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
@@ -714,7 +740,7 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
 
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: upstream.headers,
+      headers: sanitizeProxyResponseHeaders(upstream.headers),
     });
   } catch (err: unknown) {
     logPlatformRouteError('proxyToShell', err);
@@ -1150,6 +1176,7 @@ export function createApp(deps: {
         headers.set('host', `${runningMachine.handle}.matrix-os.com`);
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
+        headers.set('accept-encoding', 'identity');
         headers.set('connection', 'close');
       }
       if (platformSecret) {
@@ -1170,7 +1197,7 @@ export function createApp(deps: {
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
-        const responseHeaders = new Headers(upstream.headers);
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
@@ -1258,6 +1285,7 @@ export function createApp(deps: {
       }
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
     }
     if (platformSecret && isAppDomain) {
@@ -1289,7 +1317,7 @@ export function createApp(deps: {
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
-        const responseHeaders = new Headers(upstream.headers);
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
@@ -1758,6 +1786,7 @@ export function createApp(deps: {
         headers.set('host', `${handle}.matrix-os.com`);
         headers.set('x-forwarded-host', originalHost);
         headers.set('x-forwarded-proto', 'https');
+        headers.set('accept-encoding', 'identity');
 
         const upstream = await fetch(targetUrl, {
           method: c.req.method,
@@ -1770,7 +1799,7 @@ export function createApp(deps: {
 
         return new Response(upstream.body, {
           status: upstream.status,
-          headers: upstream.headers,
+          headers: sanitizeProxyResponseHeaders(upstream.headers),
         });
       } catch (err: unknown) {
         logPlatformRouteError('/proxy/:handle/* vps', err);
@@ -1803,6 +1832,7 @@ export function createApp(deps: {
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
@@ -1814,7 +1844,7 @@ export function createApp(deps: {
 
       return new Response(upstream.body, {
         status: upstream.status,
-        headers: upstream.headers,
+        headers: sanitizeProxyResponseHeaders(upstream.headers),
       });
     } catch (err: unknown) {
       logPlatformRouteError('/proxy/:handle/*', err);

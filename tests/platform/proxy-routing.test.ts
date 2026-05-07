@@ -281,7 +281,15 @@ describe("platform proxy routing", () => {
         status: 302,
         headers: { location: "/apps/calculator/" },
       }))
-      .mockResolvedValueOnce(new Response("asset", { status: 200 }));
+      .mockResolvedValueOnce(new Response("asset", {
+        status: 200,
+        headers: {
+          "content-encoding": "gzip",
+          "content-length": "999",
+          "connection": "close",
+          "transfer-encoding": "chunked",
+        },
+      }));
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -315,7 +323,12 @@ describe("platform proxy routing", () => {
     expect(assetUrl).toBe("https://203.0.113.13:443/apps/calculator/assets/index.js");
     const assetHeaders = assetInit?.headers as Headers;
     expect(assetHeaders.get("cookie")).toBe("matrix_app_session__calculator=session-cookie");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
     expect(assetHeaders.get("x-platform-user-id")).toBeNull();
+    expect(assetRes.headers.get("content-encoding")).toBeNull();
+    expect(assetRes.headers.get("content-length")).toBeNull();
+    expect(assetRes.headers.get("connection")).toBeNull();
+    expect(assetRes.headers.get("transfer-encoding")).toBeNull();
   });
 
   it("routes code.matrix-os.com to the authenticated user's VPS gateway first", async () => {
