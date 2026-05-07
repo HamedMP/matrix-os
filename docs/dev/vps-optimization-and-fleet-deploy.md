@@ -288,6 +288,22 @@ Three-agent review (reuse, quality, efficiency) followed by manual fixes.
 | `main.ts` — `pruneOldHeapSnapshots` uses `statSync` per file | Low | Sort by filename (ISO timestamps sort lexicographically) |
 | `platform-db.ts` — `createUser`/`ensureUser` duplicate 12-field block | Low | Extracted `buildUserValues()` with Kysely `InsertObject` type |
 
+### Bot review pass (Greptile + Codex, 2026-05-07)
+
+Automated reviewers flagged additional issues after the manual review.
+
+| Issue | Source | Severity | Fix |
+|---|---|---|---|
+| `deploy()` uses plain `fetch` — TLS cert mismatch on raw IP | Greptile + Codex | Critical | Inject `customerVpsProxyDispatcher` (`rejectUnauthorized: false`) via `fetchDispatcher` dep |
+| `platform/main.ts` — `createPipedreamClient` not awaited | Codex | Critical | Added `await` — without it all Pipedream integration routes crash |
+| Heap snapshot filename `gateway-<pid>-<ts>` sorts wrong across PIDs | Greptile | Medium | Swapped to `gateway-<ts>-<pid>` so ISO timestamp governs sort order |
+| `do_rollback()` claims success without health check | Greptile | Medium | Added 6-attempt health check loop matching `apply_update()` |
+| `sync-agent` runs as `User=matrix` but calls bare `systemctl` | Codex | Medium | Prefixed with `sudo` (matrix user has NOPASSWD sudoers) |
+| Pipedream test callback sync but uses `await` | Greptile | Low | Made callback `async` |
+| Pipedream + R2 test files not awaiting async factories | Greptile | Low | Added `await` to 13 call sites across 3 test files |
+
+Final Greptile confidence: **5/5** — "Safe to merge."
+
 ### Bugs found and fixed during testing
 
 1. **Manifest URL derivation** — `${URL%.tar.gz}.manifest.json` gave `bundle.manifest.json`. Fixed to `${URL%/*}/manifest.json`.
@@ -297,3 +313,8 @@ Three-agent review (reuse, quality, efficiency) followed by manual fixes.
 5. **Timing-unsafe token comparison** — Upgrade endpoint used `!==` instead of `timingSafeStringEquals`.
 6. **`maxSessions` override** — `createGateway()` still passed 20 explicitly after default was lowered to 10.
 7. **`lastTouched` leak in `delete()`** — Conversation store's `delete()` cleaned `active` and `buffers` but forgot `lastTouched`.
+8. **TLS cert mismatch on fleet deploy** — `deploy()` used plain `fetch` to `https://<IP>:443` but VPS has domain cert. Fixed with `customerVpsProxyDispatcher`.
+9. **Missing `await` on `createPipedreamClient`** — Platform call site not awaited. All Pipedream routes would crash.
+10. **Heap snapshot sort order** — PID before timestamp in filename broke alphabetical == chronological. Swapped order.
+11. **Rollback without health check** — `do_rollback()` claimed success without verifying gateway was healthy.
+12. **Sync-agent systemctl without sudo** — Runs as `User=matrix` but needs root to stop/start system services.
