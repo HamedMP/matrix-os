@@ -63,6 +63,20 @@ const toBase64Url = (msg: string): string =>
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
+function cappedPositiveInt(value: unknown, fallback: number, max: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(Math.floor(parsed), max);
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function linearGraphqlBody(query: string, variables?: Record<string, unknown>): Record<string, unknown> {
+  return variables ? { query, variables } : { query };
+}
+
 export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
   gmail: {
     id: "gmail",
@@ -445,6 +459,277 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           url: "https://api.github.com/notifications",
           mapParams: (p) => ({
             all: p.all ? "true" : "false",
+          }),
+        },
+      },
+    },
+  },
+
+  linear: {
+    id: "linear",
+    name: "Linear",
+    category: "developer",
+    pipedreamApp: "linear",
+    icon: "code",
+    logoUrl: `${LOGO_BASE}/linear/logo/48`,
+    actions: {
+      viewer: {
+        description: "Get the connected Linear user",
+        params: {},
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: () => linearGraphqlBody(`
+            query MatrixLinearViewer {
+              viewer { id name displayName email }
+            }
+          `),
+        },
+      },
+      list_teams: {
+        description: "List Linear teams",
+        params: {
+          first: { type: "number" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            query MatrixLinearTeams($first: Int!) {
+              teams(first: $first) {
+                nodes { id key name description }
+              }
+            }
+          `, { first: cappedPositiveInt(p.first, 50, 100) }),
+        },
+      },
+      list_projects: {
+        description: "List Linear projects",
+        params: {
+          first: { type: "number" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            query MatrixLinearProjects($first: Int!) {
+              projects(first: $first) {
+                nodes {
+                  id
+                  name
+                  slugId
+                  state
+                  description
+                  teams { nodes { id key name } }
+                }
+              }
+            }
+          `, { first: cappedPositiveInt(p.first, 50, 100) }),
+        },
+      },
+      list_workflow_states: {
+        description: "List workflow states for a Linear team",
+        params: {
+          teamId: { type: "string", required: true },
+          first: { type: "number" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            query MatrixLinearWorkflowStates($teamId: String!, $first: Int!) {
+              workflowStates(first: $first, filter: { team: { id: { eq: $teamId } } }) {
+                nodes { id name type color position team { id key name } }
+              }
+            }
+          `, {
+            teamId: String(p.teamId),
+            first: cappedPositiveInt(p.first, 50, 100),
+          }),
+        },
+      },
+      list_issues: {
+        description: "List Linear issues, optionally filtered by team, project, or state name",
+        params: {
+          first: { type: "number" },
+          teamId: { type: "string" },
+          projectId: { type: "string" },
+          state: { type: "string" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => {
+            const teamId = stringOrUndefined(p.teamId);
+            const projectId = stringOrUndefined(p.projectId);
+            const state = stringOrUndefined(p.state);
+            return linearGraphqlBody(`
+              query MatrixLinearIssues($first: Int!, $teamId: String, $projectId: String, $state: String) {
+                issues(
+                  first: $first
+                  filter: {
+                    team: { id: { eq: $teamId } }
+                    project: { id: { eq: $projectId } }
+                    state: { name: { eq: $state } }
+                  }
+                  orderBy: updatedAt
+                ) {
+                  nodes {
+                    id
+                    identifier
+                    title
+                    description
+                    url
+                    priority
+                    updatedAt
+                    assignee { id name displayName }
+                    state { id name type color }
+                    team { id key name }
+                    project { id name slugId }
+                  }
+                }
+              }
+            `, {
+              first: cappedPositiveInt(p.first, 50, 100),
+              teamId: teamId ?? null,
+              projectId: projectId ?? null,
+              state: state ?? null,
+            });
+          },
+        },
+      },
+      create_issue: {
+        description: "Create a Linear issue",
+        params: {
+          teamId: { type: "string", required: true },
+          title: { type: "string", required: true },
+          description: { type: "string" },
+          projectId: { type: "string" },
+          stateId: { type: "string" },
+          assigneeId: { type: "string" },
+          priority: { type: "number" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            mutation MatrixLinearCreateIssue($input: IssueCreateInput!) {
+              issueCreate(input: $input) {
+                success
+                issue { id identifier title url state { id name } project { id name slugId } }
+              }
+            }
+          `, {
+            input: {
+              teamId: String(p.teamId),
+              title: String(p.title),
+              ...(p.description ? { description: String(p.description) } : {}),
+              ...(p.projectId ? { projectId: String(p.projectId) } : {}),
+              ...(p.stateId ? { stateId: String(p.stateId) } : {}),
+              ...(p.assigneeId ? { assigneeId: String(p.assigneeId) } : {}),
+              ...(p.priority !== undefined ? { priority: Number(p.priority) } : {}),
+            },
+          }),
+        },
+      },
+      update_issue: {
+        description: "Update a Linear issue",
+        params: {
+          issueId: { type: "string", required: true },
+          title: { type: "string" },
+          description: { type: "string" },
+          projectId: { type: "string" },
+          stateId: { type: "string" },
+          assigneeId: { type: "string" },
+          priority: { type: "number" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            mutation MatrixLinearUpdateIssue($id: String!, $input: IssueUpdateInput!) {
+              issueUpdate(id: $id, input: $input) {
+                success
+                issue { id identifier title url state { id name } project { id name slugId } }
+              }
+            }
+          `, {
+            id: String(p.issueId),
+            input: {
+              ...(p.title !== undefined ? { title: String(p.title) } : {}),
+              ...(p.description !== undefined ? { description: String(p.description) } : {}),
+              ...(p.projectId !== undefined ? { projectId: String(p.projectId) } : {}),
+              ...(p.stateId !== undefined ? { stateId: String(p.stateId) } : {}),
+              ...(p.assigneeId !== undefined ? { assigneeId: String(p.assigneeId) } : {}),
+              ...(p.priority !== undefined ? { priority: Number(p.priority) } : {}),
+            },
+          }),
+        },
+      },
+      comment_issue: {
+        description: "Add a comment to a Linear issue",
+        params: {
+          issueId: { type: "string", required: true },
+          body: { type: "string", required: true },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            mutation MatrixLinearCommentIssue($input: CommentCreateInput!) {
+              commentCreate(input: $input) {
+                success
+                comment { id body createdAt issue { id identifier title } }
+              }
+            }
+          `, {
+            input: {
+              issueId: String(p.issueId),
+              body: String(p.body),
+            },
+          }),
+        },
+      },
+      create_workflow_state: {
+        description: "Create a Linear workflow state for Symphony",
+        params: {
+          teamId: { type: "string", required: true },
+          name: { type: "string", required: true },
+          color: { type: "string", required: true },
+          type: { type: "string" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => linearGraphqlBody(`
+            mutation MatrixLinearCreateWorkflowState($input: WorkflowStateCreateInput!) {
+              workflowStateCreate(input: $input) {
+                success
+                workflowState { id name type color team { id key name } }
+              }
+            }
+          `, {
+            input: {
+              teamId: String(p.teamId),
+              name: String(p.name),
+              color: String(p.color),
+              type: p.type ? String(p.type) : "started",
+            },
+          }),
+        },
+      },
+      graphql: {
+        description: "Run a custom Linear GraphQL operation for advanced workflows",
+        params: {
+          query: { type: "string", required: true },
+          variables: { type: "object" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.linear.app/graphql",
+          mapBody: (p) => ({
+            query: String(p.query),
+            ...(p.variables && typeof p.variables === "object" ? { variables: p.variables } : {}),
           }),
         },
       },

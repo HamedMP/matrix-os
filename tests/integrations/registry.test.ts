@@ -10,9 +10,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has 6 launch services", () => {
-    expect(listServices()).toHaveLength(6);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(6);
+  it("has 7 launch services", () => {
+    expect(listServices()).toHaveLength(7);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(7);
   });
 
   it("returns service by id", () => {
@@ -75,14 +75,46 @@ describe("Service Registry", () => {
     }
   });
 
-  it("contains all 6 expected services", () => {
+  it("contains all 7 expected services", () => {
     const ids = listServices().map((s) => s.id);
     expect(ids).toContain("gmail");
     expect(ids).toContain("google_calendar");
     expect(ids).toContain("google_drive");
     expect(ids).toContain("github");
+    expect(ids).toContain("linear");
     expect(ids).toContain("slack");
     expect(ids).toContain("discord");
+  });
+
+  it("exposes Linear project, issue, workflow, comment, and GraphQL actions", () => {
+    const linear = getService("linear");
+    expect(linear).toBeDefined();
+    expect(linear!.name).toBe("Linear");
+    expect(linear!.category).toBe("developer");
+    expect(linear!.pipedreamApp).toBe("linear");
+
+    const actionIds = Object.keys(linear!.actions);
+    expect(actionIds).toEqual(expect.arrayContaining([
+      "viewer",
+      "list_teams",
+      "list_projects",
+      "list_workflow_states",
+      "list_issues",
+      "create_issue",
+      "update_issue",
+      "comment_issue",
+      "create_workflow_state",
+      "graphql",
+    ]));
+
+    expect(getAction("linear", "create_issue")!.directApi).toMatchObject({
+      method: "POST",
+      url: "https://api.linear.app/graphql",
+    });
+    expect(getAction("linear", "graphql")!.params).toMatchObject({
+      query: { type: "string", required: true },
+      variables: { type: "object" },
+    });
   });
 
   describe("validateIntegrationManifest", () => {

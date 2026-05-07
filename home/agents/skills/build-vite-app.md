@@ -5,6 +5,20 @@ description: Guide for building a Vite React app on Matrix OS
 
 # Build a Vite React App
 
+## Default UI Stack
+
+First-party Matrix apps should use Tailwind CSS v4 and shadcn-style local primitives by default. Add this stack for polished apps:
+
+```bash
+pnpm add @tailwindcss/vite tailwindcss class-variance-authority clsx tailwind-merge lucide-react
+```
+
+- Configure Vite with `@tailwindcss/vite`; do not add `tailwind.config.js`
+- Add a `@/*` TypeScript alias to `src/*`
+- Create local `src/components/ui/*` primitives for Button, Card, Badge, Input, Textarea, Select, Tabs, Dialog, and Tooltip as needed
+- Map Matrix CSS variables through Tailwind v4 `@theme inline`
+- Use `lucide-react` icons in controls and status UI
+
 ## Scaffold
 
 Copy the template and customize:
@@ -40,6 +54,28 @@ Use CSS custom properties from the Matrix OS shell:
 color: var(--text-primary);
 background: var(--bg-surface);
 border: 1px solid var(--border-default);
+```
+
+### Tailwind v4 Theme Bridge
+
+Use Tailwind v4 with Matrix tokens:
+
+```css
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
 ```
 
 ### Build and Test

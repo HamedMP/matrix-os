@@ -85,6 +85,23 @@ www/next-env.d.ts
 .claude/skills/
 /skills/
 skills-lock.json
+# Symphony worker skills must be present in unattended repo clones
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/commit/
+!.agents/skills/commit/**
+!.agents/skills/debug/
+!.agents/skills/debug/**
+!.agents/skills/land/
+!.agents/skills/land/**
+!.agents/skills/launch-app/
+!.agents/skills/launch-app/**
+!.agents/skills/linear/
+!.agents/skills/linear/**
+!.agents/skills/pull/
+!.agents/skills/pull/**
+!.agents/skills/push/
+!.agents/skills/push/**
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**
