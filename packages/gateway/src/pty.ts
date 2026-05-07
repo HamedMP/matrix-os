@@ -1,6 +1,7 @@
-import { spawn as nodePtySpawn, type IPty } from "node-pty";
 import { existsSync } from "node:fs";
 import { resolveWithinHome } from "./path-security.js";
+
+type IPty = import("node-pty").IPty;
 
 export type PtyMessage =
   | { type: "input"; data: string }
@@ -18,9 +19,18 @@ export type SpawnFn = (
   opts: Record<string, unknown>,
 ) => IPty;
 
+let _defaultSpawn: SpawnFn | undefined;
+async function getDefaultSpawn(): Promise<SpawnFn> {
+  if (!_defaultSpawn) {
+    const pty = await import("node-pty");
+    _defaultSpawn = pty.spawn as unknown as SpawnFn;
+  }
+  return _defaultSpawn;
+}
+
 export function createPtyHandler(
   homePath: string,
-  spawnFn: SpawnFn = nodePtySpawn as unknown as SpawnFn,
+  spawnFn?: SpawnFn,
   cwd?: string,
 ) {
   let ptyProcess: IPty | null = null;
@@ -31,12 +41,13 @@ export function createPtyHandler(
       sendFn = fn;
     },
 
-    open() {
+    async open() {
+      const resolvedSpawn = spawnFn ?? await getDefaultSpawn();
       const shell = process.env.SHELL ?? "/bin/bash";
       const validatedCwd = cwd ? resolveWithinHome(homePath, cwd) : null;
       const targetCwd = validatedCwd && existsSync(validatedCwd) ? validatedCwd : homePath;
 
-      ptyProcess = spawnFn(shell, [], {
+      ptyProcess = resolvedSpawn(shell, [], {
         name: "xterm-256color",
         cols: 80,
         rows: 24,

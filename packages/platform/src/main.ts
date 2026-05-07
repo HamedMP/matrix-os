@@ -1958,7 +1958,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
     await trustedPlatformDb.migrate();
-    const pipedream = createPipedreamClient({
+    const pipedream = await createPipedreamClient({
       clientId: process.env.PIPEDREAM_CLIENT_ID,
       clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
       projectId: process.env.PIPEDREAM_PROJECT_ID,
@@ -2034,7 +2034,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
-    const r2 = createR2Client({
+    const r2 = await createR2Client({
       accessKeyId: s3AccessKey,
       secretAccessKey: s3SecretKey,
       bucket: s3Bucket,
@@ -2081,6 +2081,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           })
         : createNoopCustomerVpsSystemStore(),
       cloudInitTemplate,
+      fetchDispatcher: customerVpsProxyDispatcher,
     });
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (reconciliationIntervalMs > 0) {

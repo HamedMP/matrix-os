@@ -269,7 +269,7 @@ export async function createGateway(config: GatewayConfig) {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   const sessionRegistry = new SessionRegistry(homePath, {
-    maxSessions: 20,
+    maxSessions: 10,
     bufferSize: 1024 * 1024,
     persistPath: join(homePath, "system", "terminal-sessions.json"),
   });
@@ -286,7 +286,7 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
-    maxSessions: 20,
+    maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
   });
   const zellijShellWs = createShellWsHandler({
@@ -456,7 +456,7 @@ export async function createGateway(config: GatewayConfig) {
           accountId: process.env.R2_ACCOUNT_ID,
           forcePathStyle: s3ForcePathStyle,
         };
-        syncR2 = createR2Client(r2Config);
+        syncR2 = await createR2Client(r2Config);
       } else {
         syncR2 = createPlatformR2Client({
           baseUrl: internalPlatformUrl!,
@@ -650,7 +650,7 @@ export async function createGateway(config: GatewayConfig) {
       await platformDb.migrate();
       console.log("[platform-db] Initialized");
 
-      pipedreamClient = createPipedreamClient({
+      pipedreamClient = await createPipedreamClient({
         clientId: process.env.PIPEDREAM_CLIENT_ID,
         clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
         projectId: process.env.PIPEDREAM_PROJECT_ID,
@@ -3532,6 +3532,16 @@ export async function createGateway(config: GatewayConfig) {
       status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
     },
   }));
+
+  app.post("/api/internal/upgrade", async (c) => {
+    const upgradeToken = process.env.UPGRADE_TOKEN;
+    if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
+    const auth = c.req.header("authorization");
+    const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
+    if (!timingSafeStringEquals(token, upgradeToken)) return c.json({ error: "Unauthorized" }, 401);
+    await writeFileAsync("/opt/matrix/app/.update-now", "");
+    return c.json({ status: "upgrading" }, 202);
+  });
 
   // Load plugins and mount their HTTP routes
   async function initPlugins() {

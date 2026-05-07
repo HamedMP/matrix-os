@@ -1,13 +1,17 @@
-import {
-  S3Client,
-  GetObjectCommand,
-  PutObjectCommand,
-  DeleteObjectCommand,
-  CreateMultipartUploadCommand,
-  UploadPartCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { buildFileKey, buildManifestKey } from "./r2-keys.js";
+
+type S3ClientType = import("@aws-sdk/client-s3").S3Client;
+
+let _s3Promise: ReturnType<typeof doLoadS3> | undefined;
+async function doLoadS3() {
+  const s3 = await import("@aws-sdk/client-s3");
+  const presigner = await import("@aws-sdk/s3-request-presigner");
+  return { ...s3, getSignedUrl: presigner.getSignedUrl };
+}
+function loadS3() {
+  if (!_s3Promise) _s3Promise = doLoadS3();
+  return _s3Promise;
+}
 
 const DEFAULT_PRESIGN_EXPIRY = 900; // 15 minutes
 const R2_READ_TIMEOUT_MS = 10_000;
@@ -40,13 +44,14 @@ export interface R2Client {
   destroy(): void;
 }
 
-export function createR2Client(config: R2ClientConfig): R2Client {
+export async function createR2Client(config: R2ClientConfig): Promise<R2Client> {
   const { accountId, accessKeyId, secretAccessKey, bucket } = config;
   const endpoint = config.endpoint ?? (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : null);
   if (!endpoint) {
     throw new Error("R2 client requires either accountId or endpoint");
   }
 
+  const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, getSignedUrl } = await loadS3();
   const s3 = new S3Client({
     region: "auto",
     endpoint,

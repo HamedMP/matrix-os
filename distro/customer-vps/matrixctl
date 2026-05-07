@@ -28,6 +28,7 @@ MATRIX_PLATFORM_TOKEN="${MATRIX_PLATFORM_TOKEN:-${PLATFORM_TOKEN:-}}"
 usage() {
   echo "usage: matrixctl r2 <put|get|exists|put-latest|prune> ..." >&2
   echo "usage: matrixctl recover <clerk-user-id> [--allow-empty]" >&2
+  echo "usage: matrixctl deploy [<version>]" >&2
 }
 
 fail() {
@@ -156,9 +157,51 @@ recover() {
   echo "matrixctl: recovery requested"
 }
 
+deploy() {
+  local version="${1:-}"
+  [ -n "$MATRIX_PLATFORM_URL" ] || fail "platform URL not configured (set MATRIX_PLATFORM_URL)"
+  [ -n "$MATRIX_PLATFORM_TOKEN" ] || fail "platform token not configured (set MATRIX_PLATFORM_TOKEN)"
+
+  local payload='{}'
+  if [ -n "$version" ]; then
+    payload="$(printf '{"version":"%s"}' "$version")"
+  fi
+
+  echo "matrixctl: triggering fleet deploy${version:+ ($version)}..."
+  local response
+  if ! response="$(curl --fail --silent --show-error --max-time 30 \
+    -H "authorization: Bearer ${MATRIX_PLATFORM_TOKEN}" \
+    -H "content-type: application/json" \
+    -d "$payload" \
+    "${MATRIX_PLATFORM_URL%/}/vps/deploy" 2>&1)"; then
+    fail "deploy request failed: $response"
+  fi
+
+  local triggered failed
+  triggered="$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('triggered',0))" 2>/dev/null || echo '?')"
+  failed="$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('failed',0))" 2>/dev/null || echo '?')"
+
+  echo "matrixctl: deploy complete — $triggered triggered, $failed failed"
+  if [ "$failed" != "0" ]; then
+    printf '%s\n' "$response" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for r in d.get('results',[]):
+  if r.get('status')=='failed':
+    print(f\"  FAILED {r['handle']}: {r.get('error','unknown')}\")
+" 2>/dev/null || true
+  fi
+}
+
 if [ "${1:-}" = "recover" ]; then
   [ "$#" -ge 2 ] && [ "$#" -le 3 ] || { usage; exit 2; }
   recover "$2" "${3:-}"
+  exit 0
+fi
+
+if [ "${1:-}" = "deploy" ]; then
+  [ "$#" -le 2 ] || { usage; exit 2; }
+  deploy "${2:-}"
   exit 0
 fi
 

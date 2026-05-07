@@ -1,6 +1,6 @@
 import { resolve, dirname } from "node:path";
 import { join } from "node:path";
-import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { writeHeapSnapshot } from "node:v8";
@@ -88,23 +88,19 @@ process.on("SIGINT", async () => {
 const MAX_HEAP_SNAPSHOTS = 5;
 
 function pruneOldHeapSnapshots(dir: string): void {
-  let entries: { path: string; mtimeMs: number }[];
+  let files: string[];
   try {
-    entries = readdirSync(dir)
+    files = readdirSync(dir)
       .filter((f) => f.startsWith("gateway-") && f.endsWith(".heapsnapshot"))
-      .map((f) => {
-        const path = join(dir, f);
-        return { path, mtimeMs: statSync(path).mtimeMs };
-      });
+      .sort();
   } catch (err: unknown) {
     console.warn("[gateway] Could not enumerate heap snapshots for pruning:", err instanceof Error ? err.message : String(err));
     return;
   }
-  entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  while (entries.length >= MAX_HEAP_SNAPSHOTS) {
-    const oldest = entries.shift()!;
+  while (files.length >= MAX_HEAP_SNAPSHOTS) {
+    const oldest = files.shift()!;
     try {
-      unlinkSync(oldest.path);
+      unlinkSync(join(dir, oldest));
     } catch (err: unknown) {
       console.warn("[gateway] Could not delete old heap snapshot:", err instanceof Error ? err.message : String(err));
     }
@@ -117,7 +113,7 @@ process.on("SIGUSR2", () => {
     mkdirSync(dir, { recursive: true });
     pruneOldHeapSnapshots(dir);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const file = join(dir, `gateway-${process.pid}-${stamp}.heapsnapshot`);
+    const file = join(dir, `gateway-${stamp}-${process.pid}.heapsnapshot`);
     console.log(`[gateway] Writing heap snapshot to ${file}`);
     const written = writeHeapSnapshot(file);
     console.log(`[gateway] Heap snapshot written: ${written}`);

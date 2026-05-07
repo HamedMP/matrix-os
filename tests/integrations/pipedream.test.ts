@@ -48,7 +48,7 @@ describe("Pipedream Connect SDK Wrapper", () => {
       connectLinkUrl: "https://pipedream.com/connect/test-project-id?token=ctok_abc123",
     });
 
-    const client = createPipedreamClient(TEST_CONFIG);
+    const client = await createPipedreamClient(TEST_CONFIG);
     const result = await client.createConnectToken("user-42");
 
     expect(result.token).toBe("ctok_abc123");
@@ -61,8 +61,8 @@ describe("Pipedream Connect SDK Wrapper", () => {
     );
   });
 
-  it("gets the OAuth URL for a service", () => {
-    const client = createPipedreamClient(TEST_CONFIG);
+  it("gets the OAuth URL for a service", async () => {
+    const client = await createPipedreamClient(TEST_CONFIG);
     const url = client.getOAuthUrl("https://pipedream.com/connect/proj_abc?token=ctok_abc123", "gmail");
 
     expect(url).toContain("pipedream.com");
@@ -73,7 +73,7 @@ describe("Pipedream Connect SDK Wrapper", () => {
   it("calls a service action via proxy", async () => {
     mockProxyPost.mockResolvedValueOnce({ success: true, data: { id: "msg-1" } });
 
-    const client = createPipedreamClient(TEST_CONFIG);
+    const client = await createPipedreamClient(TEST_CONFIG);
     const result = await client.callAction({
       externalUserId: "user-42",
       accountId: "acct_abc",
@@ -97,7 +97,7 @@ describe("Pipedream Connect SDK Wrapper", () => {
   it("revokes an account", async () => {
     mockAccountsDelete.mockResolvedValueOnce(undefined);
 
-    const client = createPipedreamClient(TEST_CONFIG);
+    const client = await createPipedreamClient(TEST_CONFIG);
     await client.revokeAccount("acct_abc");
 
     expect(mockAccountsDelete).toHaveBeenCalledOnce();
@@ -110,14 +110,14 @@ describe("Pipedream Connect SDK Wrapper", () => {
   it("propagates SDK errors from createConnectToken", async () => {
     mockTokensCreate.mockRejectedValueOnce(new Error("SDK auth failed"));
 
-    const client = createPipedreamClient(TEST_CONFIG);
+    const client = await createPipedreamClient(TEST_CONFIG);
     await expect(client.createConnectToken("user-42")).rejects.toThrow("SDK auth failed");
   });
 
   it("propagates SDK errors from callAction", async () => {
     mockProxyPost.mockRejectedValueOnce(new Error("Rate limited"));
 
-    const client = createPipedreamClient(TEST_CONFIG);
+    const client = await createPipedreamClient(TEST_CONFIG);
     await expect(
       client.callAction({
         externalUserId: "user-42",

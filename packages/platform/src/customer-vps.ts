@@ -82,12 +82,19 @@ export interface StatusResponse {
   failureAt: string | null;
 }
 
+export interface DeployResult {
+  triggered: number;
+  failed: number;
+  results: Array<{ machineId: string; handle: string; status: 'triggered' | 'failed'; error?: string }>;
+}
+
 export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
+  deploy(version?: string): Promise<DeployResult>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
 
@@ -101,6 +108,7 @@ export interface CustomerVpsServiceDeps {
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
   postgresPasswordFactory?: () => string;
   now?: () => Date;
+  fetchDispatcher?: import('undici').Dispatcher;
 }
 
 const DEFAULT_CLOUD_INIT_TEMPLATE = [
@@ -616,6 +624,48 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
       }
       return { deleted: true, machineId, status: 'deleted' };
+    },
+
+    async deploy(version?: string): Promise<DeployResult> {
+      const machines = await listRunningUserMachines(deps.db, 500);
+      const results: DeployResult['results'] = [];
+      let triggered = 0;
+      let failed = 0;
+
+      await Promise.allSettled(machines.map(async (machine) => {
+        if (!machine.publicIPv4) {
+          results.push({ machineId: machine.machineId, handle: machine.handle, status: 'failed', error: 'no IP' });
+          failed++;
+          return;
+        }
+        const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
+        const body = version ? JSON.stringify({ version }) : '{}';
+        try {
+          const fetchOpts: RequestInit & { dispatcher?: import('undici').Dispatcher } = {
+            method: 'POST',
+            headers: {
+              'authorization': `Bearer ${token}`,
+              'content-type': 'application/json',
+            },
+            body,
+            signal: AbortSignal.timeout(10_000),
+          };
+          if (deps.fetchDispatcher) fetchOpts.dispatcher = deps.fetchDispatcher;
+          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, fetchOpts as RequestInit);
+          if (res.ok) {
+            results.push({ machineId: machine.machineId, handle: machine.handle, status: 'triggered' });
+            triggered++;
+          } else {
+            results.push({ machineId: machine.machineId, handle: machine.handle, status: 'failed', error: `HTTP ${res.status}` });
+            failed++;
+          }
+        } catch (err) {
+          results.push({ machineId: machine.machineId, handle: machine.handle, status: 'failed', error: (err as Error).message });
+          failed++;
+        }
+      }));
+
+      return { triggered, failed, results };
     },
 
     async reconcileProvisioning() {

@@ -16,18 +16,16 @@ export interface Watcher {
 export function createWatcher(homePath: string): Watcher {
   const listeners: Array<(event: FileChangeEvent) => void> = [];
 
-  // chokidar v4 dropped FSEvents support and uses macOS fs.watch (kqueue),
-  // which opens one descriptor per watched path. On a populated matrix home
-  // (apps/, projects/, sessions/, etc.) the recursive watch exhausts the
-  // per-process kqueue limit and crashes the gateway with EMFILE before it
-  // ever finishes binding the port. Polling is slower but bounded -- on a
-  // dev workstation the CPU cost is negligible compared to losing the
-  // gateway entirely.
+  // chokidar v4 uses fs.watch which on macOS (kqueue) opens one FD per
+  // path and hits EMFILE on large trees. On Linux, inotify avoids
+  // per-file FDs but still walks every directory to set up watches —
+  // with a large MATRIX_HOME containing projects/node_modules this
+  // exhausts memory. Polling is bounded and predictable on both.
   const fsWatcher: FSWatcher = watch(homePath, {
     ignoreInitial: true,
     usePolling: true,
-    interval: 1000,
-    binaryInterval: 2000,
+    interval: 2000,
+    binaryInterval: 5000,
     ignored: [
       "**/node_modules/**",
       "**/.git/**",

@@ -293,6 +293,55 @@ describe("ConversationStore", () => {
     });
   });
 
+  describe("eviction", () => {
+    it("does not crash when creating more than MAX_ACTIVE_CONVERSATIONS", () => {
+      const store = createConversationStore(homePath);
+      for (let i = 0; i < 25; i++) {
+        store.begin(`sess-${i}`);
+        store.addUserMessage(`sess-${i}`, `msg ${i}`);
+      }
+      const recentConv = store.get("sess-24");
+      expect(recentConv).not.toBeNull();
+      expect(recentConv!.messages[0].content).toBe("msg 24");
+    });
+
+    it("evicted conversations are still readable from disk", () => {
+      const store = createConversationStore(homePath);
+      store.begin("sess-old");
+      store.addUserMessage("sess-old", "persisted message");
+      for (let i = 0; i < 25; i++) {
+        store.begin(`sess-${i}`);
+      }
+      const fromDisk = store.get("sess-old");
+      expect(fromDisk).not.toBeNull();
+      expect(fromDisk!.messages[0].content).toBe("persisted message");
+    });
+
+    it("delete cleans up all internal state", () => {
+      const store = createConversationStore(homePath);
+      const id = store.create();
+      store.addUserMessage(id, "hello");
+      store.appendAssistantText(id, "world");
+
+      store.delete(id);
+
+      expect(store.get(id)).toBeNull();
+      expect(store.list().find((c) => c.id === id)).toBeUndefined();
+    });
+
+    it("finalize flushes to disk and evicts from memory but remains readable", () => {
+      const store = createConversationStore(homePath);
+      store.begin("sess-1");
+      store.addUserMessage("sess-1", "hello");
+      store.appendAssistantText("sess-1", "world");
+      store.finalize("sess-1");
+
+      const conv = store.get("sess-1");
+      expect(conv).not.toBeNull();
+      expect(conv!.messages).toHaveLength(2);
+    });
+  });
+
   describe("search", () => {
     it("finds matching messages across sessions", () => {
       const store = createConversationStore(homePath);

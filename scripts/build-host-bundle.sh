@@ -23,7 +23,10 @@ mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime"
 
 pnpm install --frozen-lockfile
 pnpm rebuild better-sqlite3 node-pty
+pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/gateway' build
+mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
+cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 : "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle}"
 pnpm --filter './shell' build
 pnpm --filter '@finnaai/matrix' build

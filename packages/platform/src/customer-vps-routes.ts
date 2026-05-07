@@ -7,6 +7,7 @@ import {
   ProvisionRequestSchema,
   RegisterRequestSchema,
   RecoverRequestSchema,
+  DeployRequestSchema,
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 
@@ -119,6 +120,20 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json(await deps.service.delete(parsed.data.machineId), 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/:machineId');
+    }
+  });
+
+  app.post('/deploy', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    try {
+      const parsed = DeployRequestSchema.safeParse(await readJson(c));
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      return c.json(await deps.service.deploy(parsed.data.version), 200);
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/deploy');
     }
   });
 

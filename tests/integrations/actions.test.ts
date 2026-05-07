@@ -76,7 +76,7 @@ describe("Pipedream Actions API", () => {
       };
       mockActionsList.mockResolvedValueOnce(mockPage);
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       const actions = await client.discoverActions("gmail");
 
       expect(actions).toHaveLength(2);
@@ -103,7 +103,7 @@ describe("Pipedream Actions API", () => {
       };
       mockActionsList.mockResolvedValueOnce(mockPage);
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       const actions = await client.discoverActions("nonexistent_app");
 
       expect(actions).toEqual([]);
@@ -112,7 +112,7 @@ describe("Pipedream Actions API", () => {
     it("propagates SDK errors from discoverActions", async () => {
       mockActionsList.mockRejectedValueOnce(new Error("API error"));
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       await expect(client.discoverActions("gmail")).rejects.toThrow("API error");
     });
   });
@@ -127,7 +127,7 @@ describe("Pipedream Actions API", () => {
       };
       mockActionsRun.mockResolvedValueOnce(mockResponse);
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       const result = await client.runAction({
         externalUserId: "user-42",
         componentKey: "gmail-send-email",
@@ -167,7 +167,7 @@ describe("Pipedream Actions API", () => {
       };
       mockActionsRun.mockResolvedValueOnce(mockResponse);
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       const result = await client.runAction({
         externalUserId: "user-42",
         componentKey: "google_calendar-delete-event",
@@ -184,7 +184,7 @@ describe("Pipedream Actions API", () => {
     it("propagates SDK errors from runAction", async () => {
       mockActionsRun.mockRejectedValueOnce(new Error("Action execution failed"));
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       await expect(
         client.runAction({
           externalUserId: "user-42",
@@ -199,7 +199,7 @@ describe("Pipedream Actions API", () => {
         body: { exports: {}, ret: null },
       });
 
-      const client = createPipedreamClient(TEST_CONFIG);
+      const client = await createPipedreamClient(TEST_CONFIG);
       await client.runAction({
         externalUserId: "user-42",
         componentKey: "slack-send-message",

@@ -256,6 +256,7 @@ export function createConversationStore(homePath: string): ConversationStore {
       unlinkSync(path);
       active.delete(id);
       buffers.delete(id);
+      lastTouched.delete(id);
       return true;
     },
 
