@@ -146,28 +146,52 @@ modules.
 | Customer | 8 GB | Production only | CPX32 | €13/mo |
 | Developer | 16 GB | Production + dev + Claude Code | CPX42 | €25/mo |
 
-## Implementation plan
+## Implementation status
 
-### Phase 1: Gateway memory fix (priority)
+### Phase 1: Gateway memory fix — DONE
 
-- [ ] Pre-compile `@matrix-os/kernel` — add build to bundle script, update exports
-- [ ] Gateway build: copy HTML asset to dist
-- [ ] Switch watcher to inotify on Linux
-- [ ] Reduce terminal session TTL from 7 days to 24 hours
-- [ ] Lower maxSessions from 20 to 10
+- [x] Pre-compile `@matrix-os/kernel` — kernel exports point at `dist/`
+- [x] Gateway build: copy HTML asset to dist
+- [x] Watcher tuned to 2s/5s polling (inotify reverted — ENOSPC on large MATRIX_HOME)
+- [x] Reduce terminal session TTL from 7 days to 24 hours
+- [x] Lower maxSessions from 20 to 10, bufferSize from 5MB to 1MB
+- [x] Lazy-load Anthropic SDK, AWS SDK, Pipedream SDK, node-pty
 
-### Phase 2: Fleet deploy system
+### Phase 2: Fleet deploy system — DONE
 
-- [ ] Write `scripts/publish-release.sh` (upload bundle + manifest to R2)
-- [ ] CI pipeline: on merge to main → build → publish
-- [ ] Platform API: `POST /api/fleet/deploy` (fan out to all VPS)
-- [ ] Gateway: `POST /api/internal/upgrade` endpoint
-- [ ] Health endpoint: include `updateAvailable` field
+- [x] `scripts/publish-release.sh` — upload bundle + manifest to R2
+- [x] `matrix-sync-agent` — polls manifest, downloads, verifies, swaps, health checks, auto-rollback
+- [x] `matrix-update` CLI — `matrix-update` to apply, `matrix-update rollback` to revert
+- [x] Platform API: `POST /vps/deploy` — fans out upgrade trigger to all running VPS
+- [x] Gateway: `POST /api/internal/upgrade` — validates UPGRADE_TOKEN, triggers sync-agent
+- [ ] CI pipeline: on merge to main → build → publish (not yet)
 
 ### Phase 3: Future improvements
 
+- [ ] Shell UI "update available" banner
+- [ ] `matrixctl deploy` CLI with streaming progress
 - [ ] Lazy PTY spawning (only spawn bash on attach, not on restore)
 - [ ] Add eviction to `ConversationRunRegistry.runs` Map
 - [ ] Add eviction to dispatcher `activeSessions` Map
-- [ ] Shell UI "update available" banner
-- [ ] `matrixctl deploy` CLI with streaming progress
+
+## Testing (completed 2026-05-07)
+
+| Test | Result |
+|---|---|
+| TypeScript compilation (kernel + gateway) | PASS |
+| Compiled gateway boots + /health responds | PASS |
+| Vitest session-registry (45 tests) | PASS |
+| Launcher fallback (dist → tsx) | PASS |
+| Session defaults (10 max, 24h TTL, 1MB) | PASS |
+| Lazy SDK imports (Anthropic, AWS, Pipedream, node-pty) | PASS |
+| Bash syntax (sync-agent, matrix-update, gateway) | PASS |
+| matrix-update CLI (trigger + journal tail) | PASS |
+| Build script structure (kernel → gateway → HTML → perms) | PASS |
+| Watcher polling config | PASS |
+| Gateway `/api/internal/upgrade` (no auth → reject, wrong auth → 401, correct → trigger) | PASS |
+| Platform `POST /vps/deploy` (compiles clean) | PASS |
+| `publish-release.sh` dry-run | PASS |
+| `publish-release.sh` real R2 upload + verify + cleanup | PASS |
+| Sync-agent: manifest poll → detect update | PASS |
+| Sync-agent: download → sha256 verify → extract → swap | PASS |
+| Sync-agent: manifest URL derivation fix (found + fixed during testing) | PASS |
