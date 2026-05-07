@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# matrix-update — trigger the sync agent to apply an update or rollback.
+# Usage: matrix-update              Apply pending update
+#        matrix-update rollback     Rollback to previous version
+
+case "${1:-apply}" in
+  apply)
+    if [ ! -f /opt/matrix/app/.update-available.json ]; then
+      echo "No update available. Waiting for sync agent to find one..." >&2
+    fi
+    touch /opt/matrix/app/.update-now
+    echo "Update triggered. Tailing sync-agent log (Ctrl-C to stop)..."
+    ;;
+  rollback)
+    touch /opt/matrix/app/.rollback-now
+    echo "Rollback triggered. Tailing sync-agent log (Ctrl-C to stop)..."
+    ;;
+  *)
+    echo "Usage: matrix-update [apply|rollback]" >&2
+    exit 1
+    ;;
+esac
+
+exec journalctl -u matrix-sync-agent -f --no-pager -n 20

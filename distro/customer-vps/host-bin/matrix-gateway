@@ -70,7 +70,11 @@ trap cleanup EXIT INT TERM
 
 sync_bundled_home_assets
 cd "$APP_DIR"
-"$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
+if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
+  "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &
+else
+  "$NODE_BIN" --import=tsx "$APP_DIR/packages/gateway/src/main.ts" &
+fi
 gateway_pid="$!"
 
 for _ in $(seq 1 90); do

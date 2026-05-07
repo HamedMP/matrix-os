@@ -1,10 +1,181 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Matrix OS Sync Agent — polls for bundle updates, applies on trigger, rollback support.
+#
+# Env (from host.env):  MATRIX_MACHINE_ID, MATRIX_HOST_BUNDLE_URL
+# Trigger files:        /opt/matrix/app/.update-now   — apply pending update
+#                       /opt/matrix/app/.rollback-now  — rollback to previous version
+# Signals:              SIGUSR1 — alternative apply-update trigger
+
 source /opt/matrix/env/host.env
 
-echo "matrix-sync-agent: customer host lifecycle agent started for ${MATRIX_MACHINE_ID}"
+readonly APP_DIR="/opt/matrix/app"
+readonly STAGING_DIR="/opt/matrix/staging"
+readonly BIN_DIR="/opt/matrix/bin"
+readonly VERSION_FILE="$APP_DIR/BUNDLE_VERSION"
+readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
+readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
+readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
+readonly HEALTH_URL="http://127.0.0.1:4000/health"
+
+log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
+manifest_url() { echo "${MATRIX_HOST_BUNDLE_URL%.tar.gz}.manifest.json"; }
+
+# Extract a JSON string field using grep (no jq dependency)
+json_field() { echo "$1" | grep -o "\"$2\"\s*:\s*\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+
+# ── Poll for updates ─────────────────────────────────────────────────
+check_for_update() {
+  local url manifest remote_version cur
+  url="$(manifest_url)"
+  if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
+    log "WARN: failed to fetch manifest from $url"; return 1
+  fi
+  remote_version="$(json_field "$manifest" version)"
+  if [ -z "$remote_version" ]; then
+    log "WARN: manifest missing 'version' field"; return 1
+  fi
+  cur="$(current_version)"
+  if [ "$remote_version" = "$cur" ]; then return 0; fi
+  log "Update available: $remote_version (current: $cur)"
+  echo "$manifest" > "$UPDATE_MARKER"
+}
+
+# ── Apply update ─────────────────────────────────────────────────────
+apply_update() {
+  if [ ! -f "$UPDATE_MARKER" ]; then
+    log "No update available — nothing to apply"; return 1
+  fi
+  local manifest version sha256 cur bundle_file extract_dir
+  manifest="$(cat "$UPDATE_MARKER")"
+  version="$(json_field "$manifest" version)"
+  sha256="$(json_field "$manifest" sha256)"
+  cur="$(current_version)"
+  log "Starting update from $cur to $version"
+
+  mkdir -p "$STAGING_DIR"
+  bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
+  extract_dir="$STAGING_DIR/bundle-${version}"
+
+  # Download
+  log "Downloading bundle..."
+  if ! curl --fail --silent --show-error --max-time 300 \
+       "$MATRIX_HOST_BUNDLE_URL" -o "$bundle_file"; then
+    log "ERROR: download failed"; rm -f "$bundle_file"; return 1
+  fi
+
+  # Verify checksum
+  if [ -n "$sha256" ]; then
+    local actual_sha256
+    actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
+    if [ "$actual_sha256" != "$sha256" ]; then
+      log "ERROR: checksum mismatch (expected $sha256, got $actual_sha256)"
+      rm -f "$bundle_file"; return 1
+    fi
+    log "Checksum verified"
+  else
+    log "WARN: no sha256 in manifest, skipping verification"
+  fi
+
+  # Extract and validate
+  log "Extracting bundle..."
+  mkdir -p "$extract_dir"
+  if ! tar -xzf "$bundle_file" -C "$extract_dir"; then
+    log "ERROR: extraction failed"; rm -rf "$extract_dir" "$bundle_file"; return 1
+  fi
+  if [ ! -d "$extract_dir/app" ]; then
+    log "ERROR: extracted bundle missing 'app' directory"
+    rm -rf "$extract_dir" "$bundle_file"; return 1
+  fi
+
+  # Stop services, backup, install
+  log "Stopping services..."
+  systemctl stop matrix-gateway matrix-shell || true
+  rm -rf "$APP_DIR.rollback"
+  if [ -d "$APP_DIR" ]; then
+    mv "$APP_DIR" "$APP_DIR.rollback"
+    log "Backed up current app to $APP_DIR.rollback"
+  fi
+  mv "$extract_dir/app" "$APP_DIR"
+  echo "$version" > "$VERSION_FILE"
+  log "Installed app $version"
+  if [ -d "$extract_dir/bin" ]; then
+    cp -a "$extract_dir/bin/"* "$BIN_DIR/"
+    chmod 0755 "$BIN_DIR/"*
+    log "Updated bin scripts"
+  fi
+
+  # Start services and health-check
+  log "Starting services..."
+  systemctl start matrix-gateway matrix-shell
+  log "Running health check..."
+  local healthy=false
+  for _ in $(seq 1 6); do
+    if curl --fail --silent --max-time 30 "$HEALTH_URL" >/dev/null 2>&1; then
+      healthy=true; break
+    fi
+    sleep 5
+  done
+  if [ "$healthy" = true ]; then
+    log "Health check passed — update to $version complete"
+    rm -f "$UPDATE_MARKER"
+  else
+    log "ERROR: health check failed — rolling back"
+    do_rollback; return 1
+  fi
+  rm -rf "$extract_dir" "$bundle_file"
+}
+
+# ── Rollback ─────────────────────────────────────────────────────────
+do_rollback() {
+  if [ ! -d "$APP_DIR.rollback" ]; then
+    log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
+  fi
+  log "Rolling back..."
+  systemctl stop matrix-gateway matrix-shell || true
+  if [ -d "$APP_DIR" ]; then
+    mkdir -p "$STAGING_DIR"
+    mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
+  fi
+  mv "$APP_DIR.rollback" "$APP_DIR"
+  systemctl start matrix-gateway matrix-shell
+  log "Rollback complete (now at $(current_version))"
+}
+
+# ── Signal handling ──────────────────────────────────────────────────
+update_requested=false
+on_sigusr1() { update_requested=true; }
+trap on_sigusr1 USR1
+
+# ── Main loop ────────────────────────────────────────────────────────
+log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
+mkdir -p "$STAGING_DIR"
 
 while true; do
-  sleep 300
+  # React to trigger files and signals
+  if [ -f "$UPDATE_TRIGGER" ]; then
+    rm -f "$UPDATE_TRIGGER"
+    apply_update || log "Update failed — will retry on next trigger"
+  fi
+  if [ -f "$ROLLBACK_TRIGGER" ]; then
+    rm -f "$ROLLBACK_TRIGGER"
+    do_rollback || log "Rollback failed"
+  fi
+  if [ "$update_requested" = true ]; then
+    update_requested=false
+    apply_update || log "Update (via SIGUSR1) failed"
+  fi
+
+  # Poll for new version
+  check_for_update || true
+
+  # Sleep in 6s increments (50x = 5 min) so we react quickly to triggers
+  for _ in $(seq 1 50); do
+    sleep 6
+    if [ -f "$UPDATE_TRIGGER" ] || [ -f "$ROLLBACK_TRIGGER" ] || [ "$update_requested" = true ]; then
+      break
+    fi
+  done
 done
