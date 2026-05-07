@@ -62,7 +62,7 @@ apply_update() {
 
   # Download
   log "Downloading bundle from $bundle_url..."
-  if ! curl --fail --silent --show-error --max-time 300 \
+  if ! curl --fail --silent --show-error --max-time 600 --http1.1 --retry 2 --retry-delay 5 \
        "$bundle_url" -o "$bundle_file"; then
     log "ERROR: download failed"; rm -f "$bundle_file"; return 1
   fi
