@@ -1,4 +1,3 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -36,7 +35,8 @@ import {
 } from "./tools/integrations.js";
 const execAsync = promisify(execFile);
 
-export function createIpcServer(db: MatrixDB, homePath?: string) {
+export async function createIpcServer(db: MatrixDB, homePath?: string) {
+  const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   return createSdkMcpServer({
     name: "matrix-os-ipc",
     tools: [
@@ -1058,7 +1058,7 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
         },
       ),
 
-      ...createWebTools(homePath),
+      ...(await createWebTools(homePath)),
 
       tool(
         "connect_service",
@@ -1107,7 +1107,8 @@ export function createIpcServer(db: MatrixDB, homePath?: string) {
   });
 }
 
-function createWebTools(homePath?: string) {
+async function createWebTools(homePath?: string) {
+  const { tool } = await import("@anthropic-ai/claude-agent-sdk");
   const webConfig = loadWebConfig(homePath);
   const cache = new WebCache({ defaultTtlMs: (webConfig.fetch.cacheTtlMinutes ?? 15) * 60_000 });
   const fetchTool = createWebFetchTool({

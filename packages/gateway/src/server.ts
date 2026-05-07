@@ -447,7 +447,7 @@ export async function createGateway(config: GatewayConfig) {
           accountId: process.env.R2_ACCOUNT_ID,
           forcePathStyle: s3ForcePathStyle,
         };
-        syncR2 = createR2Client(r2Config);
+        syncR2 = await createR2Client(r2Config);
       } else {
         syncR2 = createPlatformR2Client({
           baseUrl: internalPlatformUrl!,
@@ -641,7 +641,7 @@ export async function createGateway(config: GatewayConfig) {
       await platformDb.migrate();
       console.log("[platform-db] Initialized");
 
-      pipedreamClient = createPipedreamClient({
+      pipedreamClient = await createPipedreamClient({
         clientId: process.env.PIPEDREAM_CLIENT_ID,
         clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
         projectId: process.env.PIPEDREAM_PROJECT_ID,

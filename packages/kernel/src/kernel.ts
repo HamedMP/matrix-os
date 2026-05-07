@@ -1,5 +1,13 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import { kernelOptions, type KernelConfig } from "./options.js";
+
+let _query: typeof import("@anthropic-ai/claude-agent-sdk").query | undefined;
+async function getQuery() {
+  if (!_query) {
+    const sdk = await import("@anthropic-ai/claude-agent-sdk");
+    _query = sdk.query;
+  }
+  return _query;
+}
 
 export interface KernelResult {
   sessionId: string;
@@ -28,12 +36,13 @@ export async function* spawnKernel(
       `.abort()` on the user's stop request. */
   abortController?: AbortController,
 ): AsyncGenerator<KernelEvent> {
-  const opts = kernelOptions(config);
+  const opts = await kernelOptions(config);
 
   // If resuming fails (stale session ID after container upgrade), retry without resume
   let retried = false;
 
   async function* run(options: typeof opts): AsyncGenerator<KernelEvent> {
+    const query = await getQuery();
     const response = query({
       prompt: message,
       options: {

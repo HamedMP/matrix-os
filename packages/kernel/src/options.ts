@@ -81,7 +81,7 @@ export interface KernelConfig {
   env?: Record<string, string | undefined>;
 }
 
-export function kernelOptions(config: KernelConfig) {
+export async function kernelOptions(config: KernelConfig) {
   const { db, homePath, sessionId } = config;
 
   // Mirror canonical .agents/skills/ entries into .claude/skills/ so the SDK's
@@ -89,7 +89,7 @@ export function kernelOptions(config: KernelConfig) {
   // One source of truth (.agents/skills), two discovery paths (SDK + IPC).
   ensureSdkSkillsMirror(homePath);
 
-  const ipcServer = createIpcServer(db, homePath);
+  const ipcServer = await createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const agents = { ...coreAgents, ...customAgents };

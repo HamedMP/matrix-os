@@ -16,16 +16,16 @@ export interface Watcher {
 export function createWatcher(homePath: string): Watcher {
   const listeners: Array<(event: FileChangeEvent) => void> = [];
 
-  // chokidar v4 dropped FSEvents support and uses macOS fs.watch (kqueue),
-  // which opens one descriptor per watched path and exhausts the kqueue
-  // limit on large directories. Polling works around this on macOS.
-  // Linux uses inotify (directory-level, no FD-per-file problem) so we
-  // only enable polling on Darwin.
-  const needsPolling = process.platform === "darwin";
+  // chokidar v4 uses fs.watch which on macOS (kqueue) opens one FD per
+  // path and hits EMFILE on large trees. On Linux, inotify avoids
+  // per-file FDs but still walks every directory to set up watches —
+  // with a large MATRIX_HOME containing projects/node_modules this
+  // exhausts memory. Polling is bounded and predictable on both.
   const fsWatcher: FSWatcher = watch(homePath, {
     ignoreInitial: true,
-    usePolling: needsPolling,
-    ...(needsPolling ? { interval: 1000, binaryInterval: 2000 } : {}),
+    usePolling: true,
+    interval: 2000,
+    binaryInterval: 5000,
     ignored: [
       "**/node_modules/**",
       "**/.git/**",

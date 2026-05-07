@@ -1,4 +1,4 @@
-import { PipedreamClient as SdkClient } from "@pipedream/sdk";
+type SdkClient = import("@pipedream/sdk").PipedreamClient;
 
 export interface PipedreamConfig {
   clientId: string;
@@ -90,10 +90,11 @@ export interface PipedreamConnectClient {
 const API_TIMEOUT_SECONDS = 10;
 const ACTION_TIMEOUT_SECONDS = 30;
 
-export function createPipedreamClient(
+export async function createPipedreamClient(
   config: PipedreamConfig,
-): PipedreamConnectClient {
-  const sdk = new SdkClient({
+): Promise<PipedreamConnectClient> {
+  const { PipedreamClient } = await import("@pipedream/sdk");
+  const sdk = new PipedreamClient({
     clientId: config.clientId,
     clientSecret: config.clientSecret,
     projectId: config.projectId,
