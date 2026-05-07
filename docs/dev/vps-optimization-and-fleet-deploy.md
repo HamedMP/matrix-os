@@ -114,21 +114,37 @@ Merge PR → CI → build-host-bundle.sh → publish-release.sh → R2
 }
 ```
 
-### E. Estimated memory budget after all fixes
+### E. Memory reality (measured 2026-05-07)
 
-| Component | RAM |
+Module imports cost ~300 MB total. The remaining ~3.2 GB comes from
+`createGateway()` assembling 3,500 lines of route handlers, closures,
+middleware, and subsystems (Postgres, app-db, canvas, sync, plugins,
+workspace routes, watchers). This is V8 heap overhead from the
+application's architecture — not fixable by lazy-loading individual
+modules.
+
+| Component | Measured RAM |
 |---|---|
-| Prod gateway (pre-compiled) | 500 MB–1 GB |
-| Prod shell (Next.js) | 150–300 MB |
-| Dev gateway | 500 MB–1 GB |
-| Dev shell (Turbopack) | 500–800 MB |
-| code-server + sync-agent + Postgres | ~120 MB |
-| Claude Code (1 instance) | 300–500 MB |
-| OS overhead | 500 MB |
-| **Total** | **2.6–4.1 GB** |
-| **Free on 7.6 GB** | **3.5–5 GB** |
+| Gateway (prod, compiled, no tsx) | ~3.5 GB |
+| Shell (Next.js prod) | ~200 MB |
+| Dev gateway | ~3.5 GB |
+| Dev shell (Turbopack) | ~600 MB |
+| code-server + Postgres + sync-agent | ~120 MB |
+| Claude Code (1 session) | ~400 MB |
+| OS | ~500 MB |
 
-No VPS upgrade needed if the gateway memory is fixed.
+**Customer VPS (8 GB, prod only):** 3.5 + 0.2 + 0.1 + 0.5 = ~4.3 GB used, ~3.5 GB free. Works.
+
+**Dev VPS (8 GB, prod + dev):** Would need ~8.4 GB. Does not fit.
+
+**Dev VPS (16 GB, prod + dev):** ~8.4 GB used, ~7.6 GB free. Comfortable.
+
+### F. VPS tier recommendation
+
+| Tier | RAM | Use case | Hetzner plan | ~Price |
+|---|---|---|---|---|
+| Customer | 8 GB | Production only | CPX32 | €13/mo |
+| Developer | 16 GB | Production + dev + Claude Code | CPX42 | €25/mo |
 
 ## Implementation plan
 
