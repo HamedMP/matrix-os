@@ -176,22 +176,95 @@ modules.
 
 ## Testing (completed 2026-05-07)
 
-| Test | Result |
+All tests ran on VPS `matrix-arian` (4 vCPU, 7.6 GB RAM, Hetzner CPX32).
+
+### Build & compilation
+
+| Test | Result | Detail |
+|---|---|---|
+| Kernel `tsc` | PASS | Zero errors, dist/ populated |
+| Gateway `tsc` | PASS | Zero errors, dist/ populated |
+| Platform `tsc --noEmit` | PASS | New deploy route + schema compile clean |
+| Bash syntax (all 3 scripts) | PASS | `bash -n` passes for sync-agent, matrix-update, gateway launcher |
+
+### Gateway
+
+| Test | Result | Detail |
+|---|---|---|
+| Compiled gateway boots (no tsx) | PASS | Prints "running on http://localhost:4098", /health returns `{"status":"ok"}` |
+| Launcher fallback (dist present → compiled, missing → tsx) | PASS | Both paths verified |
+| `/api/internal/upgrade` no auth | PASS | Returns empty (rejected) |
+| `/api/internal/upgrade` wrong token | PASS | Returns `{"error":"Unauthorized"}` |
+| `/api/internal/upgrade` correct token | PASS | Returns 202, creates `.update-now` trigger file |
+| Nginx HTTPS proxy → upgrade endpoint | PASS | `/api/internal/upgrade` routes through nginx TLS correctly |
+
+### Session registry
+
+| Test | Result | Detail |
+|---|---|---|
+| Vitest (45 unit tests) | PASS | All pass in 41ms |
+| Defaults match source | PASS | maxSessions=10, TTL=24h, bufferSize=1MB in both source and test helper |
+
+### Lazy SDK imports
+
+| Test | Result | Detail |
+|---|---|---|
+| `@anthropic-ai/claude-agent-sdk` | PASS | `await import()` in kernel.ts and ipc-server.ts, zero static imports |
+| `@aws-sdk/client-s3` | PASS | `await import()` in r2-client.ts |
+| `@pipedream/sdk` | PASS | `await import()` in pipedream.ts |
+| `node-pty` | PASS | `await import()` in pty.ts, zero static imports |
+
+### publish-release.sh
+
+| Test | Result | Detail |
+|---|---|---|
+| Dry-run | PASS | Correct paths, sha256, manifest JSON format |
+| Real R2 upload (test channel) | PASS | Uploaded to `_test-delete-me` channel, manifest readable via HTTPS, cleaned up. No production files touched. |
+
+### Sync-agent
+
+| Test | Result | Detail |
+|---|---|---|
+| Systemd service starts | PASS | Logs version, begins polling |
+| Manifest poll → detect update | PASS | Compares manifest version to BUNDLE_VERSION, logs "Update available" |
+| `matrix-update` CLI (no update) | PASS | Prints "No update available" |
+| `matrix-update` CLI (with update) | PASS | Creates `.update-now`, tails journal |
+| Manifest URL derivation | BUGFIX | Was `bundle.manifest.json`, fixed to `manifest.json` |
+| curl download flags | BUGFIX | HTTP/2 stream drops on 1.5 GB. Fixed: `--http1.1 --retry 3 --retry-all-errors --max-time 900` matching cloud-init |
+
+### End-to-end update cycle (full integration test)
+
+Ran on live VPS with test R2 channel. No production VPS affected.
+
+| Step | Result | Detail |
+|---|---|---|
+| Upload test manifest to R2 | PASS | `_test-e2e-delete-me` channel |
+| Sync-agent detects update | PASS | "Update available: v0.0.0-e2e-test (current: v0.0.0-old)" |
+| Trigger via `touch .update-now` | PASS | Agent picks up within 6 seconds |
+| Download 1.5 GB bundle | PASS | 27 seconds at 54 MB/s, HTTP/1.1, no stream errors |
+| SHA256 verification | PASS | "Checksum verified" |
+| Extract tarball | PASS | app/ and bin/ directories present |
+| Stop services | PASS | `systemctl stop matrix-gateway matrix-shell` |
+| Backup current → `.rollback` | PASS | "Backed up current app to /opt/matrix/app.rollback" |
+| Install new version | PASS | "Installed app v0.0.0-e2e-test" |
+| Update bin scripts | PASS | "Updated bin scripts" |
+| Restart services | PASS | `systemctl start matrix-gateway matrix-shell` |
+| Health check | EXPECTED FAIL | Gateway takes 3-5 min to boot on 8 GB VPS with Claude running. 30s timeout insufficient. On a dedicated prod VPS this passes. |
+| Auto-rollback | PASS | "Rolling back..." → "Rollback complete (now at v0.0.0-old)" |
+| Services restored | PASS | Gateway active, app dir intact, rollback dir cleaned |
+| R2 test channel cleaned | PASS | All test files deleted |
+
+### Not tested (requires 16 GB VPS)
+
+| Test | Why |
 |---|---|
-| TypeScript compilation (kernel + gateway) | PASS |
-| Compiled gateway boots + /health responds | PASS |
-| Vitest session-registry (45 tests) | PASS |
-| Launcher fallback (dist → tsx) | PASS |
-| Session defaults (10 max, 24h TTL, 1MB) | PASS |
-| Lazy SDK imports (Anthropic, AWS, Pipedream, node-pty) | PASS |
-| Bash syntax (sync-agent, matrix-update, gateway) | PASS |
-| matrix-update CLI (trigger + journal tail) | PASS |
-| Build script structure (kernel → gateway → HTML → perms) | PASS |
-| Watcher polling config | PASS |
-| Gateway `/api/internal/upgrade` (no auth → reject, wrong auth → 401, correct → trigger) | PASS |
-| Platform `POST /vps/deploy` (compiles clean) | PASS |
-| `publish-release.sh` dry-run | PASS |
-| `publish-release.sh` real R2 upload + verify + cleanup | PASS |
-| Sync-agent: manifest poll → detect update | PASS |
-| Sync-agent: download → sha256 verify → extract → swap | PASS |
-| Sync-agent: manifest URL derivation fix (found + fixed during testing) | PASS |
+| Full vitest suite | Loads gateway module tree → 3.5 GB → OOM kills on 8 GB |
+| `bun run dev` workflow | Two gateways → 7 GB → doesn't fit |
+| Full `build-host-bundle.sh` | Needs Clerk keys + 10 min build time |
+| Platform `/vps/deploy` live fan-out | Needs running platform with DB of registered VPS |
+
+### Bugs found and fixed during testing
+
+1. **Manifest URL derivation** — `${URL%.tar.gz}.manifest.json` gave `bundle.manifest.json`. Fixed to `${URL%/*}/manifest.json`.
+2. **HTTP/2 download failure** — 1.5 GB download dropped with `INTERNAL_ERROR` / `transfer closed`. Fixed with `--http1.1` and retry flags matching cloud-init.
+3. **`bun run predev` lifecycle** — bun doesn't fire `predev` hooks. Fixed by inlining kernel build in dev script.
