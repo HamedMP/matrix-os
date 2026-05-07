@@ -56,7 +56,8 @@ apply_update() {
   cur="$(current_version)"
   log "Starting update from $cur to $version"
 
-  mkdir -p "$STAGING_DIR"
+  sudo mkdir -p "$STAGING_DIR"
+  sudo chown matrix:matrix "$STAGING_DIR"
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
@@ -104,8 +105,8 @@ apply_update() {
   echo "$version" > "$VERSION_FILE"
   log "Installed app $version"
   if [ -d "$extract_dir/bin" ]; then
-    find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
-    find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
+    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
+    sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
 
@@ -138,7 +139,8 @@ do_rollback() {
   log "Rolling back..."
   sudo systemctl stop matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
-    mkdir -p "$STAGING_DIR"
+    sudo mkdir -p "$STAGING_DIR"
+  sudo chown matrix:matrix "$STAGING_DIR"
     mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
   fi
   mv "$APP_DIR.rollback" "$APP_DIR"
