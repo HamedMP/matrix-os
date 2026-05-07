@@ -34,7 +34,7 @@ function createRegistry(
 ) {
   const homePath = "/tmp/test-home";
   return new SessionRegistry(homePath, {
-    maxSessions: opts.maxSessions ?? 20,
+    maxSessions: opts.maxSessions ?? 10,
     bufferSize: opts.bufferSize ?? 1024,
     persistPath: opts.persistPath ?? "/tmp/test-home/system/terminal-sessions.json",
     ...opts,
