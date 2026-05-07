@@ -11,6 +11,7 @@ on:
       - "packages/sync-client/**"
       - "shell/**"
       - "scripts/build-host-bundle.sh"
+      - "scripts/publish-release.sh"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -22,6 +23,11 @@ on:
         required: true
         default: "matrix-os-host-dev"
         type: string
+      deploy:
+        description: "Trigger fleet deploy after publish"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -66,17 +72,29 @@ jobs:
       - name: Build host bundle
         run: ./scripts/build-host-bundle.sh
 
-      - name: Upload to R2
+      - name: Publish to R2
+        env:
+          MATRIX_IMAGE_VERSION: ${{ env.IMAGE_VERSION }}
         run: |
           set -euo pipefail
-          endpoint="${R2_ENDPOINT:-}"
-          if [ -z "$endpoint" ] && [ -n "${R2_ACCOUNT_ID:-}" ]; then
-            endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          VERSION="0.0.0-${GITHUB_SHA::8}"
+          ./scripts/publish-release.sh "$VERSION"
+
+      - name: Deploy to fleet
+        if: ${{ inputs.deploy == true }}
+        env:
+          PLATFORM_URL: ${{ secrets.PLATFORM_URL }}
+          PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PLATFORM_URL:-}" ] || [ -z "${PLATFORM_SECRET:-}" ]; then
+            echo "PLATFORM_URL or PLATFORM_SECRET not configured — skipping deploy" >&2
+            exit 0
           fi
-          if [ -z "$endpoint" ] || [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
-            echo "R2 credentials are not configured" >&2
-            exit 1
-          fi
-          key="system-bundles/${IMAGE_VERSION}"
-          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz"
-          aws --endpoint-url "$endpoint" s3 cp dist/host-bundle/matrix-host-bundle.tar.gz.sha256 "s3://${R2_BUCKET}/${key}/matrix-host-bundle.tar.gz.sha256"
+          VERSION="0.0.0-${GITHUB_SHA::8}"
+          echo "Triggering fleet deploy for $VERSION..."
+          curl --fail --silent --show-error --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            -H "content-type: application/json" \
+            -d "{\"version\":\"$VERSION\"}" \
+            "${PLATFORM_URL%/}/vps/deploy"

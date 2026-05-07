@@ -15,8 +15,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${HOST_BUNDLE_DIST_DIR:-$ROOT_DIR/dist/host-bundle}"
 BUNDLE="$DIST_DIR/matrix-host-bundle.tar.gz"
 CHANNEL="${MATRIX_IMAGE_VERSION:-matrix-os-host-dev}"
-VERSION="${1:?Usage: publish-release.sh <version> [--dry-run]}"
-DRY_RUN="${2:-}"
+VERSION=""
+DRY_RUN=""
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    *) VERSION="$arg" ;;
+  esac
+done
+if [ -z "$VERSION" ]; then
+  echo "Usage: publish-release.sh <version> [--dry-run]" >&2; exit 1
+fi
 
 if [ ! -f "$BUNDLE" ]; then
   echo "Bundle not found at $BUNDLE — run build-host-bundle.sh first" >&2
@@ -45,7 +54,7 @@ MANIFEST=$(printf '{
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
-if [ "$DRY_RUN" = "--dry-run" ]; then
+if [ "$DRY_RUN" = "1" ]; then
   echo "=== DRY RUN ==="
   echo "Bundle: $BUNDLE ($SIZE bytes, sha256: $SHA256)"
   echo "Channel: $CHANNEL"

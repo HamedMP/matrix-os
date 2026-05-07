@@ -1,4 +1,4 @@
-import { Kysely, PostgresDialect, sql } from "kysely";
+import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 
@@ -173,6 +173,23 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
     kysely = new Kysely<PlatformDatabase>({ dialect: opts.dialect });
   }
 
+  function buildUserValues(input: CreateUserInput): InsertObject<PlatformDatabase, "users"> {
+    return {
+      id: randomUUID(),
+      clerk_id: input.clerkId,
+      handle: input.handle,
+      display_name: input.displayName,
+      email: input.email,
+      container_id: input.containerId,
+      container_version: input.containerVersion ?? null,
+      plan: input.plan ?? "free",
+      status: "active" as const,
+      pipedream_external_id: input.pipedreamExternalId ?? null,
+      created_at: sql`now()`,
+      updated_at: sql`now()`,
+    };
+  }
+
   const db: PlatformDb = {
     async migrate(): Promise<void> {
       await sql`
@@ -257,20 +274,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
     async createUser(input: CreateUserInput): Promise<UsersTable> {
       const result = await kysely
         .insertInto("users")
-        .values({
-          id: randomUUID(),
-          clerk_id: input.clerkId,
-          handle: input.handle,
-          display_name: input.displayName,
-          email: input.email,
-          container_id: input.containerId,
-          container_version: input.containerVersion ?? null,
-          plan: input.plan ?? "free",
-          status: "active",
-          pipedream_external_id: input.pipedreamExternalId ?? null,
-          created_at: sql`now()`,
-          updated_at: sql`now()`,
-        })
+        .values(buildUserValues(input))
         .returningAll()
         .executeTakeFirstOrThrow();
       return result;
@@ -279,20 +283,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
     async ensureUser(input: CreateUserInput): Promise<UsersTable> {
       const result = await kysely
         .insertInto("users")
-        .values({
-          id: randomUUID(),
-          clerk_id: input.clerkId,
-          handle: input.handle,
-          display_name: input.displayName,
-          email: input.email,
-          container_id: input.containerId,
-          container_version: input.containerVersion ?? null,
-          plan: input.plan ?? "free",
-          status: "active",
-          pipedream_external_id: input.pipedreamExternalId ?? null,
-          created_at: sql`now()`,
-          updated_at: sql`now()`,
-        })
+        .values(buildUserValues(input))
         .onConflict((oc) =>
           oc.column("clerk_id").doUpdateSet({
             handle: input.handle,

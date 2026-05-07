@@ -260,7 +260,7 @@ export async function createGateway(config: GatewayConfig) {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   const sessionRegistry = new SessionRegistry(homePath, {
-    maxSessions: 20,
+    maxSessions: 10,
     bufferSize: 1024 * 1024,
     persistPath: join(homePath, "system", "terminal-sessions.json"),
   });
@@ -277,7 +277,7 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
-    maxSessions: 20,
+    maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
   });
   const zellijShellWs = createShellWsHandler({
@@ -3417,9 +3417,8 @@ export async function createGateway(config: GatewayConfig) {
     if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
     const auth = c.req.header("authorization");
     const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
-    if (!token || token !== upgradeToken) return c.json({ error: "Unauthorized" }, 401);
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile("/opt/matrix/app/.update-now", "");
+    if (!timingSafeStringEquals(token, upgradeToken)) return c.json({ error: "Unauthorized" }, 401);
+    await writeFileAsync("/opt/matrix/app/.update-now", "");
     return c.json({ status: "upgrading" }, 202);
   });
 

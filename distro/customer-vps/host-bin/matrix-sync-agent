@@ -23,7 +23,7 @@ log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 manifest_url() { echo "${MATRIX_HOST_BUNDLE_URL%/*}/manifest.json"; }
 
-json_field() { python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('$2',''))" <<< "$1"; }
+json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
 
 # ── Poll for updates ─────────────────────────────────────────────────
 check_for_update() {

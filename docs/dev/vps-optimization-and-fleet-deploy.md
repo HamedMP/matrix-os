@@ -65,10 +65,10 @@ These are stopgaps — the tsc pre-compilation (A) is the real fix.
 **Architecture**:
 
 ```
-Merge PR → CI → build-host-bundle.sh → publish-release.sh → R2
-                                                               |
-              manifest.json (version, sha256, url)             |
-                                                               v
+Merge PR → host-bundle.yml (CI) → build-host-bundle.sh → publish-release.sh → R2
+                                                                                |
+                           manifest.json (version, sha256, url)                 |
+                                                                                v
   +--- VPS-1 -----+    +--- VPS-2 -----+    +--- VPS-N -----+
   | sync-agent     |    | sync-agent     |    | sync-agent     |
   | polls manifest |    | polls manifest |    | polls manifest |
@@ -88,7 +88,8 @@ Merge PR → CI → build-host-bundle.sh → publish-release.sh → R2
 **Trigger mechanisms**:
 - `matrix-update` — CLI on a single VPS, touches `/opt/matrix/app/.update-now`
 - `matrix-update rollback` — rollback on a single VPS
-- `matrixctl deploy v0.4.2` — calls platform API, fans out to all registered VPS
+- `matrixctl deploy [version]` — calls platform API, fans out to all registered VPS
+- CI: `host-bundle.yml` with `deploy: true` input — build + publish + fan-out in one step
 - `SIGUSR1` to sync-agent PID — alternative programmatic trigger
 
 **Update flow on a single VPS**:
@@ -164,12 +165,12 @@ modules.
 - [x] `matrix-update` CLI — `matrix-update` to apply, `matrix-update rollback` to revert
 - [x] Platform API: `POST /vps/deploy` — fans out upgrade trigger to all running VPS
 - [x] Gateway: `POST /api/internal/upgrade` — validates UPGRADE_TOKEN, triggers sync-agent
-- [ ] CI pipeline: on merge to main → build → publish (not yet)
+- [x] CI pipeline: `host-bundle.yml` calls `publish-release.sh` on merge to main, optional deploy trigger
+- [x] `matrixctl deploy [version]` — CLI wrapper around `POST /vps/deploy`, shows per-machine results
 
 ### Phase 3: Future improvements
 
 - [ ] Shell UI "update available" banner
-- [ ] `matrixctl deploy` CLI with streaming progress
 - [ ] Lazy PTY spawning (only spawn bash on attach, not on restore)
 - [ ] Add eviction to `ConversationRunRegistry.runs` Map
 - [ ] Add eviction to dispatcher `activeSessions` Map
@@ -263,8 +264,36 @@ Ran on live VPS with test R2 channel. No production VPS affected.
 | Full `build-host-bundle.sh` | Needs Clerk keys + 10 min build time |
 | Platform `/vps/deploy` live fan-out | Needs running platform with DB of registered VPS |
 
+### Conversation store
+
+| Test | Result | Detail |
+|---|---|---|
+| Vitest (33 unit tests) | PASS | Including 4 new eviction tests: cap overflow, disk fallback, delete cleanup, finalize flush |
+
+### Code review pass (2026-05-07)
+
+Three-agent review (reuse, quality, efficiency) followed by manual fixes.
+
+| Issue | Severity | Fix |
+|---|---|---|
+| `platform/main.ts` — missing `await` on `createR2Client()` | Critical | Added `await` — without it all R2 ops on platform side crash at runtime |
+| `server.ts` — plain `!==` for upgrade token auth | Security | Switched to `timingSafeStringEquals` (already defined in same file) |
+| `server.ts` — `maxSessions: 20` explicit overrides (contradicts PR's 10) | Medium | Changed both `sessionRegistry` and `zellijShellRegistry` to 10 |
+| `server.ts` — redundant `await import("node:fs/promises")` per request | Low | Replaced with existing `writeFileAsync` import |
+| `conversations.ts` — `delete()` leaks `lastTouched` entry | Low | Added `lastTouched.delete(id)` |
+| `sync-agent` — `json_field` interpolates field name into Python source | Low | Switched to `sys.argv[1]` parameter passing |
+| `publish-release.sh` — positional arg parsing breaks on `--dry-run v0.9.1` | Low | Switched to `for`/`case` loop |
+| `r2-client.ts` — `loadS3()` not memoized | Low | Promise-level cache (single import, reused) |
+| `ipc-server.ts` — SDK imported twice per `createIpcServer` call | Low | Pass `tool` as parameter to `createWebTools` |
+| `main.ts` — `pruneOldHeapSnapshots` uses `statSync` per file | Low | Sort by filename (ISO timestamps sort lexicographically) |
+| `platform-db.ts` — `createUser`/`ensureUser` duplicate 12-field block | Low | Extracted `buildUserValues()` with Kysely `InsertObject` type |
+
 ### Bugs found and fixed during testing
 
 1. **Manifest URL derivation** — `${URL%.tar.gz}.manifest.json` gave `bundle.manifest.json`. Fixed to `${URL%/*}/manifest.json`.
 2. **HTTP/2 download failure** — 1.5 GB download dropped with `INTERNAL_ERROR` / `transfer closed`. Fixed with `--http1.1` and retry flags matching cloud-init.
 3. **`bun run predev` lifecycle** — bun doesn't fire `predev` hooks. Fixed by inlining kernel build in dev script.
+4. **Missing `await` on `createR2Client`** — Platform call site not updated when function became async. Runtime crash on any R2 operation.
+5. **Timing-unsafe token comparison** — Upgrade endpoint used `!==` instead of `timingSafeStringEquals`.
+6. **`maxSessions` override** — `createGateway()` still passed 20 explicitly after default was lowered to 10.
+7. **`lastTouched` leak in `delete()`** — Conversation store's `delete()` cleaned `active` and `buffers` but forgot `lastTouched`.

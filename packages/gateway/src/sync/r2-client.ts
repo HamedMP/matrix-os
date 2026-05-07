@@ -2,10 +2,15 @@ import { buildFileKey, buildManifestKey } from "./r2-keys.js";
 
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;
 
-async function loadS3() {
+let _s3Promise: ReturnType<typeof doLoadS3> | undefined;
+async function doLoadS3() {
   const s3 = await import("@aws-sdk/client-s3");
   const presigner = await import("@aws-sdk/s3-request-presigner");
   return { ...s3, getSignedUrl: presigner.getSignedUrl };
+}
+function loadS3() {
+  if (!_s3Promise) _s3Promise = doLoadS3();
+  return _s3Promise;
 }
 
 const DEFAULT_PRESIGN_EXPIRY = 900; // 15 minutes

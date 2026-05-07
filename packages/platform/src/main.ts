@@ -1718,7 +1718,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
-    const r2 = createR2Client({
+    const r2 = await createR2Client({
       accessKeyId: s3AccessKey,
       secretAccessKey: s3SecretKey,
       bucket: s3Bucket,

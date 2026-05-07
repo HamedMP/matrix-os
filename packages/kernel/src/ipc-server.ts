@@ -1058,7 +1058,7 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
         },
       ),
 
-      ...(await createWebTools(homePath)),
+      ...(await createWebTools(homePath, tool)),
 
       tool(
         "connect_service",
@@ -1107,8 +1107,7 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
   });
 }
 
-async function createWebTools(homePath?: string) {
-  const { tool } = await import("@anthropic-ai/claude-agent-sdk");
+async function createWebTools(homePath: string | undefined, tool: typeof import("@anthropic-ai/claude-agent-sdk").tool) {
   const webConfig = loadWebConfig(homePath);
   const cache = new WebCache({ defaultTtlMs: (webConfig.fetch.cacheTtlMinutes ?? 15) * 60_000 });
   const fetchTool = createWebFetchTool({
