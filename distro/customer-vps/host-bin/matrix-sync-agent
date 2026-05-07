@@ -94,7 +94,7 @@ apply_update() {
 
   # Stop services, backup, install
   log "Stopping services..."
-  systemctl stop matrix-gateway matrix-shell || true
+  sudo systemctl stop matrix-gateway matrix-shell || true
   rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     mv "$APP_DIR" "$APP_DIR.rollback"
@@ -111,7 +111,7 @@ apply_update() {
 
   # Start services and health-check
   log "Starting services..."
-  systemctl start matrix-gateway matrix-shell
+  sudo systemctl start matrix-gateway matrix-shell
   log "Running health check..."
   local healthy=false
   for _ in $(seq 1 6); do
@@ -136,13 +136,13 @@ do_rollback() {
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
   log "Rolling back..."
-  systemctl stop matrix-gateway matrix-shell || true
+  sudo systemctl stop matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
     mkdir -p "$STAGING_DIR"
     mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
   fi
   mv "$APP_DIR.rollback" "$APP_DIR"
-  systemctl start matrix-gateway matrix-shell
+  sudo systemctl start matrix-gateway matrix-shell
   local healthy=false
   for _ in $(seq 1 6); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
