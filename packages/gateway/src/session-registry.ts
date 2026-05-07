@@ -9,7 +9,7 @@ import { resolveWithinHome } from "./path-security.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
-export const MIN_TERMINAL_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const MIN_TERMINAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
   if (!TERMINAL_DEBUG_ENABLED) {
@@ -309,8 +309,8 @@ export class SessionRegistry {
     spawnFn?: SpawnFn,
   ) {
     this.homePath = homePath;
-    this.maxSessions = options?.maxSessions ?? 20;
-    this.bufferSize = options?.bufferSize ?? 5 * 1024 * 1024;
+    this.maxSessions = options?.maxSessions ?? 10;
+    this.bufferSize = options?.bufferSize ?? 1024 * 1024;
     this.persistPath = options?.persistPath ?? join(homePath, "system", "terminal-sessions.json");
     this.sessionTtlMs = normalizeSessionTtl(options?.sessionTtlMs);
     this.allowedShells = options?.allowedShells

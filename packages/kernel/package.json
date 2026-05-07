@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./security/external-content": "./src/security/external-content.ts",
-    "./security/audit": "./src/security/audit.ts",
-    "./security/ssrf-guard": "./src/security/ssrf-guard.ts",
-    "./skill-registry": "./src/skill-registry.ts"
+    ".": "./dist/index.js",
+    "./security/external-content": "./dist/security/external-content.js",
+    "./security/audit": "./dist/security/audit.js",
+    "./security/ssrf-guard": "./dist/security/ssrf-guard.js",
+    "./skill-registry": "./dist/skill-registry.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
