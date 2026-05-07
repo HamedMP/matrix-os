@@ -64,7 +64,7 @@ describe("R2 client", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     createdClientConfigs.length = 0;
-    client = createR2Client({
+    client = await createR2Client({
       accountId: "test-account",
       accessKeyId: "AKIATEST",
       secretAccessKey: "secret",
@@ -72,8 +72,8 @@ describe("R2 client", () => {
     });
   });
 
-  it("uses an explicit endpoint override when provided", () => {
-    createR2Client({
+  it("uses an explicit endpoint override when provided", async () => {
+    await createR2Client({
       accessKeyId: "AKIATEST",
       secretAccessKey: "secret",
       bucket: "matrixos-sync",
@@ -87,14 +87,14 @@ describe("R2 client", () => {
     });
   });
 
-  it("throws when neither endpoint nor accountId is configured", () => {
-    expect(() =>
+  it("throws when neither endpoint nor accountId is configured", async () => {
+    await expect(
       createR2Client({
         accessKeyId: "AKIATEST",
         secretAccessKey: "secret",
         bucket: "matrixos-sync",
       }),
-    ).toThrow(/accountId|endpoint/i);
+    ).rejects.toThrow(/accountId|endpoint/i);
   });
 
   describe("getPresignedGetUrl", () => {
@@ -138,7 +138,7 @@ describe("R2 client", () => {
     });
 
     it("rewrites presigned URLs to the configured public endpoint", async () => {
-      const publicClient = createR2Client({
+      const publicClient = await createR2Client({
         endpoint: "http://minio:9000",
         publicEndpoint: "http://localhost:9100",
         accessKeyId: "AKIATEST",

@@ -1642,7 +1642,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
     await trustedPlatformDb.migrate();
-    const pipedream = createPipedreamClient({
+    const pipedream = await createPipedreamClient({
       clientId: process.env.PIPEDREAM_CLIENT_ID,
       clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
       projectId: process.env.PIPEDREAM_PROJECT_ID,
