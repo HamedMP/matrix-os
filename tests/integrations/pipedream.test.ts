@@ -61,7 +61,7 @@ describe("Pipedream Connect SDK Wrapper", () => {
     );
   });
 
-  it("gets the OAuth URL for a service", () => {
+  it("gets the OAuth URL for a service", async () => {
     const client = await createPipedreamClient(TEST_CONFIG);
     const url = client.getOAuthUrl("https://pipedream.com/connect/proj_abc?token=ctok_abc123", "gmail");
 
