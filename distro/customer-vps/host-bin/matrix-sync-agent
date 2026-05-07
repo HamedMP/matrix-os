@@ -143,7 +143,19 @@ do_rollback() {
   fi
   mv "$APP_DIR.rollback" "$APP_DIR"
   systemctl start matrix-gateway matrix-shell
-  log "Rollback complete (now at $(current_version))"
+  local healthy=false
+  for _ in $(seq 1 6); do
+    if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+      healthy=true; break
+    fi
+    sleep 5
+  done
+  if [ "$healthy" = true ]; then
+    log "Rollback complete (now at $(current_version))"
+  else
+    log "ERROR: rollback health check failed — services may be down"
+    return 1
+  fi
 }
 
 # ── Signal handling ──────────────────────────────────────────────────
