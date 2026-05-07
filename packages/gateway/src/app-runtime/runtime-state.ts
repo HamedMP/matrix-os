@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { readBuildStamp } from "./build-cache.js";
 import type { AppManifest } from "./manifest-schema.js";
 
@@ -26,17 +28,13 @@ export async function computeRuntimeState(
   }
 
   if (manifest.runtime === "vite") {
-    const stamp = await readBuildStamp(appDir);
-    if (!stamp) {
+    const indexPath = join(appDir, "dist", "index.html");
+    const indexStat = await stat(indexPath).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT" || err.code === "ENOTDIR") return null;
+      throw err;
+    });
+    if (!indexStat?.isFile()) {
       return { status: "needs_build" };
-    }
-    if (stamp.exitCode !== 0) {
-      return {
-        status: "build_failed",
-        stage: "build",
-        exitCode: stamp.exitCode,
-        stderrTail: sanitizeStderrTail(""),
-      };
     }
     return { status: "ready" };
   }

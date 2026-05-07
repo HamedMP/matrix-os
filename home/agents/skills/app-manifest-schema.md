@@ -2,9 +2,8 @@
 
 Every app under `~/apps/{slug}/` must ship a `matrix.json` that matches the
 schema in `packages/gateway/src/app-runtime/manifest-schema.ts`. If a
-manifest is missing a required field or the slug doesn't match the folder
-name, the gateway returns 500 from `/api/apps/{slug}/session` and the iframe
-never gets past the "Refreshing session..." interstitial.
+manifest is missing a required field, `/api/apps` marks the app invalid and
+the runtime routes return a generic app error instead of launching.
 
 ## Required fields (all apps)
 
@@ -21,9 +20,9 @@ never gets past the "Refreshing session..." interstitial.
 
 Rules:
 
-- **`slug`** must match `^[a-z0-9][a-z0-9-]{0,63}$` **and must equal the
-  directory name**. `cp -r _template-next my-app` won't work unless you
-  also change `matrix.json`'s `slug` to `"my-app"`.
+- **`slug`** must match `^[a-z0-9][a-z0-9-]{0,63}$`. The gateway resolves
+  apps by scanning `~/apps/**/matrix.json`, so nested apps are valid when
+  the manifest slug is unique.
 - **`version`** must be semver (`X.Y.Z` or `X.Y.Z-suffix`).
 - **`runtimeVersion`** must be a semver range (`^1.0.0` is standard).
 - **`runtime`** is one of `static` (pre-built files under `/`), `vite`
@@ -40,7 +39,7 @@ app directory as-is.
 **`runtime: "vite"`** — requires `build`:
 ```json
 "build": {
-  "command": "vite build",
+  "command": "pnpm build",
   "output": "dist"
 }
 ```

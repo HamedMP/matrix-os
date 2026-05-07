@@ -87,6 +87,13 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(document.errors).toEqual([]);
   });
 
+  it('routes hosted app runtime paths to the gateway', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    expect(cloudInit).toContain('location /apps/ {\n          proxy_pass http://127.0.0.1:4000;');
+  });
+
   it('keeps write_files independent of the matrix group creation order', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');

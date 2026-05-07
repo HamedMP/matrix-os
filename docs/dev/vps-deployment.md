@@ -1,12 +1,66 @@
 # VPS Deployment Guide
 
-Complete guide for deploying Matrix OS on a Hetzner VPS. Covers: server setup, platform service, container management, Cloudflare Tunnel, horizontal scaling, and backups.
+Complete guide for deploying Matrix OS on Hetzner. Production Matrix OS is VPS-native: one VPS per user, host-level Matrix services, local owner-controlled Postgres, Cloudflare routing, R2 backups, and no user runtime containers.
+
+## Production Rule: VPS-Native Only
+
+Effective 2026-05-06, production user runtime is **per-user VPS only**.
+
+- Do not deploy customer runtime by rebuilding a Docker image.
+- Do not use `docker compose` or rolling container restarts as a production rollout path for user-facing Matrix OS.
+- Do not put Matrix gateway, shell, code-server, or default apps inside a per-user runtime container.
+- Each customer VPS must have its own local PostgreSQL database endpoint at `127.0.0.1:5432`. The current bootstrap runs this as a single local `postgres:16` service container named `matrix-postgres` with a machine-local Docker volume; it is not the legacy shared user-runtime container model.
+- Build and publish the customer host bundle, refresh the target VPS in place, and restart `matrix-gateway.service`, `matrix-shell.service`, `matrix-code.service`, and related systemd units.
+- Docker/Compose references in older notes are legacy/local-development history. They are not the current production route.
 
 ## Architecture
 
-### Single Node (start here)
+### Current Production Mode: Platform Control Plane + Customer VPSes
+
+Matrix OS runs production users on one customer VPS per active user. The platform VPS is the control plane: it owns Clerk routing, Pipedream credentials, provisioning, R2 bundle publication, and upgrade orchestration. Each customer VPS runs Matrix shell/gateway/code under systemd with owner-controlled Postgres on the same machine. Matrix shell/gateway/code/default-app assets are not containers.
 
 ```
+Internet
+  |
+  +-- app.matrix-os.com ----+  Clerk session -> platform resolves current user
+  +-- code.matrix-os.com ---+  Clerk session -> platform resolves current user
+  +-- {handle}.matrix-os.com   handle route -> platform resolves machine
+                            |
+                     Cloudflare Tunnel
+                            |
+                     Platform VPS
+                     |
+                     +-- platform :9000
+                     +-- auth shell
+                     +-- platform Postgres
+                     +-- Pipedream credentials and integration routes
+                     +-- R2 host-bundle publisher
+                     |
+                     +-- HTTPS proxy with per-host token
+                            |
+                     Customer VPS: matrix-hamedmp-...
+                     |
+                     +-- matrix-gateway.service :4000
+                     +-- matrix-shell.service :3000
+                     +-- matrix-code.service :8787
+                     +-- matrix-postgres on 127.0.0.1:5432 + local data volume
+                     +-- /home/matrix/home and /opt/matrix/env
+```
+
+New VPS provisions download the host bundle from R2:
+
+```text
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
+system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz.sha256
+```
+
+The per-user Docker image path is legacy/local-development only. It is not used for production customer VPSes.
+
+### Archived Legacy Shared-Container Mode
+
+This section is historical context for old deployments only. Do not use it for new production work.
+
+```text
 Internet
   |
   +-- matrix-os.com ---------> Vercel (www/ -- landing, auth, dashboard)
@@ -23,14 +77,16 @@ Internet
                      +-- cloudflared (tunnel daemon)
                      +-- platform :9000 (orchestrator + routing)
                      +-- proxy :8080 (shared Anthropic API key + cost tracking)
-                     +-- matrixos-alice :4001/:3001 (user container)
-                     +-- matrixos-bob :4002/:3002 (user container)
+                     +-- matrixos-alice :4001/:3001 (legacy user container)
+                     +-- matrixos-bob :4002/:3002 (legacy user container)
                      +-- ...
 ```
 
-### Multi-Node (scale later)
+### Archived Multi-Node Container Scaling
 
-```
+This section is historical context for the old shared-container architecture. Production scaling is per-user VPS capacity and host-bundle rollout, not Docker worker nodes.
+
+```text
                      Cloudflare Tunnel
                             |
                      Hetzner VPS 1 -- control plane
@@ -54,13 +110,15 @@ Internet
 
 ### Server Selection
 
-| Users    | Server | Specs              | Cost   |
-|----------|--------|--------------------|--------|
-| 1-20     | CPX21  | 3 vCPU, 4GB RAM    | ~5/mo  |
-| 20-50    | CPX31  | 4 vCPU, 8GB RAM    | ~9/mo  |
-| 50-100   | CPX41  | 8 vCPU, 16GB RAM   | ~17/mo |
+For the platform control plane, size for routing, builds, platform Postgres, and Cloudflare. For customer workloads, provision a separate customer VPS per user.
 
-Each user container is capped at 256MB RAM + 0.5 CPU. With 30-min idle timeout, most containers are stopped. A 4GB box can run ~10 concurrent users.
+| Role | Server | Specs | Notes |
+|------|--------|-------|-------|
+| Platform control plane | CPX31+ | 4 vCPU, 8GB RAM | Handles platform, auth shell, builds, R2 publishing, Pipedream, and routing |
+| Build-heavy control plane | CPX41+ | 8 vCPU, 16GB RAM | Prefer this while building platform services and customer host bundles on the same box |
+| Customer VPS | CX/CPX small | 2-3 vCPU, 2-4GB RAM | One active user per VPS; Matrix and Postgres run under host services |
+
+Legacy shared-container capacity math is no longer used for production planning.
 
 ### Create Server
 
@@ -107,7 +165,7 @@ df -h /mnt/data
 mkdir -p /mnt/data/platform /mnt/data/proxy /mnt/data/users
 ```
 
-Update docker-compose to use the volume mount (see Step 4 below).
+Use the mounted volume for platform service data and platform Postgres. Do not add Docker Compose mounts for production customer runtime.
 
 ## Step 1: Server Setup
 
@@ -117,13 +175,9 @@ SSH into your Hetzner VPS:
 ssh root@<your-server-ip>
 ```
 
-### Install Docker
-
-```bash
-curl -fsSL https://get.docker.com | sh
-```
-
 ### Clone and Build
+
+For production, deploy platform services on the platform VPS and publish the customer VPS host bundle. Do not build a per-user Docker image for production.
 
 ```bash
 git clone https://github.com/HamedMP/matrix-os.git
@@ -132,17 +186,16 @@ cd matrix-os
 # Deploy from a specific tag (or stay on main)
 git checkout v0.3.0
 
-# Build the user container image (Clerk key is baked in at build time)
-docker build \
-  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
-  -t ghcr.io/hamedmp/matrix-os:latest \
-  -f Dockerfile .
-
-# Build platform services (reads build args from .env)
-docker compose -f distro/docker-compose.platform.yml --env-file .env build
+# Build the customer VPS host bundle. This bakes the public Clerk key into
+# the shell bundle and packages gateway/shell/code/default apps for systemd.
+set -a
+source .env
+set +a
+./scripts/build-host-bundle.sh
+sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-The `--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is required because Next.js embeds `NEXT_PUBLIC_*` vars at build time. Without it, Clerk auth will not work in the shell UI.
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is required before building the host bundle because Next.js embeds `NEXT_PUBLIC_*` vars at build time. Without it, Clerk auth will not work in the shell UI.
 
 ## Step 2: Cloudflare Tunnel
 
@@ -167,9 +220,10 @@ cp ~/.cloudflared/<tunnel-id>.json /etc/cloudflared/credentials.json
 |-------|------|-------------------------------|-------|
 | CNAME | api  | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | app  | `<tunnel-id>.cfargotunnel.com` | Yes   |
+| CNAME | code | `<tunnel-id>.cfargotunnel.com` | Yes   |
 | CNAME | *    | `<tunnel-id>.cfargotunnel.com` | Yes   |
 
-Root `matrix-os.com` stays pointed at Vercel. The `app` subdomain handles session-based routing (Clerk JWT -> user container). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
+Root `matrix-os.com` stays pointed at Vercel. The `app` and `code` subdomains handle session-based routing (Clerk JWT -> customer VPS). The wildcard covers per-handle subdomains (`{handle}.matrix-os.com`).
 
 ## Step 3: Environment Variables
 
@@ -186,22 +240,20 @@ EOF
 
 | Variable | Where Used | Build/Runtime | Description |
 |----------|-----------|---------------|-------------|
-| `ANTHROPIC_API_KEY` | proxy | runtime | Shared Anthropic API key for all user containers |
+| `ANTHROPIC_API_KEY` | platform/proxy | runtime | Shared Anthropic API key for routed AI calls |
 | `PLATFORM_SECRET` | platform | runtime | Bearer token for admin API auth |
-| `CLERK_SECRET_KEY` | platform + user containers | runtime | Server-side Clerk JWT verification |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Docker image | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
-| `GEMINI_API_KEY` | platform + user containers | runtime | Google Gemini API key for image/icon generation |
+| `CLERK_SECRET_KEY` | platform | runtime | Server-side Clerk JWT verification |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | host bundle | **build time** | Baked into Next.js bundle (NEXT_PUBLIC_ prefix) |
+| `GEMINI_API_KEY` | platform/gateway when configured | runtime | Google Gemini API key for image/icon generation |
 | `POSTGRES_PASSWORD` | postgres + platform | runtime | PostgreSQL password (default: `matrixos`) |
-| `S3_ENDPOINT` | user containers | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
-| `S3_PUBLIC_ENDPOINT` | user containers | runtime | Same as `S3_ENDPOINT` for Cloudflare R2; different for MinIO |
-| `S3_ACCESS_KEY_ID` | user containers | runtime | R2 API token access key |
-| `S3_SECRET_ACCESS_KEY` | user containers | runtime | R2 API token secret key |
-| `S3_BUCKET` | user containers | runtime | R2 bucket name, default `matrixos-sync` |
-| `S3_FORCE_PATH_STYLE` | user containers | runtime | `false` for R2, `true` for MinIO |
-| `MATRIX_HOME_MIRROR` | user containers | runtime | `true` enables three-way sync (container ↔ R2 ↔ peer) |
+| `S3_ENDPOINT` / `R2_ENDPOINT` | customer VPS gateway/sync | runtime | Cloudflare R2 S3-API endpoint (see Sync Storage below) |
+| `S3_ACCESS_KEY_ID` / `R2_ACCESS_KEY_ID` | customer VPS gateway/sync | runtime | R2 API token access key |
+| `S3_SECRET_ACCESS_KEY` / `R2_SECRET_ACCESS_KEY` | customer VPS gateway/sync | runtime | R2 API token secret key |
+| `S3_BUCKET` / `R2_BUCKET` | customer VPS gateway/sync | runtime | R2 bucket name, default `matrixos-sync` |
+| `MATRIX_HOME_MIRROR` | customer VPS gateway/sync | runtime | `true` enables three-way sync (VPS home ↔ R2 ↔ peer) |
 | `PLATFORM_INTERNAL_URL` | customer VPS gateway | runtime | Base URL for platform-owned internal APIs; customer VPSes use it with their per-host token for sync and integrations |
 
-**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available as Docker build args. All other vars are passed at container runtime via `docker-compose.platform.yml` environment section and the orchestrator's `extraEnv` mechanism.
+**Build-time vs runtime**: `NEXT_PUBLIC_*` vars are embedded into the Next.js JavaScript bundle during `next build`. They must be available when building the customer host bundle. Runtime vars for customer VPSes live in `/opt/matrix/env/host.env`, `/opt/matrix/env/r2.env`, and host systemd environment files.
 
 ### Platform-Owned Integrations
 
@@ -262,36 +314,35 @@ EOF
 
 Replace the placeholders with the real values. `S3_ENDPOINT` and `S3_PUBLIC_ENDPOINT` are the same URL in prod — the split exists for dev where gateway reaches MinIO at `minio:9000` internally but presigned URLs need `localhost:9100` (see `docs/dev/sync-testing.md`).
 
-#### How the env vars reach user containers
+#### How env vars reach customer VPSes
 
-The Platform orchestrator reads these vars from its own process env and forwards them into every per-user container via `extraEnv`. Code path: `packages/platform/src/main.ts:626–641` builds the `extraEnv` array; `packages/platform/src/orchestrator.ts:146–173` (`buildEnv`) appends it to each container's env. The gateway inside the container then reads `S3_ENDPOINT` etc. at `packages/gateway/src/server.ts:294–311` and boots the R2 client.
+Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env` plus `/opt/matrix/env/r2.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, `DATABASE_URL`, and R2 prefix metadata. It must not include platform-only secrets like `PIPEDREAM_CLIENT_SECRET`. Platform-owned integration routes stay on the platform and are reached from the customer VPS gateway through `PLATFORM_INTERNAL_URL`.
 
-After editing `.env`, restart the platform + roll every user container so the new env is in effect:
+After editing platform `.env`, restart platform services on the platform VPS. After editing a customer VPS env file, restart that VPS's host services:
 
 ```bash
-docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build platform
-curl -X POST http://localhost:9000/containers/rolling-restart \
-  -H "Authorization: Bearer $PLATFORM_SECRET"
+sudo systemctl restart matrix-gateway.service matrix-shell.service matrix-code.service
 ```
 
-Verify one container has the vars:
+Verify the target customer VPS has the expected env:
 
 ```bash
-CANARY=$(docker ps --filter "name=matrixos-" --format "{{.Names}}" | head -1)
-docker exec $CANARY env | grep -E '^(S3_|MATRIX_HOME_MIRROR)='
-# Expect all six S3_* vars + MATRIX_HOME_MIRROR=true
+sudo systemctl show matrix-gateway.service --property=Environment
+sudo grep -E '^(PLATFORM_INTERNAL_URL|UPGRADE_TOKEN|MATRIX_HANDLE|DATABASE_URL)=' /opt/matrix/env/host.env
+sudo grep -E '^(S3_|R2_)' /opt/matrix/env/r2.env
 ```
 
 #### Verify R2 upload round-trip
 
 ```bash
-# Inside a running user container, force home-mirror to push a file:
-docker exec $CANARY sh -c 'echo test > /home/matrixos/home/r2-smoke.md'
+# On the customer VPS, force home-mirror to push a file:
+sudo -u matrix sh -c 'echo test > /home/matrix/home/r2-smoke.md'
 sleep 5
 
 # The manifest should list it:
-docker exec $CANARY sh -c 'wget -qO- http://localhost:4000/api/sync/manifest \
-  -H "Authorization: Bearer $MATRIX_AUTH_TOKEN"' | grep r2-smoke
+TOKEN="$(sudo grep '^UPGRADE_TOKEN=' /opt/matrix/env/host.env | cut -d= -f2-)"
+wget -qO- http://127.0.0.1:4000/api/sync/manifest \
+  --header="Authorization: Bearer $TOKEN" | grep r2-smoke
 
 # And the object should exist in Cloudflare:
 # Open dashboard → R2 → matrixos-sync → Objects → search "r2-smoke"
@@ -302,18 +353,22 @@ If manifest shows the file but R2 dashboard doesn't, check gateway logs for `Sig
 #### Rotating R2 credentials
 
 1. Cloudflare → R2 → API Tokens → create a new token.
-2. Update `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` in `.env`.
-3. Restart platform + rolling-restart containers (same commands as above).
+2. Update `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` or `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` in `/opt/matrix/env/r2.env` on each affected customer VPS.
+3. Restart the affected VPS host services with `sudo systemctl restart matrix-gateway.service matrix-sync-agent.service matrix-db-backup.timer`.
 4. Revoke the old token in the Cloudflare dashboard.
 
 ## Step 4: Start the Platform
 
 ```bash
-# Always pass --env-file .env (reads PLATFORM_SECRET, CLERK_SECRET_KEY, GEMINI_API_KEY, etc.)
-docker compose -f distro/docker-compose.platform.yml --env-file .env up -d
+# Production platform services run on the platform VPS under systemd.
+# Use the platform service units for the host, not docker compose.
+sudo systemctl restart matrix-platform.service matrix-auth-shell.service cloudflared.service
+sudo systemctl status matrix-platform.service matrix-auth-shell.service cloudflared.service
 ```
 
-To use the Hetzner block storage volume instead of Docker volumes, create an override:
+## Archived Legacy Docker Compose Bootstrap
+
+Legacy Docker Compose deployment notes below this point are archived for old shared-container installations only. Do not use these commands for hamedmp or any production per-user VPS.
 
 ```bash
 cat > distro/docker-compose.override.yml << 'EOF'
@@ -384,11 +439,15 @@ curl https://api.matrix-os.com/health
 `/containers/provision` remains the onboarding compatibility endpoint because the Clerk/Inngest flow already calls it. When `CUSTOMER_VPS_ENABLED=true`, it delegates to customer VPS provisioning and returns `runtime: "customer_vps"` with the machine status instead of creating a legacy Docker container. The customer VPS table has a partial unique index on active `clerk_user_id`, so repeated onboarding calls reuse the same active VPS for that user.
 
 **Two routing modes:**
-- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header, prefers a running customer VPS by `clerkUserId`, and falls back to a legacy container. No handle in URL. Redirects to `/login` if no session.
-- `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway first and legacy code-server only as a fallback. No handle, SSH, or server IP is exposed.
-- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain, proxies to a running customer VPS first and legacy container second. No auth required (public access).
+- `app.matrix-os.com` -- session-based. Platform extracts Clerk JWT from cookie/auth header and proxies to the user's active VPS by `clerkUserId`. No handle in URL. Redirects to `/login` if no session.
+- `code.matrix-os.com` -- session-based. Same identity lookup as `app.matrix-os.com`, but proxies to the user's VPS code gateway. No handle, SSH, or server IP is exposed.
+- `{handle}.matrix-os.com` -- handle-based. Platform resolves handle from subdomain and proxies to the running customer VPS. No auth required (public access).
 
-## Container Management
+Legacy fallback code may exist only to keep historical records reachable during migration. New and production customer runtime should not be provisioned as containers.
+
+## Archived Legacy Container Management
+
+This section documents the legacy shared-container API and direct Docker operations. `/containers/provision` is still the compatibility entry point for onboarding; with `CUSTOMER_VPS_ENABLED=true` it delegates to customer VPS provisioning and returns `runtime: "customer_vps"`.
 
 ### Admin Dashboard
 
@@ -425,6 +484,8 @@ curl "$BASE/containers?status=running"
 
 ### Docker (direct)
 
+Direct Docker commands apply to legacy shared-container users only. Customer VPS-hosted users are inspected through SSH/systemd on their own VPS.
+
 ```bash
 docker ps --filter "name=matrixos-"          # list user containers
 docker logs matrixos-alice -f                 # logs
@@ -433,6 +494,8 @@ docker stats --filter "name=matrixos-"        # resource usage
 ```
 
 ### Container Lifecycle
+
+Legacy shared-container lifecycle:
 
 - **Provision**: image pulled, ports allocated, volume mounted at `/data/users/{handle}/matrixos`
 - **Running**: 256MB memory, 0.5 CPU, restart unless-stopped
@@ -444,7 +507,6 @@ docker stats --filter "name=matrixos-"        # resource usage
 
 ```bash
 # Access platform DB
-docker compose -f distro/docker-compose.platform.yml exec platform sh
 psql "$PLATFORM_DATABASE_URL"
 
 # Useful queries
@@ -455,90 +517,22 @@ SELECT status, COUNT(*) FROM containers GROUP BY status;
 
 ## Updating
 
-### Update Platform (zero-downtime for user containers)
+### Update Platform Control Plane
 
 ```bash
 cd matrix-os
 git pull origin main
-docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build
+pnpm install --frozen-lockfile
+bun run typecheck
+sudo systemctl restart matrix-platform.service matrix-auth-shell.service cloudflared.service
+sudo systemctl status matrix-platform.service matrix-auth-shell.service cloudflared.service
 ```
 
-User containers are NOT affected -- they keep running on the old image.
-
-### Update User Container Image
-
-```bash
-# Rebuild image (Clerk key is baked in at build time). The helper stamps
-# VERSION, MATRIX_BUILD_SHA, MATRIX_BUILD_REF, and MATRIX_BUILD_DATE into the
-# image labels, env, startup logs, and /api/system/info.
-export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-MATRIX_TAG_LOCAL=0 MATRIX_IMAGE_TAG=ghcr.io/hamedmp/matrix-os:latest ./scripts/build-user-image.sh
-
-# New provisions use the new image automatically.
-# To update an existing container, use the upgrade API:
-curl -X POST http://localhost:9000/containers/<handle>/upgrade \
-  -H "Authorization: Bearer $PLATFORM_SECRET"
-
-# Or roll every running container at once:
-curl -X POST http://localhost:9000/containers/rolling-restart \
-  -H "Authorization: Bearer $PLATFORM_SECRET"
-```
-
-The upgrade endpoint stops the old container, pulls the latest image, creates a new container with the same ports and volume mount, and starts it. User data in `/data/users/{handle}/matrixos` is preserved.
-
-#### Inspect Running Container Provenance
-
-Every user image built by `scripts/build-user-image.sh` carries build provenance:
-
-- Docker labels: `org.opencontainers.image.revision`, `org.opencontainers.image.ref.name`, `org.opencontainers.image.created`
-- Container env: `MATRIX_BUILD_SHA`, `MATRIX_BUILD_REF`, `MATRIX_BUILD_DATE`
-- Gateway API: `GET /api/system/info`
-- Startup logs: `docker logs matrixos-<handle> | head`
-
-Quick inventory:
-
-```bash
-./scripts/container-versions.sh
-```
-
-For a single container:
-
-```bash
-docker exec matrixos-<handle> wget -qO- http://localhost:4000/api/system/info | jq .
-docker inspect matrixos-<handle> \
-  --format '{{.Config.Image}} {{range .Config.Env}}{{println .}}{{end}}' \
-  | grep -E 'MATRIX_IMAGE|MATRIX_BUILD_'
-```
-
-If a row shows `unknown`, that container is running an image built before provenance stamping landed. Rebuild with `scripts/build-user-image.sh` and upgrade or rolling-restart it.
-
-#### Deploying a locally-built image (avoiding the pull-revert trap)
-
-**Important:** when `PLATFORM_IMAGE` points at a public registry ref like `ghcr.io/hamedmp/matrix-os:latest`, every call to `/upgrade` and `/containers/rolling-restart` runs `docker pull` on that ref. If the registry still holds an older image than the one you just built locally, **the pull will overwrite your local tag with the stale registry image** and silently deploy old code. The orchestrator guards against this by only pulling when the image ref looks remote (`host.tld/...`), but that only helps if you use a local-only tag.
-
-The durable fix is to use a local-only tag for deploys-without-push:
-
-```bash
-# 1. Build into a local-only tag (no registry host prefix)
-export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
-MATRIX_IMAGE_TAG=matrixos-user:$(git rev-parse --short=12 HEAD) ./scripts/build-user-image.sh
-
-# 2. Tell the orchestrator to use it (one-time setup)
-echo 'PLATFORM_IMAGE=matrixos-user:local' >> .env
-
-# 3. Restart platform to pick up the env var
-docker compose -f distro/docker-compose.platform.yml --env-file .env up -d platform
-
-# 4. Roll all containers
-curl -X POST http://localhost:9000/containers/rolling-restart \
-  -H "Authorization: Bearer $PLATFORM_SECRET"
-```
-
-Because `matrixos-user:local` has no registry host, the orchestrator's `pullImageIfRemote()` helper skips the pull entirely. `docker tag <new-sha> matrixos-user:local` after each build to advance the local tag.
+Customer VPS host services are not affected by a platform control-plane restart. Deploy customer-facing shell/gateway/default-app changes with the host-bundle path below.
 
 ### Update Customer VPS Host Bundle
 
-Customer VPSes do not run the per-user Docker image. They boot from a host bundle downloaded from R2 at:
+Customer VPSes boot from a host bundle downloaded from R2 at:
 
 ```text
 system-bundles/<CUSTOMER_VPS_IMAGE_VERSION>/matrix-host-bundle.tar.gz
@@ -567,7 +561,7 @@ Operational rules:
 - Do not use `owner: root:matrix` in cloud-init `write_files` before the `matrix` group exists. Prefer `root:root` for env files unless the file must be group-readable.
 - During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
 - Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, and pi update themselves with `npm install -g --prefix /opt/matrix/runtime/node ...`; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`.
-- Preserve `/opt/matrix/env`, `/home/matrix/home`, and the `matrix-postgres` volume during in-place refreshes.
+- Preserve `/opt/matrix/env`, `/home/matrix/home`, and the local Postgres data directory during in-place refreshes.
 - Record the checksum in `specs/070-vps-per-user/changelog.md` after publishing and mention which customer VPSes were refreshed.
 
 Verification after deploying a host bundle:
@@ -587,63 +581,23 @@ curl -fsS \
   http://127.0.0.1:3000 | grep -q clerk.example.com && echo bad || echo no_example_clerk
 ```
 
-#### Recommended Dev / Prod Split
-
-Run three image tracks:
-
-- `ghcr.io/hamedmp/matrix-os:vX.Y.Z`: immutable production release. Customer containers should run this or a digest-pinned equivalent.
-- `ghcr.io/hamedmp/matrix-os:canary-<sha>`: shared team dogfood. Founders' own containers can run this after tests pass, before promoting a release.
-- `matrixos-user:local`: one-VPS live testing only. Never point customer containers at this tag.
-
-On the current shared VPS, keep customer containers on released registry tags and use dedicated founder handles for canary/local testing. When moving to VPS-per-user, keep the same rule: each VPS records its desired image tag, and upgrades only replace the container image while preserving `/data/users/{handle}/matrixos`.
-
-For team development inside Matrix itself:
-
-1. Each founder gets their own Matrix container and home volume.
-2. Code work happens in `~/projects/matrix-os` inside that container.
-3. Build a local image with `scripts/build-user-image.sh`.
-4. Upgrade only the founder's own dogfood container first.
-5. Promote to canary after pre-PR checks pass.
-6. Promote to `vX.Y.Z` only from a tagged commit.
-
-#### Known buildx gotcha: new build, stale tag
-
-When `docker build -t ghcr.io/owner/image:tag ...` completes, buildx occasionally writes the manifest list as a dangling `<none>` image instead of advancing the tag. Verify after every build:
-
-```bash
-docker images ghcr.io/hamedmp/matrix-os --format "{{.ID}} {{.CreatedAt}}"
-```
-
-If `CreatedAt` is the old image's timestamp, find the fresh dangling image and re-tag:
-
-```bash
-docker images --all --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}" \
-  | grep -E "(<none>|matrix-os)" | head
-# Then:
-docker tag <new-sha> ghcr.io/hamedmp/matrix-os:latest   # (or matrixos-user:local)
-```
-
-This is most reproducible when running platform and user-image builds in parallel under load.
-
-#### Running parallel builds under load
-
-The platform build and user-image build share 95%+ of their layers (same base image, same `pnpm install`, same Next.js compile). Running both at once on a 16GB / 8-core box with ~20 user containers already running pushes load average above 50 and roughly doubles build time (Next.js compile went from 23s to 112s in one observed case). Build sequentially unless you're on idle hardware.
-
 ### Deploy from Tag
 
 ```bash
 git fetch --tags
 git checkout v0.3.0
-docker build \
-  --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_... \
-  -t ghcr.io/hamedmp/matrix-os:latest \
-  -f Dockerfile .
-docker compose -f distro/docker-compose.platform.yml --env-file .env up -d --build
+set -a
+source .env
+set +a
+./scripts/build-host-bundle.sh
+sha256sum dist/host-bundle/matrix-host-bundle.tar.gz
 ```
 
-## Horizontal Scaling
+Publish the generated tarball and checksum to R2 under `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh the target VPSes in place and restart their Matrix systemd units.
 
-Start with one node, add workers when you need more capacity. No architecture change -- the platform orchestrator already abstracts container creation behind dockerode, which supports remote Docker hosts.
+## Archived Legacy Horizontal Scaling
+
+This section is retained only for old shared-container design history. Production scaling is one VPS per user plus host-bundle rollout; do not add Docker worker nodes for customer runtime.
 
 ### How It Works
 
@@ -813,6 +767,22 @@ Until then, single node is simpler and cheaper. Resize the Hetzner server (CPX21
 
 Understanding the request flow is critical for debugging:
 
+Current customer VPS route:
+
+```
+Browser -> app.matrix-os.com / code.matrix-os.com / {handle}.matrix-os.com
+  -> Cloudflare Tunnel -> platform :9000
+    -> session-based: Clerk JWT -> running customer VPS by clerkUserId
+    -> handle-based: subdomain -> running customer VPS by handle
+      -> HTTPS customer VPS gateway with per-host token
+        -> nginx on customer VPS
+          -> matrix-shell.service :3000 for shell paths
+          -> matrix-gateway.service :4000 for /api, /ws, /files, /icons
+          -> matrix-code.service :8787 for code.matrix-os.com
+```
+
+Legacy shared-container route:
+
 ```
 Browser -> app.matrix-os.com (or {handle}.matrix-os.com)
   -> Cloudflare Tunnel -> platform :9000
@@ -935,7 +905,7 @@ Prometheus scrapes these every 15 seconds (configured in `distro/observability/p
 
 ### Logs
 
-Promtail tails interaction logs (`~/matrixos/system/logs/*.jsonl`), activity logs (`~/matrixos/system/activity.log`), and Docker container stdout/stderr. All logs are searchable in Grafana via the Loki data source.
+Promtail tails interaction logs (`~/matrixos/system/logs/*.jsonl`), activity logs (`~/matrixos/system/activity.log`), and systemd journal output for platform/customer VPS services. All logs are searchable in Grafana via the Loki data source.
 
 ## Caching and Cloudflare
 
@@ -967,44 +937,38 @@ Cloudflare sits between the browser and the origin (gateway). It has its own cac
 ### Platform won't start
 
 ```bash
-docker compose -f distro/docker-compose.platform.yml --env-file .env logs platform
-
-# Common: Docker socket not mounted
-ls -la /var/run/docker.sock
+sudo journalctl -u matrix-platform.service -n 200 --no-pager
+sudo systemctl status matrix-platform.service
+psql "$PLATFORM_DATABASE_URL" -c "select 1"
 ```
 
 ### Tunnel not connecting
 
 ```bash
-docker compose -f distro/docker-compose.platform.yml --env-file .env logs cloudflared
+sudo journalctl -u cloudflared.service -n 200 --no-pager
+sudo systemctl status cloudflared.service
 
 # Common: credentials missing
 ls /etc/cloudflared/credentials.json
 ```
 
-### Container provisioning fails
+### Customer VPS provisioning fails
 
 ```bash
-# Check image exists
-docker images ghcr.io/hamedmp/matrix-os
-
-# Check port conflicts
-psql "$PLATFORM_DATABASE_URL" -c "SELECT * FROM port_assignments"
+sudo journalctl -u matrix-platform.service -n 200 --no-pager
+psql "$PLATFORM_DATABASE_URL" -c "SELECT id, clerk_user_id, handle, status, public_ipv4, image_version, last_seen_at FROM user_machines ORDER BY created_at DESC LIMIT 20"
 ```
 
 ### User gets 502 Bad Gateway
 
-The shell (port 3000) crashed but the gateway (port 4000) is still running.
+For VPS-hosted users, first confirm platform routing found the expected `user_machines` row, then check the target VPS host services.
 
 ```bash
-# Check what's listening inside the container
-docker exec matrixos-alice netstat -tlnp
+psql "$PLATFORM_DATABASE_URL" -c "SELECT handle, status, public_ipv4, last_seen_at FROM user_machines WHERE handle = 'hamedmp'"
 
-# If only port 4000 is listening, shell crashed. Restart the container:
-docker restart matrixos-alice
-
-# Check memory usage (shell crash often = OOM)
-docker stats matrixos-alice --no-stream
+ssh matrix@<customer-vps-ip> 'systemctl status matrix-gateway.service matrix-shell.service matrix-code.service --no-pager'
+ssh matrix@<customer-vps-ip> 'journalctl -u matrix-gateway.service -u matrix-shell.service -n 200 --no-pager'
+ssh matrix@<customer-vps-ip> 'ss -tlnp | grep -E ":(3000|4000|8787) "'
 ```
 
 ### App icons missing or not loading
@@ -1020,7 +984,7 @@ Icons are generated PNGs stored in `/data/users/{handle}/matrixos/system/icons/`
 
 3. **Cloudflare cached a 404**: If the icon was requested before it was generated, Cloudflare may have cached the 404. Hard refresh (Ctrl+Shift+R) or wait for the CDN cache TTL to expire.
 
-4. **Shell not rebuilt**: Icon-related shell changes require rebuilding the Docker image (`docker build`) and upgrading the container. `docker compose up --build` only rebuilds platform services.
+4. **Shell bundle not refreshed**: Icon-related shell changes require rebuilding and publishing the customer VPS host bundle, then refreshing the target VPS in place and restarting `matrix-shell.service` and `matrix-gateway.service`.
 
 5. **Pinned dock icon stuck on fallback letter**: The `imgFailed` state in DockIcon/AppTile components needs to reset when `iconUrl` changes. If icons show a letter instead of the image after regeneration, this reset logic may be broken.
 
@@ -1034,8 +998,8 @@ Map repeated console errors before changing code:
 
 | Console symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `clerk.example.com` / `failed_to_load_clerk_js` | Shell bundle was built without the real `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. | Rebuild and republish the Docker image or customer VPS host bundle with the real Clerk publishable key. |
-| `GET /api/auth/ws-token 404` | Browser is still serving an old shell bundle or host shell routes were not refreshed. | Deploy the fresh bundle/image, restart shell/gateway, and hard-refresh. |
+| `clerk.example.com` / `failed_to_load_clerk_js` | Shell bundle was built without the real `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. | Rebuild and republish the customer VPS host bundle with the real Clerk publishable key. |
+| `GET /api/auth/ws-token 404` | Browser is still serving an old shell bundle or host shell routes were not refreshed. | Deploy the fresh host bundle, restart shell/gateway, and hard-refresh. |
 | `PUT /api/canvas 410` | Legacy canvas layout persistence client is still in the served bundle. | Fresh shell bundle should no longer call `/api/canvas`; deploy and hard-refresh. |
 | `HEAD /icons/*.png 404` followed by icon POST 503 | Old shell auto-generates missing icons and gateway lacks Gemini. | Use `/icons/*` compatibility redirect and stable icon fallbacks; avoid automatic POST generation. |
 | `Access-Control-Allow-Origin` from origin `null` inside apps | App iframe was loaded as an opaque/file-like origin or app bridge is calling the public origin directly. | Serve apps through Matrix origin and keep bridge/API calls relative when possible; explicit allowlists only, no wildcard CORS. |
@@ -1051,56 +1015,13 @@ Canvas panning must be gated by event target, not only by the current focus stat
 
 The Next.js middleware matcher may be excluding the path. Check `shell/src/proxy.ts` matcher config. Paths ending in `.html`, `.css`, `.js` etc. are excluded by the catch-all pattern but must be explicitly included via dedicated matchers for `/files/`, `/modules/`, etc.
 
-### Stale DB record after manual container deletion
-
-If you `docker rm` a container manually, the platform DB still has its record. The API will fail to destroy/re-provision it.
-
-```bash
-# Force-delete via API (handles missing Docker container gracefully)
-curl -X DELETE http://localhost:9000/containers/alice \
-  -H "Authorization: Bearer $PLATFORM_SECRET"
-
-# Then re-provision
-curl -X POST http://localhost:9000/containers/provision \
-  -H "Authorization: Bearer $PLATFORM_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{"handle":"alice","clerkUserId":"user_..."}'
-```
-
-### Rolling restart "succeeded" but containers still run old code
-
-Symptoms: `/containers/rolling-restart` reports `succeeded: N / failed: 0`, but the UI still shows the pre-deploy version and `docker inspect matrixos-<handle> --format '{{.Image}}'` returns the old image SHA.
-
-Diagnosis, in order:
-
-1. **Local tag reverted by `docker pull`** (most common):
-   ```bash
-   docker images ghcr.io/hamedmp/matrix-os --format "{{.ID}} {{.CreatedAt}}"
-   ```
-   If `CreatedAt` is the old timestamp, the orchestrator's pull overwrote your freshly-built tag with the registry's older image. Fix by switching to `PLATFORM_IMAGE=matrixos-user:local` (see "Deploying a locally-built image" above).
-
-2. **Dangling buildx manifest** (second most common):
-   ```bash
-   docker images --all --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}" \
-     | grep -E "(<none>|matrix-os)" | head
-   ```
-   If there's a `<none>:<none>` entry newer than your tagged image, the build wrote a dangling manifest. Re-tag it manually.
-
-3. **Container has the tag right but is a zombie**:
-   ```bash
-   docker inspect matrixos-<handle> --format '{{.Image}} {{.Created}}'
-   docker inspect <image-ref> --format '{{.Id}} {{.Created}}'
-   ```
-   The two SHAs should match. If the `Created` timestamp on the container is old, the rolling-restart didn't actually touch it -- check that its handle is present in the rolling-restart response's `results` array (not `skipped`).
-
 ### User can't access instance
 
 ```bash
-docker ps --filter "name=matrixos-alice"
-curl -s http://localhost:9000/containers/alice \
-  -H "Authorization: Bearer $PLATFORM_SECRET"
-docker exec matrixos-alice wget -qO- http://localhost:3000 2>&1 | head -5
-docker exec matrixos-alice wget -qO- http://localhost:4000/health 2>&1
+psql "$PLATFORM_DATABASE_URL" -c "SELECT handle, status, public_ipv4, last_seen_at FROM user_machines WHERE handle = 'hamedmp'"
+curl -fsS https://app.matrix-os.com/health
+ssh matrix@<customer-vps-ip> 'curl -fsS http://127.0.0.1:4000/health'
+ssh matrix@<customer-vps-ip> 'curl -fsSI http://127.0.0.1:3000'
 ```
 
 ## Backup

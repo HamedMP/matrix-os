@@ -88,7 +88,7 @@ rg_scan() {
     if [[ -z "$filtered_files" ]]; then
       return
     fi
-    echo "$filtered_files" | xargs rg -n "$pattern" "$@" 2>/dev/null || true
+    echo "$filtered_files" | xargs rg --with-filename -n "$pattern" "$@" 2>/dev/null || true
   else
     rg -n "$pattern" "$@" $SCAN_PATHS 2>/dev/null || true
   fi

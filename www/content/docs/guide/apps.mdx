@@ -1,143 +1,113 @@
 ---
 title: Apps
-description: The app platform, container-based runtime, pre-installed games, utilities, and bundled desktop apps.
+description: Use built-in apps and ask Matrix to create new apps for your work and life.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-Matrix OS runs any kind of app -- from single-file HTML to full-stack Next.js, Python, or Rust apps. Each app lives in `~/matrixos/apps/` as files you own.
+Matrix OS apps are tools inside your workspace. Some are built in. Others can be created by Matrix when you describe what you need.
 
-## App Types
+You do not need to write code to get a useful app. Ask for the outcome, review what Matrix builds, and keep using or improving it.
 
-| Type | Runtime | Build Step | Example |
-|------|---------|------------|---------|
-| Static HTML | Served directly by gateway | None | Calculator, games |
-| Node (Vite/Next.js) | `pnpm dev` process | `pnpm install` | Dashboards, CRMs |
-| Python (Flask/FastAPI) | `python main.py` | `pip install -r requirements.txt` | Data tools, ML apps |
-| Rust/Go | Compiled binary | Build step | Performance-critical services |
-| Docker | Container | Image pull | Chromium browser, VS Code |
-
-## App Manifest (matrix.json)
-
-Every non-trivial app has a `matrix.json` manifest in its directory:
-
-```json
-{
-  "name": "My Dashboard",
-  "description": "Sales analytics dashboard",
-  "runtime": "node",
-  "entry": "pnpm dev",
-  "port": 3100,
-  "framework": "nextjs",
-  "permissions": ["network", "database"],
-  "resources": { "memory": "256MB", "cpu": 0.5 }
-}
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Display name in dock and window title |
-| `description` | No | Short description for the app store |
-| `runtime` | No | `static` (default), `node`, `python`, `rust`, `docker` |
-| `entry` | No | Start command (e.g., `pnpm dev`, `python main.py`) |
-| `port` | No | Port the app listens on (auto-assigned from 3100-3999 if omitted) |
-| `framework` | No | Framework hint: `nextjs`, `vite`, `flask`, etc. |
-| `permissions` | No | Capabilities: `network`, `database`, `filesystem` |
-| `resources` | No | Resource limits: `memory` (default 256MB), `cpu` (default 0.5) |
-| `autoStart` | No | Start automatically on gateway boot (default `false`) |
-
-<Callout type="info" title="Backward compatibility">
-  Apps with `matrix.md` (the older convention) still work. The gateway reads `matrix.md` if `matrix.json` is absent and converts it internally.
+<Callout type="info" title="Apps are real tools">
+  First-party and polished Matrix apps are Vite + React apps. They can have multiple screens, forms, tables, charts, saved state, and data stored in your Matrix database.
 </Callout>
 
-## App Lifecycle
+## What You Can Build
 
-The gateway manages app processes through the app manager:
+<Cards>
+  <Card title="Personal Trackers">
+    Habits, budgets, subscriptions, workouts, medications, books, recipes, home inventory, travel plans, and routines.
+  </Card>
+  <Card title="Work Tools">
+    Lightweight CRMs, task boards, invoice trackers, meeting follow-ups, project dashboards, checklists, and internal request forms.
+  </Card>
+  <Card title="Creative Tools">
+    Content calendars, script planners, moodboards, portfolio managers, campaign trackers, idea libraries, and publishing checklists.
+  </Card>
+  <Card title="Learning Tools">
+    Flashcards, study planners, reading notes, spaced repetition helpers, class dashboards, and quiz apps.
+  </Card>
+  <Card title="Family And Life Admin">
+    Chore boards, shared plans, event lists, meal planning, school reminders, moving checklists, and emergency info.
+  </Card>
+  <Card title="Games And Fun">
+    Simple games, puzzles, party tools, scorekeepers, interactive stories, and custom dashboards for hobbies.
+  </Card>
+</Cards>
 
-1. **Registration**: new directory detected in `~/apps/` or uploaded via API
-2. **Start**: gateway spawns the process based on `runtime` and `entry`
-3. **Health check**: gateway polls the app port until it responds (timeout 30s)
-4. **Running**: gateway reverse-proxies requests from `/modules/{name}/*` to the app port
-5. **Stop**: graceful shutdown via SIGTERM, then SIGKILL after 5s
+## Built-In Apps
 
-### API Endpoints
+Matrix ships with a growing set of default apps, including:
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/apps` | GET | List all apps with status (running/stopped/error) |
-| `/api/apps/:name/start` | POST | Start an app |
-| `/api/apps/:name/stop` | POST | Stop an app |
-| `/modules/:name/*` | * | Reverse proxy to running app |
+- Notes and writing tools.
+- Task and board-style planning.
+- Profile and social surfaces.
+- Calculator, clock, weather, Pomodoro, and utility apps.
+- Games such as Solitaire, Chess, Backgammon, Snake, 2048, Minesweeper, and Tetris.
+- Whiteboard and visual workspace tools.
 
-## Pre-Installed Games
+These default apps are bundled into the Matrix host bundle so every user starts with a useful workspace.
 
-Matrix OS ships with polished games in `~/apps/games/`:
+## Asking Matrix To Build An App
 
-- **Solitaire** -- Klondike with drag-and-drop, win animations, undo
-- **Chess** -- vs AI (stockfish.js with 3 difficulty levels) or vs friend
-- **Backgammon** -- vs AI, animated dice, doubling cube
-- **Snake** -- classic gameplay, increasing speed, high scores
-- **2048** -- swipe/keyboard input, tile merge animations
-- **Minesweeper** -- 3 difficulty levels, flag/chord click
-- **Tetris** -- 7-bag randomizer, ghost piece, hold, level progression
+Good app requests include:
 
-All games persist high scores via the [bridge API](/docs/guide/file-system) and are accessible from the Game Launcher app.
+- what the app is for;
+- what information it should track;
+- what views you want;
+- whether it should be simple or polished;
+- any style preferences;
+- whether it should use connected services.
 
-## Core Utility Apps
+Examples:
 
-- **File Manager** -- browse `~/matrixos/`, create/rename/delete files, drag-drop upload, file preview
-- **Calculator** -- scientific calculator with keyboard input and history
-- **Calendar** -- month/week/day views, events from cron jobs
-- **Clock/Weather** -- analog + digital clock, weather via free API, ambient mode
+> "Build me a budget tracker with monthly totals, categories, recurring expenses, and a simple chart."
 
-## Bundled Desktop Apps
+> "Create a CRM for my wedding photography leads. Track client name, event date, budget, status, notes, and next follow-up."
 
-Two heavyweight apps make Matrix OS feel like a real desktop:
+> "Make a study planner for my biology exam with flashcards, topics, confidence ratings, and a review schedule."
 
-### Chromium Browser
+> "Build a family chore board with recurring tasks, assignees, points, and a weekly summary."
 
-Full Chromium running headless via Kasm/noVNC, rendered in a Matrix OS window. The AI agent connects to the same Chromium instance via Playwright for web automation, scraping, and form filling.
+## App Data
 
-### VS Code (code-server)
+Apps can save structured data in your Matrix database. You do not need to manage the database yourself.
 
-Full VS Code via `code-server`, served in an iframe. Connected to your `~/matrixos/` files with pre-installed extensions for TypeScript, Python, Markdown, and Git.
+When an app needs tables, Matrix records them in the app manifest and the gateway creates schema-per-app tables in the Postgres database inside your Matrix environment. Apps access that database through Matrix's bridge API, not by handling database passwords directly.
 
-<Callout type="warn" title="Resource requirements">
-  Browser and VS Code each require ~512MB RAM. They are available as premium features on cloud deployments.
-</Callout>
+This means:
 
-## Building Apps with AI
+- app data persists across reloads;
+- apps can have real lists, records, filters, and charts;
+- recovery can restore app data from snapshots;
+- app permissions and access can be enforced by Matrix.
 
-Ask the AI to build apps by describing what you want:
+## Improving An App
 
-> Build me an expense tracker with categories and charts
+You can keep iterating in plain language:
 
-The Builder agent selects the best approach (HTML for simple apps, React for complex ones) and uses domain-specific [skills](/docs/developer/skills) to follow best practices. Apps appear in the dock within seconds.
+- "Add a dark mode."
+- "Make the mobile layout cleaner."
+- "Add a status filter."
+- "Import this CSV."
+- "Add charts by month."
+- "Make it easier for my team to use."
+- "Change the labels to match my business."
 
-### AI Skills for App Building
+Matrix can inspect the app it created, update the files, rebuild it, and keep the app in your workspace.
 
-The AI has pre-loaded skills for building Matrix OS apps:
+## Sharing And Installing
 
-| Skill | Purpose |
-|-------|---------|
-| `build-for-matrix` | Master skill: manifest format, bridge API, theming, permissions |
-| `build-react-app` | React module scaffold, state management, bridge API integration |
-| `build-html-app` | Single-file HTML apps, CDN imports, inline theming |
-| `build-nextjs-app` | Next.js 16 scaffold with App Router and server components |
-| `build-vite-app` | Vite + React scaffold with HMR |
-| `build-python-app` | FastAPI/Flask scaffold with virtualenv |
-| `build-dashboard` | Data visualization with Chart.js/recharts, responsive grids |
-| `build-crud-app` | CRUD patterns with bridge API, list/detail views, forms |
-| `build-game` | Canvas 2D games, p5.js, physics, score persistence |
-| `design-matrix-app` | UX/UI guidelines for Matrix OS apps |
+Matrix apps are meant to be shareable. You can:
 
-## Deploying Apps from External Sources
+- install apps from the app store;
+- fork an app and customize it;
+- share an app with another person;
+- publish your own app when it is ready;
+- keep your own app data separate from the original creator's data.
 
-You can bring apps from outside Matrix OS:
+## For Developers
 
-- **CLI**: `matrix push ./my-app` -- uploads a directory to `~/apps/`
-- **Upload API**: `POST /api/apps` with multipart form data
-- **Drag and drop**: drop a folder or zip file onto the desktop
-- **Chat**: paste code or describe what to install
-- **Git**: push to your `~/matrixos/` git remote
+Developers can still inspect and edit app files directly. First-party apps live under the Matrix home as Vite + React projects with `matrix.json`, `index.html`, `src/main.tsx`, and `vite.config.ts`. For most users, Matrix handles those details automatically.

@@ -1,125 +1,165 @@
 ---
 title: Getting Started
-description: Set up Matrix OS locally and start your first conversation with the AI kernel.
+description: Sign up, open your Matrix workspace, connect your tools, and make your first useful request.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-## Prerequisites
+Matrix OS is designed for normal people first. You should not need to install packages, run servers, or understand databases to use it. Start with your account, your tools, and the outcome you want.
 
-- **Node.js 24+** -- check with `node --version`
-- **pnpm** -- enable via corepack:
-  ```bash
-  corepack enable && corepack prepare pnpm@latest --activate
-  ```
-- **Anthropic API key** -- get one at [console.anthropic.com](https://console.anthropic.com)
-
-<Callout type="warn" title="Node.js version">
-  Matrix OS requires Node.js 24 or later. The `bin/matrixos.ts doctor` command verifies your environment automatically.
-</Callout>
-
-## Installation
+## First Five Minutes
 
 <Steps>
   <Step>
-    ### Clone and install
+    ### Sign up
 
-    ```bash
-    git clone https://github.com/hamedmp/matrix-os.git
-    cd matrix-os
-    pnpm install
-    ```
+    Create your Matrix OS account and choose a handle. Your handle identifies your workspace and becomes the name other people can recognize when you share, message, or publish.
   </Step>
   <Step>
-    ### Set your API key
+    ### Open your workspace
 
-    ```bash
-    export ANTHROPIC_API_KEY=sk-ant-...
-    ```
+    After signup, Matrix opens your personal workspace. This is where you chat with your AI, open apps, manage files, use Canvas, and connect services.
   </Step>
   <Step>
-    ### Start the OS
+    ### Connect the tools you already use
 
-    ```bash
-    bun run dev
-    ```
+    Open Integrations and connect the services you want Matrix to help with, such as Gmail, Google Calendar, Google Drive, GitHub, Slack, or Discord.
+  </Step>
+  <Step>
+    ### Ask Matrix for a concrete outcome
 
-    This starts two servers concurrently:
-    - **Gateway** at `http://localhost:4000` -- the Hono backend (kernel, channels, file server, WebSocket)
-    - **Shell** at `http://localhost:3000` -- the Next.js web desktop
+    Use plain language. Good first requests are specific and useful:
 
-    On first boot, the gateway copies the `home/` template to `~/matrixos/`, initializes git, and sets up default agents, skills, config, and SOUL identity.
+    - "What needs my attention today?"
+    - "Summarize my unread important emails."
+    - "Make a task board for planning my move."
+    - "Build me a simple budget tracker."
+    - "Draft a polite reply to this message."
   </Step>
 </Steps>
 
-### Running Servers Individually
+<Callout type="info" title="You stay in control">
+  Matrix can read, draft, organize, and build with connected tools, but sensitive actions should be permissioned and visible. Treat Matrix like a capable assistant: give it goals, review important outputs, and approve actions that matter.
+</Callout>
 
-```bash
-bun run dev:gateway   # Gateway only (http://localhost:4000)
-bun run dev:shell     # Shell only (http://localhost:3000)
-```
+## What To Try First
 
-## Your First Conversation
+<Cards>
+  <Card title="Plan My Day">
+    Ask Matrix to combine calendar events, emails, reminders, and notes into a short plan with priorities.
+  </Card>
+  <Card title="Build A Personal App">
+    Ask for an app that fits your life: budget tracker, habit tracker, trip planner, recipe book, medication log, CRM, or study planner.
+  </Card>
+  <Card title="Organize A Project">
+    Give Matrix a goal and ask it to create tasks, notes, files, timelines, and a workspace canvas.
+  </Card>
+  <Card title="Clean Up Information">
+    Paste messy notes, upload files, or point Matrix at connected data and ask it to summarize, classify, and turn it into next steps.
+  </Card>
+  <Card title="Communicate Better">
+    Draft replies, prepare meeting notes, write follow-ups, or summarize long threads before you respond.
+  </Card>
+  <Card title="Remember Context">
+    Tell Matrix preferences, recurring routines, people, projects, and decisions so it can use them later.
+  </Card>
+</Cards>
 
-Open `http://localhost:3000` in your browser. You'll see the Matrix OS desktop with a chat panel, dock, and input bar.
+## The Main Parts Of Matrix
 
-Type something like:
+### Chat
 
-> Build me an expense tracker with categories
+Chat is the fastest way to ask for work. You can ask Matrix to answer questions, create apps, summarize files, use integrations, organize projects, or explain what it is doing.
 
-Here's what happens:
+### Apps
 
-1. Your message hits the gateway's `/ws` WebSocket endpoint
-2. The dispatcher adds it to the serial queue and creates a task in PostgreSQL
-3. `spawnKernel()` builds a system prompt with SOUL, identity, skills TOC, and active processes
-4. The kernel invokes Claude Agent SDK `query()` and selects the **Builder** agent
-5. Builder uses IPC tools to create files in `~/matrixos/apps/`
-6. `gitSnapshotHook` commits the changes automatically
-7. The file watcher detects new files and the shell renders the app in an AppViewer window
-8. Response tokens stream back to the chat panel in real time
+Apps are tools inside your Matrix workspace. Some come pre-installed, and Matrix can create new apps when you describe what you need. First-party apps are built as Vite + React apps and can store structured data in your Matrix database through the bridge API.
 
-Everything it creates is a file you own. Check `~/matrixos/apps/` to see the generated code.
+### Canvas
 
-## Project Structure
+Canvas is the main workspace surface. Use it to arrange apps, files, tasks, notes, terminals, projects, and review loops spatially so you can return to the same context later.
 
-```
-packages/kernel/     # AI kernel (Agent SDK, agents, IPC, hooks, SOUL, skills)
-packages/gateway/    # Hono HTTP/WebSocket gateway + channels + cron + heartbeat
-packages/platform/   # Multi-tenant orchestrator (Hono :9000, Kysely/PostgreSQL, dockerode)
-shell/               # Next.js 16 web desktop (one of many shells)
-www/                 # matrix-os.com website (you're reading its docs)
-home/                # File system template (copied on first boot)
-tests/               # Vitest test suites (993+ tests)
-specs/               # Architecture specifications
-distro/              # Docker, cloudflared, systemd configs
-```
+### Integrations
 
-## Running Tests
+Integrations connect Matrix to the services you already use. Once connected, Matrix can search, summarize, draft, schedule, post, or organize through those services.
 
-```bash
-bun run test              # Unit tests (~993 tests, ~11s)
-bun run test:watch        # Watch mode
-bun run test:coverage     # With coverage report
-bun run test:integration  # Integration tests (needs API key, uses haiku)
-```
+### Files And Data
 
-## Environment Variables
+Your files live in your Matrix home. Your app and workspace data lives in your Matrix Postgres database. You do not need to manage this manually; Matrix uses it so your work survives reloads, upgrades, and recovery.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | -- | Required for kernel AI features |
-| `MATRIX_HOME` | `~/matrixos/` | Home directory path |
-| `MATRIX_AUTH_TOKEN` | -- | Bearer token for web shell auth (cloud deployments) |
-| `PORT` | `4000` | Gateway port |
-| `NEXT_PUBLIC_GATEWAY_WS` | `ws://localhost:4000/ws` | Shell WebSocket URL |
-| `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:4000` | Shell HTTP URL |
-| `GATEWAY_URL` | `http://localhost:4000` | Next.js proxy target |
+## Example Requests
 
-Channel tokens (Telegram, Discord, Slack, WhatsApp) are configured in `~/matrixos/system/config.json` -- everything is a file.
+### Personal Life
+
+- "Create a weekly meal plan and grocery list for two adults."
+- "Make a moving checklist and track what is done."
+- "Build a habit tracker with streaks and notes."
+- "Summarize this PDF into plain English."
+- "Plan a weekend trip under this budget."
+
+### Work
+
+- "Summarize what happened in Slack while I was away."
+- "Find the emails I need to respond to and draft replies."
+- "Create a lightweight CRM for these leads."
+- "Turn this meeting transcript into decisions, owners, and due dates."
+- "Make a dashboard for invoices and follow-ups."
+
+### Creative
+
+- "Plan a month of content ideas."
+- "Turn these notes into a script outline."
+- "Make a portfolio tracker for projects and links."
+- "Build a moodboard app for this campaign."
+
+### Technical
+
+- "Create a project canvas for this repository."
+- "Find failing tests and explain the cause."
+- "Draft GitHub issues from this plan."
+- "Build an internal tool for this workflow."
+
+## Good Prompts
+
+Matrix works best when you include:
+
+- the outcome you want;
+- any important constraints;
+- where the relevant information lives;
+- how polished or rough the result should be;
+- whether Matrix should ask before taking external actions.
+
+Examples:
+
+> "Build me a personal budget tracker. I want categories, monthly totals, recurring expenses, and a simple chart. Keep it clean and mobile-friendly."
+
+> "Look at my calendar and unread email. Give me a 5-item priority list for today. Do not send anything without asking."
+
+> "Create a task board for launching my newsletter. Include writing, design, publishing, and sponsor outreach."
 
 ## Next Steps
 
-- Explore the [Agent System](/docs/guide/agents) to understand the five core agents
-- Read about the [File System](/docs/guide/file-system) to understand `~/matrixos/`
-- Connect a [Channel](/docs/guide/channels) like Telegram or Discord
+<Cards>
+  <Card
+    title="Integrations"
+    description="Connect services so Matrix can work with your email, calendar, files, chat, and code."
+    href="/docs/guide/integrations"
+  />
+  <Card
+    title="Apps"
+    description="Use built-in apps and ask Matrix to build new tools for your work and life."
+    href="/docs/guide/apps"
+  />
+  <Card
+    title="Channels"
+    description="Understand the web workspace and upcoming messaging surfaces."
+    href="/docs/guide/channels"
+  />
+  <Card
+    title="Storage"
+    description="Learn where your files, app data, and workspace state live."
+    href="/docs/guide/storage"
+  />
+</Cards>

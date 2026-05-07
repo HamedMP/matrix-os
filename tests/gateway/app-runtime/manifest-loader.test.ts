@@ -60,15 +60,36 @@ describe("loadManifest", () => {
     }
   });
 
-  it("rejects slug mismatch between dir name and manifest.slug", async () => {
+  it("loads manifests by slug even when nested directory name differs", async () => {
     const appDir = join(tmpDir, "dir-name");
     await mkdir(appDir, { recursive: true });
     await writeFile(join(appDir, "matrix.json"), validManifest("different-slug"));
 
-    const result = await loadManifest(tmpDir, "dir-name");
+    const byDirectory = await loadManifest(tmpDir, "dir-name");
+    expect(byDirectory.ok).toBe(false);
+    if (!byDirectory.ok) {
+      expect(byDirectory.error.code).toBe("not_found");
+    }
+
+    const bySlug = await loadManifest(tmpDir, "different-slug");
+    expect(bySlug.ok).toBe(true);
+    if (bySlug.ok) {
+      expect(bySlug.manifest.slug).toBe("different-slug");
+    }
+  });
+
+  it("rejects duplicate manifest slugs deterministically", async () => {
+    const firstDir = join(tmpDir, "games", "first");
+    const secondDir = join(tmpDir, "tools", "second");
+    await mkdir(firstDir, { recursive: true });
+    await mkdir(secondDir, { recursive: true });
+    await writeFile(join(firstDir, "matrix.json"), validManifest("shared"));
+    await writeFile(join(secondDir, "matrix.json"), validManifest("shared"));
+
+    const result = await loadManifest(tmpDir, "shared");
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.code).toBe("slug_mismatch");
+      expect(result.error.code).toBe("invalid_manifest");
     }
   });
 

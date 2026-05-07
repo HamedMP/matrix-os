@@ -1,0 +1,25 @@
+{
+  "name": "Symphony",
+  "description": "Linear-driven Codex orchestration for Matrix OS repositories",
+  "category": "developer",
+  "icon": "code",
+  "author": "system",
+  "version": "1.0.0",
+  "runtime": "vite",
+  "slug": "symphony",
+  "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180
+  },
+  "integrations": {
+    "required": [
+      "linear",
+      "github"
+    ]
+  },
+  "listingTrust": "first_party"
+}

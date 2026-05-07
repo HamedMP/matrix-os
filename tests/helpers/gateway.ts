@@ -9,10 +9,12 @@ import {
   signAppSession,
   buildSetCookie,
   loadManifest,
+  resolveAppBySlug,
   computeDistributionStatus,
   sandboxCapabilities,
   computeRuntimeState,
   AckStore,
+  MobileAppSessionTokenStore,
   SAFE_SLUG,
   installApp,
 } from "../../packages/gateway/src/app-runtime/index.js";
@@ -28,6 +30,7 @@ export interface TestGateway {
   installAppFromFixture(slug: string): Promise<void>;
   openAppSession(slug: string, opts?: { ack?: string }): Promise<string>;
   requestAckToken(slug: string): Promise<string>;
+  requestMobileSessionToken(slug: string, opts?: { ack?: string }): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -37,6 +40,10 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
 
   const app = new Hono();
   const ackStore = new AckStore();
+  const mobileSessionTokens = new MobileAppSessionTokenStore({
+    ttlMs: 60_000,
+    maxEntries: 256,
+  });
 
   // Auth middleware
   app.use("*", authMiddleware(TEST_TOKEN));
@@ -51,7 +58,9 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
       if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
       return c.json({ error: "internal" }, 500);
     }
-    const appDir = join(appsDir, slug);
+    const resolved = await resolveAppBySlug(appsDir, slug);
+    if (!resolved.ok) return c.json({ error: "internal" }, 500);
+    const appDir = resolved.entry.appDir;
     const runtimeState = await computeRuntimeState(result.manifest, appDir);
     const distributionStatus = computeDistributionStatus(
       result.manifest.listingTrust,
@@ -88,7 +97,13 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
     if (distributionStatus === "blocked") return c.json({ error: "install_blocked_by_policy" }, 403);
     if (distributionStatus === "gated") {
       let body: { ack?: string } = {};
-      try { body = await c.req.json(); } catch {}
+      try {
+        body = await c.req.json();
+      } catch (err) {
+        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+          throw err;
+        }
+      }
       if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
         return c.json({ error: "install_gated" }, 409);
       }
@@ -107,6 +122,77 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
     const token = signAppSession(key, payload);
     const cookie = buildSetCookie(slug, token, { maxAge, secure: false });
     return c.json({ expiresAt: payload.exp * 1000 }, 200, { "Set-Cookie": cookie });
+  });
+
+  app.post("/api/apps/:slug/session-token", async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) return c.json({ error: "invalid slug" }, 400);
+    const appsDir = join(home, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) return c.json({ error: "not found" }, 404);
+    const manifest = result.manifest;
+    if (manifest.scope !== "personal") return c.json({ error: "scope_mismatch" }, 409);
+    const distributionStatus = computeDistributionStatus(manifest.listingTrust, sandboxCapabilities());
+    if (distributionStatus === "blocked") return c.json({ error: "install_blocked_by_policy" }, 403);
+    if (distributionStatus === "gated") {
+      let body: { ack?: string } = {};
+      try {
+        body = await c.req.json();
+      } catch (err) {
+        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+          throw err;
+        }
+      }
+      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
+        return c.json({ error: "install_gated" }, 409);
+      }
+    }
+    const { token, expiresAt } = mobileSessionTokens.mint(slug);
+    return c.json({
+      token,
+      expiresAt,
+      launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
+    });
+  });
+
+  app.use("/apps/:slug/*", async (c, next) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) return c.json({ error: "invalid slug" }, 400);
+    const url = new URL(c.req.url);
+    const token = url.searchParams.get("session");
+    if (!token) {
+      await next();
+      return;
+    }
+    if (!mobileSessionTokens.consume(slug, token)) {
+      return c.html("<!doctype html><title>Session expired</title><p>Session expired.</p>", 401, {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/html; charset=utf-8",
+      });
+    }
+    const key = deriveAppSessionKey(TEST_TOKEN, slug);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const maxAge = 600;
+    const payload = {
+      v: 1 as const,
+      slug,
+      principal: "gateway-owner" as const,
+      scope: "personal" as const,
+      iat: nowSec,
+      exp: nowSec + maxAge,
+    };
+    const cookie = buildSetCookie(slug, signAppSession(key, payload), { maxAge, secure: false });
+    url.searchParams.delete("session");
+    const nextSearch = url.searchParams.toString();
+    const location = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
+    return new Response(null, {
+      status: 302,
+      headers: {
+        "Cache-Control": "no-store",
+        "Location": location,
+        "Set-Cookie": cookie,
+      },
+    });
   });
 
   // App session middleware for /apps/*
@@ -151,6 +237,21 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
     return ack;
   }
 
+  async function requestMobileSessionToken(slug: string, opts?: { ack?: string }): Promise<string> {
+    const body = opts?.ack ? JSON.stringify({ ack: opts.ack }) : undefined;
+    const res = await app.request(`/api/apps/${slug}/session-token`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+    if (!res.ok) throw new Error(`Failed to request mobile session token: ${res.status}`);
+    const json = (await res.json()) as { token: string };
+    return json.token;
+  }
+
   return {
     app,
     home,
@@ -159,6 +260,7 @@ export async function buildTestGateway(opts?: { home?: string }): Promise<TestGa
     installAppFromFixture: installAppFromFixture,
     openAppSession: openSession,
     requestAckToken: requestAck,
+    requestMobileSessionToken,
     stop: async () => {},
   };
 }

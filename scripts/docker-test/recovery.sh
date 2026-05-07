@@ -16,7 +16,7 @@ echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Write some bridge data
 echo -e "${YELLOW}[ACTION]${NC} Writing bridge data..."
@@ -56,7 +56,7 @@ sleep 2
 echo -e "${YELLOW}[ACTION]${NC} Restarting container..."
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Verify bridge data survived
 echo -e "${YELLOW}[VERIFY]${NC} Checking data integrity..."

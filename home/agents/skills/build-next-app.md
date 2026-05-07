@@ -9,12 +9,13 @@ trigger: When the user asks to build a server-side app, an app with API routes, 
 ## When to use Next.js (runtime: "node")
 
 Use Next.js when the app needs:
-- API routes (e.g., /api/data, /api/webhooks)
+- User-explicit server runtime or Next.js behavior
+- API routes that cannot be handled by Matrix platform APIs (e.g., /api/webhooks)
 - Server-side rendering (SSR) or React Server Components
 - Background processing or long-lived connections
-- Database access from server code
+- Direct server-only database access that cannot use Matrix/Postgres bridge APIs
 
-For static React SPAs without server logic, use the Vite template instead (see `build-vite-app.md`).
+For CRM, roadmap, dashboard, admin, CRUD, charting, and static React SPA apps, use the Vite template instead (see `build-vite-app.md`). Do not choose Next.js merely because an app stores data.
 
 ## Scaffold
 

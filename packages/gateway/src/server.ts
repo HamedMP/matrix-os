@@ -63,6 +63,12 @@ import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
+import {
+  checkForSystemUpdate,
+  parseUpdateChannel,
+  startSystemUpdate,
+  type UpdateChannel,
+} from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
@@ -70,6 +76,7 @@ import { listApps } from "./apps.js";
 import {
   createAppDispatcher,
   appSessionMiddleware,
+  resolveAppBySlug,
   loadManifest,
   computeDistributionStatus,
   sandboxCapabilities,
@@ -78,6 +85,7 @@ import {
   signAppSession,
   buildSetCookie,
   AckStore,
+  MobileAppSessionTokenStore,
   SAFE_SLUG,
   ProcessManager,
   PortPool,
@@ -169,6 +177,7 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
+const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 
 function timingSafeStringEquals(actual: string | null | undefined, expected: string): boolean {
   if (!actual) return false;
@@ -377,7 +386,7 @@ export async function createGateway(config: GatewayConfig) {
       // Register apps with storage declarations
       try {
         const { loadAppManifest } = await import("./app-manifest.js");
-        const apps = listApps(homePath);
+        const apps = await listApps(homePath);
         let registered = 0;
         for (const app of apps) {
           const appDir = app.file.includes("/")
@@ -1226,6 +1235,10 @@ export async function createGateway(config: GatewayConfig) {
   // --- App Runtime (spec 063) ---
   // Ack-token store: bounded LRU (cap 32, 5min TTL)
   const ackStore = new AckStore();
+  const mobileSessionTokens = new MobileAppSessionTokenStore({
+    ttlMs: 60_000,
+    maxEntries: 256,
+  });
 
   // GET /api/apps/:slug/manifest — bearer-authed manifest + runtime state + distribution status
   app.get("/api/apps/:slug/manifest", async (c) => {
@@ -1239,7 +1252,9 @@ export async function createGateway(config: GatewayConfig) {
       if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
       return c.json({ error: "internal" }, 500);
     }
-    const appDir = join(appsDir, slug);
+    const resolved = await resolveAppBySlug(appsDir, slug);
+    if (!resolved.ok) return c.json({ error: "internal" }, 500);
+    const appDir = resolved.entry.appDir;
     const runtimeState = await computeRuntimeState(result.manifest, appDir);
     const distributionStatus = computeDistributionStatus(
       result.manifest.listingTrust,
@@ -1343,6 +1358,99 @@ export async function createGateway(config: GatewayConfig) {
     });
     return c.json({ expiresAt: payload.exp * 1000 }, 200, {
       "Set-Cookie": cookie,
+    });
+  });
+
+  // POST /api/apps/:slug/session-token — mobile-safe one-shot session bootstrap.
+  app.post("/api/apps/:slug/session-token", appSessionBodyLimit, async (c) => {
+    const slug = c.req.param("slug");
+    if (!SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const appsDir = join(homePath, "apps");
+    const result = await loadManifest(appsDir, slug);
+    if (!result.ok) {
+      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+      return c.json({ error: "internal" }, 500);
+    }
+    const manifest = result.manifest;
+    if (manifest.scope !== "personal") {
+      return c.json({ error: "scope_mismatch" }, 409);
+    }
+    const distributionStatus = computeDistributionStatus(
+      manifest.listingTrust,
+      sandboxCapabilities(),
+    );
+    if (distributionStatus === "blocked") {
+      return c.json({ error: "install_blocked_by_policy" }, 403);
+    }
+    if (distributionStatus === "gated") {
+      let body: { ack?: string } = {};
+      try {
+        body = await c.req.json();
+      } catch (err) {
+        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+          throw err;
+        }
+      }
+      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
+        return c.json({ error: "install_gated" }, 409);
+      }
+    }
+    const routingHandle = process.env.MATRIX_HANDLE;
+    const { token, expiresAt } = mobileSessionTokens.mint(slug, Date.now(), {
+      routingKey: routingHandle && HANDLE_PATTERN.test(routingHandle) ? routingHandle : undefined,
+    });
+    return c.json({
+      token,
+      expiresAt,
+      launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
+    });
+  });
+
+  app.use("/apps/:slug/*", async (c, next) => {
+    const slug = c.req.param("slug");
+    if (!slug || !SAFE_SLUG.test(slug)) {
+      return c.json({ error: "invalid slug" }, 400);
+    }
+    const url = new URL(c.req.url);
+    const token = url.searchParams.get("session");
+    if (!token) {
+      await next();
+      return;
+    }
+    if (!mobileSessionTokens.consume(slug, token)) {
+      return c.html("<!doctype html><title>Session expired</title><p>Session expired.</p>", 401, {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/html; charset=utf-8",
+      });
+    }
+
+    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const maxAge = 600;
+    const payload = {
+      v: 1 as const,
+      slug,
+      principal: "gateway-owner" as const,
+      scope: "personal" as const,
+      iat: nowSec,
+      exp: nowSec + maxAge,
+    };
+    const cookie = buildSetCookie(slug, signAppSession(key, payload), {
+      maxAge,
+      secure: c.req.url.startsWith("https"),
+    });
+    url.searchParams.delete("session");
+    const nextSearch = url.searchParams.toString();
+    const location = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
+    return new Response(null, {
+      status: 302,
+      headers: {
+        "Cache-Control": "no-store",
+        "Location": location,
+        "Set-Cookie": cookie,
+      },
     });
   });
 
@@ -2908,8 +3016,8 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(task);
   });
 
-  app.get("/api/apps", (c) => {
-    return c.json(listApps(homePath));
+  app.get("/api/apps", async (c) => {
+    return c.json(await listApps(homePath));
   });
 
   function resolveSystemIconUrl(requestedFile: string): string | null {
@@ -3155,6 +3263,31 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
+  function resolveUpdateChannel(value: unknown): UpdateChannel | null {
+    return parseUpdateChannel(
+      typeof value === "string" && value.length > 0
+        ? value
+        : process.env.MATRIX_UPDATE_CHANNEL ?? "stable",
+    );
+  }
+
+  app.get("/api/system/update", async (c) => {
+    const channel = resolveUpdateChannel(c.req.query("channel"));
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    const info = getSystemInfo(homePath);
+    const result = await checkForSystemUpdate({
+      installed: info.release ?? {
+        version: info.version,
+        gitCommit: info.build.sha,
+        gitRef: info.build.ref,
+        buildTime: info.build.date,
+      },
+      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
+      channel,
+    });
+    return c.json(result);
+  });
+
   app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
     const token = process.env.MATRIX_SYSTEM_BACKUP_TOKEN;
     if (!token) {
@@ -3168,43 +3301,31 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ error: "Backup trigger not implemented" }, 501);
   });
 
-  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
-    const handle = process.env.MATRIX_HANDLE;
-    const token = process.env.UPGRADE_TOKEN;
-    const platformUrl = process.env.PLATFORM_INTERNAL_URL;
-
-    if (!handle || !token || !platformUrl) {
-      return c.json({ error: "Upgrade not configured" }, 503);
-    }
-
+  async function startUpdateFromRequest(c: Context) {
+    let body: unknown = {};
     try {
-      const res = await fetch(`${platformUrl}/containers/${handle}/self-upgrade`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(30_000),
-      });
-
-      if (!res.ok) {
-        let data: unknown = {};
-        try {
-          data = await res.json();
-        } catch (err: unknown) {
-          if (!(err instanceof SyntaxError)) {
-            console.warn("[system/upgrade] Failed to parse platform error response:", err);
-          }
-        }
-        return c.json({ error: (data as Record<string, string>).error ?? "Upgrade failed" }, res.status as 400);
-      }
-
-      return c.json({ ok: true });
+      body = await c.req.json();
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") {
-        console.error("[system/upgrade] Platform self-upgrade request timed out");
-        return c.json({ error: "Upgrade timed out" }, 504);
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[system-update] Failed to parse update request:", err);
       }
-      // Connection drop likely means the container is being replaced
-      return c.json({ ok: true });
     }
+    const requestedChannel =
+      body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
+    const channel = resolveUpdateChannel(requestedChannel);
+    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+
+    const result = await startSystemUpdate({ channel });
+    if (!result.ok) {
+      return c.json({ error: "Update not configured" }, 503);
+    }
+    return c.json({ ok: true, status: result.status, channel }, 202);
+  }
+
+  app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
+
+  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
+    return startUpdateFromRequest(c);
   });
 
   const usageTracker = createUsageTracker(homePath);

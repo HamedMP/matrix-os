@@ -1,121 +1,107 @@
 ---
-title: Introduction
-description: Matrix OS is Web 4 -- a unified AI operating system where software is generated from conversation.
+title: Guide
+description: Learn what Matrix OS can do and how to use it day to day.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-## What is Matrix OS?
+## What Is Matrix OS?
 
-Matrix OS is an AI-native operating system that combines your OS, messaging, social network, and AI assistant into a single platform. You describe what you need in natural language. It writes the software into existence.
+Matrix OS is a personal AI operating system. It gives you a web workspace where an AI can understand your context, use connected services, create apps, organize files, remember preferences, and help you get real work done.
 
-Built on the Claude Agent SDK, Matrix OS treats AI as the kernel. The `spawnKernel()` function in `packages/kernel/src/spawn.ts` invokes `query()` for initial prompts and `resume` for multi-turn conversations. Everything the system creates is persisted as files in `~/matrixos/`.
+You do not use Matrix by configuring infrastructure. You use it by asking for outcomes.
 
-<Callout type="info" title="Everything you create is a file you own">
-  Apps live in `~/matrixos/apps/`, config in `~/matrixos/system/`, agent prompts in `~/matrixos/agents/`. Back up your entire OS by copying a folder.
+<Callout type="info" title="The simple version">
+  Matrix is your AI workspace: chat with it, connect your tools, ask it to build what you need, and keep everything organized in one place.
 </Callout>
 
-## How It Works
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Shell as Shell (Web/Telegram/CLI)
-    participant GW as Gateway
-    participant Disp as Dispatcher
-    participant K as Kernel
-    participant Agent as Sub-Agent
-    participant FS as ~/matrixos/
-
-    User->>Shell: "Build me an expense tracker"
-    Shell->>GW: WebSocket / REST / Channel
-    GW->>Disp: dispatch(message)
-    Disp->>Disp: Queue + create task in PostgreSQL
-    Disp->>K: spawnKernel(message)
-    K->>K: buildSystemPrompt(SOUL, skills, context)
-    K->>Agent: Select Builder agent
-    Agent->>FS: Write files via IPC tools
-    FS-->>Agent: gitSnapshotHook commits
-    Agent-->>K: Stream tokens
-    K-->>GW: KernelEvents
-    GW-->>Shell: ServerMessages (streaming)
-    Shell-->>User: App appears on desktop
-```
-
-## Core Principles
+## What Matrix Helps With
 
 <Cards>
-  <Card title="Everything Is a File">
-    The file system is the single source of truth. Config, agents, skills, themes, data -- all files you own and can inspect, copy, or version with git.
+  <Card title="Personal Productivity" href="/docs/guide/getting-started">
+    Plan your day, summarize information, make checklists, track habits, organize files, and turn messy thoughts into clear next actions.
   </Card>
-  <Card title="Agent Is the Kernel">
-    The Claude Agent SDK is the kernel. `query()` with `resume` handles multi-turn conversations. Five specialized sub-agents handle different task types.
+  <Card title="Connected Work" href="/docs/guide/integrations">
+    Work across Gmail, Calendar, Drive, GitHub, Slack, Discord, and other services without jumping between tabs.
   </Card>
-  <Card title="Headless Core, Multi-Shell">
-    The core works without a UI. The web desktop is one of many shells -- Telegram, WhatsApp, Discord, Slack, and CLI all connect to the same kernel.
+  <Card title="Custom Apps" href="/docs/guide/apps">
+    Ask Matrix to create apps for your life or business: trackers, planners, dashboards, CRMs, games, study tools, and internal tools.
   </Card>
-  <Card title="Self-Healing and Self-Expanding">
-    The Healer agent detects broken modules and restores them from git snapshots. The Evolver agent writes new agents, skills, and knowledge files on demand.
+  <Card title="Shared Apps" href="/docs/guide/app-store">
+    Install apps, fork them, customize them, share them with others, or publish your own.
+  </Card>
+  <Card title="Communication" href="/docs/guide/channels">
+    Use Matrix through the web workspace and, as channels come online, through messaging surfaces.
+  </Card>
+  <Card title="Memory And Data" href="/docs/guide/storage">
+    Keep files, app data, memories, and workspace state in your own Matrix environment.
   </Card>
 </Cards>
 
-## The Computer Metaphor
+## Example Workflows
 
-Matrix OS maps the Claude Agent SDK to real computer architecture:
+### "Help Me Run My Day"
 
-| Component | Maps To |
-|-----------|---------|
-| CPU | Claude Opus 4.6 |
-| RAM | Context window (1M tokens) |
-| Kernel | Main agent + `spawnKernel()` |
-| Processes | 5 sub-agents (Builder, Researcher, Deployer, Healer, Evolver) |
-| Syscalls | Read, Write, Edit, Bash |
-| Disk | `~/matrixos/` (apps, data, system, agents) |
-| Drivers | MCP servers (IPC tools) |
-| IPC | File coordination + PostgreSQL task queue |
+Connect calendar and email, then ask Matrix:
 
-## Next Steps
+> "What should I focus on today? Pull from my calendar, unread email, and existing tasks."
+
+Matrix can summarize what matters, create tasks, draft replies, and build a plan.
+
+### "Build Me A Tool"
+
+Ask:
+
+> "Build a clean app to track subscriptions, renewal dates, monthly cost, and cancellation notes."
+
+Matrix creates a real app in your workspace and stores its data in your Matrix database.
+
+### "Organize This Project"
+
+Ask:
+
+> "Create a workspace for launching my podcast. Include episodes, guests, sponsors, publishing checklist, and files."
+
+Matrix can create apps, tasks, notes, and a Canvas layout for the project.
+
+### "Use My Connected Services"
+
+Ask:
+
+> "Find the last email from my accountant, summarize it, and draft a response. Ask before sending."
+
+Matrix uses integrations to read context and prepare work while keeping you in control.
+
+### "Remember How I Work"
+
+Tell Matrix:
+
+> "When I ask for a daily plan, keep it under five bullets and separate urgent from optional."
+
+Matrix can use preferences and context in later conversations.
+
+## Where To Go Next
 
 <Cards>
   <Card
     title="Getting Started"
-    description="Set up Matrix OS locally and have your first conversation"
+    description="Create your account, open your workspace, connect tools, and make your first request."
     href="/docs/guide/getting-started"
   />
   <Card
-    title="Agent System"
-    description="Understand the five core agents, SOUL identity, and skills"
-    href="/docs/guide/agents"
-  />
-  <Card
-    title="File System"
-    description="The home directory, config, themes, and git snapshots"
-    href="/docs/guide/file-system"
-  />
-  <Card
     title="Integrations"
-    description="Connect Gmail, Calendar, GitHub, Slack, Discord and use them from conversation"
+    description="Connect your existing services and understand what Matrix can do with them."
     href="/docs/guide/integrations"
   />
   <Card
     title="Apps"
-    description="App runtime, pre-installed games, utilities, and bundled desktop apps"
+    description="Use built-in apps and ask Matrix to create new ones."
     href="/docs/guide/apps"
   />
   <Card
-    title="App Store"
-    description="Browse, install, publish, and fork apps. Personal websites."
-    href="/docs/guide/app-store"
-  />
-  <Card
     title="Storage"
-    description="S3 backup, git versioning, and PostgreSQL databases"
+    description="Understand where your files and app data live."
     href="/docs/guide/storage"
-  />
-  <Card
-    title="Social"
-    description="Social feed, messaging, Matrix protocol federation"
-    href="/docs/guide/social"
   />
 </Cards>

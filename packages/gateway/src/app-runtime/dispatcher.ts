@@ -5,6 +5,7 @@ import { lstat, realpath, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolveWithinHome } from "../path-security.js";
 import { SAFE_SLUG } from "./manifest-schema.js";
+import { resolveAppBySlug } from "./app-index.js";
 import { loadManifest } from "./manifest-loader.js";
 import { serveStaticFileWithin } from "./serve-static.js";
 import type { ProcessManager } from "./process-manager.js";
@@ -66,8 +67,10 @@ function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
 }
 
 async function resolveAppDirectory(appsDir: string, slug: string): Promise<string | null> {
-  const appDir = resolveWithinHome(appsDir, slug);
-  if (!appDir) return null;
+  const resolved = await resolveAppBySlug(appsDir, slug);
+  if (!resolved.ok) return null;
+  const appDir = resolveWithinHome(appsDir, resolved.entry.relativePath);
+  if (!appDir || appDir !== resolved.entry.appDir) return null;
 
   const appStat = await lstat(appDir).catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT" || err.code === "ENOTDIR") return null;

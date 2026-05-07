@@ -1,181 +1,216 @@
 ---
 title: Architecture
-description: How the kernel, gateway, dispatcher, agents, and shell fit together.
+description: "How Matrix OS fits together: platform control plane, customer VPS runtime, gateway, shell, kernel, apps, and data."
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-## System Architecture
+## Architecture At A Glance
+
+Matrix OS has two major runtime layers:
+
+- **Platform control plane**: shared services for auth, routing, provisioning, integrations, host-bundle publication, and recovery orchestration.
+- **Customer VPS runtime**: one VPS per active user, running that user's Matrix gateway, shell, code editor, app assets, local Postgres, sync, and backup services.
 
 ```mermaid
 graph TD
-    subgraph Shells[Client Shells]
-        Web["Web Desktop :3000"]
-        TG[Telegram]
-        DC[Discord]
-        SL[Slack]
-        WA[WhatsApp]
-        CL[CLI]
+    User[User Browser] --> CF[Cloudflare]
+    CF --> Platform[Platform VPS :9000]
+
+    subgraph PlatformBox[Platform Control Plane]
+      Auth[Clerk Auth + Session Routing]
+      Machines[user_machines Registry]
+      Integrations[Pipedream Integration Routes]
+      Bundles[R2 Host Bundles]
+      Provision[Hetzner Provisioning]
+      PDB[(Platform Postgres)]
     end
 
-    subgraph Gateway["Gateway (Hono :4000)"]
-        WS["/ws WebSocket"]
-        WST["/ws/terminal PTY"]
-        API["/api/message REST"]
-        Files["/files/* static"]
-        Modules["/modules/* proxy"]
-        Health["/health"]
-        CM[ChannelManager]
-        Cron[CronService]
-        HB[HeartbeatRunner]
-        FW[FileWatcher]
-        Disp[Dispatcher]
+    Platform --> Auth
+    Platform --> Machines
+    Platform --> Integrations
+    Platform --> Bundles
+    Platform --> Provision
+    Machines --> PDB
+
+    Platform --> Customer[Customer VPS HTTPS :443]
+
+    subgraph CustomerBox[Customer VPS]
+      Nginx[Nginx]
+      Shell[matrix-shell.service :3000]
+      Gateway[matrix-gateway.service :4000]
+      Code[matrix-code.service :8787]
+      Sync[matrix-sync-agent.service]
+      Pg[(Local Postgres :5432)]
+      Home[/home/matrix/home/]
+      Runtime[/opt/matrix/app + runtime/]
     end
 
-    subgraph Kernel["Kernel (Agent SDK)"]
-        Spawn["spawnKernel()"]
-        Prompt["buildSystemPrompt()"]
-        Agents["5 Agents"]
-        IPC["26 IPC Tools\n(createSdkMcpServer)"]
-        Hooks["8 Hooks\n(PreToolUse, PostToolUse, Stop)"]
-    end
-
-    subgraph Home["~/matrixos/"]
-        Apps[apps/]
-        AgDir[agents/]
-        Sys[system/]
-        Data[data/]
-        Mod[modules/]
-    end
-
-    Web --> WS
-    TG --> CM
-    DC --> CM
-    SL --> CM
-    WA --> CM
-    CL --> API
-    CM --> Disp
-    WS --> Disp
-    API --> Disp
-    Cron --> Disp
-    HB --> Disp
-    Disp --> Spawn
-    Spawn --> Prompt
-    Spawn --> Agents
-    Spawn --> IPC
-    Spawn --> Hooks
-    IPC --> Home
-    FW -.-> Home
-    Files --> Home
-    Modules --> Mod
+    Customer --> Nginx
+    Nginx --> Shell
+    Nginx --> Gateway
+    Nginx --> Code
+    Gateway --> Pg
+    Gateway --> Home
+    Shell --> Gateway
+    Sync --> Home
 ```
 
-### Gateway Endpoints
+## Platform Control Plane
 
-| Endpoint | Purpose |
-|----------|---------|
-| `/ws` | Main WebSocket (chat, file watcher events) |
-| `/ws/terminal` | PTY WebSocket (xterm.js to node-pty) |
-| `/api/message` | REST endpoint for kernel dispatch |
-| `/api/channels/status` | Connected channel status |
-| `/files/*` | Static file serving from ~/matrixos/ |
-| `/modules/*` | Reverse proxy to module ports (3100-3999) |
-| `/api/theme` | Current theme JSON |
-| `/api/cron` | Cron job list |
-| `/api/tasks` | Task list + creation |
-| `/health` | Health check |
+`packages/platform/` owns shared platform concerns:
 
-## Packages
+- Clerk/session auth for `app.matrix-os.com` and `code.matrix-os.com`.
+- `{handle}.matrix-os.com` routing.
+- `user_machines` registry for customer VPSes.
+- Hetzner provisioning, registration, deletion, and recovery flows.
+- Host-bundle serving through `/system-bundles/*`.
+- Pipedream integration credentials and user-scoped integration routes.
+- Platform Postgres for control-plane records.
 
-### `packages/kernel/`
+The platform does not run the user's gateway, shell, code-server, apps, or app database in production. It resolves who the user is and proxies to that user's VPS.
 
-The AI kernel. Key files:
+## Customer VPS Runtime
 
-| File | Purpose |
-|------|---------|
-| `spawn.ts` | `spawnKernel()` -- entry point, calls `query()` and `resume` |
-| `options.ts` | `kernelOptions()` -- assembles system prompt, IPC, agents, hooks |
-| `prompt.ts` | `buildSystemPrompt()` -- constructs the system prompt with SOUL, skills, context |
-| `ipc-server.ts` | `createIpcServer()` -- 26 IPC tools via `createSdkMcpServer()` |
-| `agents.ts` | Core agent definitions, `parseFrontmatter()`, `loadCustomAgents()` |
-| `hooks.ts` | All hook implementations (safety, snapshots, permissions, healing) |
-| `soul.ts` | SOUL identity loading (`loadSoul()`, `loadIdentity()`, `loadUser()`) |
-| `db.ts` | Kysely/PostgreSQL setup, schema bootstrap, and migrations |
+Each customer VPS is bootstrapped by cloud-init and the Matrix host bundle.
 
-### `packages/gateway/`
+Runtime files:
 
-Hono HTTP/WebSocket gateway. Key files:
+- `/opt/matrix/env/host.env`: machine identity, handle, Clerk user id, `DATABASE_URL`, `PLATFORM_INTERNAL_URL`, and per-host tokens.
+- `/opt/matrix/env/r2.env`: R2 credentials for backup/sync.
+- `/opt/matrix/app`: gateway, shell, packages, and bundled default apps.
+- `/opt/matrix/runtime`: Node, code-server, and bundled coding-agent CLIs.
+- `/opt/matrix/bin`: launchers for gateway, shell, code, sync, and update.
+- `/home/matrix/home`: user-owned Matrix home.
 
-| File | Purpose |
-|------|---------|
-| `server.ts` | `createGateway()` -- initializes all services, routes, WebSocket |
-| `dispatcher.ts` | `createDispatcher()` -- serial/concurrent queue, kernel invocation |
-| `watcher.ts` | File watcher (chokidar) -- broadcasts file:change events |
-| `channels/` | Channel adapters (Telegram, Discord, Slack, WhatsApp) |
-| `cron.ts` | `createCronService()` -- scheduled task execution |
-| `heartbeat.ts` | `createHeartbeatRunner()` -- periodic kernel health checks |
-| `conversations.ts` | `createConversationStore()` -- multi-session persistence |
-| `request-principal.ts` | Canonical protected-route principal resolution, source precedence, owner-scope conversion, and generic auth error mapping |
+Services:
 
-#### Request Principal
+- `matrix-gateway.service` runs the Hono gateway.
+- `matrix-shell.service` runs the Next.js shell.
+- `matrix-code.service` runs code-server.
+- `matrix-sync-agent.service` keeps sync flows moving.
+- `matrix-db-backup.timer` uploads Postgres snapshots.
+- Nginx terminates local HTTPS and routes to shell/gateway/code.
 
-Protected gateway routes should resolve owner identity through `request-principal.ts` instead of reading JWT claims or environment fallback values directly. The resolver accepts sources in this order:
+Each customer VPS has its own local Postgres endpoint at `127.0.0.1:5432`. The current bootstrap starts it as a single machine-local `postgres:16` service container named `matrix-postgres` with a local volume. This is not the legacy shared user-runtime container model.
 
-1. Validated JWT `sub` stored on the Hono context by auth middleware.
-2. Platform-controlled configured container identity for trusted single-user/container gateways, using `MATRIX_USER_ID` as the canonical configured user id.
-3. `dev-default`, only in open local development when auth is disabled, production is false, and no configured identity exists.
+## Gateway
 
-The principal user id is validated before it reaches owner scope, database queries, storage keys, or rate-limit keys. Missing identity maps to a generic unauthorized response; reading the principal before auth middleware marks request context readiness maps to a generic server misconfiguration response.
+`packages/gateway/` is the user runtime API. It runs on the customer VPS and owns:
 
-### `packages/platform/`
+- chat/WebSocket routes;
+- file serving from the Matrix home;
+- app discovery, build, launch, and proxying;
+- app data bridge routes;
+- canvas routes and realtime subscriptions;
+- terminal/workspace/session routes;
+- sync and home-mirror integration;
+- social and channel adapters where configured;
+- integration proxying back to platform-owned routes.
 
-Multi-tenant cloud orchestrator (Hono :9000). Manages container provisioning via dockerode, Kysely/PostgreSQL for tenant and control-plane data, Clerk auth integration, and Cloudflare Tunnel configuration.
+When `DATABASE_URL` is set, the gateway connects to the customer-local Postgres database, bootstraps app/workspace tables, and registers app manifests with `storage.tables`.
 
-### `shell/`
+## Shell
 
-Next.js 16 web desktop. The primary visual shell. Renders the desktop with windows, dock, chat panel, terminal, settings, and Mission Control. Uses WebSocket for real-time streaming and file change events.
+`shell/` is the primary visual renderer. It is a Next.js 16 + React 19 web shell. Canvas mode is the primary product surface; Desktop remains a compatibility shell.
+
+The shell handles:
+
+- app windows and built-ins;
+- Canvas layout and spatial workspaces;
+- chat surfaces;
+- file/app preview;
+- terminal/code entry points;
+- settings and integrations UI.
+
+Built-in paths such as `__workspace__`, `__terminal__`, `__file-browser__`, `__preview-window__`, and `__chat__` must be wired in every renderer so they never fall through to normal app file routing.
+
+## Kernel
+
+`packages/kernel/` is the AI kernel layer. Current implementation uses Claude Agent SDK V1 `query()` with `resume`.
+
+Important pieces:
+
+- `spawnKernel()` starts or resumes kernel turns.
+- `buildSystemPrompt()` assembles identity, SOUL, skills, context, and rules.
+- IPC/MCP tools expose controlled system capabilities.
+- Hooks protect files, snapshot changes, and persist state.
+- Agent definitions and skills live as files so the OS can expand itself.
+
+The product principle is "AI is the kernel," but the runtime still has conventional services for routing, auth, storage, and UI.
+
+## Apps
+
+First-party and polished apps are Vite + React apps under the Matrix home. Bundled default apps are built by `scripts/build-default-apps.mjs` before host-bundle publication and copied into the user's home on gateway startup.
+
+App manifests use `matrix.json`. Apps that need structured data declare:
+
+```json
+{
+  "runtime": "vite",
+  "build": { "command": "pnpm build", "output": "dist" },
+  "storage": {
+    "tables": {
+      "tasks": {
+        "columns": {
+          "text": "text",
+          "done": "boolean"
+        }
+      }
+    }
+  }
+}
+```
+
+The gateway creates schema-per-app Postgres tables and exposes scoped CRUD through `/api/bridge/query`. App child processes intentionally do not receive raw `DATABASE_URL`.
 
 ## Request Flow
 
-Here's the complete path of a user message from input to response:
+### App Domain
 
-1. **User sends a message** via WebSocket (`/ws`), REST (`/api/message`), or a channel adapter
-2. **Gateway receives it** in `createGateway()` and passes it to `dispatcher.dispatch()`
-3. **Dispatcher queues it** in the serial FIFO queue (or concurrent queue if configured)
-4. **Task is created** in PostgreSQL via `createTask()`, then claimed via `claimTask()`
-5. **`spawnKernel()` is called** with the message and `KernelConfig` (db, homePath)
-6. **System prompt is built** by `buildSystemPrompt()`:
-   - SOUL identity (`soul.md`, `identity.md`, `user.md`)
-   - Skills table of contents (`buildSkillsToc()`)
-   - Active processes (from tasks table)
-   - Available agents and their descriptions
-7. **Agent SDK `query()` is called** with the system prompt and available tools
-8. **Tokens stream back** as `KernelEvent`s through the gateway to the client as `ServerMessage`s
-9. **If the agent uses a tool**, a `tool_use` block is returned:
-   - The kernel executes the IPC tool via `createSdkMcpServer()`
-   - `PreToolUse` hooks run first (safety guards, permission checks)
-   - The tool executes (file ops, task management, skill loading, etc.)
-   - `PostToolUse` hooks run after (git snapshots, state updates, shell notifications)
-   - The result is returned to the kernel
-10. **`resume()` is called** with tool results to continue the conversation
-11. **The final response** streams back to the user
-12. **Task is completed** via `completeTask()` (or `failTask()` on error)
+1. Browser requests `https://app.matrix-os.com`.
+2. Cloudflare sends the request to the platform tunnel.
+3. Platform verifies Clerk/session identity.
+4. Platform finds the user's `running` `user_machines` row.
+5. Platform proxies to `https://<customer-vps-ip>:443`.
+6. Customer nginx routes shell/gateway/code requests to local services.
 
-<Callout type="info" title="Serial by default">
-  The dispatcher processes one message at a time by default. This prevents file system corruption from concurrent writes. Enable concurrent dispatch with `maxConcurrency` in the dispatcher config, where each process registers in the tasks table.
+### Handle Domain
+
+1. Browser requests `https://alice.matrix-os.com`.
+2. Platform resolves `alice` to a customer VPS.
+3. Platform proxies to that VPS.
+4. The customer gateway/shell serves the user workspace.
+
+### App Data
+
+1. App calls `/api/bridge/query`.
+2. Gateway validates app/table/action payload.
+3. Gateway uses Kysely against the customer-local Postgres database.
+4. Gateway broadcasts generic data-change events after mutations.
+
+## Data Boundaries
+
+| Data | Owner | Location |
+| --- | --- | --- |
+| Platform users, machine rows, routing state | Platform | Platform Postgres |
+| Clerk sessions and auth verification | Platform/Clerk | Clerk + platform |
+| Pipedream provider credentials | Platform | Platform integration store |
+| User files and apps | User | Customer VPS Matrix home |
+| App/workspace data | User | Customer VPS Postgres |
+| Canvas documents | User | Customer VPS Postgres |
+| DB snapshots and VPS metadata | User/system recovery | R2 prefix |
+
+## Developer Rules
+
+- Use Postgres/Kysely for new persistence.
+- Use Zod 4 from `zod/v4`.
+- Use Vite + React for first-party apps.
+- Use `/api/bridge/query` for app data, not direct app `DATABASE_URL`.
+- Keep platform secrets off customer VPSes unless they are explicitly per-host runtime tokens.
+- Add body limits, validation, timeouts, resource caps, and generic client errors on new routes.
+- Build and publish a customer host bundle when shell/gateway/default-app/runtime code changes.
+
+<Callout type="warn" title="Production is not the legacy container path">
+  Older docs and specs may mention shared per-user Docker containers. Current production user runtime is per-user VPS with host services and local Postgres. Treat `/containers/*` as legacy/local-development compatibility unless you are explicitly working on that path.
 </Callout>
-
-## The Computer Metaphor
-
-| Traditional OS | Matrix OS |
-|---------------|-----------|
-| CPU | Claude Opus 4.6 |
-| RAM | Context window (1M tokens) |
-| Kernel | Main agent + `spawnKernel()` |
-| Processes | 5 sub-agents (Builder, Researcher, Deployer, Healer, Evolver) |
-| Syscalls | Read, Write, Edit, Bash (file tools) |
-| Disk | `~/matrixos/` (apps, data, system, agents) |
-| Drivers | MCP servers (IPC tools) |
-| IPC | File coordination + PostgreSQL task queue |
-| Shell | Web desktop, Telegram, CLI (any renderer) |
-| Device drivers | Channel adapters |

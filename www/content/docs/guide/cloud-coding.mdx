@@ -3,7 +3,7 @@ title: Cloud Coding
 description: Project workspaces, GitHub authentication, Browser IDE access, review loops, and sandboxed coding agents.
 ---
 
-Matrix OS cloud coding workspaces turn each user container into a private development machine. Projects, tasks, worktrees, sessions, transcripts, reviews, and editor settings live in the user's Matrix home so the gateway, web desktop, CLI, TUI, and browser IDE all operate on the same records.
+Matrix OS cloud coding workspaces turn each user VPS into a private development machine. Projects, tasks, worktrees, sessions, transcripts, reviews, and editor settings live in the user's Matrix home so the gateway, web desktop, CLI, TUI, and browser IDE all operate on the same records.
 
 ## GitHub authentication
 
@@ -47,7 +47,7 @@ The operator can approve, stop, or advance a loop. Matrix OS treats parse failur
 
 ## Browser IDE
 
-The Browser IDE is code-server running privately inside the user's container and exposed through the authenticated Matrix platform proxy. It opens the same files that agents and terminal sessions edit.
+The Browser IDE is code-server running privately on the user's VPS and exposed through the authenticated Matrix platform proxy. It opens the same files that agents and terminal sessions edit.
 
 Editor assets and WebSocket traffic stay behind Matrix authentication. Platform credentials are stripped before requests reach code-server, and cache-control headers prevent protected editor responses from being cached publicly.
 

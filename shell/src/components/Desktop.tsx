@@ -39,7 +39,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
+import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, ExternalLinkIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -53,6 +53,7 @@ import { ChatPopover } from "./ChatPopover";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import { openAppInStandaloneTab } from "@/lib/open-app-tab";
 import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
@@ -1749,7 +1750,22 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}
                   </CardTitle>
-                  <div className="w-[54px] flex items-center justify-end">
+                  <div className="w-[78px] flex items-center justify-end gap-1">
+                    {!win.path.startsWith("__") && (
+                      <button
+                        type="button"
+                        className="size-7 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAppInStandaloneTab(win.path);
+                        }}
+                        aria-label="Open in new tab"
+                        title="Open in new tab"
+                      >
+                        <ExternalLinkIcon className="size-3.5" />
+                      </button>
+                    )}
                     <AIButton
                       appName={win.title}
                       appPath={win.path}

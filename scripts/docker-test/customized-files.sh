@@ -16,7 +16,7 @@ echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Add custom line to soul.md
 CUSTOM_SOUL_LINE="I am a customized soul for testing purposes."
@@ -43,7 +43,7 @@ echo -e "${YELLOW}[SETUP]${NC} Restarting container to trigger sync..."
 $COMPOSE stop dev
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Verify customizations survived
 assert_file_contains "dev" "/home/matrixos/home/system/soul.md" \

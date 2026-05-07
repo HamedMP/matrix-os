@@ -6,7 +6,9 @@ description: Connect external services like Gmail, Google Calendar, GitHub, Slac
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-Matrix OS connects to external services through [Pipedream Connect](https://pipedream.com/connect). You authorize once via OAuth, and your AI agent can read emails, create calendar events, post to Slack, and more -- all from conversation.
+Matrix OS connects to external services through secure OAuth flows. You authorize once, then Matrix can help read, search, draft, organize, schedule, post, and summarize through connected services.
+
+You do not need to manage API keys or developer credentials. Connect the service, then ask Matrix for the result you want.
 
 ## Available Services
 
@@ -48,13 +50,8 @@ Once connected, just ask naturally:
 > "Post 'deploy complete' to #engineering in Slack"
 > "List my open GitHub issues in myorg/myrepo"
 
-The agent uses two IPC tools under the hood:
-
-- **`connect_service`** -- starts the OAuth flow for a service
-- **`call_service`** -- calls an action on a connected service
-
-<Callout type="info" title="Actions API">
-  When component keys are discovered at startup, Matrix OS uses Pipedream's Actions API to execute real service components with proper auth binding. This is more reliable than raw API proxying and returns structured summaries (e.g., "Email sent to alice@example.com").
+<Callout type="info" title="Review important actions">
+  Matrix is useful because it can prepare and take action, but sensitive actions should stay visible. Ask it to draft before sending, summarize before deleting, and confirm before posting when the result matters.
 </Callout>
 
 ## Service Actions Reference
@@ -158,31 +155,23 @@ Apps you build can use connected services. When the agent creates an app that ne
 
 If a required service isn't connected, the platform tells you what's missing and how to connect it.
 
-## How It Works (Architecture)
+## How It Works
 
 ```
 User -> Shell (Settings UI / Conversation)
          |
-    Gateway (:4000)
-    /api/integrations/*
+    Matrix Gateway
          |
-    Pipedream Connect SDK
+    Platform-owned Integration Layer
     - OAuth token management
-    - Actions API (component execution)
+    - Action execution
     - Credential storage
          |
     External Service APIs
     (Gmail API, GitHub API, Slack API, etc.)
 ```
 
-1. **Gateway** hosts the integration REST API and manages the platform database (users, connections, apps)
-2. **Pipedream** handles OAuth flows, credential storage, token refresh, and API execution
-3. **Kernel** exposes `connect_service` and `call_service` as IPC tools for the agent
-4. **Shell** provides the Settings UI for visual connection management
-
-<Callout type="warn" title="Environment required">
-  Integrations require Pipedream credentials (`PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, `PIPEDREAM_PROJECT_ID`) and a platform database (`PLATFORM_DATABASE_URL`). See the [Getting Started](/docs/guide/getting-started) guide for setup.
-</Callout>
+Integration provider credentials stay on the platform. Customer workspaces call the platform integration layer through scoped Matrix routes, so apps and customer VPSes do not need raw provider secrets.
 
 ## Error Handling
 
@@ -193,21 +182,6 @@ User -> Shell (Settings UI / Conversation)
 | "Timed out" (504) | The service took too long to respond | Try again or simplify the request |
 | "Service unavailable" (503) | Pipedream is temporarily down | Try again in a few minutes |
 | "Missing required params" (400) | The action is missing required input | Check the action reference above |
-
-## CLI Migration Notes
-
-Older Matrix OS development commands such as `matrixos status` and `matrixos doctor` now redirect to the published `matrix` command tree. Use profiles instead of separate local-only command sets:
-
-```bash
-matrix profile ls
-matrix profile use cloud
-matrix status
-
-matrix login --dev
-matrix --dev status
-```
-
-If a command reports `unknown_command` or `unsupported_version`, update the CLI and restart the sync daemon so the local IPC contract and published command tree match.
 
 ## Common Workflows
 

@@ -2,7 +2,7 @@
 
 ## Default: Apps In `~/apps/<slug>/`
 
-The default output type is a **pre-built React app** using Vite in `~/apps/<slug>/`. These are static builds served through the gateway with no separate dev server.
+The default output type is a **pre-built React app** using Vite in `~/apps/<slug>/`. These are static builds served through the gateway with no separate dev server. CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite apps by default; use Matrix bridge APIs for data instead of creating a Next.js server.
 
 Use `~/modules/<name>/` only when the user explicitly wants a module, when the app must follow existing module conventions, or when you are extending an existing module-based app. Do not default to `~/modules/` for new user-facing apps.
 
@@ -10,9 +10,9 @@ Use `~/modules/<name>/` only when the user explicitly wants a module, when the a
 
 1. Create app directory: `~/apps/<slug>/`
 2. Write project files (see structure below)
-3. Run: `cd ~/apps/<slug> && pnpm install && pnpm build`
+3. Run: `cd ~/apps/<slug> && pnpm install --prefer-offline && pnpm build`
 4. Verify `dist/index.html` exists
-5. Register in `~/system/modules.json`
+5. Verify `matrix.json` has `runtime: "vite"` and `build.output: "dist"`
 
 ### Structure
 ```
@@ -121,12 +121,18 @@ createRoot(document.getElementById("root")!).render(
 ### matrix.json (Matrix OS app manifest)
 ```json
 {
-  "name": "todo-app",
-  "title": "Todo App",
+  "name": "Todo App",
+  "slug": "todo-app",
   "description": "A simple todo list",
   "version": "1.0.0",
-  "type": "react-app",
-  "entry": "dist/index.html"
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "category": "productivity",
+  "build": {
+    "command": "pnpm build",
+    "output": "dist"
+  }
 }
 ```
 
@@ -152,21 +158,13 @@ body {
 ### Build and Verify
 ```bash
 cd ~/apps/<slug>
-pnpm install
+pnpm install --prefer-offline
 pnpm build
 # Verify dist/index.html exists
 ls dist/index.html
 ```
 
-### Register in modules.json
-```json
-{
-  "name": "todo-app",
-  "type": "react-app",
-  "path": "~/apps/todo-app",
-  "status": "active"
-}
-```
+Apps are discovered from `matrix.json`; do not add new app registrations to `~/system/modules.json`.
 
 ## HTML Apps (~/apps/) -- Simple Alternative
 
@@ -204,9 +202,12 @@ For very simple tools (calculators, clocks, single-screen utilities), use `~/app
 | "build me an app", "create an app" | React app in `~/apps/<slug>/` |
 | Multiple screens or views | React app in `~/apps/<slug>/` |
 | State management needed | React app in `~/apps/<slug>/` |
+| CRM, roadmap, dashboard, project tracker | React app in `~/apps/<slug>/` |
 | User explicitly wants a module or existing module extension | React module in `~/modules/<name>/` |
 | "quick", "simple", "just a..." | HTML app in `~/apps/<slug>/` |
 | Calculator, clock, single widget | HTML app in `~/apps/<slug>/` |
+
+Do not create Next.js, `.next/`, app router folders, API routes, `runtime: "node"`, or `npm start` unless the user explicitly asks for a server runtime or Next.js.
 
 ## Integrations Bridge API (Gmail, Calendar, GitHub, Slack, etc.)
 

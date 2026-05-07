@@ -20,10 +20,10 @@ This is the architecture Matrix OS has been pointing at since the "personal clou
 
 - One Hetzner VPS per user, in a dedicated Hetzner project ("matrix-os-customers"), separate from the control-plane VPS.
 - Provision on first real use (lazy), not at signup.
-- Postgres runs inside the user's VPS as a container. One DB per user.
+- Postgres runs on the user's VPS as a host service. One DB per user.
 - R2 holds the canonical recoverable state: home + projects + DB snapshots + VPS metadata.
 - VPS destroyed or unreachable → reprovision from R2 with one command, deterministic.
-- Existing `matrixos-*` containers on the control-plane VPS keep running. New users go to VPS. No forced migration in phase 1.
+- Existing `matrixos-*` containers on the control-plane VPS are legacy only. New and production users go to per-user VPS. No new production user runtime is container-based.
 
 ## Non-Goals
 
@@ -46,14 +46,13 @@ Control-plane VPS (this box, Hetzner project "matrix-os-infra")
    proxy:8080         shared API proxy
    conduit:6167       Matrix homeserver
    cloudflared        tunnel
-   postgres           machine + container registry via Kysely
-   (legacy)           existing matrixos-* containers keep running
+   postgres           machine registry via Kysely
+   (legacy only)      historical matrixos-* container records during migration
 
 Customer VPSes (Hetzner project "matrix-os-customers", one per user)
    matrix-os-host services (gateway, shell, agent runtime) -- systemd
-   docker engine                                            -- host
-   postgres:16          container, one DB for this user     -- docker
-   user app containers                                      -- docker
+   postgres           local endpoint, one DB for this user  -- 127.0.0.1:5432
+   user app/runtime processes                               -- host services/processes
    sync-agent           pulls/pushes R2                     -- systemd
    db-backup            pg_dump on schedule + on demand     -- systemd timer
 
@@ -67,9 +66,11 @@ Cloudflare R2 (existing matrixos-sync bucket, extended layout)
 
 ### Why services-on-host instead of Matrix-in-a-container
 
-On the user's own VPS, the gateway and shell run as systemd services on the host, not inside another container. User workloads use Docker normally (no nesting). This is the whole point of the VPS-per-user move: stop fighting Docker-in-Docker.
+On the user's own VPS, the gateway, shell, code server, sync agent, and backup jobs run as host services/processes, not inside another user-runtime container. This is the whole point of the VPS-per-user move: use the VM boundary as the user boundary.
 
-The control-plane VPS keeps its current Docker-Compose layout (platform, proxy, conduit, cloudflared) — that's not user-facing compute, it's the operator's own stack.
+Current implementation note: customer Postgres is a single machine-local `postgres:16` service container named `matrix-postgres` with a local Docker volume and `127.0.0.1:5432` binding. It is per-VPS and owner-local, but it is not the old shared platform container runtime. The no-container rule applies to Matrix gateway/shell/code/default-app runtime.
+
+The control-plane VPS is not user-facing compute. Any remaining containerized control-plane implementation is legacy/operator infrastructure and must not be used as the production user runtime path.
 
 ### Why Postgres on the user's VPS
 
@@ -124,10 +125,10 @@ Provisioning model: **cloud-init from a base Ubuntu 24.04 image**, not a Hetzner
 The cloud-init recipe lives at `distro/customer-vps/cloud-init.yaml`. It:
 
 1. Creates `matrix` system user.
-2. Installs Docker engine + compose plugin (apt, official repo).
-3. Pulls the matrix-os-host bundle (a tarball published to R2 by CI, not a Docker image — the host services aren't containerized).
-4. Installs systemd units: `matrix-gateway.service`, `matrix-shell.service`, `matrix-sync-agent.service`, `matrix-db-backup.timer`.
-5. Pulls `postgres:16` and starts it via a small compose file (`/opt/matrix/postgres-compose.yml`) with a named volume.
+2. Installs the Matrix host runtime dependencies needed by the bundled gateway, shell, code service, sync agent, and local Postgres endpoint.
+3. Pulls the matrix-os-host bundle (a tarball published to R2 by CI, not a Docker image).
+4. Installs systemd units: `matrix-gateway.service`, `matrix-shell.service`, `matrix-sync-agent.service`, `matrix-db-backup.timer`, and local Postgres dependencies.
+5. Initializes local owner-controlled Postgres at `127.0.0.1:5432`.
 6. On first boot, calls back to control plane (`POST /vps/register`) with its public IP, server ID, image version. Control plane updates `userMachines` row to `running`.
 7. If `system/db/latest` exists in R2, sync-agent restores DB before gateway starts (gateway start is gated on `matrix-restore-complete` flag file).
 
@@ -165,7 +166,7 @@ app.matrix-os.com / code.matrix-os.com
   -> reverse_proxy to userMachines.publicIPv4:443
 ```
 
-The platform session router resolves the authenticated Clerk user to a `userMachines` row. If that row is `running`, `app.matrix-os.com` and `code.matrix-os.com` requests route to that user's VPS; otherwise the router falls back to the existing container path. New users: only the VPS branch ever fires.
+The platform session router resolves the authenticated Clerk user to a `userMachines` row. If that row is `running`, `app.matrix-os.com` and `code.matrix-os.com` requests route to that user's VPS. Legacy container fallback is historical migration support only; new and production users must be VPS-backed.
 
 Cloud coding uses one shared public hostname: `https://code.matrix-os.com/?folder=/home/matrixos/home`. The control plane authenticates the user, strips Clerk/code-server cookies before forwarding, attaches platform proof headers to the customer VPS gateway, and pins a short-lived `matrix_code_session` cookie so code-server static assets and websocket reconnects can stay on the correct VPS without per-user DNS.
 
@@ -260,7 +261,7 @@ Sequence:
 
 Recovery time target: ~3 minutes for a fresh-ish user (small DB, modest project tree). Document this. If it grows, that's the signal to introduce Hetzner Volumes.
 
-### Update (new image version)
+### Update (new host-bundle version)
 
 Phase 1: no in-place update of running VPSes. To roll out a host-services bump, run `matrixctl recover {handle}` per user during a maintenance window. Cloud-init pulls the new bundle automatically.
 
@@ -272,7 +273,7 @@ Once we have ~10+ customer VPSes this becomes painful and we add an in-place upd
 - Hetzner customer project + API token in control-plane env.
 - `userMachines` table + Kysely/PostgreSQL migration.
 - `customer-vps.ts` provisioner module + `/vps/*` routes (admin-only behind `PLATFORM_SECRET`).
-- `distro/customer-vps/cloud-init.yaml` that installs Docker + Postgres + a placeholder gateway.
+- `distro/customer-vps/cloud-init.yaml` that installs host services, local Postgres, and a placeholder gateway.
 - Manual test: `curl -X POST localhost:9000/vps/provision -d '{"clerkUserId":"test"}'` creates a real VPS, comes up, registers, status flips to `running`. Tear down by hand.
 
 **Phase 1.1 — host services + routing**

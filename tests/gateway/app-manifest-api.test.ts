@@ -40,6 +40,64 @@ describe("GET /api/apps/:slug/manifest", () => {
     expect(body.runtimeState.status).toBe("ready");
   }, 120_000);
 
+  it("resolves nested apps by manifest slug", async () => {
+    const appDir = join(gateway.home, "apps", "games", "chess");
+    await mkdir(join(appDir, "dist"), { recursive: true });
+    await writeFile(
+      join(appDir, "matrix.json"),
+      JSON.stringify({
+        name: "Chess",
+        slug: "chess",
+        version: "1.0.0",
+        runtime: "vite",
+        runtimeVersion: "^1.0.0",
+        build: { command: "pnpm build", output: "dist" },
+      }),
+    );
+    await writeFile(join(appDir, "dist", "index.html"), "<html>Chess</html>");
+    const res = await gateway.app.request("/api/apps/chess/manifest", {
+      headers: { Authorization: `Bearer ${gateway.token}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.manifest.slug).toBe("chess");
+    expect(body.runtimeState.status).toBe("ready");
+  });
+
+  it("creates sessions for nested apps by manifest slug", async () => {
+    const appDir = join(gateway.home, "apps", "games", "chess");
+    await mkdir(appDir, { recursive: true });
+    await writeFile(
+      join(appDir, "matrix.json"),
+      JSON.stringify({
+        name: "Chess",
+        slug: "chess",
+        version: "1.0.0",
+        runtime: "static",
+        runtimeVersion: "^1.0.0",
+        listingTrust: "first_party",
+      }),
+    );
+    await writeFile(join(appDir, "index.html"), "<html>Chess</html>");
+
+    const sessionRes = await gateway.app.request("/api/apps/chess/session", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${gateway.token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    expect(sessionRes.status).toBe(200);
+    const cookie = sessionRes.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(cookie).toMatch(/^matrix_app_session__chess=/);
+
+    const appRes = await gateway.app.request("/apps/chess/", {
+      headers: { Cookie: cookie, Accept: "text/html" },
+    });
+    expect(appRes.status).toBe(200);
+    expect(await appRes.text()).toContain("Chess");
+  });
+
   it("returns runtimeState needs_build when .build-stamp is missing", async () => {
     const appDir = join(gateway.home, "apps", "unbuilt");
     await mkdir(appDir, { recursive: true });

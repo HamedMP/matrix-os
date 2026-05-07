@@ -755,6 +755,22 @@ export async function getRunningUserMachineByClerkId(
   return row ? mapUserMachine(row) : undefined;
 }
 
+export async function listUserMachines(
+  db: PlatformDB,
+  options: { includeDeleted?: boolean } = {},
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  let query = db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .orderBy('provisioned_at', 'desc');
+  if (!options.includeDeleted) {
+    query = query.where('deleted_at', 'is', null);
+  }
+  const rows = await query.execute();
+  return rows.map(mapUserMachine);
+}
+
 export async function updateUserMachine(
   db: PlatformDB,
   machineId: string,

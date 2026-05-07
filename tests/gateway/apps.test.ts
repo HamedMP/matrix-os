@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -17,19 +17,19 @@ describe("T711: GET /api/apps", () => {
     rmSync(homePath, { recursive: true, force: true });
   });
 
-  it("returns empty array when no apps exist", () => {
-    const apps = listApps(homePath);
+  it("returns empty array when no apps exist", async () => {
+    const apps = await listApps(homePath);
     expect(apps).toEqual([]);
   });
 
-  it("lists HTML apps with metadata from matrix.md", () => {
+  it("lists HTML apps with metadata from matrix.md", async () => {
     writeFileSync(join(homePath, "apps/todo.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/todo.matrix.md"),
       "---\nname: Todo\ndescription: Task manager\ncategory: productivity\nicon: check\n---\n",
     );
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(1);
     expect(apps[0]).toEqual({
       name: "Todo",
@@ -41,38 +41,38 @@ describe("T711: GET /api/apps", () => {
     });
   });
 
-  it("lists multiple apps sorted by name", () => {
+  it("lists multiple apps sorted by name", async () => {
     writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
     writeFileSync(join(homePath, "apps/calc.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/calc.matrix.md"), "---\nname: Calculator\ncategory: utility\n---\n");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(2);
     expect(apps[0].name).toBe("Calculator");
     expect(apps[1].name).toBe("Notes");
   });
 
-  it("uses defaults when matrix.md is missing", () => {
+  it("uses defaults when matrix.md is missing", async () => {
     writeFileSync(join(homePath, "apps/widget.html"), "<html></html>");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(1);
     expect(apps[0].name).toBe("widget");
     expect(apps[0].category).toBe("utility");
     expect(apps[0].path).toBe("/files/apps/widget.html");
   });
 
-  it("ignores non-HTML files", () => {
+  it("ignores non-HTML files", async () => {
     writeFileSync(join(homePath, "apps/readme.md"), "# readme");
     writeFileSync(join(homePath, "apps/todo.html"), "<html></html>");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toHaveLength(1);
     expect(apps[0].file).toBe("todo.html");
   });
 
-  it("does not list app templates as installed apps", () => {
+  it("does not list app templates as installed apps", async () => {
     mkdirSync(join(homePath, "apps/_template-next"), { recursive: true });
     writeFileSync(join(homePath, "apps/_template-next/index.html"), "<html></html>");
     writeFileSync(
@@ -81,39 +81,103 @@ describe("T711: GET /api/apps", () => {
     );
     writeFileSync(join(homePath, "apps/real.html"), "<html></html>");
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
 
     expect(apps.map((app) => app.name)).toEqual(["real"]);
   });
 
-  it("returns empty when apps directory does not exist", () => {
+  it("returns empty when apps directory does not exist", async () => {
     rmSync(join(homePath, "apps"), { recursive: true, force: true });
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     expect(apps).toEqual([]);
   });
 
-  it("discovers apps in nested subdirectories", () => {
+  it("skips broken filesystem entries and still returns readable apps", async () => {
+    writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
+    writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
+    symlinkSync(join(homePath, "apps/missing-target"), join(homePath, "apps/broken-link"));
+
+    const apps = await listApps(homePath);
+
+    expect(apps.map((app) => app.name)).toEqual(["Notes"]);
+  });
+
+  it("skips malformed app manifests and keeps scanning siblings", async () => {
+    mkdirSync(join(homePath, "apps/bad-app"), { recursive: true });
+    writeFileSync(join(homePath, "apps/bad-app/matrix.json"), "{ bad json");
+    mkdirSync(join(homePath, "apps/good-app"), { recursive: true });
+    writeFileSync(join(homePath, "apps/good-app/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/good-app/matrix.json"),
+      JSON.stringify({ name: "Good App", slug: "good-app", version: "1.0.0", runtimeVersion: "^1.0.0", category: "utility", runtime: "static" }),
+    );
+
+    const apps = await listApps(homePath);
+
+    expect(apps.map((app) => app.name)).toEqual(["Good App"]);
+  });
+
+  it("does not warn for ordinary nested directories without manifests", async () => {
+    mkdirSync(join(homePath, "apps/generated/app/api/health"), { recursive: true });
+    mkdirSync(join(homePath, "apps/generated/src/components"), { recursive: true });
+    mkdirSync(join(homePath, "apps/ready/dist"), { recursive: true });
+    writeFileSync(join(homePath, "apps/ready/dist/index.html"), "<html>built</html>");
+    writeFileSync(
+      join(homePath, "apps/ready/matrix.json"),
+      JSON.stringify({
+        name: "Ready",
+        slug: "ready",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        category: "utility",
+        runtime: "vite",
+        build: { command: "pnpm build", output: "dist" },
+      }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const apps = await listApps(homePath);
+
+      expect(apps.map((app) => app.name)).toEqual(["Ready"]);
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("generated/app/api"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("generated/src"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("returns empty when the apps directory is not a readable directory", async () => {
+    rmSync(join(homePath, "apps"), { recursive: true, force: true });
+    symlinkSync(join(homePath, "missing-apps"), join(homePath, "apps"));
+
+    const apps = await listApps(homePath);
+
+    expect(apps).toEqual([]);
+  });
+
+  it("discovers apps in nested subdirectories", async () => {
     mkdirSync(join(homePath, "apps/games"), { recursive: true });
     writeFileSync(
       join(homePath, "apps/games/matrix.json"),
-      JSON.stringify({ name: "Game Center", category: "utilities", runtime: "static" }),
+      JSON.stringify({ name: "Game Center", slug: "games", version: "1.0.0", runtimeVersion: "^1.0.0", category: "utilities", runtime: "static" }),
     );
 
     mkdirSync(join(homePath, "apps/games/snake"), { recursive: true });
     writeFileSync(join(homePath, "apps/games/snake/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/games/snake/matrix.json"),
-      JSON.stringify({ name: "Snake", category: "games", runtime: "static" }),
+      JSON.stringify({ name: "Snake", slug: "snake", version: "1.0.0", runtimeVersion: "^1.0.0", category: "games", runtime: "static" }),
     );
 
     mkdirSync(join(homePath, "apps/games/2048"), { recursive: true });
     writeFileSync(join(homePath, "apps/games/2048/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/games/2048/matrix.json"),
-      JSON.stringify({ name: "2048", category: "games", runtime: "static" }),
+      JSON.stringify({ name: "2048", slug: "2048", version: "1.0.0", runtimeVersion: "^1.0.0", category: "games", runtime: "static" }),
     );
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     const names = apps.map((a) => a.name);
     expect(names).toContain("Game Center");
     expect(names).toContain("Snake");
@@ -123,9 +187,65 @@ describe("T711: GET /api/apps", () => {
     expect(snake.path).toBe("/files/apps/games/snake/index.html");
     expect(snake.file).toBe("games/snake/index.html");
     expect(snake.category).toBe("games");
+    expect(snake.slug).toBe("snake");
+    expect(snake.runtime).toBe("static");
+    expect(snake.runtimeState).toEqual({ status: "ready" });
+    expect(snake.launchUrl).toBe("/apps/snake/");
   });
 
-  it("lists nested apps alongside top-level apps", () => {
+  it("uses manifest slug for nested launch URLs and reports vite build readiness", async () => {
+    mkdirSync(join(homePath, "apps/games/chess/dist"), { recursive: true });
+    writeFileSync(join(homePath, "apps/games/chess/dist/index.html"), "<html>built</html>");
+    writeFileSync(
+      join(homePath, "apps/games/chess/matrix.json"),
+      JSON.stringify({
+        name: "Chess",
+        slug: "chess",
+        category: "games",
+        runtime: "vite",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        build: { command: "vite build --base ./ --outDir dist", output: "dist" },
+      }),
+    );
+
+    const apps = await listApps(homePath);
+    expect(apps).toEqual([
+      expect.objectContaining({
+        name: "Chess",
+        slug: "chess",
+        runtime: "vite",
+        runtimeState: { status: "ready" },
+        launchUrl: "/apps/chess/",
+        path: "/files/apps/games/chess/index.html",
+      }),
+    ]);
+  });
+
+  it("reports needs_build for vite apps without built output", async () => {
+    mkdirSync(join(homePath, "apps/games/chess"), { recursive: true });
+    writeFileSync(
+      join(homePath, "apps/games/chess/matrix.json"),
+      JSON.stringify({
+        name: "Chess",
+        slug: "chess",
+        category: "games",
+        runtime: "vite",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        build: { command: "vite build --base ./ --outDir dist", output: "dist" },
+      }),
+    );
+
+    const apps = await listApps(homePath);
+    expect(apps[0]).toMatchObject({
+      slug: "chess",
+      runtimeState: { status: "needs_build" },
+      launchUrl: "/apps/chess/",
+    });
+  });
+
+  it("lists nested apps alongside top-level apps", async () => {
     writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");
 
@@ -133,10 +253,10 @@ describe("T711: GET /api/apps", () => {
     writeFileSync(join(homePath, "apps/tools/timer/index.html"), "<html></html>");
     writeFileSync(
       join(homePath, "apps/tools/timer/matrix.json"),
-      JSON.stringify({ name: "Timer", category: "utilities", runtime: "static" }),
+      JSON.stringify({ name: "Timer", slug: "timer", version: "1.0.0", runtimeVersion: "^1.0.0", category: "utilities", runtime: "static" }),
     );
 
-    const apps = listApps(homePath);
+    const apps = await listApps(homePath);
     const names = apps.map((a) => a.name);
     expect(names).toContain("Notes");
     expect(names).toContain("Timer");
@@ -155,7 +275,7 @@ describe("T711: GET /api/apps", () => {
 
     const visit = (dir: string) => {
       for (const entry of readdirSync(dir)) {
-        if (entry.startsWith("_template-")) {
+        if (entry === "node_modules" || entry.startsWith("_template-")) {
           continue;
         }
         const fullPath = join(dir, entry);
@@ -186,7 +306,7 @@ describe("T711: GET /api/apps", () => {
 
     const visit = (dir: string) => {
       for (const entry of readdirSync(dir)) {
-        if (entry.startsWith("_")) continue;
+        if (entry === "node_modules" || entry.startsWith("_")) continue;
         const fullPath = join(dir, entry);
         if (!statSync(fullPath).isDirectory()) continue;
         const manifestPath = join(fullPath, "matrix.json");

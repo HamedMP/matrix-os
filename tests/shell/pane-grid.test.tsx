@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import type { PaneNode } from "../../shell/src/stores/terminal-store.js";

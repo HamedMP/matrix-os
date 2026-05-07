@@ -83,6 +83,7 @@ jobs:
           ./scripts/docker-test/${{ matrix.scenario }}.sh
         env:
           COMPOSE_OVERRIDE_FILE: ${{ github.workspace }}/docker-compose.ci.yml
+          DOCKER_HEALTH_TIMEOUT: "180"
 
       - name: Collect container logs on failure
         if: failure()

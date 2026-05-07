@@ -70,4 +70,30 @@ describe('platform host bundle route', () => {
     expect(res.status).toBe(400);
     expect(getObject).not.toHaveBeenCalled();
   });
+
+  it('serves channel manifests from private object storage', async () => {
+    const getObject = vi.fn().mockResolvedValue({
+      body: streamText('{"version":"v2026.05.06-1"}'),
+      etag: '"etag"',
+      contentLength: 29,
+    });
+    const app = createApp({
+      db: {} as PlatformDB,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/channels/stable.json');
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(await res.text()).toBe('{"version":"v2026.05.06-1"}');
+    expect(getObject).toHaveBeenCalledWith(
+      'system-bundles/channels/stable.json',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
 });

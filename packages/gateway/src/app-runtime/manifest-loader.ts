@@ -1,8 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
-import { join, basename } from "node:path";
-import { resolveWithinHome } from "../path-security.js";
+import { join } from "node:path";
 import { ManifestError } from "./errors.js";
 import { parseManifest, type AppManifest, type ParseResult } from "./manifest-schema.js";
+import { invalidateAppIndexCache, resolveAppBySlug } from "./app-index.js";
 
 interface CacheEntry {
   mtimeMs: number;
@@ -14,6 +14,7 @@ const cache = new Map<string, CacheEntry>();
 
 export function invalidateManifestCache(): void {
   cache.clear();
+  invalidateAppIndexCache();
 }
 
 function getCacheKey(homeDir: string, slug: string): string {
@@ -41,16 +42,12 @@ function setCachedManifest(cacheKey: string, entry: CacheEntry): void {
 }
 
 export async function loadManifest(
-  homeDir: string,
+  appsDir: string,
   slug: string,
 ): Promise<ParseResult> {
-  const appDir = resolveWithinHome(homeDir, slug);
-  if (appDir === null) {
-    return {
-      ok: false,
-      error: new ManifestError("not_found", `slug "${slug}" escapes home directory`),
-    };
-  }
+  const resolved = await resolveAppBySlug(appsDir, slug);
+  if (!resolved.ok) return resolved;
+  const appDir = resolved.entry.appDir;
 
   const manifestPath = join(appDir, "matrix.json");
 
@@ -70,7 +67,7 @@ export async function loadManifest(
     };
   }
 
-  const cacheKey = getCacheKey(homeDir, slug);
+  const cacheKey = getCacheKey(appsDir, slug);
   const cached = getCachedManifest(cacheKey);
   if (cached && cached.mtimeMs === fileStat.mtimeMs) {
     return { ok: true, manifest: cached.manifest };
@@ -102,13 +99,12 @@ export async function loadManifest(
     return result;
   }
 
-  const dirName = basename(appDir);
-  if (result.manifest.slug !== dirName) {
+  if (result.manifest.slug !== slug) {
     return {
       ok: false,
       error: new ManifestError(
         "slug_mismatch",
-        `manifest slug "${result.manifest.slug}" does not match directory name "${dirName}"`,
+        `manifest slug "${result.manifest.slug}" does not match requested slug "${slug}"`,
       ),
     };
   }

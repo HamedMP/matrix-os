@@ -156,6 +156,83 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("issues websocket tokens for Clerk-authenticated customer VPS users before proxying", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await insertUserMachine(db, {
+      machineId: "machine-alice-ws",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 124,
+      publicIPv4: "203.0.113.12",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/auth/ws-token", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      token: expect.any(String),
+      expiresAt: expect.any(Number),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "machine-alice-provisioning",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.11",
+      status: "provisioning",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    expect(html).toContain("Booting Matrix OS");
+    expect(html).toContain("alice.matrix-os.com - provisioning");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("routes sync JWT bearer requests through app.matrix-os.com to the matching container", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -186,6 +263,72 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
+  });
+
+  it("routes mobile app session-token launches to the hinted customer VPS without Clerk cookies", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice-mobile-app",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      hetznerServerId: 125,
+      publicIPv4: "203.0.113.13",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("<html>app</html>", {
+        status: 302,
+        headers: { location: "/apps/calculator/" },
+      }))
+      .mockResolvedValueOnce(new Response("asset", {
+        status: 200,
+        headers: {
+          "content-encoding": "gzip",
+          "content-length": "999",
+          "connection": "close",
+          "transfer-encoding": "chunked",
+        },
+      }));
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/apps/calculator/?session=alice.opaque-token", {
+      headers: { host: "app.matrix-os.com" },
+      redirect: "manual",
+    });
+
+    expect(res.status).toBe(302);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.13:443/apps/calculator/?session=alice.opaque-token");
+    const headers = init?.headers as Headers;
+    expect(headers.get("authorization")).toBeTruthy();
+    expect(headers.get("x-platform-user-id")).toBeNull();
+    expect(headers.get("x-platform-verified")).toBeNull();
+    expect(res.headers.get("set-cookie")).toContain("matrix_app_route=alice");
+    expect(res.headers.get("set-cookie")).toContain("Path=/apps/calculator/");
+
+    const assetRes = await app.request("/apps/calculator/assets/index.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_app_route=alice; matrix_app_session__calculator=session-cookie",
+      },
+    });
+
+    expect(assetRes.status).toBe(200);
+    const [assetUrl, assetInit] = fetchMock.mock.calls[1]!;
+    expect(assetUrl).toBe("https://203.0.113.13:443/apps/calculator/assets/index.js");
+    const assetHeaders = assetInit?.headers as Headers;
+    expect(assetHeaders.get("cookie")).toBe("matrix_app_session__calculator=session-cookie");
+    expect(assetHeaders.get("accept-encoding")).toBe("identity");
+    expect(assetHeaders.get("x-platform-user-id")).toBeNull();
+    expect(assetRes.headers.get("content-encoding")).toBeNull();
+    expect(assetRes.headers.get("content-length")).toBeNull();
+    expect(assetRes.headers.get("connection")).toBeNull();
+    expect(assetRes.headers.get("transfer-encoding")).toBeNull();
   });
 
   it("routes code.matrix-os.com to the authenticated user's VPS gateway first", async () => {
@@ -419,6 +562,88 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(500);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("falls through to Clerk auth when a Clerk JWT is not a valid Matrix sync JWT", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const joseAuthError = Object.assign(new Error('"alg" (Algorithm) Header Parameter value not allowed'), {
+      name: "JOSEAlgNotAllowed",
+      code: "ERR_JOSE_ALG_NOT_ALLOWED",
+    });
+    vi.spyOn(syncJwt, "verifySyncJwt").mockRejectedValueOnce(joseAuthError);
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/api/apps", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session-jwt",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(verifyToken).toHaveBeenCalledWith("clerk-session-jwt");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("reports customer VPS release status for operators", async () => {
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff113",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123457,
+      publicIPv4: "203.0.113.11",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+      lastSeenAt: "2026-05-06T20:00:00.000Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        startedAt: "2026-05-06T21:16:29.650Z",
+        release: {
+          version: "matrix-os-host-dev",
+          gitCommit: "a5a894cabe71a0379a877414414d865a01ecf440",
+          buildTime: "2026-05-06T20:49:48Z",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/vps/releases", {
+      headers: {
+        authorization: "Bearer platform-secret-123",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.machines).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        handle: "alice",
+        release: expect.objectContaining({
+          reachable: true,
+          release: expect.objectContaining({
+            gitCommit: "a5a894cabe71a0379a877414414d865a01ecf440",
+          }),
+        }),
+      }),
+    ]));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://203.0.113.11:443/api/system/info");
+    expect((init?.headers as Headers).get("authorization")).toBeTruthy();
   });
 
   it("requires authentication before proxying code-domain editor static assets", async () => {

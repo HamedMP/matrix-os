@@ -4,8 +4,22 @@ import { join } from "node:path";
 import { parseAppManifest } from "../../packages/gateway/src/app-manifest.js";
 
 const GAMES_DIR = join(__dirname, "../../home/apps/games");
+const SHARED_RENDERER = join(__dirname, "../../home/apps/_shared/default-apps.tsx");
 
 const GAME_SLUGS = ["snake", "2048", "minesweeper", "tetris", "solitaire", "chess"];
+
+function expectViteApp(appDir: string, appId: string) {
+  const html = readFileSync(join(appDir, "index.html"), "utf-8");
+  expect(html.toLowerCase()).toContain("<!doctype html>");
+  expect(html).toContain('id="root"');
+  expect(html).toContain('type="module"');
+  expect(html).toContain("/src/main.tsx");
+  expect(existsSync(join(appDir, "vite.config.ts"))).toBe(true);
+
+  const source = readFileSync(join(appDir, "src/main.tsx"), "utf-8");
+  expect(source).toContain("renderDefaultApp");
+  expect(source).toContain(`"${appId}"`);
+}
 
 describe("T1420-T1427: Pre-installed games", () => {
   describe("game launcher", () => {
@@ -14,11 +28,11 @@ describe("T1420-T1427: Pre-installed games", () => {
       const parsed = parseAppManifest(manifest);
       expect(parsed.name).toBe("Game Center");
       expect(parsed.category).toBe("utilities");
-      expect(parsed.runtime).toBe("static");
+      expect(parsed.runtime).toBe("vite");
     });
 
-    it("has an index.html", () => {
-      expect(existsSync(join(GAMES_DIR, "index.html"))).toBe(true);
+    it("is a Vite app wired to the shared renderer", () => {
+      expectViteApp(GAMES_DIR, "games");
     });
   });
 
@@ -35,30 +49,25 @@ describe("T1420-T1427: Pre-installed games", () => {
         const parsed = parseAppManifest(manifest);
         expect(parsed.name).toBeTruthy();
         expect(parsed.category).toBe("games");
-        expect(parsed.runtime).toBe("static");
+        expect(parsed.runtime).toBe("vite");
         expect(parsed.version).toBeTruthy();
+        expect(manifest.build.command).toContain("vite build");
+        expect(manifest.build.output).toBe("dist");
       });
 
-      it("has an index.html", () => {
-        expect(existsSync(join(GAMES_DIR, slug, "index.html"))).toBe(true);
-      });
-
-      it("index.html contains game content", () => {
-        const html = readFileSync(join(GAMES_DIR, slug, "index.html"), "utf-8");
-        expect(html).toContain("<!DOCTYPE html>");
-        expect(html).toContain("<title>");
-        expect(html).toContain("<script>");
-      });
-
-      it("uses bridge API for persistence", () => {
-        const html = readFileSync(join(GAMES_DIR, slug, "index.html"), "utf-8");
-        expect(html).toContain("/api/bridge/data");
-      });
-
-      it("has sound effects via Web Audio API", () => {
-        const html = readFileSync(join(GAMES_DIR, slug, "index.html"), "utf-8");
-        expect(html).toContain("AudioContext");
+      it("is a Vite app wired to the shared renderer", () => {
+        expectViteApp(join(GAMES_DIR, slug), slug);
       });
     });
   }
+
+  it("keeps game-specific UI definitions in the shared app renderer", () => {
+    const shared = readFileSync(SHARED_RENDERER, "utf-8");
+    for (const slug of GAME_SLUGS) {
+      expect(shared).toContain(slug);
+    }
+    expect(shared).toContain("ArcadeApp");
+    expect(shared).toContain("BoardGame");
+    expect(shared).toContain("gameCards");
+  });
 });

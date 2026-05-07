@@ -13,11 +13,15 @@ import {
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
+  getActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
+  listUserMachines,
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  type UserMachineRecord,
 } from './db.js';
 import type { Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
@@ -56,16 +60,22 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
+const APP_ROUTE_COOKIE = 'matrix_app_route';
 const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
   'matrix-host-bundle.tar.gz',
   'matrix-host-bundle.tar.gz.sha256',
+  'manifest.json',
+  'release.json',
 ]);
+const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev)$/;
+const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev)\.json$/;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -87,6 +97,32 @@ const customerVpsProxyDispatcher = new Agent({
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
 const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'trailers',
+  'transfer-encoding',
+  'upgrade',
+]);
+const DECODED_FETCH_RESPONSE_HEADERS = new Set([
+  'content-encoding',
+  'content-length',
+]);
+
+function sanitizeProxyResponseHeaders(headers: Headers): Headers {
+  const sanitized = new Headers(headers);
+  for (const header of HOP_BY_HOP_RESPONSE_HEADERS) {
+    sanitized.delete(header);
+  }
+  for (const header of DECODED_FETCH_RESPONSE_HEADERS) {
+    sanitized.delete(header);
+  }
+  return sanitized;
+}
 
 const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
@@ -226,6 +262,53 @@ function readCookie(cookieHeader: string | undefined, name: string): string | nu
   }
 }
 
+function readMobileAppSessionRoutingHandle(path: string, rawUrl: string): string | null {
+  if (!(path === '/apps' || path.startsWith('/apps/'))) {
+    return null;
+  }
+  let token: string | null = null;
+  try {
+    token = new URL(rawUrl).searchParams.get('session');
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn('[platform] Failed to parse app session URL:', err instanceof Error ? err.message : String(err));
+    }
+    return null;
+  }
+  if (!token) return null;
+  const separator = token.indexOf('.');
+  if (separator <= 0) return null;
+  const handle = token.slice(0, separator);
+  return HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function readMobileAppRouteCookie(path: string, cookieHeader: string | undefined): string | null {
+  if (!(path === '/apps' || path.startsWith('/apps/'))) {
+    return null;
+  }
+  const handle = readCookie(cookieHeader, APP_ROUTE_COOKIE);
+  return handle && HANDLE_PATTERN.test(handle) ? handle : null;
+}
+
+function getAppRouteCookiePath(path: string): string | null {
+  const match = path.match(/^\/apps\/([^/?#]+)/);
+  if (!match?.[1]) return null;
+  return `/apps/${match[1]}/`;
+}
+
+function buildAppRouteCookie(handle: string, path: string): string | null {
+  const cookiePath = getAppRouteCookiePath(path);
+  if (!cookiePath) return null;
+  return [
+    `${APP_ROUTE_COOKIE}=${encodeURIComponent(handle)}`,
+    `Path=${cookiePath}`,
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=600',
+  ].join('; ');
+}
+
 function buildCodeSessionCookie(token: string): string {
   return [
     `${CODE_SESSION_COOKIE}=${encodeURIComponent(token)}`,
@@ -337,6 +420,7 @@ export function checkUnsafeDefaultSecrets(
 interface AppDomainIdentity {
   handle: string;
   userId: string;
+  source?: 'auth' | 'mobile-session';
 }
 
 interface ResolvedContainerEndpoint {
@@ -433,9 +517,15 @@ function describeError(err: unknown): string {
 }
 function isSyncJwtAuthError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  const errorWithCode = err as Error & { code?: unknown };
+  const errorCode = typeof errorWithCode.code === 'string'
+    ? errorWithCode.code
+    : '';
   return (
     err.name.startsWith("JWT") ||
     err.name.startsWith("JWS") ||
+    err.name.startsWith("JOSE") ||
+    errorCode.startsWith("ERR_JOSE_") ||
     err.message === "Invalid sync JWT claims" ||
     err.message.startsWith("JWT handle ")
   );
@@ -502,7 +592,7 @@ async function resolveAppDomainIdentity(opts: {
       userId: result.userId,
     };
   }
-  const machine = await getRunningUserMachineByClerkId(opts.db, result.userId);
+  const machine = await getActiveUserMachineByClerkId(opts.db, result.userId);
   if (!machine) {
     return null;
   }
@@ -511,6 +601,53 @@ async function resolveAppDomainIdentity(opts: {
     handle: machine.handle,
     userId: result.userId,
   };
+}
+
+async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string): Promise<{
+  reachable: boolean;
+  statusCode?: number;
+  release?: unknown;
+  startedAt?: string;
+  error?: string;
+}> {
+  const targetUrl = buildCustomerVpsProxyUrl(machine, '/api/system/info');
+  if (!targetUrl) {
+    return { reachable: false, error: 'VPS unreachable' };
+  }
+  if (!platformSecret) {
+    return { reachable: false, error: 'Platform auth unavailable' };
+  }
+  const headers = new Headers({
+    authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`,
+    host: `${machine.handle}.matrix-os.com`,
+    'x-forwarded-host': 'app.matrix-os.com',
+    'x-forwarded-proto': 'https',
+    connection: 'close',
+  });
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(VPS_RELEASE_PROBE_TIMEOUT_MS),
+      dispatcher: customerVpsProxyDispatcher,
+    } as RequestInit & { dispatcher: Agent });
+    if (!response.ok) {
+      return { reachable: false, statusCode: response.status, error: 'System info unavailable' };
+    }
+    const info = await response.json() as { release?: unknown; startedAt?: string };
+    return {
+      reachable: true,
+      statusCode: response.status,
+      release: info.release,
+      startedAt: info.startedAt,
+    };
+  } catch (err: unknown) {
+    console.warn(
+      `[platform] VPS release probe failed handle=${machine.handle} machine=${machine.machineId} error=${describeError(err)}`,
+    );
+    return { reachable: false, error: 'VPS release probe failed' };
+  }
 }
 
 function getGatewayUrlForHandle(handle: string): string {
@@ -603,7 +740,7 @@ async function proxyToShell(c: import('hono').Context, host: string, port: numbe
 
     return new Response(upstream.body, {
       status: upstream.status,
-      headers: upstream.headers,
+      headers: sanitizeProxyResponseHeaders(upstream.headers),
     });
   } catch (err: unknown) {
     logPlatformRouteError('proxyToShell', err);
@@ -633,6 +770,40 @@ function getNoContainerPage() {
     <h1>No instance yet</h1>
     <p>Your account doesn't have a Matrix OS instance provisioned. Visit the <a href="https://matrix-os.com/dashboard">dashboard</a> to set one up.</p>
   </div>
+</body>
+</html>`;
+}
+
+function getVpsBootPage(input: { handle: string; status: string }) {
+  const title = input.status === 'recovering' ? 'Restoring Matrix OS' : 'Booting Matrix OS';
+  const detail = input.status === 'recovering'
+    ? 'Your Matrix instance is restoring its workspace. This page will refresh automatically.'
+    : 'Your Matrix instance is starting for the first time. This usually takes a couple of minutes.';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="8">
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    main { width: min(520px, calc(100vw - 48px)); padding: 32px; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; background: rgba(15, 23, 42, 0.92); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32); }
+    .row { display: flex; align-items: center; gap: 14px; }
+    .spinner { width: 22px; height: 22px; border: 3px solid rgba(148, 163, 184, 0.45); border-top-color: #38bdf8; border-radius: 999px; animation: spin 1s linear infinite; }
+    h1 { font-size: 24px; line-height: 1.2; margin: 0; }
+    p { color: #cbd5e1; line-height: 1.55; margin: 16px 0 0; }
+    code { display: inline-block; margin-top: 18px; color: #93c5fd; background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 8px; padding: 7px 10px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="row"><div class="spinner"></div><h1>${title}</h1></div>
+    <p>${detail}</p>
+    <code>${input.handle}.matrix-os.com - ${input.status}</code>
+  </main>
 </body>
 </html>`;
 }
@@ -735,6 +906,38 @@ export function createApp(deps: {
 
     const imageVersion = c.req.param('imageVersion');
     const file = c.req.param('file');
+    if (imageVersion === 'channels') {
+      if (!HOST_BUNDLE_CHANNEL_FILE_PATTERN.test(file)) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      try {
+        const object = await deps.customerVpsObjectStore.getObject(
+          `system-bundles/channels/${file}`,
+          { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+        );
+        if (!object.body) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        const headers = new Headers({
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'public, max-age=60',
+          'cdn-cache-control': 'public, max-age=60',
+          'cloudflare-cdn-cache-control': 'public, max-age=60',
+        });
+        if (object.etag) headers.set('etag', object.etag);
+        if (typeof object.contentLength === 'number') {
+          headers.set('content-length', String(object.contentLength));
+        }
+        return new Response(object.body, { status: 200, headers });
+      } catch (err: unknown) {
+        if (isObjectNotFoundError(err)) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        logPlatformRouteError('/system-bundles/channels/:channel', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
+    }
+
     if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(imageVersion) || !HOST_BUNDLE_FILES.has(file)) {
       return c.json({ error: 'Invalid request' }, 400);
     }
@@ -748,7 +951,11 @@ export function createApp(deps: {
         return c.json({ error: 'Not found' }, 404);
       }
       const headers = new Headers({
-        'content-type': file.endsWith('.sha256') ? 'text/plain; charset=utf-8' : 'application/gzip',
+        'content-type': file.endsWith('.json')
+          ? 'application/json; charset=utf-8'
+          : file.endsWith('.sha256')
+            ? 'text/plain; charset=utf-8'
+            : 'application/gzip',
         'cache-control': 'public, max-age=31536000, immutable',
         'cdn-cache-control': 'public, max-age=31536000, immutable',
         'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
@@ -763,6 +970,44 @@ export function createApp(deps: {
         return c.json({ error: 'Not found' }, 404);
       }
       logPlatformRouteError('/system-bundles/:imageVersion/:file', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
+  app.get('/system-bundles/channels/:channel', async (c) => {
+    if (!deps.customerVpsObjectStore) {
+      return c.json({ error: 'Host bundle storage unavailable' }, 503);
+    }
+
+    const channel = c.req.param('channel');
+    if (!HOST_BUNDLE_CHANNEL_PATTERN.test(channel)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    try {
+      const object = await deps.customerVpsObjectStore.getObject(
+        `system-bundles/channels/${channel}`,
+        { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+      );
+      if (!object.body) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      const headers = new Headers({
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'public, max-age=60',
+        'cdn-cache-control': 'public, max-age=60',
+        'cloudflare-cdn-cache-control': 'public, max-age=60',
+      });
+      if (object.etag) headers.set('etag', object.etag);
+      if (typeof object.contentLength === 'number') {
+        headers.set('content-length', String(object.contentLength));
+      }
+      return new Response(object.body, { status: 200, headers });
+    } catch (err: unknown) {
+      if (isObjectNotFoundError(err)) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      logPlatformRouteError('/system-bundles/channels/:channel', err);
       return c.json({ error: 'Host bundle unavailable' }, 502);
     }
   });
@@ -836,13 +1081,25 @@ export function createApp(deps: {
     const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
 
-    const identity = await resolveAppDomainIdentity({
+    let identity = await resolveAppDomainIdentity({
       authHeader,
       cookieHeader,
       clerkAuth,
       db,
       platformJwtSecret,
     });
+    if (!identity && isAppDomain) {
+      const mobileSessionHandle =
+        readMobileAppSessionRoutingHandle(path, c.req.url) ??
+        readMobileAppRouteCookie(path, cookieHeader);
+      if (mobileSessionHandle) {
+        identity = {
+          handle: mobileSessionHandle,
+          userId: '',
+          source: 'mobile-session',
+        };
+      }
+    }
 
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
@@ -867,6 +1124,23 @@ export function createApp(deps: {
       c.set('platformUserId', identity.userId);
       c.set('platformHandle', identity.handle);
       return next();
+    }
+
+    if (isAppDomain && path === '/api/auth/ws-token') {
+      if (!platformJwtSecret) {
+        return c.json({ error: 'WebSocket auth unavailable' }, 503);
+      }
+      const issued = await issueSyncJwt({
+        secret: platformJwtSecret,
+        clerkUserId: identity.userId,
+        handle: identity.handle,
+        gatewayUrl: getGatewayUrlForHandle(identity.handle),
+        expiresInSec: WS_TOKEN_EXPIRES_IN_SEC,
+      });
+      return c.json({
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+      });
     }
 
     const runningMachine = await getRunningUserMachineByHandle(db, identity.handle);
@@ -902,12 +1176,15 @@ export function createApp(deps: {
         headers.set('host', `${runningMachine.handle}.matrix-os.com`);
         headers.set('x-forwarded-host', host);
         headers.set('x-forwarded-proto', 'https');
+        headers.set('accept-encoding', 'identity');
         headers.set('connection', 'close');
       }
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
-        headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
-        headers.set('x-platform-user-id', identity.userId);
+        if (identity.source !== 'mobile-session') {
+          headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, identity.userId, platformSecret));
+          headers.set('x-platform-user-id', identity.userId);
+        }
       }
 
       try {
@@ -920,7 +1197,11 @@ export function createApp(deps: {
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
-        const responseHeaders = new Headers(upstream.headers);
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        if (identity.source === 'mobile-session') {
+          const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
+          if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
+        }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({
             secret: platformJwtSecret,
@@ -944,24 +1225,20 @@ export function createApp(deps: {
 
     const record = await getContainer(db, identity.handle);
     if (!record) {
-      return c.html(getNoContainerPage());
-    }
-
-    if (isAppDomain && path === '/api/auth/ws-token') {
-      if (!platformJwtSecret) {
-        return c.json({ error: 'WebSocket auth unavailable' }, 503);
+      const activeMachine = await getActiveUserMachineByHandle(db, identity.handle);
+      if (activeMachine) {
+        if (isCodeDomain || isGatewayPath) {
+          return c.json({
+            error: 'VPS provisioning',
+            status: activeMachine.status,
+          }, 503);
+        }
+        return c.html(getVpsBootPage({
+          handle: activeMachine.handle,
+          status: activeMachine.status,
+        }), 503);
       }
-      const issued = await issueSyncJwt({
-        secret: platformJwtSecret,
-        clerkUserId: identity.userId,
-        handle: record.handle,
-        gatewayUrl: getGatewayUrlForHandle(record.handle),
-        expiresInSec: WS_TOKEN_EXPIRES_IN_SEC,
-      });
-      return c.json({
-        token: issued.token,
-        expiresAt: issued.expiresAt,
-      });
+      return c.html(getNoContainerPage());
     }
 
     if (record.status === 'stopped') {
@@ -976,7 +1253,7 @@ export function createApp(deps: {
     await updateLastActive(db, record.handle);
 
     const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-    const targetPort = isCodeDomain ? CODE_SERVER_PORT : isGatewayPath ? 4000 : 3000;
+    const targetPort = isCodeDomain ? CODE_SERVER_PORT : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain
       ? buildCodeDomainProxyHeaders(
@@ -1008,12 +1285,15 @@ export function createApp(deps: {
       }
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
     }
     if (platformSecret && isAppDomain) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
-      headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
-      headers.set('x-platform-user-id', identity.userId);
+      if (identity.source !== 'mobile-session') {
+        headers.set('x-platform-verified', buildPlatformUserProof(record.handle, identity.userId, platformSecret));
+        headers.set('x-platform-user-id', identity.userId);
+      }
     }
 
     let lastErr: unknown = null;
@@ -1037,7 +1317,11 @@ export function createApp(deps: {
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
 
-        const responseHeaders = new Headers(upstream.headers);
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        if (identity.source === 'mobile-session') {
+          const routeCookie = buildAppRouteCookie(record.handle, path);
+          if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
+        }
         if (isCodeDomain && platformJwtSecret) {
           const issued = await issueSyncJwt({
             secret: platformJwtSecret,
@@ -1106,6 +1390,36 @@ export function createApp(deps: {
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }
+  app.get('/vps/releases', async (c) => {
+    if (!platformSecret) {
+      return c.json({ error: 'VPS tracking not configured' }, 503);
+    }
+    const auth = c.req.header('authorization');
+    const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    if (!timingSafeTokenEquals(token, platformSecret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const machines = await listUserMachines(db);
+    const rows = await Promise.all(machines.map(async (machine) => {
+      const probe = machine.status === 'running'
+        ? await probeCustomerVpsRelease(machine, platformSecret)
+        : { reachable: false, error: 'VPS not running' };
+      return {
+        machineId: machine.machineId,
+        handle: machine.handle,
+        status: machine.status,
+        publicIPv4: machine.publicIPv4,
+        imageVersion: machine.imageVersion,
+        lastSeenAt: machine.lastSeenAt,
+        provisionedAt: machine.provisionedAt,
+        release: probe,
+      };
+    }));
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      machines: rows,
+    });
+  });
   if (deps.customerVpsService) {
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
@@ -1472,6 +1786,7 @@ export function createApp(deps: {
         headers.set('host', `${handle}.matrix-os.com`);
         headers.set('x-forwarded-host', originalHost);
         headers.set('x-forwarded-proto', 'https');
+        headers.set('accept-encoding', 'identity');
 
         const upstream = await fetch(targetUrl, {
           method: c.req.method,
@@ -1484,7 +1799,7 @@ export function createApp(deps: {
 
         return new Response(upstream.body, {
           status: upstream.status,
-          headers: upstream.headers,
+          headers: sanitizeProxyResponseHeaders(upstream.headers),
         });
       } catch (err: unknown) {
         logPlatformRouteError('/proxy/:handle/* vps', err);
@@ -1517,6 +1832,7 @@ export function createApp(deps: {
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');
+      headers.set('accept-encoding', 'identity');
 
       const upstream = await fetch(targetUrl, {
         method: c.req.method,
@@ -1528,7 +1844,7 @@ export function createApp(deps: {
 
       return new Response(upstream.body, {
         status: upstream.status,
-        headers: upstream.headers,
+        headers: sanitizeProxyResponseHeaders(upstream.headers),
       });
     } catch (err: unknown) {
       logPlatformRouteError('/proxy/:handle/*', err);
@@ -1874,14 +2190,23 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const path = req.url ?? '/';
     const wsToken = getWebSocketUpgradeToken(path);
-    const identity = await resolveAppDomainIdentity({
-      authHeader: req.headers.authorization as string | undefined,
-      cookieHeader: req.headers.cookie,
-      clerkAuth,
-      db,
-      platformJwtSecret: PLATFORM_JWT_SECRET,
-      wsToken,
-    });
+    let identity: AppDomainIdentity | null;
+    try {
+      identity = await resolveAppDomainIdentity({
+        authHeader: req.headers.authorization as string | undefined,
+        cookieHeader: req.headers.cookie,
+        clerkAuth,
+        db,
+        platformJwtSecret: PLATFORM_JWT_SECRET,
+        wsToken,
+      });
+    } catch (err: unknown) {
+      console.warn(
+        `[platform] websocket auth failed host=${host} path=${path} error=${describeError(err)}`,
+      );
+      socket.destroy();
+      return;
+    }
     if (!identity) {
       console.warn(`[platform] websocket unauthenticated host=${host} path=${path} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
       socket.destroy();

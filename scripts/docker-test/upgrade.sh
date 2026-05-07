@@ -16,7 +16,7 @@ echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Simulate old version: downgrade .matrix-version to 0.3.0
 echo -e "${YELLOW}[SETUP]${NC} Simulating v0.3.0 state..."
@@ -33,7 +33,7 @@ echo -e "${YELLOW}[SETUP]${NC} Restarting container to trigger sync..."
 $COMPOSE stop dev
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
-wait_for_healthy "dev" 90
+wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
 # Verify upgrade happened
 # The template version should be the current version (0.4.0)

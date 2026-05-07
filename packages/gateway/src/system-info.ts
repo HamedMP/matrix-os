@@ -1,7 +1,9 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { HostBundleRelease } from "./system-update.js";
 
 const startTime = Date.now();
+const startedAt = new Date(startTime).toISOString();
 
 function logSystemInfoReadFailure(context: string, err: unknown): void {
   console.warn(
@@ -50,6 +52,27 @@ export interface SystemInfo {
   skills: number;
   templateVersion: string;
   installedVersion: string;
+  startedAt: string;
+  release?: HostBundleRelease;
+}
+
+function readReleaseInfo(homePath: string): HostBundleRelease | undefined {
+  const candidates = [
+    process.env.MATRIX_RELEASE_FILE,
+    "/opt/matrix/release.json",
+    join(homePath, "release.json"),
+  ].filter((value): value is string => Boolean(value));
+
+  for (const file of candidates) {
+    try {
+      if (!existsSync(file)) continue;
+      const parsed = JSON.parse(readFileSync(file, "utf-8")) as HostBundleRelease;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch (err) {
+      logSystemInfoReadFailure("Failed to read release metadata", err);
+    }
+  }
+  return undefined;
 }
 
 export function getSystemInfo(homePath: string): SystemInfo {
@@ -125,5 +148,7 @@ export function getSystemInfo(homePath: string): SystemInfo {
     skills,
     templateVersion,
     installedVersion,
+    startedAt,
+    release: readReleaseInfo(homePath),
   };
 }

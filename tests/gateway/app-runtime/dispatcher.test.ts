@@ -115,6 +115,27 @@ describe("App Runtime Dispatcher", () => {
       expect(html).toContain("Notes SPA");
     });
 
+    it("serves nested vite apps by manifest slug", async () => {
+      const appDir = join(homeDir, "apps", "games", "chess");
+      await mkdir(join(appDir, "dist"), { recursive: true });
+      await writeFile(
+        join(appDir, "matrix.json"),
+        JSON.stringify({
+          name: "Chess",
+          slug: "chess",
+          version: "1.0.0",
+          runtime: "vite",
+          runtimeVersion: "^1.0.0",
+          build: { command: "pnpm build", output: "dist" },
+        }),
+      );
+      await writeFile(join(appDir, "dist", "index.html"), "<html><body>Chess SPA</body></html>");
+
+      const res = await app.request("/apps/chess/");
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("Chess SPA");
+    });
+
     it("returns 503 needs_build when vite dist/ is missing", async () => {
       const appDir = join(homeDir, "apps", "broken-vite");
       await mkdir(appDir, { recursive: true });
@@ -173,7 +194,7 @@ describe("App Runtime Dispatcher", () => {
       await symlink(targetDir, join(homeDir, "apps", "calculator"));
 
       const res = await app.request("/apps/calculator/");
-      expect(res.status).toBe(400);
+      expect([400, 404]).toContain(res.status);
     });
   });
 

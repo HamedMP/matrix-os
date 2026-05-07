@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { SpawnError, type SpawnErrorCode } from "./errors.js";
 import { safeEnv } from "./safe-env.js";
 import { loadManifest } from "./manifest-loader.js";
+import { resolveAppBySlug } from "./app-index.js";
 import type { AppManifest } from "./manifest-schema.js";
 import type { PortPool } from "./port-pool.js";
 
@@ -231,7 +232,12 @@ export class ProcessManager {
 
   private async doSpawn(record: ProcessRecord, manifest: AppManifest): Promise<void> {
     const { slug, port } = record;
-    const appDir = join(this.homeDir, "apps", slug);
+    const appsDir = join(this.homeDir, "apps");
+    const resolved = await resolveAppBySlug(appsDir, slug);
+    if (!resolved.ok) {
+      throw new SpawnError("spawn_failed", `Cannot resolve app directory for "${slug}"`);
+    }
+    const appDir = resolved.entry.appDir;
     const env = safeEnv({ slug, port: port!, homeDir: this.homeDir });
 
     const startCmd = manifest.serve!.start;

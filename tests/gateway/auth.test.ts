@@ -32,6 +32,7 @@ function createTestApp() {
   // Protected API route
   app.get("/api/apps/:slug/manifest", (c) => c.json({ ok: true }));
   app.post("/api/apps/:slug/session", (c) => c.json({ ok: true }));
+  app.post("/api/apps/:slug/session-token", (c) => c.json({ ok: true }));
   app.post("/api/apps/:slug/ack", (c) => c.json({ ok: true }));
 
   // App iframe route (should be exempted)
@@ -317,11 +318,20 @@ describe("authMiddleware app iframe exemption", () => {
     expect(res.status).toBe(401);
   });
 
+  it("still requires bearer auth for /api/apps/:slug/session-token", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/apps/notes/session-token", {
+      method: "POST",
+      headers: { "X-Forwarded-For": "203.0.113.12" },
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("still requires bearer auth for /api/apps/:slug/ack", async () => {
     const app = createTestApp();
     const res = await app.request("/api/apps/notes/ack", {
       method: "POST",
-      headers: { "X-Forwarded-For": "203.0.113.12" },
+      headers: { "X-Forwarded-For": "203.0.113.13" },
     });
     expect(res.status).toBe(401);
   });
@@ -329,7 +339,7 @@ describe("authMiddleware app iframe exemption", () => {
   it("still requires bearer auth for non-/apps/* routes", async () => {
     const app = createTestApp();
     const res = await app.request("/api/conversations", {
-      headers: { "X-Forwarded-For": "203.0.113.13" },
+      headers: { "X-Forwarded-For": "203.0.113.14" },
     });
     expect(res.status).toBe(401);
   });

@@ -60,6 +60,53 @@ describe("phase 1: static + vite runtime", () => {
     expect(res.status).toBe(401);
   }, 120_000);
 
+  it("exchanges a mobile one-shot session token for an app session cookie", async () => {
+    await gateway.installAppFromFixture("calculator-static");
+    const tokenRes = await gateway.app.request("/api/apps/calculator-static/session-token", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${gateway.token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    expect(tokenRes.status).toBe(200);
+    const tokenBody = (await tokenRes.json()) as { token: string; launchUrl: string };
+    expect(tokenBody.launchUrl).toBe(`/apps/calculator-static/?session=${encodeURIComponent(tokenBody.token)}`);
+
+    const exchangeRes = await gateway.app.request(tokenBody.launchUrl, {
+      headers: { Accept: "text/html" },
+      redirect: "manual",
+    });
+    expect(exchangeRes.status).toBe(302);
+    expect(exchangeRes.headers.get("location")).toBe("/apps/calculator-static/");
+    const cookie = exchangeRes.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(cookie).toMatch(/^matrix_app_session__calculator-static=/);
+
+    const appRes = await gateway.app.request("/apps/calculator-static/", {
+      headers: { Cookie: cookie, Accept: "text/html" },
+    });
+    expect(appRes.status).toBe(200);
+    expect(await appRes.text()).toContain("Calculator");
+  });
+
+  it("rejects replayed or cross-app mobile session tokens", async () => {
+    await gateway.installAppFromFixture("calculator-static");
+    await gateway.installAppFromFixture("hello-vite");
+    const token = await gateway.requestMobileSessionToken("calculator-static");
+
+    const crossAppRes = await gateway.app.request(`/apps/hello-vite/?session=${encodeURIComponent(token)}`, {
+      headers: { Accept: "text/html" },
+      redirect: "manual",
+    });
+    expect(crossAppRes.status).toBe(401);
+
+    const replayRes = await gateway.app.request(`/apps/calculator-static/?session=${encodeURIComponent(token)}`, {
+      headers: { Accept: "text/html" },
+      redirect: "manual",
+    });
+    expect(replayRes.status).toBe(401);
+  }, 120_000);
+
   it("manifest API returns the expected runtime mode and distributionStatus", async () => {
     await gateway.installAppFromFixture("hello-vite");
     const res = await gateway.app.request("/api/apps/hello-vite/manifest", {
