@@ -23,8 +23,7 @@ log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 manifest_url() { echo "${MATRIX_HOST_BUNDLE_URL%.tar.gz}.manifest.json"; }
 
-# Extract a JSON string field using grep (no jq dependency)
-json_field() { echo "$1" | grep -o "\"$2\"\s*:\s*\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+json_field() { python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('$2',''))" <<< "$1"; }
 
 # ── Poll for updates ─────────────────────────────────────────────────
 check_for_update() {
@@ -48,10 +47,12 @@ apply_update() {
   if [ ! -f "$UPDATE_MARKER" ]; then
     log "No update available — nothing to apply"; return 1
   fi
-  local manifest version sha256 cur bundle_file extract_dir
+  local manifest version sha256 bundle_url cur bundle_file extract_dir
   manifest="$(cat "$UPDATE_MARKER")"
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
+  bundle_url="$(json_field "$manifest" url)"
+  bundle_url="${bundle_url:-$MATRIX_HOST_BUNDLE_URL}"
   cur="$(current_version)"
   log "Starting update from $cur to $version"
 
@@ -60,9 +61,9 @@ apply_update() {
   extract_dir="$STAGING_DIR/bundle-${version}"
 
   # Download
-  log "Downloading bundle..."
+  log "Downloading bundle from $bundle_url..."
   if ! curl --fail --silent --show-error --max-time 300 \
-       "$MATRIX_HOST_BUNDLE_URL" -o "$bundle_file"; then
+       "$bundle_url" -o "$bundle_file"; then
     log "ERROR: download failed"; rm -f "$bundle_file"; return 1
   fi
 
@@ -102,8 +103,8 @@ apply_update() {
   echo "$version" > "$VERSION_FILE"
   log "Installed app $version"
   if [ -d "$extract_dir/bin" ]; then
-    cp -a "$extract_dir/bin/"* "$BIN_DIR/"
-    chmod 0755 "$BIN_DIR/"*
+    find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \;
+    find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
 
@@ -113,7 +114,7 @@ apply_update() {
   log "Running health check..."
   local healthy=false
   for _ in $(seq 1 6); do
-    if curl --fail --silent --max-time 30 "$HEALTH_URL" >/dev/null 2>&1; then
+    if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
       healthy=true; break
     fi
     sleep 5
