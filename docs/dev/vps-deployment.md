@@ -560,7 +560,7 @@ Operational rules:
 - `DATABASE_URL` must exist in `/opt/matrix/env/host.env` or be assembled by `/opt/matrix/bin/matrix-gateway` from `/opt/matrix/env/postgres.env`. Without it, gateway state can drift away from owner-controlled Postgres.
 - Do not use `owner: root:matrix` in cloud-init `write_files` before the `matrix` group exists. Prefer `root:root` for env files unless the file must be group-readable.
 - During in-place refreshes, wrapper scripts in `/opt/matrix/bin` must be executable by the `matrix` service user. Either keep bundle wrapper mode `0755`, or set group to `matrix` and mode `0750` after extraction.
-- Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, and pi update themselves with `npm install -g --prefix /opt/matrix/runtime/node ...`; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`.
+- Global agent CLI packages under `/opt/matrix/runtime/node/lib/node_modules` and their shims under `/opt/matrix/runtime/node/bin` must be writable by the `matrix` group. Codex, Claude, opencode, pi, and uv update themselves through the Matrix runtime prefix; root-owned, non-writable global packages cause `EACCES: permission denied, rename ...`. Hermes installs for the `matrix` user through `/opt/matrix/bin/matrix-install-hermes`.
 - Preserve `/opt/matrix/env`, `/home/matrix/home`, and the local Postgres data directory during in-place refreshes.
 - Record the checksum in `specs/070-vps-per-user/changelog.md` after publishing and mention which customer VPSes were refreshed.
 

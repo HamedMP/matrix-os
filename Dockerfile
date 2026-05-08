@@ -121,12 +121,18 @@ RUN apk add --no-cache \
 
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 
-# AI coding CLIs -- pin versions so this layer caches
+# AI coding CLIs. Claude Code and Codex intentionally use latest at image build
+# time so fresh Matrix runtimes start with current agent CLIs.
 RUN npm install -g \
-    @anthropic-ai/claude-code@2.1.91 \
-    @openai/codex@0.118.0 \
+    @anthropic-ai/claude-code@latest \
+    @openai/codex@latest \
     opencode-ai@1.14.25 \
     @mariozechner/pi-coding-agent@0.70.2
+
+RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+    -o /tmp/hermes-agent-install.sh && \
+    bash /tmp/hermes-agent-install.sh --skip-setup && \
+    rm -f /tmp/hermes-agent-install.sh
 
 # Browser IDE served only on the private Docker network and exposed publicly
 # through the authenticated platform proxy at code.matrix-os.com. code-server

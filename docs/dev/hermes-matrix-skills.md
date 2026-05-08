@@ -61,7 +61,7 @@ hermes skills browse matrix
 
 Recommended target state:
 
-1. The Matrix image includes Hermes or installs it during first boot as the `matrix` user.
+1. The Matrix image includes `uv` in the host runtime and installs Hermes during first boot as the `matrix` user via `/opt/matrix/bin/matrix-install-hermes`.
 2. First boot runs `scripts/install-hermes-matrix-skills.sh`.
 3. Hermes config sets Matrix's local gateway URL:
 
@@ -71,7 +71,7 @@ Recommended target state:
 
 4. No Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets are written to Hermes config or customer VPS env.
 
-For production user VPSes, preinstalling Hermes plus the Matrix skills is safe because the skills contain instructions only. Authenticated Matrix actions should still go through Matrix gateway/platform APIs.
+For production user VPSes, installing Hermes plus the Matrix skills is safe because the skills contain instructions only. Authenticated Matrix actions should still go through Matrix gateway/platform APIs.
 
 For dev VPSes, also make the Hermes install path writable by the `matrix` user so `hermes`, Codex, and Claude CLIs can self-update without `EACCES`.
 
