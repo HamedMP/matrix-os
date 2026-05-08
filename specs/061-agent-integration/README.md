@@ -1,27 +1,27 @@
-# Spec 061: Hermes Agent Integration
+# Spec 061: Agent Integration
 
-> Install Hermes Agent (Nous Research, MIT) as a second AI kernel in Matrix OS.
+> Install Agent (Nous Research, MIT) as a second AI kernel in Matrix OS.
 
 ## Documents
 
-- **[SPEC.md](./SPEC.md)** -- Main design spec. Architecture, phases, Hermes deep reference.
+- **[SPEC.md](./SPEC.md)** -- Main design spec. Architecture, phases, Agent deep reference.
 - **[PATTERNS-TO-COPY.md](./PATTERNS-TO-COPY.md)** -- Specific MIT-licensed patterns worth porting, with source file references.
 
 ## Quick Summary
 
-Matrix OS installs Hermes as a Python sidecar process. Users get:
+Matrix OS installs Agent as a Python sidecar process. Users get:
 
-1. **Hermes chat app** in the shell (multi-model, SSE streaming)
-2. **`hermes` TUI** in the Matrix OS terminal (full Hermes CLI experience)
-3. **External channels** via Hermes's 16+ platform adapters (Telegram, Discord, Matrix, Slack, WhatsApp, etc.)
-4. **Matrix protocol bridge** -- `@hermes:matrix-os.com` as a federated bot identity
+1. **Agent chat app** in the shell (multi-model, SSE streaming)
+2. **`agent` TUI** in the Matrix OS terminal (full Agent CLI experience)
+3. **External channels** via Agent's 16+ platform adapters (Telegram, Discord, Matrix, Slack, WhatsApp, etc.)
+4. **Matrix protocol bridge** -- `@agent:matrix-os.com` as a federated bot identity
 
 ## Integration Surface
 
-Hermes exposes an OpenAI-compatible HTTP API on port 8642. Matrix OS gateway proxies to it:
+Agent exposes an OpenAI-compatible HTTP API on port 8642. Matrix OS gateway proxies to it:
 
 ```
-Browser -> Matrix OS gateway (/api/hermes/*) -> localhost:8642 -> Hermes
+Browser -> Matrix OS gateway (/api/agent/*) -> localhost:8642 -> Agent
 ```
 
 No Python code runs inside the Node.js process. Two runtimes, one container.
@@ -29,7 +29,7 @@ No Python code runs inside the Node.js process. Two runtimes, one container.
 ## Why Now
 
 - Multi-model unlock -- 200+ models via OpenRouter alongside Claude
-- Hermes is MIT -- copy patterns directly, no legal friction
+- Agent is MIT -- copy patterns directly, no legal friction
 - Self-improving skills, FTS5 memory, context compression are production-ready
 - 16+ channel adapters = massive acceleration on Matrix OS's channel story
 

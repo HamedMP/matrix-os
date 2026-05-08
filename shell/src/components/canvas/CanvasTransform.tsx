@@ -37,11 +37,13 @@ export function CanvasTransform({
   const [grabCursor, setGrabCursor] = useState(false);
 
   const isCanvasSurfaceEvent = useCallback((target: EventTarget | null) => {
-    return (
+    if (
       target === containerRef.current ||
       target === zoomOverlayRef.current ||
       target === transformRef.current
-    );
+    ) return true;
+    if (target instanceof HTMLElement && target.closest("[data-canvas-window]") && !target.closest("iframe")) return true;
+    return false;
   }, []);
 
   const onWheel = useCallback(
