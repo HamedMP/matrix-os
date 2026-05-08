@@ -38,8 +38,18 @@ check_for_update() {
   fi
   cur="$(current_version)"
   if [ "$remote_version" = "$cur" ]; then return 0; fi
-  log "Update available: $remote_version (current: $cur)"
+
+  local severity update_type
+  severity="$(json_field "$manifest" severity)"
+  update_type="$(json_field "$manifest" updateType)"
+
+  log "Update available: $remote_version (current: $cur, severity: ${severity:-normal})"
   echo "$manifest" > "$UPDATE_MARKER"
+
+  if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
+    log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
+    apply_update || log "Auto-apply failed — will retry on next poll"
+  fi
 }
 
 # ── Apply update ─────────────────────────────────────────────────────
