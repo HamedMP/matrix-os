@@ -44,3 +44,32 @@ groups:
         annotations:
           summary: "High dispatch backlog"
           description: "More than 50 dispatches accumulated in the last 5 minutes, indicating potential queue backlog."
+
+  - name: matrixos-vps
+    rules:
+      - alert: VpsInstanceUnreachable
+        expr: matrix_vps_healthy == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPS {{ $labels.handle }} unreachable"
+          description: "VPS instance {{ $labels.handle }} has been unreachable for more than 10 minutes."
+
+      - alert: VpsStaleVersion
+        expr: matrix_vps_version_age_seconds > 3600 and matrix_vps_update_severity == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "VPS {{ $labels.handle }} running stale version after security update"
+          description: "VPS {{ $labels.handle }} has not updated to the latest version more than 1 hour after a security update was published."
+
+      - alert: VpsProvisioningStuck
+        expr: matrix_vps_status{status="provisioning"} == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VPS {{ $labels.handle }} stuck in provisioning"
+          description: "VPS {{ $labels.handle }} has been in provisioning state for more than 15 minutes."
