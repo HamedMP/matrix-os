@@ -125,6 +125,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('server_name code.matrix-os.com');
     expect(cloudInit).toContain('proxy_pass http://127.0.0.1:8787');
     expect(cloudInit).toContain('proxy_set_header X-Matrix-Code-Proxy-Token $http_x_matrix_code_proxy_token');
+    expect(cloudInit).toContain('if ($http_x_forwarded_host = "code.matrix-os.com")');
+    expect(cloudInit).toContain('error_page 418 = @matrix_code_proxy');
   });
 
   it('copies customer VPS cloud-init assets into the runtime image', () => {
