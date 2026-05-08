@@ -37,9 +37,10 @@ export function resolveSystemUpdateState(input: {
   updateAvailable?: boolean;
   severity?: string;
   changelog?: string;
+  updateType?: string;
 }) {
   const updateAvailable = Boolean(input.updateAvailable && input.latestVersion);
-  const autoApplying = updateAvailable && (input.severity === "security");
+  const autoApplying = updateAvailable && (input.severity === "security" || input.updateType === "auto");
   return {
     currentVersion: input.installedVersion ?? "unknown",
     latestVersion: input.latestVersion ?? null,

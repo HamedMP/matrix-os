@@ -72,6 +72,18 @@ describe("SystemSection version helpers", () => {
     expect(state.showDot).toBe(false);
   });
 
+  it("marks updateType=auto as auto-applying even with normal severity", () => {
+    const state = resolveSystemUpdateState({
+      installedVersion: "v2026.05.06-1",
+      latestVersion: "v2026.05.07-1",
+      updateAvailable: true,
+      severity: "normal",
+      updateType: "auto",
+    });
+    expect(state.autoApplying).toBe(true);
+    expect(state.showDot).toBe(false);
+  });
+
   it("returns severity badge styles", () => {
     expect(severityBadgeStyle("security")).toContain("red");
     expect(severityBadgeStyle("critical")).toContain("orange");

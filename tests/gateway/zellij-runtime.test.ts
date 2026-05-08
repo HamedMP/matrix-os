@@ -100,6 +100,22 @@ describe("zellij-runtime", () => {
     expect(layout).toContain("\\\\backslash");
   });
 
+  it("correctly escapes backslash followed by newline without collapsing sequences", async () => {
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn() });
+    const launchMixed: AgentLaunchSpec = {
+      command: "claude",
+      args: ["--", "before\\\nafter"],
+      cwd: "/home/matrixos/home/projects/repo",
+      env: {},
+    };
+
+    const result = await runtime.generateLayout({ sessionId: "sess_esc3", launch: launchMixed });
+    const layout = await readFile(result.layoutPath, "utf-8");
+
+    expect(layout).toContain("\\\\\\n");
+    expect(layout).not.toContain("\n" + "after");
+  });
+
   it("returns degraded health when zellij is unavailable without exposing raw errors", async () => {
     const runCommand = vi.fn(async () => {
       throw new Error("ENOENT /usr/bin/zellij secret-path");

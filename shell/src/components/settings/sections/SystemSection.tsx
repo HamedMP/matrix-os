@@ -128,6 +128,7 @@ export function SystemSection() {
     updateAvailable: updateStatus?.updateAvailable,
     severity: updateStatus?.latest?.severity,
     changelog: updateStatus?.latest?.changelog,
+    updateType: updateStatus?.latest?.updateType,
   });
   const currentVersion = resolvedUpdate.currentVersion;
   const latestVersion = resolvedUpdate.latestVersion;
