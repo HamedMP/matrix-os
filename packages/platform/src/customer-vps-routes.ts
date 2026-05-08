@@ -10,12 +10,14 @@ import {
   DeployRequestSchema,
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
 
 const VPS_BODY_LIMIT = 4096;
 
 export interface CustomerVpsRoutesDeps {
   service: CustomerVpsService;
   platformSecret: string;
+  probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
 }
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
@@ -134,6 +136,51 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json(await deps.service.deploy(parsed.data.version), 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/deploy');
+    }
+  });
+
+  const FLEET_PROBE_TIMEOUT_MS = 10_000;
+
+  app.get('/fleet', async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    try {
+      const statuses = await deps.service.listAllMachines();
+      const probed = await Promise.allSettled(
+        statuses.map(async (s): Promise<FleetMachineView> => {
+          if (s.status !== 'running' || !deps.probeMachineHealth) {
+            return { ...s, healthy: false };
+          }
+          const healthy = await Promise.race([
+            deps.probeMachineHealth(s).catch((err: unknown) => {
+              logCustomerVpsError(`fleet probe failed for ${s.handle}`, err);
+              return false;
+            }),
+            new Promise<false>((resolve) => setTimeout(() => resolve(false), FLEET_PROBE_TIMEOUT_MS)),
+          ]);
+          return { ...s, healthy };
+        }),
+      );
+      const machines = probed
+        .filter((r): r is PromiseFulfilledResult<FleetMachineView> => r.status === "fulfilled")
+        .map(r => r.value);
+      return c.json({ fleet: buildFleetSummary(machines), machines });
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/fleet');
+    }
+  });
+
+  app.post('/fleet/update-all', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    try {
+      const parsed = DeployRequestSchema.safeParse(await readJson(c));
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      return c.json(await deps.service.deploy(parsed.data.version), 200);
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/fleet/update-all');
     }
   });
 
