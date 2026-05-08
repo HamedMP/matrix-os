@@ -241,8 +241,8 @@ export function CanvasWindow({ win, hidden = false }: CanvasWindowProps) {
           </button>
           <button
             className="size-3 rounded-full bg-[#28c840] flex items-center justify-center hover:brightness-90 transition-colors"
-            onClick={(e) => { e.stopPropagation(); fitWindow(); }}
-            aria-label="Maximize"
+            onClick={(e) => { e.stopPropagation(); useWindowManager.getState().toggleFullscreen(win.id); }}
+            aria-label="Fullscreen"
           >
             <Maximize2 className="size-1.5 text-black/0 group-hover/traffic:text-black/60 transition-colors" />
           </button>

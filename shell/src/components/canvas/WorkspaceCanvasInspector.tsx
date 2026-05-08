@@ -5,7 +5,6 @@ import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 export function WorkspaceCanvasInspector() {
   const document = useWorkspaceCanvasStore((s) => s.document);
   const selectedNodeId = useWorkspaceCanvasStore((s) => s.selectedNodeId);
-  const saveStatus = useWorkspaceCanvasStore((s) => s.saveStatus);
   const error = useWorkspaceCanvasStore((s) => s.error);
   const executeAction = useWorkspaceCanvasStore((s) => s.executeAction);
   const selected = document?.nodes.find((node) => node.id === selectedNodeId) ?? null;
@@ -14,7 +13,6 @@ export function WorkspaceCanvasInspector() {
     <aside className="pointer-events-auto w-72 rounded-md border border-white/10 bg-zinc-950/90 p-3 text-xs text-zinc-100 shadow-lg">
       <div className="flex items-center justify-between">
         <span className="font-medium">{selected ? selected.type.replaceAll("_", " ") : "Workspace"}</span>
-        <span className="text-zinc-400">{saveStatus}</span>
       </div>
       {error && <div className="mt-2 rounded bg-red-950/70 p-2 text-red-100">{error}</div>}
       {selected ? (

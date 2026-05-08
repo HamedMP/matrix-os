@@ -3104,7 +3104,7 @@ export async function createGateway(config: GatewayConfig) {
         }
       }
       if (!iconStyle) {
-        iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
+        iconStyle = "Minimal line icon on a plain white background, single thin dark-gray outline stroke of the object that represents the app (e.g. terminal is a simple console prompt, calculator is a simple calculator outline, notes is a notepad outline), no fill colors, no gradients, no shadows, no 3D effects, no text, no transparency, centered in the square, very simple and clean like a wireframe sketch, soft and muted, 1-2px stroke weight";
       }
 
       const client = createImageClient(geminiKey);
@@ -3146,7 +3146,7 @@ export async function createGateway(config: GatewayConfig) {
       logBestEffortFailure("Failed to read desktop icon style", err);
     }
     if (!iconStyle) {
-      iconStyle = "macOS-style app icon filling the entire square canvas edge to edge with zero margin or padding, flat solid background color (not gradient) in a smooth muted tone unique to each app, a single white or light symbol centered that clearly represents what the app does (e.g. terminal shows a command prompt, calculator shows a calculator, notes shows a notepad, chess shows a chess piece), the symbol should be instantly recognizable and directly related to the app purpose, clean modern design with minimal depth, no text, no transparency, no rounded corners (UI handles rounding), background color must be a single solid color extending to all edges";
+      iconStyle = "Minimal line icon on a plain white background, single thin dark-gray outline stroke of the object that represents the app (e.g. terminal is a simple console prompt, calculator is a simple calculator outline, notes is a notepad outline), no fill colors, no gradients, no shadows, no 3D effects, no text, no transparency, centered in the square, very simple and clean like a wireframe sketch, soft and muted, 1-2px stroke weight";
     }
 
     const iconsDir = join(homePath, "system/icons");

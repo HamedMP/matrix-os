@@ -276,6 +276,18 @@ export function createSettingsRoutes(opts: {
     }
   });
 
+  app.post("/onboarding-complete", async (c) => {
+    const path = join(homePath, "system", "onboarding-complete.json");
+    try {
+      await writeFile(path, JSON.stringify({ completedAt: new Date().toISOString() }) + "\n", { flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return c.json({ ok: true });
+      console.error("[settings] onboarding-complete write failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Failed to mark onboarding complete" }, 500);
+    }
+    return c.json({ ok: true });
+  });
+
   app.post("/api-key", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
     let body: { apiKey: string };
     try {
