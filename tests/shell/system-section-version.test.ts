@@ -3,7 +3,8 @@ import {
   isNewer,
   normalizeMatrixReleaseTag,
   resolveSystemUpdateState,
-} from "../../shell/src/components/settings/sections/SystemSection";
+  severityBadgeStyle,
+} from "../../shell/src/components/settings/sections/system-update-state.js";
 
 describe("SystemSection version helpers", () => {
   it("ignores CLI releases when choosing Matrix OS app releases", () => {
@@ -30,6 +31,51 @@ describe("SystemSection version helpers", () => {
       currentVersion: "v2026.05.06-1",
       latestVersion: "v2026.05.06-2",
       updateAvailable: true,
+      autoApplying: false,
+      severity: undefined,
+      changelog: undefined,
+      showDot: true,
     });
+  });
+
+  it("marks security updates as auto-applying with no dot", () => {
+    const state = resolveSystemUpdateState({
+      installedVersion: "v2026.05.06-1",
+      latestVersion: "v2026.05.08-1",
+      updateAvailable: true,
+      severity: "security",
+      changelog: "Critical auth bypass fix.",
+    });
+    expect(state.autoApplying).toBe(true);
+    expect(state.showDot).toBe(false);
+    expect(state.severity).toBe("security");
+    expect(state.changelog).toBe("Critical auth bypass fix.");
+  });
+
+  it("shows dot for normal updates", () => {
+    const state = resolveSystemUpdateState({
+      installedVersion: "v2026.05.06-1",
+      latestVersion: "v2026.05.07-1",
+      updateAvailable: true,
+      severity: "normal",
+    });
+    expect(state.autoApplying).toBe(false);
+    expect(state.showDot).toBe(true);
+  });
+
+  it("does not show dot when no update available", () => {
+    const state = resolveSystemUpdateState({
+      installedVersion: "v2026.05.06-1",
+      latestVersion: "v2026.05.06-1",
+      updateAvailable: false,
+    });
+    expect(state.showDot).toBe(false);
+  });
+
+  it("returns severity badge styles", () => {
+    expect(severityBadgeStyle("security")).toContain("red");
+    expect(severityBadgeStyle("critical")).toContain("orange");
+    expect(severityBadgeStyle("normal")).toContain("blue");
+    expect(severityBadgeStyle(undefined)).toContain("blue");
   });
 });
