@@ -22,7 +22,7 @@ workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/HamedMP/matrix-os.git .
+    git clone --depth 1 git@github.com:HamedMP/matrix-os.git .
     pnpm install --frozen-lockfile
   before_remove: |
     branch=$(git branch --show-current 2>/dev/null)
