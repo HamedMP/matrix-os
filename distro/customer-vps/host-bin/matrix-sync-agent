@@ -18,6 +18,7 @@ readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
 readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
+readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
@@ -47,8 +48,17 @@ check_for_update() {
   echo "$manifest" > "$UPDATE_MARKER"
 
   if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
-    log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
-    apply_update || log "Auto-apply failed — will retry on next poll"
+    if [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then
+      log "Skipping auto-apply for $remote_version — previous attempt failed (use .update-now to retry)"
+    else
+      log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
+      if ! apply_update; then
+        echo "$remote_version" > "$AUTO_APPLY_FAILED_MARKER"
+        log "Auto-apply failed — will not retry automatically (use .update-now to force)"
+      else
+        rm -f "$AUTO_APPLY_FAILED_MARKER"
+      fi
+    fi
   fi
 }
 
@@ -183,6 +193,7 @@ while true; do
   # React to trigger files and signals
   if [ -f "$UPDATE_TRIGGER" ]; then
     rm -f "$UPDATE_TRIGGER"
+    rm -f "$AUTO_APPLY_FAILED_MARKER"
     apply_update || log "Update failed — will retry on next trigger"
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then

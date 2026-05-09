@@ -1431,7 +1431,7 @@ export function createApp(deps: {
         });
         return res.ok;
       } catch (err: unknown) {
-        console.warn(`[fleet-probe] health check failed for ${machine.handle} (${machine.publicIPv4}):`, err);
+        console.warn(`[fleet-probe] health check failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));
         return false;
       }
     }
