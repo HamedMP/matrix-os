@@ -59,13 +59,13 @@ interface SystemUpdateStatus {
   error?: string;
 }
 
-export {
+import {
   normalizeMatrixReleaseTag,
   isNewer,
   severityBadgeStyle,
   resolveSystemUpdateState,
 } from "./system-update-state.js";
-import { severityBadgeStyle, resolveSystemUpdateState } from "./system-update-state.js";
+export { normalizeMatrixReleaseTag, isNewer, severityBadgeStyle, resolveSystemUpdateState };
 
 export function SystemSection() {
   const [info, setInfo] = useState<SystemInfo>({});

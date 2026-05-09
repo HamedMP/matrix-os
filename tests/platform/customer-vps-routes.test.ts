@@ -308,45 +308,5 @@ describe('platform/customer-vps-routes', () => {
       }
     });
 
-    it('POST /fleet/update-all without auth returns 401', async () => {
-      const service = {
-        deploy: vi.fn().mockResolvedValue({ triggered: 0, failed: 0, results: [] }),
-      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
-      const app = new Hono();
-      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
-
-      const res = await app.request('/vps/fleet/update-all', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      expect(res.status).toBe(401);
-    });
-
-    it('POST /fleet/update-all with auth triggers deploy and returns result', async () => {
-      const deployResult = {
-        triggered: 2,
-        failed: 0,
-        results: [
-          { machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', handle: 'alice', status: 'triggered' },
-          { machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7', handle: 'bob', status: 'triggered' },
-        ],
-      };
-      const service = {
-        deploy: vi.fn().mockResolvedValue(deployResult),
-      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
-      const app = new Hono();
-      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
-
-      const res = await app.request('/vps/fleet/update-all', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ version: 'matrix-os-host-2026.05.01-1' }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual(deployResult);
-      expect(service.deploy).toHaveBeenCalledWith('matrix-os-host-2026.05.01-1');
-    });
   });
 });

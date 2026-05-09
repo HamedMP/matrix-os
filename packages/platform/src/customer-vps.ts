@@ -96,7 +96,6 @@ export interface CustomerVpsService {
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(version?: string): Promise<DeployResult>;
-  listRunningMachines(): Promise<StatusResponse[]>;
   listAllMachines(): Promise<StatusResponse[]>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
@@ -627,11 +626,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
       }
       return { deleted: true, machineId, status: 'deleted' };
-    },
-
-    async listRunningMachines(): Promise<StatusResponse[]> {
-      const machines = await listRunningUserMachines(deps.db, 500);
-      return machines.map(statusResponse);
     },
 
     async listAllMachines(): Promise<StatusResponse[]> {

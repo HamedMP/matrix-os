@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
+import { DANGEROUS_CONTROL_CHARS_GLOBAL } from "./prompt-validation.js";
 
 type CommandRunner = (
   command: string,
@@ -56,7 +57,7 @@ function kdlString(value: string): string {
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
     .replace(/\t/g, "\\t")
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+    .replace(DANGEROUS_CONTROL_CHARS_GLOBAL, "")
   }"`;
 }
 

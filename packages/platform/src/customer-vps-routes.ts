@@ -11,8 +11,7 @@ import {
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
-import { vpsInfo, vpsHealthy, vpsUptimeSeconds } from './metrics.js';
-import { buildPlatformVerificationToken } from './platform-token.js';
+import { vpsInfo, vpsHealthy } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
 
@@ -141,8 +140,6 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     }
   });
 
-  const FLEET_PROBE_TIMEOUT_MS = 10_000;
-
   app.get('/fleet', async (c) => {
     const authError = requirePlatformAuth(c);
     if (authError) return authError;
@@ -150,69 +147,30 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       const statuses = await deps.service.listAllMachines();
       const probed = await Promise.allSettled(
         statuses.map(async (s): Promise<FleetMachineView> => {
-          if (s.status !== 'running' || !deps.probeMachineHealth) {
+          if (s.status !== 'running' || !s.publicIPv4 || !deps.probeMachineHealth) {
             return { ...s, healthy: false };
           }
-          const healthy = await Promise.race([
-            deps.probeMachineHealth(s).catch((err: unknown) => {
-              logCustomerVpsError(`fleet probe failed for ${s.handle}`, err);
-              return false;
-            }),
-            new Promise<false>((resolve) => setTimeout(() => resolve(false), FLEET_PROBE_TIMEOUT_MS)),
-          ]);
+          const healthy = await deps.probeMachineHealth(s).catch((err: unknown) => {
+            logCustomerVpsError(`fleet probe failed for ${s.handle}`, err);
+            return false;
+          });
           return { ...s, healthy };
         }),
       );
       const machines = probed
         .filter((r): r is PromiseFulfilledResult<FleetMachineView> => r.status === "fulfilled")
         .map(r => r.value);
+
       vpsInfo.reset();
       vpsHealthy.reset();
-      vpsUptimeSeconds.reset();
       for (const m of machines) {
         vpsInfo.set({ handle: m.handle, version: m.imageVersion ?? "unknown", status: m.status }, 1);
         vpsHealthy.set({ handle: m.handle }, m.healthy ? 1 : 0);
       }
 
-      // Fetch uptime from healthy machines
-      const healthyMachines = machines.filter((m) => m.healthy && m.publicIPv4);
-      await Promise.allSettled(
-        healthyMachines.map(async (m) => {
-          try {
-            const token = buildPlatformVerificationToken(m.handle, deps.platformSecret);
-            const res = await fetch(`https://${m.publicIPv4}:443/api/system/info`, {
-              headers: { authorization: `Bearer ${token}` },
-              signal: AbortSignal.timeout(8_000),
-            });
-            if (res.ok) {
-              const data = (await res.json()) as { uptime?: number };
-              if (typeof data.uptime === 'number') {
-                vpsUptimeSeconds.set({ handle: m.handle }, data.uptime);
-              }
-            }
-          } catch (err: unknown) {
-            logCustomerVpsError(`fleet uptime probe failed for ${m.handle}`, err);
-          }
-        }),
-      );
-
       return c.json({ fleet: buildFleetSummary(machines), machines });
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/fleet');
-    }
-  });
-
-  app.post('/fleet/update-all', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
-    const authError = requirePlatformAuth(c);
-    if (authError) return authError;
-    try {
-      const parsed = DeployRequestSchema.safeParse(await readJson(c));
-      if (!parsed.success) {
-        return c.json({ error: 'Invalid request' }, 400);
-      }
-      return c.json(await deps.service.deploy(parsed.data.version), 200);
-    } catch (err: unknown) {
-      return jsonError(c, err, '/vps/fleet/update-all');
     }
   });
 
