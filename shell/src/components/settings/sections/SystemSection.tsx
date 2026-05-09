@@ -221,17 +221,17 @@ export function SystemSection() {
           )}
           {resolvedUpdate.autoApplying && (
             <p className="text-xs text-red-600 font-medium pt-1">
-              A security update is being applied automatically. Your system will restart shortly.
+              This update is being applied automatically. Your system will restart shortly.
             </p>
           )}
-          {updateAvailable && !resolvedUpdate.autoApplying && (
+          {updateAvailable && (
             <div className="pt-1 space-y-2">
               <button
                 onClick={handleUpgrade}
                 disabled={upgrading}
                 className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
-                {upgrading ? "Upgrading... reloading in 15s" : "Upgrade Now"}
+                {upgrading ? "Upgrading... reloading in 15s" : resolvedUpdate.autoApplying ? "Retry Update" : "Upgrade Now"}
               </button>
               {upgradeError && (
                 <p className="text-xs text-red-500">{upgradeError}</p>

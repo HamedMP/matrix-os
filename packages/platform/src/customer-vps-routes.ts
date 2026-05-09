@@ -168,7 +168,8 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
         vpsHealthy.set({ handle: m.handle }, m.healthy ? 1 : 0);
       }
 
-      return c.json({ fleet: buildFleetSummary(machines), machines });
+      const FLEET_LIMIT = 500;
+      return c.json({ fleet: buildFleetSummary(machines), machines, truncated: machines.length >= FLEET_LIMIT });
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/fleet');
     }

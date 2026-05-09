@@ -175,40 +175,6 @@
           "refId": "B"
         }
       ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 3600 },
-              { "color": "green", "value": 86400 }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
-      "id": 6,
-      "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
-      },
-      "title": "Uptime Per Instance",
-      "type": "bargauge",
-      "targets": [
-        {
-          "expr": "matrix_vps_uptime_seconds",
-          "legendFormat": "{{handle}}",
-          "refId": "A"
-        }
-      ]
     }
   ],
   "schemaVersion": 39,
