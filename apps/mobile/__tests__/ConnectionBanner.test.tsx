@@ -14,28 +14,28 @@ describe("ConnectionBanner", () => {
     const { getByText } = render(
       <ConnectionBanner state="connecting" queueCount={0} />
     );
-    expect(getByText("Connecting...")).toBeTruthy();
+    expect(getByText("Connecting to Matrix OS")).toBeTruthy();
   });
 
   it("renders disconnected state", () => {
     const { getByText } = render(
       <ConnectionBanner state="disconnected" queueCount={0} />
     );
-    expect(getByText("No connection")).toBeTruthy();
+    expect(getByText("Chat socket offline")).toBeTruthy();
   });
 
   it("renders error state", () => {
     const { getByText } = render(
       <ConnectionBanner state="error" queueCount={0} />
     );
-    expect(getByText("Connection error")).toBeTruthy();
+    expect(getByText("Chat reconnecting")).toBeTruthy();
   });
 
   it("shows queued message count", () => {
     const { getByText } = render(
       <ConnectionBanner state="disconnected" queueCount={3} />
     );
-    expect(getByText("No connection (3 queued)")).toBeTruthy();
+    expect(getByText("Chat socket offline (3 queued)")).toBeTruthy();
   });
 
   it("shows retry button on error", () => {
