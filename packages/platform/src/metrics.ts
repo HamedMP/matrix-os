@@ -36,3 +36,24 @@ export const provisionDuration = new Histogram({
   buckets: [1, 5, 10, 30, 60],
   registers: [metricsRegistry],
 });
+
+export const vpsInfo = new Gauge({
+  name: 'matrix_vps_info',
+  help: 'VPS instance info (value is always 1, labels carry metadata)',
+  labelNames: ['handle', 'version', 'status'] as const,
+  registers: [metricsRegistry],
+});
+
+export const vpsHealthy = new Gauge({
+  name: 'matrix_vps_healthy',
+  help: 'VPS instance health (1=healthy, 0=unhealthy)',
+  labelNames: ['handle'] as const,
+  registers: [metricsRegistry],
+});
+
+export const vpsUptimeSeconds = new Gauge({
+  name: 'matrix_vps_uptime_seconds',
+  help: 'VPS instance uptime in seconds',
+  labelNames: ['handle'] as const,
+  registers: [metricsRegistry],
+});

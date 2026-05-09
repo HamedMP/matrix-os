@@ -902,6 +902,7 @@ export async function listAllUserMachines(
   const rows = await db.executor
     .selectFrom('user_machines')
     .selectAll()
+    .where('status', '!=', 'deleted')
     .orderBy('last_seen_at', 'desc')
     .limit(limit)
     .execute();

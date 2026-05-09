@@ -11,6 +11,7 @@ import {
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
+import { vpsInfo, vpsHealthy } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
 
@@ -164,6 +165,13 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       const machines = probed
         .filter((r): r is PromiseFulfilledResult<FleetMachineView> => r.status === "fulfilled")
         .map(r => r.value);
+      vpsInfo.reset();
+      vpsHealthy.reset();
+      for (const m of machines) {
+        vpsInfo.set({ handle: m.handle, version: m.imageVersion ?? "unknown", status: m.status }, 1);
+        vpsHealthy.set({ handle: m.handle }, m.healthy ? 1 : 0);
+      }
+
       return c.json({ fleet: buildFleetSummary(machines), machines });
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/fleet');
