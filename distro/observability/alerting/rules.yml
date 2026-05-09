@@ -56,17 +56,17 @@ groups:
           summary: "VPS {{ $labels.handle }} unreachable"
           description: "VPS instance {{ $labels.handle }} has been unreachable for more than 10 minutes."
 
-      - alert: VpsStaleVersion
-        expr: matrix_vps_version_age_seconds > 3600 and matrix_vps_update_severity == 1
-        for: 5m
+      - alert: VpsVersionDrift
+        expr: count(count by (version) (matrix_vps_info)) > 1
+        for: 60m
         labels:
-          severity: critical
+          severity: warning
         annotations:
-          summary: "VPS {{ $labels.handle }} running stale version after security update"
-          description: "VPS {{ $labels.handle }} has not updated to the latest version more than 1 hour after a security update was published."
+          summary: "VPS fleet running mixed versions"
+          description: "Multiple versions detected across the fleet for more than 1 hour. Check for stalled updates."
 
       - alert: VpsProvisioningStuck
-        expr: matrix_vps_status{status="provisioning"} == 1
+        expr: matrix_vps_info{status="provisioning"} == 1
         for: 15m
         labels:
           severity: warning

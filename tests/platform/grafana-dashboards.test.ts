@@ -43,7 +43,7 @@ describe("alerting rules", () => {
     const raw = readFileSync(join(ALERTING_DIR, "rules.yml"), "utf-8");
 
     expect(raw).toContain("VpsInstanceUnreachable");
-    expect(raw).toContain("VpsStaleVersion");
+    expect(raw).toContain("VpsVersionDrift");
     expect(raw).toContain("VpsProvisioningStuck");
     expect(raw).toContain("matrixos-vps");
   });
