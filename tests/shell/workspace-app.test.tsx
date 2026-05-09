@@ -7,6 +7,7 @@ import { WorkspaceApp } from "../../shell/src/components/workspace/WorkspaceApp.
 
 describe("WorkspaceApp", () => {
   beforeEach(() => {
+    let createdWorktree: { id: string; currentBranch: string; dirtyState: string } | undefined;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/workspace/projects")) {
@@ -35,8 +36,17 @@ describe("WorkspaceApp", () => {
           order: index,
         })) });
       }
+      if (url.includes("/api/projects/repo/worktrees") && init?.method === "POST") {
+        createdWorktree = { id: "wt_new123", currentBranch: "feature/mat-5", dirtyState: "clean" };
+        return json({ worktree: createdWorktree });
+      }
       if (url.includes("/api/projects/repo/worktrees")) {
-        return json({ worktrees: [{ id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "dirty" }] });
+        return json({
+          worktrees: [
+            { id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "dirty" },
+            ...(createdWorktree ? [createdWorktree] : []),
+          ],
+        });
       }
       if (url.includes("/api/reviews")) {
         return json({ reviews: [{ id: "rev_abc123", status: "reviewing", round: 2 }] });
@@ -57,7 +67,13 @@ describe("WorkspaceApp", () => {
         return json({ session: { id: "sess_abc123", status: "exited" } });
       }
       if (url.endsWith("/api/sessions") && init?.method === "POST") {
-        return json({ session: { id: "sess_duplicate", status: "starting" } });
+        const body = typeof init.body === "string" ? JSON.parse(init.body) as { kind?: string } : {};
+        return json({
+          session: {
+            id: body.kind === "agent" ? "sess_agent123" : "sess_duplicate",
+            status: "starting",
+          },
+        });
       }
       if (url.includes("/api/sessions")) {
         return json({ sessions: [{
@@ -87,7 +103,7 @@ describe("WorkspaceApp", () => {
     expect(screen.getByText("1,000 tasks")).toBeTruthy();
     expect(screen.getByText("Task 0")).toBeTruthy();
     expect(screen.queryByText("Task 999")).toBeNull();
-    expect(screen.getByText("feature/workspace")).toBeTruthy();
+    expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0);
     expect(screen.getByText(/Round 2/)).toBeTruthy();
     expect(screen.getByText("Local app").closest("a")?.getAttribute("href")).toBe("http://localhost:3000");
     expect(screen.getByText("Open IDE").getAttribute("href")).toContain("code.matrix-os.com");
@@ -171,6 +187,49 @@ describe("WorkspaceApp", () => {
         body: JSON.stringify({ url: "github.com/owner/new-repo", slug: "new-repo" }),
       }),
     );
+  });
+
+  it("creates a branch worktree and starts a coding agent from Workspace", async () => {
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("Repo").length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByLabelText("New worktree branch"), { target: { value: "feature/mat-5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /create worktree/i }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/projects/repo/worktrees"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ branch: "feature/mat-5" }),
+      }),
+    );
+    await waitFor(() => expect((screen.getByLabelText("Agent worktree") as HTMLSelectElement).value).toBe("wt_new123"));
+
+    fireEvent.change(screen.getByLabelText("Agent prompt"), { target: { value: "Implement MAT-5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start agent/i }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "agent",
+          agent: "codex",
+          projectSlug: "repo",
+          worktreeId: "wt_new123",
+          prompt: "Implement MAT-5",
+          runtimePreference: "zellij",
+        }),
+      }),
+    );
+    expect(await screen.findByText("Started sess_agent123")).toBeTruthy();
   });
 
   it("shows an actionable empty state when no managed projects exist", async () => {

@@ -259,7 +259,11 @@ export function createWorkspaceRoutes(options: {
     return c.json({ project: result.project });
   });
 
-  app.delete("/api/projects/:slug", async (c) => {
+  app.delete("/api/projects/:slug", limited, async (c) => {
+    if (c.req.header("content-type") || c.req.header("content-length") || c.req.header("transfer-encoding")) {
+      const body = await parseJson(c, EmptyObjectSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    }
     const result = await projectManager.deleteProject(c.req.param("slug"));
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
     return c.json({ ok: true });

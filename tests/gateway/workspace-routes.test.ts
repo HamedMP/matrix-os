@@ -63,6 +63,23 @@ describe("workspace API routes", () => {
     expect(res.status).toBe(413);
   });
 
+  it("applies body limits before deleting a project", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const res = await app.request(deleteJsonRequest("/api/projects/repo", { padding: "x".repeat(70 * 1024) }));
+
+    expect(res.status).toBe(413);
+    expect(projectManager.deleteProject).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid workspace delete slugs before state deletion", async () => {
     await mkdir(join(homePath, "projects", "keep"), { recursive: true });
     const app = createWorkspaceRoutes({ homePath });

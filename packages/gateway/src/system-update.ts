@@ -76,6 +76,12 @@ export function compareHostBundleVersions(
   return latest.version !== installed.version;
 }
 
+function isExpectedAccessFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "EACCES" || code === "ENOTDIR";
+}
+
 export async function fetchHostBundleChannelManifest(options: {
   platformUrl: string;
   channel: UpdateChannel;
@@ -148,7 +154,13 @@ export async function startSystemUpdate(options: {
   const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
   try {
     await access(updateCommand, constants.X_OK);
-  } catch {
+  } catch (err: unknown) {
+    if (!isExpectedAccessFailure(err)) {
+      console.warn(
+        "[system-update] Failed to check updater command:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     return { ok: false, status: "not_configured" };
   }
 

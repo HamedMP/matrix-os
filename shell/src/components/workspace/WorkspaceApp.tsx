@@ -63,6 +63,10 @@ interface WorkspaceAppProps {
   initialProjectSlug?: string;
 }
 
+type WorkspaceAgent = "claude" | "codex" | "opencode" | "pi";
+
+const WORKSPACE_AGENTS: WorkspaceAgent[] = ["codex", "claude", "opencode", "pi"];
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${GATEWAY_URL}${path}`, {
     ...init,
@@ -103,7 +107,14 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [sessionSearch, setSessionSearch] = useState("");
   const [newProjectUrl, setNewProjectUrl] = useState("");
   const [newProjectSlug, setNewProjectSlug] = useState("");
+  const [newWorktreeBranch, setNewWorktreeBranch] = useState("");
+  const [selectedWorktreeId, setSelectedWorktreeId] = useState("");
+  const [selectedAgent, setSelectedAgent] = useState<WorkspaceAgent>("codex");
+  const [agentPrompt, setAgentPrompt] = useState("");
+  const [agentMessage, setAgentMessage] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [creatingWorktree, setCreatingWorktree] = useState(false);
+  const [startingAgent, setStartingAgent] = useState(false);
   const [error, setError] = useState("");
 
   const selectedProject = useMemo(
@@ -158,6 +169,22 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     const timer = window.setTimeout(() => void loadProjectDetail(activeSlug), 0);
     return () => window.clearTimeout(timer);
   }, [activeSlug, loadProjectDetail]);
+
+  useEffect(() => {
+    setSelectedWorktreeId("");
+    setAgentMessage("");
+  }, [activeSlug]);
+
+  useEffect(() => {
+    const firstWorktreeId = worktrees.find((worktree) => worktree.id)?.id ?? "";
+    if (!firstWorktreeId) {
+      setSelectedWorktreeId("");
+      return;
+    }
+    if (!selectedWorktreeId || !worktrees.some((worktree) => worktree.id === selectedWorktreeId)) {
+      setSelectedWorktreeId(firstWorktreeId);
+    }
+  }, [selectedWorktreeId, worktrees]);
 
   const attachSession = useCallback(async (sessionId: string) => {
     const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/observe`, {
@@ -226,6 +253,95 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setCreatingProject(false);
     }
   }, [loadProjects, newProjectSlug, newProjectUrl]);
+
+  const createWorktree = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSlug) {
+      setError("Select a project first");
+      return;
+    }
+    const branch = newWorktreeBranch.trim();
+    if (!branch) {
+      setError("Enter a branch name");
+      return;
+    }
+
+    const existingWorktree = worktrees.find((worktree) => worktree.id && worktree.currentBranch === branch);
+    if (existingWorktree?.id) {
+      setSelectedWorktreeId(existingWorktree.id);
+      setNewWorktreeBranch("");
+      setAgentMessage(`Using ${existingWorktree.id}`);
+      setError("");
+      return;
+    }
+
+    setCreatingWorktree(true);
+    try {
+      const data = await fetchJson<{ worktree?: WorkspaceWorktree }>(`/api/projects/${encodeURIComponent(activeSlug)}/worktrees`, {
+        method: "POST",
+        body: JSON.stringify({ branch }),
+      });
+      await loadProjectDetail(activeSlug);
+      const createdWorktree = data.worktree;
+      if (createdWorktree?.id) {
+        setWorktrees((current) => [
+          ...current.filter((worktree) => worktree.id !== createdWorktree.id),
+          createdWorktree,
+        ]);
+        setSelectedWorktreeId(createdWorktree.id);
+        setAgentMessage(`Created ${createdWorktree.id}`);
+      } else {
+        setAgentMessage("Created worktree");
+      }
+      setNewWorktreeBranch("");
+      setError("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Worktree creation failed");
+    } finally {
+      setCreatingWorktree(false);
+    }
+  }, [activeSlug, loadProjectDetail, newWorktreeBranch, worktrees]);
+
+  const startAgent = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSlug) {
+      setError("Select a project first");
+      return;
+    }
+    const worktreeId = selectedWorktreeId.trim();
+    const prompt = agentPrompt.trim();
+    if (!worktreeId) {
+      setError("Select a worktree");
+      return;
+    }
+    if (!prompt) {
+      setError("Enter an agent prompt");
+      return;
+    }
+
+    setStartingAgent(true);
+    try {
+      const data = await fetchJson<{ session?: WorkspaceSession }>("/api/sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "agent",
+          agent: selectedAgent,
+          projectSlug: activeSlug,
+          worktreeId,
+          prompt,
+          runtimePreference: "zellij",
+        }),
+      });
+      setAgentPrompt("");
+      setAgentMessage(data.session?.id ? `Started ${data.session.id}` : "Started agent");
+      await loadProjectDetail(activeSlug);
+      setError("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Agent start failed");
+    } finally {
+      setStartingAgent(false);
+    }
+  }, [activeSlug, agentPrompt, loadProjectDetail, selectedAgent, selectedWorktreeId]);
 
   const visibleProjects = projects.slice(0, PROJECT_RENDER_LIMIT);
   const visibleTasks = tasks.slice(0, TASK_RENDER_LIMIT);
@@ -369,6 +485,55 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
 
         <aside className="min-h-0 overflow-auto border-t border-border lg:border-l lg:border-t-0">
           <WorkspacePanel title="Sessions" icon={<PanelRightOpenIcon className="size-3.5" />}>
+            <form onSubmit={startAgent} className="mb-3 space-y-2 rounded-md border border-border p-2">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block text-xs text-muted-foreground">
+                  Agent
+                  <select
+                    aria-label="Agent"
+                    value={selectedAgent}
+                    onChange={(event) => setSelectedAgent(event.target.value as WorkspaceAgent)}
+                    className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                  >
+                    {WORKSPACE_AGENTS.map((agent) => (
+                      <option key={agent} value={agent}>{agent}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs text-muted-foreground">
+                  Worktree
+                  <select
+                    aria-label="Agent worktree"
+                    value={selectedWorktreeId}
+                    onChange={(event) => setSelectedWorktreeId(event.target.value)}
+                    disabled={worktrees.length === 0}
+                    className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {worktrees.length === 0 && <option value="">None</option>}
+                    {worktrees.map((worktree) => (
+                      <option key={worktree.id} value={worktree.id}>
+                        {worktree.currentBranch ?? worktree.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <textarea
+                aria-label="Agent prompt"
+                value={agentPrompt}
+                onChange={(event) => setAgentPrompt(event.target.value)}
+                rows={3}
+                className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground"
+              />
+              <button
+                type="submit"
+                disabled={startingAgent || !activeSlug || worktrees.length === 0}
+                className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <PlayIcon className="size-3.5" />
+                {startingAgent ? "Starting" : "Start agent"}
+              </button>
+            </form>
             <label className="mb-2 block text-xs text-muted-foreground">
               Search sessions
               <input
@@ -403,9 +568,27 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
               </div>
             ))}
             {attachMessage && <p className="pt-2 text-xs text-muted-foreground">{attachMessage}</p>}
+            {agentMessage && <p className="pt-2 text-xs text-muted-foreground">{agentMessage}</p>}
           </WorkspacePanel>
 
           <WorkspacePanel title="Worktrees" icon={<GitBranchIcon className="size-3.5" />}>
+            <form onSubmit={createWorktree} className="mb-2 flex gap-2">
+              <input
+                aria-label="New worktree branch"
+                value={newWorktreeBranch}
+                onChange={(event) => setNewWorktreeBranch(event.target.value)}
+                placeholder="feature/name"
+                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+              />
+              <button
+                type="submit"
+                disabled={creatingWorktree || !activeSlug}
+                className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <GitBranchIcon className="size-3.5" />
+                {creatingWorktree ? "Creating" : "Create worktree"}
+              </button>
+            </form>
             {worktrees.map((worktree) => (
               <div key={worktree.id} className="py-2 text-xs">
                 <div className="font-medium">{worktree.currentBranch ?? worktree.id}</div>
