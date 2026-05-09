@@ -1,0 +1,86 @@
+import {
+  buildGatewayAppUrl,
+  appRuntimeHref,
+  getAppIconName,
+  getAppSlug,
+  getNativeAppRoute,
+  getRuntimeSlug,
+  mergeNativeAndRemoteApps,
+  type MatrixAppEntry,
+} from "../lib/apps";
+
+const app = (overrides: Partial<MatrixAppEntry>): MatrixAppEntry => ({
+  name: "Notes",
+  file: "notes/index.html",
+  path: "/files/apps/notes/index.html",
+  ...overrides,
+});
+
+describe("mobile app helpers", () => {
+  it("derives slugs from nested directory apps", () => {
+    expect(getAppSlug(app({ file: "games/snake/index.html" }))).toBe("games/snake");
+  });
+
+  it("derives slugs from legacy html apps", () => {
+    expect(getAppSlug(app({ file: "calculator.html" }))).toBe("calculator");
+  });
+
+  it("routes known Matrix apps to native screens", () => {
+    expect(getNativeAppRoute(app({ name: "Task Manager", file: "task-manager/index.html" }))).toBe(
+      "/(tabs)/mission-control",
+    );
+    expect(getNativeAppRoute(app({ name: "Chat", file: "chat/index.html" }))).toBe("/(tabs)/chat");
+  });
+
+  it("leaves generated apps on native detail screens before browser fallback", () => {
+    expect(getNativeAppRoute(app({ name: "Workout Tracker", file: "workout/index.html" }))).toBeNull();
+  });
+
+  it("builds absolute gateway app URLs", () => {
+    expect(buildGatewayAppUrl("http://localhost:4000/", app({}))).toBe(
+      "http://localhost:4000/apps/notes/",
+    );
+  });
+
+  it("builds app runtime URLs from nested app manifest slugs", () => {
+    const chess = app({
+      name: "Chess",
+      slug: "chess",
+      file: "games/chess/index.html",
+      path: "/files/apps/games/chess/index.html",
+    });
+
+    expect(getRuntimeSlug(chess)).toBe("chess");
+    expect(buildGatewayAppUrl("https://app.matrix-os.com", chess)).toBe(
+      "https://app.matrix-os.com/apps/chess/",
+    );
+  });
+
+  it("uses backend launch URLs when provided", () => {
+    expect(
+      buildGatewayAppUrl("https://app.matrix-os.com", app({ slug: "notes", launchUrl: "/apps/notes/" })),
+    ).toBe("https://app.matrix-os.com/apps/notes/");
+  });
+
+  it("builds runtime hrefs for generated apps", () => {
+    expect(appRuntimeHref("games/snake")).toEqual({
+      pathname: "/runtime/[...slug]",
+      params: { slug: ["games", "snake"] },
+    });
+  });
+
+  it("selects useful native symbols for app cards", () => {
+    expect(getAppIconName(app({ name: "Pomodoro", category: "productivity" }))).toBe("timer");
+    expect(getAppIconName(app({ name: "Snake", category: "game" }))).toBe("game-controller");
+  });
+
+  it("keeps native Matrix apps visible when the VPS app list is empty", () => {
+    const apps = mergeNativeAndRemoteApps([]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Tasks", "Settings"]);
+  });
+
+  it("appends remote apps after native Matrix apps", () => {
+    const apps = mergeNativeAndRemoteApps([app({ name: "Workout Tracker", file: "workout/index.html" })]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Tasks", "Settings", "Workout Tracker"]);
+  });
+});

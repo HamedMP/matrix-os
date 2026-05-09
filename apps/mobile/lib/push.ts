@@ -45,7 +45,7 @@ export async function registerPushNotifications(client: GatewayClient): Promise<
       name: "Matrix OS",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#c2703a",
+      lightColor: "#8CC7BE",
     });
   }
 

@@ -7,6 +7,7 @@ import { colors, fonts } from "@/lib/theme";
 
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   chat: { outline: "chatbubble-outline", filled: "chatbubble" },
+  apps: { outline: "apps-outline", filled: "apps" },
   "mission-control": { outline: "grid-outline", filled: "grid" },
   settings: { outline: "settings-outline", filled: "settings" },
 };
@@ -16,11 +17,13 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   if (!icons) return null;
 
   return (
-    <Ionicons
-      name={focused ? icons.filled : icons.outline}
-      size={24}
-      color={focused ? colors.light.primary : colors.light.mutedForeground}
-    />
+    <View style={[styles.iconShell, focused && styles.iconShellFocused]}>
+      <Ionicons
+        name={focused ? icons.filled : icons.outline}
+        size={20}
+        color={focused ? colors.light.forest : colors.light.moss}
+      />
+    </View>
   );
 }
 
@@ -41,11 +44,12 @@ export default function TabsLayout() {
       screenOptions={{
         tabBarStyle: styles.tabBar,
         tabBarBackground: () => (
-          <BlurView tint="systemChromeMaterial" intensity={80} style={StyleSheet.absoluteFill} />
+          <BlurView tint="light" intensity={88} style={styles.tabBarBackdrop} />
         ),
-        tabBarActiveTintColor: colors.light.primary,
-        tabBarInactiveTintColor: colors.light.mutedForeground,
+        tabBarActiveTintColor: colors.light.forest,
+        tabBarInactiveTintColor: colors.light.moss,
         tabBarLabelStyle: styles.tabBarLabel,
+        tabBarItemStyle: styles.tabBarItem,
         headerStyle: styles.header,
         headerTintColor: colors.light.foreground,
         headerTitleStyle: styles.headerTitle,
@@ -62,9 +66,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="apps"
+        options={{
+          title: "Apps",
+          tabBarIcon: ({ focused }) => <TabIcon name="apps" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
         name="mission-control"
         options={{
-          title: "Mission Control",
+          title: "Tasks",
           tabBarIcon: ({ focused }) => <TabIcon name="mission-control" focused={focused} />,
         }}
       />
@@ -82,21 +93,49 @@ export default function TabsLayout() {
 const styles = StyleSheet.create({
   tabBar: {
     position: "absolute" as const,
-    borderTopColor: colors.light.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    height: process.env.EXPO_OS === "ios" ? 88 : 64,
-    paddingBottom: process.env.EXPO_OS === "ios" ? 28 : 8,
+    left: 14,
+    right: 14,
+    bottom: process.env.EXPO_OS === "ios" ? 12 : 10,
+    height: process.env.EXPO_OS === "ios" ? 78 : 66,
     paddingTop: 8,
+    paddingBottom: process.env.EXPO_OS === "ios" ? 18 : 8,
+    borderTopWidth: 0,
+    borderRadius: 26,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: "rgba(50, 61, 46, 0.10)",
+    backgroundColor: "rgba(250, 250, 249, 0.86)",
+    overflow: "hidden",
+    boxShadow: "0 14px 34px rgba(50, 61, 46, 0.16)",
+  },
+  tabBarBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(250, 250, 249, 0.78)",
+  },
+  tabBarItem: {
+    borderRadius: 20,
+    borderCurve: "continuous" as const,
   },
   tabBarLabel: {
-    fontFamily: fonts.sansMedium,
-    fontSize: 10,
-    marginTop: 2,
+    fontFamily: fonts.sansSemiBold,
+    fontSize: 11,
+    marginTop: 0,
+  },
+  iconShell: {
+    width: 40,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconShellFocused: {
+    backgroundColor: "rgba(140, 199, 190, 0.24)",
+    borderWidth: 1,
+    borderColor: "rgba(50, 61, 46, 0.08)",
   },
   header: {
     backgroundColor: colors.light.background,
-    shadowColor: "transparent",
-    elevation: 0,
+    boxShadow: "none",
   },
   headerTitle: {
     fontFamily: fonts.sansSemiBold,
@@ -117,10 +156,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.light.success,
   },
   dotDisconnected: {
-    backgroundColor: colors.light.destructive,
+    backgroundColor: colors.light.moss,
   },
   badge: {
-    backgroundColor: colors.light.primary,
+    backgroundColor: colors.light.forest,
+    color: colors.light.background,
     fontSize: 10,
     minWidth: 18,
     height: 18,

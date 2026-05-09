@@ -13,6 +13,45 @@ export type ServerMessage =
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number };
 
+export interface MatrixAppEntry {
+  name: string;
+  description?: string;
+  icon?: string;
+  category?: string;
+  author?: string;
+  version?: string;
+  slug?: string;
+  runtime?: "static" | "vite" | "node";
+  runtimeState?: {
+    status?: string;
+    [key: string]: unknown;
+  };
+  launchUrl?: string;
+  file: string;
+  path: string;
+}
+
+export interface MatrixAppManifestResponse {
+  manifest?: {
+    name?: string;
+    description?: string;
+    icon?: string;
+    category?: string;
+    version?: string;
+    runtime?: string;
+    runtimeVersion?: string;
+    [key: string]: unknown;
+  };
+  runtimeState?: {
+    status?: string;
+    [key: string]: unknown;
+  };
+  distributionStatus?: {
+    status?: string;
+    [key: string]: unknown;
+  };
+}
+
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
   | { type: "switch_session"; sessionId: string }
@@ -20,6 +59,11 @@ type ClientMessage =
 
 type MessageHandler = (msg: ServerMessage) => void;
 type StateHandler = (state: ConnectionState) => void;
+type ReactNativeWebSocketConstructor = new (
+  url: string,
+  protocols?: string | string[],
+  options?: { headers?: Record<string, string> },
+) => WebSocket;
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -28,6 +72,7 @@ export class GatewayClient {
   private ws: WebSocket | null = null;
   private baseUrl: string;
   private token: string | undefined;
+  private wsToken: string | undefined;
   private state: ConnectionState = "disconnected";
   private messageHandlers = new Set<MessageHandler>();
   private stateHandlers = new Set<StateHandler>();
@@ -35,9 +80,10 @@ export class GatewayClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = false;
 
-  constructor(baseUrl: string, token?: string) {
+  constructor(baseUrl: string, token?: string, wsToken?: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.token = token;
+    this.wsToken = wsToken;
   }
 
   get connectionState(): ConnectionState {
@@ -51,6 +97,10 @@ export class GatewayClient {
   get wsUrl(): string {
     const url = this.baseUrl.replace(/^http/, "ws");
     return `${url}/ws`;
+  }
+
+  setWebSocketToken(token: string | null): void {
+    this.wsToken = token ?? undefined;
   }
 
   private setState(state: ConnectionState): void {
@@ -77,11 +127,19 @@ export class GatewayClient {
     this.shouldReconnect = true;
     this.setState("connecting");
 
-    const wsUrl = this.token
-      ? `${this.wsUrl}?token=${encodeURIComponent(this.token)}`
+    const upgradeToken = this.wsToken;
+    const wsUrl = upgradeToken
+      ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
       : this.wsUrl;
 
-    this.ws = new WebSocket(wsUrl);
+    const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    this.ws = new WebSocketWithOptions(
+      wsUrl,
+      [],
+      this.token
+        ? { headers: { Authorization: `Bearer ${this.token}` } }
+        : undefined,
+    );
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
@@ -99,7 +157,9 @@ export class GatewayClient {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (evt) => {
+      const closeEvent = evt as CloseEvent;
+      console.warn("[mobile] websocket closed", closeEvent.code, closeEvent.reason || "");
       this.ws = null;
       this.setState("disconnected");
       this.scheduleReconnect();
@@ -171,6 +231,13 @@ export class GatewayClient {
     return headers;
   }
 
+  webViewHeaders(): Record<string, string> | undefined {
+    if (!this.token) return undefined;
+    return {
+      Authorization: `Bearer ${this.token}`,
+    };
+  }
+
   async healthCheck(): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     try {
       const res = await fetch(`${this.httpUrl}/health`, {
@@ -181,6 +248,28 @@ export class GatewayClient {
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "Unknown error" };
+    }
+  }
+
+  async getWsToken(): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.httpUrl}/api/auth/ws-token`, {
+        headers: this.authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.warn("[mobile] /api/auth/ws-token failed", res.status, body.slice(0, 160));
+        return null;
+      }
+      const data = (await res.json()) as { token?: unknown };
+      if (typeof data.token !== "string") {
+        console.warn("[mobile] /api/auth/ws-token returned no token");
+        return null;
+      }
+      return data.token;
+    } catch {
+      console.warn("[mobile] /api/auth/ws-token network error");
+      return null;
     }
   }
 
@@ -255,6 +344,50 @@ export class GatewayClient {
       headers: this.authHeaders(),
     });
     return res.json();
+  }
+
+  async getApps(): Promise<MatrixAppEntry[]> {
+    const res = await fetch(`${this.httpUrl}/api/apps`, {
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.warn("[mobile] /api/apps failed", res.status, body.slice(0, 160));
+      return [];
+    }
+    return res.json();
+  }
+
+  async getAppManifest(slug: string): Promise<MatrixAppManifestResponse | null> {
+    const res = await fetch(`${this.httpUrl}/api/apps/${encodeURIComponent(slug)}/manifest`, {
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  async createAppSessionToken(slug: string): Promise<{ launchUrl: string; expiresAt: number } | null> {
+    try {
+      const res = await fetch(`${this.httpUrl}/api/apps/${encodeURIComponent(slug)}/session-token`, {
+        method: "POST",
+        headers: this.authHeaders(),
+        body: "{}",
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.warn("[mobile] /api/apps/:slug/session-token failed", slug, res.status, body.slice(0, 160));
+        return null;
+      }
+      const data = (await res.json()) as { launchUrl?: unknown; expiresAt?: unknown };
+      if (typeof data.launchUrl !== "string" || typeof data.expiresAt !== "number") {
+        console.warn("[mobile] /api/apps/:slug/session-token returned invalid payload", slug);
+        return null;
+      }
+      return { launchUrl: data.launchUrl, expiresAt: data.expiresAt };
+    } catch {
+      console.warn("[mobile] /api/apps/:slug/session-token network error", slug);
+      return null;
+    }
   }
 
   async getProfile(): Promise<string | null> {
