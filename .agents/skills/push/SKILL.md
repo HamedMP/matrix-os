@@ -26,10 +26,13 @@ description:
 ## Steps
 
 1. Identify current branch and confirm remote state.
-2. Run Matrix OS local validation before pushing:
+2. Run local validation before pushing. For Matrix OS, use the narrowest
+   relevant checks first, and use the full pre-PR suite before handoff when the
+   scope warrants it:
    - `bun run typecheck`
-   - `bun run check:patterns`
+   - `bun run check:patterns:diff`
    - `bun run test`
+   - `bun run test:e2e` for user-visible shell/browser flows or PR handoff
 3. Push branch to `origin` with upstream tracking if needed, using whatever
    remote URL is already configured.
 4. If push is not clean/rejected:
@@ -47,13 +50,11 @@ description:
    - Write a proper PR title that clearly describes the change outcome
    - For branch updates, explicitly reconsider whether current PR title still
      matches the latest scope; update it if it no longer does.
-6. Write/update PR body explicitly:
-   - Include concrete `Summary` and `Tests` sections.
-   - For backend changes, include the Matrix OS `Invariants` section from
-     `docs/dev/review-pipeline.md`.
-   - If PR already exists, refresh body content so it reflects the total PR
-     scope (all intended work on the branch), not just the newest commits,
-     including newly added work, removed work, or changed approach.
+6. Write/update the PR body explicitly:
+   - Summarize the full PR scope, not just the newest commit.
+   - Include validation commands and results.
+   - For backend PRs, include the mandatory `Invariants` section from
+     `AGENTS.md`.
    - Do not reuse stale description text from earlier iterations.
 7. Reply with the PR URL from `gh pr view`.
 
@@ -63,9 +64,9 @@ description:
 # Identify branch
 branch=$(git branch --show-current)
 
-# Matrix OS validation gate
+# Minimal validation gate for Matrix OS
 bun run typecheck
-bun run check:patterns
+bun run check:patterns:diff
 bun run test
 
 # Initial push: respect the current origin remote.
@@ -97,11 +98,8 @@ else
   gh pr edit --title "$pr_title"
 fi
 
-# Write/edit PR body before validation.
-# Example workflow:
-# 1) draft Summary, Tests, and Invariants if backend code changed
-# 2) gh pr edit --body-file /tmp/pr_body.md
-# 3) for branch updates, re-check that title/body still match current diff
+# Write/edit PR body before handoff. Include Matrix OS invariants for backend
+# changes and keep validation current.
 
 # Show PR URL for the reply
 gh pr view --json url -q .url
