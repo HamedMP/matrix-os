@@ -39,16 +39,16 @@ describe("customer-vps-fleet", () => {
     expect(summary.versionDistribution).toEqual({});
   });
 
-  it("counts deleted machines separately", () => {
+  it("handles failed machines in the summary", () => {
     const machines: FleetMachineView[] = [
-      makeMachine({ status: "deleted", imageVersion: "v2026.05.06-1", healthy: false }),
+      makeMachine({ status: "failed", imageVersion: "v2026.05.06-1", healthy: false }),
       makeMachine({ status: "running", imageVersion: "v2026.05.06-1", healthy: true }),
     ];
 
     const summary = buildFleetSummary(machines);
 
     expect(summary.total).toBe(2);
-    expect(summary.deleted).toBe(1);
+    expect(summary.failed).toBe(1);
     expect(summary.running).toBe(1);
   });
 });

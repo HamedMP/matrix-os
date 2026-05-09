@@ -252,7 +252,6 @@ describe('platform/customer-vps-routes', () => {
         running: 1,
         provisioning: 1,
         failed: 0,
-        deleted: 0,
         versionDistribution: {
           'matrix-os-host-2026.04.26-1': 1,
           unknown: 1,

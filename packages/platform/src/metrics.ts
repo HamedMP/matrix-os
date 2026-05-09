@@ -51,9 +51,3 @@ export const vpsHealthy = new Gauge({
   registers: [metricsRegistry],
 });
 
-export const vpsUptimeSeconds = new Gauge({
-  name: 'matrix_vps_uptime_seconds',
-  help: 'VPS instance uptime in seconds',
-  labelNames: ['handle'] as const,
-  registers: [metricsRegistry],
-});

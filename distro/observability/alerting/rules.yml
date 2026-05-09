@@ -48,7 +48,7 @@ groups:
   - name: matrixos-vps
     rules:
       - alert: VpsInstanceUnreachable
-        expr: matrix_vps_healthy == 0 and matrix_vps_info{status="running"} == 1
+        expr: matrix_vps_healthy == 0 and on(handle) matrix_vps_info{status="running"} == 1
         for: 10m
         labels:
           severity: critical

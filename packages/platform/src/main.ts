@@ -1425,10 +1425,12 @@ export function createApp(deps: {
       if (!machine.publicIPv4) return false;
       const token = buildPlatformVerificationToken(machine.handle, platformSecret);
       try {
-        const res = await fetch(`https://${machine.publicIPv4}:443/health`, {
+        const fetchOpts: RequestInit & { dispatcher?: import('undici').Dispatcher } = {
           headers: { authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(8_000),
-        });
+          dispatcher: customerVpsProxyDispatcher,
+        };
+        const res = await fetch(`https://${machine.publicIPv4}:443/health`, fetchOpts as RequestInit);
         return res.ok;
       } catch (err: unknown) {
         console.warn(`[fleet-probe] health check failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));
