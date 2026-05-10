@@ -34,6 +34,8 @@ describe("cloud workspace runtime gates", () => {
     expect(syncScript).toContain(".agents/skills");
     expect(syncScript).toContain("agents/skills");
     expect(syncScript).toContain('cp -a "$source/." "$out/"');
+    expect(syncScript).toContain('grep -qxF "name: matrix-$name"');
+    expect(syncScript).toContain("escape_sed_replacement");
     expect(syncScript).toContain("agents/openai.yaml");
     expect(entrypoint).toContain("source /app/scripts/bundled-skill-hashes.sh");
     expect(devEntrypoint).toContain("source /app/scripts/bundled-skill-hashes.sh");
@@ -77,6 +79,12 @@ describe("cloud workspace runtime gates", () => {
         "---\nname: integrations\ndescription: Demo integration skill\n---\n# Integrations\n",
       );
       writeFileSync(join(sourceSkill, "references/guide.md"), "supporting resource\n");
+      const specialSkill = join(matrixHome, ".agents/skills/amp&skill");
+      mkdirSync(specialSkill, { recursive: true });
+      writeFileSync(
+        join(specialSkill, "SKILL.md"),
+        "---\nname: ampersand\ndescription: Ampersand skill\n---\n# Ampersand\n",
+      );
 
       execFileSync("bash", [join(root, "scripts/sync-matrix-agent-skills.sh"), matrixHome, targetHome]);
 
@@ -87,6 +95,12 @@ describe("cloud workspace runtime gates", () => {
       }
       expect(readFileSync(join(targetHome, ".codex/skills/matrix-integrations/agents/openai.yaml"), "utf-8")).toContain(
         'display_name: "Matrix: Integrations"',
+      );
+      expect(readFileSync(join(targetHome, ".claude/skills/matrix-amp&skill/SKILL.md"), "utf-8")).toContain(
+        "name: matrix-amp&skill",
+      );
+      expect(readFileSync(join(targetHome, ".codex/skills/matrix-amp&skill/SKILL.md"), "utf-8")).toContain(
+        "name: matrix-amp&skill",
       );
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });

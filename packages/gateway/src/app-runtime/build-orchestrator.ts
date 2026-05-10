@@ -237,6 +237,8 @@ export class BuildOrchestrator {
         if (timeoutResolutionStarted || settled) return;
         timeoutResolutionStarted = true;
         clearTimeout(timer);
+        // Keep the SIGKILL escalation armed: a daemonized descendant can
+        // outlive the shell even when the shell closes promptly on SIGTERM.
         const output = Buffer.concat(chunks).toString("utf8");
         void writeLog(output).finally(() => {
           resolveOnce({

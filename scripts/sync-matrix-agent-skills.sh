@@ -60,7 +60,7 @@ cleanup_matrix_skills() {
   done
   for name in "${skill_names[@]}"; do
     legacy="$skills_root/$name"
-    if [ -f "$legacy/SKILL.md" ] && grep -q "^name: matrix-$name\$" "$legacy/SKILL.md"; then
+    if [ -f "$legacy/SKILL.md" ] && grep -qxF "name: matrix-$name" "$legacy/SKILL.md"; then
       rm -rf "$legacy"
     elif [ -f "$legacy/agents/openai.yaml" ] && grep -q 'display_name: "Matrix:' "$legacy/agents/openai.yaml"; then
       rm -rf "$legacy"
@@ -68,19 +68,24 @@ cleanup_matrix_skills() {
   done
 }
 
+escape_sed_replacement() {
+  printf '%s' "$1" | sed 's/[&\\/]/\\&/g'
+}
+
 write_claude_skill() {
   local skills_root="$1"
   local name="$2"
   local source="$3"
   local out="$skills_root/matrix-$name"
-  local skill_file="$source"
+  local safe_name skill_file="$source"
   mkdir -p "$out"
   if [ -d "$source" ]; then
     cp -a "$source/." "$out/"
     rm -f "$out/.matrix-os-template-sha256"
     skill_file="$source/SKILL.md"
   fi
-  sed "s/^name: .*/name: matrix-$name/" "$skill_file" > "$out/SKILL.md"
+  safe_name="$(escape_sed_replacement "$name")"
+  sed "s/^name: .*/name: matrix-$safe_name/" "$skill_file" > "$out/SKILL.md"
   touch "$out/.matrix-os-managed"
 }
 
@@ -89,7 +94,7 @@ write_codex_skill() {
   local name="$2"
   local source="$3"
   local out="$skills_root/matrix-$name"
-  local display desc short_desc prompt_desc skill_file="$source"
+  local safe_name display desc short_desc prompt_desc skill_file="$source"
   mkdir -p "$out"
   if [ -d "$source" ]; then
     cp -a "$source/." "$out/"
@@ -97,7 +102,8 @@ write_codex_skill() {
     skill_file="$source/SKILL.md"
   fi
   mkdir -p "$out/agents"
-  sed "s/^name: .*/name: matrix-$name/" "$skill_file" > "$out/SKILL.md"
+  safe_name="$(escape_sed_replacement "$name")"
+  sed "s/^name: .*/name: matrix-$safe_name/" "$skill_file" > "$out/SKILL.md"
   touch "$out/.matrix-os-managed"
   display="$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')"
   desc="$(sed -n 's/^description: *//p' "$skill_file" | head -1)"
