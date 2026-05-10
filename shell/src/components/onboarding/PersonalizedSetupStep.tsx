@@ -104,6 +104,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
   const [codingAgents, setCodingAgents] = useState<CodingAgentId[]>([]);
   const connectionsRef = useRef<ConnectedService[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollInFlightRef = useRef(false);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connectedIds = useMemo(
@@ -160,6 +161,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      pollInFlightRef.current = false;
     };
   }, []);
 
@@ -185,20 +187,28 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
 
       if (pollRef.current) clearInterval(pollRef.current);
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      pollInFlightRef.current = false;
       pollRef.current = setInterval(() => {
-        void loadConnections(true).then((next) => {
-          if (serviceConnected(next, serviceId)) {
-            setConnecting(null);
-            if (pollRef.current) clearInterval(pollRef.current);
-            if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
-            pollRef.current = null;
-            pollTimeoutRef.current = null;
-          }
-        });
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
+        void loadConnections(true)
+          .then((next) => {
+            if (serviceConnected(next, serviceId)) {
+              setConnecting(null);
+              if (pollRef.current) clearInterval(pollRef.current);
+              if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+              pollRef.current = null;
+              pollTimeoutRef.current = null;
+            }
+          })
+          .finally(() => {
+            pollInFlightRef.current = false;
+          });
       }, 2000);
       pollTimeoutRef.current = setTimeout(() => {
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = null;
+        pollInFlightRef.current = false;
         pollTimeoutRef.current = null;
         setConnecting(null);
       }, 120_000);
