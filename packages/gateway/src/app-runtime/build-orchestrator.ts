@@ -228,6 +228,7 @@ export class BuildOrchestrator {
       child.stdout?.on("data", appendChunk);
       child.stderr?.on("data", appendChunk);
 
+      let processError: Error | undefined;
       const finish = (result: BuildResult) => {
         if (settled) return;
         settled = true;
@@ -235,18 +236,20 @@ export class BuildOrchestrator {
         if (forceKillTimer) clearTimeout(forceKillTimer);
         const output = Buffer.concat(chunks).toString("utf8");
         writeFile(logPath, output.slice(0, MAX_LOG_SIZE))
-          .catch((writeErr) => {
+          .catch((writeErr: unknown) => {
             console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
           })
-          .finally(() => {
-            resolve(result);
-          });
+          .finally(() => resolve(result));
       };
 
       child.on("error", (err) => {
+        processError = err instanceof Error ? err : new Error(String(err));
         if (timeoutFired || ac.signal.aborted) {
+          signalProcessGroup("SIGKILL");
+          finish(timeoutResult());
           return;
         }
+
         const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
         finish({
           ok: false,
@@ -254,7 +257,7 @@ export class BuildOrchestrator {
             "install_failed",
             stage,
             null,
-            stderrTail || err.message,
+            stderrTail || processError.message,
           ),
         });
       });
@@ -265,6 +268,14 @@ export class BuildOrchestrator {
 
         if (timeoutFired || ac.signal.aborted) {
           finish(timeoutResult());
+          return;
+        }
+
+        if (processError) {
+          finish({
+            ok: false,
+            error: new BuildError("install_failed", stage, null, stderrTail || processError.message),
+          });
           return;
         }
 

@@ -141,6 +141,7 @@ describe("Telegram voice note handling", () => {
     });
 
     await vi.waitFor(() => expect(mockBot.getFile).toHaveBeenCalled());
+    await vi.waitFor(() => expect(stt.transcribe).toHaveBeenCalled());
 
     expect(mockBot.getFile).toHaveBeenCalledWith("voice_file_abc");
     expect(globalThis.fetch).toHaveBeenCalledWith(

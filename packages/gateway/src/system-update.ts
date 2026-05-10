@@ -158,8 +158,10 @@ export async function startSystemUpdate(options: {
   const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
   try {
     await access(updateCommand, constants.X_OK);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
+  } catch (err: unknown) {
+    const code = err instanceof Error && "code" in err
+      ? String((err as NodeJS.ErrnoException).code)
+      : "";
     if (code !== "ENOENT" && code !== "EACCES") {
       console.warn(
         "[system-update] update command access check failed:",

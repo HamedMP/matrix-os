@@ -7,7 +7,7 @@ import {
 } from "../../shell/src/lib/builtin-apps";
 
 describe("built-in app helpers", () => {
-  it("does not pin launchers by default", () => {
+  it("does not pin core workspace launchers by default", () => {
     expect(DEFAULT_PINNED_APPS).toEqual([]);
   });
 
