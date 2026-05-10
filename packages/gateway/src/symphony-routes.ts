@@ -12,6 +12,7 @@ import {
 type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
 
 const SYMPHONY_BODY_LIMIT = 16 * 1024;
+const EmptyBodySchema = z.object({}).strict();
 
 function status(code: number): ContentfulStatusCode {
   return code as ContentfulStatusCode;
@@ -92,7 +93,11 @@ export function createSymphonyRoutes(options: {
     return startResponse(c, result);
   });
 
-  app.post("/stop", limited, async (c) => c.json(await runner.stop()));
+  app.post("/stop", limited, async (c) => {
+    const parsed = await parseOptionalJson(c, EmptyBodySchema);
+    if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
+    return c.json(await runner.stop());
+  });
 
   return app;
 }

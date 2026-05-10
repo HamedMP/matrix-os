@@ -49,6 +49,7 @@ function json(body: unknown, init?: ResponseInit): Response {
 describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
   let availableLabels: Array<{ id: string; name: string }> = [];
+  let availableLabelPages: Record<string, { nodes: Array<{ id: string; name: string }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
@@ -56,6 +57,7 @@ describe("Symphony app", () => {
   beforeEach(() => {
     runtimeConfigShouldFail = false;
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
+    availableLabelPages = null;
     createdIssues = [];
     listedIssues = [];
     listedIssuePages = null;
@@ -112,7 +114,7 @@ describe("Symphony app", () => {
       }
       if (url === "/api/integrations/call" && init?.method === "POST") {
         const body = typeof init.body === "string"
-          ? JSON.parse(init.body) as { action?: string; params?: { after?: string } }
+          ? JSON.parse(init.body) as { action?: string; params?: { after?: string; variables?: { after?: string | null } } }
           : {};
         if (body.action === "list_teams") {
           return json({ data: { teams: { nodes: [
@@ -132,7 +134,9 @@ describe("Symphony app", () => {
           return json({ data: { issues: page } });
         }
         if (body.action === "graphql") {
-          return json({ data: { issueLabels: { nodes: availableLabels } } });
+          const after = body.params?.variables?.after ?? "";
+          const page = availableLabelPages?.[after] ?? { nodes: availableLabels, pageInfo: { hasNextPage: false, endCursor: null } };
+          return json({ data: { issueLabels: page } });
         }
         if (body.action === "create_issue") {
           createdIssues.push(body.params);
@@ -181,6 +185,37 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("Issue could not be created.")).toBeTruthy());
     expect(createdIssues).toEqual([]);
     expect(warnSpy).toHaveBeenCalledWith("[symphony] issue creation failed:", "required_label_missing");
+  });
+
+  it("finds required Linear labels on later pages before creating issues", async () => {
+    availableLabelPages = {
+      "": {
+        nodes: [{ id: "label_symphony", name: "symphony" }],
+        pageInfo: { hasNextPage: true, endCursor: "label_cursor_1" },
+      },
+      label_cursor_1: {
+        nodes: [{ id: "label_urgent", name: "urgent" }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    };
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+      fireEvent.change(screen.getByPlaceholderText("New Linear ticket"), { target: { value: "Follow up" } });
+    });
+    const createButton = screen.getByRole("button", { name: /^Create$/ }) as HTMLButtonElement;
+    await waitFor(() => expect(createButton.disabled).toBe(false));
+
+    await act(async () => {
+      fireEvent.click(createButton);
+    });
+
+    await waitFor(() => expect(createdIssues).toHaveLength(1));
+    expect(createdIssues[0]).toMatchObject({
+      labelIds: ["label_symphony", "label_urgent"],
+    });
   });
 
   it("filters the board by every required Linear label", async () => {

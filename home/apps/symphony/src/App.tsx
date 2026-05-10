@@ -38,6 +38,7 @@ const CONFIG_KEY = "config";
 const FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_RUNNER_PORT = 4066;
 const LABEL_PAGE_SIZE = 250;
+const LABEL_MAX_PAGES = 10;
 const ISSUE_PAGE_SIZE = 100;
 const ISSUE_TARGET_COUNT = 50;
 const ISSUE_MAX_PAGES = 5;
@@ -291,19 +292,35 @@ function selectLinearProjectId(config: SymphonyConfig, projects: Project[]): str
 async function fetchRequiredLinearLabelIds(teamId: string, labelNames: string[]): Promise<string[]> {
   const names = labelNames.map((label) => label.trim()).filter(Boolean);
   if (names.length === 0) return [];
-  const payload = await callService<unknown>("linear", "graphql", {
-    query: `
-      query MatrixSymphonyLabels($teamId: String!, $first: Int!) {
-        issueLabels(first: $first, filter: { team: { id: { eq: $teamId } } }) {
-          nodes { id name }
-        }
-      }
-    `,
-    variables: { teamId, first: LABEL_PAGE_SIZE },
-  });
-  const nodes = graphData<{ issueLabels?: { nodes?: Array<{ id: string; name: string }> } }>(payload).issueLabels?.nodes ?? [];
   const required = new Set(names.map((label) => label.toLowerCase()));
-  return nodes.filter((label) => required.has(label.name.toLowerCase())).map((label) => label.id);
+  const found = new Map<string, string>();
+  let after: string | undefined;
+  for (let page = 0; page < LABEL_MAX_PAGES && found.size < required.size; page += 1) {
+    const payload = await callService<unknown>("linear", "graphql", {
+      query: `
+        query MatrixSymphonyLabels($teamId: String!, $first: Int!, $after: String) {
+          issueLabels(first: $first, after: $after, filter: { team: { id: { eq: $teamId } } }) {
+            nodes { id name }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      `,
+      variables: { teamId, first: LABEL_PAGE_SIZE, after: after ?? null },
+    });
+    const issueLabels = graphData<{
+      issueLabels?: {
+        nodes?: Array<{ id: string; name: string }>;
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(payload).issueLabels;
+    for (const label of issueLabels?.nodes ?? []) {
+      const normalized = label.name.toLowerCase();
+      if (required.has(normalized)) found.set(normalized, label.id);
+    }
+    if (!issueLabels?.pageInfo?.hasNextPage || !issueLabels.pageInfo.endCursor) break;
+    after = issueLabels.pageInfo.endCursor;
+  }
+  return names.map((label) => found.get(label.toLowerCase())).filter((id): id is string => Boolean(id));
 }
 
 function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {

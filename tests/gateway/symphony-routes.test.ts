@@ -129,4 +129,20 @@ describe("Symphony routes", () => {
     expect(runner.saveConfig).toHaveBeenCalledWith({ port: 4088 });
     expect(onConfigChange).toHaveBeenCalledWith(nextConfig);
   });
+
+  it("rejects stop request bodies before stopping", async () => {
+    const runner = {
+      status: vi.fn(),
+      getConfig: vi.fn(),
+      saveConfig: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner });
+
+    const res = await app.request(jsonRequest("/stop", { force: true }));
+
+    expect(res.status).toBe(400);
+    expect(runner.stop).not.toHaveBeenCalled();
+  });
 });
