@@ -99,7 +99,6 @@ export class SessionManager {
 
   async launch(opts: { profile?: string } = {}): Promise<BrowserSession> {
     const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
-    if (this.session?.profile === profile) return this.session;
     if (this.launching) {
       if (this.launching.profile === profile) return this.launching.promise;
       try {
@@ -112,6 +111,7 @@ export class SessionManager {
       }
       return this.launch({ profile });
     }
+    if (this.session?.profile === profile) return this.session;
 
     const promise = this.openSession(profile).finally(() => {
       if (this.launching?.promise === promise) {

@@ -168,6 +168,41 @@ describe("SessionManager", () => {
     expect(manager.getActive()?.profile).toBe("personal");
   });
 
+  it("does not return a being-closed session during a profile switch", async () => {
+    const defaultPage = createMockPage();
+    const defaultBrowser = createMockBrowser(defaultPage);
+    const secondWorkPage = createMockPage();
+    const secondWorkBrowser = createMockBrowser(secondWorkPage);
+    const closeStarted = deferred<void>();
+    const closeFinished = deferred<void>();
+    mockBrowser.close.mockImplementationOnce(async () => {
+      closeStarted.resolve();
+      await closeFinished.promise;
+    });
+
+    await manager.launch({ profile: "work" });
+    launcher.mockResolvedValueOnce(defaultBrowser).mockResolvedValueOnce(secondWorkBrowser);
+
+    const defaultLaunch = manager.launch();
+    await closeStarted.promise;
+
+    const workLaunch = manager.launch({ profile: "work" });
+    let workResolved = false;
+    void workLaunch.then(() => {
+      workResolved = true;
+    });
+    await Promise.resolve();
+
+    expect(workResolved).toBe(false);
+    closeFinished.resolve();
+    await defaultLaunch;
+    const workSession = await workLaunch;
+
+    expect(workSession.profile).toBe("work");
+    expect(workSession.browser).toBe(secondWorkBrowser);
+    expect(manager.getActive()?.browser).toBe(secondWorkBrowser);
+  });
+
   it("rejects invalid profile names before launching", async () => {
     await expect(manager.launch({ profile: "../secrets" })).rejects.toThrow(
       "Invalid browser profile name",

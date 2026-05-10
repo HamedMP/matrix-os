@@ -209,7 +209,18 @@ export class BuildOrchestrator {
 
       child.on("error", (err) => {
         processError = err instanceof Error ? err : new Error(String(err));
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted) {
+          finish({
+            ok: false,
+            error: new BuildError(
+              "timeout",
+              stage,
+              null,
+              `Build timed out after ${timeoutMs}ms`,
+            ),
+          });
+          return;
+        }
 
         const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
         finish({
