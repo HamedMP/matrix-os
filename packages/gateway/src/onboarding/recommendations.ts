@@ -4,6 +4,7 @@ import type { PipedreamConnectClient } from "../integrations/pipedream.js";
 export const MAX_ONBOARDING_EMAILS = 1000;
 const GMAIL_PAGE_SIZE = 500;
 const GMAIL_DETAIL_CONCURRENCY = 8;
+const GMAIL_SCAN_DEADLINE_MS = 45_000;
 const CALENDAR_EVENT_LIMIT = 50;
 export const DEFAULT_RECOMMENDATION_MODEL = "gemini-3.1-flash";
 
@@ -567,12 +568,18 @@ export async function fetchRecentGmailEmailSignals(opts: {
   externalUserId: string;
   accountId: string;
   maxEmails: number;
+  deadlineMs?: number;
+  nowMs?: () => number;
 }): Promise<EmailSignal[]> {
   const cap = Math.min(Math.max(1, opts.maxEmails), MAX_ONBOARDING_EMAILS);
   const ids: string[] = [];
+  const nowMs = opts.nowMs ?? Date.now;
+  const startedAt = nowMs();
+  const deadlineMs = opts.deadlineMs ?? GMAIL_SCAN_DEADLINE_MS;
+  const hasTimeRemaining = () => nowMs() - startedAt < deadlineMs;
   let pageToken: string | undefined;
 
-  while (ids.length < cap) {
+  while (ids.length < cap && hasTimeRemaining()) {
     const maxResults = Math.min(GMAIL_PAGE_SIZE, cap - ids.length);
     const page = await opts.pipedream.proxyGet({
       externalUserId: opts.externalUserId,
@@ -596,6 +603,7 @@ export async function fetchRecentGmailEmailSignals(opts: {
   }
 
   return await mapWithConcurrency(ids, GMAIL_DETAIL_CONCURRENCY, async (id) => {
+    if (!hasTimeRemaining()) return null;
     try {
       const message = await opts.pipedream.proxyGet({
         externalUserId: opts.externalUserId,
@@ -690,12 +698,12 @@ export async function generateAiRecommendations(input: {
   if (!apiKey) return null;
   const model = input.ai.model ?? DEFAULT_RECOMMENDATION_MODEL;
   const fetchFn = input.ai.fetchFn ?? fetch;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   try {
     const response = await fetchFn(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
         contents: [{ parts: [{ text: buildGeminiPrompt(input) }] }],
         generationConfig: { responseMimeType: "application/json" },

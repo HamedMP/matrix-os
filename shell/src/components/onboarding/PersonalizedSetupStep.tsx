@@ -223,7 +223,11 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
     );
   }, []);
 
-  const handleAnalyze = useCallback(async () => {
+  const handleAnalyze = useCallback(async (options?: { preserveExcludedServices?: boolean }) => {
+    const nextExcludedServices = options?.preserveExcludedServices ? excludedServices : [];
+    if (!options?.preserveExcludedServices) {
+      setExcludedServices([]);
+    }
     setAnalyzing(true);
     setError(null);
     try {
@@ -233,7 +237,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
         body: JSON.stringify({
           includedServices: splitList(includeDraft),
           missingServices: splitList(missingDraft),
-          excludedServices,
+          excludedServices: nextExcludedServices,
           codingAgents,
           maxEmails: 1000,
         }),
@@ -367,7 +371,9 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
           <div className="flex flex-wrap gap-2 pt-1">
             <button
               type="button"
-              onClick={handleAnalyze}
+              onClick={() => {
+                void handleAnalyze();
+              }}
               disabled={disabled || analyzing || loadingConnections}
               className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:bg-foreground/90 disabled:opacity-60"
             >
@@ -437,7 +443,9 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
                 </div>
                 <button
                   type="button"
-                  onClick={handleAnalyze}
+                  onClick={() => {
+                    void handleAnalyze({ preserveExcludedServices: true });
+                  }}
                   disabled={analyzing}
                   className="inline-flex size-9 items-center justify-center rounded-lg border border-border/70 text-muted-foreground transition hover:text-foreground disabled:opacity-60"
                   title="Refresh suggestions"
@@ -497,15 +505,26 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
                 </p>
               )}
 
-              <button
-                type="button"
-                onClick={onStartVoice}
-                disabled={disabled}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:bg-foreground/90 disabled:opacity-60"
-              >
-                Continue
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </button>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={onStartVoice}
+                  disabled={disabled}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background transition hover:bg-foreground/90 disabled:opacity-60"
+                >
+                  Voice intro
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onStartText}
+                  disabled={disabled}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-border/70 px-4 py-2.5 text-sm font-medium text-foreground transition hover:border-foreground/30 disabled:opacity-60"
+                >
+                  <Terminal className="size-4" aria-hidden="true" />
+                  Text intro
+                </button>
+              </div>
             </div>
           )}
         </aside>

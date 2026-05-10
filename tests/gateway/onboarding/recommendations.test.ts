@@ -7,6 +7,7 @@ import type { PipedreamConnectClient } from "../../../packages/gateway/src/integ
 import {
   CODING_AGENT_OPTIONS,
   buildPersonalizedOnboardingPlan,
+  fetchRecentGmailEmailSignals,
   type EmailSignal,
 } from "../../../packages/gateway/src/onboarding/recommendations.js";
 
@@ -141,6 +142,44 @@ describe("personalized onboarding recommendations", () => {
       serviceId: "linear",
     }));
   });
+
+  it("stops starting Gmail detail fetches when the overall scan deadline expires", async () => {
+    let now = 0;
+    const detailFetches: string[] = [];
+    const pipedream = mockPipedream({
+      proxyGet: vi.fn(async ({ url }: { url: string }) => {
+        if (url.includes("/users/me/messages/")) {
+          detailFetches.push(url);
+          now = 50_000;
+          return {
+            id: "msg_0",
+            snippet: "Todoist task reminder.",
+            payload: {
+              headers: [
+                { name: "From", value: "Todoist <notifications@todoist.com>" },
+                { name: "Subject", value: "Task reminder" },
+              ],
+            },
+          };
+        }
+        return {
+          messages: Array.from({ length: 20 }, (_, index) => ({ id: `msg_${index}` })),
+        };
+      }),
+    });
+
+    const signals = await fetchRecentGmailEmailSignals({
+      pipedream,
+      externalUserId: "pd_ext_deadline",
+      accountId: "pd_acc_gmail",
+      maxEmails: 20,
+      deadlineMs: 1,
+      nowMs: () => now,
+    });
+
+    expect(detailFetches).toHaveLength(1);
+    expect(signals).toHaveLength(1);
+  });
 });
 
 describe("POST /api/integrations/onboarding/recommendations", () => {
@@ -265,8 +304,12 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     expect(data.recommendations).toContainEqual(expect.objectContaining({ id: "ai-task-routine" }));
     expect(fetchFn).toHaveBeenCalledWith(
       expect.stringContaining("/models/gemini-3.1-flash:generateContent"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "x-goog-api-key": "gemini-test-key" }),
+        signal: expect.any(AbortSignal),
+      }),
     );
+    expect(String(fetchFn.mock.calls[0]?.[0] ?? "")).not.toContain("key=");
   });
 
   it("falls back to deterministic recommendations when Gemini fails without exposing raw provider errors", async () => {

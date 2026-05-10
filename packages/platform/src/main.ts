@@ -185,6 +185,10 @@ interface GatewayIntegrationRoutesModule {
   }): Hono;
 }
 
+interface GatewayRecommendationsModule {
+  DEFAULT_RECOMMENDATION_MODEL: string;
+}
+
 interface GatewayR2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
@@ -1954,10 +1958,12 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       { createIntegrationRoutes },
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
+      { DEFAULT_RECOMMENDATION_MODEL },
     ] = await Promise.all([
       importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/src/integrations/routes.js'),
       importRuntimeModule<GatewayPipedreamModule>('../../gateway/src/integrations/pipedream.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/src/platform-db.js'),
+      importRuntimeModule<GatewayRecommendationsModule>('../../gateway/src/onboarding/recommendations.js'),
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
@@ -2003,7 +2009,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       },
       recommendationAi: {
         apiKey: process.env.GEMINI_API_KEY,
-        model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? 'gemini-3.1-flash',
+        model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? DEFAULT_RECOMMENDATION_MODEL,
       },
     });
     internalIntegrationRoutes = createIntegrationRoutes({
@@ -2017,7 +2023,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       },
       recommendationAi: {
         apiKey: process.env.GEMINI_API_KEY,
-        model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? 'gemini-3.1-flash',
+        model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? DEFAULT_RECOMMENDATION_MODEL,
       },
     });
   }

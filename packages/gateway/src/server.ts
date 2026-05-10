@@ -60,6 +60,7 @@ import {
 } from "./auth.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "./request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
+import { DEFAULT_RECOMMENDATION_MODEL } from "./onboarding/recommendations.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
@@ -774,7 +775,7 @@ export async function createGateway(config: GatewayConfig) {
         broadcast,
         recommendationAi: {
           apiKey: process.env.GEMINI_API_KEY,
-          model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? "gemini-3.1-flash",
+          model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? DEFAULT_RECOMMENDATION_MODEL,
         },
       });
       // Routes mounted after auth middleware below (see "deferred route mounts")
