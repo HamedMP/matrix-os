@@ -107,9 +107,8 @@ jobs:
           MATRIX_BUILD_DATE: ${{ github.event.head_commit.timestamp }}
         run: |
           set -euo pipefail
-          BUNDLE_PATH="$(./scripts/build-host-bundle.sh)"
-          echo "bundle_path=$BUNDLE_PATH" >> "$GITHUB_OUTPUT"
-          echo "Built: $BUNDLE_PATH"
+          ./scripts/build-host-bundle.sh
+          echo "bundle_path=dist/host-bundle/matrix-host-bundle.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
