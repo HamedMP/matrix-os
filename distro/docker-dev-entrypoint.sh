@@ -11,6 +11,14 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
+mkdir -p /app/node_modules/@matrix-os
+for workspace_pkg in gateway kernel mcp-browser platform proxy ui; do
+  if [ -d "/app/packages/$workspace_pkg" ]; then
+    rm -rf "/app/node_modules/@matrix-os/$workspace_pkg"
+    ln -s "../../packages/$workspace_pkg" "/app/node_modules/@matrix-os/$workspace_pkg"
+  fi
+done
+
 echo "[matrix-os-dev] Building kernel package..."
 pnpm --filter '@matrix-os/kernel' build
 chown -R matrixos:matrixos /app/packages/kernel/dist 2>/dev/null || true
