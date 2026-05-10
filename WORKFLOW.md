@@ -1,7 +1,10 @@
 ---
 tracker:
   kind: linear
+  team_key: "MAT"
   project_slug: "matrix-os"
+  required_labels:
+    - symphony
   active_states:
     - Todo
     - In Progress

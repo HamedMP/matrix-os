@@ -23,6 +23,8 @@ import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createSymphonyRoutes } from "./symphony-routes.js";
+import { createSymphonyRunner } from "./symphony-runner.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -262,6 +264,7 @@ export async function createGateway(config: GatewayConfig) {
       process.env.PROXY_ORIGIN,
       "http://localhost:3000",
       "http://localhost:4001",
+      "http://localhost:4066",
     ].filter((origin): origin is string => Boolean(origin)),
   ));
 
@@ -294,6 +297,7 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
+  const symphonyRunner = createSymphonyRunner({ homePath });
 
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -2237,6 +2241,7 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
+  app.route("/api/symphony", createSymphonyRoutes({ homePath, runner: symphonyRunner }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
@@ -3623,6 +3628,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
+      await symphonyRunner.stop();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

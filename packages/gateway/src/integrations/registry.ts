@@ -555,6 +555,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           teamId: { type: "string" },
           projectId: { type: "string" },
           state: { type: "string" },
+          labelName: { type: "string" },
         },
         directApi: {
           method: "POST",
@@ -563,14 +564,16 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             const teamId = stringOrUndefined(p.teamId);
             const projectId = stringOrUndefined(p.projectId);
             const state = stringOrUndefined(p.state);
+            const labelName = stringOrUndefined(p.labelName);
             return linearGraphqlBody(`
-              query MatrixLinearIssues($first: Int!, $teamId: String, $projectId: String, $state: String) {
+              query MatrixLinearIssues($first: Int!, $teamId: String, $projectId: String, $state: String, $labelName: String) {
                 issues(
                   first: $first
                   filter: {
                     team: { id: { eq: $teamId } }
                     project: { id: { eq: $projectId } }
                     state: { name: { eq: $state } }
+                    labels: { name: { eq: $labelName } }
                   }
                   orderBy: updatedAt
                 ) {
@@ -585,6 +588,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
                     assignee { id name displayName }
                     state { id name type color }
                     team { id key name }
+                    labels { nodes { id name } }
                     project { id name slugId }
                   }
                 }
@@ -594,6 +598,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
               teamId: teamId ?? null,
               projectId: projectId ?? null,
               state: state ?? null,
+              labelName: labelName ?? null,
             });
           },
         },
@@ -608,28 +613,33 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           stateId: { type: "string" },
           assigneeId: { type: "string" },
           priority: { type: "number" },
+          labelIds: { type: "string" },
         },
         directApi: {
           method: "POST",
           url: "https://api.linear.app/graphql",
-          mapBody: (p) => linearGraphqlBody(`
-            mutation MatrixLinearCreateIssue($input: IssueCreateInput!) {
-              issueCreate(input: $input) {
-                success
-                issue { id identifier title url state { id name } project { id name slugId } }
+          mapBody: (p) => {
+            const labelIds = stringOrUndefined(p.labelIds)?.split(",").map((labelId) => labelId.trim()).filter(Boolean);
+            return linearGraphqlBody(`
+              mutation MatrixLinearCreateIssue($input: IssueCreateInput!) {
+                issueCreate(input: $input) {
+                  success
+                  issue { id identifier title url state { id name } labels { nodes { id name } } project { id name slugId } }
+                }
               }
-            }
-          `, {
-            input: {
-              teamId: String(p.teamId),
-              title: String(p.title),
-              ...(p.description ? { description: String(p.description) } : {}),
-              ...(p.projectId ? { projectId: String(p.projectId) } : {}),
-              ...(p.stateId ? { stateId: String(p.stateId) } : {}),
-              ...(p.assigneeId ? { assigneeId: String(p.assigneeId) } : {}),
-              ...(p.priority !== undefined ? { priority: Number(p.priority) } : {}),
-            },
-          }),
+            `, {
+              input: {
+                teamId: String(p.teamId),
+                title: String(p.title),
+                ...(p.description ? { description: String(p.description) } : {}),
+                ...(p.projectId ? { projectId: String(p.projectId) } : {}),
+                ...(p.stateId ? { stateId: String(p.stateId) } : {}),
+                ...(p.assigneeId ? { assigneeId: String(p.assigneeId) } : {}),
+                ...(p.priority !== undefined ? { priority: Number(p.priority) } : {}),
+                ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
+              },
+            });
+          },
         },
       },
       update_issue: {

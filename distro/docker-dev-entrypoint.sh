@@ -12,7 +12,13 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
 fi
 
 echo "[matrix-os-dev] Building kernel package..."
-pnpm --filter '@matrix-os/kernel' run build
+if ! pnpm --filter '@matrix-os/kernel' exec tsc --noEmitOnError false; then
+  if [ ! -f /app/packages/kernel/dist/index.js ]; then
+    echo "[matrix-os-dev] Kernel build failed before emitting dist"
+    exit 1
+  fi
+  echo "[matrix-os-dev] Kernel build emitted dist with type errors; continuing for dev runtime"
+fi
 
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
