@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -249,14 +249,50 @@ class SymphonyRunner {
       };
     }
 
+    let realHomePath: string;
+    let realServiceRoot: string;
+    let realWorkflowPath: string;
+    let realCommandPath: string;
+    try {
+      [realHomePath, realServiceRoot, realWorkflowPath, realCommandPath] = await Promise.all([
+        realpath(this.homePath),
+        realpath(serviceRoot),
+        realpath(workflowPath),
+        realpath(commandPath),
+      ]);
+    } catch (err: unknown) {
+      console.error("[symphony] Failed to resolve runner paths:", err);
+      return {
+        ok: false,
+        status: 409,
+        code: "symphony_not_installed",
+        message: "Symphony runner path is not available",
+      };
+    }
+
+    const realPathPolicy = validateRunnerPaths({
+      homePath: realHomePath,
+      serviceRoot: realServiceRoot,
+      workflowPath: realWorkflowPath,
+      commandPath: realCommandPath,
+    });
+    if (!realPathPolicy.ok) {
+      return {
+        ok: false,
+        status: 400,
+        code: realPathPolicy.code,
+        message: realPathPolicy.message,
+      };
+    }
+
     const runId = randomUUID();
-    const child = this.spawnProcess(commandPath, [
-      workflowPath,
+    const child = this.spawnProcess(realCommandPath, [
+      realWorkflowPath,
       "--port",
       String(config.port),
       GUARDRAILS_FLAG,
     ], {
-      cwd: serviceRoot,
+      cwd: realServiceRoot,
       env: buildSymphonyEnv(this.env, this.homePath, runId),
       stdio: "ignore",
       detached: false,

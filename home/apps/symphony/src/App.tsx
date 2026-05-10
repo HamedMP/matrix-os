@@ -99,6 +99,23 @@ type SymphonyRuntimeStatus = {
   config: SymphonyRuntimeConfig;
 };
 
+type SymphonyRuntimeErrorCode =
+  | "missing_linear_api_key"
+  | "symphony_path_not_allowed"
+  | "symphony_not_installed"
+  | "symphony_start_failed"
+  | "runtime_start_failed";
+
+class SymphonyRuntimeError extends Error {
+  readonly code: SymphonyRuntimeErrorCode;
+
+  constructor(code: SymphonyRuntimeErrorCode) {
+    super(code);
+    this.name = "SymphonyRuntimeError";
+    this.code = code;
+  }
+}
+
 type SymphonyConfig = {
   repoUrl: string;
   cloneUrl: string;
@@ -117,17 +134,17 @@ type SymphonyConfig = {
 };
 
 const DEFAULT_CONFIG: SymphonyConfig = {
-  repoUrl: "https://github.com/HamedMP/matrix-os",
-  cloneUrl: "https://github.com/HamedMP/matrix-os.git",
-  githubRepo: "HamedMP/matrix-os",
-  workflowPath: "/app/WORKFLOW.md",
-  serviceRoot: "/home/matrixos/code/symphony/elixir",
+  repoUrl: "",
+  cloneUrl: "",
+  githubRepo: "",
+  workflowPath: "~/code/symphony/WORKFLOW.md",
+  serviceRoot: "~/code/symphony/elixir",
   binPath: "./bin/symphony",
   runnerPort: DEFAULT_RUNNER_PORT,
   teamKey: "MAT",
   requiredLabels: REQUIRED_LABELS,
   activeStates: DEFAULT_ACTIVE_STATES,
-  projectSlug: "matrix-os",
+  projectSlug: "",
   teamId: "",
   projectId: "",
   dashboardUrl: `http://127.0.0.1:${DEFAULT_RUNNER_PORT}`,
@@ -190,7 +207,7 @@ async function startRuntime(config: SymphonyConfig): Promise<SymphonyRuntimeStat
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     body: JSON.stringify(runtimeConfigFromApp(config)),
   });
-  if (!response.ok) throw new Error("runtime_start_failed");
+  if (!response.ok) throw await runtimeErrorFromResponse(response);
   return (await response.json()) as SymphonyRuntimeStatus;
 }
 
@@ -203,6 +220,39 @@ async function stopRuntime(): Promise<SymphonyRuntimeStatus> {
   });
   if (!response.ok) throw new Error("runtime_stop_failed");
   return (await response.json()) as SymphonyRuntimeStatus;
+}
+
+async function runtimeErrorFromResponse(response: Response): Promise<SymphonyRuntimeError> {
+  try {
+    const payload = (await response.json()) as { error?: { code?: string } };
+    if (payload.error?.code === "missing_linear_api_key" ||
+      payload.error?.code === "symphony_path_not_allowed" ||
+      payload.error?.code === "symphony_not_installed" ||
+      payload.error?.code === "symphony_start_failed") {
+      return new SymphonyRuntimeError(payload.error.code);
+    }
+  } catch (err: unknown) {
+    console.warn("[symphony] start error body could not be read:", err instanceof Error ? err.message : String(err));
+  }
+  return new SymphonyRuntimeError("runtime_start_failed");
+}
+
+function startErrorMessage(err: unknown): string {
+  if (err instanceof SymphonyRuntimeError) {
+    switch (err.code) {
+      case "missing_linear_api_key":
+        return "Symphony runner could not be started because LINEAR_API_KEY is missing.";
+      case "symphony_path_not_allowed":
+        return "Symphony runner paths must stay inside the allowed local checkout roots.";
+      case "symphony_not_installed":
+        return "Symphony checkout, workflow, or runner binary could not be found or executed.";
+      case "symphony_start_failed":
+        return "Symphony runner exited during startup.";
+      case "runtime_start_failed":
+        return "Symphony runner could not be started.";
+    }
+  }
+  return "Symphony runner could not be started.";
 }
 
 async function fetchConnections(): Promise<Connection[]> {
@@ -636,7 +686,7 @@ function App() {
       setConfig((current) => mergeRuntimeConfig(current, next));
     } catch (err: unknown) {
       console.warn("[symphony] runtime start failed:", err instanceof Error ? err.message : String(err));
-      setError("Symphony runner could not be started. Check LINEAR_API_KEY and local checkout settings.");
+      setError(startErrorMessage(err));
     } finally {
       setBusy(null);
     }

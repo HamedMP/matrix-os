@@ -57,6 +57,7 @@ describe("Symphony app", () => {
   let runtimeActiveStates: string[] = [];
   let runtimeRunning = false;
   let runtimePort = 4066;
+  let startRuntimeFailureCode: string | null = null;
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
@@ -69,6 +70,7 @@ describe("Symphony app", () => {
     runtimeActiveStates = ["Todo", "In Progress", "Merging", "Rework"];
     runtimeRunning = false;
     runtimePort = 4066;
+    startRuntimeFailureCode = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -123,6 +125,36 @@ describe("Symphony app", () => {
             teamKey: requestedConfig.tracker?.teamKey ?? "OPS",
             requiredLabels: requestedConfig.tracker?.requiredLabels ?? ["symphony"],
             activeStates: requestedConfig.tracker?.activeStates ?? runtimeActiveStates,
+          },
+        });
+      }
+      if (url === "/api/symphony/start" && init?.method === "POST") {
+        if (startRuntimeFailureCode) {
+          return json({ error: { code: startRuntimeFailureCode, message: "Start failed" } }, { status: 409 });
+        }
+        const requestedConfig = typeof init.body === "string"
+          ? JSON.parse(init.body) as Partial<{ port: number; tracker: { activeStates: string[] } }>
+          : {};
+        return json({
+          running: true,
+          pid: 123,
+          startedAt: "2026-05-10T00:00:00.000Z",
+          lastExitAt: null,
+          lastExitCode: null,
+          dashboardUrl: `http://127.0.0.1:${requestedConfig.port ?? runtimePort}`,
+          linearApiKeyConfigured: true,
+          config: {
+            version: 1,
+            serviceRoot: "/home/matrixos/code/symphony/elixir",
+            binPath: "./bin/symphony",
+            workflowPath: "/app/WORKFLOW.md",
+            port: requestedConfig.port ?? runtimePort,
+            tracker: {
+              kind: "linear",
+              teamKey: "MAT",
+              requiredLabels: ["symphony"],
+              activeStates: requestedConfig.tracker?.activeStates ?? runtimeActiveStates,
+            },
           },
         });
       }
@@ -244,6 +276,30 @@ describe("Symphony app", () => {
     });
     expect(screen.getByText("Running :4077")).toBeTruthy();
     expect(screen.queryByText("Running :4088")).toBeNull();
+  });
+
+  it("shows a specific safe runner start error from the API code", async () => {
+    startRuntimeFailureCode = "symphony_path_not_allowed";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /Start/ })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start/ }));
+    });
+
+    await waitFor(() => expect(screen.getByText("Symphony runner paths must stay inside the allowed local checkout roots.")).toBeTruthy());
+    expect(warnSpy).toHaveBeenCalledWith("[symphony] runtime start failed:", "symphony_path_not_allowed");
+  });
+
+  it("starts with generic repository defaults before runtime config loads", async () => {
+    render(<App />);
+
+    expect((screen.getByLabelText("GitHub repo") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Clone URL") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Project slug") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Symphony checkout") as HTMLInputElement).value).toBe("~/code/symphony/elixir");
+    expect((screen.getByLabelText("Workflow path") as HTMLInputElement).value).toBe("~/code/symphony/WORKFLOW.md");
   });
 
   it("does not create issues when any required Linear label is missing", async () => {

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,15 +89,20 @@ describe("Symphony runner", () => {
       port: 4077,
       tracker: { teamKey: "MAT", requiredLabels: ["symphony"], activeStates: ["Todo", "Rework"] },
     });
+    const [realBinPath, realWorkflowPath, realServiceRoot] = await Promise.all([
+      realpath(binPath),
+      realpath(workflowPath),
+      realpath(serviceRoot),
+    ]);
 
     expect(result).toMatchObject({ ok: true });
-    expect(spawnProcess).toHaveBeenCalledWith(binPath, [
-      workflowPath,
+    expect(spawnProcess).toHaveBeenCalledWith(realBinPath, [
+      realWorkflowPath,
       "--port",
       "4077",
       "--i-understand-that-this-will-be-running-without-the-usual-guardrails",
     ], expect.objectContaining({
-      cwd: serviceRoot,
+      cwd: realServiceRoot,
       detached: false,
       stdio: "ignore",
       env: expect.objectContaining({
@@ -120,10 +125,14 @@ describe("Symphony runner", () => {
     });
 
     const result = await runner.start({ serviceRoot, workflowPath, binPath: "symphony" });
+    const [realBareBinPath, realServiceRoot] = await Promise.all([
+      realpath(bareBinPath),
+      realpath(serviceRoot),
+    ]);
 
     expect(result).toMatchObject({ ok: true });
-    expect(spawnProcess).toHaveBeenCalledWith(bareBinPath, expect.any(Array), expect.objectContaining({
-      cwd: serviceRoot,
+    expect(spawnProcess).toHaveBeenCalledWith(realBareBinPath, expect.any(Array), expect.objectContaining({
+      cwd: realServiceRoot,
     }));
   });
 
@@ -176,6 +185,31 @@ describe("Symphony runner", () => {
 
     const result = await runner.start({
       serviceRoot: outsideRoot,
+      workflowPath,
+      binPath: "./bin/symphony",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "symphony_path_not_allowed" });
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("refuses symlinked runner roots that resolve outside allowed Symphony checkouts", async () => {
+    const spawnProcess = vi.fn();
+    const outsideRoot = join(homePath, "tmp", "evil");
+    const outsideBinPath = join(outsideRoot, "bin", "symphony");
+    const symlinkRoot = join(homePath, "code", "symphony", "linked");
+    await mkdir(join(outsideRoot, "bin"), { recursive: true });
+    await writeFile(outsideBinPath, "#!/bin/sh\n");
+    await chmod(outsideBinPath, 0o755);
+    await symlink(outsideRoot, symlinkRoot, "dir");
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+
+    const result = await runner.start({
+      serviceRoot: symlinkRoot,
       workflowPath,
       binPath: "./bin/symphony",
     });
