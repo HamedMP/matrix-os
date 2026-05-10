@@ -177,6 +177,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setSelectedWorktreeId("");
     setAgentMessage("");
     setWorktreeMessage("");
+    setCreatingWorktree(false);
+    setStartingAgent(false);
   }, [activeSlug]);
 
   useEffect(() => {

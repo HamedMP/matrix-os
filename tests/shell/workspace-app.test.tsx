@@ -244,6 +244,54 @@ describe("WorkspaceApp", () => {
     expect(await screen.findByText("Started sess_agent123")).toBeTruthy();
   });
 
+  it("clears pending project action spinners when switching projects", async () => {
+    let resolveSession: (response: Response) => void = () => {};
+    const pendingSession = new Promise<Response>((resolve) => {
+      resolveSession = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [
+          { slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } },
+          { slug: "repo-2", name: "Project 2", github: { owner: "owner", repo: "repo-2" } },
+        ] });
+      }
+      if (url.includes("/api/projects/repo/worktrees")) {
+        return json({ worktrees: [{ id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "clean" }] });
+      }
+      if (url.includes("/api/projects/repo-2/worktrees")) {
+        return json({ worktrees: [{ id: "wt_two", currentBranch: "feature/two", dirtyState: "clean" }] });
+      }
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        return await pendingSession;
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ tasks: [], sessions: [], reviews: [], previews: [], events: [] });
+      }
+      return json({});
+    }));
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0));
+    fireEvent.change(screen.getByLabelText("Agent prompt"), { target: { value: "Implement MAT-5" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start agent/i }));
+    });
+    expect(screen.getByRole("button", { name: /starting/i })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Project 2"));
+    });
+
+    expect(screen.getByRole("button", { name: /start agent/i })).toBeTruthy();
+    resolveSession(json({ session: { id: "sess_agent123", status: "starting" } }));
+    await act(async () => {
+      await pendingSession;
+    });
+  });
+
   it("shows an actionable empty state when no managed projects exist", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

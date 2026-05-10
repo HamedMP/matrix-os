@@ -72,7 +72,7 @@ export const SymphonyConfigSchema = z.object({
   version: z.literal(SYMPHONY_CONFIG_VERSION).default(SYMPHONY_CONFIG_VERSION),
   serviceRoot: LocalPathSchema.default(() => join(homedir(), "code", "symphony", "elixir")),
   binPath: RelativeCommandSchema.default("./bin/symphony"),
-  workflowPath: LocalPathSchema.default(() => join(process.cwd(), "WORKFLOW.md")),
+  workflowPath: LocalPathSchema.default(() => join(homedir(), "code", "symphony", "WORKFLOW.md")),
   port: z.number().int().min(1024).max(65535).default(4066),
   tracker: SymphonyTrackerConfigSchema.default({
     kind: "linear",

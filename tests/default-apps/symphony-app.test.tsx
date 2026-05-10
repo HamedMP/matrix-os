@@ -50,6 +50,7 @@ describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
   let availableLabels: Array<{ id: string; name: string }> = [];
   let availableLabelPages: Record<string, { nodes: Array<{ id: string; name: string }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
+  let workflowStates: Array<{ id: string; name: string; type?: string; color?: string }> = [];
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
@@ -63,6 +64,7 @@ describe("Symphony app", () => {
     runtimeConfigShouldFail = false;
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
     availableLabelPages = null;
+    workflowStates = [];
     createdIssues = [];
     listedIssues = [];
     listedIssuePages = null;
@@ -176,7 +178,7 @@ describe("Symphony app", () => {
           return json({ data: { projects: { nodes: [] } } });
         }
         if (body.action === "list_workflow_states") {
-          return json({ data: { workflowStates: { nodes: [] } } });
+          return json({ data: { workflowStates: { nodes: workflowStates } } });
         }
         if (body.action === "list_issues") {
           const after = body.params?.after ?? "";
@@ -322,12 +324,16 @@ describe("Symphony app", () => {
       fireEvent.click(createButton);
     });
 
-    await waitFor(() => expect(screen.getByText("Issue could not be created.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("One or more required labels could not be found in the selected Linear team. Check that all required labels exist.")).toBeTruthy());
     expect(createdIssues).toEqual([]);
-    expect(warnSpy).toHaveBeenCalledWith("[symphony] issue creation failed:", "required_label_missing");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[symphony] issue creation failed:",
+      "One or more required labels could not be found in the selected Linear team. Check that all required labels exist.",
+    );
   });
 
   it("finds required Linear labels on later pages before creating issues", async () => {
+    workflowStates = [{ id: "state_todo", name: "Todo", type: "unstarted", color: "#6b7280" }];
     availableLabelPages = {
       "": {
         nodes: [{ id: "label_symphony", name: "symphony" }],
@@ -358,6 +364,7 @@ describe("Symphony app", () => {
     await waitFor(() => expect(createdIssues).toHaveLength(1));
     expect(createdIssues[0]).toMatchObject({
       labelIds: ["label_symphony", "label_urgent"],
+      stateId: "state_todo",
     });
   });
 
@@ -484,6 +491,7 @@ describe("Symphony app", () => {
         expect.objectContaining({ collected: 0, pages: 5, requiredLabels: 2 }),
       );
     });
+    expect(screen.getByText("Board is incomplete: only 0 of 50 target issues found after scanning 5 pages. Consider reducing the number of required labels.")).toBeTruthy();
   });
 
   it("omits the Linear label filter when required labels are empty", async () => {

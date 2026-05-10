@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSymphonyRunner } from "../../packages/gateway/src/symphony-runner.js";
@@ -73,6 +73,7 @@ describe("Symphony runner", () => {
       activeStates: ["Todo", "In Progress", "Merging", "Rework"],
     });
     expect(status.config.port).toBe(4066);
+    expect(status.config.workflowPath).toBe(join(homedir(), "code", "symphony", "WORKFLOW.md"));
   });
 
   it("fails instead of replacing an invalid persisted config with defaults", async () => {

@@ -42,6 +42,8 @@ const LABEL_MAX_PAGES = 10;
 const ISSUE_PAGE_SIZE = 100;
 const ISSUE_TARGET_COUNT = 50;
 const ISSUE_MAX_PAGES = 5;
+const REQUIRED_LABELS_MISSING_MESSAGE = "One or more required labels could not be found in the selected Linear team. Check that all required labels exist.";
+const BOARD_INCOMPLETE_ERROR_PREFIX = "Board is incomplete:";
 type SymphonyStateTemplate = { name: string; color: string; type: "backlog" | "unstarted" | "started" | "completed" | "canceled" };
 const SYMPHONY_STATES: SymphonyStateTemplate[] = [
   { name: "Todo", color: "#6b7280", type: "unstarted" },
@@ -416,6 +418,17 @@ function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
   return required.every((label) => issueLabels.has(label));
 }
 
+function boardIncompleteMessage(collected: number, pages: number): string {
+  return `${BOARD_INCOMPLETE_ERROR_PREFIX} only ${collected} of ${ISSUE_TARGET_COUNT} target issues found after scanning ${pages} pages. Consider reducing the number of required labels.`;
+}
+
+function safeLinearErrorMessage(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  if (err.message === REQUIRED_LABELS_MISSING_MESSAGE) return err.message;
+  if (err.message.startsWith(BOARD_INCOMPLETE_ERROR_PREFIX)) return err.message;
+  return null;
+}
+
 async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, projectId: string, selectedState: string): Promise<Issue[]> {
   const collected: Issue[] = [];
   const requiredLabels = baseConfig.requiredLabels.map((label) => label.trim()).filter(Boolean);
@@ -447,6 +460,7 @@ async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, pro
       pages: pagesFetched,
       requiredLabels: requiredLabels.length,
     });
+    throw new Error(boardIncompleteMessage(collected.length, pagesFetched));
   }
   return collected.slice(0, ISSUE_TARGET_COUNT);
 }
@@ -566,7 +580,7 @@ function App() {
       }
     } catch (err: unknown) {
       console.warn("[symphony] Linear refresh failed:", err instanceof Error ? err.message : String(err));
-      setError("Linear data could not be loaded.");
+      setError(safeLinearErrorMessage(err) ?? "Linear data could not be loaded.");
     } finally {
       setBusy(null);
     }
@@ -636,11 +650,13 @@ function App() {
     try {
       const labelIds = await fetchRequiredLinearLabelIds(config.teamId, config.requiredLabels);
       if (config.requiredLabels.length > 0 && labelIds.length < config.requiredLabels.length) {
-        throw new Error("required_label_missing");
+        throw new Error(REQUIRED_LABELS_MISSING_MESSAGE);
       }
+      const selectedWorkflowState = states.find((state) => state.name.toLowerCase() === selectedState.toLowerCase());
       await callService("linear", "create_issue", {
         teamId: config.teamId,
         projectId: config.projectId || undefined,
+        stateId: selectedWorkflowState?.id,
         title: newIssueTitle.trim(),
         description: newIssueDescription.trim() || undefined,
         labelIds,
@@ -650,11 +666,11 @@ function App() {
       await refreshLinear();
     } catch (err: unknown) {
       console.warn("[symphony] issue creation failed:", err instanceof Error ? err.message : String(err));
-      setError("Issue could not be created.");
+      setError(safeLinearErrorMessage(err) ?? "Issue could not be created.");
     } finally {
       setBusy(null);
     }
-  }, [config.projectId, config.requiredLabels, config.teamId, newIssueDescription, newIssueTitle, refreshLinear]);
+  }, [config.projectId, config.requiredLabels, config.teamId, newIssueDescription, newIssueTitle, refreshLinear, selectedState, states]);
 
   const runGraphql = useCallback(async () => {
     if (!graphqlQuery.trim()) return;
