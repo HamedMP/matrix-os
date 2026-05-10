@@ -76,6 +76,24 @@ describe("task board model", () => {
     });
   });
 
+  it("summarizes completed cards on custom boards without a done column id", () => {
+    let board = createBoard("Custom");
+    board = {
+      ...board,
+      columns: [
+        { id: "today", title: "Today", color: "#0ea5e9" },
+        { id: "complete", title: "Complete", color: "#10b981" },
+      ],
+    };
+    board = addCard(board, {
+      columnId: "complete",
+      title: "Custom board done",
+      projectId: board.projects[0].id,
+    });
+
+    expect(summarizeBoard(board).doneCards).toBe(1);
+  });
+
   it("records Matrix and Hermes delegation intent on cards", () => {
     let board = createBoard("Default");
     board = addCard(board, {

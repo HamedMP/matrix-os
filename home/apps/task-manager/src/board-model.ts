@@ -293,15 +293,23 @@ export function summarizeBoard(board: Board): BoardSummary {
   const activeProjectIds = board.cards.reduce<string[]>((projectIds, card) => (
     projectIds.includes(card.projectId) ? projectIds : [...projectIds, card.projectId]
   ), []);
+  const doneColumnId = resolveDoneColumnId(board);
   return {
     totalCards: board.cards.length,
-    doneCards: board.cards.filter((card) => card.columnId === "done").length,
+    doneCards: doneColumnId ? board.cards.filter((card) => card.columnId === doneColumnId).length : 0,
     activeProjects: activeProjectIds.length,
     checklistDone: checklist.filter((item) => item.done).length,
     checklistTotal: checklist.length,
     delegatedCards: board.cards.filter((card) => card.delegation).length,
     urgentCards: board.cards.filter((card) => card.priority === "urgent").length,
   };
+}
+
+function resolveDoneColumnId(board: Board): string | null {
+  const explicitDone = board.columns.find((column) => column.id === "done");
+  if (explicitDone) return explicitDone.id;
+  const semanticDone = board.columns.find((column) => /done|complete|completed/i.test(column.title));
+  return semanticDone?.id ?? board.columns.at(-1)?.id ?? null;
 }
 
 export function hydrateBoard(value: unknown): Board {
