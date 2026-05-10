@@ -302,6 +302,13 @@ async function fetchRequiredLinearLabelIds(teamId: string, labelNames: string[])
   return nodes.filter((label) => required.has(label.name.toLowerCase())).map((label) => label.id);
 }
 
+function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
+  const required = labelNames.map((label) => label.trim().toLowerCase()).filter(Boolean);
+  if (required.length === 0) return true;
+  const issueLabels = new Set((issue.labels?.nodes ?? []).map((label) => label.name.toLowerCase()));
+  return required.every((label) => issueLabels.has(label));
+}
+
 function stateBadgeVariant(stateName: string | undefined): "secondary" | "success" | "warning" | "outline" {
   if (!stateName) return "outline";
   if (stateName === "Merging") return "success";
@@ -410,7 +417,8 @@ function App() {
           }),
         ]);
         setStates(graphData<{ workflowStates?: { nodes?: WorkflowState[] } }>(statePayload).workflowStates?.nodes ?? []);
-        setIssues(graphData<{ issues?: { nodes?: Issue[] } }>(issuePayload).issues?.nodes ?? []);
+        const nextIssues = graphData<{ issues?: { nodes?: Issue[] } }>(issuePayload).issues?.nodes ?? [];
+        setIssues(nextIssues.filter((issue) => issueHasRequiredLabels(issue, baseConfig.requiredLabels)));
       }
     } catch (err: unknown) {
       console.warn("[symphony] Linear refresh failed:", err instanceof Error ? err.message : String(err));

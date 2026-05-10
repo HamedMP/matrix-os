@@ -50,11 +50,13 @@ describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
   let availableLabels: Array<{ id: string; name: string }> = [];
   let createdIssues: unknown[] = [];
+  let listedIssues: unknown[] = [];
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
     createdIssues = [];
+    listedIssues = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -121,7 +123,7 @@ describe("Symphony app", () => {
           return json({ data: { workflowStates: { nodes: [] } } });
         }
         if (body.action === "list_issues") {
-          return json({ data: { issues: { nodes: [] } } });
+          return json({ data: { issues: { nodes: listedIssues } } });
         }
         if (body.action === "graphql") {
           return json({ data: { issueLabels: { nodes: availableLabels } } });
@@ -173,5 +175,42 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("Issue could not be created.")).toBeTruthy());
     expect(createdIssues).toEqual([]);
     expect(warnSpy).toHaveBeenCalledWith("[symphony] issue creation failed:", "required_label_missing");
+  });
+
+  it("filters the board by every required Linear label", async () => {
+    listedIssues = [
+      {
+        id: "issue_one",
+        identifier: "MAT-1",
+        title: "Only first label",
+        url: "https://linear.app/matrix-os/issue/MAT-1",
+        state: { id: "state_todo", name: "Todo" },
+        labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
+      },
+      {
+        id: "issue_two",
+        identifier: "MAT-2",
+        title: "All required labels",
+        url: "https://linear.app/matrix-os/issue/MAT-2",
+        state: { id: "state_todo", name: "Todo" },
+        labels: { nodes: [
+          { id: "label_symphony", name: "symphony" },
+          { id: "label_urgent", name: "urgent" },
+        ] },
+      },
+    ];
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Only first label")).toBeTruthy());
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Sync Linear/ }));
+    });
+
+    await waitFor(() => expect(screen.queryByText("Only first label")).toBeNull());
+    expect(screen.getByText("All required labels")).toBeTruthy();
   });
 });
