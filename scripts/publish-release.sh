@@ -6,6 +6,12 @@ set -euo pipefail
 # Usage:
 #   ./scripts/publish-release.sh v0.9.1
 #   ./scripts/publish-release.sh v0.9.1 --dry-run
+#   ./scripts/publish-release.sh v0.9.1 --severity security --changelog "Fix auth bypass"
+#
+# Flags:
+#   --dry-run              Print what would happen without uploading
+#   --severity <level>     Update severity: normal (default), important, security
+#   --changelog <text>     One-line changelog entry for the manifest
 #
 # Expects build-host-bundle.sh to have already run (tarball at dist/host-bundle/).
 # Env: R2_ACCOUNT_ID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, R2_BUCKET
@@ -17,14 +23,33 @@ BUNDLE="$DIST_DIR/matrix-host-bundle.tar.gz"
 CHANNEL="${MATRIX_IMAGE_VERSION:-matrix-os-host-dev}"
 VERSION=""
 DRY_RUN=""
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
-    *) VERSION="$arg" ;;
+SEVERITY="normal"
+CHANGELOG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --severity)
+      SEVERITY="${2:-normal}"; shift 2 ;;
+    --changelog)
+      CHANGELOG="${2:-}"; shift 2 ;;
+    *)
+      if [ -z "$VERSION" ]; then
+        VERSION="$1"
+      fi
+      shift ;;
   esac
 done
+
 if [ -z "$VERSION" ]; then
-  echo "Usage: publish-release.sh <version> [--dry-run]" >&2; exit 1
+  echo "Usage: publish-release.sh <version> [--dry-run] [--severity <level>] [--changelog <text>]" >&2; exit 1
+fi
+
+# Derive updateType from severity: security triggers auto-update
+if [ "$SEVERITY" = "security" ]; then
+  UPDATE_TYPE="auto"
+else
+  UPDATE_TYPE="manual"
 fi
 
 if [ ! -f "$BUNDLE" ]; then
@@ -41,13 +66,18 @@ R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
 PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Build manifest JSON with optional severity/changelog/updateType fields
 MANIFEST=$(printf '{
   "version": "%s",
   "sha256": "%s",
   "size": %s,
   "published": "%s",
-  "channel": "%s"
-}' "$VERSION" "$SHA256" "$SIZE" "$PUBLISHED" "$CHANNEL")
+  "channel": "%s",
+  "severity": "%s",
+  "updateType": "%s",
+  "changelog": "%s"
+}' "$VERSION" "$SHA256" "$SIZE" "$PUBLISHED" "$CHANNEL" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG")
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
@@ -56,6 +86,9 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "Bundle: $BUNDLE ($SIZE bytes, sha256: $SHA256)"
   echo "Channel: $CHANNEL"
   echo "Version: $VERSION"
+  echo "Severity: $SEVERITY"
+  echo "UpdateType: $UPDATE_TYPE"
+  echo "Changelog: $CHANGELOG"
   echo ""
   echo "Would upload:"
   echo "  $BUNDLE → s3://$R2_BUCKET/system-bundles/$VERSION/matrix-host-bundle.tar.gz"

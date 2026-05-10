@@ -1,0 +1,196 @@
+# Host Bundle Release
+#
+# Builds, publishes, and optionally deploys the Matrix OS host bundle.
+# Triggered on every push to main (automatic release) or via manual dispatch
+# with severity/changelog inputs.
+#
+# Version format: v{YYYY.MM.DD}-{run_number} (date-based, monotonically increasing)
+#
+# Flow:
+#   1. test — typecheck + unit tests
+#   2. build — compile gateway, shell, kernel into host bundle tarball
+#   3. publish — upload to R2, write manifest with severity/changelog
+#   4. (optional) auto-deploy if severity is "security"
+
+name: Host Bundle Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      severity:
+        description: "Update severity (normal, important, security)"
+        required: false
+        default: "normal"
+        type: choice
+        options:
+          - normal
+          - important
+          - security
+      changelog:
+        description: "Changelog entry (one-line summary of what changed)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-bundle-release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: bun run typecheck
+        continue-on-error: true
+
+      - name: Unit tests
+        run: bun run test
+
+  build:
+    name: Build host bundle
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      bundle_path: ${{ steps.build.outputs.bundle_path }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Generate version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="v$(date -u +%Y.%m.%d)-${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Generated version: $VERSION"
+
+      - name: Build host bundle
+        id: build
+        env:
+          HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+          MATRIX_BUILD_SHA: ${{ github.sha }}
+          MATRIX_BUILD_REF: ${{ github.ref_name }}
+          MATRIX_BUILD_DATE: ${{ github.event.head_commit.timestamp }}
+        run: |
+          set -euo pipefail
+          BUNDLE_PATH="$(./scripts/build-host-bundle.sh)"
+          echo "bundle_path=$BUNDLE_PATH" >> "$GITHUB_OUTPUT"
+          echo "Built: $BUNDLE_PATH"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-bundle
+          path: dist/host-bundle/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish to R2
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      MATRIX_IMAGE_VERSION: matrix-os-host
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: host-bundle
+          path: dist/host-bundle/
+
+      - name: Install AWS CLI
+        run: |
+          set -euo pipefail
+          if ! command -v aws &>/dev/null; then
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            unzip -q /tmp/awscliv2.zip -d /tmp
+            sudo /tmp/aws/install
+          fi
+
+      - name: Resolve severity and changelog
+        id: meta
+        run: |
+          set -euo pipefail
+          # Default to "normal" for push-triggered runs
+          SEVERITY="${{ inputs.severity || 'normal' }}"
+          CHANGELOG="${{ inputs.changelog || '' }}"
+          echo "severity=$SEVERITY" >> "$GITHUB_OUTPUT"
+          echo "changelog=$CHANGELOG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          HOST_BUNDLE_DIST_DIR: dist/host-bundle
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build.outputs.version }}"
+          SEVERITY="${{ steps.meta.outputs.severity }}"
+          CHANGELOG="${{ steps.meta.outputs.changelog }}"
+
+          ARGS=("$VERSION")
+          if [ -n "$SEVERITY" ] && [ "$SEVERITY" != "normal" ]; then
+            ARGS+=("--severity" "$SEVERITY")
+          fi
+          if [ -n "$CHANGELOG" ]; then
+            ARGS+=("--changelog" "$CHANGELOG")
+          fi
+
+          ./scripts/publish-release.sh "${ARGS[@]}"
+
+      - name: Auto-deploy on security severity
+        if: ${{ inputs.severity == 'security' }}
+        env:
+          PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build.outputs.version }}"
+          if [ -z "${PLATFORM_SECRET:-}" ]; then
+            echo "PLATFORM_SECRET not configured — skipping auto-deploy" >&2
+            exit 0
+          fi
+          echo "Security severity — triggering auto-deploy for $VERSION..."
+          curl --fail --silent --show-error --max-time 30 \
+            -X POST "https://app.matrix-os.com/vps/deploy" \
+            -H "Authorization: Bearer ${PLATFORM_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\":\"$VERSION\"}"
+          echo "Deploy triggered successfully."
