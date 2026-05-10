@@ -334,6 +334,7 @@ function normalizeCard(card: Card, columnIds: Set<string>, fallbackColumnId: str
     id: typeof card.id === "string" && card.id ? card.id : id("card"),
     projectId: typeof card.projectId === "string" && card.projectId ? card.projectId : "",
     columnId: columnIds.has(card.columnId) ? card.columnId : fallbackColumnId,
+    title: typeof card.title === "string" ? card.title.trim() || "Untitled card" : "Untitled card",
     description: typeof card.description === "string" ? card.description : "",
     priority: isPriority(card.priority) ? card.priority : "medium",
     labels: Array.isArray(card.labels) ? card.labels.filter((label): label is string => typeof label === "string") : [],

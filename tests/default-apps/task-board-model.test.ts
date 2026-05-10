@@ -253,4 +253,31 @@ describe("task board model", () => {
     expect(board.cards[0].projectId).toBe("");
     expect(moveCard(board, board.cards[0].id, "today", 0).cards[0].id).toBe(board.cards[0].id);
   });
+
+  it("hydrates cards with malformed titles into visible card names", () => {
+    const board = hydrateBoard({
+      version: 1,
+      projects: [{ id: "project-a", name: "A", color: "#2563eb", description: "" }],
+      columns: [{ id: "today", title: "Today", color: "#0ea5e9" }],
+      cards: [{
+        id: "card-a",
+        projectId: "project-a",
+        columnId: "today",
+        title: null,
+        description: "",
+        priority: "medium",
+        labels: [],
+        assignee: "",
+        dueDate: "",
+        checklist: [],
+        delegation: null,
+        order: 0,
+        createdAt: "2026-05-10T00:00:00.000Z",
+        updatedAt: "2026-05-10T00:00:00.000Z",
+      }],
+      updatedAt: "2026-05-10T00:00:00.000Z",
+    });
+
+    expect(board.cards[0].title).toBe("Untitled card");
+  });
 });
