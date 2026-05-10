@@ -273,13 +273,33 @@ export function buildAllowedOrigins(options: {
   ));
 }
 
+export function createAllowedOriginController(options: {
+  shellOrigin?: string;
+  proxyOrigin?: string;
+  symphonyPort?: number;
+}) {
+  let symphonyPort = options.symphonyPort;
+  let allowedOrigins = buildAllowedOrigins({ ...options, symphonyPort });
+
+  return {
+    resolve(origin: string | undefined): string | undefined {
+      if (!origin) return undefined;
+      return allowedOrigins.includes(origin) ? origin : undefined;
+    },
+    updateSymphonyPort(port: number): void {
+      symphonyPort = port;
+      allowedOrigins = buildAllowedOrigins({ ...options, symphonyPort });
+    },
+  };
+}
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
   const symphonyRunner = createSymphonyRunner({ homePath });
   const symphonyConfig = await symphonyRunner.getConfig();
-  const allowedOrigins = buildAllowedOrigins({
+  const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
     proxyOrigin: process.env.PROXY_ORIGIN,
     symphonyPort: symphonyConfig.port,
@@ -1197,10 +1217,7 @@ export async function createGateway(config: GatewayConfig) {
 
   app.use("*", cors({
     origin: (origin) => {
-      if (!origin) {
-        return undefined;
-      }
-      return allowedOrigins.includes(origin) ? origin : undefined;
+      return allowedOriginController.resolve(origin);
     },
   }));
   app.use("*", securityHeadersMiddleware());
@@ -2256,7 +2273,11 @@ export async function createGateway(config: GatewayConfig) {
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
   }));
-  app.route("/api/symphony", createSymphonyRoutes({ homePath, runner: symphonyRunner }));
+  app.route("/api/symphony", createSymphonyRoutes({
+    homePath,
+    runner: symphonyRunner,
+    onConfigChange: (nextConfig) => allowedOriginController.updateSymphonyPort(nextConfig.port),
+  }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");

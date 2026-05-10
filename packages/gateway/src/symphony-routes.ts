@@ -67,6 +67,7 @@ function startResponse(c: Context, result: SymphonyStartResult) {
 export function createSymphonyRoutes(options: {
   homePath: string;
   runner?: SymphonyRunner;
+  onConfigChange?: (config: { port: number }) => void;
 }) {
   const app = new Hono();
   const limited = bodyLimit({ maxSize: SYMPHONY_BODY_LIMIT });
@@ -78,13 +79,17 @@ export function createSymphonyRoutes(options: {
   app.post("/config", limited, async (c) => {
     const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
     if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
-    return c.json(await runner.saveConfig(parsed.value));
+    const config = await runner.saveConfig(parsed.value);
+    options.onConfigChange?.(config);
+    return c.json(config);
   });
 
   app.post("/start", limited, async (c) => {
     const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
     if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
-    return startResponse(c, await runner.start(parsed.value));
+    const result = await runner.start(parsed.value);
+    if (result.ok) options.onConfigChange?.(result.status.config);
+    return startResponse(c, result);
   });
 
   app.post("/stop", limited, async (c) => c.json(await runner.stop()));

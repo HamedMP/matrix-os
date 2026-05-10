@@ -70,6 +70,7 @@ describe("Symphony routes", () => {
   });
 
   it("starts with Matrix's Linear ticket filter contract", async () => {
+    const onConfigChange = vi.fn();
     const runner = {
       status: vi.fn(),
       getConfig: vi.fn(),
@@ -89,7 +90,7 @@ describe("Symphony routes", () => {
       })),
       stop: vi.fn(),
     };
-    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner });
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner, onConfigChange });
 
     const res = await app.request(jsonRequest("/start", {
       tracker: {
@@ -107,5 +108,25 @@ describe("Symphony routes", () => {
         activeStates: ["Todo", "In Progress", "Merging", "Rework"],
       },
     }));
+    expect(onConfigChange).toHaveBeenCalledWith(config);
+  });
+
+  it("notifies when runtime config changes", async () => {
+    const onConfigChange = vi.fn();
+    const nextConfig = { ...config, port: 4088 };
+    const runner = {
+      status: vi.fn(),
+      getConfig: vi.fn(),
+      saveConfig: vi.fn(async () => nextConfig),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner, onConfigChange });
+
+    const res = await app.request(jsonRequest("/config", { port: 4088 }));
+
+    expect(res.status).toBe(200);
+    expect(runner.saveConfig).toHaveBeenCalledWith({ port: 4088 });
+    expect(onConfigChange).toHaveBeenCalledWith(nextConfig);
   });
 });
