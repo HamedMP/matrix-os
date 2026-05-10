@@ -573,6 +573,10 @@ function App() {
                     onDrop={(event) => {
                       event.stopPropagation();
                       if (!draggingCardId) return;
+                      if (draggingCardId === card.id) {
+                        setDraggingCardId(null);
+                        return;
+                      }
                       saveBoard(moveCard(board, draggingCardId, column.id, cardDropIndex(board, card.id, draggingCardId)));
                       setDraggingCardId(null);
                     }}

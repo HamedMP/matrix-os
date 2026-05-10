@@ -134,4 +134,39 @@ describe("Task Manager app persistence", () => {
       resolveWrite?.(jsonResponse({ ok: true }));
     });
   });
+
+  it("does not persist a card self-drop", async () => {
+    let board = createBoard("Matrix OS");
+    board = addCard(board, {
+      columnId: "backlog",
+      projectId: board.projects[0].id,
+      title: "First",
+    });
+    board = addCard(board, {
+      columnId: "backlog",
+      projectId: board.projects[0].id,
+      title: "Middle",
+    });
+    board = addCard(board, {
+      columnId: "backlog",
+      projectId: board.projects[0].id,
+      title: "Last",
+    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return jsonResponse({ ok: true });
+      return jsonResponse(boardValue(board));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const middleTitle = await screen.findByText("Middle");
+    const middleCard = middleTitle.closest("article");
+    expect(middleCard).toBeTruthy();
+    fetchMock.mockClear();
+
+    fireEvent.dragStart(middleCard!);
+    fireEvent.drop(middleCard!);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
