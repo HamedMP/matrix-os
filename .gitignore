@@ -107,7 +107,7 @@ skills-lock.json
 !home/agents/skills/**
 !home/.agents/skills/
 !home/.agents/skills/**
-# Hermes-installable Matrix skills published from this repo
+# Agent-installable Matrix skills published from this repo
 !/skills/
 !/skills/matrix/
 !/skills/matrix/**

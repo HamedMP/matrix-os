@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   checkForSystemUpdate,
   compareHostBundleVersions,
+  isAutoApplyUpdate,
   parseUpdateChannel,
   startSystemUpdate,
 } from "../../packages/gateway/src/system-update.js";
@@ -63,6 +64,69 @@ describe("system update checks", () => {
       "https://app.matrix-os.com/system-bundles/channels/stable.json",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+});
+
+describe("two-lane update severity", () => {
+  it("auto-applies security updates", () => {
+    expect(isAutoApplyUpdate({ severity: "security" })).toBe(true);
+  });
+
+  it("auto-applies when updateType is auto", () => {
+    expect(isAutoApplyUpdate({ updateType: "auto" })).toBe(true);
+  });
+
+  it("does not auto-apply normal or critical updates without auto updateType", () => {
+    expect(isAutoApplyUpdate({ severity: "normal" })).toBe(false);
+    expect(isAutoApplyUpdate({ severity: "normal", updateType: "manual" })).toBe(false);
+    expect(isAutoApplyUpdate({ severity: "critical" })).toBe(false);
+  });
+
+  it("auto-applies when updateType is auto even with normal severity", () => {
+    expect(isAutoApplyUpdate({ severity: "normal", updateType: "auto" })).toBe(true);
+  });
+
+  it("does not auto-apply when fields are missing", () => {
+    expect(isAutoApplyUpdate({})).toBe(false);
+    expect(isAutoApplyUpdate({ severity: undefined })).toBe(false);
+  });
+
+  it("propagates severity and changelog through update check", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      version: "v2026.05.08-1",
+      gitCommit: "sec-fix",
+      severity: "security",
+      changelog: "Critical auth bypass patched.",
+      updateType: "auto",
+    })));
+
+    const result = await checkForSystemUpdate({
+      installed: { version: "v2026.05.07-1", gitCommit: "old" },
+      platformUrl: "https://app.matrix-os.com",
+      channel: "stable",
+      fetchImpl,
+    });
+
+    expect(result.latest?.severity).toBe("security");
+    expect(result.latest?.changelog).toBe("Critical auth bypass patched.");
+    expect(result.latest?.updateType).toBe("auto");
+  });
+
+  it("defaults missing severity to undefined (treated as normal by isAutoApplyUpdate)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      version: "v2026.05.08-1",
+      gitCommit: "feature",
+    })));
+
+    const result = await checkForSystemUpdate({
+      installed: { version: "v2026.05.07-1", gitCommit: "old" },
+      platformUrl: "https://app.matrix-os.com",
+      channel: "stable",
+      fetchImpl,
+    });
+
+    expect(result.latest?.severity).toBeUndefined();
+    expect(isAutoApplyUpdate({ severity: result.latest?.severity })).toBe(false);
   });
 });
 

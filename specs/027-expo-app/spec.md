@@ -83,7 +83,7 @@ Five tabs instead of three:
 └─ Settings ─────────┘   (existing, extended)
 ```
 
-Optional overflow drawer for `Terminal`, `Memory`, `Social`, and `Hermes` screens so the tab bar stays tight on smaller phones.
+Optional overflow drawer for `Terminal`, `Memory`, `Social`, and `Agent` screens so the tab bar stays tight on smaller phones.
 
 ### New surface: Apps tab
 
@@ -286,7 +286,7 @@ apps/mobile/
 ## Open questions
 
 1. **In-app WebView vs external browser for apps** — some `node` apps may want camera / mic. v2 uses in-app WebView for the bridge and defers cam/mic to a follow-up spec.
-2. **Hermes chat surface** — spec 061 landed the sidecar; mobile could add a second chat tab. Deferred to v3 unless the Hermes kernel stabilizes.
+2. **Agent chat surface** — spec 061 landed the sidecar; mobile could add a second chat tab. Deferred to v3 unless the Agent kernel stabilizes.
 3. **Background sync** — iOS `BGTaskScheduler` / Android `WorkManager` for silent push memory sync. Nice to have; not blocking.
 4. **App Store submission** — v2 still ships via TestFlight / internal track. Public store needs a privacy manifest, data safety form, and age rating — separate spec.
 5. **Social tab** — spec 041 is mid-flight; mobile social should wait for feed API stability and be a v3 tab.

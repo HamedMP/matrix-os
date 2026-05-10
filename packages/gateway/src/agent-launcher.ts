@@ -69,7 +69,8 @@ function firstLine(value: string): string | undefined {
 }
 
 function promptArgs(prompt?: string): string[] {
-  return prompt && prompt.length > 0 ? [prompt] : [];
+  if (!prompt || prompt.length === 0) return [];
+  return ["--", prompt];
 }
 
 function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {

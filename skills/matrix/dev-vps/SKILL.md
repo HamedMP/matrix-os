@@ -6,7 +6,7 @@ author: Matrix OS
 license: MIT
 platforms: [linux]
 metadata:
-  hermes:
+  agent:
     tags: [Matrix OS, VPS, development, HMR, devops]
     related_skills: [matrix-app-builder, matrix-debug-app, matrix-integrations]
 ---
@@ -68,7 +68,7 @@ pnpm build
 - Do not expose unauthenticated dev servers publicly.
 - `dev.matrix-os.com` should require auth.
 
-## Codex, Claude, and Hermes on VPS
+## Codex, Claude, and Agent on VPS
 
 - Use `pnpm`, not `npm`, for project dependencies.
 - Global agent CLIs must be writable by the `matrix` user if self-update is expected.
