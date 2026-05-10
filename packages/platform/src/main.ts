@@ -1429,7 +1429,7 @@ export function createApp(deps: {
           headers: { authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(8_000),
           dispatcher: customerVpsProxyDispatcher,
-        } as RequestInit & { dispatcher?: import('undici').Dispatcher });
+        } as RequestInit & { dispatcher: Agent });
         return res.ok;
       } catch (err: unknown) {
         console.warn(`[fleet-probe] health check failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));

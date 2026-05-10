@@ -31,13 +31,14 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-update');
   });
 
-  it('update launcher installs a verified host bundle through the platform bundle route', () => {
+  it('update launcher triggers the sync agent update and rollback paths', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
 
-    expect(updater).toContain('/opt/matrix/app/.update-now');
-    expect(updater).toContain('/opt/matrix/app/.rollback-now');
-    expect(updater).toContain('journalctl -u matrix-sync-agent');
+    expect(updater).toContain('touch /opt/matrix/app/.update-now');
+    expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
+    expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
+    expect(updater).toContain('Usage: matrix-update [apply|rollback]');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {

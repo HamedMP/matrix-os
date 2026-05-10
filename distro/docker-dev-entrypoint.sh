@@ -11,6 +11,9 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
+echo "[matrix-os-dev] Building kernel package..."
+pnpm --filter @matrix-os/kernel build
+
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
@@ -161,13 +164,16 @@ fi
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
-# Next dev rewrites next-env.d.ts during startup. The source tree is bind
-# mounted from the host, so make this one generated type file writable before
-# dropping to the non-root matrixos user.
-if [ -e /app/shell/next-env.d.ts ]; then
-  chmod a+rw /app/shell/next-env.d.ts 2>/dev/null || true
-else
-  install -m 0666 /dev/null /app/shell/next-env.d.ts 2>/dev/null || true
+if [ "${MATRIX_DOCKER_CHOWN_SOURCE:-}" = "true" ]; then
+  # Next dev rewrites next-env.d.ts during startup. The source tree is bind
+  # mounted from the host, so make this one generated type file writable before
+  # dropping to the non-root matrixos user.
+  if [ -e /app/shell/next-env.d.ts ]; then
+    chmod ug+rw /app/shell/next-env.d.ts 2>/dev/null || true
+  else
+    install -m 0664 /dev/null /app/shell/next-env.d.ts 2>/dev/null || true
+  fi
+  chown matrixos:matrixos /app/shell/next-env.d.ts 2>/dev/null || true
 fi
 
 # QMD: index user home for semantic search (best-effort)
