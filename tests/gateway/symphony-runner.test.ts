@@ -95,6 +95,25 @@ describe("Symphony runner", () => {
     }));
   });
 
+  it("coalesces concurrent start requests into one local process", async () => {
+    const child = new FakeProcess();
+    const spawnProcess = vi.fn(() => child as never);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+
+    const [first, second] = await Promise.all([
+      runner.start({ serviceRoot, workflowPath, binPath }),
+      runner.start({ serviceRoot, workflowPath, binPath }),
+    ]);
+
+    expect(first).toMatchObject({ ok: true });
+    expect(second).toMatchObject({ ok: true });
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+  });
+
   it("stops the running local process on shutdown", async () => {
     const child = new FakeProcess();
     const runner = createSymphonyRunner({

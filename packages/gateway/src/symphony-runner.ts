@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -101,6 +101,7 @@ class SymphonyRunner {
   private readonly spawnProcess: SpawnProcess;
   private readonly configPath: string;
   private process: ChildProcess | null = null;
+  private startInFlight: Promise<SymphonyStartResult> | null = null;
   private startedAt: string | null = null;
   private lastExitAt: string | null = null;
   private lastExitCode: number | null = null;
@@ -134,8 +135,16 @@ class SymphonyRunner {
   async saveConfig(update: SymphonyConfigUpdate): Promise<SymphonyConfig> {
     const current = await this.getConfig();
     const next = this.mergeConfig(update, current);
-    await mkdir(join(this.homePath, "system"), { recursive: true });
-    await writeFile(this.configPath, `${JSON.stringify(next, null, 2)}\n`, { flag: "w" });
+    const systemPath = join(this.homePath, "system");
+    await mkdir(systemPath, { recursive: true });
+    const tempPath = join(systemPath, `.symphony-${randomUUID()}.json.tmp`);
+    try {
+      await writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`, { flag: "wx" });
+      await rename(tempPath, this.configPath);
+    } catch (err: unknown) {
+      await removeTempFile(tempPath);
+      throw err;
+    }
     return next;
   }
 
@@ -145,6 +154,14 @@ class SymphonyRunner {
   }
 
   async start(update?: SymphonyConfigUpdate): Promise<SymphonyStartResult> {
+    if (this.startInFlight) return this.startInFlight;
+    this.startInFlight = this.startUnlocked(update).finally(() => {
+      this.startInFlight = null;
+    });
+    return this.startInFlight;
+  }
+
+  private async startUnlocked(update?: SymphonyConfigUpdate): Promise<SymphonyStartResult> {
     if (this.process && !this.process.killed) {
       return { ok: true, status: await this.status() };
     }
@@ -291,4 +308,15 @@ async function firstMissingPath(paths: Array<[label: string, path: string]>): Pr
     }
   }
   return null;
+}
+
+async function removeTempFile(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+      return;
+    }
+    console.error("[symphony] Failed to clean up temporary config file:", err);
+  }
 }
