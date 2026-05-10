@@ -296,6 +296,58 @@ describe("WorkspaceApp", () => {
     expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0);
   });
 
+  it("ignores stale worktree creation responses after switching projects", async () => {
+    let resolveWorktree: (response: Response) => void = () => {};
+    const pendingWorktree = new Promise<Response>((resolve) => {
+      resolveWorktree = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) {
+        return json({ projects: [
+          { slug: "repo", name: "Repo", github: { owner: "owner", repo: "repo" } },
+          { slug: "repo-2", name: "Project 2", github: { owner: "owner", repo: "repo-2" } },
+        ] });
+      }
+      if (url.includes("/api/projects/repo/worktrees") && init?.method === "POST") {
+        return await pendingWorktree;
+      }
+      if (url.includes("/api/projects/repo/worktrees")) {
+        return json({ worktrees: [{ id: "wt_abc123", currentBranch: "feature/workspace", dirtyState: "clean" }] });
+      }
+      if (url.includes("/api/projects/repo-2/worktrees")) {
+        return json({ worktrees: [{ id: "wt_two", currentBranch: "feature/two", dirtyState: "clean" }] });
+      }
+      if (url.includes("/api/projects/") || url.includes("/api/sessions") || url.includes("/api/reviews") || url.includes("/api/workspace/events")) {
+        return json({ tasks: [], sessions: [], reviews: [], previews: [], events: [] });
+      }
+      return json({});
+    }));
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0));
+    fireEvent.change(screen.getByLabelText("New worktree branch"), { target: { value: "feature/new" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /create worktree/i }));
+    });
+    expect(screen.getByRole("button", { name: /creating/i })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Project 2"));
+    });
+
+    await waitFor(() => expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0));
+    resolveWorktree(json({ worktree: { id: "wt_new", currentBranch: "feature/new", dirtyState: "clean" } }));
+    await act(async () => {
+      await pendingWorktree;
+    });
+
+    expect(screen.queryByText("Created wt_new")).toBeNull();
+    expect(screen.queryByText("feature/new")).toBeNull();
+    expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0);
+  });
+
   it("shows an actionable empty state when no managed projects exist", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

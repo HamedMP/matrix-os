@@ -292,6 +292,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         method: "POST",
         body: JSON.stringify({ branch }),
       });
+      if (activeSlugRef.current !== activeSlug) return;
       const createdWorktree = data.worktree;
       if (createdWorktree?.id) {
         setWorktrees((current) => [
@@ -308,7 +309,9 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setNewWorktreeBranch("");
       setError("");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Worktree creation failed");
+      if (activeSlugRef.current === activeSlug) {
+        setError(err instanceof Error ? err.message : "Worktree creation failed");
+      }
     } finally {
       setCreatingWorktree(false);
     }

@@ -513,11 +513,11 @@ function App() {
   }, [config.activeStates, focusedListField]);
 
   const saveConfig = useCallback(async (next: SymphonyConfig) => {
-    setConfig(next);
     setError(null);
     try {
       const runtimeConfig = await saveRuntimeConfig(next);
       await writeConfig(next);
+      setConfig(next);
       setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));

@@ -213,6 +213,7 @@ describe("Symphony app", () => {
     fireEvent.change(screen.getByLabelText("Team"), { target: { value: "team_ops" } });
 
     await waitFor(() => expect(screen.getByText("Symphony settings could not be saved.")).toBeTruthy());
+    expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat");
     expect(global.fetch).not.toHaveBeenCalledWith("/api/bridge/data", expect.objectContaining({ method: "POST" }));
     expect(warnSpy).toHaveBeenCalledWith("[symphony] config save failed:", "runtime_config_failed");
   });
