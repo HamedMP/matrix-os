@@ -93,7 +93,9 @@ async function readBoard(): Promise<Board> {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!response.ok) return createSeedBoard();
-  if (!response.headers.get("content-type")?.includes("application/json")) return createSeedBoard();
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    throw new Error("Bridge returned a non-JSON response");
+  }
   let payload: { value?: string | null } | null;
   try {
     payload = (await response.json()) as { value?: string | null } | null;

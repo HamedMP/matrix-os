@@ -22,6 +22,20 @@ describe("Task Manager app persistence", () => {
     vi.restoreAllMocks();
   });
 
+  it("blocks editing when the bridge returns a non-JSON response", async () => {
+    const fetchMock = vi.fn(async () => new Response("<html>bad gateway</html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByText("Board could not be loaded.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /add task/i })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks editing when the persisted board payload is malformed", async () => {
     const fetchMock = vi.fn(async () => new Response("{", {
       status: 200,
