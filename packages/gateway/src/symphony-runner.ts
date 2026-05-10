@@ -242,7 +242,7 @@ class SymphonyRunner {
     }
 
     const runId = randomUUID();
-    const child = this.spawnProcess(command, [
+    const child = this.spawnProcess(commandPath, [
       workflowPath,
       "--port",
       String(config.port),

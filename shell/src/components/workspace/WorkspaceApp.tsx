@@ -182,7 +182,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   useEffect(() => {
     const firstWorktreeId = worktrees.find((worktree) => worktree.id)?.id ?? "";
     setSelectedWorktreeId((current) => {
-      if (!firstWorktreeId) return current ? "" : current;
+      if (!firstWorktreeId) return "";
       if (!current || !worktrees.some((worktree) => worktree.id === current)) return firstWorktreeId;
       return current;
     });

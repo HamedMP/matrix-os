@@ -80,7 +80,7 @@ describe("Symphony runner", () => {
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(spawnProcess).toHaveBeenCalledWith("./bin/symphony", [
+    expect(spawnProcess).toHaveBeenCalledWith(binPath, [
       workflowPath,
       "--port",
       "4077",
@@ -93,6 +93,26 @@ describe("Symphony runner", () => {
         LINEAR_API_KEY: "test-key",
         MATRIX_HOME: homePath,
       }),
+    }));
+  });
+
+  it("spawns bare command names from the validated service root instead of PATH", async () => {
+    const bareBinPath = join(serviceRoot, "symphony");
+    await writeFile(bareBinPath, "#!/bin/sh\n");
+    await chmod(bareBinPath, 0o755);
+    const child = new FakeProcess();
+    const spawnProcess = vi.fn(() => child as never);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key", PATH: "/usr/bin" },
+      spawnProcess,
+    });
+
+    const result = await runner.start({ serviceRoot, workflowPath, binPath: "symphony" });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(spawnProcess).toHaveBeenCalledWith(bareBinPath, expect.any(Array), expect.objectContaining({
+      cwd: serviceRoot,
     }));
   });
 

@@ -304,7 +304,7 @@ async function fetchRequiredLinearLabelIds(teamId: string, labelNames: string[])
 
 function stateBadgeVariant(stateName: string | undefined): "secondary" | "success" | "warning" | "outline" {
   if (!stateName) return "outline";
-  if (stateName === "Human Review" || stateName === "Merging") return "success";
+  if (stateName === "Merging") return "success";
   if (stateName === "Rework") return "warning";
   return "secondary";
 }
@@ -334,13 +334,19 @@ function App() {
 
   const saveConfig = useCallback(async (next: SymphonyConfig) => {
     setConfig(next);
-    await writeConfig(next);
-    const runtimeConfig = await saveRuntimeConfig(next);
-    setRuntimeStatus((current) => current ? {
-      ...current,
-      dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
-      config: runtimeConfig,
-    } : current);
+    setError(null);
+    try {
+      const runtimeConfig = await saveRuntimeConfig(next);
+      await writeConfig(next);
+      setRuntimeStatus((current) => current ? {
+        ...current,
+        dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
+        config: runtimeConfig,
+      } : current);
+    } catch (err: unknown) {
+      console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
+      setError("Symphony settings could not be saved.");
+    }
   }, []);
 
   const updateConfig = useCallback((patch: Partial<SymphonyConfig>) => {
@@ -349,8 +355,8 @@ function App() {
 
   const persistConfig = useCallback(async () => {
     try {
-      await writeConfig(config);
       const runtimeConfig = await saveRuntimeConfig(config);
+      await writeConfig(config);
       setRuntimeStatus((current) => current ? {
         ...current,
         dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
