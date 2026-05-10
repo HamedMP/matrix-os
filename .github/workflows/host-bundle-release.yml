@@ -160,18 +160,17 @@ jobs:
       - name: Publish release
         env:
           HOST_BUNDLE_DIST_DIR: dist/host-bundle
+          PUBLISH_VERSION: ${{ needs.build.outputs.version }}
+          PUBLISH_SEVERITY: ${{ steps.meta.outputs.severity }}
+          PUBLISH_CHANGELOG: ${{ steps.meta.outputs.changelog }}
         run: |
           set -euo pipefail
-          VERSION="${{ needs.build.outputs.version }}"
-          SEVERITY="${{ steps.meta.outputs.severity }}"
-          CHANGELOG="${{ steps.meta.outputs.changelog }}"
-
-          ARGS=("$VERSION")
-          if [ -n "$SEVERITY" ] && [ "$SEVERITY" != "normal" ]; then
-            ARGS+=("--severity" "$SEVERITY")
+          ARGS=("$PUBLISH_VERSION")
+          if [ -n "$PUBLISH_SEVERITY" ] && [ "$PUBLISH_SEVERITY" != "normal" ]; then
+            ARGS+=("--severity" "$PUBLISH_SEVERITY")
           fi
-          if [ -n "$CHANGELOG" ]; then
-            ARGS+=("--changelog" "$CHANGELOG")
+          if [ -n "$PUBLISH_CHANGELOG" ]; then
+            ARGS+=("--changelog" "$PUBLISH_CHANGELOG")
           fi
 
           ./scripts/publish-release.sh "${ARGS[@]}"

@@ -67,17 +67,20 @@ SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
 PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Build manifest JSON with optional severity/changelog/updateType fields
-MANIFEST=$(printf '{
-  "version": "%s",
-  "sha256": "%s",
-  "size": %s,
-  "published": "%s",
-  "channel": "%s",
-  "severity": "%s",
-  "updateType": "%s",
-  "changelog": "%s"
-}' "$VERSION" "$SHA256" "$SIZE" "$PUBLISHED" "$CHANNEL" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG")
+# Build manifest JSON safely (handles special chars in changelog)
+MANIFEST=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'version': sys.argv[1],
+    'sha256': sys.argv[2],
+    'size': int(sys.argv[3]),
+    'published': sys.argv[4],
+    'channel': sys.argv[5],
+    'severity': sys.argv[6],
+    'updateType': sys.argv[7],
+    'changelog': sys.argv[8],
+}, indent=2))
+" "$VERSION" "$SHA256" "$SIZE" "$PUBLISHED" "$CHANNEL" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG")
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
