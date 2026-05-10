@@ -6,6 +6,7 @@ import {
   hydrateBoard,
   moveCardToAdjacentColumn,
   moveCard,
+  resolveColumnId,
   summarizeBoard,
   toggleChecklistItem,
 } from "../../home/apps/task-manager/src/board-model";
@@ -141,5 +142,49 @@ describe("task board model", () => {
     board = moveCardToAdjacentColumn(board, card.id, "previous");
     board = moveCardToAdjacentColumn(board, card.id, "previous");
     expect(board.cards[0].columnId).toBe("backlog");
+  });
+
+  it("keeps quick-created cards visible when the requested column is stale", () => {
+    let board = createBoard("Custom");
+    board = {
+      ...board,
+      columns: [{ id: "today", title: "Today", color: "#0ea5e9" }],
+    };
+
+    board = addCard(board, {
+      columnId: "backlog",
+      title: "Custom board capture",
+      projectId: board.projects[0].id,
+    });
+
+    expect(resolveColumnId(board, "backlog")).toBe("today");
+    expect(board.cards[0].columnId).toBe("today");
+  });
+
+  it("hydrates stale card column references into the first available column", () => {
+    const board = hydrateBoard({
+      version: 1,
+      projects: [{ id: "project-a", name: "A", color: "#2563eb", description: "" }],
+      columns: [{ id: "today", title: "Today", color: "#0ea5e9" }],
+      cards: [{
+        id: "card-a",
+        projectId: "project-a",
+        columnId: "backlog",
+        title: "Previously orphaned card",
+        description: "",
+        priority: "medium",
+        labels: [],
+        assignee: "",
+        dueDate: "",
+        checklist: [],
+        delegation: null,
+        order: 0,
+        createdAt: "2026-05-10T00:00:00.000Z",
+        updatedAt: "2026-05-10T00:00:00.000Z",
+      }],
+      updatedAt: "2026-05-10T00:00:00.000Z",
+    });
+
+    expect(board.cards[0].columnId).toBe("today");
   });
 });

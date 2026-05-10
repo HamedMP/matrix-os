@@ -180,11 +180,12 @@ export function addProject(board: Board, name: string, description = ""): Board 
 }
 
 export function addCard(board: Board, input: NewCardInput): Board {
-  const columnCards = board.cards.filter((card) => card.columnId === input.columnId);
+  const columnId = resolveColumnId(board, input.columnId);
+  const columnCards = board.cards.filter((card) => card.columnId === columnId);
   const card: Card = {
     id: id("card"),
     projectId: input.projectId,
-    columnId: input.columnId,
+    columnId,
     title: input.title.trim() || "Untitled card",
     description: input.description?.trim() ?? "",
     priority: input.priority ?? "medium",
@@ -282,6 +283,11 @@ export function addChecklistItem(board: Board, cardId: string, text: string): Bo
   });
 }
 
+export function resolveColumnId(board: Board, preferredColumnId: string | null | undefined): string {
+  if (preferredColumnId && board.columns.some((column) => column.id === preferredColumnId)) return preferredColumnId;
+  return board.columns[0]?.id ?? "backlog";
+}
+
 export function summarizeBoard(board: Board): BoardSummary {
   const checklist = board.cards.flatMap((card) => card.checklist);
   const activeProjectIds = board.cards.reduce<string[]>((projectIds, card) => (
@@ -302,18 +308,22 @@ export function hydrateBoard(value: unknown): Board {
   if (!value || typeof value !== "object") return createSeedBoard();
   const candidate = value as Partial<Board>;
   if (!Array.isArray(candidate.projects) || !Array.isArray(candidate.cards)) return createSeedBoard();
+  const columns = Array.isArray(candidate.columns) && candidate.columns.length > 0 ? candidate.columns : DEFAULT_COLUMNS;
+  const columnIds = new Set(columns.map((column) => column.id));
+  const fallbackColumnId = columns[0]?.id ?? "backlog";
   return {
     version: 1,
     projects: candidate.projects.length > 0 ? candidate.projects : createBoard().projects,
-    columns: Array.isArray(candidate.columns) && candidate.columns.length > 0 ? candidate.columns : DEFAULT_COLUMNS,
-    cards: normalizeOrders(sortCards((candidate.cards as Card[]).map(normalizeCard))),
+    columns,
+    cards: normalizeOrders(sortCards((candidate.cards as Card[]).map((card) => normalizeCard(card, columnIds, fallbackColumnId)))),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : now(),
   };
 }
 
-function normalizeCard(card: Card): Card {
+function normalizeCard(card: Card, columnIds: Set<string>, fallbackColumnId: string): Card {
   return {
     ...card,
+    columnId: columnIds.has(card.columnId) ? card.columnId : fallbackColumnId,
     description: typeof card.description === "string" ? card.description : "",
     priority: isPriority(card.priority) ? card.priority : "medium",
     labels: Array.isArray(card.labels) ? card.labels.filter((label): label is string => typeof label === "string") : [],

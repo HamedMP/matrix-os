@@ -31,6 +31,7 @@ import {
   hydrateBoard,
   moveCard,
   moveCardToAdjacentColumn,
+  resolveColumnId,
   summarizeBoard,
   toggleChecklistItem,
   updateCard,
@@ -75,12 +76,16 @@ interface QuickDraft {
   delegationTarget: DraftDelegationTarget;
 }
 
-const DEFAULT_QUICK_DRAFT: QuickDraft = {
-  title: "",
-  columnId: "backlog",
-  priority: "medium",
-  delegationTarget: "none",
-};
+function makeDefaultQuickDraft(board?: Board | null): QuickDraft {
+  return {
+    title: "",
+    columnId: board ? resolveColumnId(board, null) : "backlog",
+    priority: "medium",
+    delegationTarget: "none",
+  };
+}
+
+const DEFAULT_QUICK_DRAFT: QuickDraft = makeDefaultQuickDraft();
 
 async function readBoard(): Promise<Board> {
   const params = new URLSearchParams({ app: APP_ID, key: BOARD_KEY });
@@ -89,7 +94,13 @@ async function readBoard(): Promise<Board> {
   });
   if (!response.ok) return createSeedBoard();
   if (!response.headers.get("content-type")?.includes("application/json")) return createSeedBoard();
-  const payload = (await response.json().catch(() => null)) as { value?: string | null } | null;
+  let payload: { value?: string | null } | null;
+  try {
+    payload = (await response.json()) as { value?: string | null } | null;
+  } catch (err: unknown) {
+    console.warn("[task-manager] ignored invalid bridge JSON:", err instanceof Error ? err.message : String(err));
+    return createSeedBoard();
+  }
   if (!payload?.value) return createSeedBoard();
   try {
     return hydrateBoard(JSON.parse(payload.value));
@@ -209,13 +220,24 @@ function App() {
 
   useEffect(() => {
     readBoard()
-      .then(setBoard)
+      .then((nextBoard) => {
+        setBoard(nextBoard);
+        setQuickDraft(makeDefaultQuickDraft(nextBoard));
+      })
       .catch((err: unknown) => {
         console.warn("[task-manager] load failed:", err instanceof Error ? err.message : String(err));
         setBoard(createSeedBoard());
         setError("Board could not be loaded.");
       });
   }, []);
+
+  useEffect(() => {
+    if (!board) return;
+    setQuickDraft((draft) => {
+      const columnId = resolveColumnId(board, draft.columnId);
+      return columnId === draft.columnId ? draft : { ...draft, columnId };
+    });
+  }, [board]);
 
   useEffect(() => {
     if (!selectedCardId) return;
@@ -266,8 +288,9 @@ function App() {
     const projectId = activeProjectId === "all" ? board.projects[0]?.id : activeProjectId;
     if (!projectId) return;
     const existingIds = new Set(board.cards.map((card) => card.id));
+    const targetColumnId = resolveColumnId(board, columnId);
     let nextBoard = addCard(board, {
-      columnId,
+      columnId: targetColumnId,
       projectId,
       title,
       priority: options?.priority ?? "medium",
