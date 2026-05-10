@@ -834,9 +834,11 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("skips local auto-push for files over the configured max size", async () => {
+    it("skips local push for files over the configured max size", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const putSpy = vi.spyOn(r2, "putObject");
+      await writeFile(join(tmpRoot, "too-big.txt"), "12345");
+
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -849,7 +851,6 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      await writeFile(join(tmpRoot, "too-big.txt"), "12345");
       await waitFor(() =>
         logger.error.mock.calls.some(
           ([message]: [string]) => message.includes("skipping push for too-big.txt"),
@@ -1092,9 +1093,8 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger,
       });
-      await mirror.start();
-
       await writeFile(join(tmpRoot, "queue-error.txt"), "hello");
+      await expect(mirror.start()).rejects.toThrow("manifest db down");
       await waitFor(() =>
         logger.error.mock.calls.some(
           ([message]: [string]) => message.includes("serial queue task failed:"),
