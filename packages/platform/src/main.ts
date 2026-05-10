@@ -1427,10 +1427,12 @@ export function createApp(deps: {
       try {
         const fetchOpts: RequestInit & { dispatcher?: import('undici').Dispatcher } = {
           headers: { authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(8_000),
           dispatcher: customerVpsProxyDispatcher,
         };
-        const res = await fetch(`https://${machine.publicIPv4}:443/health`, fetchOpts as RequestInit);
+        const res = await fetch(`https://${machine.publicIPv4}:443/health`, {
+          ...fetchOpts,
+          signal: AbortSignal.timeout(8_000),
+        } as RequestInit);
         return res.ok;
       } catch (err: unknown) {
         console.warn(`[fleet-probe] health check failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));
