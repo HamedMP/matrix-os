@@ -359,9 +359,14 @@ function recommendationMatchesExcludedService(
   return excludedServiceIds.some((excludedId) =>
     serviceId === excludedId ||
     recommendationId === excludedId ||
-    recommendationId.startsWith(`${excludedId}-`) ||
-    recommendationId.endsWith(`-${excludedId}`) ||
-    recommendationId.includes(`-${excludedId}-`)
+    recommendationId === `connect-${excludedId}` ||
+    recommendationId.startsWith(`connect-${excludedId}-`) ||
+    recommendationId === `${excludedId}-connect` ||
+    recommendationId.startsWith(`${excludedId}-connect-`) ||
+    recommendationId === `replace-${excludedId}` ||
+    recommendationId.startsWith(`replace-${excludedId}-`) ||
+    recommendationId === `${excludedId}-replacement` ||
+    recommendationId.startsWith(`${excludedId}-replacement-`)
   );
 }
 
@@ -658,7 +663,7 @@ export async function fetchUpcomingCalendarSignals(opts: {
 function sanitizePromptField(value: string | undefined, maxLength: number): string | undefined {
   if (!value) return undefined;
   const sanitized = value
-    .replace(/<\/?USER_CONTEXT_DATA>/gi, "[data-boundary]")
+    .replace(/<\/?USER_CONTEXT_DATA(?:\s[^>]*)?>/gi, "[data-boundary]")
     .replace(/[\u0000-\u001F\u007F]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();

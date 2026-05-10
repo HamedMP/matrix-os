@@ -182,7 +182,8 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
       }
       const data = await res.json();
       if (typeof data.url === "string") {
-        window.open(data.url, "_blank", "width=600,height=700");
+        const popup = window.open(data.url, "_blank", "width=600,height=700,noopener,noreferrer");
+        if (popup) popup.opener = null;
       }
 
       if (pollRef.current) clearInterval(pollRef.current);
