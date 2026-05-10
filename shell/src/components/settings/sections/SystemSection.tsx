@@ -221,7 +221,7 @@ export function SystemSection() {
           )}
           {resolvedUpdate.autoApplying && (
             <p className="text-xs text-red-600 font-medium pt-1">
-              This update is being applied automatically. Your system will restart shortly.
+              This is a security update scheduled for automatic installation. Use the button below if it hasn't taken effect.
             </p>
           )}
           {updateAvailable && (
