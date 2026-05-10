@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { existsSync } from "node:fs";
 import { BuildOrchestrator } from "../../../packages/gateway/src/app-runtime/build-orchestrator.js";
 import { BuildError } from "../../../packages/gateway/src/app-runtime/errors.js";
@@ -63,7 +64,7 @@ describe("BuildOrchestrator", () => {
     }
   }, 60_000);
 
-  it("enforces build timeout via AbortSignal", async () => {
+  it("enforces build timeout", async () => {
     const result = await orch.build("hello-vite", appDir, { timeoutMs: 100 });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -88,6 +89,32 @@ describe("BuildOrchestrator", () => {
     }
   }, 5_000);
 
+  it("kills descendants from timed-out build commands", async () => {
+    const manifestPath = join(appDir, "matrix.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const childPidPath = join(tmpDir, "child.pid");
+    const script = [
+      'const { spawn } = require("node:child_process");',
+      'const { writeFileSync } = require("node:fs");',
+      'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+      `writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));`,
+      "setInterval(() => {}, 1000);",
+    ].join(" ");
+    manifest.build.install = "node -e \"\"";
+    manifest.build.command = `node -e ${JSON.stringify(script)}`;
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+    const result = await orch.build("hello-vite-descendant-timeout", appDir, { timeoutMs: 300 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result.error as BuildError).code).toBe("timeout");
+    }
+
+    const childPid = Number(await readFile(childPidPath, "utf8"));
+    await delay(200);
+    expect(isProcessAlive(childPid)).toBe(false);
+  }, 5_000);
+
   it("serializes concurrent builds for same slug", async () => {
     const results = await Promise.all([
       orch.build("hello-vite", appDir),
@@ -108,3 +135,18 @@ describe("BuildOrchestrator", () => {
     expect(log.length).toBeGreaterThan(0);
   }, 120_000);
 });
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    const code = err instanceof Error && "code" in err
+      ? (err as NodeJS.ErrnoException).code
+      : undefined;
+    if (code === "ESRCH") {
+      return false;
+    }
+    throw err;
+  }
+}

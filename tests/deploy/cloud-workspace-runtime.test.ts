@@ -37,6 +37,23 @@ describe("cloud workspace runtime gates", () => {
     expect(entrypoint).toContain("baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea");
     expect(entrypoint).toContain("Matrix skill sync failed; continuing startup");
     expect(devEntrypoint).toContain("Matrix skill sync failed; continuing startup");
+    expect(entrypoint).toContain("Bundled directory skill sync failed; continuing startup");
+    expect(devEntrypoint).toContain("Bundled directory skill sync failed; continuing startup");
+  });
+
+  it("keeps bundled skill upgrade hashes aligned across startup paths", () => {
+    const sources = [
+      readFileSync(join(root, "distro/docker-entrypoint.sh"), "utf-8"),
+      readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8"),
+      readFileSync(join(root, "distro/customer-vps/host-bin/matrix-gateway"), "utf-8"),
+    ];
+    const extractHashes = (source: string) => [...source.matchAll(/integrations:[a-f0-9]{64}/g)].map((match) => match[0]);
+    const [first, ...rest] = sources.map(extractHashes);
+
+    expect(first.length).toBeGreaterThan(0);
+    for (const hashes of rest) {
+      expect(hashes).toEqual(first);
+    }
   });
 
   it("copies directory skill support files into Claude Code and Codex mirrors", () => {

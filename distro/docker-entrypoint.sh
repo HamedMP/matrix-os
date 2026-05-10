@@ -95,7 +95,9 @@ if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
   cd /app
 fi
 
-sync_bundled_directory_skills /app/home
+if ! sync_bundled_directory_skills /app/home; then
+  echo "[matrix-os] Bundled directory skill sync failed; continuing startup" >&2
+fi
 chown -R matrixos:matrixos "$MATRIX_HOME/.agents" 2>/dev/null || true
 
 echo "Ensuring bundled default app builds..."

@@ -157,8 +157,8 @@ export class BuildOrchestrator {
     const logPath = join(cwd, ".build.log");
 
     return new Promise<BuildResult>((resolve) => {
-      const ac = new AbortController();
       let settled = false;
+      let timedOut = false;
       let forceKillTimer: NodeJS.Timeout | undefined;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
@@ -169,20 +169,34 @@ export class BuildOrchestrator {
       // for the serve command.
       const child = spawn("sh", ["-c", command], {
         cwd,
+        detached: process.platform !== "win32",
         env,
         stdio: ["ignore", "pipe", "pipe"],
-        signal: ac.signal,
       });
 
-      const forceKillChild = () => {
+      const killProcessTree = (signal: NodeJS.Signals) => {
         if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
+          if (process.platform === "win32" || !child.pid) {
+            child.kill(signal);
+            return;
+          }
+          try {
+            process.kill(-child.pid, signal);
+          } catch (err: unknown) {
+            const code = err instanceof Error && "code" in err
+              ? (err as NodeJS.ErrnoException).code
+              : undefined;
+            if (code !== "ESRCH") {
+              console.warn("[build-orchestrator] failed to kill process group:", err);
+            }
+          }
         }
       };
 
       const timer = setTimeout(() => {
-        ac.abort();
-        forceKillTimer = setTimeout(forceKillChild, 1_000);
+        timedOut = true;
+        killProcessTree("SIGTERM");
+        forceKillTimer = setTimeout(() => killProcessTree("SIGKILL"), 1_000);
         forceKillTimer.unref?.();
       }, timeoutMs);
 
@@ -220,6 +234,7 @@ export class BuildOrchestrator {
 
       const resolveTimeout = (code: number | null) => {
         clearTimeout(timer);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
         const output = Buffer.concat(chunks).toString("utf8");
         void writeLog(output).finally(() => {
           resolveOnce({
@@ -235,8 +250,8 @@ export class BuildOrchestrator {
       };
 
       child.on("error", (err) => {
-        if (ac.signal.aborted) {
-          forceKillChild();
+        if (timedOut) {
+          killProcessTree("SIGKILL");
           resolveTimeout(null);
           return;
         }
@@ -263,7 +278,7 @@ export class BuildOrchestrator {
         const stderrTail = output.slice(-2048);
 
         void writeLog(output).finally(() => {
-          if (ac.signal.aborted) {
+          if (timedOut) {
             resolveOnce({
               ok: false,
               error: new BuildError(

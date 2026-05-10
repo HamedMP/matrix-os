@@ -96,7 +96,9 @@ for dir in .agents agents system apps; do
   fi
 done
 
-sync_bundled_directory_skills /app/home
+if ! sync_bundled_directory_skills /app/home; then
+  echo "[matrix-os-dev] Bundled directory skill sync failed; continuing startup" >&2
+fi
 
 build_default_apps() {
   echo "[matrix-os-dev] Building bundled default apps..."
