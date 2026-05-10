@@ -9,15 +9,19 @@ import {
 function mockFetcher(overrides?: {
   status?: number;
   body?: unknown;
+  jsonReject?: Error;
   reject?: Error;
 }): GatewayFetcher {
-  const { status = 200, body = {}, reject } = overrides ?? {};
+  const { status = 200, body = {}, jsonReject, reject } = overrides ?? {};
   return vi.fn(async () => {
     if (reject) throw reject;
     return {
       ok: status >= 200 && status < 300,
       status,
-      async json() { return body; },
+      async json() {
+        if (jsonReject) throw jsonReject;
+        return body;
+      },
       async text() { return JSON.stringify(body); },
     };
   });
@@ -166,6 +170,26 @@ describe("list_available_services handler", () => {
     const result = await listAvailableServicesHandler(fetcher);
 
     expect(result.content[0].text).toMatch(/unavailable/i);
+  });
+
+  it("keeps the HTTP status when a catalog error response is not JSON", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const fetcher = mockFetcher({
+        status: 502,
+        jsonReject: new SyntaxError("Unexpected token <"),
+      });
+
+      const result = await listAvailableServicesHandler(fetcher);
+
+      expect(result.content[0].text).toContain("status 502");
+      expect(warn).toHaveBeenCalledWith(
+        "[integrations] failed to parse list_available_services error response:",
+        "Unexpected token <",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

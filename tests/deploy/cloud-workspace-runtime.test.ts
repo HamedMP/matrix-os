@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -24,17 +25,21 @@ describe("cloud workspace runtime gates", () => {
     const entrypoint = readFileSync(join(root, "distro/docker-entrypoint.sh"), "utf-8");
     const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
     const syncScript = readFileSync(join(root, "scripts/sync-matrix-agent-skills.sh"), "utf-8");
+    const hashScript = readFileSync(join(root, "scripts/bundled-skill-hashes.sh"), "utf-8");
 
     expect(dockerfile).toContain("sync-matrix-agent-skills.sh");
+    expect(dockerfile).toContain("bundled-skill-hashes.sh");
     expect(entrypoint).toContain("sync-matrix-agent-skills.sh");
     expect(devEntrypoint).toContain("sync-matrix-agent-skills.sh");
     expect(syncScript).toContain(".agents/skills");
     expect(syncScript).toContain("agents/skills");
     expect(syncScript).toContain('cp -a "$source/." "$out/"');
     expect(syncScript).toContain("agents/openai.yaml");
-    expect(entrypoint).toContain("is_known_bundled_skill_hash");
-    expect(devEntrypoint).toContain("is_known_bundled_skill_hash");
-    expect(entrypoint).toContain("baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea");
+    expect(entrypoint).toContain("source /app/scripts/bundled-skill-hashes.sh");
+    expect(devEntrypoint).toContain("source /app/scripts/bundled-skill-hashes.sh");
+    expect(hashScript).toContain("is_known_bundled_skill_hash");
+    expect(hashScript).toContain("baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea");
+    expect(hashScript).toContain("3ead6fd9db4c992778a1ea3aad13a0cd56f8aa33b608bf8a80bc721edc7131ee");
     expect(entrypoint).toContain("Matrix skill sync failed; continuing startup");
     expect(devEntrypoint).toContain("Matrix skill sync failed; continuing startup");
     expect(entrypoint).toContain("Bundled directory skill sync failed; continuing startup");
@@ -42,17 +47,21 @@ describe("cloud workspace runtime gates", () => {
   });
 
   it("keeps bundled skill upgrade hashes aligned across startup paths", () => {
+    const hashScript = readFileSync(join(root, "scripts/bundled-skill-hashes.sh"), "utf-8");
     const sources = [
       readFileSync(join(root, "distro/docker-entrypoint.sh"), "utf-8"),
       readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8"),
       readFileSync(join(root, "distro/customer-vps/host-bin/matrix-gateway"), "utf-8"),
     ];
-    const extractHashes = (source: string) => [...source.matchAll(/integrations:[a-f0-9]{64}/g)].map((match) => match[0]);
-    const [first, ...rest] = sources.map(extractHashes);
+    const hashes = [...hashScript.matchAll(/integrations:[a-f0-9]{64}/g)].map((match) => match[0]);
 
-    expect(first.length).toBeGreaterThan(0);
-    for (const hashes of rest) {
-      expect(hashes).toEqual(first);
+    expect(hashes).toEqual([
+      "integrations:baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea",
+      "integrations:3ead6fd9db4c992778a1ea3aad13a0cd56f8aa33b608bf8a80bc721edc7131ee",
+    ]);
+    for (const source of sources) {
+      expect(source).toContain("bundled-skill-hashes.sh");
+      expect(source).not.toMatch(/integrations:[a-f0-9]{64}/);
     }
   });
 
@@ -86,8 +95,11 @@ describe("cloud workspace runtime gates", () => {
 
   it("tracks canonical dot-directory skills in the home template manifest", () => {
     const manifest = JSON.parse(readFileSync(join(root, "home/.template-manifest.json"), "utf-8"));
+    const skill = readFileSync(join(root, "home/.agents/skills/integrations/SKILL.md"));
+    const skillHash = createHash("sha256").update(skill).digest("hex");
 
     expect(manifest).toHaveProperty(".agents/skills/integrations/SKILL.md");
+    expect(manifest[".agents/skills/integrations/SKILL.md"]).toBe(skillHash);
   });
 
   it("lets the non-root Matrix user run sudo-based project installers", () => {

@@ -201,6 +201,7 @@ COPY --from=builder /app/shell ./shell
 COPY --from=builder /app/home ./home
 COPY --from=builder /app/scripts/build-default-apps.mjs ./scripts/build-default-apps.mjs
 COPY scripts/sync-matrix-agent-skills.sh ./scripts/sync-matrix-agent-skills.sh
+COPY scripts/bundled-skill-hashes.sh ./scripts/bundled-skill-hashes.sh
 COPY --from=builder /app/package.json ./
 COPY distro/customer-vps /app/distro/customer-vps
 COPY distro/zshrc /app/distro/zshrc

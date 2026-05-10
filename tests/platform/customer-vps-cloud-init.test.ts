@@ -149,6 +149,7 @@ describe('platform/customer-vps-cloud-init', () => {
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
     const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const hashScript = readFileSync(join(root, 'scripts/bundled-skill-hashes.sh'), 'utf8');
 
     expect(buildScript).toContain('@anthropic-ai/claude-code@latest');
     expect(buildScript).toContain('@openai/codex@latest');
@@ -157,6 +158,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(buildScript).toContain('https://astral.sh/uv/install.sh');
     expect(buildScript).toContain('UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin"');
     expect(buildScript).toContain('scripts/install-hermes-matrix-skills.sh');
+    expect(buildScript).toContain('scripts/bundled-skill-hashes.sh');
     expect(buildScript).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(buildScript).toContain('cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"');
     expect(buildScript).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
@@ -172,8 +174,11 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
     expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
     expect(gateway).toContain('$bundled_home/.agents/skills');
-    expect(gateway).toContain('is_known_bundled_skill_hash');
-    expect(gateway).toContain('baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea');
+    expect(gateway).toContain('source "$APP_DIR/scripts/bundled-skill-hashes.sh"');
+    expect(gateway).not.toContain('integrations:baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea');
+    expect(hashScript).toContain('is_known_bundled_skill_hash');
+    expect(hashScript).toContain('baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea');
+    expect(hashScript).toContain('3ead6fd9db4c992778a1ea3aad13a0cd56f8aa33b608bf8a80bc721edc7131ee');
     expect(gateway).toContain('sync-matrix-agent-skills.sh');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');

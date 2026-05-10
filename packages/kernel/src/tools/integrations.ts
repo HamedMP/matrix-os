@@ -62,8 +62,17 @@ export async function listAvailableServicesHandler(
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Failed to list available services (status ${res.status})`);
+      let errorMessage: string | undefined;
+      try {
+        const data = (await res.json()) as { error?: string };
+        errorMessage = data.error;
+      } catch (parseErr: unknown) {
+        console.warn(
+          "[integrations] failed to parse list_available_services error response:",
+          parseErr instanceof Error ? parseErr.message : parseErr,
+        );
+      }
+      return textResult(errorMessage ?? `Failed to list available services (status ${res.status})`);
     }
 
     const services = (await res.json()) as AvailableService[];

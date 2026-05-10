@@ -272,25 +272,16 @@ export class BuildOrchestrator {
       });
 
       child.on("close", (code) => {
+        if (timedOut) {
+          resolveTimeout(code);
+          return;
+        }
         clearTimeout(timer);
         if (forceKillTimer) clearTimeout(forceKillTimer);
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
 
         void writeLog(output).finally(() => {
-          if (timedOut) {
-            resolveOnce({
-              ok: false,
-              error: new BuildError(
-                "timeout",
-                stage,
-                code,
-                `Build timed out after ${timeoutMs}ms`,
-              ),
-            });
-            return;
-          }
-
           if (code !== 0) {
             resolveOnce({
               ok: false,

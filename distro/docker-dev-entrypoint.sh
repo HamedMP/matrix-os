@@ -17,20 +17,18 @@ if [ ! -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME"
 fi
 
-hash_file() {
-  sha256sum "$1" | awk '{print $1}'
-}
-
-is_known_bundled_skill_hash() {
-  skill_name="$1"
-  hash="$2"
-  case "$skill_name:$hash" in
-    integrations:baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea)
-      return 0
-      ;;
-  esac
-  return 1
-}
+if [ -f /app/scripts/bundled-skill-hashes.sh ]; then
+  # shellcheck source=/dev/null
+  source /app/scripts/bundled-skill-hashes.sh
+else
+  echo "[matrix-os-dev] Bundled skill hash table missing; continuing startup without skill upgrades" >&2
+  hash_file() {
+    sha256sum "$1" | awk '{print $1}'
+  }
+  is_known_bundled_skill_hash() {
+    return 1
+  }
+fi
 
 sync_bundled_directory_skills() {
   bundled_home="$1"
