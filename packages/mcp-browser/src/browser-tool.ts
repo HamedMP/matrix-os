@@ -334,7 +334,31 @@ export function createBrowserTool(opts: BrowserToolOptions) {
 
         case "tab_close": {
           const session = await ensureSession(input.profile);
-          await session.page.close();
+          const ctx = session.page.context();
+          const pages = ctx.pages();
+          const currentIndex = pages.indexOf(session.page);
+          const index = input.value === undefined ? Math.max(currentIndex, 0) : parseInt(input.value, 10);
+
+          if (!Number.isInteger(index) || index < 0 || index >= pages.length) {
+            return { action, success: false, error: `Invalid tab index: ${input.value ?? index}` };
+          }
+
+          const closingPage = pages[index];
+          const closingActivePage = closingPage === session.page;
+          await closingPage.close();
+
+          const remainingPages = ctx.pages().filter((page) => page !== closingPage);
+          if (remainingPages.length === 0) {
+            await manager.close();
+            return { action, success: true, content: "Tab closed; browser session closed" };
+          }
+
+          if (closingActivePage) {
+            const nextPage = remainingPages[Math.min(index, remainingPages.length - 1)];
+            await installRequestGuard(nextPage);
+            manager.setActivePage(nextPage);
+          }
+
           return { action, success: true, content: "Tab closed" };
         }
 
@@ -344,6 +368,9 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           const pages = ctx.pages();
           const index = parseInt(input.value ?? "0", 10);
           if (index >= 0 && index < pages.length) {
+            const nextPage = pages[index];
+            await installRequestGuard(nextPage);
+            manager.setActivePage(nextPage);
             return { action, success: true, content: `Switched to tab ${index}` };
           }
           return { action, success: false, error: `Invalid tab index: ${index}` };

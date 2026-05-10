@@ -86,6 +86,7 @@ export class SessionManager {
   private profileRoot: string | undefined;
   private defaultProfile: string;
   private consoleMessages: Array<{ type: string; text: string }> = [];
+  private consolePages = new WeakSet<PageLike>();
 
   constructor(opts: SessionManagerOptions) {
     this.launcher = opts.launcher;
@@ -137,16 +138,9 @@ export class SessionManager {
       ...(profilePath ? { userDataDir: profilePath } : {}),
     });
     const page = this.getInitialPage(browser) ?? await browser.newPage();
-    page.setDefaultTimeout(this.timeout);
 
     this.consoleMessages = [];
-    page.on("console", (msg: unknown) => {
-      const m = msg as { type(): string; text(): string };
-      this.consoleMessages.push({ type: m.type(), text: m.text() });
-      if (this.consoleMessages.length > 100) {
-        this.consoleMessages.shift();
-      }
-    });
+    this.preparePage(page);
 
     const session: BrowserSession = {
       id: `session_${randomUUID()}`,
@@ -163,6 +157,20 @@ export class SessionManager {
     return session;
   }
 
+  private preparePage(page: PageLike): void {
+    page.setDefaultTimeout(this.timeout);
+    if (this.consolePages.has(page)) return;
+
+    page.on("console", (msg: unknown) => {
+      const m = msg as { type(): string; text(): string };
+      this.consoleMessages.push({ type: m.type(), text: m.text() });
+      if (this.consoleMessages.length > 100) {
+        this.consoleMessages.shift();
+      }
+    });
+    this.consolePages.add(page);
+  }
+
   private getInitialPage(browser: BrowserLike): PageLike | undefined {
     for (const context of browser.contexts()) {
       const page = context.pages()[0];
@@ -177,6 +185,13 @@ export class SessionManager {
 
   getPage(): PageLike | undefined {
     return this.session?.page;
+  }
+
+  setActivePage(page: PageLike): void {
+    if (!this.session) return;
+    this.preparePage(page);
+    this.session.page = page;
+    this.touch();
   }
 
   getConsoleMessages(): Array<{ type: string; text: string }> {

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createBrowserTool, type BrowserToolInput } from "../../packages/mcp-browser/src/browser-tool.js";
 
-function createMockPage() {
+function createMockPage(url = "https://example.com") {
   const context = {
     pages: vi.fn().mockReturnValue([]),
     newPage: vi.fn(),
@@ -15,7 +15,7 @@ function createMockPage() {
   return {
     goto: vi.fn().mockResolvedValue({ status: vi.fn().mockReturnValue(200) }),
     title: vi.fn().mockResolvedValue("Test Page"),
-    url: vi.fn().mockReturnValue("https://example.com"),
+    url: vi.fn().mockReturnValue(url),
     screenshot: vi.fn().mockResolvedValue(Buffer.from("fake-png")),
     pdf: vi.fn().mockResolvedValue(Buffer.from("fake-pdf")),
     content: vi.fn().mockResolvedValue("<html><body>Hello</body></html>"),
@@ -296,6 +296,59 @@ describe("Browser Tool (composite action dispatch)", () => {
       await execute({ action: "launch" });
       const result = await execute({ action: "tabs" });
       expect(result.success).toBe(true);
+    });
+
+    it("tab_switch updates the active page for later actions", async () => {
+      const context = mockPage.context();
+      const secondPage = createMockPage("https://second.example");
+      secondPage.context.mockReturnValue(context);
+      context.pages.mockReturnValue([mockPage, secondPage]);
+
+      await execute({ action: "launch" });
+      const result = await execute({ action: "tab_switch", value: "1" });
+      const status = await execute({ action: "status" });
+
+      expect(result.success).toBe(true);
+      expect(status.content).toContain("https://second.example");
+      expect(secondPage.setDefaultTimeout).toHaveBeenCalled();
+    });
+
+    it("tab_close moves the active page to a remaining tab", async () => {
+      const context = mockPage.context();
+      const secondPage = createMockPage("https://second.example");
+      secondPage.context.mockReturnValue(context);
+      const pages = [mockPage, secondPage];
+      context.pages.mockImplementation(() => pages);
+      mockPage.close.mockImplementation(async () => {
+        const index = pages.indexOf(mockPage);
+        if (index >= 0) pages.splice(index, 1);
+      });
+
+      await execute({ action: "launch" });
+      const result = await execute({ action: "tab_close", value: "0" });
+      const status = await execute({ action: "status" });
+
+      expect(result.success).toBe(true);
+      expect(mockPage.close).toHaveBeenCalled();
+      expect(status.content).toContain("https://second.example");
+      expect(secondPage.setDefaultTimeout).toHaveBeenCalled();
+    });
+
+    it("tab_close closes the browser session when the last tab closes", async () => {
+      const context = mockPage.context();
+      const pages = [mockPage];
+      context.pages.mockImplementation(() => pages);
+      mockPage.close.mockImplementation(async () => {
+        pages.splice(0, 1);
+      });
+
+      await execute({ action: "launch" });
+      const result = await execute({ action: "tab_close" });
+      const status = await execute({ action: "status" });
+
+      expect(result.success).toBe(true);
+      expect(status.content).toBe("No active browser session");
+      expect(mockBrowser.close).toHaveBeenCalled();
     });
   });
 
