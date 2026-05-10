@@ -1,13 +1,45 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod/v4";
 
 const SYMPHONY_CONFIG_VERSION = 1;
 const SYMPHONY_STOP_TIMEOUT_MS = 5_000;
+const SYMPHONY_START_SETTLE_MS = 25;
 const GUARDRAILS_FLAG = "--i-understand-that-this-will-be-running-without-the-usual-guardrails";
+const SYMPHONY_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "MIX_ENV",
+  "ERL_AFLAGS",
+  "ELIXIR_ERL_OPTIONS",
+  "MISE_DATA_DIR",
+  "MISE_CONFIG_DIR",
+  "MISE_CACHE_DIR",
+];
+const SYMPHONY_ENV_DENYLIST = new Set([
+  "DATABASE_URL",
+  "MATRIX_AUTH_TOKEN",
+  "PLATFORM_INTERNAL_TOKEN",
+  "PLATFORM_INTERNAL_URL",
+  "PIPEDREAM_CLIENT_ID",
+  "PIPEDREAM_CLIENT_SECRET",
+  "PIPEDREAM_PROJECT_ID",
+  "PIPEDREAM_PROJECT_ENVIRONMENT",
+  "CLERK_SECRET_KEY",
+  "UPGRADE_TOKEN",
+]);
+const SYMPHONY_ENV_DENY_PREFIXES = ["PIPEDREAM_", "CLERK_", "CUSTOMER_VPS_"];
 
 const LocalPathSchema = z.string()
   .min(1)
@@ -180,10 +212,25 @@ class SymphonyRunner {
     const command = isAbsolute(config.binPath) ? expandLocalPath(config.binPath) : config.binPath;
     const commandPath = isAbsolute(command) ? command : resolve(serviceRoot, command);
 
-    const missing = await firstMissingPath([
-      ["serviceRoot", serviceRoot],
-      ["workflowPath", workflowPath],
-      ["binPath", commandPath],
+    const pathPolicy = validateRunnerPaths({
+      homePath: this.homePath,
+      serviceRoot,
+      workflowPath,
+      commandPath,
+    });
+    if (!pathPolicy.ok) {
+      return {
+        ok: false,
+        status: 400,
+        code: pathPolicy.code,
+        message: pathPolicy.message,
+      };
+    }
+
+    const missing = await firstUnavailablePath([
+      { label: "serviceRoot", path: serviceRoot, mode: fsConstants.R_OK | fsConstants.X_OK },
+      { label: "workflowPath", path: workflowPath, mode: fsConstants.R_OK },
+      { label: "binPath", path: commandPath, mode: fsConstants.X_OK },
     ]);
     if (missing) {
       return {
@@ -202,11 +249,7 @@ class SymphonyRunner {
       GUARDRAILS_FLAG,
     ], {
       cwd: serviceRoot,
-      env: {
-        ...this.env,
-        MATRIX_HOME: this.homePath,
-        MATRIX_SYMPHONY_RUN_ID: runId,
-      },
+      env: buildSymphonyEnv(this.env, this.homePath, runId),
       stdio: "ignore",
       detached: false,
     });
@@ -232,10 +275,32 @@ class SymphonyRunner {
       console.error("[symphony] Failed to start local runner:", err);
     });
 
+    const startupFailure = await waitForStartupFailure(child);
+    if (startupFailure) {
+      if (this.process === child) {
+        this.process = null;
+      }
+      this.lastExitAt ??= new Date().toISOString();
+      return {
+        ok: false,
+        status: 409,
+        code: "symphony_start_failed",
+        message: "Symphony runner failed to start",
+      };
+    }
+
     return { ok: true, status: this.statusFor(config) };
   }
 
   async stop(): Promise<SymphonyStatus> {
+    const startInFlight = this.startInFlight;
+    if (startInFlight) {
+      try {
+        await startInFlight;
+      } catch (err: unknown) {
+        console.error("[symphony] Start failed while stopping local runner:", err);
+      }
+    }
     const child = this.process;
     if (!child) return this.status();
 
@@ -295,10 +360,59 @@ function expandLocalPath(value: string): string {
   return resolve(value);
 }
 
-async function firstMissingPath(paths: Array<[label: string, path: string]>): Promise<{ label: string } | null> {
-  for (const [label, path] of paths) {
+function validateRunnerPaths(paths: {
+  homePath: string;
+  serviceRoot: string;
+  workflowPath: string;
+  commandPath: string;
+}): { ok: true } | { ok: false; code: string; message: string } {
+  const serviceRoots = [
+    resolve(homedir(), "code", "symphony"),
+    resolve(paths.homePath, "code", "symphony"),
+  ];
+  if (!serviceRoots.some((root) => isWithinPath(root, paths.serviceRoot))) {
+    return {
+      ok: false,
+      code: "symphony_path_not_allowed",
+      message: "Symphony runner path is not allowed",
+    };
+  }
+  if (!isWithinPath(paths.serviceRoot, paths.commandPath)) {
+    return {
+      ok: false,
+      code: "symphony_path_not_allowed",
+      message: "Symphony runner path is not allowed",
+    };
+  }
+
+  const workflowRoots = [
+    resolve(process.cwd()),
+    resolve(paths.homePath),
+  ];
+  if (!workflowRoots.some((root) => isWithinPath(root, paths.workflowPath))) {
+    return {
+      ok: false,
+      code: "symphony_workflow_path_not_allowed",
+      message: "Symphony workflow path is not allowed",
+    };
+  }
+
+  return { ok: true };
+}
+
+function isWithinPath(parent: string, child: string): boolean {
+  const resolvedParent = resolve(parent);
+  const resolvedChild = resolve(child);
+  const childRelativePath = relative(resolvedParent, resolvedChild);
+  return childRelativePath === "" || (!childRelativePath.startsWith("..") && !isAbsolute(childRelativePath));
+}
+
+async function firstUnavailablePath(
+  paths: Array<{ label: string; path: string; mode: number }>,
+): Promise<{ label: string } | null> {
+  for (const { label, path, mode } of paths) {
     try {
-      await access(path);
+      await access(path, mode);
     } catch (err: unknown) {
       if (err instanceof Error && "code" in err) {
         return { label };
@@ -308,6 +422,51 @@ async function firstMissingPath(paths: Array<[label: string, path: string]>): Pr
     }
   }
   return null;
+}
+
+function buildSymphonyEnv(baseEnv: NodeJS.ProcessEnv, homePath: string, runId: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SYMPHONY_ENV_ALLOWLIST) {
+    if (baseEnv[key] !== undefined) env[key] = baseEnv[key];
+  }
+  for (const key of parseExtraEnvAllowlist(baseEnv.MATRIX_SYMPHONY_ENV_ALLOWLIST)) {
+    if (isDeniedSymphonyEnvKey(key)) continue;
+    if (baseEnv[key] !== undefined) env[key] = baseEnv[key];
+  }
+  env.LINEAR_API_KEY = baseEnv.LINEAR_API_KEY;
+  env.MATRIX_HOME = homePath;
+  env.MATRIX_SYMPHONY_RUN_ID = runId;
+  return env;
+}
+
+function parseExtraEnvAllowlist(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter((key) => /^[A-Z0-9_]{1,128}$/.test(key));
+}
+
+function isDeniedSymphonyEnvKey(key: string): boolean {
+  return SYMPHONY_ENV_DENYLIST.has(key) || SYMPHONY_ENV_DENY_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+async function waitForStartupFailure(child: ChildProcess): Promise<boolean> {
+  return new Promise((resolveStartup) => {
+    let settled = false;
+    const finish = (failed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      resolveStartup(failed);
+    };
+    const onError = () => finish(true);
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), SYMPHONY_START_SETTLE_MS);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
 }
 
 async function removeTempFile(path: string): Promise<void> {

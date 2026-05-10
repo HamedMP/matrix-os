@@ -23,6 +23,12 @@ Set a local Linear key in the Matrix gateway environment:
 LINEAR_API_KEY=...
 ```
 
+The gateway only forwards a small runtime environment to Symphony by default:
+`LINEAR_API_KEY`, basic shell/toolchain variables, `MATRIX_HOME`, and
+`MATRIX_SYMPHONY_RUN_ID`. If a local deployment needs additional non-gateway
+secrets for the runner, set `MATRIX_SYMPHONY_ENV_ALLOWLIST` to a comma-separated
+list of variable names.
+
 Then open the Symphony app in Matrix OS. It uses the gateway's local
 `/api/symphony/*` runner endpoints to start the Elixir service beside the
 current Matrix instance.

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,7 @@ describe("Symphony runner", () => {
     await mkdir(join(serviceRoot, "bin"), { recursive: true });
     await writeFile(workflowPath, "---\ntracker:\n  kind: linear\n---\n");
     await writeFile(binPath, "#!/bin/sh\n");
+    await chmod(binPath, 0o755);
   });
 
   afterEach(() => {
@@ -95,6 +96,90 @@ describe("Symphony runner", () => {
     }));
   });
 
+  it("does not forward gateway-only secrets to the local runner", async () => {
+    const child = new FakeProcess();
+    const spawnProcess = vi.fn(() => child as never);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: {
+        LINEAR_API_KEY: "linear-key",
+        MATRIX_AUTH_TOKEN: "gateway-token",
+        DATABASE_URL: "postgres://secret",
+        PIPEDREAM_CLIENT_SECRET: "pipedream-secret",
+        PATH: "/usr/bin",
+      },
+      spawnProcess,
+    });
+
+    await runner.start({ serviceRoot, workflowPath, binPath });
+
+    expect(spawnProcess).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.objectContaining({
+      env: expect.objectContaining({
+        LINEAR_API_KEY: "linear-key",
+        PATH: "/usr/bin",
+      }),
+    }));
+    const env = spawnProcess.mock.calls[0]?.[2]?.env;
+    expect(env).not.toHaveProperty("MATRIX_AUTH_TOKEN");
+    expect(env).not.toHaveProperty("DATABASE_URL");
+    expect(env).not.toHaveProperty("PIPEDREAM_CLIENT_SECRET");
+  });
+
+  it("refuses to start from outside the allowed Symphony checkout roots", async () => {
+    const spawnProcess = vi.fn();
+    const outsideRoot = join(homePath, "tmp", "evil");
+    const outsideBinPath = join(outsideRoot, "bin", "symphony");
+    await mkdir(join(outsideRoot, "bin"), { recursive: true });
+    await writeFile(outsideBinPath, "#!/bin/sh\n");
+    await chmod(outsideBinPath, 0o755);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+
+    const result = await runner.start({
+      serviceRoot: outsideRoot,
+      workflowPath,
+      binPath: "./bin/symphony",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "symphony_path_not_allowed" });
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-executable runner binary", async () => {
+    const spawnProcess = vi.fn();
+    await chmod(binPath, 0o644);
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+
+    const result = await runner.start({ serviceRoot, workflowPath, binPath });
+
+    expect(result).toMatchObject({ ok: false, code: "symphony_not_installed" });
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("reports an immediate spawn failure instead of a running process", async () => {
+    const child = new FakeProcess();
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess: vi.fn(() => {
+        queueMicrotask(() => child.emit("error", new Error("spawn failed")));
+        return child as never;
+      }),
+    });
+
+    const result = await runner.start({ serviceRoot, workflowPath, binPath });
+
+    expect(result).toMatchObject({ ok: false, code: "symphony_start_failed" });
+    await expect(runner.status()).resolves.toMatchObject({ running: false });
+  });
+
   it("coalesces concurrent start requests into one local process", async () => {
     const child = new FakeProcess();
     const spawnProcess = vi.fn(() => child as never);
@@ -128,5 +213,21 @@ describe("Symphony runner", () => {
     expect(child.killed).toBe(true);
     expect(status.running).toBe(false);
     expect(status.lastExitCode).toBe(0);
+  });
+
+  it("waits for an in-flight start before stopping", async () => {
+    const child = new FakeProcess();
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess: vi.fn(() => child as never),
+    });
+
+    const startPromise = runner.start({ serviceRoot, workflowPath, binPath });
+    const status = await runner.stop();
+    await startPromise;
+
+    expect(child.killed).toBe(true);
+    expect(status.running).toBe(false);
   });
 });

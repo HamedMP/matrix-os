@@ -81,6 +81,8 @@ describe("WorkspaceApp", () => {
           status: "running",
           projectSlug: "repo",
           taskId: "task_0",
+          worktreeId: "wt_abc123def456",
+          pr: 77,
           agent: "codex",
           runtime: { status: "running" },
           nativeAttachCommand: ["zellij", "attach", "matrix-sess_abc123"],
@@ -140,7 +142,17 @@ describe("WorkspaceApp", () => {
     });
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/sessions"),
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "agent",
+          agent: "codex",
+          projectSlug: "repo",
+          taskId: "task_0",
+          worktreeId: "wt_abc123def456",
+          pr: 77,
+        }),
+      }),
     );
 
     await act(async () => {

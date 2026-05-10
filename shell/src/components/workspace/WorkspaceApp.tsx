@@ -29,6 +29,8 @@ interface WorkspaceSession {
   status?: string;
   projectSlug?: string;
   taskId?: string;
+  worktreeId?: string;
+  pr?: number;
   agent?: string;
   runtime?: { status?: string };
   nativeAttachCommand?: string[];
@@ -210,6 +212,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         ...(session.agent ? { agent: session.agent } : {}),
         ...(session.projectSlug ? { projectSlug: session.projectSlug } : {}),
         ...(session.taskId ? { taskId: session.taskId } : {}),
+        ...(session.worktreeId ? { worktreeId: session.worktreeId } : {}),
+        ...(session.pr ? { pr: session.pr } : {}),
       }),
     });
     await loadProjectDetail(activeSlug);
