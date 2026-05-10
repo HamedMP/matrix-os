@@ -1421,9 +1421,26 @@ export function createApp(deps: {
     });
   });
   if (deps.customerVpsService) {
+    async function probeMachineHealth(machine: { machineId: string; handle: string; publicIPv4: string | null }): Promise<boolean> {
+      if (!machine.publicIPv4) return false;
+      const token = buildPlatformVerificationToken(machine.handle, platformSecret);
+      try {
+        const res = await fetch(`https://${machine.publicIPv4}:443/health`, {
+          headers: { authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(8_000),
+          dispatcher: customerVpsProxyDispatcher,
+        } as RequestInit & { dispatcher?: import('undici').Dispatcher });
+        return res.ok;
+      } catch (err: unknown) {
+        console.warn(`[fleet-probe] health check failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));
+        return false;
+      }
+    }
+
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
       platformSecret,
+      probeMachineHealth,
     }));
   }
 

@@ -360,13 +360,13 @@ Creating your Matrix instance...
 
 Select packages to install (space to toggle, enter to confirm):
   [x] claude-code       -- Claude Code integration
-  [x] hermes            -- Hermes agent
+  [x] agent             -- Agent
   [ ] moltbot           -- Multi-channel messenger bot
   [ ] ...
 
 Installing...
   claude-code
-  hermes
+  agent
 
 Ready.
   Syncing to ~/matrixos
@@ -376,7 +376,7 @@ Ready.
 ### Scope
 
 - CLI interactive prompt with `@inquirer/prompts` (already in the workspace for other tools).
-- Non-interactive variant: `matrix onboard --email ... --handle ... --packages claude-code,hermes`.
+- Non-interactive variant: `matrix onboard --email ... --handle ... --packages claude-code,agent`.
 - Platform endpoint: `POST /api/signup` — creates the Clerk user server-side (Clerk backend API) and provisions the Hetzner container via the existing orchestrator.
 - Package registry: a `~/system/packages.json` manifest the gateway reads on first boot and installs into `/home/matrixos/home/agents/` + `~/system/apps/`.
 - Package selection backed by a central registry (initially a static JSON at `app.matrix-os.com/api/packages/catalog`).

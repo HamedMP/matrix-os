@@ -5,6 +5,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 const UPDATE_CHANNELS = new Set(["stable", "canary", "dev"]);
 
+export type UpdateSeverity = "security" | "critical" | "normal";
+export type UpdateType = "auto" | "manual";
+
 export interface HostBundleRelease {
   schemaVersion?: number;
   kind?: string;
@@ -15,6 +18,9 @@ export interface HostBundleRelease {
   buildTime?: string;
   bundleSha256?: string;
   installedAt?: string;
+  severity?: UpdateSeverity;
+  changelog?: string;
+  updateType?: UpdateType;
   files?: {
     bundle?: {
       path?: string;
@@ -27,6 +33,10 @@ export interface HostBundleRelease {
       size?: number;
     };
   };
+}
+
+export function isAutoApplyUpdate(input: { severity?: string; updateType?: string }): boolean {
+  return input.severity === "security" || input.updateType === "auto";
 }
 
 export interface SystemUpdateCheck {

@@ -190,4 +190,122 @@ describe('platform/customer-vps-routes', () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: 'Provisioning failed' });
   });
+
+  describe('fleet endpoints', () => {
+    const sampleMachines = [
+      {
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        clerkUserId: 'user_alice',
+        handle: 'alice',
+        status: 'running' as const,
+        imageVersion: 'matrix-os-host-2026.04.26-1',
+        publicIPv4: '203.0.113.10',
+        publicIPv6: null,
+        provisionedAt: '2026-04-26T12:00:00.000Z',
+        lastSeenAt: '2026-04-26T12:05:00.000Z',
+        deletedAt: null,
+        failureCode: null,
+        failureAt: null,
+      },
+      {
+        machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+        clerkUserId: 'user_bob',
+        handle: 'bob',
+        status: 'provisioning' as const,
+        imageVersion: null,
+        publicIPv4: null,
+        publicIPv6: null,
+        provisionedAt: '2026-04-26T12:10:00.000Z',
+        lastSeenAt: null,
+        deletedAt: null,
+        failureCode: null,
+        failureAt: null,
+      },
+    ];
+
+    it('GET /fleet without auth returns 401', async () => {
+      const service = {
+        listAllMachines: vi.fn().mockResolvedValue(sampleMachines),
+      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+      const app = new Hono();
+      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+      const res = await app.request('/vps/fleet');
+      expect(res.status).toBe(401);
+    });
+
+    it('GET /fleet with auth returns fleet summary with correct shape', async () => {
+      const service = {
+        listAllMachines: vi.fn().mockResolvedValue(sampleMachines),
+      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+      const app = new Hono();
+      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+      const res = await app.request('/vps/fleet', {
+        headers: { authorization: `Bearer ${platformSecret}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.fleet).toMatchObject({
+        total: 2,
+        running: 1,
+        provisioning: 1,
+        failed: 0,
+        versionDistribution: {
+          'matrix-os-host-2026.04.26-1': 1,
+          unknown: 1,
+        },
+        healthSummary: { healthy: 0, degraded: 1, unreachable: 1 },
+      });
+      expect(body.machines).toHaveLength(2);
+      expect(body.machines[0]).toMatchObject({
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        handle: 'alice',
+        healthy: false,
+      });
+      expect(body.machines[1]).toMatchObject({
+        machineId: 'f973bb98-2538-4f9f-a10d-1be5920a7bf7',
+        handle: 'bob',
+        healthy: false,
+      });
+    });
+
+    it('GET /fleet with probeMachineHealth returning true marks machines as healthy', async () => {
+      const service = {
+        listAllMachines: vi.fn().mockResolvedValue(sampleMachines),
+      } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+      const probeMachineHealth = vi.fn().mockResolvedValue(true);
+      const app = new Hono();
+      app.route('/vps', createCustomerVpsRoutes({ service, platformSecret, probeMachineHealth }));
+
+      // Stub global fetch to avoid real network calls from the uptime probe
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ uptime: 3600 }), { status: 200 }));
+      try {
+        const res = await app.request('/vps/fleet', {
+          headers: { authorization: `Bearer ${platformSecret}` },
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json();
+
+        // Only the running machine (alice) should be probed
+        expect(probeMachineHealth).toHaveBeenCalledTimes(1);
+        expect(probeMachineHealth).toHaveBeenCalledWith(
+          expect.objectContaining({
+            machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+            handle: 'alice',
+            publicIPv4: '203.0.113.10',
+          }),
+        );
+
+        expect(body.machines[0]).toMatchObject({ handle: 'alice', healthy: true });
+        expect(body.machines[1]).toMatchObject({ handle: 'bob', healthy: false });
+        expect(body.fleet.healthSummary).toEqual({ healthy: 1, degraded: 0, unreachable: 1 });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+  });
 });

@@ -6,7 +6,7 @@ author: Matrix OS
 license: MIT
 platforms: [linux, macos]
 metadata:
-  hermes:
+  agent:
     tags: [Matrix OS, design, shadcn, UI, icons]
     related_skills: [matrix-app-builder]
 ---
