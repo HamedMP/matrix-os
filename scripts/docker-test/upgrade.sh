@@ -31,7 +31,7 @@ $COMPOSE exec -T dev rm -f /home/matrixos/home/system/logs/template-sync.log
 # Stop container (preserves volume)
 echo -e "${YELLOW}[SETUP]${NC} Restarting container to trigger sync..."
 $COMPOSE stop dev
-$COMPOSE up $COMPOSE_UP_FLAGS -d dev
+$COMPOSE up $COMPOSE_UP_FLAGS --force-recreate -d dev
 
 wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
