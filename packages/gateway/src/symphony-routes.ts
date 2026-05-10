@@ -68,7 +68,7 @@ function startResponse(c: Context, result: SymphonyStartResult) {
 export function createSymphonyRoutes(options: {
   homePath: string;
   runner?: SymphonyRunner;
-  onConfigChange?: (config: { port: number }) => void;
+  onConfigChange?: (config: { port: number; runningPort?: number }) => void;
 }) {
   const app = new Hono();
   const limited = bodyLimit({ maxSize: SYMPHONY_BODY_LIMIT });
@@ -81,7 +81,11 @@ export function createSymphonyRoutes(options: {
     const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
     if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
     const config = await runner.saveConfig(parsed.value);
-    options.onConfigChange?.(config);
+    const runnerStatus = await runner.status();
+    options.onConfigChange?.({
+      port: config.port,
+      runningPort: runnerStatus.running ? runnerStatus.config.port : undefined,
+    });
     return c.json(config);
   });
 
@@ -89,14 +93,19 @@ export function createSymphonyRoutes(options: {
     const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
     if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
     const result = await runner.start(parsed.value);
-    if (result.ok) options.onConfigChange?.(result.status.config);
+    if (result.ok) options.onConfigChange?.({ port: result.status.config.port });
     return startResponse(c, result);
   });
 
   app.post("/stop", limited, async (c) => {
     const parsed = await parseOptionalJson(c, EmptyBodySchema);
     if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
-    return c.json(await runner.stop());
+    const runnerStatus = await runner.stop();
+    options.onConfigChange?.({
+      port: runnerStatus.config.port,
+      runningPort: runnerStatus.running ? runnerStatus.config.port : undefined,
+    });
+    return c.json(runnerStatus);
   });
 
   return app;

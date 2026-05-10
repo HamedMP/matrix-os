@@ -9,10 +9,13 @@ import { createSymphonyRunner } from "../../packages/gateway/src/symphony-runner
 class FakeProcess extends EventEmitter {
   pid = 12345;
   killed = false;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
 
   kill(signal?: NodeJS.Signals): boolean {
     this.killed = true;
-    this.emit("exit", signal === "SIGKILL" ? 137 : 0);
+    this.exitCode = signal === "SIGKILL" ? 137 : 0;
+    this.emit("exit", this.exitCode);
     return true;
   }
 }
@@ -132,6 +135,8 @@ describe("Symphony runner", () => {
       env: {
         LINEAR_API_KEY: "linear-key",
         MATRIX_AUTH_TOKEN: "gateway-token",
+        MATRIX_SESSION_SECRET: "future-secret",
+        MATRIX_SYMPHONY_ENV_ALLOWLIST: "MATRIX_SESSION_SECRET",
         DATABASE_URL: "postgres://secret",
         PIPEDREAM_CLIENT_SECRET: "pipedream-secret",
         PATH: "/usr/bin",
@@ -149,8 +154,11 @@ describe("Symphony runner", () => {
     }));
     const env = spawnProcess.mock.calls[0]?.[2]?.env;
     expect(env).not.toHaveProperty("MATRIX_AUTH_TOKEN");
+    expect(env).not.toHaveProperty("MATRIX_SESSION_SECRET");
     expect(env).not.toHaveProperty("DATABASE_URL");
     expect(env).not.toHaveProperty("PIPEDREAM_CLIENT_SECRET");
+    expect(env).toHaveProperty("MATRIX_HOME", homePath);
+    expect(env).toHaveProperty("MATRIX_SYMPHONY_RUN_ID");
   });
 
   it("refuses to start from outside the allowed Symphony checkout roots", async () => {
@@ -239,6 +247,24 @@ describe("Symphony runner", () => {
     const status = await runner.stop();
 
     expect(child.killed).toBe(true);
+    expect(status.running).toBe(false);
+    expect(status.lastExitCode).toBe(0);
+  });
+
+  it("does not signal an already-exited process during stop", async () => {
+    const child = new FakeProcess();
+    const killSpy = vi.spyOn(child, "kill");
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess: vi.fn(() => child as never),
+    });
+    await runner.start({ serviceRoot, workflowPath, binPath });
+    child.exitCode = 0;
+
+    const status = await runner.stop();
+
+    expect(killSpy).not.toHaveBeenCalled();
     expect(status.running).toBe(false);
     expect(status.lastExitCode).toBe(0);
   });

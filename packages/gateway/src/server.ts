@@ -24,7 +24,7 @@ import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createSymphonyRoutes } from "./symphony-routes.js";
-import { createSymphonyRunner } from "./symphony-runner.js";
+import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -258,7 +258,12 @@ export function buildAllowedOrigins(options: {
   shellOrigin?: string;
   proxyOrigin?: string;
   symphonyPort?: number;
+  symphonyPorts?: number[];
 }): string[] {
+  const symphonyPorts = Array.from(new Set([
+    options.symphonyPort,
+    ...(options.symphonyPorts ?? []),
+  ].filter((port): port is number => typeof port === "number")));
   return Array.from(new Set(
     [
       options.shellOrigin,
@@ -267,8 +272,10 @@ export function buildAllowedOrigins(options: {
       "http://localhost:4001",
       "http://localhost:4066",
       "http://127.0.0.1:4066",
-      options.symphonyPort ? `http://localhost:${options.symphonyPort}` : undefined,
-      options.symphonyPort ? `http://127.0.0.1:${options.symphonyPort}` : undefined,
+      ...symphonyPorts.flatMap((port) => [
+        `http://localhost:${port}`,
+        `http://127.0.0.1:${port}`,
+      ]),
     ].filter((origin): origin is string => Boolean(origin)),
   ));
 }
@@ -278,19 +285,37 @@ export function createAllowedOriginController(options: {
   proxyOrigin?: string;
   symphonyPort?: number;
 }) {
-  let symphonyPort = options.symphonyPort;
-  let allowedOrigins = buildAllowedOrigins({ ...options, symphonyPort });
+  const baseOptions = {
+    shellOrigin: options.shellOrigin,
+    proxyOrigin: options.proxyOrigin,
+  };
+  let symphonyPorts = options.symphonyPort ? [options.symphonyPort] : [];
+  let allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
 
   return {
     resolve(origin: string | undefined): string | undefined {
       if (!origin) return undefined;
       return allowedOrigins.includes(origin) ? origin : undefined;
     },
-    updateSymphonyPort(port: number): void {
-      symphonyPort = port;
-      allowedOrigins = buildAllowedOrigins({ ...options, symphonyPort });
+    updateSymphonyPort(port: number, additionalPorts: number[] = []): void {
+      symphonyPorts = Array.from(new Set([port, ...additionalPorts]));
+      allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
     },
   };
+}
+
+type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
+
+export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
+  try {
+    return (await runner.getConfig()).port;
+  } catch (err: unknown) {
+    if (err instanceof SymphonyConfigLoadError) {
+      console.warn("[gateway] Ignoring invalid Symphony config while seeding CORS origins");
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 export async function createGateway(config: GatewayConfig) {
@@ -298,11 +323,11 @@ export async function createGateway(config: GatewayConfig) {
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
   const symphonyRunner = createSymphonyRunner({ homePath });
-  const symphonyConfig = await symphonyRunner.getConfig();
+  const symphonyPort = await readInitialSymphonyPort(symphonyRunner);
   const allowedOriginController = createAllowedOriginController({
     shellOrigin: process.env.SHELL_ORIGIN,
     proxyOrigin: process.env.PROXY_ORIGIN,
-    symphonyPort: symphonyConfig.port,
+    symphonyPort,
   });
 
   const app = new Hono();
@@ -2276,7 +2301,10 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/symphony", createSymphonyRoutes({
     homePath,
     runner: symphonyRunner,
-    onConfigChange: (nextConfig) => allowedOriginController.updateSymphonyPort(nextConfig.port),
+    onConfigChange: (nextConfig) => allowedOriginController.updateSymphonyPort(
+      nextConfig.port,
+      nextConfig.runningPort ? [nextConfig.runningPort] : [],
+    ),
   }));
   const workspaceStartupRecovery = await createWorkspaceStartupRecovery({ homePath }).run();
   if (workspaceStartupRecovery.status === "degraded") {

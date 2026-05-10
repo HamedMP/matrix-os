@@ -39,7 +39,7 @@ const SYMPHONY_ENV_DENYLIST = new Set([
   "CLERK_SECRET_KEY",
   "UPGRADE_TOKEN",
 ]);
-const SYMPHONY_ENV_DENY_PREFIXES = ["PIPEDREAM_", "CLERK_", "CUSTOMER_VPS_"];
+const SYMPHONY_ENV_DENY_PREFIXES = ["PIPEDREAM_", "CLERK_", "CUSTOMER_VPS_", "MATRIX_"];
 
 const LocalPathSchema = z.string()
   .min(1)
@@ -315,6 +315,15 @@ class SymphonyRunner {
     }
     const child = this.process;
     if (!child) return this.status();
+    if (child.exitCode !== null || child.signalCode !== null) {
+      if (this.process === child) {
+        this.process = null;
+        this.runningConfig = null;
+      }
+      this.lastExitAt ??= new Date().toISOString();
+      this.lastExitCode = typeof child.exitCode === "number" ? child.exitCode : null;
+      return this.status();
+    }
 
     await new Promise<void>((resolveStop) => {
       let settled = false;

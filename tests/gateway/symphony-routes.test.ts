@@ -108,7 +108,7 @@ describe("Symphony routes", () => {
         activeStates: ["Todo", "In Progress", "Merging", "Rework"],
       },
     }));
-    expect(onConfigChange).toHaveBeenCalledWith(config);
+    expect(onConfigChange).toHaveBeenCalledWith({ port: 4066 });
   });
 
   it("notifies when runtime config changes", async () => {
@@ -121,13 +121,51 @@ describe("Symphony routes", () => {
       start: vi.fn(),
       stop: vi.fn(),
     };
+    runner.status.mockResolvedValue({
+      running: false,
+      pid: null,
+      startedAt: null,
+      lastExitAt: null,
+      lastExitCode: null,
+      dashboardUrl: "http://127.0.0.1:4088",
+      linearApiKeyConfigured: true,
+      config: nextConfig,
+    });
     const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner, onConfigChange });
 
     const res = await app.request(jsonRequest("/config", { port: 4088 }));
 
     expect(res.status).toBe(200);
     expect(runner.saveConfig).toHaveBeenCalledWith({ port: 4088 });
-    expect(onConfigChange).toHaveBeenCalledWith(nextConfig);
+    expect(onConfigChange).toHaveBeenCalledWith({ port: 4088, runningPort: undefined });
+  });
+
+  it("keeps the launched runner port allowed when config changes while running", async () => {
+    const onConfigChange = vi.fn();
+    const savedConfig = { ...config, port: 4088 };
+    const runningConfig = { ...config, port: 4077 };
+    const runner = {
+      status: vi.fn(async () => ({
+        running: true,
+        pid: 123,
+        startedAt: "2026-05-10T00:00:00.000Z",
+        lastExitAt: null,
+        lastExitCode: null,
+        dashboardUrl: "http://127.0.0.1:4077",
+        linearApiKeyConfigured: true,
+        config: runningConfig,
+      })),
+      getConfig: vi.fn(),
+      saveConfig: vi.fn(async () => savedConfig),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner, onConfigChange });
+
+    const res = await app.request(jsonRequest("/config", { port: 4088 }));
+
+    expect(res.status).toBe(200);
+    expect(onConfigChange).toHaveBeenCalledWith({ port: 4088, runningPort: 4077 });
   });
 
   it("rejects stop request bodies before stopping", async () => {

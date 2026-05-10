@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildAllowedOrigins, createAllowedOriginController } from "../../packages/gateway/src/server.js";
+import { SymphonyConfigLoadError } from "../../packages/gateway/src/symphony-runner.js";
+import { buildAllowedOrigins, createAllowedOriginController, readInitialSymphonyPort } from "../../packages/gateway/src/server.js";
 
 describe("gateway CORS origins", () => {
   it("includes the configured Symphony runner port without duplicating defaults", () => {
@@ -23,12 +24,26 @@ describe("gateway CORS origins", () => {
   });
 
   it("updates the Symphony dashboard origin when the runner port changes", () => {
-    const controller = createAllowedOriginController({ symphonyPort: 4066 });
+    const controller = createAllowedOriginController({ symphonyPort: 4077 });
 
     expect(controller.resolve("http://127.0.0.1:4088")).toBeUndefined();
-    controller.updateSymphonyPort(4088);
+    expect(controller.resolve("http://127.0.0.1:4077")).toBe("http://127.0.0.1:4077");
+    controller.updateSymphonyPort(4088, [4077]);
 
     expect(controller.resolve("http://127.0.0.1:4088")).toBe("http://127.0.0.1:4088");
     expect(controller.resolve("http://localhost:4088")).toBe("http://localhost:4088");
+    expect(controller.resolve("http://127.0.0.1:4077")).toBe("http://127.0.0.1:4077");
+
+    controller.updateSymphonyPort(4088);
+
+    expect(controller.resolve("http://127.0.0.1:4077")).toBeUndefined();
+  });
+
+  it("does not require readable Symphony config to seed gateway CORS", async () => {
+    await expect(readInitialSymphonyPort({
+      getConfig: async () => {
+        throw new SymphonyConfigLoadError();
+      },
+    })).resolves.toBeUndefined();
   });
 });
