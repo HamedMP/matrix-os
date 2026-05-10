@@ -420,6 +420,7 @@ async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, pro
   const collected: Issue[] = [];
   const requiredLabels = baseConfig.requiredLabels.map((label) => label.trim()).filter(Boolean);
   let after: string | undefined;
+  let pagesFetched = 0;
   for (let page = 0; page < ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT; page += 1) {
     const issuePayload = await callService<unknown>("linear", "list_issues", {
       teamId,
@@ -436,8 +437,16 @@ async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, pro
       };
     }>(issuePayload).issues;
     collected.push(...(issueData?.nodes ?? []).filter((issue) => issueHasRequiredLabels(issue, baseConfig.requiredLabels)));
+    pagesFetched = page + 1;
     if (!issueData?.pageInfo?.hasNextPage || !issueData.pageInfo.endCursor) break;
     after = issueData.pageInfo.endCursor;
+  }
+  if (requiredLabels.length > 1 && pagesFetched >= ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT) {
+    console.warn("[symphony] Linear issue label filter reached the page cap before filling the board", {
+      collected: collected.length,
+      pages: pagesFetched,
+      requiredLabels: requiredLabels.length,
+    });
   }
   return collected.slice(0, ISSUE_TARGET_COUNT);
 }

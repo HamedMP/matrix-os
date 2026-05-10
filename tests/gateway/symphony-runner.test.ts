@@ -193,6 +193,24 @@ describe("Symphony runner", () => {
     expect(spawnProcess).not.toHaveBeenCalled();
   });
 
+  it("rejects workflow paths outside Matrix home even when under gateway cwd", async () => {
+    const spawnProcess = vi.fn();
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess,
+    });
+
+    const result = await runner.start({
+      serviceRoot,
+      workflowPath: join(process.cwd(), "WORKFLOW.md"),
+      binPath: "./bin/symphony",
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "symphony_workflow_path_not_allowed" });
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it("refuses symlinked runner roots that resolve outside allowed Symphony checkouts", async () => {
     const spawnProcess = vi.fn();
     const outsideRoot = join(homePath, "tmp", "evil");

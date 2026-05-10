@@ -448,6 +448,44 @@ describe("Symphony app", () => {
     expect(screen.queryByText("First page only")).toBeNull();
   });
 
+  it("warns when multi-label issue filtering exhausts the page cap", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    listedIssuePages = Object.fromEntries(Array.from({ length: 5 }, (_, index) => {
+      const cursor = index === 0 ? "" : `cursor_${index}`;
+      return [cursor, {
+        nodes: [{
+          id: `issue_page_${index}`,
+          identifier: `MAT-${index + 1}`,
+          title: `Partial label page ${index + 1}`,
+          url: `https://linear.app/matrix-os/issue/MAT-${index + 1}`,
+          state: { id: "state_todo", name: "Todo" },
+          labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
+        }],
+        pageInfo: { hasNextPage: index < 4, endCursor: index < 4 ? `cursor_${index + 1}` : null },
+      }];
+    }));
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Partial label page 1")).toBeTruthy());
+    await act(async () => {
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+      fireEvent.blur(requiredLabelsInput);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Sync Linear/ }));
+    });
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[symphony] Linear issue label filter reached the page cap before filling the board",
+        expect.objectContaining({ collected: 0, pages: 5, requiredLabels: 2 }),
+      );
+    });
+  });
+
   it("omits the Linear label filter when required labels are empty", async () => {
     listedIssues = [{
       id: "issue_unlabeled",

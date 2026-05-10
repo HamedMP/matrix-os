@@ -304,6 +304,8 @@ class SymphonyRunner {
     this.lastExitAt = null;
     this.lastExitCode = null;
 
+    // These cleanup listeners are registered before the startup probe; the
+    // guarded cleanup after the probe tolerates them firing first.
     child.once("exit", (code) => {
       if (this.process === child) {
         this.process = null;
@@ -440,7 +442,6 @@ function validateRunnerPaths(paths: {
   }
 
   const workflowRoots = [
-    resolve(process.cwd()),
     resolve(paths.homePath),
   ];
   if (!workflowRoots.some((root) => isWithinPath(root, paths.workflowPath))) {

@@ -7,5 +7,5 @@ export function requestHasBody(c: Context): boolean {
     return !Number.isFinite(parsed) || parsed > 0;
   }
   if (c.req.header("transfer-encoding")) return true;
-  return c.req.raw.body !== null;
+  return Boolean(c.req.header("content-type") && c.req.raw.body !== null);
 }
