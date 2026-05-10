@@ -62,6 +62,15 @@ describe("browser security helpers", () => {
     await expect(assertSafeBrowserUrl("http://[::7f00:1]:3000")).rejects.toThrow(
       "Browser navigation URL is not allowed",
     );
+    await expect(assertSafeBrowserUrl("http://[0::ffff:7f00:1]:3000")).rejects.toThrow(
+      "Browser navigation URL is not allowed",
+    );
+    await expect(assertSafeBrowserUrl("http://[0:0::ffff:7f00:1]:3000")).rejects.toThrow(
+      "Browser navigation URL is not allowed",
+    );
+    await expect(assertSafeBrowserUrl("http://[::0:ffff:7f00:1]:3000")).rejects.toThrow(
+      "Browser navigation URL is not allowed",
+    );
     await expect(assertSafeBrowserUrl("http://[::192.168.1.1]:3000")).rejects.toThrow(
       "Browser navigation URL is not allowed",
     );
@@ -95,6 +104,12 @@ describe("browser security helpers", () => {
     await expect(
       assertSafeBrowserUrl("https://ipv4-compatible.example", {
         resolveHostname: async () => ["::c0a8:101"],
+      }),
+    ).rejects.toThrow("Browser navigation URL is not allowed");
+
+    await expect(
+      assertSafeBrowserUrl("https://ipv4-mapped.example", {
+        resolveHostname: async () => ["0::ffff:7f00:1"],
       }),
     ).rejects.toThrow("Browser navigation URL is not allowed");
   });
