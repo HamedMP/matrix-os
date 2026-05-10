@@ -15,8 +15,8 @@ describe('platform/social', () => {
   });
 
   it('lists users with status', async () => {
-    await insertContainer(db, { handle: 'alice', clerkUserId: 'c1', containerId: 'ctr1', port: 4001, shellPort: 3001, status: 'running' });
-    await insertContainer(db, { handle: 'bob', clerkUserId: 'c2', containerId: 'ctr2', port: 4002, shellPort: 3002, status: 'stopped' });
+    await insertContainer(db, { handle: 'alice', clerkUserId: 'c1', containerId: 'ctr1', port: 4001, shellPort: 3001, status: 'running', createdAt: '2026-04-26T12:00:00.000Z' });
+    await insertContainer(db, { handle: 'bob', clerkUserId: 'c2', containerId: 'ctr2', port: 4002, shellPort: 3002, status: 'stopped', createdAt: '2026-04-26T12:00:01.000Z' });
 
     const social = createSocialApi(db);
     const users = await social.listUsers();

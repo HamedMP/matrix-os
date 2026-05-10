@@ -648,7 +648,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
         const body = version ? JSON.stringify({ version }) : '{}';
         try {
-          const fetchOpts: RequestInit & { dispatcher?: import('undici').Dispatcher } = {
+          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, {
             method: 'POST',
             headers: {
               'authorization': `Bearer ${token}`,
@@ -656,9 +656,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             },
             body,
             signal: AbortSignal.timeout(10_000),
-          };
-          if (deps.fetchDispatcher) fetchOpts.dispatcher = deps.fetchDispatcher;
-          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, fetchOpts as RequestInit);
+            ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
+          } as RequestInit & { dispatcher?: import('undici').Dispatcher });
           if (res.ok) {
             results.push({ machineId: machine.machineId, handle: machine.handle, status: 'triggered' });
             triggered++;

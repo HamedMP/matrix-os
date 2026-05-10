@@ -158,10 +158,8 @@ describe("T404: Provisioner", () => {
   });
 
   it("handles partial build failures gracefully", async () => {
-    let callCount = 0;
-    const spawn = vi.fn<SpawnFn>(async function* () {
-      callCount++;
-      if (callCount === 2) throw new Error("build crashed");
+    const spawn = vi.fn<SpawnFn>(async function* (message) {
+      if (message.includes("App B")) throw new Error("build crashed");
       yield resultEvent("s");
     });
 

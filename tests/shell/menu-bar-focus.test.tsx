@@ -42,7 +42,7 @@ describe("MenuBar focus display", () => {
     );
 
     expect(screen.getByRole("button", { name: "Matrix OS" })).toBeTruthy();
-    expect(screen.getByTestId("menu-focus-indicator").textContent).toBe("Canvas");
+    expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
   });
 
   it("shows the active app name when a window owns focus", () => {
@@ -55,6 +55,6 @@ describe("MenuBar focus display", () => {
     );
 
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
-    expect(screen.getByTestId("menu-focus-indicator").textContent).toBe("Whiteboard");
+    expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
   });
 });

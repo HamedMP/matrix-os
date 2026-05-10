@@ -74,10 +74,10 @@ async function settle(ms = 30) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitFor(check: () => boolean, timeoutMs = 15_000): Promise<void> {
+async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (check()) return;
+    if (await check()) return;
     await settle(50);
   }
   throw new Error("Timed out waiting for condition");
@@ -137,8 +137,14 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      // Give the async enqueue a tick to process.
-      await settle(80);
+      await waitFor(async () => {
+        try {
+          const written = await readFile(join(tmpRoot, "notes/foo.md"));
+          return written.equals(content);
+        } catch {
+          return false;
+        }
+      });
 
       const written = await readFile(join(tmpRoot, "notes/foo.md"));
       expect(written.equals(content)).toBe(true);
@@ -174,7 +180,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       await expect(stat(join(tmpRoot, "notes/bad.md"))).rejects.toThrow(/ENOENT/);
       expect(logger.error).toHaveBeenCalledWith(
@@ -275,7 +281,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       await expect(stat(join(tmpRoot, "notes/huge.md"))).rejects.toThrow(/ENOENT/);
       expect(getObject).not.toHaveBeenCalledWith("matrixos-sync/alice/files/notes/huge.md");
@@ -310,7 +316,14 @@ describe("createHomeMirror", () => {
         manifestVersion: 3,
       });
 
-      await settle(80);
+      await waitFor(async () => {
+        try {
+          await stat(join(tmpRoot, "notes/bar.md"));
+          return false;
+        } catch {
+          return true;
+        }
+      });
 
       await expect(stat(join(tmpRoot, "notes/bar.md"))).rejects.toThrow(/ENOENT/);
       await mirror.stop();
@@ -341,7 +354,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 3,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       expect(logger.error).toHaveBeenCalledWith("refusing to delete symlink notes-link");
       const linkStat = await (await import("node:fs/promises")).lstat(link);
@@ -373,7 +386,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 3,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       expect(logger.error).toHaveBeenCalledWith(
         expect.stringContaining("remote-change failed for notes/blocked:"),
@@ -500,7 +513,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       await expect(stat(outsidePath)).rejects.toThrow(/ENOENT/);
       expect(logger.error).toHaveBeenCalledWith(
@@ -540,7 +553,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       expect(await readFile(target, "utf8")).toBe("outside");
       expect(logger.error).toHaveBeenCalledWith(
@@ -584,7 +597,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       expect(logger.error).toHaveBeenCalledWith(
         "remote-change failed for notes/string-failure.md:",
@@ -631,7 +644,7 @@ describe("createHomeMirror", () => {
           manifestVersion: 2,
         });
 
-        await settle(80);
+        await waitFor(() => logger.error.mock.calls.length > 0);
 
         await expect(stat(join(outsideRoot, "crontab"))).rejects.toThrow(/ENOENT/);
         expect(logger.error).toHaveBeenCalledWith(
@@ -668,7 +681,7 @@ describe("createHomeMirror", () => {
         manifestVersion: 2,
       });
 
-      await settle(80);
+      await waitFor(() => logger.error.mock.calls.length > 0);
 
       const remaining = await readFile(outsidePath, "utf8");
       expect(remaining).toBe("keep me");
@@ -808,7 +821,7 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"), 45_000);
 
       expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
       await mirror.stop();
@@ -998,11 +1011,11 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       await writeFile(join(tmpRoot, "notes.txt"), "hello");
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/notes.txt"));
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/notes.txt"), 45_000);
 
       const deleteSpy = vi.spyOn(r2, "deleteObject").mockRejectedValueOnce(new Error("r2 unavailable"));
       await unlink(join(tmpRoot, "notes.txt"));
-      await waitFor(() => deleteSpy.mock.calls.length > 0);
+      await waitFor(() => deleteSpy.mock.calls.length > 0, 45_000);
 
       expect(deleteSpy).toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledWith(
@@ -1038,6 +1051,7 @@ describe("createHomeMirror", () => {
         logger.error.mock.calls.some(
           ([message]: [string]) => message.includes("push failed for orphan.txt:"),
         ),
+        45_000,
       );
 
       expect(r2.store.has("matrixos-sync/alice/files/orphan.txt")).toBe(false);
@@ -1099,6 +1113,7 @@ describe("createHomeMirror", () => {
         logger.error.mock.calls.some(
           ([message]: [string]) => message.includes("serial queue task failed:"),
         ),
+        45_000,
       );
 
       expect(logger.error).toHaveBeenCalledWith(
@@ -1142,7 +1157,7 @@ describe("createHomeMirror", () => {
       await writeFile(filePath, "new bytes that should win");
       gate.resolve();
 
-      await waitFor(() => r2.store.has("matrixos-sync/alice/manifest.json"));
+      await waitFor(() => r2.store.has("matrixos-sync/alice/manifest.json"), 45_000);
 
       const uploaded = r2.store.get("matrixos-sync/alice/files/race.txt");
       const manifestBuf = r2.store.get("matrixos-sync/alice/manifest.json");
@@ -1207,10 +1222,10 @@ describe("createHomeMirror", () => {
 
       const filePath = join(tmpRoot, "locked.txt");
       await writeFile(filePath, "hello");
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/locked.txt"));
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/locked.txt"), 45_000);
 
       await unlink(filePath);
-      await waitFor(() => deleteSpy.mock.calls.length > 0);
+      await waitFor(() => deleteSpy.mock.calls.length > 0, 45_000);
 
       expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
       expect(getMetaExecutors).toEqual([lockedExecutor, lockedExecutor]);

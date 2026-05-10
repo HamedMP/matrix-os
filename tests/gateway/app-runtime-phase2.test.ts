@@ -4,6 +4,42 @@ import type { PortPool } from "../../packages/gateway/src/app-runtime/port-pool.
 import { mkdtemp, cp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
+
+async function findFreePortBlock(size: number): Promise<{ min: number; max: number }> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const base = await new Promise<number>((resolve, reject) => {
+      const server = createServer();
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        server.close(() => {
+          if (typeof address === "object" && address) resolve(address.port);
+          else reject(new Error("Could not allocate a local port"));
+        });
+      });
+    });
+    if (base + size > 65_535) continue;
+
+    const probes = await Promise.all(
+      Array.from({ length: size }, (_, offset) => probePort(base + offset)),
+    );
+    if (probes.every(Boolean)) {
+      return { min: base, max: base + size - 1 };
+    }
+  }
+  throw new Error("Could not allocate a free local port block");
+}
+
+async function probePort(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
 
 describe("Phase 2 integration: node runtime", () => {
   let ProcessManagerCtor: typeof ProcessManager;
@@ -30,7 +66,8 @@ describe("Phase 2 integration: node runtime", () => {
       await mkdir(join(tmpHome, "data", fixture), { recursive: true });
     }
 
-    portPool = new PortPoolCtor({ min: 43000, max: 43100 });
+    const range = await findFreePortBlock(4);
+    portPool = new PortPoolCtor(range);
     pm = new ProcessManagerCtor({
       homeDir: tmpHome,
       portPool,
@@ -41,7 +78,7 @@ describe("Phase 2 integration: node runtime", () => {
 
   afterEach(async () => {
     await pm.shutdownAll();
-    await rm(tmpHome, { recursive: true, force: true });
+    await rm(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it("installs, spawns, and proxies a node app — hello-next responds on /api/hello", async () => {
@@ -123,7 +160,7 @@ describe("Phase 2 integration: node runtime", () => {
     await mk(join(tmpHome, "data", "short-idle-int"), { recursive: true });
 
     // Create a PM with a fast reaper
-    const idlePool = new PortPoolCtor({ min: 43200, max: 43210 });
+    const idlePool = new PortPoolCtor(await findFreePortBlock(2));
     const idlePm = new ProcessManagerCtor({
       homeDir: tmpHome,
       portPool: idlePool,

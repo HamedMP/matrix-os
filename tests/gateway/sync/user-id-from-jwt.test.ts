@@ -212,14 +212,14 @@ describe("sync routes: userId resolution from JWT", () => {
       handle: HANDLE,
       gatewayUrl: "https://app.matrix-os.com",
     });
-    // Flip the last character of the signature segment. Base64url uses
-    // [A-Za-z0-9_-]; swap 'A' ↔ 'B' so the token still *looks* like a JWT
-    // (3 base64url segments) and reaches the validator.
+    // Flip the first character of the signature segment. Changing the last
+    // base64url character can affect only padding bits for some signature
+    // lengths, so mutate an always-significant byte instead.
     const parts = issued.token.split(".");
     const sig = parts[2]!;
-    const lastChar = sig.slice(-1);
-    const flipped = lastChar === "A" ? "B" : "A";
-    const tamperedToken = `${parts[0]}.${parts[1]}.${sig.slice(0, -1)}${flipped}`;
+    const firstChar = sig[0]!;
+    const flipped = firstChar === "A" ? "B" : "A";
+    const tamperedToken = `${parts[0]}.${parts[1]}.${flipped}${sig.slice(1)}`;
 
     const app = buildApp(getUserIdFromContext);
 
