@@ -201,7 +201,7 @@ describe("Browser Tool (composite action dispatch)", () => {
       expect(mockPage.route).toHaveBeenCalledWith("**/*", expect.any(Function));
     });
 
-    it("deduplicates DNS lookups for guarded requests to the same host", async () => {
+    it("validates every guarded request instead of caching DNS decisions", async () => {
       let resolveCalls = 0;
       const cachedPage = createMockPage();
       const cachedBrowser = createMockBrowser(cachedPage);
@@ -222,7 +222,7 @@ describe("Browser Tool (composite action dispatch)", () => {
 
       await Promise.all([handler(routeA), handler(routeB)]);
 
-      expect(resolveCalls).toBe(1);
+      expect(resolveCalls).toBe(2);
       expect(routeA.continue).toHaveBeenCalled();
       expect(routeB.continue).toHaveBeenCalled();
     });

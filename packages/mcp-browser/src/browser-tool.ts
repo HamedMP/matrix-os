@@ -14,8 +14,6 @@ import {
 } from "./security.js";
 
 const REQUEST_GUARD_INSTALLED = Symbol("matrixBrowserRequestGuardInstalled");
-const DNS_CACHE_MAX_ENTRIES = 256;
-const DNS_CACHE_TTL_MS = 60_000;
 
 export type BrowserAction =
   | "launch"
@@ -62,7 +60,7 @@ export interface BrowserToolResult {
   error?: string;
 }
 
-type Launcher = (opts?: { headless?: boolean }) => Promise<BrowserLike>;
+type Launcher = (opts?: { headless?: boolean; userDataDir?: string }) => Promise<BrowserLike>;
 
 export interface BrowserToolOptions {
   homePath: string;
@@ -78,41 +76,9 @@ function wrapBrowserContent(content: string): string {
   return wrapBrowserExternalContent(content);
 }
 
-function createCachedResolveHostname(resolveHostname: ResolveHostname): ResolveHostname {
-  const cache = new Map<string, { expiresAt: number; promise: Promise<string[]> }>();
-
-  return (hostname) => {
-    const now = Date.now();
-    const key = hostname.toLowerCase();
-    const cached = cache.get(key);
-    if (cached && cached.expiresAt > now) {
-      cache.delete(key);
-      cache.set(key, cached);
-      return cached.promise;
-    }
-    if (cached) {
-      cache.delete(key);
-    }
-
-    const promise = resolveHostname(hostname).catch((error: unknown) => {
-      cache.delete(key);
-      throw error;
-    });
-    cache.set(key, { expiresAt: now + DNS_CACHE_TTL_MS, promise });
-
-    while (cache.size > DNS_CACHE_MAX_ENTRIES) {
-      const oldestKey = cache.keys().next().value;
-      if (!oldestKey) break;
-      cache.delete(oldestKey);
-    }
-
-    return promise;
-  };
-}
-
 export function createBrowserTool(opts: BrowserToolOptions) {
   const defaultProfile = opts.defaultProfile ?? "default";
-  const resolveHostname = createCachedResolveHostname(opts.resolveHostname ?? resolveBrowserHostname);
+  const resolveHostname = opts.resolveHostname ?? resolveBrowserHostname;
   let actionQueue: Promise<void> = Promise.resolve();
   const manager = new SessionManager({
     launcher: opts.launcher,
