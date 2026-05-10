@@ -331,6 +331,8 @@ export function hydrateBoard(value: unknown): Board {
 function normalizeCard(card: Card, columnIds: Set<string>, fallbackColumnId: string): Card {
   return {
     ...card,
+    id: typeof card.id === "string" && card.id ? card.id : id("card"),
+    projectId: typeof card.projectId === "string" && card.projectId ? card.projectId : "",
     columnId: columnIds.has(card.columnId) ? card.columnId : fallbackColumnId,
     description: typeof card.description === "string" ? card.description : "",
     priority: isPriority(card.priority) ? card.priority : "medium",

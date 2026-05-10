@@ -205,4 +205,33 @@ describe("task board model", () => {
 
     expect(board.cards[0].columnId).toBe("today");
   });
+
+  it("hydrates cards with malformed identity fields into mutable records", () => {
+    const board = hydrateBoard({
+      version: 1,
+      projects: [{ id: "project-a", name: "A", color: "#2563eb", description: "" }],
+      columns: [{ id: "today", title: "Today", color: "#0ea5e9" }],
+      cards: [{
+        id: undefined,
+        projectId: undefined,
+        columnId: "today",
+        title: "Malformed identity",
+        description: "",
+        priority: "medium",
+        labels: [],
+        assignee: "",
+        dueDate: "",
+        checklist: [],
+        delegation: null,
+        order: 0,
+        createdAt: "2026-05-10T00:00:00.000Z",
+        updatedAt: "2026-05-10T00:00:00.000Z",
+      }],
+      updatedAt: "2026-05-10T00:00:00.000Z",
+    });
+
+    expect(board.cards[0].id).toMatch(/^card-/);
+    expect(board.cards[0].projectId).toBe("");
+    expect(moveCard(board, board.cards[0].id, "today", 0).cards[0].id).toBe(board.cards[0].id);
+  });
 });

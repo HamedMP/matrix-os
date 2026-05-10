@@ -27,6 +27,7 @@ describe("API key validation and storage", () => {
 
   afterEach(() => {
     rmSync(homePath, { recursive: true, force: true });
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
