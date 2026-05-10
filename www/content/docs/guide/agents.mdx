@@ -98,36 +98,31 @@ These are loaded by `buildSystemPrompt()` in `packages/kernel/src/prompt.ts` and
 
 ## Skills System
 
-Skills are markdown files in `~/matrixos/agents/skills/` that extend what the kernel can do. They use a demand-loading pattern to keep the context window lean.
+Skills are directory-based Agent Skills in `~/.agents/skills/<name>/SKILL.md` that extend what the kernel can do. They use a demand-loading pattern to keep the context window lean.
 
 ### How Skills Work
 
 1. **TOC in prompt** -- `buildSkillsToc()` generates a table of contents listing all skills. This is injected into the system prompt so the kernel knows what's available.
-2. **Trigger matching** -- each skill has `triggers` in its frontmatter (keywords or patterns).
+2. **Trigger matching** -- each skill has a `description` in its frontmatter that helps the model choose when to load it.
 3. **On-demand loading** -- when a request matches, the kernel calls the `load_skill` IPC tool to fetch the full skill body into context.
 
 ### Skill File Format
 
-```md title="~/matrixos/agents/skills/summarize.md"
+```md title="~/.agents/skills/matrix-app-builder/SKILL.md"
 ---
-name: summarize
-description: Condense long text into key points
-triggers:
-  - summarize
-  - tldr
-  - key points
+name: matrix-app-builder
+description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
+version: 1.0.0
+author: Matrix OS
+license: MIT
 ---
 
-When asked to summarize, follow this process:
-1. Read the full content
-2. Identify the 3-5 most important points
-3. Write a concise summary with bullet points
-4. Include any action items or decisions
+Default to Vite, React 19, TypeScript, `runtime: "vite"`, and Matrix/Postgres bridge APIs.
 ```
 
 ### Built-in Skills
 
-Matrix OS ships with seven skills: Summarize, Weather, Reminder, Budget Helper, Study Timer, Setup Wizard, and Skill Creator. The Skill Creator can generate new skills from natural language descriptions.
+Matrix OS ships a canonical coding pack under `skills/matrix/`: `matrix-app-builder`, `matrix-design-system`, `matrix-integrations`, `matrix-dev-vps`, and `matrix-debug-app`. Runtime startup syncs that pack into Matrix, Claude Code, Codex, and Hermes skill folders.
 
 ## Onboarding
 

@@ -74,6 +74,15 @@ Use a compact app shell:
 }
 ```
 
+## Shadcn-Style Components
+
+- Build app-local primitives in `src/components/ui/` when a project needs reusable controls.
+- Use Radix primitives only when the interaction benefits from them: dialogs, popovers, menus, tabs, selects, switches, sliders, and tooltips.
+- Use `lucide-react` icons for toolbar and action buttons. Prefer icon-only controls with accessible labels for familiar actions.
+- Keep styling in the app's CSS/Tailwind layer with Matrix variables as the base tokens.
+- Do not import a remote shadcn registry or CDN at runtime. Vendor the component source into the app and keep the app self-contained.
+- Do not add shadcn components that duplicate simple native HTML controls unless they improve keyboard, focus, or state behavior.
+
 ## Built-In App Taste Bar
 
 - Workspace: spatial, calm, minimal chrome, strong empty states, canvas actions as icons.

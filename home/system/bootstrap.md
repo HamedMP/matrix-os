@@ -86,7 +86,7 @@ When they confirm:
 3. Update `~/system/soul.md` -- personality traits based on their preferences
 4. Write `~/system/setup-plan.json` using the `write_setup_plan` tool -- the manifest of what to build
 5. Build each app by describing it naturally ("Build me a study planner with weekly schedule and assignment deadlines")
-6. Create relevant skill files in `~/agents/skills/`
+6. Create relevant skill files in `~/.agents/skills/<skill>/SKILL.md`
 7. Delete this file (`~/system/bootstrap.md`) -- you don't need a script anymore
 
 ### 6. Welcome Them

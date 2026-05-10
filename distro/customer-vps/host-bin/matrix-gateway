@@ -69,6 +69,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 sync_bundled_home_assets
+if [ -x "$APP_DIR/scripts/sync-matrix-agent-skills.sh" ] && [ -d "$APP_DIR/skills/matrix" ]; then
+  MATRIX_SKILL_TARGETS=matrix,claude,codex \
+    MATRIX_SKILLS_SOURCE="$APP_DIR/skills/matrix" \
+    HOME="${HOME:-/home/matrix}" \
+    MATRIX_HOME="$MATRIX_HOME" \
+    bash "$APP_DIR/scripts/sync-matrix-agent-skills.sh"
+fi
 cd "$APP_DIR"
 if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
   "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &

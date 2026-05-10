@@ -60,7 +60,7 @@ export function SkillsSection() {
       const loaded: SkillInfo[] = [];
       for (const entry of data) {
         try {
-          const r = await fetch(`${GATEWAY}/files/agents/skills/${entry.file}`);
+          const r = await fetch(`${GATEWAY}/files/${entry.file}`);
           if (r.ok) {
             const content = await r.text();
             const skill = parseSkillFrontmatter(entry.name, content);
@@ -100,7 +100,7 @@ export function SkillsSection() {
 
     setSaving(true);
     try {
-      const res = await fetch(`${GATEWAY}/files/agents/skills/${slug}.md`, {
+      const res = await fetch(`${GATEWAY}/files/.agents/skills/${slug}/SKILL.md`, {
         method: "PUT",
         body: content,
       });
