@@ -153,7 +153,9 @@ ln -sfn "$MATRIX_HOME/.ssh" /home/matrixos/.ssh
 # canonical .agents/skills entries and legacy agents/skills entries flow into
 # both coding-agent discovery directories.
 echo "Syncing Matrix skills into ~/.claude/skills and ~/.codex/skills..."
-bash /app/scripts/sync-matrix-agent-skills.sh "$MATRIX_HOME" /home/matrixos "$MATRIX_HOME"
+if ! bash /app/scripts/sync-matrix-agent-skills.sh "$MATRIX_HOME" /home/matrixos "$MATRIX_HOME"; then
+  echo "Matrix skill sync failed; continuing startup" >&2
+fi
 chown -R matrixos:matrixos /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME/.claude" "$MATRIX_HOME/.codex" 2>/dev/null || true
 
 start_matrix_code_server() {

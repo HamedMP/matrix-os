@@ -124,7 +124,9 @@ done
 # Expose Matrix OS skills to Claude Code and Codex. Re-runs every boot so
 # canonical .agents/skills entries and legacy agents/skills entries flow into
 # both coding-agent discovery directories.
-bash /app/scripts/sync-matrix-agent-skills.sh "$MATRIX_HOME" /home/matrixos "$MATRIX_HOME"
+if ! bash /app/scripts/sync-matrix-agent-skills.sh "$MATRIX_HOME" /home/matrixos "$MATRIX_HOME"; then
+  echo "[matrix-os-dev] Matrix skill sync failed; continuing startup" >&2
+fi
 chown -R matrixos:matrixos /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME/.claude" "$MATRIX_HOME/.codex" 2>/dev/null || true
 
 # AI CLI auth persistence via shared external volume (matrixos-ai-auth)

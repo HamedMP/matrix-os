@@ -35,6 +35,8 @@ describe("cloud workspace runtime gates", () => {
     expect(entrypoint).toContain("is_known_bundled_skill_hash");
     expect(devEntrypoint).toContain("is_known_bundled_skill_hash");
     expect(entrypoint).toContain("baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea");
+    expect(entrypoint).toContain("Matrix skill sync failed; continuing startup");
+    expect(devEntrypoint).toContain("Matrix skill sync failed; continuing startup");
   });
 
   it("copies directory skill support files into Claude Code and Codex mirrors", () => {
