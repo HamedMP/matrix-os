@@ -34,6 +34,7 @@ function createMockPage() {
       }),
     },
     on: vi.fn(),
+    route: vi.fn().mockResolvedValue(undefined),
     context: vi.fn().mockReturnValue({
       pages: vi.fn().mockReturnValue([]),
       newPage: vi.fn(),
@@ -69,6 +70,7 @@ describe("Browser Tool (composite action dispatch)", () => {
       homePath,
       launcher: launcher as never,
       idleTimeoutMs: 300_000,
+      resolveHostname: async () => ["93.184.216.34"],
     });
     execute = tool.execute;
   });
@@ -82,6 +84,24 @@ describe("Browser Tool (composite action dispatch)", () => {
       const result = await execute({ action: "launch" });
       expect(result.success).toBe(true);
       expect(result.action).toBe("launch");
+      expect(launcher).toHaveBeenCalledWith(expect.objectContaining({
+        userDataDir: join(homePath, "data", "browser-profiles", "default"),
+      }));
+    });
+
+    it("launch starts a named persistent browser profile", async () => {
+      const result = await execute({ action: "launch", profile: "work" });
+      expect(result.success).toBe(true);
+      expect(launcher).toHaveBeenCalledWith(expect.objectContaining({
+        userDataDir: join(homePath, "data", "browser-profiles", "work"),
+      }));
+    });
+
+    it("rejects invalid profile names before launching", async () => {
+      const result = await execute({ action: "launch", profile: "../secret" });
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Invalid browser profile name");
+      expect(launcher).not.toHaveBeenCalled();
     });
 
     it("close shuts down browser", async () => {
@@ -106,10 +126,22 @@ describe("Browser Tool (composite action dispatch)", () => {
       expect(result.url).toBe("https://example.com");
     });
 
+    it("blocks local browser navigation URLs before launching", async () => {
+      const result = await execute({ action: "navigate", url: "http://127.0.0.1:3000" });
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Browser navigation URL is not allowed");
+      expect(launcher).not.toHaveBeenCalled();
+    });
+
     it("auto-launches browser if needed", async () => {
       const result = await execute({ action: "navigate", url: "https://example.com" });
       expect(result.success).toBe(true);
       expect(launcher).toHaveBeenCalled();
+    });
+
+    it("installs a request guard before navigation", async () => {
+      await execute({ action: "navigate", url: "https://example.com" });
+      expect(mockPage.route).toHaveBeenCalledWith("**/*", expect.any(Function));
     });
   });
 
@@ -164,6 +196,20 @@ describe("Browser Tool (composite action dispatch)", () => {
       expect(result.success).toBe(true);
       expect(result.screenshotPath).toContain("screenshots");
       expect(result.screenshotPath).toMatch(/\.png$/);
+    });
+
+    it("saves custom relative artifact paths under screenshots", async () => {
+      await execute({ action: "launch" });
+      const result = await execute({ action: "screenshot", path: "runs/page.png" });
+      expect(result.success).toBe(true);
+      expect(result.screenshotPath).toBe(join(homePath, "data", "screenshots", "runs", "page.png"));
+    });
+
+    it("rejects screenshot path traversal", async () => {
+      await execute({ action: "launch" });
+      const result = await execute({ action: "screenshot", path: "../secret.png" });
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Invalid browser artifact path");
     });
   });
 

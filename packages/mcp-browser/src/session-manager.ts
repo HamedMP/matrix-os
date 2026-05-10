@@ -1,7 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { normalizeBrowserProfileName } from "./security.js";
+
 export interface BrowserSession {
   id: string;
   browser: BrowserLike;
   page: PageLike;
+  profile?: string;
+  profilePath?: string;
   createdAt: number;
   lastActivity: number;
 }
@@ -26,31 +33,44 @@ export interface PageLike {
   mouse: { wheel(opts: { deltaX: number; deltaY: number }): Promise<void> };
   accessibility: { snapshot(): Promise<unknown> };
   on(event: string, handler: (...args: unknown[]) => void): void;
+  route?(
+    url: string,
+    handler: (route: {
+      request(): { url(): string };
+      continue(): Promise<void>;
+      abort(errorCode?: string): Promise<void>;
+    }) => Promise<void>,
+  ): Promise<void>;
   context(): { pages(): PageLike[]; newPage(): Promise<PageLike>; close(): Promise<void> };
 }
 
 export interface BrowserLike {
   newPage(): Promise<PageLike>;
   close(): Promise<void>;
-  contexts(): Array<{ pages(): PageLike[] }>;
+  contexts(): Array<{ pages(): PageLike[]; newPage?: () => Promise<PageLike> }>;
 }
 
-type Launcher = (opts?: { headless?: boolean }) => Promise<BrowserLike>;
+type Launcher = (opts?: { headless?: boolean; userDataDir?: string }) => Promise<BrowserLike>;
 
 export interface SessionManagerOptions {
   launcher: Launcher;
   headless?: boolean;
   idleTimeoutMs?: number;
   timeout?: number;
+  profileRoot?: string;
+  defaultProfile?: string;
 }
 
 export class SessionManager {
   private session: BrowserSession | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private launching: Promise<BrowserSession> | undefined;
   private launcher: Launcher;
   private headless: boolean;
   private idleTimeoutMs: number;
   private timeout: number;
+  private profileRoot: string | undefined;
+  private defaultProfile: string;
   private consoleMessages: Array<{ type: string; text: string }> = [];
 
   constructor(opts: SessionManagerOptions) {
@@ -58,13 +78,37 @@ export class SessionManager {
     this.headless = opts.headless ?? true;
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60 * 1000;
     this.timeout = opts.timeout ?? 30000;
+    this.profileRoot = opts.profileRoot ? resolve(opts.profileRoot) : undefined;
+    this.defaultProfile = opts.defaultProfile ?? "default";
   }
 
-  async launch(): Promise<BrowserSession> {
-    if (this.session) return this.session;
+  async launch(opts: { profile?: string } = {}): Promise<BrowserSession> {
+    const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
+    if (this.session?.profile === profile) return this.session;
+    if (this.launching) return this.launching;
 
-    const browser = await this.launcher({ headless: this.headless });
-    const page = await browser.newPage();
+    this.launching = this.openSession(profile).finally(() => {
+      this.launching = undefined;
+    });
+
+    return this.launching;
+  }
+
+  private async openSession(profile: string): Promise<BrowserSession> {
+    if (this.session) {
+      await this.close();
+    }
+
+    const profilePath = this.profileRoot ? join(this.profileRoot, profile) : undefined;
+    if (profilePath) {
+      await mkdir(profilePath, { recursive: true, mode: 0o700 });
+    }
+
+    const browser = await this.launcher({
+      headless: this.headless,
+      ...(profilePath ? { userDataDir: profilePath } : {}),
+    });
+    const page = this.getInitialPage(browser) ?? await browser.newPage();
     page.setDefaultTimeout(this.timeout);
 
     this.consoleMessages = [];
@@ -77,9 +121,11 @@ export class SessionManager {
     });
 
     const session: BrowserSession = {
-      id: `session_${Date.now()}`,
+      id: `session_${randomUUID()}`,
       browser,
       page,
+      profile,
+      ...(profilePath ? { profilePath } : {}),
       createdAt: Date.now(),
       lastActivity: Date.now(),
     };
@@ -87,6 +133,14 @@ export class SessionManager {
     this.session = session;
     this.resetIdleTimer();
     return session;
+  }
+
+  private getInitialPage(browser: BrowserLike): PageLike | undefined {
+    for (const context of browser.contexts()) {
+      const page = context.pages()[0];
+      if (page) return page;
+    }
+    return undefined;
   }
 
   getActive(): BrowserSession | undefined {

@@ -648,10 +648,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               'content-type': 'application/json',
             },
             body,
-            signal: AbortSignal.timeout(10_000),
           };
           if (deps.fetchDispatcher) fetchOpts.dispatcher = deps.fetchDispatcher;
-          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, fetchOpts as RequestInit);
+          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, {
+            ...fetchOpts,
+            signal: AbortSignal.timeout(10_000),
+          } as RequestInit);
           if (res.ok) {
             results.push({ machineId: machine.machineId, handle: machine.handle, status: 'triggered' });
             triggered++;

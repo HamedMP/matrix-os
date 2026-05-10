@@ -41,10 +41,16 @@ const IPC_TOOL_NAMES = [
 ];
 
 const BROWSER_TOOL_NAMES = [
-  "mcp__matrix-os-browser__browse_web",
+  "mcp__matrix-os-browser__browser",
 ];
 
-function loadBrowserConfig(homePath: string): { enabled: boolean; headless: boolean; timeout: number } | null {
+function loadBrowserConfig(homePath: string): {
+  enabled: boolean;
+  headless: boolean;
+  timeout: number;
+  idleTimeout: number;
+  defaultProfile: string;
+} | null {
   try {
     const configPath = join(homePath, "system", "config.json");
     if (!existsSync(configPath)) return null;
@@ -54,6 +60,8 @@ function loadBrowserConfig(homePath: string): { enabled: boolean; headless: bool
       enabled: true,
       headless: config.browser.headless ?? true,
       timeout: config.browser.timeout ?? 30000,
+      idleTimeout: config.browser.idleTimeout ?? 300000,
+      defaultProfile: config.browser.defaultProfile ?? "default",
     };
   } catch (err: unknown) {
     console.warn("[kernel-options] Could not load browser config:", err instanceof Error ? err.message : String(err));
@@ -61,7 +69,10 @@ function loadBrowserConfig(homePath: string): { enabled: boolean; headless: bool
   }
 }
 
-function tryCreateBrowserServer(homePath: string, browserConfig: { headless: boolean; timeout: number }) {
+function tryCreateBrowserServer(
+  homePath: string,
+  browserConfig: { headless: boolean; timeout: number; idleTimeout: number; defaultProfile: string },
+) {
   try {
     const { createBrowserMcpServer } = require("@matrix-os/mcp-browser/server");
     return createBrowserMcpServer({ homePath, ...browserConfig });

@@ -7,14 +7,25 @@ export interface BrowserServerConfig {
   headless?: boolean;
   timeout?: number;
   idleTimeout?: number;
+  defaultProfile?: string;
 }
 
 export function createBrowserMcpServer(config: BrowserServerConfig) {
   async function getLauncher() {
     try {
       const pw = await import("playwright");
-      return (opts?: { headless?: boolean }) =>
-        pw.chromium.launch({ headless: opts?.headless ?? config.headless ?? true });
+      return async (opts?: { headless?: boolean; userDataDir?: string }) => {
+        const headless = opts?.headless ?? config.headless ?? true;
+        if (opts?.userDataDir) {
+          const context = await pw.chromium.launchPersistentContext(opts.userDataDir, { headless });
+          return {
+            newPage: () => context.newPage(),
+            close: () => context.close(),
+            contexts: () => [context],
+          };
+        }
+        return pw.chromium.launch({ headless });
+      };
     } catch (err: unknown) {
       console.warn("[mcp-browser] Playwright launcher unavailable:", err instanceof Error ? err.message : String(err));
       return null;
@@ -27,7 +38,7 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
     if (browserTool) return browserTool;
     const launcher = await getLauncher();
     if (!launcher) {
-      throw new Error("Browser not available. Install Playwright: pnpm --filter mcp-browser exec playwright install chromium");
+      throw new Error("Browser is not available. Install Playwright to enable browser automation.");
     }
     browserTool = createBrowserTool({
       homePath: config.homePath,
@@ -35,6 +46,7 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
       headless: config.headless,
       idleTimeoutMs: config.idleTimeout ?? 300_000,
       timeout: config.timeout ?? 30_000,
+      defaultProfile: config.defaultProfile ?? "default",
     });
     return browserTool;
   }
@@ -63,7 +75,8 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
           expression: z.string().optional().describe("JavaScript expression for evaluate"),
           timeout: z.number().optional().describe("Wait timeout in ms (default: 30000)"),
           full_page: z.boolean().optional().describe("Full page screenshot (default: true)"),
-          path: z.string().optional().describe("Custom save path for screenshot/pdf"),
+          path: z.string().optional().describe("Relative save path under data/screenshots for screenshot/pdf"),
+          profile: z.string().optional().describe("Persistent browser profile name (default: default)"),
         },
         async (input) => {
           try {
@@ -80,6 +93,7 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
               timeout: input.timeout,
               fullPage: input.full_page,
               path: input.path,
+              profile: input.profile,
             });
 
             const parts: string[] = [];
@@ -96,10 +110,11 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
               }],
             };
           } catch (e) {
+            console.warn("[mcp-browser] Browser tool failed:", e instanceof Error ? e.message : String(e));
             return {
               content: [{
                 type: "text" as const,
-                text: `Browser error: ${e instanceof Error ? e.message : String(e)}`,
+                text: "Browser error: action failed",
               }],
             };
           }

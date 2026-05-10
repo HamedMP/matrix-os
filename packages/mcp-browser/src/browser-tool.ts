@@ -1,9 +1,17 @@
-import { mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { SessionManager, type BrowserLike } from "./session-manager.js";
+import { dirname, join } from "node:path";
+import { SessionManager, type BrowserLike, type PageLike } from "./session-manager.js";
 import { formatAccessibilityTree, type AXNode } from "./role-snapshot.js";
-import { wrapExternalContent } from "@matrix-os/kernel/security/external-content";
+import { wrapBrowserExternalContent } from "./external-content.js";
+import {
+  assertSafeBrowserUrl,
+  isBrowserInputError,
+  resolveBrowserArtifactPath,
+  type ResolveHostname,
+} from "./security.js";
+
+const REQUEST_GUARD_INSTALLED = Symbol("matrixBrowserRequestGuardInstalled");
 
 export type BrowserAction =
   | "launch"
@@ -37,6 +45,7 @@ export interface BrowserToolInput {
   timeout?: number;
   fullPage?: boolean;
   path?: string;
+  profile?: string;
 }
 
 export interface BrowserToolResult {
@@ -57,13 +66,12 @@ export interface BrowserToolOptions {
   headless?: boolean;
   idleTimeoutMs?: number;
   timeout?: number;
+  defaultProfile?: string;
+  resolveHostname?: ResolveHostname;
 }
 
 function wrapBrowserContent(content: string): string {
-  return wrapExternalContent(content, {
-    source: "browser",
-    includeWarning: true,
-  });
+  return wrapBrowserExternalContent(content);
 }
 
 export function createBrowserTool(opts: BrowserToolOptions) {
@@ -72,15 +80,33 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     headless: opts.headless ?? true,
     idleTimeoutMs: opts.idleTimeoutMs ?? 300_000,
     timeout: opts.timeout ?? 30_000,
+    profileRoot: join(opts.homePath, "data", "browser-profiles"),
+    defaultProfile: opts.defaultProfile ?? "default",
   });
+  async function installRequestGuard(page: PageLike): Promise<void> {
+    const guardedPage = page as PageLike & { [REQUEST_GUARD_INSTALLED]?: boolean };
+    if (!page.route || guardedPage[REQUEST_GUARD_INSTALLED]) return;
+    await page.route("**/*", async (route) => {
+      try {
+        await assertSafeBrowserUrl(route.request().url(), { resolveHostname: opts.resolveHostname });
+        await route.continue();
+      } catch (error) {
+        console.warn(
+          "[mcp-browser] Blocked browser request:",
+          error instanceof Error ? error.message : "unsafe request",
+        );
+        await route.abort("blockedbyclient");
+      }
+    });
+    guardedPage[REQUEST_GUARD_INSTALLED] = true;
+  }
 
-  const screenshotDir = join(opts.homePath, "data", "screenshots");
-
-  async function ensureSession() {
+  async function ensureSession(profile?: string) {
     let session = manager.getActive();
-    if (!session) {
-      session = await manager.launch();
+    if (!session || (profile && session.profile !== profile)) {
+      session = await manager.launch({ profile });
     }
+    await installRequestGuard(session.page);
     manager.touch();
     return session;
   }
@@ -91,7 +117,8 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     try {
       switch (action) {
         case "launch": {
-          await manager.launch();
+          const session = await manager.launch({ profile: input.profile });
+          await installRequestGuard(session.page);
           return { action, success: true, content: "Browser session started" };
         }
 
@@ -109,7 +136,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           return {
             action,
             success: true,
-            content: `Browser: active\nURL: ${page.url()}\nSession: ${session.id}\nUptime: ${Math.round((Date.now() - session.createdAt) / 1000)}s`,
+            content: `Browser: active\nProfile: ${session.profile ?? "default"}\nURL: ${page.url()}\nSession: ${session.id}\nUptime: ${Math.round((Date.now() - session.createdAt) / 1000)}s`,
           };
         }
 
@@ -117,9 +144,10 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           if (!input.url) {
             return { action, success: false, error: "navigate requires a url" };
           }
-          const session = await ensureSession();
+          const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname: opts.resolveHostname });
+          const session = await ensureSession(input.profile);
           const page = session.page;
-          await page.goto(input.url, { waitUntil: "domcontentloaded" });
+          await page.goto(safeUrl, { waitUntil: "domcontentloaded" });
           const title = await page.title();
           const url = page.url();
 
@@ -136,7 +164,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "snapshot": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
           const tree = await page.accessibility.snapshot() as AXNode | null;
           const snapshot = formatAccessibilityTree(tree);
@@ -150,7 +178,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "click": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
 
           if (input.role && input.name) {
@@ -174,7 +202,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           if (!input.selector || input.text === undefined) {
             return { action, success: false, error: "type requires selector and text" };
           }
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
           await page.fill(input.selector, input.text);
 
@@ -190,7 +218,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           if (!input.selector || !input.value) {
             return { action, success: false, error: "select requires selector and value" };
           }
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           await session.page.selectOption(input.selector, input.value);
 
           const tree = await session.page.accessibility.snapshot() as AXNode | null;
@@ -202,26 +230,26 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "screenshot": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
           const buffer = await page.screenshot({ fullPage: input.fullPage ?? true });
 
-          mkdirSync(screenshotDir, { recursive: true });
           const filename = `${Date.now()}.png`;
-          const filepath = input.path ?? join(screenshotDir, filename);
+          const filepath = resolveBrowserArtifactPath(opts.homePath, filename, input.path);
+          await mkdir(dirname(filepath), { recursive: true, mode: 0o700 });
           await writeFile(filepath, buffer);
 
           return { action, success: true, screenshotPath: filepath };
         }
 
         case "pdf": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
           const buffer = await page.pdf();
 
-          mkdirSync(screenshotDir, { recursive: true });
           const filename = `${Date.now()}.pdf`;
-          const filepath = input.path ?? join(screenshotDir, filename);
+          const filepath = resolveBrowserArtifactPath(opts.homePath, filename, input.path);
+          await mkdir(dirname(filepath), { recursive: true, mode: 0o700 });
           await writeFile(filepath, buffer);
 
           return { action, success: true, screenshotPath: filepath };
@@ -231,7 +259,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           if (!input.expression) {
             return { action, success: false, error: "evaluate requires expression" };
           }
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const result = await session.page.evaluate(input.expression);
           const text = typeof result === "string" ? result : JSON.stringify(result);
           return {
@@ -242,7 +270,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "wait": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
           const timeout = input.timeout ?? 30_000;
 
@@ -255,14 +283,14 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "scroll": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const page = session.page;
           await page.mouse.wheel({ deltaX: 0, deltaY: 500 });
           return { action, success: true, content: "Scrolled down" };
         }
 
         case "tabs": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const ctx = session.page.context();
           const pages = ctx.pages();
           const tabInfo = pages.map((p, i) => `${i}: ${p.url()}`);
@@ -274,23 +302,25 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         }
 
         case "tab_new": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const ctx = session.page.context();
           const newPage = await ctx.newPage();
+          await installRequestGuard(newPage);
           if (input.url) {
-            await newPage.goto(input.url, { waitUntil: "domcontentloaded" });
+            const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname: opts.resolveHostname });
+            await newPage.goto(safeUrl, { waitUntil: "domcontentloaded" });
           }
           return { action, success: true, content: "New tab opened" };
         }
 
         case "tab_close": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           await session.page.close();
           return { action, success: true, content: "Tab closed" };
         }
 
         case "tab_switch": {
-          const session = await ensureSession();
+          const session = await ensureSession(input.profile);
           const ctx = session.page.context();
           const pages = ctx.pages();
           const index = parseInt(input.value ?? "0", 10);
@@ -316,10 +346,19 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           return { action: String(action), success: false, error: `Unknown action: ${action}` };
       }
     } catch (e) {
+      if (isBrowserInputError(e)) {
+        return {
+          action: String(action),
+          success: false,
+          error: e.message,
+        };
+      }
+
+      console.warn("[mcp-browser] Browser action failed:", e instanceof Error ? e.message : String(e));
       return {
         action: String(action),
         success: false,
-        error: e instanceof Error ? e.message : String(e),
+        error: "Browser action failed",
       };
     }
   }
