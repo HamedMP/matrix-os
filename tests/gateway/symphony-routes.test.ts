@@ -116,6 +116,22 @@ describe("Symphony routes", () => {
     expect(runner.start).not.toHaveBeenCalled();
   });
 
+  it("rejects oversized start payloads before invoking the runner", async () => {
+    const runner = {
+      status: vi.fn(),
+      getConfig: vi.fn(),
+      saveConfig: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner });
+
+    const res = await app.request(jsonRequest("/start", { serviceRoot: "x".repeat(20_000) }));
+
+    expect(res.status).toBe(413);
+    expect(runner.start).not.toHaveBeenCalled();
+  });
+
   it("starts with Matrix's Linear ticket filter contract", async () => {
     const onConfigChange = vi.fn();
     const runner = {

@@ -47,6 +47,9 @@ async function parseOptionalJson<T>(c: Context, schema: z.ZodType<T>): Promise<
     try {
       raw = await c.req.json();
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "BodyLimitError") {
+        return { ok: false, status: 413, code: "payload_too_large", message: "Request body is too large" };
+      }
       if (err instanceof SyntaxError) {
         return { ok: false, status: 400, code: "invalid_json", message: "Request body must be valid JSON" };
       }
