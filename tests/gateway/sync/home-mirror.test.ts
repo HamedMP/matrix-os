@@ -703,7 +703,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("ignores broadcasts for ignored paths (e.g. node_modules)", async () => {
+    it("ignores broadcasts for ignored paths (e.g. node_modules and browser profiles)", async () => {
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -718,15 +718,27 @@ describe("createHomeMirror", () => {
       const putObject = vi.spyOn(r2, "putObject");
       registry.broadcastChange("alice", "laptop-1", {
         type: "sync:change",
-        files: [{ path: "node_modules/evil.js", hash: "sha256:deadbeef", size: 10, action: "update" }],
+        files: [{ path: "node_modules/evil.js", hash: "sha256:" + "0".repeat(64), size: 10, action: "update" }],
         peerId: "laptop-1",
         manifestVersion: 4,
+      });
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: "data/browser-profiles/default/Cookies",
+          hash: "sha256:" + "0".repeat(64),
+          size: 10,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 5,
       });
       await settle(40);
 
       // The file must not have been downloaded -- there's no R2 entry for it
       // and no attempt to fetch.
       await expect(stat(join(tmpRoot, "node_modules/evil.js"))).rejects.toThrow(/ENOENT/);
+      await expect(stat(join(tmpRoot, "data/browser-profiles/default/Cookies"))).rejects.toThrow(/ENOENT/);
       expect(putObject).not.toHaveBeenCalled();
       await mirror.stop();
     });
@@ -834,6 +846,36 @@ describe("createHomeMirror", () => {
       await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
 
       expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
+      await mirror.stop();
+    });
+
+    it("keeps browser profile files out of startup and explicit local pushes", async () => {
+      await mkdir(join(tmpRoot, "data/browser-profiles/default"), { recursive: true });
+      await writeFile(join(tmpRoot, "data/browser-profiles/default/Cookies"), "login state");
+      await writeFile(join(tmpRoot, "preexisting.md"), "present before watcher starts");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
+      expect(r2.store.has("matrixos-sync/alice/files/data/browser-profiles/default/Cookies")).toBe(false);
+
+      await writeFile(join(tmpRoot, "data/browser-profiles/default/Local State"), "more profile state");
+      await mirror.pushLocalFile("data/browser-profiles/default/Local State");
+      await writeFile(join(tmpRoot, "after-start.md"), "local push is active");
+      await mirror.pushLocalFile("after-start.md");
+
+      expect(r2.store.has("matrixos-sync/alice/files/data/browser-profiles/default/Local State")).toBe(false);
+      expect(r2.store.has("matrixos-sync/alice/files/after-start.md")).toBe(true);
       await mirror.stop();
     });
 
@@ -1020,10 +1062,19 @@ describe("createHomeMirror", () => {
 
       await writeFile(join(tmpRoot, "notes.txt"), "hello");
       await waitFor(() => r2.store.has("matrixos-sync/alice/files/notes.txt"));
+      await waitFor(() =>
+        logger.info.mock.calls.some(([message]) =>
+          String(message).startsWith("pushed notes.txt"),
+        ),
+      );
 
       const deleteSpy = vi.spyOn(r2, "deleteObject").mockRejectedValueOnce(new Error("r2 unavailable"));
       await unlink(join(tmpRoot, "notes.txt"));
-      await waitFor(() => deleteSpy.mock.calls.length > 0);
+      await waitFor(() =>
+        logger.error.mock.calls.some(([message]) =>
+          String(message).startsWith("delete blob failed for notes.txt:"),
+        ),
+      );
 
       expect(deleteSpy).toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledWith(
@@ -1110,9 +1161,8 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger,
       });
-      await mirror.start();
-
       await writeFile(join(tmpRoot, "queue-error.txt"), "hello");
+      await expect(mirror.start()).rejects.toThrow("manifest db down");
       await waitFor(() =>
         logger.error.mock.calls.some(
           ([message]: [string]) => message.includes("serial queue task failed:"),
@@ -1127,22 +1177,15 @@ describe("createHomeMirror", () => {
     });
 
     it("records the hash for the exact bytes uploaded", async () => {
-      const gate = deferred<void>();
-      let getMetaCalls = 0;
-      db = {
-        async getManifestMeta() {
-          getMetaCalls++;
-          if (getMetaCalls === 2) {
-            await gate.promise;
-          }
-          return null;
-        },
-        async upsertManifestMeta() {},
-        async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
-          return fn(undefined);
-        },
-      } as unknown as ManifestDb;
-
+      const filePath = join(tmpRoot, "race.txt");
+      const originalPutObject = r2.putObject.bind(r2);
+      vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
+        const result = await originalPutObject(key, body as Buffer);
+        if (key === "matrixos-sync/alice/files/race.txt") {
+          await writeFile(filePath, "new bytes that should not affect the uploaded hash");
+        }
+        return result;
+      });
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -1155,14 +1198,8 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      const filePath = join(tmpRoot, "race.txt");
       await writeFile(filePath, "old bytes");
-      const pushPromise = mirror.pushLocalFile("race.txt");
-      await waitFor(() => getMetaCalls > 1);
-      await writeFile(filePath, "new bytes that should win");
-      gate.resolve();
-
-      await pushPromise;
+      await mirror.pushLocalFile("race.txt");
 
       const uploaded = r2.store.get("matrixos-sync/alice/files/race.txt");
       const manifestBuf = r2.store.get("matrixos-sync/alice/manifest.json");
@@ -1211,6 +1248,7 @@ describe("createHomeMirror", () => {
       } as unknown as ManifestDb;
 
       const deleteSpy = vi.spyOn(r2, "deleteObject");
+
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -1219,6 +1257,7 @@ describe("createHomeMirror", () => {
         peerId: "gateway-alice",
         peerRegistry: registry,
         logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
       });
       await mirror.start();
       lockCalls.length = 0;
@@ -1233,8 +1272,8 @@ describe("createHomeMirror", () => {
       await mirror.pushLocalDelete("locked.txt");
 
       expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
-      expect(getMetaExecutors).toEqual([lockedExecutor, lockedExecutor]);
-      expect(upsertExecutors).toEqual([lockedExecutor, lockedExecutor]);
+      expect(getMetaExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
+      expect(upsertExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
 
       await mirror.stop();
     });

@@ -308,6 +308,12 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.74
         version: 0.2.79(zod@4.3.6)
+      '@matrix-os/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@matrix-os/mcp-browser':
+        specifier: workspace:*
+        version: link:../mcp-browser
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0

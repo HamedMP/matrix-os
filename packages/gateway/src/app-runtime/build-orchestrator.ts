@@ -24,6 +24,7 @@ interface BuildOrchestratorOptions {
 }
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
+const BUILD_LOG_WRITE_TIMEOUT_MS = 5_000;
 
 export class BuildOrchestrator {
   private readonly concurrency: number;
@@ -194,7 +195,9 @@ export class BuildOrchestrator {
 
       const writeBuildLog = async (output: string): Promise<void> => {
         try {
-          await writeFile(logPath, output.slice(0, MAX_LOG_SIZE));
+          await writeFile(logPath, output.slice(0, MAX_LOG_SIZE), {
+            signal: AbortSignal.timeout(BUILD_LOG_WRITE_TIMEOUT_MS),
+          });
         } catch (writeErr: unknown) {
           console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
         }
@@ -207,7 +210,7 @@ export class BuildOrchestrator {
         void writeBuildLog(output).finally(() => resolve(result));
       };
 
-      child.on("error", (err) => {
+      child.on("error", () => {
         const isAbort = ac.signal.aborted;
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
@@ -225,6 +228,19 @@ export class BuildOrchestrator {
       child.on("close", (code) => {
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
+
+        if (ac.signal.aborted) {
+          finish({
+            ok: false,
+            error: new BuildError(
+              "timeout",
+              stage,
+              null,
+              `Build timed out after ${timeoutMs}ms`,
+            ),
+          }, output);
+          return;
+        }
 
         if (code !== 0) {
           finish({

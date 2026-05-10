@@ -61,7 +61,8 @@ interface BrowserToolInput {
   expression?: string;       // for evaluate (JS)
   timeout?: number;          // wait timeout (default: 30s)
   fullPage?: boolean;        // for screenshot (default: true)
-  path?: string;             // save path for screenshot/pdf
+  path?: string;             // relative save path under ~/data/screenshots/
+  profile?: string;          // persistent browser profile (default: default)
 }
 
 interface BrowserToolResult {
@@ -123,6 +124,8 @@ class SessionManager {
 
 - All browser output (snapshots, console, page text) wrapped with `wrapExternalContent({ source: "browser" })` + warning
 - SSRF guard on navigate URLs (block internal IPs, metadata endpoints)
+- Page and tab network requests are routed through the same guard before continuing
+- Hostname navigation uses DNS preflight before browser launch; this is not DNS pinning, so DNS rebinding remains a documented residual risk until browser traffic can be pinned through a dispatcher
 - No `file://` or `data:` URI navigation
 - Page JavaScript sandboxed (Playwright's default isolation)
 - Screenshots saved to controlled path only (`~/data/screenshots/`)
