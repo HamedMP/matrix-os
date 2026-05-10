@@ -254,19 +254,34 @@ const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
 
+export function buildAllowedOrigins(options: {
+  shellOrigin?: string;
+  proxyOrigin?: string;
+  symphonyPort?: number;
+}): string[] {
+  return Array.from(new Set(
+    [
+      options.shellOrigin,
+      options.proxyOrigin,
+      "http://localhost:3000",
+      "http://localhost:4001",
+      "http://localhost:4066",
+      options.symphonyPort ? `http://localhost:${options.symphonyPort}` : undefined,
+    ].filter((origin): origin is string => Boolean(origin)),
+  ));
+}
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   let syncReportSent = false;
-  const allowedOrigins = Array.from(new Set(
-    [
-      process.env.SHELL_ORIGIN,
-      process.env.PROXY_ORIGIN,
-      "http://localhost:3000",
-      "http://localhost:4001",
-      "http://localhost:4066",
-    ].filter((origin): origin is string => Boolean(origin)),
-  ));
+  const symphonyRunner = createSymphonyRunner({ homePath });
+  const symphonyConfig = await symphonyRunner.getConfig();
+  const allowedOrigins = buildAllowedOrigins({
+    shellOrigin: process.env.SHELL_ORIGIN,
+    proxyOrigin: process.env.PROXY_ORIGIN,
+    symphonyPort: symphonyConfig.port,
+  });
 
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -297,8 +312,6 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
-  const symphonyRunner = createSymphonyRunner({ homePath });
-
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
     model: config.model,

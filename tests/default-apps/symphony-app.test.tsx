@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/symphony/src/App.js";
 
@@ -48,9 +48,13 @@ function json(body: unknown, init?: ResponseInit): Response {
 
 describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
+  let availableLabels: Array<{ id: string; name: string }> = [];
+  let createdIssues: unknown[] = [];
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
+    availableLabels = [{ id: "label_symphony", name: "symphony" }];
+    createdIssues = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -119,6 +123,13 @@ describe("Symphony app", () => {
         if (body.action === "list_issues") {
           return json({ data: { issues: { nodes: [] } } });
         }
+        if (body.action === "graphql") {
+          return json({ data: { issueLabels: { nodes: availableLabels } } });
+        }
+        if (body.action === "create_issue") {
+          createdIssues.push(body.params);
+          return json({ data: { issueCreate: { success: true } } });
+        }
       }
       return json({});
     }));
@@ -140,5 +151,27 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("Symphony settings could not be saved.")).toBeTruthy());
     expect(global.fetch).not.toHaveBeenCalledWith("/api/bridge/data", expect.objectContaining({ method: "POST" }));
     expect(warnSpy).toHaveBeenCalledWith("[symphony] config save failed:", "runtime_config_failed");
+  });
+
+  it("does not create issues when any required Linear label is missing", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByLabelText("Required labels")).toBeTruthy());
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+      fireEvent.change(screen.getByPlaceholderText("New Linear ticket"), { target: { value: "Follow up" } });
+    });
+    const createButton = screen.getByRole("button", { name: /^Create$/ }) as HTMLButtonElement;
+    await waitFor(() => expect(createButton.disabled).toBe(false));
+
+    await act(async () => {
+      fireEvent.click(createButton);
+    });
+
+    await waitFor(() => expect(screen.getByText("Issue could not be created.")).toBeTruthy());
+    expect(createdIssues).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledWith("[symphony] issue creation failed:", "required_label_missing");
   });
 });

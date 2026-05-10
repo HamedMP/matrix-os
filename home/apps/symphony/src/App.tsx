@@ -479,7 +479,7 @@ function App() {
     setError(null);
     try {
       const labelIds = await fetchRequiredLinearLabelIds(config.teamId, config.requiredLabels);
-      if (config.requiredLabels.length > 0 && labelIds.length === 0) {
+      if (config.requiredLabels.length > 0 && labelIds.length < config.requiredLabels.length) {
         throw new Error("required_label_missing");
       }
       await callService("linear", "create_issue", {
