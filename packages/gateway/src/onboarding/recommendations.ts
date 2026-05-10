@@ -6,7 +6,7 @@ const GMAIL_PAGE_SIZE = 500;
 const GMAIL_DETAIL_CONCURRENCY = 8;
 const GMAIL_SCAN_DEADLINE_MS = 45_000;
 const CALENDAR_EVENT_LIMIT = 50;
-export const DEFAULT_RECOMMENDATION_MODEL = "gemini-3.1-flash";
+export const DEFAULT_RECOMMENDATION_MODEL = "gemini-3-flash-preview";
 
 const CODING_AGENT_IDS = ["claude_code", "codex", "hermes", "openclaw"] as const;
 
@@ -102,7 +102,7 @@ const SERVICE_RULES: ServiceRule[] = [
   {
     id: "notion",
     name: "Notion",
-    aliases: ["notion"],
+    aliases: [],
     domains: ["notion.so", "mail.notion.so"],
     matrixReplacement: "Matrix Notes",
     replacementDescription: "Move lightweight notes, operating docs, and personal dashboards into Matrix apps when collaboration history is not needed.",
@@ -125,7 +125,7 @@ const SERVICE_RULES: ServiceRule[] = [
   {
     id: "linear",
     name: "Linear",
-    aliases: ["linear"],
+    aliases: [],
     domains: ["linear.app"],
     connectService: "linear",
   },
@@ -139,14 +139,14 @@ const SERVICE_RULES: ServiceRule[] = [
   {
     id: "slack",
     name: "Slack",
-    aliases: ["slack"],
+    aliases: [],
     domains: ["slack.com"],
     connectService: "slack",
   },
   {
     id: "discord",
     name: "Discord",
-    aliases: ["discord"],
+    aliases: [],
     domains: ["discord.com", "discordapp.com"],
     connectService: "discord",
   },
@@ -166,13 +166,13 @@ const SERVICE_RULES: ServiceRule[] = [
   {
     id: "zoom",
     name: "Zoom",
-    aliases: ["zoom"],
+    aliases: [],
     domains: ["zoom.us"],
   },
   {
     id: "stripe",
     name: "Stripe",
-    aliases: ["stripe"],
+    aliases: [],
     domains: ["stripe.com"],
   },
 ];
@@ -250,6 +250,10 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function getHeader(headers: Array<{ name: string; value: string }> | undefined, name: string): string | undefined {
   return headers?.find((header) => header.name.toLowerCase() === name)?.value;
 }
@@ -263,7 +267,7 @@ function calendarHaystack(event: CalendarEventSignal): string {
 }
 
 function matchesRule(haystack: string, rule: ServiceRule): boolean {
-  return rule.aliases.some((alias) => haystack.includes(alias)) ||
+  return rule.aliases.some((alias) => new RegExp(`(^|[^a-z0-9])${escapeRegExp(alias)}([^a-z0-9]|$)`).test(haystack)) ||
     rule.domains.some((domain) => haystack.includes(domain));
 }
 

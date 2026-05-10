@@ -16,6 +16,7 @@ import {
   type CalendarEventSignal,
   type RecommendationAiConfig,
   type RecommendationWarning,
+  type PersonalizedOnboardingPlan,
 } from "../onboarding/recommendations.js";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,49 @@ const WebhookBodySchema = z.object({
   email: z.string().optional(),
   scopes: z.array(z.string()).optional(),
 });
+
+type OnboardingRecommendationRouteResponse = PersonalizedOnboardingPlan & {
+  maxEmails: number;
+  analyzedEmailCount: number;
+  analyzedCalendarEventCount: number;
+  connectedServices: string[];
+  warnings: RecommendationWarning[];
+};
+
+const ONBOARDING_RECOMMENDATION_INFLIGHT_LIMIT = 500;
+const ONBOARDING_RECOMMENDATION_INFLIGHT_TTL_MS = 70_000;
+
+const onboardingRecommendationInFlight = new Map<string, {
+  startedAt: number;
+  promise: Promise<OnboardingRecommendationRouteResponse>;
+}>();
+
+function sweepOnboardingRecommendationInFlight(now = Date.now()): void {
+  for (const [key, entry] of onboardingRecommendationInFlight) {
+    if (now - entry.startedAt > ONBOARDING_RECOMMENDATION_INFLIGHT_TTL_MS) {
+      onboardingRecommendationInFlight.delete(key);
+    }
+  }
+  while (onboardingRecommendationInFlight.size > ONBOARDING_RECOMMENDATION_INFLIGHT_LIMIT) {
+    const oldestKey = onboardingRecommendationInFlight.keys().next().value;
+    if (!oldestKey) break;
+    onboardingRecommendationInFlight.delete(oldestKey);
+  }
+}
+
+function onboardingRecommendationInFlightKey(
+  userId: string,
+  request: z.infer<typeof OnboardingRecommendationRequestSchema>,
+): string {
+  return JSON.stringify({
+    userId,
+    includedServices: request.includedServices,
+    excludedServices: request.excludedServices,
+    missingServices: request.missingServices,
+    codingAgents: request.codingAgents,
+    maxEmails: request.maxEmails,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // HMAC verification
@@ -660,81 +704,105 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     const request = parsed.data;
-    const warnings: RecommendationWarning[] = [];
-    const addWarning = (warning: RecommendationWarning) => {
-      if (!warnings.includes(warning)) warnings.push(warning);
-    };
+    sweepOnboardingRecommendationInFlight();
+    const inFlightKey = onboardingRecommendationInFlightKey(uid, request);
+    const existing = onboardingRecommendationInFlight.get(inFlightKey);
+    if (existing) {
+      return c.json(await existing.promise);
+    }
 
-    const connections = await db.listConnectedServices(uid);
-    const activeConnections = connections.filter((connection) => connection.status === "active");
-    const connectedServices = activeConnections.map((connection) => connection.service);
-    const externalId = activeConnections.length > 0 ? await getOrCreateExternalId(uid) : uid;
-    const gmail = activeConnections.find((connection) => connection.service === "gmail");
-    const calendar = activeConnections.find((connection) => connection.service === "google_calendar");
+    const responsePromise = (async (): Promise<OnboardingRecommendationRouteResponse> => {
+      const warnings: RecommendationWarning[] = [];
+      const addWarning = (warning: RecommendationWarning) => {
+        if (!warnings.includes(warning)) warnings.push(warning);
+      };
 
-    let emails: EmailSignal[] = [];
-    let calendarEvents: CalendarEventSignal[] = [];
+      const connections = await db.listConnectedServices(uid);
+      const activeConnections = connections.filter((connection) => connection.status === "active");
+      const connectedServices = activeConnections.map((connection) => connection.service);
+      const externalId = activeConnections.length > 0 ? await getOrCreateExternalId(uid) : uid;
+      const gmail = activeConnections.find((connection) => connection.service === "gmail");
+      const calendar = activeConnections.find((connection) => connection.service === "google_calendar");
 
-    if (gmail) {
-      try {
-        emails = await fetchRecentGmailEmailSignals({
-          pipedream,
-          externalUserId: externalId,
-          accountId: gmail.pipedream_account_id,
-          maxEmails: request.maxEmails,
-        });
-      } catch (err) {
-        console.error("[onboarding-recommendations] Gmail analysis failed:", err instanceof Error ? err.message : String(err));
-        addWarning("email_unavailable");
+      let emails: EmailSignal[] = [];
+      let calendarEvents: CalendarEventSignal[] = [];
+
+      if (gmail) {
+        try {
+          emails = await fetchRecentGmailEmailSignals({
+            pipedream,
+            externalUserId: externalId,
+            accountId: gmail.pipedream_account_id,
+            maxEmails: request.maxEmails,
+          });
+        } catch (err) {
+          console.error("[onboarding-recommendations] Gmail analysis failed:", err instanceof Error ? err.message : String(err));
+          addWarning("email_unavailable");
+        }
+      }
+
+      if (calendar) {
+        try {
+          calendarEvents = await fetchUpcomingCalendarSignals({
+            pipedream,
+            externalUserId: externalId,
+            accountId: calendar.pipedream_account_id,
+          });
+        } catch (err) {
+          console.error("[onboarding-recommendations] Calendar analysis failed:", err instanceof Error ? err.message : String(err));
+          addWarning("calendar_unavailable");
+        }
+      }
+
+      const userPreferences = {
+        includedServices: request.includedServices,
+        excludedServices: request.excludedServices,
+        missingServices: request.missingServices,
+        codingAgents: request.codingAgents,
+      };
+      const aiRecommendations = await generateAiRecommendations({
+        emails,
+        calendarEvents,
+        connectedServices,
+        userPreferences,
+        ai: recommendationAi ?? {},
+      });
+      if (!aiRecommendations) {
+        addWarning("ai_unavailable");
+      }
+
+      const plan = buildPersonalizedOnboardingPlan({
+        emails,
+        calendarEvents,
+        connectedServices,
+        userPreferences,
+        aiRecommendations: aiRecommendations ?? [],
+      });
+
+      return {
+        maxEmails: request.maxEmails,
+        analyzedEmailCount: emails.length,
+        analyzedCalendarEventCount: calendarEvents.length,
+        connectedServices,
+        warnings,
+        ...plan,
+      };
+    })();
+
+    onboardingRecommendationInFlight.set(inFlightKey, {
+      startedAt: Date.now(),
+      promise: responsePromise,
+    });
+    sweepOnboardingRecommendationInFlight();
+
+    try {
+      return c.json(await responsePromise);
+    } finally {
+      const current = onboardingRecommendationInFlight.get(inFlightKey);
+      if (current?.promise === responsePromise) {
+        onboardingRecommendationInFlight.delete(inFlightKey);
       }
     }
-
-    if (calendar) {
-      try {
-        calendarEvents = await fetchUpcomingCalendarSignals({
-          pipedream,
-          externalUserId: externalId,
-          accountId: calendar.pipedream_account_id,
-        });
-      } catch (err) {
-        console.error("[onboarding-recommendations] Calendar analysis failed:", err instanceof Error ? err.message : String(err));
-        addWarning("calendar_unavailable");
-      }
-    }
-
-    const userPreferences = {
-      includedServices: request.includedServices,
-      excludedServices: request.excludedServices,
-      missingServices: request.missingServices,
-      codingAgents: request.codingAgents,
-    };
-    const aiRecommendations = await generateAiRecommendations({
-      emails,
-      calendarEvents,
-      connectedServices,
-      userPreferences,
-      ai: recommendationAi ?? {},
-    });
-    if (!aiRecommendations) {
-      addWarning("ai_unavailable");
-    }
-
-    const plan = buildPersonalizedOnboardingPlan({
-      emails,
-      calendarEvents,
-      connectedServices,
-      userPreferences,
-      aiRecommendations: aiRecommendations ?? [],
-    });
-
-    return c.json({
-      maxEmails: request.maxEmails,
-      analyzedEmailCount: emails.length,
-      analyzedCalendarEventCount: calendarEvents.length,
-      connectedServices,
-      warnings,
-      ...plan,
-    });
   });
 
   // -----------------------------------------------------------------------

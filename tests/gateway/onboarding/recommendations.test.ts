@@ -30,6 +30,16 @@ function mockPipedream(overrides?: Partial<PipedreamConnectClient>): PipedreamCo
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const todoistEmail: EmailSignal = {
   id: "msg_todoist",
   from: "Todoist <notifications@todoist.com>",
@@ -140,6 +150,53 @@ describe("personalized onboarding recommendations", () => {
     expect(plan.recommendations).toContainEqual(expect.objectContaining({
       id: "linear-ai-routine",
       serviceId: "linear",
+    }));
+  });
+
+  it("does not detect common English words as services without service domains", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [
+        { id: "msg_slack_word", subject: "Can you take up the slack on this project?" },
+        { id: "msg_notion_word", subject: "I had no notion this was due today" },
+        { id: "msg_stripe_word", subject: "The striped shirt mockup is ready" },
+        { id: "msg_linear_word", subject: "Linear regression course notes" },
+        { id: "msg_discord_word", subject: "There was discord over the decision" },
+      ],
+      calendarEvents: [],
+      connectedServices: ["gmail"],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: [],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [],
+    });
+
+    expect(plan.detectedServices.map((service) => service.id)).not.toEqual(
+      expect.arrayContaining(["slack", "notion", "stripe", "linear", "discord"]),
+    );
+  });
+
+  it("still detects service domains after alias false-positive guards", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [
+        { id: "msg_slack_domain", from: "Slack <notify@slack.com>", subject: "New mention" },
+      ],
+      calendarEvents: [],
+      connectedServices: ["gmail"],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: [],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [],
+    });
+
+    expect(plan.detectedServices).toContainEqual(expect.objectContaining({
+      id: "slack",
+      name: "Slack",
     }));
   });
 
@@ -267,7 +324,7 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
       resolveUserId: async () => userId,
       recommendationAi: {
         apiKey: "gemini-test-key",
-        model: "gemini-3.1-flash",
+        model: "gemini-3-flash-preview",
         fetchFn,
       },
     });
@@ -303,7 +360,7 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     expect(data.detectedServices).toContainEqual(expect.objectContaining({ id: "todoist" }));
     expect(data.recommendations).toContainEqual(expect.objectContaining({ id: "ai-task-routine" }));
     expect(fetchFn).toHaveBeenCalledWith(
-      expect.stringContaining("/models/gemini-3.1-flash:generateContent"),
+      expect.stringContaining("/models/gemini-3-flash-preview:generateContent"),
       expect.objectContaining({
         headers: expect.objectContaining({ "x-goog-api-key": "gemini-test-key" }),
         signal: expect.any(AbortSignal),
@@ -330,5 +387,51 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
       serviceId: "todoist",
       category: "connection",
     }));
+  });
+
+  it("deduplicates concurrent recommendation fan-outs for the same user and request", async () => {
+    const deferredMessage = createDeferred<unknown>();
+    pipedream.proxyGet = vi.fn(async ({ url }: { url: string }) => {
+      if (url.includes("/users/me/messages/")) {
+        return await deferredMessage.promise;
+      }
+      if (url.includes("/users/me/messages")) {
+        return { messages: [{ id: "msg_todoist" }] };
+      }
+      return {};
+    });
+
+    const request = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxEmails: 1000, codingAgents: ["codex"] }),
+    };
+    const first = app.request("/api/integrations/onboarding/recommendations", request);
+    await Promise.resolve();
+    const second = app.request("/api/integrations/onboarding/recommendations", request);
+
+    deferredMessage.resolve({
+      id: "msg_todoist",
+      snippet: "You have tasks due today in Todoist.",
+      payload: {
+        headers: [
+          { name: "From", value: "Todoist <notifications@todoist.com>" },
+          { name: "Subject", value: "Today: Finish onboarding spec" },
+        ],
+      },
+    });
+
+    const [firstRes, secondRes] = await Promise.all([first, second]);
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(await firstRes.json()).toMatchObject(await secondRes.json());
+    const gmailListCalls = vi.mocked(pipedream.proxyGet).mock.calls.filter(([opts]) =>
+      opts.url === "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    );
+    const gmailDetailCalls = vi.mocked(pipedream.proxyGet).mock.calls.filter(([opts]) =>
+      opts.url.includes("/users/me/messages/msg_todoist"),
+    );
+    expect(gmailListCalls).toHaveLength(1);
+    expect(gmailDetailCalls).toHaveLength(1);
   });
 });
