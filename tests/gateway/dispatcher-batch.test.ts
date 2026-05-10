@@ -129,10 +129,8 @@ describe("T404: Dispatcher batch mode", () => {
   });
 
   it("partial failures return mixed results", async () => {
-    let callCount = 0;
-    const spawn = vi.fn<SpawnFn>(async function* (_message, _config) {
-      callCount++;
-      if (callCount === 2) throw new Error("build failed");
+    const spawn = vi.fn<SpawnFn>(async function* (message, _config) {
+      if (message === "app 2") throw new Error("build failed");
       yield resultEvent("s");
     });
 
