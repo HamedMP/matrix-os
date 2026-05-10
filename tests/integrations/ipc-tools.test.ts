@@ -3,6 +3,8 @@ import {
   connectServiceHandler,
   callServiceHandler,
   listAvailableServicesHandler,
+  listConnectedServicesHandler,
+  syncServicesHandler,
   type GatewayFetcher,
 } from "../../packages/kernel/src/tools/integrations.js";
 
@@ -311,5 +313,47 @@ describe("call_service handler", () => {
 
     const [, opts] = (fetcher as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(opts.signal).toBeDefined();
+  });
+});
+
+describe("integration handler error responses", () => {
+  it("keeps HTTP status details when non-catalog error responses are not JSON", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const jsonReject = new SyntaxError("Unexpected token <");
+      const cases = [
+        {
+          run: () => connectServiceHandler({ service: "gmail" }, mockFetcher({ status: 502, jsonReject })),
+          expected: "Failed to connect gmail (status 502)",
+        },
+        {
+          run: () => listConnectedServicesHandler(mockFetcher({ status: 503, jsonReject })),
+          expected: "Failed to list connected services (status 503)",
+        },
+        {
+          run: () => syncServicesHandler(mockFetcher({ status: 504, jsonReject })),
+          expected: "Sync failed (status 504)",
+        },
+        {
+          run: () => callServiceHandler(
+            { service: "gmail", action: "list_messages" },
+            mockFetcher({ status: 502, jsonReject }),
+          ),
+          expected: "Call to gmail/list_messages failed (status 502)",
+        },
+      ];
+
+      for (const testCase of cases) {
+        const result = await testCase.run();
+        expect(result.content[0].text).toBe(testCase.expected);
+      }
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/failed to parse .* error response:/),
+        "Unexpected token <",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

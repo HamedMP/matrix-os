@@ -48,6 +48,25 @@ function defaultFetcher(): GatewayFetcher {
   return fetch as unknown as GatewayFetcher;
 }
 
+async function errorTextFromResponse(
+  res: GatewayFetchResponse,
+  fallback: string,
+  context: string,
+): Promise<string> {
+  try {
+    const data = (await res.json()) as { error?: unknown };
+    if (typeof data.error === "string" && data.error.length > 0) {
+      return data.error;
+    }
+  } catch (parseErr: unknown) {
+    console.warn(
+      `[integrations] failed to parse ${context} error response:`,
+      parseErr instanceof Error ? parseErr.message : parseErr,
+    );
+  }
+  return fallback;
+}
+
 // ---------------------------------------------------------------------------
 // list_available_services
 // ---------------------------------------------------------------------------
@@ -62,17 +81,11 @@ export async function listAvailableServicesHandler(
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!res.ok) {
-      let errorMessage: string | undefined;
-      try {
-        const data = (await res.json()) as { error?: string };
-        errorMessage = data.error;
-      } catch (parseErr: unknown) {
-        console.warn(
-          "[integrations] failed to parse list_available_services error response:",
-          parseErr instanceof Error ? parseErr.message : parseErr,
-        );
-      }
-      return textResult(errorMessage ?? `Failed to list available services (status ${res.status})`);
+      return textResult(await errorTextFromResponse(
+        res,
+        `Failed to list available services (status ${res.status})`,
+        "list_available_services",
+      ));
     }
 
     const services = (await res.json()) as AvailableService[];
@@ -115,8 +128,11 @@ export async function connectServiceHandler(
     });
 
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Failed to connect ${input.service} (status ${res.status})`);
+      return textResult(await errorTextFromResponse(
+        res,
+        `Failed to connect ${input.service} (status ${res.status})`,
+        "connect_service",
+      ));
     }
 
     const data = (await res.json()) as { url: string; service: string };
@@ -143,8 +159,11 @@ export async function listConnectedServicesHandler(
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Failed to list connected services (status ${res.status})`);
+      return textResult(await errorTextFromResponse(
+        res,
+        `Failed to list connected services (status ${res.status})`,
+        "list_connected_services",
+      ));
     }
     const services = (await res.json()) as Array<{
       id: string;
@@ -184,8 +203,11 @@ export async function syncServicesHandler(
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Sync failed (status ${res.status})`);
+      return textResult(await errorTextFromResponse(
+        res,
+        `Sync failed (status ${res.status})`,
+        "sync_services",
+      ));
     }
     const data = (await res.json()) as {
       synced: number;
@@ -243,8 +265,11 @@ export async function callServiceHandler(
     });
 
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Call to ${input.service}/${input.action} failed (status ${res.status})`);
+      return textResult(await errorTextFromResponse(
+        res,
+        `Call to ${input.service}/${input.action} failed (status ${res.status})`,
+        "call_service",
+      ));
     }
 
     const data = await res.json();

@@ -87,8 +87,8 @@ sync_bundled_home_assets() {
         continue
       fi
       if is_known_bundled_skill_hash "$skill_name" "$dst_hash"; then
-        rm -rf "$dst_skill"
-        cp -a "$src_skill" "$dst_skill"
+        cp -an "$src_skill/." "$dst_skill/"
+        cp "$src_skill/SKILL.md" "$dst_skill/SKILL.md"
       fi
     done
   fi
