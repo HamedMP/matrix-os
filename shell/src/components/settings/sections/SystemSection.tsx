@@ -107,15 +107,26 @@ export function SystemSection() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ channel: updateStatus?.channel ?? info.release?.channel ?? "stable" }),
+        signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setUpgradeError((data as Record<string, string>).error ?? "Upgrade failed");
+        let message = "Upgrade failed";
+        try {
+          const data = await res.json();
+          if (data && typeof data === "object") {
+            const error = (data as { error?: unknown }).error;
+            if (typeof error === "string" && error.length <= 120) message = error;
+          }
+        } catch (err: unknown) {
+          console.warn("[system-settings] failed to parse upgrade error:", err instanceof Error ? err.message : String(err));
+        }
+        setUpgradeError(message);
         setUpgrading(false);
         return;
       }
-    } catch {
-      // Connection drop is expected -- container is being replaced
+    } catch (err: unknown) {
+      // Connection drop is expected while the container is being replaced.
+      console.warn("[system-settings] upgrade request interrupted:", err instanceof Error ? err.message : String(err));
     }
 
     // Container will restart; reload after 15s
