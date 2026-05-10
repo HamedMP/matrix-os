@@ -51,12 +51,14 @@ describe("Symphony app", () => {
   let availableLabels: Array<{ id: string; name: string }> = [];
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
+  let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
     availableLabels = [{ id: "label_symphony", name: "symphony" }];
     createdIssues = [];
     listedIssues = [];
+    listedIssuePages = null;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -109,7 +111,9 @@ describe("Symphony app", () => {
         return json([{ id: "conn_linear", service: "linear", account_label: "Linear", status: "connected" }]);
       }
       if (url === "/api/integrations/call" && init?.method === "POST") {
-        const body = typeof init.body === "string" ? JSON.parse(init.body) as { action?: string } : {};
+        const body = typeof init.body === "string"
+          ? JSON.parse(init.body) as { action?: string; params?: { after?: string } }
+          : {};
         if (body.action === "list_teams") {
           return json({ data: { teams: { nodes: [
             { id: "team_mat", key: "MAT", name: "Matrix" },
@@ -123,7 +127,9 @@ describe("Symphony app", () => {
           return json({ data: { workflowStates: { nodes: [] } } });
         }
         if (body.action === "list_issues") {
-          return json({ data: { issues: { nodes: listedIssues } } });
+          const after = body.params?.after ?? "";
+          const page = listedIssuePages?.[after] ?? { nodes: listedIssues, pageInfo: { hasNextPage: false, endCursor: null } };
+          return json({ data: { issues: page } });
         }
         if (body.action === "graphql") {
           return json({ data: { issueLabels: { nodes: availableLabels } } });
@@ -212,5 +218,49 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect(screen.queryByText("Only first label")).toBeNull());
     expect(screen.getByText("All required labels")).toBeTruthy();
+  });
+
+  it("fetches additional issue pages before applying every required label", async () => {
+    listedIssuePages = {
+      "": {
+        nodes: Array.from({ length: 50 }, (_, index) => ({
+          id: `issue_first_${index}`,
+          identifier: `MAT-${index + 1}`,
+          title: index === 0 ? "First page only" : `First page ${index}`,
+          url: `https://linear.app/matrix-os/issue/MAT-${index + 1}`,
+          state: { id: "state_todo", name: "Todo" },
+          labels: { nodes: [{ id: "label_symphony", name: "symphony" }] },
+        })),
+        pageInfo: { hasNextPage: true, endCursor: "cursor_1" },
+      },
+      cursor_1: {
+        nodes: [{
+          id: "issue_second",
+          identifier: "MAT-99",
+          title: "Second page full match",
+          url: "https://linear.app/matrix-os/issue/MAT-99",
+          state: { id: "state_todo", name: "Todo" },
+          labels: { nodes: [
+            { id: "label_symphony", name: "symphony" },
+            { id: "label_urgent", name: "urgent" },
+          ] },
+        }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    };
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("First page only")).toBeTruthy());
+    expect(screen.queryByText("Second page full match")).toBeNull();
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Sync Linear/ }));
+    });
+
+    await waitFor(() => expect(screen.getByText("Second page full match")).toBeTruthy());
+    expect(screen.queryByText("First page only")).toBeNull();
   });
 });

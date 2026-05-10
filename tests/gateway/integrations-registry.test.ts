@@ -1,0 +1,43 @@
+import { describe, expect, it } from "vitest";
+import { getAction } from "../../packages/gateway/src/integrations/registry.js";
+import { validateActionParams } from "../../packages/gateway/src/integrations/routes.js";
+
+describe("integrations registry", () => {
+  it("passes Linear label IDs as an array", () => {
+    const action = getAction("linear", "create_issue");
+    expect(action).toBeDefined();
+    const params = {
+      teamId: "team_mat",
+      title: "Follow up",
+      labelIds: ["label_symphony", "label_urgent"],
+    };
+
+    expect(validateActionParams(action!, params)).toEqual({ valid: true });
+    const body = action!.directApi?.mapBody?.(params);
+
+    expect(body).toMatchObject({
+      variables: {
+        input: {
+          teamId: "team_mat",
+          title: "Follow up",
+          labelIds: ["label_symphony", "label_urgent"],
+        },
+      },
+    });
+  });
+
+  it("rejects comma-delimited Linear label IDs", () => {
+    const action = getAction("linear", "create_issue");
+    expect(action).toBeDefined();
+
+    expect(validateActionParams(action!, {
+      teamId: "team_mat",
+      title: "Follow up",
+      labelIds: "label_symphony,label_urgent",
+    })).toEqual({
+      valid: false,
+      missing: [],
+      typeErrors: ["labelIds: expected array, got string"],
+    });
+  });
+});

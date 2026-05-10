@@ -37,6 +37,10 @@ const APP_ID = "symphony";
 const CONFIG_KEY = "config";
 const FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_RUNNER_PORT = 4066;
+const LABEL_PAGE_SIZE = 250;
+const ISSUE_PAGE_SIZE = 100;
+const ISSUE_TARGET_COUNT = 50;
+const ISSUE_MAX_PAGES = 5;
 const SYMPHONY_STATES = [
   { name: "Todo", color: "#6b7280", type: "unstarted" },
   { name: "In Progress", color: "#2563eb", type: "started" },
@@ -295,7 +299,7 @@ async function fetchRequiredLinearLabelIds(teamId: string, labelNames: string[])
         }
       }
     `,
-    variables: { teamId, first: 100 },
+    variables: { teamId, first: LABEL_PAGE_SIZE },
   });
   const nodes = graphData<{ issueLabels?: { nodes?: Array<{ id: string; name: string }> } }>(payload).issueLabels?.nodes ?? [];
   const required = new Set(names.map((label) => label.toLowerCase()));
@@ -307,6 +311,31 @@ function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
   if (required.length === 0) return true;
   const issueLabels = new Set((issue.labels?.nodes ?? []).map((label) => label.name.toLowerCase()));
   return required.every((label) => issueLabels.has(label));
+}
+
+async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, projectId: string, selectedState: string): Promise<Issue[]> {
+  const collected: Issue[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT; page += 1) {
+    const issuePayload = await callService<unknown>("linear", "list_issues", {
+      teamId,
+      projectId: projectId || undefined,
+      state: selectedState || undefined,
+      labelName: baseConfig.requiredLabels[0] || REQUIRED_LABELS[0],
+      first: ISSUE_PAGE_SIZE,
+      ...(after ? { after } : {}),
+    });
+    const issueData = graphData<{
+      issues?: {
+        nodes?: Issue[];
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(issuePayload).issues;
+    collected.push(...(issueData?.nodes ?? []).filter((issue) => issueHasRequiredLabels(issue, baseConfig.requiredLabels)));
+    if (!issueData?.pageInfo?.hasNextPage || !issueData.pageInfo.endCursor) break;
+    after = issueData.pageInfo.endCursor;
+  }
+  return collected.slice(0, ISSUE_TARGET_COUNT);
 }
 
 function stateBadgeVariant(stateName: string | undefined): "secondary" | "success" | "warning" | "outline" {
@@ -406,19 +435,12 @@ function App() {
       setProjects(nextProjects);
       setConfig(nextConfig);
       if (teamId) {
-        const [statePayload, issuePayload] = await Promise.all([
+        const [statePayload, nextIssues] = await Promise.all([
           callService<unknown>("linear", "list_workflow_states", { teamId, first: 100 }),
-          callService<unknown>("linear", "list_issues", {
-            teamId,
-            projectId: projectId || undefined,
-            state: selectedState || undefined,
-            labelName: baseConfig.requiredLabels[0] || REQUIRED_LABELS[0],
-            first: 50,
-          }),
+          fetchLinearIssues(baseConfig, teamId, projectId, selectedState),
         ]);
         setStates(graphData<{ workflowStates?: { nodes?: WorkflowState[] } }>(statePayload).workflowStates?.nodes ?? []);
-        const nextIssues = graphData<{ issues?: { nodes?: Issue[] } }>(issuePayload).issues?.nodes ?? [];
-        setIssues(nextIssues.filter((issue) => issueHasRequiredLabels(issue, baseConfig.requiredLabels)));
+        setIssues(nextIssues);
       }
     } catch (err: unknown) {
       console.warn("[symphony] Linear refresh failed:", err instanceof Error ? err.message : String(err));
@@ -495,7 +517,7 @@ function App() {
         projectId: config.projectId || undefined,
         title: newIssueTitle.trim(),
         description: newIssueDescription.trim() || undefined,
-        labelIds: labelIds.join(","),
+        labelIds,
       });
       setNewIssueTitle("");
       setNewIssueDescription("");

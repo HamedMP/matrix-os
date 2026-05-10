@@ -1,5 +1,5 @@
 export interface ActionParam {
-  type: "string" | "number" | "boolean" | "object";
+  type: "string" | "number" | "boolean" | "object" | "array";
   description?: string;
   required?: boolean;
 }

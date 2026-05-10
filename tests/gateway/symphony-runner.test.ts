@@ -235,6 +235,30 @@ describe("Symphony runner", () => {
     expect(status.lastExitCode).toBe(0);
   });
 
+  it("reports the launch-time config while the runner is still running", async () => {
+    const child = new FakeProcess();
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess: vi.fn(() => child as never),
+    });
+    await runner.start({ serviceRoot, workflowPath, binPath, port: 4077 });
+    await runner.saveConfig({ port: 4088 });
+
+    await expect(runner.status()).resolves.toMatchObject({
+      running: true,
+      dashboardUrl: "http://127.0.0.1:4077",
+      config: { port: 4077 },
+    });
+
+    await runner.stop();
+    await expect(runner.status()).resolves.toMatchObject({
+      running: false,
+      dashboardUrl: "http://127.0.0.1:4088",
+      config: { port: 4088 },
+    });
+  });
+
   it("waits for an in-flight start before stopping", async () => {
     const child = new FakeProcess();
     const runner = createSymphonyRunner({

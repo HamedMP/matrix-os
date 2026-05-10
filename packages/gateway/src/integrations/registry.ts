@@ -73,6 +73,12 @@ function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function stringArrayOrUndefined(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
 function linearGraphqlBody(query: string, variables?: Record<string, unknown>): Record<string, unknown> {
   return variables ? { query, variables } : { query };
 }
@@ -556,6 +562,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           projectId: { type: "string" },
           state: { type: "string" },
           labelName: { type: "string" },
+          after: { type: "string" },
         },
         directApi: {
           method: "POST",
@@ -565,10 +572,12 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             const projectId = stringOrUndefined(p.projectId);
             const state = stringOrUndefined(p.state);
             const labelName = stringOrUndefined(p.labelName);
+            const after = stringOrUndefined(p.after);
             return linearGraphqlBody(`
-              query MatrixLinearIssues($first: Int!, $teamId: String, $projectId: String, $state: String, $labelName: String) {
+              query MatrixLinearIssues($first: Int!, $after: String, $teamId: String, $projectId: String, $state: String, $labelName: String) {
                 issues(
                   first: $first
+                  after: $after
                   filter: {
                     team: { id: { eq: $teamId } }
                     project: { id: { eq: $projectId } }
@@ -591,10 +600,12 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
                     labels { nodes { id name } }
                     project { id name slugId }
                   }
+                  pageInfo { hasNextPage endCursor }
                 }
               }
             `, {
               first: cappedPositiveInt(p.first, 50, 100),
+              after: after ?? null,
               teamId: teamId ?? null,
               projectId: projectId ?? null,
               state: state ?? null,
@@ -613,13 +624,13 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
           stateId: { type: "string" },
           assigneeId: { type: "string" },
           priority: { type: "number" },
-          labelIds: { type: "string" },
+          labelIds: { type: "array" },
         },
         directApi: {
           method: "POST",
           url: "https://api.linear.app/graphql",
           mapBody: (p) => {
-            const labelIds = stringOrUndefined(p.labelIds)?.split(",").map((labelId) => labelId.trim()).filter(Boolean);
+            const labelIds = stringArrayOrUndefined(p.labelIds);
             return linearGraphqlBody(`
               mutation MatrixLinearCreateIssue($input: IssueCreateInput!) {
                 issueCreate(input: $input) {

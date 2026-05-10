@@ -134,6 +134,7 @@ class SymphonyRunner {
   private readonly configPath: string;
   private process: ChildProcess | null = null;
   private startInFlight: Promise<SymphonyStartResult> | null = null;
+  private runningConfig: SymphonyConfig | null = null;
   private startedAt: string | null = null;
   private lastExitAt: string | null = null;
   private lastExitCode: number | null = null;
@@ -181,7 +182,7 @@ class SymphonyRunner {
   }
 
   async status(): Promise<SymphonyStatus> {
-    const config = await this.getConfig();
+    const config = this.runningConfig ?? await this.getConfig();
     return this.statusFor(config);
   }
 
@@ -195,7 +196,7 @@ class SymphonyRunner {
 
   private async startUnlocked(update?: SymphonyConfigUpdate): Promise<SymphonyStartResult> {
     if (this.process && !this.process.killed) {
-      return { ok: true, status: await this.status() };
+      return { ok: true, status: this.statusFor(this.runningConfig ?? await this.getConfig()) };
     }
     if (!this.env.LINEAR_API_KEY) {
       return {
@@ -255,6 +256,7 @@ class SymphonyRunner {
     });
 
     this.process = child;
+    this.runningConfig = config;
     this.startedAt = new Date().toISOString();
     this.lastExitAt = null;
     this.lastExitCode = null;
@@ -262,6 +264,7 @@ class SymphonyRunner {
     child.once("exit", (code) => {
       if (this.process === child) {
         this.process = null;
+        this.runningConfig = null;
       }
       this.lastExitAt = new Date().toISOString();
       this.lastExitCode = typeof code === "number" ? code : null;
@@ -269,6 +272,7 @@ class SymphonyRunner {
     child.once("error", (err) => {
       if (this.process === child) {
         this.process = null;
+        this.runningConfig = null;
       }
       this.lastExitAt = new Date().toISOString();
       this.lastExitCode = null;
@@ -279,6 +283,7 @@ class SymphonyRunner {
     if (startupFailure) {
       if (this.process === child) {
         this.process = null;
+        this.runningConfig = null;
       }
       this.lastExitAt ??= new Date().toISOString();
       return {
@@ -322,6 +327,7 @@ class SymphonyRunner {
 
     if (this.process === child) {
       this.process = null;
+      this.runningConfig = null;
     }
     this.lastExitAt ??= new Date().toISOString();
     return this.status();
