@@ -36,6 +36,8 @@ async function probePort(port: number): Promise<boolean> {
     const server = createServer();
     server.once("error", () => resolve(false));
     server.listen(port, "127.0.0.1", () => {
+      // The listener is released before PortPool uses the range; the 50-attempt
+      // retry loop above mitigates collisions under parallel test load.
       server.close(() => resolve(true));
     });
   });

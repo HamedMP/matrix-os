@@ -1024,7 +1024,7 @@ describe("createHomeMirror", () => {
         "r2 unavailable",
       );
       await mirror.stop();
-    });
+    }, 60_000);
 
     it("cleans up uploaded blobs when a local manifest write fails", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };

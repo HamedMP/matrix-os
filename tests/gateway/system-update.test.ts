@@ -154,4 +154,27 @@ describe("system update start", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("returns error for unexpected updater access failures", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "matrix-update-"));
+    const filePath = join(dir, "not-a-dir");
+    writeFileSync(filePath, "not a directory");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await startSystemUpdate({
+        channel: "stable",
+        updateCommand: join(filePath, "matrix-update"),
+      });
+
+      expect(result).toEqual({ ok: false, status: "error" });
+      expect(warn).toHaveBeenCalledWith(
+        "[system-update] Failed to access update command:",
+        expect.any(String),
+      );
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

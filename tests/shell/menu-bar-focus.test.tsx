@@ -45,7 +45,7 @@ describe("MenuBar focus display", () => {
     expect(screen.queryByTestId("menu-focus-indicator")).toBeNull();
   });
 
-  it("shows the active app name when a window owns focus", () => {
+  it("shows the active app name as a menu button without a focus indicator", () => {
     useWindowManager.getState().openWindow("Whiteboard", "apps/whiteboard", 80);
 
     render(

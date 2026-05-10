@@ -154,13 +154,14 @@ export async function startSystemUpdate(options: {
   channel: UpdateChannel;
   updateCommand?: string;
   spawnImpl?: typeof spawn;
-}): Promise<{ ok: true; status: "started" } | { ok: false; status: "not_configured" }> {
+}): Promise<{ ok: true; status: "started" } | { ok: false; status: "not_configured" | "error" }> {
   const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
   try {
     await access(updateCommand, constants.X_OK);
   } catch (err: unknown) {
     if (!(err instanceof Error) || !["ENOENT", "EACCES", "EPERM"].includes(String((err as NodeJS.ErrnoException).code))) {
       console.warn("[system-update] Failed to access update command:", err instanceof Error ? err.message : String(err));
+      return { ok: false, status: "error" };
     }
     return { ok: false, status: "not_configured" };
   }
