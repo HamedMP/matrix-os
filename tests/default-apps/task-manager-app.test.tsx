@@ -101,4 +101,37 @@ describe("Task Manager app persistence", () => {
     const savedBoard = JSON.parse(body.value) as Board;
     expect(savedBoard.cards[0].title).toBe("Unmounted edit");
   });
+
+  it("preserves an immediate in-flight save when the app unmounts", async () => {
+    let board = createBoard("Matrix OS");
+    board = addCard(board, {
+      columnId: "backlog",
+      projectId: board.projects[0].id,
+      title: "Move me",
+    });
+    let writeSignal: AbortSignal | undefined;
+    let resolveWrite: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        writeSignal = init.signal ?? undefined;
+        return new Promise<Response>((resolve) => {
+          resolveWrite = resolve;
+        });
+      }
+      return jsonResponse(boardValue(board));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unmount } = render(<App />);
+    await screen.findByText("Move me");
+    fireEvent.click(screen.getByTitle("Move next"));
+
+    expect(writeSignal).toBeDefined();
+    unmount();
+    expect(writeSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      resolveWrite?.(jsonResponse({ ok: true }));
+    });
+  });
 });

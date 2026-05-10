@@ -316,9 +316,9 @@ function App() {
       if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
       detailSaveTimerRef.current = null;
       pendingDetailBoardRef.current = null;
+      if (!pendingBoard) return;
       saveAbortRef.current?.abort();
       saveAbortRef.current = null;
-      if (!pendingBoard) return;
       writeBoard(pendingBoard).catch((err: unknown) => {
         if (isAbortError(err)) return;
         console.warn("[task-manager] save failed:", err instanceof Error ? err.message : String(err));
