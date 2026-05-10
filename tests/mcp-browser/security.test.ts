@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { join, resolve } from "node:path";
 import {
+  assertSafeBrowserWebSocketUrl,
   assertSafeBrowserUrl,
   resolveBrowserArtifactPath,
   resolveBrowserProfilePath,
@@ -96,5 +97,21 @@ describe("browser security helpers", () => {
         resolveHostname: async () => ["::c0a8:101"],
       }),
     ).rejects.toThrow("Browser navigation URL is not allowed");
+  });
+
+  it("validates WebSocket URLs through the same SSRF guard", async () => {
+    await expect(
+      assertSafeBrowserWebSocketUrl("wss://example.com/socket", {
+        resolveHostname: async () => ["93.184.216.34"],
+      }),
+    ).resolves.toBe("wss://example.com/socket");
+
+    await expect(assertSafeBrowserWebSocketUrl("http://example.com/socket")).rejects.toThrow(
+      "Browser WebSocket URL must use ws or wss",
+    );
+
+    await expect(assertSafeBrowserWebSocketUrl("ws://127.0.0.1:3000/socket")).rejects.toThrow(
+      "Browser navigation URL is not allowed",
+    );
   });
 });

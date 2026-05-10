@@ -96,6 +96,13 @@ export async function resolveBrowserHostname(hostname: string): Promise<string[]
   return records.map((record) => record.address);
 }
 
+interface BrowserUrlSafetyOptions {
+  resolveHostname?: ResolveHostname;
+  dnsTimeoutMs?: number;
+  allowedProtocols?: readonly string[];
+  protocolErrorMessage?: string;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -244,10 +251,7 @@ function isBlockedAddress(address: string): boolean {
 
 export async function assertSafeBrowserUrl(
   rawUrl: string,
-  opts: {
-    resolveHostname?: ResolveHostname;
-    dnsTimeoutMs?: number;
-  } = {},
+  opts: BrowserUrlSafetyOptions = {},
 ): Promise<string> {
   let parsed: URL;
   try {
@@ -262,8 +266,9 @@ export async function assertSafeBrowserUrl(
     throw new BrowserInputError("Browser navigation URL is invalid");
   }
 
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new BrowserInputError("Browser navigation URL must use http or https");
+  const allowedProtocols = opts.allowedProtocols ?? ["http:", "https:"];
+  if (!allowedProtocols.includes(parsed.protocol)) {
+    throw new BrowserInputError(opts.protocolErrorMessage ?? "Browser navigation URL must use http or https");
   }
 
   const hostname = parsed.hostname.replace(/^\[(.*)]$/, "$1");
@@ -294,4 +299,15 @@ export async function assertSafeBrowserUrl(
   }
 
   return parsed.toString();
+}
+
+export async function assertSafeBrowserWebSocketUrl(
+  rawUrl: string,
+  opts: Pick<BrowserUrlSafetyOptions, "resolveHostname" | "dnsTimeoutMs"> = {},
+): Promise<string> {
+  return assertSafeBrowserUrl(rawUrl, {
+    ...opts,
+    allowedProtocols: ["ws:", "wss:"],
+    protocolErrorMessage: "Browser WebSocket URL must use ws or wss",
+  });
 }

@@ -10,6 +10,7 @@ function createMockPage(url = "https://example.com") {
     newPage: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
     route: vi.fn().mockResolvedValue(undefined),
+    routeWebSocket: vi.fn().mockResolvedValue(undefined),
   };
 
   return {
@@ -42,6 +43,7 @@ function createMockPage(url = "https://example.com") {
     },
     on: vi.fn(),
     route: vi.fn().mockResolvedValue(undefined),
+    routeWebSocket: vi.fn().mockResolvedValue(undefined),
     context: vi.fn().mockReturnValue(context),
   };
 }
@@ -59,6 +61,14 @@ function createMockRoute(url: string) {
     request: vi.fn().mockReturnValue({ url: vi.fn().mockReturnValue(url) }),
     continue: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function createMockWebSocketRoute(url: string) {
+  return {
+    url: vi.fn().mockReturnValue(url),
+    connectToServer: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -186,7 +196,9 @@ describe("Browser Tool (composite action dispatch)", () => {
     it("installs a request guard before navigation", async () => {
       await execute({ action: "navigate", url: "https://example.com" });
       expect(mockPage.context().route).toHaveBeenCalledWith("**/*", expect.any(Function));
+      expect(mockPage.context().routeWebSocket).toHaveBeenCalledWith("**/*", expect.any(Function));
       expect(mockPage.route).not.toHaveBeenCalled();
+      expect(mockPage.routeWebSocket).not.toHaveBeenCalled();
     });
 
     it("blocks unsafe requests through the context request guard", async () => {
@@ -200,13 +212,37 @@ describe("Browser Tool (composite action dispatch)", () => {
       expect(route.continue).not.toHaveBeenCalled();
     });
 
+    it("blocks unsafe WebSockets through the context WebSocket guard", async () => {
+      await execute({ action: "navigate", url: "https://example.com" });
+      const handler = mockPage.context().routeWebSocket.mock.calls[0][1];
+      const route = createMockWebSocketRoute("ws://127.0.0.1:3000/socket");
+
+      await handler(route);
+
+      expect(route.close).toHaveBeenCalledWith({ code: 1008, reason: "blocked" });
+      expect(route.connectToServer).not.toHaveBeenCalled();
+    });
+
+    it("allows safe WebSockets through the context WebSocket guard", async () => {
+      await execute({ action: "navigate", url: "https://example.com" });
+      const handler = mockPage.context().routeWebSocket.mock.calls[0][1];
+      const route = createMockWebSocketRoute("wss://example.com/socket");
+
+      await handler(route);
+
+      expect(route.connectToServer).toHaveBeenCalled();
+      expect(route.close).not.toHaveBeenCalled();
+    });
+
     it("falls back to a page request guard when context routing is unavailable", async () => {
       const context = mockPage.context();
       delete (context as { route?: unknown }).route;
+      delete (context as { routeWebSocket?: unknown }).routeWebSocket;
 
       await execute({ action: "navigate", url: "https://example.com" });
 
       expect(mockPage.route).toHaveBeenCalledWith("**/*", expect.any(Function));
+      expect(mockPage.routeWebSocket).toHaveBeenCalledWith("**/*", expect.any(Function));
     });
 
     it("validates every guarded request instead of caching DNS decisions", async () => {

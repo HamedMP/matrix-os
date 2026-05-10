@@ -1,10 +1,17 @@
 import { mkdir } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { SessionManager, type BrowserLike, type PageLike } from "./session-manager.js";
+import {
+  SessionManager,
+  type BrowserLike,
+  type BrowserRequestRouteLike,
+  type BrowserWebSocketRouteLike,
+  type PageLike,
+} from "./session-manager.js";
 import { formatAccessibilityTree, type AXNode } from "./role-snapshot.js";
 import { wrapBrowserExternalContent } from "./external-content.js";
 import {
+  assertSafeBrowserWebSocketUrl,
   assertSafeBrowserUrl,
   isBrowserInputError,
   normalizeBrowserProfileName,
@@ -14,6 +21,7 @@ import {
 } from "./security.js";
 
 const REQUEST_GUARD_INSTALLED = Symbol("matrixBrowserRequestGuardInstalled");
+const WEBSOCKET_GUARD_INSTALLED = Symbol("matrixBrowserWebSocketGuardInstalled");
 
 export type BrowserAction =
   | "launch"
@@ -88,13 +96,10 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     profileRoot: join(opts.homePath, "data", "browser-profiles"),
     defaultProfile,
   });
-  const guardedContexts = new WeakSet<object>();
+  const guardedRequestContexts = new WeakSet<object>();
+  const guardedWebSocketContexts = new WeakSet<object>();
 
-  async function handleGuardedRequest(route: {
-    request(): { url(): string };
-    continue(): Promise<void>;
-    abort(errorCode?: string): Promise<void>;
-  }): Promise<void> {
+  async function handleGuardedRequest(route: BrowserRequestRouteLike): Promise<void> {
     try {
       await assertSafeBrowserUrl(route.request().url(), { resolveHostname });
       await route.continue();
@@ -107,19 +112,54 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     }
   }
 
+  async function handleGuardedWebSocket(route: BrowserWebSocketRouteLike): Promise<void> {
+    try {
+      await assertSafeBrowserWebSocketUrl(route.url(), { resolveHostname });
+      route.connectToServer();
+    } catch (error) {
+      console.warn(
+        "[mcp-browser] Blocked browser WebSocket:",
+        error instanceof Error ? error.message : "unsafe WebSocket",
+      );
+      await route.close({ code: 1008, reason: "blocked" });
+    }
+  }
+
   async function installRequestGuard(page: PageLike): Promise<void> {
     const context = page.context();
+    let needsPageRequestGuard = true;
+    let needsPageWebSocketGuard = true;
+
     if (context.route) {
-      if (guardedContexts.has(context)) return;
-      await context.route("**/*", handleGuardedRequest);
-      guardedContexts.add(context);
-      return;
+      needsPageRequestGuard = false;
+      if (!guardedRequestContexts.has(context)) {
+        await context.route("**/*", handleGuardedRequest);
+        guardedRequestContexts.add(context);
+      }
     }
 
-    const guardedPage = page as PageLike & { [REQUEST_GUARD_INSTALLED]?: boolean };
-    if (!page.route || guardedPage[REQUEST_GUARD_INSTALLED]) return;
-    await page.route("**/*", handleGuardedRequest);
-    guardedPage[REQUEST_GUARD_INSTALLED] = true;
+    if (context.routeWebSocket) {
+      needsPageWebSocketGuard = false;
+      if (!guardedWebSocketContexts.has(context)) {
+        await context.routeWebSocket("**/*", handleGuardedWebSocket);
+        guardedWebSocketContexts.add(context);
+      }
+    }
+
+    const guardedPage = page as PageLike & {
+      [REQUEST_GUARD_INSTALLED]?: boolean;
+      [WEBSOCKET_GUARD_INSTALLED]?: boolean;
+    };
+
+    if (needsPageRequestGuard && page.route && !guardedPage[REQUEST_GUARD_INSTALLED]) {
+      await page.route("**/*", handleGuardedRequest);
+      guardedPage[REQUEST_GUARD_INSTALLED] = true;
+    }
+
+    if (needsPageWebSocketGuard && page.routeWebSocket && !guardedPage[WEBSOCKET_GUARD_INSTALLED]) {
+      await page.routeWebSocket("**/*", handleGuardedWebSocket);
+      guardedPage[WEBSOCKET_GUARD_INSTALLED] = true;
+    }
   }
 
   async function ensureSession(profile?: string) {

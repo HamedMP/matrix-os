@@ -13,6 +13,20 @@ export interface BrowserSession {
   lastActivity: number;
 }
 
+type BrowserRoutePattern = string | RegExp | ((url: URL) => boolean);
+
+export interface BrowserRequestRouteLike {
+  request(): { url(): string };
+  continue(): Promise<void>;
+  abort(errorCode?: string): Promise<void>;
+}
+
+export interface BrowserWebSocketRouteLike {
+  url(): string;
+  connectToServer(): unknown;
+  close(options?: { code?: number; reason?: string }): Promise<void> | void;
+}
+
 export interface PageLike {
   goto(url: string, opts?: Record<string, unknown>): Promise<{ status(): number } | null>;
   title(): Promise<string>;
@@ -34,12 +48,12 @@ export interface PageLike {
   accessibility: { snapshot(): Promise<unknown> };
   on(event: string, handler: (...args: unknown[]) => void): void;
   route?(
-    url: string,
-    handler: (route: {
-      request(): { url(): string };
-      continue(): Promise<void>;
-      abort(errorCode?: string): Promise<void>;
-    }) => Promise<void>,
+    url: BrowserRoutePattern,
+    handler: (route: BrowserRequestRouteLike) => Promise<void> | void,
+  ): Promise<void>;
+  routeWebSocket?(
+    url: BrowserRoutePattern,
+    handler: (route: BrowserWebSocketRouteLike) => Promise<void> | void,
   ): Promise<void>;
   context(): BrowserContextLike;
 }
@@ -49,12 +63,12 @@ export interface BrowserContextLike {
   newPage(): Promise<PageLike>;
   close(): Promise<void>;
   route?(
-    url: string,
-    handler: (route: {
-      request(): { url(): string };
-      continue(): Promise<void>;
-      abort(errorCode?: string): Promise<void>;
-    }) => Promise<void>,
+    url: BrowserRoutePattern,
+    handler: (route: BrowserRequestRouteLike) => Promise<void> | void,
+  ): Promise<void>;
+  routeWebSocket?(
+    url: BrowserRoutePattern,
+    handler: (route: BrowserWebSocketRouteLike) => Promise<void> | void,
   ): Promise<void>;
 }
 
