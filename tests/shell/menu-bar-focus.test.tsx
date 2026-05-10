@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MenuBar } from "../../shell/src/components/MenuBar.js";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 vi.mock("@clerk/nextjs", () => ({
@@ -13,6 +12,12 @@ vi.mock("@clerk/nextjs", () => ({
 vi.mock("../../shell/src/components/AppSettingsDialog.js", () => ({
   AppSettingsDialog: () => null,
 }));
+
+let MenuBar: typeof import("../../shell/src/components/MenuBar.js").MenuBar;
+
+beforeAll(async () => {
+  ({ MenuBar } = await import("../../shell/src/components/MenuBar.js"));
+});
 
 function resetStore() {
   useWindowManager.setState({
