@@ -24,27 +24,42 @@ fi
 # files, and skips files the user has touched. The previous version of this
 # block did `rm -rf` + `cp -r` on every boot, which clobbered user
 # customizations and broke the docker-test customized-files scenario.
-for dir in agents system apps; do
+for dir in .agents agents system apps; do
   if [ -d "/app/home/$dir" ] && [ ! -d "$MATRIX_HOME/$dir" ]; then
     cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"
   fi
 done
 
-echo "[matrix-os-dev] Building bundled default apps..."
-node /app/scripts/build-default-apps.mjs /app/home/apps
-find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do
-  built_app=$(dirname "$(dirname "$built_index")")
-  app_rel=${built_app#/app/home/apps/}
-  target_app="$MATRIX_HOME/apps/$app_rel"
-  [ -d "$target_app" ] || continue
-  if [ ! -d "$target_app/dist" ]; then
-    mkdir -p "$target_app"
-    cp -R "$built_app/dist" "$target_app/dist"
-    if [ -f "$built_app/.build-stamp" ]; then
-      cp "$built_app/.build-stamp" "$target_app/.build-stamp"
+build_default_apps() {
+  echo "[matrix-os-dev] Building bundled default apps..."
+  node /app/scripts/build-default-apps.mjs /app/home/apps
+  find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do
+    built_app=$(dirname "$(dirname "$built_index")")
+    app_rel=${built_app#/app/home/apps/}
+    target_app="$MATRIX_HOME/apps/$app_rel"
+    [ -d "$target_app" ] || continue
+    if [ ! -d "$target_app/dist" ]; then
+      mkdir -p "$target_app"
+      cp -R "$built_app/dist" "$target_app/dist"
+      if [ -f "$built_app/.build-stamp" ]; then
+        cp "$built_app/.build-stamp" "$target_app/.build-stamp"
+      fi
+      chown -R matrixos:matrixos "$target_app/dist" "$target_app/.build-stamp" 2>/dev/null || true
     fi
-  fi
-done
+  done
+}
+
+case "${MATRIX_DEFAULT_APP_BUILD_MODE:-background}" in
+  blocking)
+    build_default_apps
+    ;;
+  skip)
+    echo "[matrix-os-dev] Skipping bundled default app build."
+    ;;
+  *)
+    build_default_apps &
+    ;;
+esac
 
 # Unify $HOME/.claude and $MATRIX_HOME/.claude (and same for .codex) into a
 # single directory. The gateway runs with HOME=/home/matrixos and reads
@@ -63,66 +78,11 @@ for tool in .claude .codex; do
   ln -sfn "/home/matrixos/$tool" "$MATRIX_HOME/$tool"
 done
 
-# Expose Matrix OS skills to Claude Code and Codex
-# Clean Matrix-managed copies from previous runs, then create fresh ones.
-# Both tools discover skills in project-level and user-level directories.
-cleanup_matrix_skills() {
-  skills_root="$1"
-  mkdir -p "$skills_root"
-  for generated in "$skills_root"/matrix-*; do
-    [ -e "$generated" ] || continue
-    [ -f "$generated/.matrix-os-managed" ] && rm -rf "$generated"
-  done
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    legacy="$skills_root/$name"
-    if [ -f "$legacy/SKILL.md" ] && grep -q "^name: matrix-$name\$" "$legacy/SKILL.md"; then
-      rm -rf "$legacy"
-    elif [ -f "$legacy/agents/openai.yaml" ] && grep -q 'display_name: "Matrix:' "$legacy/agents/openai.yaml"; then
-      rm -rf "$legacy"
-    fi
-  done
-}
-for skills_root in "/home/matrixos/.claude/skills" "/home/matrixos/.codex/skills" \
-                   "$MATRIX_HOME/.claude/skills" "$MATRIX_HOME/.codex/skills"; do
-  cleanup_matrix_skills "$skills_root"
-done
-
-for skills_root in "/home/matrixos/.claude/skills" "$MATRIX_HOME/.claude/skills"; do
-  mkdir -p "$skills_root"
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    out="$skills_root/matrix-$name"
-    mkdir -p "$out"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
-    touch "$out/.matrix-os-managed"
-  done
-done
-
-# Codex ignores symlinks and needs agents/openai.yaml for discovery
-for skills_root in "/home/matrixos/.codex/skills" "$MATRIX_HOME/.codex/skills"; do
-  mkdir -p "$skills_root"
-  for skill in "$MATRIX_HOME/agents/skills/"*.md; do
-    [ -f "$skill" ] || continue
-    name=$(basename "$skill" .md)
-    out="$skills_root/matrix-$name"
-    mkdir -p "$out/agents"
-    sed "s/^name: .*/name: matrix-$name/" "$skill" > "$out/SKILL.md"
-    touch "$out/.matrix-os-managed"
-    display=$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
-    desc=$(sed -n 's/^description: *//p' "$skill" | head -1)
-    short_desc=$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    prompt_desc=$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    cat > "$out/agents/openai.yaml" <<EOYAML
-interface:
-  display_name: "Matrix: $display"
-  short_description: "$short_desc"
-  default_prompt: "Use \$matrix-$name for $prompt_desc."
-EOYAML
-  done
-done
+# Expose Matrix OS skills to Claude Code and Codex. Re-runs every boot so
+# canonical .agents/skills entries and legacy agents/skills entries flow into
+# both coding-agent discovery directories.
+bash /app/scripts/sync-matrix-agent-skills.sh "$MATRIX_HOME" /home/matrixos "$MATRIX_HOME"
+chown -R matrixos:matrixos /home/matrixos/.claude /home/matrixos/.codex "$MATRIX_HOME/.claude" "$MATRIX_HOME/.codex" 2>/dev/null || true
 
 # AI CLI auth persistence via shared external volume (matrixos-ai-auth)
 # Survives container rebuilds and is shared across feature branch containers.

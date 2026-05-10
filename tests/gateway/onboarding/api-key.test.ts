@@ -17,8 +17,16 @@ import {
 
 describe("API key validation and storage", () => {
   let homePath: string;
+  const originalEnv = {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    CLAUDE_CODE_AUTH: process.env.CLAUDE_CODE_AUTH,
+    NODE_ENV: process.env.NODE_ENV,
+  };
 
   beforeEach(() => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.CLAUDE_CODE_AUTH;
+    process.env.NODE_ENV = "test";
     homePath = resolve(mkdtempSync(join(tmpdir(), "api-key-test-")));
     mkdirSync(join(homePath, "system"), { recursive: true });
   });
@@ -26,6 +34,13 @@ describe("API key validation and storage", () => {
   afterEach(() => {
     rmSync(homePath, { recursive: true, force: true });
     vi.restoreAllMocks();
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   });
 
   describe("validateApiKeyFormat", () => {

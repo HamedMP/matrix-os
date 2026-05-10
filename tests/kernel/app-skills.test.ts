@@ -9,6 +9,7 @@ const APP_SKILLS = [
   { name: "design-matrix-app", category: "builder" },
   { name: "build-game", category: "builder" },
   { name: "app-builder", category: "system" },
+  { name: "integrations", category: "system" },
   { name: "build-react-app" },
   { name: "build-html-app" },
 ];
@@ -92,6 +93,27 @@ describe("T1440-T1445: AI skills for app building", () => {
     it("documents accessibility", () => {
       const content = readFileSync(skillPath("design-matrix-app"), "utf-8");
       expect(content).toContain("Accessibility");
+    });
+  });
+
+  describe("integrations skill content", () => {
+    it("documents SDK tools for discovery, connection, sync, and calls", () => {
+      const content = readFileSync(skillPath("integrations"), "utf-8");
+
+      expect(content).toContain("list_available_services");
+      expect(content).toContain("list_connected_services");
+      expect(content).toContain("connect_service");
+      expect(content).toContain("sync_services");
+      expect(content).toContain("call_service");
+    });
+
+    it("documents Matrix app bridge and Pipedream event webhook boundaries", () => {
+      const content = readFileSync(skillPath("integrations"), "utf-8");
+
+      expect(content).toContain("/api/bridge/service");
+      expect(content).toContain("connection webhooks");
+      expect(content).toContain("trigger webhooks");
+      expect(content).toContain("PIPEDREAM_");
     });
   });
 });

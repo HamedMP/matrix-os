@@ -15,6 +15,21 @@ describe("cloud workspace runtime gates", () => {
       expect(dockerfile).toContain(agentCli);
     }
     expect(dockerfile).toContain("hermes-agent/main/scripts/install.sh");
+    expect(dockerfile).toContain("scripts/sync-matrix-agent-skills.sh");
+  });
+
+  it("syncs Matrix skills into Claude Code and Codex from canonical skill directories", () => {
+    const dockerfile = readFileSync(join(root, "Dockerfile"), "utf-8");
+    const entrypoint = readFileSync(join(root, "distro/docker-entrypoint.sh"), "utf-8");
+    const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
+    const syncScript = readFileSync(join(root, "scripts/sync-matrix-agent-skills.sh"), "utf-8");
+
+    expect(dockerfile).toContain("sync-matrix-agent-skills.sh");
+    expect(entrypoint).toContain("sync-matrix-agent-skills.sh");
+    expect(devEntrypoint).toContain("sync-matrix-agent-skills.sh");
+    expect(syncScript).toContain(".agents/skills");
+    expect(syncScript).toContain("agents/skills");
+    expect(syncScript).toContain("agents/openai.yaml");
   });
 
   it("lets the non-root Matrix user run sudo-based project installers", () => {
@@ -43,6 +58,23 @@ describe("cloud workspace runtime gates", () => {
     ]) {
       expect(entrypoint).toContain(`$MATRIX_HOME/${dir}`);
     }
+  });
+
+  it("seeds canonical agent skills, including dot-directories, on first boot", () => {
+    const entrypoint = readFileSync(join(root, "distro/docker-entrypoint.sh"), "utf-8");
+    const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
+
+    expect(entrypoint).toContain("cp -r /app/home/. \"$MATRIX_HOME/\"");
+    expect(devEntrypoint).toContain("for dir in .agents agents system apps; do");
+  });
+
+  it("keeps Docker scenario health checks independent of default app builds", () => {
+    const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
+    const dockerTestWorkflow = readFileSync(join(root, ".github/workflows/docker-test.yml"), "utf-8");
+
+    expect(devEntrypoint).toContain("MATRIX_DEFAULT_APP_BUILD_MODE");
+    expect(devEntrypoint).toContain("Skipping bundled default app build.");
+    expect(dockerTestWorkflow).toContain("MATRIX_DEFAULT_APP_BUILD_MODE: skip");
   });
 
   it("extends health output without leaking filesystem paths or secrets", () => {

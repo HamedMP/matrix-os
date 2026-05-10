@@ -28,12 +28,60 @@ interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
 }
 
+interface AvailableAction {
+  description?: string;
+  params?: Record<string, { type?: string; required?: boolean; description?: string }>;
+}
+
+interface AvailableService {
+  id: string;
+  name: string;
+  category?: string;
+  actions?: Record<string, AvailableAction>;
+}
+
 function textResult(text: string): ToolResult {
   return { content: [{ type: "text" as const, text }] };
 }
 
 function defaultFetcher(): GatewayFetcher {
   return fetch as unknown as GatewayFetcher;
+}
+
+// ---------------------------------------------------------------------------
+// list_available_services
+// ---------------------------------------------------------------------------
+
+export async function listAvailableServicesHandler(
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const res = await fetcher(`${GATEWAY_BASE}/api/integrations/available`, {
+      method: "GET",
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      return textResult(data.error ?? `Failed to list available services (status ${res.status})`);
+    }
+
+    const services = (await res.json()) as AvailableService[];
+    if (services.length === 0) {
+      return textResult("No integration services are currently available.");
+    }
+
+    const lines = services.map((service) => {
+      const actionIds = Object.keys(service.actions ?? {});
+      const actions = actionIds.length > 0 ? actionIds.join(", ") : "no actions registered";
+      const category = service.category ? ` [${service.category}]` : "";
+      return `- ${service.name} (\`${service.id}\`)${category}: ${actions}`;
+    });
+    return textResult(`Available integration services (${services.length}):\n${lines.join("\n")}`);
+  } catch (err: unknown) {
+    console.error("[integrations] list_available_services error:", err instanceof Error ? err.message : err);
+    return textResult("Integration service catalog is temporarily unavailable. Please try again later.");
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -54,8 +54,42 @@ sync_bundled_home_assets() {
     done < <(find "$bundled_home/apps" -type f -name matrix.json)
   fi
 
+  if [ -d "$bundled_home/.agents/skills" ]; then
+    mkdir -p "$MATRIX_HOME/.agents/skills"
+    local src_skill skill_name dst_skill
+    for src_skill in "$bundled_home/.agents/skills"/*; do
+      [ -d "$src_skill" ] || continue
+      [ -f "$src_skill/SKILL.md" ] || continue
+      skill_name="$(basename "$src_skill")"
+      dst_skill="$MATRIX_HOME/.agents/skills/$skill_name"
+      [ -e "$dst_skill" ] || cp -a "$src_skill" "$dst_skill"
+    done
+  fi
+
+  if [ -d "$bundled_home/agents/skills" ]; then
+    mkdir -p "$MATRIX_HOME/agents/skills"
+    local src_flat flat_name dst_flat
+    for src_flat in "$bundled_home/agents/skills"/*.md; do
+      [ -f "$src_flat" ] || continue
+      flat_name="$(basename "$src_flat")"
+      dst_flat="$MATRIX_HOME/agents/skills/$flat_name"
+      [ -e "$dst_flat" ] || cp -a "$src_flat" "$dst_flat"
+    done
+  fi
+
   if id matrix >/dev/null 2>&1; then
-    chown -R matrix:matrix "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
+    local owned_path
+    for owned_path in "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps" "$MATRIX_HOME/.agents" "$MATRIX_HOME/agents"; do
+      [ -e "$owned_path" ] && chown -R matrix:matrix "$owned_path"
+    done
+  fi
+}
+
+sync_coding_agent_skills() {
+  local sync_script="$APP_DIR/scripts/sync-matrix-agent-skills.sh"
+  [ -f "$sync_script" ] || return 0
+  if ! bash "$sync_script" "$MATRIX_HOME" "${HOME:-/home/matrix}" "$MATRIX_HOME"; then
+    echo "matrix-gateway: failed to sync Matrix coding-agent skills" >&2
   fi
 }
 
@@ -69,6 +103,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 sync_bundled_home_assets
+sync_coding_agent_skills
 cd "$APP_DIR"
 if [ -f "$APP_DIR/packages/gateway/dist/main.js" ]; then
   "$NODE_BIN" "$APP_DIR/packages/gateway/dist/main.js" &

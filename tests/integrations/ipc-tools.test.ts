@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   connectServiceHandler,
   callServiceHandler,
+  listAvailableServicesHandler,
   type GatewayFetcher,
 } from "../../packages/kernel/src/tools/integrations.js";
 
@@ -109,6 +110,62 @@ describe("connect_service handler", () => {
       "Content-Type": "application/json",
       "x-platform-user-id": "user_clerk_123",
     });
+  });
+});
+
+describe("list_available_services handler", () => {
+  it("returns the service and action catalog on success", async () => {
+    const fetcher = mockFetcher({
+      body: [
+        {
+          id: "gmail",
+          name: "Gmail",
+          category: "Productivity",
+          actions: {
+            list_messages: {
+              description: "List messages",
+              params: {
+                maxResults: { type: "number", required: false },
+              },
+            },
+            send_email: {
+              description: "Send email",
+              params: {
+                to: { type: "string", required: true },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const result = await listAvailableServicesHandler(fetcher);
+
+    expect(result.content[0].text).toContain("Gmail (`gmail`)");
+    expect(result.content[0].text).toContain("list_messages");
+    expect(result.content[0].text).toContain("send_email");
+    const [url, opts] = (fetcher as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("http://localhost:4000/api/integrations/available");
+    expect(opts.method).toBe("GET");
+  });
+
+  it("passes a timeout signal to the available services fetch", async () => {
+    const fetcher = mockFetcher({ body: [] });
+
+    await listAvailableServicesHandler(fetcher);
+
+    const [, opts] = (fetcher as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(opts.signal).toBeDefined();
+  });
+
+  it("returns a generic unavailable message on network failure", async () => {
+    const fetcher = mockFetcher({
+      reject: new Error("connect ECONNREFUSED"),
+    });
+
+    const result = await listAvailableServicesHandler(fetcher);
+
+    expect(result.content[0].text).toMatch(/unavailable/i);
   });
 });
 

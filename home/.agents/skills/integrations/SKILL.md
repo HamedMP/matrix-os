@@ -1,6 +1,6 @@
 ---
 name: integrations
-description: Connect and use external services (Gmail, Calendar, Drive, GitHub, Slack, Discord) via Pipedream
+description: Connect and use external services (Gmail, Calendar, Drive, GitHub, Linear, Slack, Discord) via Pipedream
 triggers:
   - connect
   - integration
@@ -9,6 +9,7 @@ triggers:
   - calendar
   - google drive
   - github
+  - linear
   - slack
   - discord
   - send email
@@ -19,8 +20,11 @@ triggers:
   - send message
   - connected services
   - oauth
+  - webhook
+  - trigger webhook
 category: system
 tools_needed:
+  - list_available_services
   - connect_service
   - call_service
   - list_connected_services
@@ -46,6 +50,20 @@ composable_with:
 
 Connect and use external services through Pipedream. The user connects via OAuth, then you can call APIs on their behalf.
 
+Matrix OS keeps Pipedream credentials platform-owned. Do not ask the user for provider API keys, do not write `PIPEDREAM_*` secrets into apps, and do not configure customer VPS agents with raw Pipedream OAuth client credentials.
+
+## Step 0: Discover the Current Catalog
+
+Call `list_available_services` when you need the supported service/action catalog, when building an app with integrations, or when a requested service/action is not listed below.
+
+```
+list_available_services()
+// -> Available integration services:
+//    - Gmail (`gmail`): list_messages, get_message, send_email, search, list_labels
+```
+
+The catalog comes from Matrix OS, not directly from Pipedream credentials in the coding-agent environment.
+
 ## Available Services
 
 | Service | ID | Actions |
@@ -54,6 +72,7 @@ Connect and use external services through Pipedream. The user connects via OAuth
 | Google Calendar | `google_calendar` | `list_events`, `create_event`, `update_event`, `delete_event` |
 | Google Drive | `google_drive` | `list_files`, `get_file`, `upload_file`, `share_file` |
 | GitHub | `github` | `list_repos`, `list_issues`, `create_issue`, `list_prs`, `get_notifications` |
+| Linear | `linear` | `viewer`, `list_teams`, `list_projects`, `list_workflow_states`, `list_issues`, `create_issue`, `update_issue`, `add_comment`, `create_workflow_state`, `graphql` |
 | Slack | `slack` | `send_message`, `list_channels`, `list_messages`, `search`, `react` |
 | Discord | `discord` | `send_message`, `list_servers`, `list_channels`, `list_messages` |
 
@@ -110,37 +129,37 @@ Use `call_service` to invoke actions:
 call_service({
   service: "gmail",
   action: "send_email",
-  params: "{\"to\": \"alice@example.com\", \"subject\": \"Meeting\", \"body\": \"See you at 3pm\"}"
+  params: { "to": "alice@example.com", "subject": "Meeting", "body": "See you at 3pm" }
 })
 
 call_service({
   service: "gmail",
   action: "list_messages",
-  params: "{\"query\": \"is:unread\", \"maxResults\": 5}"
+  params: { "query": "is:unread", "maxResults": 5 }
 })
 
 call_service({
   service: "google_calendar",
   action: "list_events",
-  params: "{\"timeMin\": \"2026-04-05T00:00:00Z\", \"timeMax\": \"2026-04-06T00:00:00Z\"}"
+  params: { "timeMin": "2026-04-05T00:00:00Z", "timeMax": "2026-04-06T00:00:00Z" }
 })
 
 call_service({
   service: "google_calendar",
   action: "create_event",
-  params: "{\"summary\": \"Team standup\", \"start\": \"2026-04-06T09:00:00Z\", \"end\": \"2026-04-06T09:30:00Z\"}"
+  params: { "summary": "Team standup", "start": "2026-04-06T09:00:00Z", "end": "2026-04-06T09:30:00Z" }
 })
 
 call_service({
   service: "github",
   action: "list_repos",
-  params: "{\"sort\": \"updated\", \"per_page\": 10}"
+  params: { "sort": "updated", "per_page": 10 }
 })
 
 call_service({
   service: "slack",
   action: "send_message",
-  params: "{\"channel\": \"#general\", \"text\": \"Hello from Matrix OS!\"}"
+  params: { "channel": "#general", "text": "Hello from Matrix OS!" }
 })
 ```
 
@@ -176,6 +195,19 @@ call_service({
 **list_prs**: `repo` (required), `state`
 **get_notifications**: `all` (boolean)
 
+### Linear
+
+**viewer**: no params
+**list_teams**: `first` (number)
+**list_projects**: `first` (number)
+**list_workflow_states**: `teamId` (required), `first` (number)
+**list_issues**: `first` (number), `teamId`, `projectId`, `state`
+**create_issue**: `teamId` (required), `title` (required), `description`, `projectId`, `stateId`
+**update_issue**: `id` (required), `title`, `description`, `stateId`, `projectId`
+**add_comment**: `issueId` (required), `body` (required)
+**create_workflow_state**: `teamId` (required), `name` (required), `type` (required), `color`
+**graphql**: `query` (required), `variables`
+
 ### Slack
 
 **send_message**: `channel` (required, "#channel" or channel ID), `text` (required)
@@ -203,6 +235,48 @@ call_service({
 })
 ```
 
+## Building Matrix Apps With Integrations
+
+For apps running in the Matrix shell, use the Matrix bridge APIs rather than direct provider APIs:
+
+```ts
+const listRes = await fetch("/api/bridge/service", {
+  signal: AbortSignal.timeout(10000),
+});
+const { services } = await listRes.json();
+const gmail = services.find((s) => s.service === "gmail" && s.status === "active");
+
+const callRes = await fetch("/api/bridge/service", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    service: "gmail",
+    action: "list_messages",
+    params: { query: "is:unread", maxResults: 10 },
+  }),
+  signal: AbortSignal.timeout(10000),
+});
+const { data } = await callRes.json();
+```
+
+When `window.MatrixOS` is available, these are equivalent:
+
+```ts
+await window.MatrixOS.integrations();
+await window.MatrixOS.service("github", "list_repos", { per_page: 10 });
+```
+
+Always check `status === "active"` first and show the connected `account_email` or `account_label` in the UI when the account choice matters.
+
+## Hooks and Webhooks
+
+Pipedream Connect has two relevant webhook categories:
+
+- Pipedream connection webhooks notify Matrix OS when OAuth succeeds or fails. Matrix handles these at `/api/integrations/webhook/connected`; agents should use `sync_services` as the local-dev fallback before declaring OAuth failed.
+- Pipedream trigger webhooks deliver events from deployed Pipedream triggers. Treat these as backend/platform wiring, not browser-app secrets. Do not put Pipedream signing keys or OAuth client credentials in app code, `matrix.json`, Hermes config, Claude Code config, or Codex config.
+
+For event-driven apps, prefer a Matrix-owned route or workflow that receives the trigger webhook, validates the Pipedream signature in constant time, stores normalized event data in Matrix/Postgres, and then lets the app read that data through Matrix APIs. If the repo does not already expose a trigger subscription endpoint for the requested event source, say the app can consume existing connected-account actions now and needs a backend integration endpoint before it can receive new external events.
+
 ## Error Handling
 
 - **Service not connected (404)**: The gateway already auto-retries by pulling from Pipedream once before returning this error, so if you see it, the service really isn't connected at Pipedream either. Call `list_connected_services` to confirm, then `connect_service` to start OAuth. Do NOT loop on `connect_service` -- if the user already tried and it didn't take, run `sync_services` instead of generating a new link.
@@ -215,8 +289,8 @@ call_service({
 ## Common Patterns
 
 ### Morning briefing
-1. `call_service({ service: "gmail", action: "list_messages", params: "{\"query\": \"is:unread\", \"maxResults\": 10}" })`
-2. `call_service({ service: "google_calendar", action: "list_events", params: "{\"timeMin\": \"<today>T00:00:00Z\", \"timeMax\": \"<today>T23:59:59Z\"}" })`
+1. `call_service({ service: "gmail", action: "list_messages", params: { "query": "is:unread", "maxResults": 10 } })`
+2. `call_service({ service: "google_calendar", action: "list_events", params: { "timeMin": "<today>T00:00:00Z", "timeMax": "<today>T23:59:59Z" } })`
 3. Summarize unread emails and today's events
 
 ### Send and track
@@ -224,12 +298,12 @@ call_service({
 2. `call_service({ service: "google_calendar", action: "create_event", params: "..." })` (create follow-up reminder)
 
 ### Cross-service workflow
-1. `call_service({ service: "github", action: "list_issues", params: "{\"repo\": \"owner/repo\", \"state\": \"open\"}" })`
+1. `call_service({ service: "github", action: "list_issues", params: { "repo": "owner/repo", "state": "open" } })`
 2. Summarize issues and `call_service({ service: "slack", action: "send_message", params: "..." })` to post update
 
 ## Tips
 
-- The `params` field is a **JSON string**, not an object. Always stringify.
+- The `params` field is an object when calling the Agent SDK tool directly. Stringify only when sending raw HTTP JSON to `/api/integrations/call` or `/api/bridge/service`.
 - When listing items, use `maxResults` or `limit` to avoid overwhelming output.
 - For Gmail search, use Gmail's query syntax: "is:unread", "from:alice", "subject:meeting", "after:2026/04/01".
 - For calendar events, always use ISO 8601 datetime with timezone.

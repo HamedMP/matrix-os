@@ -72,6 +72,8 @@ jobs:
             dev:
               image: matrix-os-dev:ci
               build: null
+              environment:
+                MATRIX_DEFAULT_APP_BUILD_MODE: skip
           EOF
 
       - name: Create external volumes

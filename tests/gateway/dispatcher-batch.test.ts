@@ -18,6 +18,15 @@ function resultEvent(id: string): KernelEvent {
   return { type: "result", data: { sessionId: id, cost: 0, turns: 1 } };
 }
 
+async function waitForCondition(predicate: () => boolean, timeoutMs = 250): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  expect(predicate()).toBe(true);
+}
+
 describe("T404: Dispatcher batch mode", () => {
   let homePath: string;
 
@@ -89,7 +98,7 @@ describe("T404: Dispatcher batch mode", () => {
     ]);
     const serialPromise = dispatcher.dispatch("after-batch", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    await waitForCondition(() => order.length === 1);
     expect(order).toEqual(["batch-start-batch-a"]);
 
     releaseBatch!();
@@ -131,10 +140,8 @@ describe("T404: Dispatcher batch mode", () => {
   });
 
   it("partial failures return mixed results", async () => {
-    let callCount = 0;
-    const spawn = vi.fn<SpawnFn>(async function* (_message, _config) {
-      callCount++;
-      if (callCount === 2) throw new Error("build failed");
+    const spawn = vi.fn<SpawnFn>(async function* (message, _config) {
+      if (message === "app 2") throw new Error("build failed");
       yield resultEvent("s");
     });
 

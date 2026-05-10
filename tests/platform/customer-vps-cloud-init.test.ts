@@ -157,6 +157,7 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(buildScript).toContain('https://astral.sh/uv/install.sh');
     expect(buildScript).toContain('UV_INSTALL_DIR="$STAGE_DIR/runtime/node/bin"');
     expect(buildScript).toContain('scripts/install-hermes-matrix-skills.sh');
+    expect(buildScript).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(buildScript).toContain('cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"');
     expect(buildScript).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(buildScript).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
@@ -170,6 +171,8 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
     expect(gateway).toContain('export PATH="/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"');
+    expect(gateway).toContain('$bundled_home/.agents/skills');
+    expect(gateway).toContain('sync-matrix-agent-skills.sh');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
     expect(cloudInit).not.toContain('owner: root:matrix');
   });

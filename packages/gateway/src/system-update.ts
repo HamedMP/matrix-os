@@ -148,7 +148,14 @@ export async function startSystemUpdate(options: {
   const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
   try {
     await access(updateCommand, constants.X_OK);
-  } catch {
+  } catch (err: unknown) {
+    const code = err && typeof err === "object" && "code" in err ? String(err.code) : "";
+    if (code !== "ENOENT" && code !== "EACCES") {
+      console.warn(
+        "[system-update] Failed to inspect update command:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     return { ok: false, status: "not_configured" };
   }
 

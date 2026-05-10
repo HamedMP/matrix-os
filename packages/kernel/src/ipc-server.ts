@@ -30,6 +30,7 @@ import { createWebSearchTool, type ApiKeys } from "./tools/web-search.js";
 import {
   connectServiceHandler,
   callServiceHandler,
+  listAvailableServicesHandler,
   listConnectedServicesHandler,
   syncServicesHandler,
 } from "./tools/integrations.js";
@@ -1061,10 +1062,19 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
       ...(await createWebTools(homePath, tool)),
 
       tool(
+        "list_available_services",
+        "List integration services and actions supported by Matrix OS. Use this before building an app with integrations or when you need the current service/action catalog.",
+        {},
+        async () => {
+          return listAvailableServicesHandler();
+        },
+      ),
+
+      tool(
         "connect_service",
-        "Connect an external service (Gmail, Google Calendar, Google Drive, GitHub, Slack, Discord) via OAuth. Returns a URL for the user to authorize.",
+        "Connect an external service (Gmail, Google Calendar, Google Drive, GitHub, Linear, Slack, Discord) via OAuth. Returns a URL for the user to authorize.",
         {
-          service: z.string().describe("Service to connect: gmail, google_calendar, google_drive, github, slack, discord"),
+          service: z.string().describe("Service to connect: gmail, google_calendar, google_drive, github, linear, slack, discord"),
           label: z.string().optional().describe("Label for the connection (e.g. 'Work Gmail', 'Personal GitHub')"),
         },
         async ({ service, label }) => {
@@ -1076,7 +1086,7 @@ export async function createIpcServer(db: MatrixDB, homePath?: string) {
         "call_service",
         "Call a connected external service API. The service must be connected first via connect_service. Use this to read emails, send messages, list calendar events, etc.",
         {
-          service: z.string().describe("Service to call: gmail, google_calendar, google_drive, github, slack, discord"),
+          service: z.string().describe("Service to call: gmail, google_calendar, google_drive, github, linear, slack, discord"),
           action: z.string().describe("Action to perform (e.g. list_messages, send_email, list_events, list_repos, send_message)"),
           params: z.record(z.string(), z.unknown()).optional().describe("Action parameters as key-value pairs"),
           label: z.string().optional().describe("Which account to use if multiple are connected (e.g. 'Work Gmail')"),

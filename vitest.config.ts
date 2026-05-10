@@ -17,6 +17,10 @@ export default defineConfig({
     // waitFor polling can exceed the 5s vitest default.
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    // PGlite-backed suites and app runtime builds can overcommit local/CI
+    // workers and trip the 20s hook timeout when every test file starts at
+    // once. Keep the default test command at a stable concurrency.
+    maxWorkers: 4,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {

@@ -71,6 +71,23 @@ describe("BuildOrchestrator", () => {
     }
   }, 30_000);
 
+  it("resolves promptly when a timed-out child ignores SIGTERM", async () => {
+    const manifestPath = join(appDir, "matrix.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.build.command = 'trap "" TERM; sleep 5';
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+    const startedAt = Date.now();
+    const result = await orch.build("hello-vite-ignore-term", appDir, { timeoutMs: 100 });
+    const elapsed = Date.now() - startedAt;
+
+    expect(result.ok).toBe(false);
+    expect(elapsed).toBeLessThan(2_000);
+    if (!result.ok) {
+      expect((result.error as BuildError).code).toBe("timeout");
+    }
+  }, 5_000);
+
   it("serializes concurrent builds for same slug", async () => {
     const results = await Promise.all([
       orch.build("hello-vite", appDir),

@@ -22,6 +22,7 @@ function createMockPty() {
 }
 
 type MockPty = ReturnType<typeof createMockPty>;
+let testHomePath: string;
 
 function createMockSpawn(mockPty?: MockPty) {
   const factory = vi.fn(() => mockPty ?? createMockPty());
@@ -32,11 +33,11 @@ function createRegistry(
   opts: Partial<SessionRegistryOptions> = {},
   spawnFn?: ReturnType<typeof createMockSpawn>,
 ) {
-  const homePath = "/tmp/test-home";
+  const homePath = testHomePath;
   return new SessionRegistry(homePath, {
     maxSessions: opts.maxSessions ?? 10,
     bufferSize: opts.bufferSize ?? 1024,
-    persistPath: opts.persistPath ?? "/tmp/test-home/system/terminal-sessions.json",
+    persistPath: opts.persistPath ?? join(homePath, "system", "terminal-sessions.json"),
     ...opts,
   }, spawnFn ?? createMockSpawn());
 }
@@ -44,6 +45,16 @@ function createRegistry(
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe("SessionRegistry", () => {
+  beforeEach(() => {
+    testHomePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
+    mkdirSync(join(testHomePath, "system"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testHomePath, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
   describe("create", () => {
     it("returns a UUID string", () => {
       const registry = createRegistry();
@@ -64,8 +75,8 @@ describe("SessionRegistry", () => {
       registry.create("projects/myapp");
 
       const call = mockSpawn.mock.calls[0];
-      // /tmp/test-home/projects/myapp doesn't exist, so falls back to homePath
-      expect(call[2]).toMatchObject({ cwd: "/tmp/test-home" });
+      // The project directory doesn't exist, so it falls back to homePath.
+      expect(call[2]).toMatchObject({ cwd: testHomePath });
     });
 
     it("validates cwd against home path", () => {
@@ -75,7 +86,7 @@ describe("SessionRegistry", () => {
       // Should still create a session but with homePath as fallback cwd
       expect(id).toMatch(UUID_REGEX);
       const call = mockSpawn.mock.calls[0];
-      expect(call[2].cwd).toBe("/tmp/test-home");
+      expect(call[2].cwd).toBe(testHomePath);
     });
 
     it("rejects shell not in allowlist and falls back to default", () => {
@@ -598,7 +609,7 @@ describe("SessionRegistry", () => {
       const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
       const persistPath = join(homePath, "system", "terminal-sessions.json");
       mkdirSync(join(homePath, "system"), { recursive: true });
-      writeFileSync(persistPath, JSON.stringify([{ sessionId: "bad", cwd: "/tmp/test-home" }]));
+      writeFileSync(persistPath, JSON.stringify([{ sessionId: "bad", cwd: homePath }]));
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       expect(() => new SessionRegistry(homePath, { persistPath }, createMockSpawn())).not.toThrow();

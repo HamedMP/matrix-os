@@ -158,7 +158,8 @@ export class BuildOrchestrator {
 
     return new Promise<BuildResult>((resolve) => {
       const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      let settled = false;
+      let forceKillTimer: NodeJS.Timeout | undefined;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
 
@@ -172,6 +173,18 @@ export class BuildOrchestrator {
         stdio: ["ignore", "pipe", "pipe"],
         signal: ac.signal,
       });
+
+      const forceKillChild = () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      };
+
+      const timer = setTimeout(() => {
+        ac.abort();
+        forceKillTimer = setTimeout(forceKillChild, 1_000);
+        forceKillTimer.unref?.();
+      }, timeoutMs);
 
       // Ring-buffer output to cap memory. A verbose pnpm install / vite build
       // can emit hundreds of MB of logs; accumulating all of it would OOM the
@@ -191,51 +204,93 @@ export class BuildOrchestrator {
       child.stdout?.on("data", appendChunk);
       child.stderr?.on("data", appendChunk);
 
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        const isAbort = ac.signal.aborted;
-        const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
-        // Log writes are best-effort — the build has already failed and we
-        // surface that result below. Warn if the log write itself errors.
-        writeFile(logPath, Buffer.concat(chunks).toString("utf8").slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
+      const writeLog = async (output: string) => {
+        try {
+          await writeFile(logPath, output.slice(0, MAX_LOG_SIZE));
+        } catch (writeErr: unknown) {
           console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
+        }
+      };
+
+      const resolveOnce = (result: BuildResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
+      const resolveTimeout = (code: number | null) => {
+        clearTimeout(timer);
+        const output = Buffer.concat(chunks).toString("utf8");
+        void writeLog(output).finally(() => {
+          resolveOnce({
+            ok: false,
+            error: new BuildError(
+              "timeout",
+              stage,
+              code,
+              `Build timed out after ${timeoutMs}ms`,
+            ),
+          });
         });
-        resolve({
-          ok: false,
-          error: new BuildError(
-            isAbort ? "timeout" : "install_failed",
-            stage,
-            null,
-            isAbort ? `Build timed out after ${timeoutMs}ms` : stderrTail,
-          ),
+      };
+
+      child.on("error", (err) => {
+        if (ac.signal.aborted) {
+          forceKillChild();
+          resolveTimeout(null);
+          return;
+        }
+        clearTimeout(timer);
+        const output = Buffer.concat(chunks).toString("utf8");
+        const stderrTail = output.slice(-2048);
+        void writeLog(output).finally(() => {
+          resolveOnce({
+            ok: false,
+            error: new BuildError(
+              "install_failed",
+              stage,
+              null,
+              stderrTail || err.message,
+            ),
+          });
         });
       });
 
       child.on("close", (code) => {
         clearTimeout(timer);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
 
-        // Write log (truncated to MAX_LOG_SIZE). Best-effort: a missing log
-        // is recoverable; we still resolve the build result below.
-        writeFile(logPath, output.slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
-          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
+        void writeLog(output).finally(() => {
+          if (ac.signal.aborted) {
+            resolveOnce({
+              ok: false,
+              error: new BuildError(
+                "timeout",
+                stage,
+                code,
+                `Build timed out after ${timeoutMs}ms`,
+              ),
+            });
+            return;
+          }
+
+          if (code !== 0) {
+            resolveOnce({
+              ok: false,
+              error: new BuildError(
+                stage === "install" ? "install_failed" : "build_failed",
+                stage,
+                code,
+                stderrTail,
+              ),
+            });
+            return;
+          }
+
+          resolveOnce({ ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } });
         });
-
-        if (code !== 0) {
-          resolve({
-            ok: false,
-            error: new BuildError(
-              stage === "install" ? "install_failed" : "build_failed",
-              stage,
-              code,
-              stderrTail,
-            ),
-          });
-          return;
-        }
-
-        resolve({ ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } });
       });
     });
   }
