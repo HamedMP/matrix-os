@@ -118,6 +118,14 @@ describe("cloud workspace runtime gates", () => {
     expect(dockerTestWorkflow).toContain("MATRIX_DEFAULT_APP_BUILD_MODE: skip");
   });
 
+  it("builds the kernel package before Docker dev gateway startup", () => {
+    const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
+
+    expect(devEntrypoint).toContain("build_kernel_package_if_needed");
+    expect(devEntrypoint).toContain("/app/packages/kernel/dist/index.js");
+    expect(devEntrypoint).toContain("pnpm --filter '@matrix-os/kernel' build");
+  });
+
   it("preseeds shell Next generated types before dropping privileges", () => {
     const devEntrypoint = readFileSync(join(root, "distro/docker-dev-entrypoint.sh"), "utf-8");
     const nextEnv = readFileSync(join(root, "shell/next-env.d.ts"), "utf-8");

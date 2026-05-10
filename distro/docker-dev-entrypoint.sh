@@ -72,6 +72,17 @@ NEXT_ENV_EOF
   chown matrixos:matrixos "$next_env" 2>/dev/null || true
 }
 
+build_kernel_package_if_needed() {
+  kernel_dist="/app/packages/kernel/dist/index.js"
+  if [ ! -f "$kernel_dist" ] || [ -n "$(find /app/packages/kernel/src -type f -newer "$kernel_dist" -print -quit 2>/dev/null)" ]; then
+    echo "[matrix-os-dev] Building kernel package..."
+    pnpm --filter '@matrix-os/kernel' build
+    chown -R matrixos:matrixos /app/packages/kernel/dist 2>/dev/null || true
+  fi
+}
+
+build_kernel_package_if_needed
+
 # First-boot only: seed agents/system/apps from the template so the skills-to-
 # Claude/Codex adapter below has files to read. On subsequent boots the kernel's
 # smartSyncTemplate (packages/kernel/src/boot.ts) takes over -- it respects user
