@@ -266,7 +266,9 @@ export function buildAllowedOrigins(options: {
       "http://localhost:3000",
       "http://localhost:4001",
       "http://localhost:4066",
+      "http://127.0.0.1:4066",
       options.symphonyPort ? `http://localhost:${options.symphonyPort}` : undefined,
+      options.symphonyPort ? `http://127.0.0.1:${options.symphonyPort}` : undefined,
     ].filter((origin): origin is string => Boolean(origin)),
   ));
 }

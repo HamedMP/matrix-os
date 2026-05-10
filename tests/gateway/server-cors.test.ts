@@ -13,9 +13,12 @@ describe("gateway CORS origins", () => {
       "http://localhost:3000",
       "http://localhost:4001",
       "http://localhost:4066",
+      "http://127.0.0.1:4066",
       "http://localhost:4088",
+      "http://127.0.0.1:4088",
     ]);
 
     expect(buildAllowedOrigins({ symphonyPort: 4066 }).filter((origin) => origin === "http://localhost:4066")).toHaveLength(1);
+    expect(buildAllowedOrigins({ symphonyPort: 4066 }).filter((origin) => origin === "http://127.0.0.1:4066")).toHaveLength(1);
   });
 });
