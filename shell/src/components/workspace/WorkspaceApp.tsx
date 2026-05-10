@@ -112,6 +112,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [selectedAgent, setSelectedAgent] = useState<WorkspaceAgent>("codex");
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentMessage, setAgentMessage] = useState("");
+  const [worktreeMessage, setWorktreeMessage] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingWorktree, setCreatingWorktree] = useState(false);
   const [startingAgent, setStartingAgent] = useState(false);
@@ -173,18 +174,17 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   useEffect(() => {
     setSelectedWorktreeId("");
     setAgentMessage("");
+    setWorktreeMessage("");
   }, [activeSlug]);
 
   useEffect(() => {
     const firstWorktreeId = worktrees.find((worktree) => worktree.id)?.id ?? "";
-    if (!firstWorktreeId) {
-      setSelectedWorktreeId("");
-      return;
-    }
-    if (!selectedWorktreeId || !worktrees.some((worktree) => worktree.id === selectedWorktreeId)) {
-      setSelectedWorktreeId(firstWorktreeId);
-    }
-  }, [selectedWorktreeId, worktrees]);
+    setSelectedWorktreeId((current) => {
+      if (!firstWorktreeId) return current ? "" : current;
+      if (!current || !worktrees.some((worktree) => worktree.id === current)) return firstWorktreeId;
+      return current;
+    });
+  }, [worktrees]);
 
   const attachSession = useCallback(async (sessionId: string) => {
     const data = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/observe`, {
@@ -270,7 +270,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     if (existingWorktree?.id) {
       setSelectedWorktreeId(existingWorktree.id);
       setNewWorktreeBranch("");
-      setAgentMessage(`Using ${existingWorktree.id}`);
+      setWorktreeMessage(`Using ${existingWorktree.id}`);
+      setAgentMessage("");
       setError("");
       return;
     }
@@ -281,7 +282,6 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         method: "POST",
         body: JSON.stringify({ branch }),
       });
-      await loadProjectDetail(activeSlug);
       const createdWorktree = data.worktree;
       if (createdWorktree?.id) {
         setWorktrees((current) => [
@@ -289,10 +289,12 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
           createdWorktree,
         ]);
         setSelectedWorktreeId(createdWorktree.id);
-        setAgentMessage(`Created ${createdWorktree.id}`);
+        setWorktreeMessage(`Created ${createdWorktree.id}`);
       } else {
-        setAgentMessage("Created worktree");
+        setWorktreeMessage("Created worktree");
+        await loadProjectDetail(activeSlug);
       }
+      setAgentMessage("");
       setNewWorktreeBranch("");
       setError("");
     } catch (err: unknown) {
@@ -589,6 +591,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
                 {creatingWorktree ? "Creating" : "Create worktree"}
               </button>
             </form>
+            {worktreeMessage && <p className="pb-2 text-xs text-muted-foreground">{worktreeMessage}</p>}
             {worktrees.map((worktree) => (
               <div key={worktree.id} className="py-2 text-xs">
                 <div className="font-medium">{worktree.currentBranch ?? worktree.id}</div>

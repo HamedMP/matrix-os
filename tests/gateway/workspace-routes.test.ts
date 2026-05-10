@@ -22,6 +22,13 @@ function deleteJsonRequest(path: string, body: unknown): Request {
   });
 }
 
+function bodylessJsonDeleteRequest(path: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 function patchJsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method: "PATCH",
@@ -78,6 +85,23 @@ describe("workspace API routes", () => {
 
     expect(res.status).toBe(413);
     expect(projectManager.deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("allows bodyless project deletes even when clients send JSON headers", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(async () => ({ ok: true as const })),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo"));
+
+    expect(res.status).toBe(200);
+    expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
   });
 
   it("rejects invalid workspace delete slugs before state deletion", async () => {

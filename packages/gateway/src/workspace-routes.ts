@@ -138,6 +138,15 @@ function errorBody(code: string, message: string): { error: { code: string; mess
   return { error: { code, message } };
 }
 
+function requestHasBody(c: Context): boolean {
+  if (c.req.raw.body !== null) return true;
+  if (c.req.header("transfer-encoding")) return true;
+  const contentLength = c.req.header("content-length");
+  if (!contentLength) return false;
+  const parsed = Number.parseInt(contentLength, 10);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
 async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
   { ok: true; value: T } | { ok: false; status: number; code: string; message: string }
 > {
@@ -260,7 +269,7 @@ export function createWorkspaceRoutes(options: {
   });
 
   app.delete("/api/projects/:slug", limited, async (c) => {
-    if (c.req.header("content-type") || c.req.header("content-length") || c.req.header("transfer-encoding")) {
+    if (requestHasBody(c)) {
       const body = await parseJson(c, EmptyObjectSchema);
       if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
     }
