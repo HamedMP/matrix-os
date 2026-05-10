@@ -190,8 +190,11 @@ export async function assertSafeBrowserUrl(
   try {
     parsed = new URL(rawUrl);
   } catch (error: unknown) {
-    if (error instanceof TypeError) {
-      throw new BrowserInputError("Browser navigation URL is invalid");
+    if (!(error instanceof TypeError)) {
+      console.warn(
+        "[mcp-browser] Unexpected URL parse failure:",
+        error instanceof Error ? error.message : String(error),
+      );
     }
     throw new BrowserInputError("Browser navigation URL is invalid");
   }

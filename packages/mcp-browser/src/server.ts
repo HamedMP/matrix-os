@@ -17,7 +17,10 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
       return async (opts?: { headless?: boolean; userDataDir?: string }) => {
         const headless = opts?.headless ?? config.headless ?? true;
         if (opts?.userDataDir) {
-          const context = await pw.chromium.launchPersistentContext(opts.userDataDir, { headless });
+          const context = await pw.chromium.launchPersistentContext(opts.userDataDir, {
+            headless,
+            serviceWorkers: "block",
+          });
           return {
             newPage: () => context.newPage(),
             close: () => context.close(),

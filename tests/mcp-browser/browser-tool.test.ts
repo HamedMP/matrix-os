@@ -140,6 +140,14 @@ describe("Browser Tool (composite action dispatch)", () => {
       expect(launcher).not.toHaveBeenCalled();
     });
 
+    it("rejects invalid configured default profile names before use", () => {
+      expect(() => createBrowserTool({
+        homePath,
+        launcher: launcher as never,
+        defaultProfile: "Default Profile",
+      })).toThrow("Invalid browser profile name");
+    });
+
     it("close shuts down browser", async () => {
       await execute({ action: "launch" });
       const result = await execute({ action: "close" });

@@ -210,6 +210,14 @@ describe("SessionManager", () => {
     expect(launcher).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid default profile names at construction", () => {
+    expect(() => new SessionManager({
+      launcher: launcher as never,
+      profileRoot,
+      defaultProfile: "Default Profile",
+    })).toThrow("Invalid browser profile name");
+  });
+
   it("lazy start: no browser process until first launch", () => {
     expect(launcher).not.toHaveBeenCalled();
     expect(manager.getActive()).toBeUndefined();

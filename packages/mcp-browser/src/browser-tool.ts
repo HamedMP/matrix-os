@@ -77,7 +77,7 @@ function wrapBrowserContent(content: string): string {
 }
 
 export function createBrowserTool(opts: BrowserToolOptions) {
-  const defaultProfile = opts.defaultProfile ?? "default";
+  const defaultProfile = normalizeBrowserProfileName(opts.defaultProfile, "default");
   const resolveHostname = opts.resolveHostname ?? resolveBrowserHostname;
   let actionQueue: Promise<void> = Promise.resolve();
   const manager = new SessionManager({

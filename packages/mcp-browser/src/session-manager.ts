@@ -94,7 +94,7 @@ export class SessionManager {
     this.idleTimeoutMs = opts.idleTimeoutMs ?? 5 * 60 * 1000;
     this.timeout = opts.timeout ?? 30000;
     this.profileRoot = opts.profileRoot ? resolve(opts.profileRoot) : undefined;
-    this.defaultProfile = opts.defaultProfile ?? "default";
+    this.defaultProfile = normalizeBrowserProfileName(opts.defaultProfile, "default");
   }
 
   async launch(opts: { profile?: string } = {}): Promise<BrowserSession> {
