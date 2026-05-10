@@ -8,6 +8,7 @@ import {
   type AgentLaunchSandbox,
   type SupportedAgent,
 } from "./agent-launcher.js";
+import { PromptContentSchema } from "./prompt-validation.js";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { createAgentLauncher } from "./agent-launcher.js";
@@ -84,7 +85,7 @@ const StartSessionSchema = z.object({
   worktreeId: WorktreeIdSchema.optional(),
   pr: z.number().int().positive().optional(),
   agent: SupportedAgentSchema.optional(),
-  prompt: z.string().max(100_000).optional(),
+  prompt: PromptContentSchema.optional(),
   runtimePreference: z.enum(["zellij"]).optional(),
   sandbox: AgentSandboxSchema.optional(),
 });

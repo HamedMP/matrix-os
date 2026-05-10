@@ -1,8 +1,8 @@
-# Hermes Patterns to Copy to Matrix OS
+# Agent Patterns to Copy to Matrix OS
 
 > MIT-licensed patterns from `../hermes-agent` worth porting to Matrix OS, either for this feature or as general improvements. File references point to the source at `../hermes-agent/`.
 
-## For This Feature (Hermes Integration)
+## For This Feature (Agent Integration)
 
 ### 1. Platform Adapter Interface
 
@@ -44,7 +44,7 @@ export interface MessageEvent {
 
 **Source**: `gateway/session.py:build_session_key()`
 
-Isolate conversations per chat/thread with deterministic keys. Matrix OS already has conversation registry but the threading logic from Hermes is worth studying.
+Isolate conversations per chat/thread with deterministic keys. Matrix OS already has conversation registry but the threading logic from Agent is worth studying.
 
 ```python
 def build_session_key(source: SessionSource) -> str:
@@ -71,7 +71,7 @@ def _hash_chat_id(value: str) -> str:
 
 **Source**: `gateway/platforms/api_server.py`
 
-OpenAI-compatible HTTP server with `/v1/chat/completions`, `/v1/responses`, `/v1/runs`. This is the integration surface between Matrix OS shell and Hermes.
+OpenAI-compatible HTTP server with `/v1/chat/completions`, `/v1/responses`, `/v1/runs`. This is the integration surface between Matrix OS shell and Agent.
 
 Key features worth studying:
 - `ResponseStore` -- SQLite-backed LRU for stateful conversations via `previous_response_id`
@@ -135,7 +135,7 @@ def build_memory_context_block(raw_context: str) -> str:
 
 **Source**: `agent/context_compressor.py`
 
-Matrix OS doesn't compress context today (Claude SDK handles it). But when Hermes sessions are long, this is worth understanding.
+Matrix OS doesn't compress context today (Claude SDK handles it). But when Agent sessions are long, this is worth understanding.
 
 Algorithm:
 1. Prune old tool results (no LLM call)
@@ -226,7 +226,7 @@ registry.register(
 
 **Source**: `tools/delegate_tool.py`
 
-Matrix OS has subagents (builder, researcher, healer) but delegation is coarse. Hermes's pattern:
+Matrix OS has subagents (builder, researcher, healer) but delegation is coarse. Agent's pattern:
 
 - Each child gets fresh conversation, own task_id, own terminal session
 - Restricted toolset per child (configurable)
@@ -309,7 +309,7 @@ Redacts API keys, tokens, phone numbers from strings before logging. Generic eno
 
 **Source**: `tools/skills_hub.py` + `hermes_cli/skills_hub.py`
 
-Hermes has a community skill repository (agentskills.io). Users install skills via `hermes skills install <name>`. Each install goes through security scanning. Matrix OS could have a similar model: `~/agents/skills/` populated from a trusted community index.
+Agent has a community skill repository (agentskills.io). Users install skills via `agent skills install <name>`. Each install goes through security scanning. Matrix OS could have a similar model: `~/agents/skills/` populated from a trusted community index.
 
 ---
 

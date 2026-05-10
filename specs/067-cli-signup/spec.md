@@ -24,7 +24,7 @@ its own and lets us dogfood 1–3 while the signup surface is designed.
 - **Reference for the mobile app signup.** Same `POST /api/signup` endpoint
   will back the Expo app (spec 027).
 - **Package selection is the "personalize at boot" moment.** Choosing `claude-
-  code`, `hermes`, `moltbot`, etc. at signup is a better UX than a freshly
+  code`, `agent`, `moltbot`, etc. at signup is a better UX than a freshly
   provisioned empty home that the user has to populate manually.
 
 ## Goals / Non-Goals
@@ -79,7 +79,7 @@ Code:             123456
 
 Select packages to install (space to toggle, enter to confirm):
   [x] claude-code       Claude Code integration (recommended)
-  [x] hermes            Hermes personal agent (recommended)
+  [x] agent             Agent personal agent (recommended)
   [ ] moltbot           Multi-channel messenger bot
   [ ] calendar          Calendar + scheduling
   [ ] notes             Markdown notes
@@ -89,7 +89,7 @@ Creating your Matrix instance...
   [OK] Clerk account created
   [OK] Container provisioned (Nuremberg, cx22)
   [OK] Home directory seeded
-  [OK] Packages installed: claude-code, hermes
+  [OK] Packages installed: claude-code, agent
 
 Ready.
   Handle:     @hamed:matrix-os.com
@@ -110,7 +110,7 @@ below for the exact copy + exit codes.
 $ matrix onboard \
     --email hamed@example.com \
     --handle hamed \
-    --packages claude-code,hermes \
+    --packages claude-code,agent \
     --accept-tos \
     --turnstile-token <from-prompt-or-web-flow>
 
@@ -363,13 +363,13 @@ enforces what users can install. CDN-cached 60s.
       "sha256": "..."
     },
     {
-      "slug": "hermes",
-      "name": "Hermes",
+      "slug": "agent",
+      "name": "Agent",
       "tagline": "Your personal agent",
       "default": true,
       "installer": {
         "type": "builtin",
-        "source": "hermes"
+        "source": "agent"
       }
     }
   ]

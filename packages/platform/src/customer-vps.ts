@@ -9,6 +9,7 @@ import {
   insertUserMachine,
   insertProviderDeletion,
   listPendingProviderDeletions,
+  listAllUserMachines,
   listRunningUserMachines,
   listStaleUserMachines,
   markProviderDeletionCompleted,
@@ -95,6 +96,7 @@ export interface CustomerVpsService {
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(version?: string): Promise<DeployResult>;
+  listAllMachines(): Promise<StatusResponse[]>;
   reconcileProvisioning(): Promise<{ checked: number; failed: number; running: number }>;
 }
 
@@ -624,6 +626,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
       }
       return { deleted: true, machineId, status: 'deleted' };
+    },
+
+    async listAllMachines(): Promise<StatusResponse[]> {
+      const machines = await listAllUserMachines(deps.db, 500);
+      return machines.map(statusResponse);
     },
 
     async deploy(version?: string): Promise<DeployResult> {

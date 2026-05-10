@@ -894,6 +894,21 @@ export async function listRunningUserMachines(
   return rows.map(mapUserMachine);
 }
 
+export async function listAllUserMachines(
+  db: PlatformDB,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('status', '!=', 'deleted')
+    .orderBy('last_seen_at', 'desc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
+}
+
 export async function markProviderDeletionCompleted(
   db: PlatformDB,
   id: string,
