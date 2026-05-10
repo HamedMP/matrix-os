@@ -26,7 +26,7 @@
 
 ### T900 [US44] MCP browser server scaffold
 - [x] Create `packages/mcp-browser/package.json` -- deps: `playwright`, `@anthropic-ai/sdk`
-- [ ] Create `packages/mcp-browser/tsconfig.json`
+- [x] Create `packages/mcp-browser/tsconfig.json`
 - [x] Create `packages/mcp-browser/src/server.ts` -- MCP server with stdio transport
 - [x] Register single `browser` tool (composite, action dispatch)
 - [x] Add to `pnpm-workspace.yaml`
@@ -44,7 +44,7 @@
 
 ### T902 [US44] Chromium installation
 - [ ] `pnpm --filter mcp-browser exec playwright install chromium` (only Chromium, ~150MB)
-- [ ] Document: "browser requires explicit Playwright install"
+- [x] Document: "browser requires explicit Playwright install"
 - [x] Graceful error when Chromium not installed: "Run `pnpm mcp-browser install` to enable browser"
 - **Output**: Chromium available for browser automation
 
@@ -57,9 +57,9 @@
 - **Output**: Agent can access browser tool via MCP
 
 ### T904 [P] Chrome profile support
-- [ ] Support named profiles (persist cookies, sessions across restarts)
-- [ ] Profile directory: `~/data/browser-profiles/{name}/`
-- [ ] Default profile: "default"
+- [x] Support named profiles (persist cookies, sessions across restarts)
+- [x] Profile directory: `~/data/browser-profiles/{name}/`
+- [x] Default profile: "default"
 - **Output**: Browser sessions with persistent state
 
 ---
@@ -146,7 +146,7 @@
 
 ### Tests (TDD -- write FIRST)
 
-- [ ] T913a [US45] Write `tests/mcp-browser/security.test.ts`:
+- [x] T913a [US45] Write `tests/mcp-browser/security.test.ts`:
   - Blocks navigation to file:// URLs
   - Blocks navigation to data: URLs
   - Blocks navigation to private IPs (127.0.0.1, 192.168.x, etc.)
@@ -155,9 +155,9 @@
   - All browser output contains external content markers
 
 ### T913 [US45] URL validation
-- [ ] Create `packages/mcp-browser/src/security.ts`
-- [ ] Block `file://`, `data:`, `javascript:` URIs
-- [ ] Block private IPs and metadata endpoints (reuse SSRF guard logic from 025)
+- [x] Create `packages/mcp-browser/src/security.ts`
+- [x] Block `file://`, `data:`, `javascript:` URIs
+- [x] Block private IPs and metadata endpoints (reuse SSRF guard logic from 025)
 - [ ] Configurable allowlist for internal URLs (e.g., localhost:3000 for testing)
 - **Output**: Browser cannot access internal/dangerous URLs
 
@@ -175,9 +175,9 @@
 - **Output**: Screenshots accessible from shell and API
 
 ### T916 [P] Agent prompt update
-- [ ] Update system prompt to mention browser capability when enabled
-- [ ] Brief: "You have a web browser. Use it to navigate pages, fill forms, take screenshots. Use `snapshot` to understand page content."
-- [ ] Mention role snapshot as the preferred way to understand pages (not raw HTML)
+- [x] Update system prompt to mention browser capability when enabled
+- [x] Brief: "You have a web browser. Use it to navigate pages, fill forms, take screenshots. Use `snapshot` to understand page content."
+- [x] Mention role snapshot as the preferred way to understand pages (not raw HTML)
 - **Output**: Agent knows about browser
 
 ### T917 [P] Docker Playwright support

@@ -89,7 +89,7 @@ describe("T404: Dispatcher batch mode", () => {
     ]);
     const serialPromise = dispatcher.dispatch("after-batch", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(order).toEqual(["batch-start-batch-a"]));
     expect(order).toEqual(["batch-start-batch-a"]);
 
     releaseBatch!();
@@ -116,13 +116,13 @@ describe("T404: Dispatcher batch mode", () => {
 
     const serialPromise = dispatcher.dispatch("serial-first", undefined, () => {});
 
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(releaseSerial).not.toBeNull());
 
     const batchPromise = dispatcher.dispatchBatch([
       { taskId: "t1", message: "app-1", onEvent: () => {} },
     ]);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(order).toEqual(["serial-start"]));
     expect(order).toEqual(["serial-start"]);
 
     releaseSerial!();
@@ -131,10 +131,8 @@ describe("T404: Dispatcher batch mode", () => {
   });
 
   it("partial failures return mixed results", async () => {
-    let callCount = 0;
-    const spawn = vi.fn<SpawnFn>(async function* (_message, _config) {
-      callCount++;
-      if (callCount === 2) throw new Error("build failed");
+    const spawn = vi.fn<SpawnFn>(async function* (message, _config) {
+      if (message === "app 2") throw new Error("build failed");
       yield resultEvent("s");
     });
 

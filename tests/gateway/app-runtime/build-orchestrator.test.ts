@@ -71,6 +71,34 @@ describe("BuildOrchestrator", () => {
     }
   }, 30_000);
 
+  it("resolves timeout when abort fires before process close", async () => {
+    await writeFile(join(appDir, "matrix.json"), JSON.stringify({
+      name: "Hello Vite",
+      slug: "hello-vite",
+      version: "1.0.0",
+      runtime: "vite",
+      runtimeVersion: "^1.0.0",
+      listingTrust: "first_party",
+      build: {
+        install: "node -e \"process.on('SIGTERM',()=>{}); setTimeout(()=>process.exit(0),2000)\"",
+        command: "node -e \"process.exit(0)\"",
+        output: "dist",
+        timeout: 120,
+        sourceGlobs: ["matrix.json"],
+      },
+    }));
+
+    const start = Date.now();
+    const result = await orch.build("hello-vite", appDir, { timeoutMs: 100 });
+    const elapsed = Date.now() - start;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result.error as BuildError).code).toBe("timeout");
+    }
+    expect(elapsed).toBeLessThan(1_000);
+  }, 10_000);
+
   it("serializes concurrent builds for same slug", async () => {
     const results = await Promise.all([
       orch.build("hello-vite", appDir),

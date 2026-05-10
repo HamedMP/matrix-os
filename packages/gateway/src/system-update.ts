@@ -158,7 +158,10 @@ export async function startSystemUpdate(options: {
   const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
   try {
     await access(updateCommand, constants.X_OK);
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) {
+      console.warn("[system-update] Update command access check failed with non-error value");
+    }
     return { ok: false, status: "not_configured" };
   }
 

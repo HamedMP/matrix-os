@@ -11,6 +11,9 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
+echo "[matrix-os-dev] Building kernel package..."
+pnpm --filter @matrix-os/kernel build
+
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
@@ -161,6 +164,10 @@ fi
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
+if [ "${MATRIX_DOCKER_CHOWN_SOURCE:-}" = "true" ]; then
+  touch /app/shell/next-env.d.ts
+  chown matrixos:matrixos /app/shell/next-env.d.ts
+fi
 
 # QMD: index user home for semantic search (best-effort)
 if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
