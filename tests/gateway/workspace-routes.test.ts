@@ -29,6 +29,14 @@ function bodylessJsonDeleteRequest(path: string): Request {
   });
 }
 
+function emptyJsonDeleteRequest(path: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", "Content-Length": "0" },
+    body: "",
+  });
+}
+
 function patchJsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method: "PATCH",
@@ -99,6 +107,23 @@ describe("workspace API routes", () => {
     };
     const app = createWorkspaceRoutes({ homePath, projectManager });
     const res = await app.request(bodylessJsonDeleteRequest("/api/projects/repo"));
+
+    expect(res.status).toBe(200);
+    expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");
+  });
+
+  it("allows empty project delete bodies with JSON headers", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(async () => ({ ok: true as const })),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({ homePath, projectManager });
+    const res = await app.request(emptyJsonDeleteRequest("/api/projects/repo"));
 
     expect(res.status).toBe(200);
     expect(projectManager.deleteProject).toHaveBeenCalledWith("repo");

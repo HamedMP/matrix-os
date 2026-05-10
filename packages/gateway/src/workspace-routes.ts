@@ -139,12 +139,13 @@ function errorBody(code: string, message: string): { error: { code: string; mess
 }
 
 function requestHasBody(c: Context): boolean {
-  if (c.req.raw.body !== null) return true;
-  if (c.req.header("transfer-encoding")) return true;
   const contentLength = c.req.header("content-length");
-  if (!contentLength) return false;
-  const parsed = Number.parseInt(contentLength, 10);
-  return Number.isFinite(parsed) && parsed > 0;
+  if (contentLength !== undefined) {
+    const parsed = Number(contentLength);
+    return !Number.isFinite(parsed) || parsed > 0;
+  }
+  if (c.req.header("transfer-encoding")) return true;
+  return c.req.raw.body !== null;
 }
 
 async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
