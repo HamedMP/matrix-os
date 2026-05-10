@@ -207,31 +207,16 @@ function DockIcon({
   canQuit?: boolean;
 }) {
   const initial = name.charAt(0).toUpperCase();
-  const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
-  const showIcon = iconUrl && failedIconUrl !== iconUrl;
 
   const btn = (
     <button
       onClick={onClick}
-      className={`relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all overflow-hidden ${
-        showIcon ? "" : "bg-card border border-border/60"
-      }`}
+      className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60"
       style={{ width: iconSize, height: iconSize }}
     >
-      {showIcon ? (
-        // eslint-disable-next-line @next/next/no-img-element -- dock icons are dynamic files served by the gateway
-        <img
-          key={iconUrl}
-          src={iconUrl}
-          alt={name}
-          className="size-full object-cover rounded-xl"
-          onError={() => setFailedIconUrl(iconUrl)}
-        />
-      ) : (
-        <span className="text-sm font-semibold text-foreground">
-          {initial}
-        </span>
-      )}
+      <span className="text-sm font-semibold text-foreground">
+        {initial}
+      </span>
       {active && (
         <span className="absolute -right-1 top-1/2 -translate-y-1/2 size-1.5 rounded-full bg-foreground" />
       )}
@@ -1469,7 +1454,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   <TooltipTrigger asChild>
                     <button
                       data-testid="dock-tasks"
-                      onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
+                      onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                         taskBoardOpen
                           ? "bg-primary text-primary-foreground border-primary"
@@ -1488,7 +1473,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   <TooltipTrigger asChild>
                     <button
                       data-testid="dock-chat"
-                      onClick={() => setChatOpen((v) => !v)}
+                      onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
                       className={`relative flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                         chatOpen
                           ? "bg-primary text-primary-foreground border-primary"
@@ -1513,7 +1498,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
                   <TooltipTrigger asChild>
                     <button
                       data-testid="dock-settings"
-                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+                      onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
                       className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                         settingsOpen
                           ? "bg-primary text-primary-foreground border-primary"
@@ -1563,7 +1548,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               data-testid="dock-chat-mobile"
-              onClick={() => setChatOpen((v) => !v)}
+              onClick={() => { setChatOpen((v) => !v); setTaskBoardOpen(false); setSettingsOpen(false); }}
               className={`relative flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 chatOpen
                   ? "bg-primary text-primary-foreground border-primary"
@@ -1580,7 +1565,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
               )}
             </button>
             <button
-              onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
+              onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 taskBoardOpen
                   ? "bg-primary text-primary-foreground border-primary"
@@ -1591,7 +1576,7 @@ export function Desktop({ onOpenCommandPalette, chat }: DesktopProps) {
             </button>
             <ModeSwitcher iconSize={36} tooltipSide="top" />
             <button
-              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); }}
+              onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                 settingsOpen
                   ? "bg-primary text-primary-foreground border-primary"

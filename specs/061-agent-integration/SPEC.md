@@ -1,6 +1,6 @@
-# 061: Hermes Agent Integration
+# 061: Agent Integration
 
-> Install Hermes Agent (Nous Research) as a second AI kernel in Matrix OS, giving users multi-model chat, self-improving skills, and 16+ channel adapters -- all MIT licensed.
+> Install Agent (Nous Research) as a second AI kernel in Matrix OS, giving users multi-model chat, self-improving skills, and 16+ channel adapters -- all MIT licensed.
 
 ## Source
 
@@ -12,13 +12,13 @@
 
 ## Context
 
-Matrix OS currently uses Claude Agent SDK as its only AI kernel. This works well for Claude-native users but limits model choice. Hermes Agent is a production-ready, MIT-licensed AI agent framework by Nous Research that supports 200+ models via OpenRouter, has a closed learning loop (skills self-improve during use), and ships with 16+ channel adapters.
+Matrix OS currently uses Claude Agent SDK as its only AI kernel. This works well for Claude-native users but limits model choice. Agent is a production-ready, MIT-licensed AI agent framework by Nous Research that supports 200+ models via OpenRouter, has a closed learning loop (skills self-improve during use), and ships with 16+ channel adapters.
 
-Rather than forking, we install Hermes as a Python sidecar process and expose it through Matrix OS's shell and gateway. Users get a "Hermes" chat app alongside the existing Claude chat, can run `hermes` in the terminal, and can connect external channels (Telegram, Discord, Matrix protocol, etc.) through Hermes's own gateway.
+Rather than forking, we install Agent as a Python sidecar process and expose it through Matrix OS's shell and gateway. Users get an "Agent" chat app alongside the existing Claude chat, can run `agent` in the terminal, and can connect external channels (Telegram, Discord, Matrix protocol, etc.) through Agent's own gateway.
 
-### Why Hermes specifically
+### Why Agent specifically
 
-| Capability | Matrix OS (Claude SDK) | Hermes adds |
+| Capability | Matrix OS (Claude SDK) | Agent adds |
 |---|---|---|
 | Models | Claude only | 200+ via OpenRouter, Nous Portal, OpenAI, z.ai, Kimi, MiniMax |
 | Skill evolution | Static markdown skills | Skills self-improve during use, agent creates new skills from experience |
@@ -40,36 +40,36 @@ Matrix OS Container
   +-- Node.js (gateway :4000 + shell :3000)
   |     |
   |     +-- Claude Agent SDK kernel (existing)
-  |     +-- Hermes HTTP client -> Hermes API
+  |     +-- Agent HTTP client -> Agent API
   |
-  +-- Python sidecar (Hermes Agent)
+  +-- Python sidecar (Agent)
         |
         +-- API server (:8642) -- OpenAI-compatible
         +-- Gateway process (optional, for external channels)
         +-- ACP adapter (for standardized agent protocol)
 ```
 
-The Hermes process runs alongside Node.js. Matrix OS talks to it via its OpenAI-compatible HTTP API (`/v1/chat/completions`, `/v1/responses`, `/v1/runs`). No Python code runs inside the Node.js process.
+The Agent process runs alongside Node.js. Matrix OS talks to it via its OpenAI-compatible HTTP API (`/v1/chat/completions`, `/v1/responses`, `/v1/runs`). No Python code runs inside the Node.js process.
 
 ## Goals
 
-1. Users can install Hermes Agent from Matrix OS settings
-2. "Hermes Chat" app in the shell for multi-model conversations
-3. `hermes` TUI accessible in the Matrix OS terminal
-4. External channels configurable through Hermes gateway
-5. Matrix protocol integration via Hermes's `nio` adapter
+1. Users can install Agent from Matrix OS settings
+2. "Agent Chat" app in the shell for multi-model conversations
+3. `agent` TUI accessible in the Matrix OS terminal
+4. External channels configurable through Agent gateway
+5. Matrix protocol integration via Agent's `nio` adapter
 6. Skills and memory persist in the user's home directory
 
 ## Non-Goals
 
 - Replacing Claude Agent SDK as the primary kernel
 - Merging the two agent runtimes into one process
-- Porting Hermes to TypeScript (too large, evolving upstream)
-- Running Hermes tools from the Claude kernel (separate tool registries)
+- Porting Agent to TypeScript (too large, evolving upstream)
+- Running Agent tools from the Claude kernel (separate tool registries)
 
 ---
 
-## Hermes Agent Deep Reference
+## Agent Deep Reference
 
 > This section is a complete map for any coding agent tasked with building this integration. Everything below was read directly from the source at `../hermes-agent`.
 
@@ -283,9 +283,9 @@ GET  /v1/runs/{id}/events     -- SSE stream of run lifecycle events
 GET  /health                  -- Health check
 ```
 
-**This is the primary integration surface for Matrix OS.** The shell's Hermes chat app talks to this API. Auth is via `X-Hermes-Token` header or configurable bearer token.
+**This is the primary integration surface for Matrix OS.** The shell's Agent chat app talks to this API. Auth is via `X-Agent-Token` header or configurable bearer token.
 
-Session continuity: pass `X-Hermes-Session-Id` header to maintain conversation state across requests. Without it, each request is stateless.
+Session continuity: pass `X-Agent-Session-Id` header to maintain conversation state across requests. Without it, each request is stateless.
 
 ### Platform Adapters
 
@@ -325,10 +325,10 @@ class BasePlatformAdapter(ABC):
 
 ### Data Directory Layout (`HERMES_HOME`)
 
-Default: `~/.hermes/` (overridable via `HERMES_HOME` env var)
+Default: `~/.agent/` (overridable via `HERMES_HOME` env var)
 
 ```
-~/.hermes/
+~/.agent/
   config.yaml             # Main config (model, provider, tools, gateway platforms)
   .env                    # API keys and secrets
   SOUL.md                 # Agent identity/personality (like Matrix OS's soul.md)
@@ -417,11 +417,11 @@ sessions:
 
 #### 1. Skill Self-Improvement (`tools/skill_manager_tool.py`)
 
-Hermes creates skills from experience. After a complex multi-step task, the agent can autonomously create a new skill capturing the approach. Skills can be patched/edited during use when the agent discovers improvements.
+Agent creates skills from experience. After a complex multi-step task, the agent can autonomously create a new skill capturing the approach. Skills can be patched/edited during use when the agent discovers improvements.
 
 ```python
 # Actions: create, edit, patch, delete, write_file, remove_file
-# Skills stored in ~/.hermes/skills/<name>/SKILL.md
+# Skills stored in ~/.agent/skills/<name>/SKILL.md
 # Security scanning on every write (prompt injection, exfil patterns)
 # Frontmatter: name, description, version, platforms, prerequisites
 ```
@@ -445,7 +445,7 @@ _SUMMARY_RATIO = 0.20  # 20% of compressed content allocated to summary
 _SUMMARY_TOKENS_CEILING = 12_000
 ```
 
-**Matrix OS equivalent**: Claude Agent SDK handles context internally, but this pattern is useful for Hermes sessions routed through Matrix OS.
+**Matrix OS equivalent**: Claude Agent SDK handles context internally, but this pattern is useful for Agent sessions routed through Matrix OS.
 
 #### 3. Memory System (`agent/memory_manager.py`, `tools/memory_tool.py`)
 
@@ -590,69 +590,69 @@ Reset policies: `inactivity` (reset after N seconds idle), `manual` (only on `/r
 
 ## Integration Plan
 
-### Phase 1: Hermes Process Manager
+### Phase 1: Agent Process Manager
 
-Add Hermes as a managed sidecar process in the gateway.
+Add Agent as a managed sidecar process in the gateway.
 
 **New files:**
-- `packages/gateway/src/hermes/process.ts` -- Start/stop/health-check the Hermes Python process
-- `packages/gateway/src/hermes/client.ts` -- HTTP client for Hermes API (port 8642)
-- `packages/gateway/src/hermes/config.ts` -- Config generation (config.yaml + .env from Matrix OS settings)
+- `packages/gateway/src/agent/process.ts` -- Start/stop/health-check the Agent Python process
+- `packages/gateway/src/agent/client.ts` -- HTTP client for Agent API (port 8642)
+- `packages/gateway/src/agent/config.ts` -- Config generation (config.yaml + .env from Matrix OS settings)
 
 **How it works:**
-1. Gateway checks if Hermes is installed (`which hermes` or check for Python package)
-2. On startup (if enabled in settings), spawn `hermes gateway` as a child process
+1. Gateway checks if Agent is installed (`which agent` or check for Python package)
+2. On startup (if enabled in settings), spawn `agent gateway` as a child process
 3. Health check via `GET /health` on port 8642
 4. Restart on crash with exponential backoff
 5. Graceful shutdown on gateway stop
 
-**Config mapping** (Matrix OS settings -> Hermes config.yaml):
+**Config mapping** (Matrix OS settings -> Agent config.yaml):
 - Model selection -> `model` + `provider`
 - API keys -> `.env` file
 - Enabled platforms -> `gateway.platforms.*`
 - Memory toggle -> `memory.enabled`
 
-### Phase 2: Hermes Chat App
+### Phase 2: Agent Chat App
 
-A built-in Matrix OS app that provides a chat UI for Hermes.
+A built-in Matrix OS app that provides a chat UI for Agent.
 
 **Two surfaces:**
 
-1. **Shell chat component** (`shell/src/components/hermes/HermesChat.tsx`)
+1. **Shell chat component** (`shell/src/components/agent/AgentChat.tsx`)
    - SSE streaming from `/v1/chat/completions` with `stream: true`
-   - Session continuity via `X-Hermes-Session-Id` header
+   - Session continuity via `X-Agent-Session-Id` header
    - Model picker (OpenRouter model list)
    - Skill browser panel
    - Memory viewer
-   - Chat history (from Hermes sessions directory)
+   - Chat history (from Agent sessions directory)
 
-2. **Built-in module** (`~/modules/hermes-chat/`)
+2. **Built-in module** (`~/modules/agent-chat/`)
    - React app served through the gateway
    - Full-featured chat interface
    - Can be opened as a windowed app in the shell desktop
 
 **API proxy** (gateway routes to avoid CORS):
 ```
-POST /api/hermes/v1/chat/completions  -> localhost:8642/v1/chat/completions
-POST /api/hermes/v1/responses         -> localhost:8642/v1/responses
-GET  /api/hermes/v1/models            -> localhost:8642/v1/models
-POST /api/hermes/v1/runs              -> localhost:8642/v1/runs
-GET  /api/hermes/v1/runs/:id/events   -> localhost:8642/v1/runs/:id/events
-GET  /api/hermes/health               -> localhost:8642/health
+POST /api/agent/v1/chat/completions  -> localhost:8642/v1/chat/completions
+POST /api/agent/v1/responses         -> localhost:8642/v1/responses
+GET  /api/agent/v1/models            -> localhost:8642/v1/models
+POST /api/agent/v1/runs              -> localhost:8642/v1/runs
+GET  /api/agent/v1/runs/:id/events   -> localhost:8642/v1/runs/:id/events
+GET  /api/agent/health               -> localhost:8642/health
 ```
 
 ### Phase 3: Terminal Integration
 
-Users run `hermes` in the Matrix OS xterm.js terminal and get the full Hermes TUI experience (multiline editing, slash commands, streaming, skill autocomplete).
+Users run `agent` in the Matrix OS xterm.js terminal and get the full Agent TUI experience (multiline editing, slash commands, streaming, skill autocomplete).
 
 This requires:
-- Hermes CLI (`hermes` command) installed in the container PATH
+- Agent CLI (`agent` command) installed in the container PATH
 - `HERMES_HOME` set to user's home directory (`~/` in Matrix OS)
 - Python available in the container
 
 ### Phase 4: Channel Configuration
 
-Settings UI for Hermes channel management:
+Settings UI for Agent channel management:
 
 - **Telegram**: Bot token input, allowed users, home channel
 - **Discord**: Bot token, server selection
@@ -661,15 +661,15 @@ Settings UI for Hermes channel management:
 - **WhatsApp**: Cloud API token
 - **Others**: Generic credential input per platform
 
-Settings writes to `~/system/hermes/config.yaml` and `~/system/hermes/.env`, then signals Hermes to reload.
+Settings writes to `~/system/agent/config.yaml` and `~/system/agent/.env`, then signals Agent to reload.
 
 ### Phase 5: Matrix Protocol Bridge
 
-Connect Hermes to Matrix homeserver for federated messaging:
+Connect Agent to Matrix homeserver for federated messaging:
 
-- Hermes bot identity: `@hermes:matrix-os.com`
+- Agent bot identity: `@agent:matrix-os.com`
 - E2EE support via `matrix-nio[e2e]`
-- Users chat with their Hermes from any Matrix client
+- Users chat with their Agent from any Matrix client
 - Cross-room conversation continuity
 
 ## Docker Changes
@@ -679,19 +679,19 @@ The container needs Python alongside Node.js:
 ```dockerfile
 # Add to existing Dockerfile
 RUN apt-get update && apt-get install -y python3 python3-pip python3-venv
-# Install Hermes in isolated venv
-RUN python3 -m venv /opt/hermes-venv
-RUN /opt/hermes-venv/bin/pip install hermes-agent[messaging,matrix,cron]
-ENV PATH="/opt/hermes-venv/bin:${PATH}"
+# Install Agent in isolated venv
+RUN python3 -m venv /opt/agent-venv
+RUN /opt/agent-venv/bin/pip install hermes-agent[messaging,matrix,cron]
+ENV PATH="/opt/agent-venv/bin:${PATH}"
 ```
 
-Estimated additional image size: ~400MB (Python + Hermes deps).
+Estimated additional image size: ~400MB (Python + Agent deps).
 Estimated additional RAM: ~250MB idle, ~500MB active.
 
 ## Settings Schema
 
 ```typescript
-interface HermesSettings {
+interface AgentSettings {
   enabled: boolean;
   model: string;              // e.g. "anthropic/claude-sonnet-4-20250514"
   provider: string;           // e.g. "openrouter", "nous", "openai"
@@ -720,16 +720,16 @@ interface HermesSettings {
 }
 ```
 
-Stored in `~/system/config.json` under a `hermes` key (Everything Is a File).
+Stored in `~/system/config.json` under an `agent` key (Everything Is a File).
 
 ## Open Questions
 
 1. **Install mechanism** -- Bundled in Docker image, or user-triggered install via `pip install hermes-agent`? Bundling is simpler but adds ~400MB. On-demand install saves space but adds first-run latency.
 
-2. **Shared home directory** -- Should Hermes use the same `~/` as Matrix OS (so files are visible to both kernels), or an isolated `~/hermes/`? Shared is more useful but risks conflicts.
+2. **Shared home directory** -- Should Agent use the same `~/` as Matrix OS (so files are visible to both kernels), or an isolated `~/agent/`? Shared is more useful but risks conflicts.
 
-3. **Hermes version pinning** -- Pin to v0.8.0 or track upstream? Hermes is pre-1.0 and evolving fast. Pinning gives stability but misses improvements.
+3. **Agent version pinning** -- Pin to v0.8.0 or track upstream? Agent is pre-1.0 and evolving fast. Pinning gives stability but misses improvements.
 
-4. **Skill sharing** -- Can Matrix OS skills and Hermes skills share format? Both use markdown with YAML frontmatter, but the fields differ. A compatibility layer could let skills work in both systems.
+4. **Skill sharing** -- Can Matrix OS skills and Agent skills share format? Both use markdown with YAML frontmatter, but the fields differ. A compatibility layer could let skills work in both systems.
 
-5. **Unified conversation history** -- Should Hermes conversations appear in the Matrix OS chat history alongside Claude conversations? Different backends but same UI.
+5. **Unified conversation history** -- Should Agent conversations appear in the Matrix OS chat history alongside Claude conversations? Different backends but same UI.

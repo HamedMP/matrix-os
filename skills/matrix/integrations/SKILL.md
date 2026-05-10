@@ -1,17 +1,17 @@
 ---
 name: matrix-integrations
-description: Use Matrix OS platform-owned integrations from apps or agents without exposing provider secrets on customer VPSes or inside Hermes.
+description: Use Matrix OS platform-owned integrations from apps or agents without exposing provider secrets on customer VPSes or inside Agent.
 version: 1.0.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
 metadata:
-  hermes:
+  agent:
     tags: [Matrix OS, integrations, Pipedream, OAuth, platform]
     related_skills: [matrix-app-builder]
     config:
       - key: matrix.gateway_url
-        description: Matrix gateway URL reachable from the Hermes runtime.
+        description: Matrix gateway URL reachable from the Agent runtime.
         default: "http://localhost:4000"
         prompt: Matrix gateway URL
 ---
@@ -26,7 +26,7 @@ Use this when the user wants Gmail, Calendar, Drive, GitHub, Linear, Slack, Disc
 
 - Platform owns Pipedream credentials and OAuth app secrets.
 - Customer VPSes should not store provider secrets.
-- Hermes should not store provider secrets or `PIPEDREAM_*` OAuth client credentials.
+- Agent and Hermes runtimes should not store provider secrets or `PIPEDREAM_*` OAuth client credentials.
 - Apps call Matrix integration endpoints through Matrix auth.
 - Provider names and raw upstream errors should not be exposed as client-facing error details.
 
@@ -47,7 +47,7 @@ Default base URL inside a Matrix user instance:
 http://localhost:4000
 ```
 
-Use the configured `skills.config.matrix.gateway_url` if Hermes injects one.
+Use the configured `skills.config.matrix.gateway_url` if Agent or Hermes injects one.
 
 ### List Available Services and Actions
 
@@ -141,7 +141,7 @@ Hermes supports HTTP and stdio MCP servers, but do not configure Pipedream's rem
 ## Pitfalls
 
 - Do not ask for provider API keys in chat.
-- Do not put OAuth tokens in `matrix.json`, app source, or Hermes config.
+- Do not put OAuth tokens in `matrix.json`, app source, Agent config, or Hermes config.
 - Do not configure Pipedream remote MCP directly in Hermes with Matrix platform credentials.
 - Do not call provider APIs directly from app code unless the provider is public and unauthenticated.
 - After OAuth, always sync before saying the connection failed.
