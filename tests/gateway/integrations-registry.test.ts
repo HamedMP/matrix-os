@@ -55,16 +55,49 @@ describe("integrations registry", () => {
     expect(body.variables).not.toHaveProperty("labelName");
   });
 
-  it("includes the Linear label comparator when a label name is requested", () => {
+  it("omits optional Linear issue filters when their params are absent", () => {
     const action = getAction("linear", "list_issues");
     expect(action).toBeDefined();
 
-    const body = action!.directApi?.mapBody?.({ teamId: "team_mat", labelName: "symphony", first: 25 }) as {
+    const body = action!.directApi?.mapBody?.({ first: 25 }) as {
       query: string;
       variables: Record<string, unknown>;
     };
 
+    expect(body.query).not.toContain("team:");
+    expect(body.query).not.toContain("project:");
+    expect(body.query).not.toContain("state:");
+    expect(body.query).not.toContain("labels:");
+    expect(body.variables).not.toHaveProperty("teamId");
+    expect(body.variables).not.toHaveProperty("projectId");
+    expect(body.variables).not.toHaveProperty("state");
+    expect(body.variables).not.toHaveProperty("labelName");
+  });
+
+  it("includes the Linear label comparator when a label name is requested", () => {
+    const action = getAction("linear", "list_issues");
+    expect(action).toBeDefined();
+
+    const body = action!.directApi?.mapBody?.({
+      teamId: "team_mat",
+      projectId: "project_matrix",
+      state: "Todo",
+      labelName: "symphony",
+      first: 25,
+    }) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+
+    expect(body.query).toContain("team: { id: { eq: $teamId } }");
+    expect(body.query).toContain("project: { id: { eq: $projectId } }");
+    expect(body.query).toContain("state: { name: { eq: $state } }");
     expect(body.query).toContain("labels: { name: { eq: $labelName } }");
-    expect(body.variables).toMatchObject({ labelName: "symphony" });
+    expect(body.variables).toMatchObject({
+      teamId: "team_mat",
+      projectId: "project_matrix",
+      state: "Todo",
+      labelName: "symphony",
+    });
   });
 });

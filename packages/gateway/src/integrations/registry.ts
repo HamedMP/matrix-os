@@ -573,26 +573,41 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             const state = stringOrUndefined(p.state);
             const labelName = stringOrUndefined(p.labelName);
             const after = stringOrUndefined(p.after);
-            const labelVariable = labelName ? ", $labelName: String!" : "";
-            const labelFilter = labelName ? "\n                    labels: { name: { eq: $labelName } }" : "";
             const variables: Record<string, unknown> = {
               first: cappedPositiveInt(p.first, 50, 100),
               after: after ?? null,
-              teamId: teamId ?? null,
-              projectId: projectId ?? null,
-              state: state ?? null,
             };
-            if (labelName) variables.labelName = labelName;
+            const variableDefs = ["$first: Int!", "$after: String"];
+            const filters: string[] = [];
+            if (teamId) {
+              variableDefs.push("$teamId: String!");
+              filters.push("team: { id: { eq: $teamId } }");
+              variables.teamId = teamId;
+            }
+            if (projectId) {
+              variableDefs.push("$projectId: String!");
+              filters.push("project: { id: { eq: $projectId } }");
+              variables.projectId = projectId;
+            }
+            if (state) {
+              variableDefs.push("$state: String!");
+              filters.push("state: { name: { eq: $state } }");
+              variables.state = state;
+            }
+            if (labelName) {
+              variableDefs.push("$labelName: String!");
+              filters.push("labels: { name: { eq: $labelName } }");
+              variables.labelName = labelName;
+            }
+            const filterBlock = filters.length > 0
+              ? `filter: {\n${filters.map((filter) => `                    ${filter}`).join("\n")}\n                  }`
+              : "";
             return linearGraphqlBody(`
-              query MatrixLinearIssues($first: Int!, $after: String, $teamId: String, $projectId: String, $state: String${labelVariable}) {
+              query MatrixLinearIssues(${variableDefs.join(", ")}) {
                 issues(
                   first: $first
                   after: $after
-                  filter: {
-                    team: { id: { eq: $teamId } }
-                    project: { id: { eq: $projectId } }
-                    state: { name: { eq: $state } }${labelFilter}
-                  }
+                  ${filterBlock}
                   orderBy: updatedAt
                 ) {
                   nodes {

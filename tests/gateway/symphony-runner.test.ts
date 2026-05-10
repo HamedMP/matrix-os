@@ -20,6 +20,26 @@ class FakeProcess extends EventEmitter {
   }
 }
 
+class SlowKillProcess extends EventEmitter {
+  pid = 12346;
+  killed = false;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  signals: NodeJS.Signals[] = [];
+
+  kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    this.killed = true;
+    this.signals.push(signal);
+    if (signal === "SIGKILL") {
+      setTimeout(() => {
+        this.exitCode = 137;
+        this.emit("exit", this.exitCode);
+      }, 10);
+    }
+    return true;
+  }
+}
+
 describe("Symphony runner", () => {
   let homePath: string;
   let serviceRoot: string;
@@ -319,6 +339,37 @@ describe("Symphony runner", () => {
     expect(killSpy).not.toHaveBeenCalled();
     expect(status.running).toBe(false);
     expect(status.lastExitCode).toBe(0);
+  });
+
+  it("waits for SIGKILL exit before returning stop status", async () => {
+    const child = new SlowKillProcess();
+    const runner = createSymphonyRunner({
+      homePath,
+      env: { LINEAR_API_KEY: "test-key" },
+      spawnProcess: vi.fn(() => child as never),
+    });
+    await runner.start({ serviceRoot, workflowPath, binPath });
+    vi.useFakeTimers();
+    try {
+      const stopPromise = runner.stop();
+      let settled = false;
+      void stopPromise.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      await Promise.resolve();
+
+      expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(10);
+      const status = await stopPromise;
+
+      expect(status.running).toBe(false);
+      expect(status.lastExitCode).toBe(137);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports the launch-time config while the runner is still running", async () => {

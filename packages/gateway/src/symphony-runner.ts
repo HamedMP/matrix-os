@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 
 const SYMPHONY_CONFIG_VERSION = 1;
 const SYMPHONY_STOP_TIMEOUT_MS = 5_000;
+const SYMPHONY_STOP_KILL_SETTLE_MS = 1_000;
 const SYMPHONY_START_SETTLE_MS = 25;
 const GUARDRAILS_FLAG = "--i-understand-that-this-will-be-running-without-the-usual-guardrails";
 const SYMPHONY_ENV_ALLOWLIST = [
@@ -253,12 +254,18 @@ class SymphonyRunner {
     let realServiceRoot: string;
     let realWorkflowPath: string;
     let realCommandPath: string;
+    let realUserSymphonyRoot: string;
+    let realHomeSymphonyRoot: string;
     try {
       [realHomePath, realServiceRoot, realWorkflowPath, realCommandPath] = await Promise.all([
         realpath(this.homePath),
         realpath(serviceRoot),
         realpath(workflowPath),
         realpath(commandPath),
+      ]);
+      [realUserSymphonyRoot, realHomeSymphonyRoot] = await Promise.all([
+        realpathOrResolved(resolve(homedir(), "code", "symphony")),
+        realpathOrResolved(resolve(realHomePath, "code", "symphony")),
       ]);
     } catch (err: unknown) {
       console.error("[symphony] Failed to resolve runner paths:", err);
@@ -275,6 +282,9 @@ class SymphonyRunner {
       serviceRoot: realServiceRoot,
       workflowPath: realWorkflowPath,
       commandPath: realCommandPath,
+    }, {
+      serviceRoots: [realUserSymphonyRoot, realHomeSymphonyRoot],
+      workflowRoots: [realHomePath],
     });
     if (!realPathPolicy.ok) {
       return {
@@ -360,12 +370,14 @@ class SymphonyRunner {
         if (settled) return;
         settled = true;
         clearTimeout(killTimer);
+        clearTimeout(forceFinishTimer);
         resolveStop();
       };
       const killTimer = setTimeout(() => {
-        if (!child.killed) child.kill("SIGKILL");
-        finish();
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        if (child.exitCode !== null || child.signalCode !== null) finish();
       }, SYMPHONY_STOP_TIMEOUT_MS);
+      const forceFinishTimer = setTimeout(finish, SYMPHONY_STOP_TIMEOUT_MS + SYMPHONY_STOP_KILL_SETTLE_MS);
       child.once("exit", finish);
       if (child.exitCode !== null || child.signalCode !== null) {
         finish();
@@ -421,8 +433,11 @@ function validateRunnerPaths(paths: {
   serviceRoot: string;
   workflowPath: string;
   commandPath: string;
+}, roots?: {
+  serviceRoots?: string[];
+  workflowRoots?: string[];
 }): { ok: true } | { ok: false; code: string; message: string } {
-  const serviceRoots = [
+  const serviceRoots = roots?.serviceRoots ?? [
     resolve(homedir(), "code", "symphony"),
     resolve(paths.homePath, "code", "symphony"),
   ];
@@ -441,7 +456,7 @@ function validateRunnerPaths(paths: {
     };
   }
 
-  const workflowRoots = [
+  const workflowRoots = roots?.workflowRoots ?? [
     resolve(paths.homePath),
   ];
   if (!workflowRoots.some((root) => isWithinPath(root, paths.workflowPath))) {
@@ -453,6 +468,17 @@ function validateRunnerPaths(paths: {
   }
 
   return { ok: true };
+}
+
+async function realpathOrResolved(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err.code === "ENOENT" || err.code === "ENOTDIR")) {
+      return resolve(path);
+    }
+    throw err;
+  }
 }
 
 function isWithinPath(parent: string, child: string): boolean {
