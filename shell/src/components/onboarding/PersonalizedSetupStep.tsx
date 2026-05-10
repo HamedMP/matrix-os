@@ -252,7 +252,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
           codingAgents,
           maxEmails: 1000,
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(90_000),
       });
       if (!res.ok) {
         setError("Suggestions are unavailable.");

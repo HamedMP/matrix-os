@@ -729,7 +729,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         if (!warnings.includes(warning)) warnings.push(warning);
       };
 
-      const externalId = activeConnections.length > 0 ? await getOrCreateExternalId(uid) : uid;
+      let externalId = uid;
+      if (activeConnections.length > 0) {
+        try {
+          externalId = await getOrCreateExternalId(uid);
+        } catch (err: unknown) {
+          console.error("[onboarding-recommendations] external user id lookup failed:", err instanceof Error ? err.message : String(err));
+          if (gmail) addWarning("email_unavailable");
+          if (calendar) addWarning("calendar_unavailable");
+        }
+      }
 
       let emails: EmailSignal[] = [];
       let calendarEvents: CalendarEventSignal[] = [];

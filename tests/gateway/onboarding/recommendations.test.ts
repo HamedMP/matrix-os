@@ -188,6 +188,40 @@ describe("personalized onboarding recommendations", () => {
     }));
   });
 
+  it("keeps deterministic recommendations when AI returns a duplicate id", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [],
+      calendarEvents: [],
+      connectedServices: [],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: [],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [
+        {
+          id: "connect-gmail",
+          category: "workflow",
+          title: "AI-generated Gmail workflow",
+          description: "This should not replace the built-in connection prompt.",
+          serviceId: "gmail",
+          priority: "low",
+        },
+      ],
+    });
+
+    expect(plan.recommendations).toContainEqual(expect.objectContaining({
+      id: "connect-gmail",
+      category: "connection",
+      title: "Connect Gmail",
+    }));
+    expect(plan.recommendations).not.toContainEqual(expect.objectContaining({
+      id: "connect-gmail",
+      title: "AI-generated Gmail workflow",
+    }));
+  });
+
   it("does not detect common English words as services without service domains", () => {
     const plan = buildPersonalizedOnboardingPlan({
       emails: [
@@ -590,5 +624,37 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
       opts.url === "https://gmail.googleapis.com/gmail/v1/users/me/messages",
     );
     expect(gmailListCalls).toHaveLength(1);
+  });
+
+  it("returns partial recommendations when external id lookup fails", async () => {
+    const failingDb = {
+      ...db,
+      getUserById: vi.fn().mockRejectedValue(new Error("database unavailable")),
+    } satisfies PlatformDb;
+    const fallbackApp = new Hono();
+    fallbackApp.route("/api/integrations", createIntegrationRoutes({
+      db: failingDb,
+      pipedream,
+      webhookSecret: "whsec_test",
+      resolveUserId: async () => userId,
+      recommendationAi: {
+        apiKey: "gemini-test-key",
+        model: "gemini-3-flash-preview",
+        fetchFn,
+      },
+    }));
+
+    const res = await fallbackApp.request("/api/integrations/onboarding/recommendations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxEmails: 1000, codingAgents: ["codex"] }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).not.toContain("database unavailable");
+    const data = JSON.parse(body);
+    expect(data.warnings).toContain("email_unavailable");
+    expect(data.connectedServices).toEqual(["gmail"]);
   });
 });

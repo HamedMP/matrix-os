@@ -178,6 +178,8 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
+const DEFAULT_INTEGRATION_PROXY_TIMEOUT_MS = 30_000;
+const ONBOARDING_RECOMMENDATION_PROXY_TIMEOUT_MS = 90_000;
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 
 function timingSafeStringEquals(actual: string | null | undefined, expected: string): boolean {
@@ -625,11 +627,14 @@ export async function createGateway(config: GatewayConfig) {
       headers.set("authorization", `Bearer ${internalPlatformToken}`);
     }
 
+    const proxyTimeoutMs = upstreamUrl.includes("/api/integrations/onboarding/recommendations")
+      ? ONBOARDING_RECOMMENDATION_PROXY_TIMEOUT_MS
+      : DEFAULT_INTEGRATION_PROXY_TIMEOUT_MS;
     const upstream = await fetch(upstreamUrl, {
       method: c.req.method,
       headers,
       redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(proxyTimeoutMs),
       body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
     });
 

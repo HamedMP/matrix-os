@@ -527,11 +527,11 @@ export function buildPersonalizedOnboardingPlan(input: {
     input.userPreferences.codingAgents,
   );
   const recommendations: OnboardingRecommendation[] = [];
-  for (const recommendation of sanitizeAiRecommendations(input.aiRecommendations)) {
-    if (recommendationMatchesExcludedService(recommendation, excluded)) continue;
+  for (const recommendation of deterministic) {
     pushRecommendation(recommendations, recommendation);
   }
-  for (const recommendation of deterministic) {
+  for (const recommendation of sanitizeAiRecommendations(input.aiRecommendations)) {
+    if (recommendationMatchesExcludedService(recommendation, excluded)) continue;
     pushRecommendation(recommendations, recommendation);
   }
 
