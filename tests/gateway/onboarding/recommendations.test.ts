@@ -298,6 +298,60 @@ describe("personalized onboarding recommendations", () => {
     }));
   });
 
+  it("filters AI recommendations that mention excluded known service names without service ids", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [],
+      calendarEvents: [],
+      connectedServices: [],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: ["slack"],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [
+        {
+          id: "daily-team-chat-review",
+          category: "routine",
+          title: "Integrate Slack into your daily workflow",
+          description: "Review Slack messages and turn them into Matrix follow-ups.",
+          priority: "medium",
+        },
+      ],
+    });
+
+    expect(plan.recommendations).not.toContainEqual(expect.objectContaining({
+      id: "daily-team-chat-review",
+    }));
+  });
+
+  it("filters AI recommendations that mention de-slugged excluded custom service ids", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [],
+      calendarEvents: [],
+      connectedServices: [],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: ["readwise-reader"],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [
+        {
+          id: "daily-reader-review",
+          category: "routine",
+          title: "Review Readwise Reader highlights",
+          description: "Turn Readwise Reader articles into a daily Matrix reading routine.",
+          priority: "medium",
+        },
+      ],
+    });
+
+    expect(plan.recommendations).not.toContainEqual(expect.objectContaining({
+      id: "daily-reader-review",
+    }));
+  });
+
   it("does not detect common English words as services without service domains", () => {
     const plan = buildPersonalizedOnboardingPlan({
       emails: [

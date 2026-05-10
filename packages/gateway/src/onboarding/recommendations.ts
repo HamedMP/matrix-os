@@ -391,6 +391,9 @@ function recommendationMatchesExcludedService(
     const excludedRule = ruleForUserService(excludedId);
     const knownRule = SERVICE_RULES.some((rule) => rule.id === excludedRule.id);
     const hasSpecificCustomAlias = excludedRule.aliases.some((alias) => slugify(alias).length >= 4);
+    const matchesTextMention = knownRule || hasSpecificCustomAlias
+      ? matchesRule(recommendationText, excludedRule) || matchesServiceTextMention(recommendationText, excludedRule)
+      : false;
     return serviceId === excludedId ||
       recommendationId === excludedId ||
       recommendationId === `connect-${excludedId}` ||
@@ -401,8 +404,27 @@ function recommendationMatchesExcludedService(
       recommendationId.startsWith(`replace-${excludedId}-`) ||
       recommendationId === `${excludedId}-replacement` ||
       recommendationId.startsWith(`${excludedId}-replacement-`) ||
-      ((knownRule || hasSpecificCustomAlias) && matchesRule(recommendationText, excludedRule));
+      matchesTextMention;
   });
+}
+
+function matchesServiceTextMention(haystack: string, rule: ServiceRule): boolean {
+  const candidates = [
+    rule.id,
+    rule.name,
+    rule.id.replace(/[-_]+/g, " "),
+    rule.name.replace(/[-_]+/g, " "),
+    ...rule.aliases,
+    ...rule.aliases.map((alias) => alias.replace(/[-_]+/g, " ")),
+  ].filter((candidate, index, all) => all.indexOf(candidate) === index);
+  for (const candidate of candidates) {
+    const value = normalize(candidate);
+    if (slugify(value).length < 4) continue;
+    if (new RegExp(`(^|[^a-z0-9])${escapeRegExp(value)}([^a-z0-9]|$)`).test(haystack)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildRuleRecommendations(
