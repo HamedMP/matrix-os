@@ -735,8 +735,6 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
           externalId = await getOrCreateExternalId(uid);
         } catch (err: unknown) {
           console.error("[onboarding-recommendations] external user id lookup failed:", err instanceof Error ? err.message : String(err));
-          if (gmail) addWarning("email_unavailable");
-          if (calendar) addWarning("calendar_unavailable");
         }
       }
 

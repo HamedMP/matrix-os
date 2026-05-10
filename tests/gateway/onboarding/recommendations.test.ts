@@ -655,7 +655,7 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     expect(gmailListCalls).toHaveLength(1);
   });
 
-  it("returns partial recommendations when external id lookup fails", async () => {
+  it("falls back to the user id when external id lookup fails", async () => {
     const failingDb = {
       ...db,
       getUserById: vi.fn().mockRejectedValue(new Error("database unavailable")),
@@ -683,7 +683,11 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     const body = await res.text();
     expect(body).not.toContain("database unavailable");
     const data = JSON.parse(body);
-    expect(data.warnings).toContain("email_unavailable");
+    expect(data.warnings).not.toContain("email_unavailable");
     expect(data.connectedServices).toEqual(["gmail"]);
+    expect(pipedream.proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+      externalUserId: userId,
+      accountId: "pd_acc_gmail",
+    }));
   });
 });
