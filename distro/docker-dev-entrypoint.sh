@@ -161,6 +161,14 @@ fi
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
 chown -R matrixos:matrixos /app/shell/.next
+# Next dev rewrites next-env.d.ts during startup. The source tree is bind
+# mounted from the host, so make this one generated type file writable before
+# dropping to the non-root matrixos user.
+if [ -e /app/shell/next-env.d.ts ]; then
+  chmod a+rw /app/shell/next-env.d.ts 2>/dev/null || true
+else
+  install -m 0666 /dev/null /app/shell/next-env.d.ts 2>/dev/null || true
+fi
 
 # QMD: index user home for semantic search (best-effort)
 if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then

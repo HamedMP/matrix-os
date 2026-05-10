@@ -1,5 +1,5 @@
 /// <reference types="next" />
 /// <reference types="next/image-types/global" />
 
-// This file is committed so non-root Docker dev containers do not need to
-// create it inside the bind-mounted shell directory during startup.
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
