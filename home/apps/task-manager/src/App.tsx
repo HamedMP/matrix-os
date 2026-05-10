@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
@@ -98,23 +98,30 @@ async function readBoard(): Promise<Board> {
   try {
     payload = (await response.json()) as { value?: string | null } | null;
   } catch (err: unknown) {
-    console.warn("[task-manager] ignored invalid bridge JSON:", err instanceof Error ? err.message : String(err));
-    return createSeedBoard();
+    throw new Error(`Bridge returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!payload?.value) return createSeedBoard();
   try {
     return hydrateBoard(JSON.parse(payload.value));
   } catch (err: unknown) {
-    console.warn("[task-manager] ignored invalid board payload:", err instanceof Error ? err.message : String(err));
-    return createSeedBoard();
+    throw new Error(`Bridge returned invalid board payload: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-async function writeBoard(board: Board): Promise<void> {
+function timeoutSignal(signal?: AbortSignal): AbortSignal {
+  if (!signal) return AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  return AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
+async function writeBoard(board: Board, signal?: AbortSignal): Promise<void> {
   const response = await fetch("/api/bridge/data", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: timeoutSignal(signal),
     body: JSON.stringify({
       action: "write",
       app: APP_ID,
@@ -137,6 +144,20 @@ function delegationClass(target: DelegationTarget): string {
 
 function defaultDelegationInstructions(card: Card): string {
   return card.description.trim() || card.title;
+}
+
+function columnCardCount(board: Board, columnId: string): number {
+  return board.cards.filter((card) => card.columnId === columnId).length;
+}
+
+function cardDropIndex(board: Board, targetCardId: string, movingCardId: string): number {
+  const targetCard = board.cards.find((card) => card.id === targetCardId);
+  if (!targetCard) return 0;
+  const targetCards = board.cards
+    .filter((card) => card.columnId === targetCard.columnId && card.id !== movingCardId)
+    .sort((a, b) => a.order - b.order);
+  const targetIndex = targetCards.findIndex((card) => card.id === targetCardId);
+  return targetIndex < 0 ? targetCards.length : targetIndex;
 }
 
 function CardView({
@@ -217,6 +238,8 @@ function App() {
   const [columnDrafts, setColumnDrafts] = useState<Record<string, string>>({});
   const [newProjectName, setNewProjectName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const detailSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     readBoard()
@@ -226,9 +249,15 @@ function App() {
       })
       .catch((err: unknown) => {
         console.warn("[task-manager] load failed:", err instanceof Error ? err.message : String(err));
-        setBoard(createSeedBoard());
         setError("Board could not be loaded.");
       });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
+      saveAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -248,14 +277,40 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedCardId]);
 
+  const persistBoard = useCallback((nextBoard: Board) => {
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
+    writeBoard(nextBoard, controller.signal)
+      .catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        console.warn("[task-manager] save failed:", err instanceof Error ? err.message : String(err));
+        setError("Board could not be saved.");
+      })
+      .finally(() => {
+        if (saveAbortRef.current === controller) saveAbortRef.current = null;
+      });
+  }, []);
+
   const saveBoard = useCallback((nextBoard: Board) => {
+    if (detailSaveTimerRef.current) {
+      clearTimeout(detailSaveTimerRef.current);
+      detailSaveTimerRef.current = null;
+    }
     setBoard(nextBoard);
     setError(null);
-    writeBoard(nextBoard).catch((err: unknown) => {
-      console.warn("[task-manager] save failed:", err instanceof Error ? err.message : String(err));
-      setError("Board could not be saved.");
-    });
-  }, []);
+    persistBoard(nextBoard);
+  }, [persistBoard]);
+
+  const queueBoardSave = useCallback((nextBoard: Board) => {
+    setBoard(nextBoard);
+    setError(null);
+    if (detailSaveTimerRef.current) clearTimeout(detailSaveTimerRef.current);
+    detailSaveTimerRef.current = setTimeout(() => {
+      detailSaveTimerRef.current = null;
+      persistBoard(nextBoard);
+    }, 400);
+  }, [persistBoard]);
 
   const summary = useMemo(() => board ? summarizeBoard(board) : null, [board]);
   const selectedCard = board?.cards.find((card) => card.id === selectedCardId) ?? null;
@@ -317,8 +372,8 @@ function App() {
 
   const updateSelectedCard = useCallback((patch: Partial<Omit<Card, "id" | "createdAt">>) => {
     if (!board || !selectedCard) return;
-    saveBoard(updateCard(board, selectedCard.id, patch));
-  }, [board, saveBoard, selectedCard]);
+    queueBoardSave(updateCard(board, selectedCard.id, patch));
+  }, [board, queueBoardSave, selectedCard]);
 
   const moveSelectedCard = useCallback((columnId: string) => {
     if (!board || !selectedCard || selectedCard.columnId === columnId) return;
@@ -331,13 +386,13 @@ function App() {
     const current = selectedCard.delegation;
     const target = patch.target ?? current?.target;
     if (!target) return;
-    saveBoard(delegateCard(board, selectedCard.id, {
+    queueBoardSave(delegateCard(board, selectedCard.id, {
       target,
       trigger: patch.trigger ?? current?.trigger ?? "manual",
       instructions: patch.instructions ?? current?.instructions ?? defaultDelegationInstructions(selectedCard),
       status: patch.status ?? current?.status ?? "queued",
     }));
-  }, [board, saveBoard, selectedCard]);
+  }, [board, queueBoardSave, selectedCard]);
 
   const setDelegationTarget = useCallback((target: DraftDelegationTarget) => {
     if (!board || !selectedCard) return;
@@ -354,7 +409,7 @@ function App() {
   }, [board, saveBoard, selectedCard]);
 
   if (!board || !summary) {
-    return <div className="loading">Opening Task Manager</div>;
+    return <div className="loading">{error ?? "Opening Task Manager"}</div>;
   }
 
   const projectById = Object.fromEntries(board.projects.map((project) => [project.id, project]));
@@ -467,7 +522,7 @@ function App() {
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => {
                 if (!draggingCardId) return;
-                saveBoard(moveCard(board, draggingCardId, column.id, cards.length));
+                saveBoard(moveCard(board, draggingCardId, column.id, columnCardCount(board, column.id)));
                 setDraggingCardId(null);
               }}
             >
@@ -503,7 +558,7 @@ function App() {
                     onDrop={(event) => {
                       event.stopPropagation();
                       if (!draggingCardId) return;
-                      saveBoard(moveCard(board, draggingCardId, column.id, index));
+                      saveBoard(moveCard(board, draggingCardId, column.id, cardDropIndex(board, card.id, draggingCardId)));
                       setDraggingCardId(null);
                     }}
                   >

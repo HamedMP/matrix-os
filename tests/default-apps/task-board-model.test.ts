@@ -113,6 +113,24 @@ describe("task board model", () => {
     expect(summarizeBoard(board).doneCards).toBe(1);
   });
 
+  it("does not treat the final custom column as done without done semantics", () => {
+    let board = createBoard("Custom");
+    board = {
+      ...board,
+      columns: [
+        { id: "today", title: "Today", color: "#0ea5e9" },
+        { id: "later", title: "Later", color: "#64748b" },
+      ],
+    };
+    board = addCard(board, {
+      columnId: "later",
+      title: "Parked for later",
+      projectId: board.projects[0].id,
+    });
+
+    expect(summarizeBoard(board).doneCards).toBe(0);
+  });
+
   it("records Matrix and Hermes delegation intent on cards", () => {
     let board = createBoard("Default");
     board = addCard(board, {

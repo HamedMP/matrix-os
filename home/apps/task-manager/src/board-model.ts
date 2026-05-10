@@ -309,7 +309,7 @@ function resolveDoneColumnId(board: Board): string | null {
   const explicitDone = board.columns.find((column) => column.id === "done");
   if (explicitDone) return explicitDone.id;
   const semanticDone = board.columns.find((column) => /\b(done|complete|completed)\b/i.test(column.title));
-  return semanticDone?.id ?? board.columns.at(-1)?.id ?? null;
+  return semanticDone?.id ?? null;
 }
 
 export function hydrateBoard(value: unknown): Board {

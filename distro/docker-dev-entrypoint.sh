@@ -11,9 +11,6 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
 fi
 
-echo "[matrix-os-dev] Building kernel package..."
-pnpm --filter '@matrix-os/kernel' build
-
 # Ensure home directory exists
 if [ ! -d "$MATRIX_HOME" ]; then
   echo "[matrix-os-dev] Initializing home directory..."
@@ -188,6 +185,8 @@ cp /app/distro/p10k.zsh "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
+mkdir -p /app/packages/kernel/dist
+chown -R matrixos:matrixos /app/packages/kernel/dist 2>/dev/null || true
 chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
@@ -202,6 +201,9 @@ exec su-exec matrixos bash -c '
   export SHELL=/bin/zsh
   export PATH="/app/node_modules/.bin:$PATH"
   cd /app
+
+  echo "[matrix-os-dev] Building kernel package..."
+  pnpm --filter "@matrix-os/kernel" build
 
   # QMD: register collections + start MCP server (best-effort, background)
   if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
