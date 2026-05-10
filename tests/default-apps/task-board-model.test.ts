@@ -94,6 +94,25 @@ describe("task board model", () => {
     expect(summarizeBoard(board).doneCards).toBe(1);
   });
 
+  it("does not count incomplete columns as done columns", () => {
+    let board = createBoard("Custom");
+    board = {
+      ...board,
+      columns: [
+        { id: "in-progress", title: "In Progress", color: "#0ea5e9" },
+        { id: "incomplete", title: "Incomplete Tasks", color: "#f59e0b" },
+        { id: "finished", title: "Done", color: "#10b981" },
+      ],
+    };
+    board = addCard(board, {
+      columnId: "finished",
+      title: "Actually finished",
+      projectId: board.projects[0].id,
+    });
+
+    expect(summarizeBoard(board).doneCards).toBe(1);
+  });
+
   it("records Matrix and Hermes delegation intent on cards", () => {
     let board = createBoard("Default");
     board = addCard(board, {

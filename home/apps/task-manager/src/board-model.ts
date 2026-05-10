@@ -308,7 +308,7 @@ export function summarizeBoard(board: Board): BoardSummary {
 function resolveDoneColumnId(board: Board): string | null {
   const explicitDone = board.columns.find((column) => column.id === "done");
   if (explicitDone) return explicitDone.id;
-  const semanticDone = board.columns.find((column) => /done|complete|completed/i.test(column.title));
+  const semanticDone = board.columns.find((column) => /\b(done|complete|completed)\b/i.test(column.title));
   return semanticDone?.id ?? board.columns.at(-1)?.id ?? null;
 }
 
