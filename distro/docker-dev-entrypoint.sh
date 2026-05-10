@@ -160,7 +160,9 @@ fi
 # from a previous run often references outdated AST -- causes SyntaxErrors)
 rm -rf /app/shell/.next/cache
 mkdir -p /app/shell/.next
+touch /app/shell/next-env.d.ts
 chown -R matrixos:matrixos /app/shell/.next
+chown matrixos:matrixos /app/shell/next-env.d.ts
 
 # QMD: index user home for semantic search (best-effort)
 if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
