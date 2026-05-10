@@ -5,8 +5,8 @@ import { useOnboarding } from "@/hooks/useOnboarding";
 import { useMicPermission } from "@/hooks/useMicPermission";
 import { VoiceWave } from "./onboarding/VoiceWave";
 import { ApiKeyInput } from "./onboarding/ApiKeyInput";
+import { PersonalizedSetupStep } from "./onboarding/PersonalizedSetupStep";
 import { MicPermissionDialog } from "./MicPermissionDialog";
-import { MicIcon, KeyboardIcon } from "lucide-react";
 
 interface OnboardingScreenProps {
   onComplete: () => void;
@@ -16,7 +16,6 @@ interface OnboardingScreenProps {
 export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScreenProps) {
   const ob = useOnboarding();
   const mic = useMicPermission();
-  const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<"idle" | "dimming" | "black" | "revealing">("idle");
   const [showMicDialog, setShowMicDialog] = useState(false);
   const ambientRef = useRef<HTMLAudioElement | null>(null);
@@ -83,7 +82,6 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
     setTimeout(() => {
       // Phase 2: fully dark
       setPhase("black");
-      setStarted(true);
       startAmbientAudio();
       ob.start(useVoice);
       setTimeout(() => {
@@ -138,28 +136,17 @@ export function OnboardingScreen({ onComplete, onOpenTerminal }: OnboardingScree
           onDismiss={() => setShowMicDialog(false)}
         />
 
-        <div className="flex-1 flex items-center justify-center">
-          <button
-            onClick={handleTalkToMe}
-            disabled={phase !== "idle"}
-            className="text-4xl font-light tracking-tight text-foreground hover:scale-110 transition-transform duration-700 ease-out"
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+        <div className="flex-1 overflow-y-auto">
+          <div
+            className="min-h-full flex items-center justify-center py-10 pb-24 transition-opacity duration-500"
+            style={{ opacity: phase === "idle" ? 1 : 0 }}
           >
-            <span
-              className="bg-clip-text text-transparent"
-              style={{
-                backgroundImage:
-                  phase === "dimming"
-                    ? "linear-gradient(90deg, var(--primary) 0%, var(--primary) 100%)"
-                    : "linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 35%, var(--primary) 50%, var(--foreground) 65%, var(--foreground) 100%)",
-                backgroundSize: "200% 100%",
-                animation: phase === "idle" ? "shimmer 6s ease-in-out infinite" : "none",
-                transition: "all 1.2s ease-in-out",
-              }}
-            >
-              Enter Matrix OS
-            </span>
-          </button>
+            <PersonalizedSetupStep
+              disabled={phase !== "idle"}
+              onStartVoice={handleTalkToMe}
+              onStartText={() => handleStart(false)}
+            />
+          </div>
         </div>
 
         <div

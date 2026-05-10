@@ -6,6 +6,17 @@ import { listServices, getService, getAction } from "./registry.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
+import {
+  OnboardingRecommendationRequestSchema,
+  buildPersonalizedOnboardingPlan,
+  fetchRecentGmailEmailSignals,
+  fetchUpcomingCalendarSignals,
+  generateAiRecommendations,
+  type EmailSignal,
+  type CalendarEventSignal,
+  type RecommendationAiConfig,
+  type RecommendationWarning,
+} from "../onboarding/recommendations.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -356,10 +367,11 @@ export interface IntegrationRoutesOpts {
   webhookSecret: string;
   resolveUserId: (c: Context) => Promise<string | null>;
   broadcast?: IntegrationBroadcast;
+  recommendationAi?: RecommendationAiConfig;
 }
 
 export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId, broadcast } = opts;
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast, recommendationAi } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
 
@@ -624,6 +636,105 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       console.error("[integrations] Sync failed:", err instanceof Error ? err.message : err);
       return c.json({ error: "Failed to sync accounts" }, 502);
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /onboarding/recommendations -- personalized setup suggestions
+  // -----------------------------------------------------------------------
+
+  app.post("/onboarding/recommendations", bodyLimit({ maxSize: 16 * 1024 }), async (c) => {
+    const uid = await requireUser(c);
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (err: unknown) {
+      console.warn("[onboarding-recommendations] Invalid JSON:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const parsed = OnboardingRecommendationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid request body" }, 400);
+    }
+
+    const request = parsed.data;
+    const warnings: RecommendationWarning[] = [];
+    const addWarning = (warning: RecommendationWarning) => {
+      if (!warnings.includes(warning)) warnings.push(warning);
+    };
+
+    const connections = await db.listConnectedServices(uid);
+    const activeConnections = connections.filter((connection) => connection.status === "active");
+    const connectedServices = activeConnections.map((connection) => connection.service);
+    const externalId = activeConnections.length > 0 ? await getOrCreateExternalId(uid) : uid;
+    const gmail = activeConnections.find((connection) => connection.service === "gmail");
+    const calendar = activeConnections.find((connection) => connection.service === "google_calendar");
+
+    let emails: EmailSignal[] = [];
+    let calendarEvents: CalendarEventSignal[] = [];
+
+    if (gmail) {
+      try {
+        emails = await fetchRecentGmailEmailSignals({
+          pipedream,
+          externalUserId: externalId,
+          accountId: gmail.pipedream_account_id,
+          maxEmails: request.maxEmails,
+        });
+      } catch (err) {
+        console.error("[onboarding-recommendations] Gmail analysis failed:", err instanceof Error ? err.message : String(err));
+        addWarning("email_unavailable");
+      }
+    }
+
+    if (calendar) {
+      try {
+        calendarEvents = await fetchUpcomingCalendarSignals({
+          pipedream,
+          externalUserId: externalId,
+          accountId: calendar.pipedream_account_id,
+        });
+      } catch (err) {
+        console.error("[onboarding-recommendations] Calendar analysis failed:", err instanceof Error ? err.message : String(err));
+        addWarning("calendar_unavailable");
+      }
+    }
+
+    const userPreferences = {
+      includedServices: request.includedServices,
+      excludedServices: request.excludedServices,
+      missingServices: request.missingServices,
+      codingAgents: request.codingAgents,
+    };
+    const aiRecommendations = await generateAiRecommendations({
+      emails,
+      calendarEvents,
+      connectedServices,
+      userPreferences,
+      ai: recommendationAi ?? {},
+    });
+    if (!aiRecommendations) {
+      addWarning("ai_unavailable");
+    }
+
+    const plan = buildPersonalizedOnboardingPlan({
+      emails,
+      calendarEvents,
+      connectedServices,
+      userPreferences,
+      aiRecommendations: aiRecommendations ?? [],
+    });
+
+    return c.json({
+      maxEmails: request.maxEmails,
+      analyzedEmailCount: emails.length,
+      analyzedCalendarEventCount: calendarEvents.length,
+      connectedServices,
+      warnings,
+      ...plan,
+    });
   });
 
   // -----------------------------------------------------------------------

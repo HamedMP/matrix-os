@@ -10,9 +10,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has 7 launch services", () => {
-    expect(listServices()).toHaveLength(7);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(7);
+  it("has 8 launch services", () => {
+    expect(listServices()).toHaveLength(8);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(8);
   });
 
   it("returns service by id", () => {
@@ -75,9 +75,10 @@ describe("Service Registry", () => {
     }
   });
 
-  it("contains all 7 expected services", () => {
+  it("contains all 8 expected services", () => {
     const ids = listServices().map((s) => s.id);
     expect(ids).toContain("gmail");
+    expect(ids).toContain("todoist");
     expect(ids).toContain("google_calendar");
     expect(ids).toContain("google_drive");
     expect(ids).toContain("github");

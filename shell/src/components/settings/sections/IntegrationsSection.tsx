@@ -40,6 +40,7 @@ export function shouldLogIntegrationWarning(err: unknown): boolean {
 
 const CATEGORY_COLORS: Record<string, string> = {
   google: "bg-blue-500",
+  productivity: "bg-emerald-600",
   developer: "bg-gray-700",
   communication: "bg-indigo-500",
 };

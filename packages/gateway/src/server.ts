@@ -772,6 +772,10 @@ export async function createGateway(config: GatewayConfig) {
         })(),
         resolveUserId: resolveIntegrationUserId,
         broadcast,
+        recommendationAi: {
+          apiKey: process.env.GEMINI_API_KEY,
+          model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? "gemini-3.1-flash",
+        },
       });
       // Routes mounted after auth middleware below (see "deferred route mounts")
       console.log("[platform-db] Integration routes ready");

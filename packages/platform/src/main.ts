@@ -178,6 +178,10 @@ interface GatewayIntegrationRoutesModule {
     pipedream: unknown;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
+    recommendationAi?: {
+      apiKey?: string;
+      model?: string;
+    };
   }): Hono;
 }
 
@@ -1997,6 +2001,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         const handle = c.get('platformHandle') as string | undefined;
         return await resolveIntegrationUserId(clerkUserId, handle);
       },
+      recommendationAi: {
+        apiKey: process.env.GEMINI_API_KEY,
+        model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? 'gemini-3.1-flash',
+      },
     });
     internalIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
@@ -2006,6 +2014,10 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
         const handle = c.get('internalContainerHandle') as string | undefined;
         return await resolveIntegrationUserId(clerkUserId, handle);
+      },
+      recommendationAi: {
+        apiKey: process.env.GEMINI_API_KEY,
+        model: process.env.ONBOARDING_RECOMMENDATION_GEMINI_MODEL ?? 'gemini-3.1-flash',
       },
     });
   }

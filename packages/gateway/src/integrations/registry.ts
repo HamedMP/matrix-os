@@ -173,6 +173,55 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     },
   },
 
+  todoist: {
+    id: "todoist",
+    name: "Todoist",
+    category: "productivity",
+    pipedreamApp: "todoist",
+    icon: "check-square",
+    logoUrl: `${LOGO_BASE}/todoist/logo/48`,
+    actions: {
+      list_tasks: {
+        description: "List active Todoist tasks",
+        params: {
+          projectId: { type: "string" },
+          sectionId: { type: "string" },
+          label: { type: "string" },
+          filter: { type: "string" },
+        },
+        directApi: {
+          method: "GET",
+          url: "https://api.todoist.com/rest/v2/tasks",
+          mapParams: (p) => ({
+            ...(p.projectId ? { project_id: String(p.projectId) } : {}),
+            ...(p.sectionId ? { section_id: String(p.sectionId) } : {}),
+            ...(p.label ? { label: String(p.label) } : {}),
+            ...(p.filter ? { filter: String(p.filter) } : {}),
+          }),
+        },
+      },
+      create_task: {
+        description: "Create a Todoist task",
+        params: {
+          content: { type: "string", required: true },
+          description: { type: "string" },
+          dueString: { type: "string" },
+          priority: { type: "number" },
+        },
+        directApi: {
+          method: "POST",
+          url: "https://api.todoist.com/rest/v2/tasks",
+          mapBody: (p) => ({
+            content: String(p.content),
+            ...(p.description ? { description: String(p.description) } : {}),
+            ...(p.dueString ? { due_string: String(p.dueString) } : {}),
+            ...(p.priority ? { priority: cappedPositiveInt(p.priority, 1, 4) } : {}),
+          }),
+        },
+      },
+    },
+  },
+
   google_calendar: {
     id: "google_calendar",
     name: "Google Calendar",
