@@ -387,8 +387,15 @@ function stateBadgeVariant(stateName: string | undefined): "secondary" | "succes
   return "secondary";
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function App() {
   const [config, setConfig] = useState<SymphonyConfig>(DEFAULT_CONFIG);
+  const [requiredLabelsInput, setRequiredLabelsInput] = useState(DEFAULT_CONFIG.requiredLabels.join(", "));
+  const [activeStatesInput, setActiveStatesInput] = useState(DEFAULT_CONFIG.activeStates.join(", "));
+  const [focusedListField, setFocusedListField] = useState<"requiredLabels" | "activeStates" | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -411,6 +418,14 @@ function App() {
   const missingSymphonyStates = activeStateTemplates.filter(
     (required) => !states.some((state) => state.name.toLowerCase() === required.name.toLowerCase()),
   );
+
+  useEffect(() => {
+    if (focusedListField !== "requiredLabels") setRequiredLabelsInput(config.requiredLabels.join(", "));
+  }, [config.requiredLabels, focusedListField]);
+
+  useEffect(() => {
+    if (focusedListField !== "activeStates") setActiveStatesInput(config.activeStates.join(", "));
+  }, [config.activeStates, focusedListField]);
 
   const saveConfig = useCallback(async (next: SymphonyConfig) => {
     setConfig(next);
@@ -639,8 +654,8 @@ function App() {
   }, []);
 
   const command = [
-    "cd " + config.serviceRoot,
-    `LINEAR_API_KEY=... mise exec -- ${config.binPath} ${config.workflowPath} --port ${config.runnerPort} --i-understand-that-this-will-be-running-without-the-usual-guardrails`,
+    "cd " + shellQuote(config.serviceRoot),
+    `LINEAR_API_KEY=... mise exec -- ${shellQuote(config.binPath)} ${shellQuote(config.workflowPath)} --port ${config.runnerPort} --i-understand-that-this-will-be-running-without-the-usual-guardrails`,
   ].join(" && ");
 
   return (
@@ -719,10 +734,16 @@ function App() {
                 <Input value={config.teamKey} onChange={(event) => updateConfig({ teamKey: event.target.value })} onBlur={persistConfig} />
               </Field>
               <Field label="Required labels">
-                <Input value={config.requiredLabels.join(", ")} onChange={(event) => updateConfig({ requiredLabels: event.target.value.split(",").map((label) => label.trim()).filter(Boolean) })} onBlur={persistConfig} />
+                <Input value={requiredLabelsInput} onFocus={() => setFocusedListField("requiredLabels")} onChange={(event) => setRequiredLabelsInput(event.target.value)} onBlur={() => {
+                  setFocusedListField(null);
+                  void saveConfig({ ...config, requiredLabels: normalizeNameList(requiredLabelsInput.split(",")) });
+                }} />
               </Field>
               <Field label="Active states">
-                <Input value={config.activeStates.join(", ")} onChange={(event) => updateConfig({ activeStates: normalizeNameList(event.target.value.split(",")) })} onBlur={persistConfig} />
+                <Input value={activeStatesInput} onFocus={() => setFocusedListField("activeStates")} onChange={(event) => setActiveStatesInput(event.target.value)} onBlur={() => {
+                  setFocusedListField(null);
+                  void saveConfig({ ...config, activeStates: normalizeNameList(activeStatesInput.split(",")) });
+                }} />
               </Field>
               <Field label="Project slug">
                 <Input value={config.projectSlug} onChange={(event) => updateConfig({ projectSlug: event.target.value })} onBlur={persistConfig} placeholder="Linear slugId" />

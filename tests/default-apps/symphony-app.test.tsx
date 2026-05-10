@@ -170,6 +170,49 @@ describe("Symphony app", () => {
     expect(warnSpy).toHaveBeenCalledWith("[symphony] config save failed:", "runtime_config_failed");
   });
 
+  it("preserves comma-separated list edits while typing", async () => {
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    const requiredLabelsInput = screen.getByLabelText("Required labels") as HTMLInputElement;
+    const activeStatesInput = screen.getByLabelText("Active states") as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony," } });
+    });
+    expect(requiredLabelsInput.value).toBe("symphony,");
+    await act(async () => {
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+    });
+    expect(requiredLabelsInput.value).toBe("symphony, urgent");
+
+    await act(async () => {
+      fireEvent.focus(activeStatesInput);
+      fireEvent.change(activeStatesInput, { target: { value: "Ready," } });
+    });
+    expect(activeStatesInput.value).toBe("Ready,");
+    await act(async () => {
+      fireEvent.change(activeStatesInput, { target: { value: "Ready, Reviewing" } });
+    });
+    expect(activeStatesInput.value).toBe("Ready, Reviewing");
+  });
+
+  it("quotes local runner command paths", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByLabelText("Symphony checkout")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Symphony checkout"), { target: { value: "/home/matrix user/code/symphony/elixir" } });
+    fireEvent.change(screen.getByLabelText("Runner binary"), { target: { value: "./bin/my symphony" } });
+    fireEvent.change(screen.getByLabelText("Workflow path"), { target: { value: "/app/Work Flow.md" } });
+
+    expect(screen.getByText((content) => (
+      content.includes("cd '/home/matrix user/code/symphony/elixir'") &&
+      content.includes("'./bin/my symphony'") &&
+      content.includes("'/app/Work Flow.md'")
+    ))).toBeTruthy();
+  });
+
   it("does not create issues when any required Linear label is missing", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     render(<App />);
@@ -177,7 +220,10 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByLabelText("Required labels")).toBeTruthy());
     await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+      fireEvent.blur(requiredLabelsInput);
       fireEvent.change(screen.getByPlaceholderText("New Linear ticket"), { target: { value: "Follow up" } });
     });
     const createButton = screen.getByRole("button", { name: /^Create$/ }) as HTMLButtonElement;
@@ -207,7 +253,10 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+      fireEvent.blur(requiredLabelsInput);
       fireEvent.change(screen.getByPlaceholderText("New Linear ticket"), { target: { value: "Follow up" } });
     });
     const createButton = screen.getByRole("button", { name: /^Create$/ }) as HTMLButtonElement;
@@ -249,7 +298,10 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect(screen.getByText("Only first label")).toBeTruthy());
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+      fireEvent.blur(requiredLabelsInput);
     });
 
     await act(async () => {
@@ -293,7 +345,10 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("First page only")).toBeTruthy());
     expect(screen.queryByText("Second page full match")).toBeNull();
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "symphony, urgent" } });
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "symphony, urgent" } });
+      fireEvent.blur(requiredLabelsInput);
     });
 
     await act(async () => {
@@ -317,7 +372,10 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "" } });
+      const requiredLabelsInput = screen.getByLabelText("Required labels");
+      fireEvent.focus(requiredLabelsInput);
+      fireEvent.change(requiredLabelsInput, { target: { value: "" } });
+      fireEvent.blur(requiredLabelsInput);
     });
 
     await act(async () => {
