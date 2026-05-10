@@ -30,6 +30,47 @@ install_shell_config() {
 install_shell_config "$MATRIX_HOME"
 install_shell_config "/home/matrixos"
 
+hash_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+is_known_bundled_skill_hash() {
+  skill_name="$1"
+  hash="$2"
+  case "$skill_name:$hash" in
+    integrations:baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+sync_bundled_directory_skills() {
+  bundled_home="$1"
+  [ -d "$bundled_home/.agents/skills" ] || return 0
+  mkdir -p "$MATRIX_HOME/.agents/skills"
+  for src_skill in "$bundled_home/.agents/skills"/*; do
+    [ -d "$src_skill" ] || continue
+    [ -f "$src_skill/SKILL.md" ] || continue
+    skill_name="$(basename "$src_skill")"
+    dst_skill="$MATRIX_HOME/.agents/skills/$skill_name"
+    if [ ! -e "$dst_skill" ]; then
+      cp -a "$src_skill" "$dst_skill"
+      continue
+    fi
+    [ -f "$dst_skill/SKILL.md" ] || continue
+    src_hash="$(hash_file "$src_skill/SKILL.md")"
+    dst_hash="$(hash_file "$dst_skill/SKILL.md")"
+    if [ "$src_hash" = "$dst_hash" ]; then
+      continue
+    fi
+    if is_known_bundled_skill_hash "$skill_name" "$dst_hash"; then
+      rm -rf "$dst_skill"
+      cp -a "$src_skill" "$dst_skill"
+    fi
+  done
+}
+
 # Unify AI CLI auth directories. Terminal panes use HOME=$MATRIX_HOME, while
 # gateway/kernel processes run with HOME=/home/matrixos. Without this, a
 # `claude login` completed in the web terminal can write credentials to a
@@ -53,6 +94,9 @@ if [ -d "$MATRIX_HOME" ] && [ ! -d "$MATRIX_HOME/system" ]; then
   su-exec matrixos git commit -m "Matrix OS: initial state" 2>/dev/null || true
   cd /app
 fi
+
+sync_bundled_directory_skills /app/home
+chown -R matrixos:matrixos "$MATRIX_HOME/.agents" 2>/dev/null || true
 
 echo "Ensuring bundled default app builds..."
 find /app/home/apps -path '*/dist/index.html' -type f 2>/dev/null | while read -r built_index; do

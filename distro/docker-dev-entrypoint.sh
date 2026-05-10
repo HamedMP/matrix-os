@@ -17,6 +17,47 @@ if [ ! -d "$MATRIX_HOME" ]; then
   mkdir -p "$MATRIX_HOME"
 fi
 
+hash_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+is_known_bundled_skill_hash() {
+  skill_name="$1"
+  hash="$2"
+  case "$skill_name:$hash" in
+    integrations:baceb1ffe57e46ba95d21b310cb0a49917bd29b8cd18ca53eb2784986c0f17ea)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+sync_bundled_directory_skills() {
+  bundled_home="$1"
+  [ -d "$bundled_home/.agents/skills" ] || return 0
+  mkdir -p "$MATRIX_HOME/.agents/skills"
+  for src_skill in "$bundled_home/.agents/skills"/*; do
+    [ -d "$src_skill" ] || continue
+    [ -f "$src_skill/SKILL.md" ] || continue
+    skill_name="$(basename "$src_skill")"
+    dst_skill="$MATRIX_HOME/.agents/skills/$skill_name"
+    if [ ! -e "$dst_skill" ]; then
+      cp -a "$src_skill" "$dst_skill"
+      continue
+    fi
+    [ -f "$dst_skill/SKILL.md" ] || continue
+    src_hash="$(hash_file "$src_skill/SKILL.md")"
+    dst_hash="$(hash_file "$dst_skill/SKILL.md")"
+    if [ "$src_hash" = "$dst_hash" ]; then
+      continue
+    fi
+    if is_known_bundled_skill_hash "$skill_name" "$dst_hash"; then
+      rm -rf "$dst_skill"
+      cp -a "$src_skill" "$dst_skill"
+    fi
+  done
+}
+
 # First-boot only: seed agents/system/apps from the template so the skills-to-
 # Claude/Codex adapter below has files to read. On subsequent boots the kernel's
 # smartSyncTemplate (packages/kernel/src/boot.ts) takes over -- it respects user
@@ -29,6 +70,8 @@ for dir in .agents agents system apps; do
     cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"
   fi
 done
+
+sync_bundled_directory_skills /app/home
 
 build_default_apps() {
   echo "[matrix-os-dev] Building bundled default apps..."

@@ -46,7 +46,7 @@ add_directory_skills() {
     skill="$skill_dir/SKILL.md"
     [ -f "$skill" ] || continue
     name="$(basename "$skill_dir")"
-    set_skill_source "$name" "$skill"
+    set_skill_source "$name" "$skill_dir"
   done
 }
 
@@ -73,8 +73,14 @@ write_claude_skill() {
   local name="$2"
   local source="$3"
   local out="$skills_root/matrix-$name"
+  local skill_file="$source"
   mkdir -p "$out"
-  sed "s/^name: .*/name: matrix-$name/" "$source" > "$out/SKILL.md"
+  if [ -d "$source" ]; then
+    cp -a "$source/." "$out/"
+    rm -f "$out/.matrix-os-template-sha256"
+    skill_file="$source/SKILL.md"
+  fi
+  sed "s/^name: .*/name: matrix-$name/" "$skill_file" > "$out/SKILL.md"
   touch "$out/.matrix-os-managed"
 }
 
@@ -83,12 +89,18 @@ write_codex_skill() {
   local name="$2"
   local source="$3"
   local out="$skills_root/matrix-$name"
-  local display desc short_desc prompt_desc
+  local display desc short_desc prompt_desc skill_file="$source"
+  mkdir -p "$out"
+  if [ -d "$source" ]; then
+    cp -a "$source/." "$out/"
+    rm -f "$out/.matrix-os-template-sha256"
+    skill_file="$source/SKILL.md"
+  fi
   mkdir -p "$out/agents"
-  sed "s/^name: .*/name: matrix-$name/" "$source" > "$out/SKILL.md"
+  sed "s/^name: .*/name: matrix-$name/" "$skill_file" > "$out/SKILL.md"
   touch "$out/.matrix-os-managed"
   display="$(echo "$name" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')"
-  desc="$(sed -n 's/^description: *//p' "$source" | head -1)"
+  desc="$(sed -n 's/^description: *//p' "$skill_file" | head -1)"
   short_desc="$(printf '%s' "${desc:-$display skill}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   prompt_desc="$(printf '%s' "${desc:-this task}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   cat > "$out/agents/openai.yaml" <<EOYAML
