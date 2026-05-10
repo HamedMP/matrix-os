@@ -162,6 +162,10 @@ function isBlockedIpv6(address: string): boolean {
     lower.startsWith("fe9") ||
     lower.startsWith("fea") ||
     lower.startsWith("feb") ||
+    lower.startsWith("fec") ||
+    lower.startsWith("fed") ||
+    lower.startsWith("fee") ||
+    lower.startsWith("fef") ||
     lower.startsWith("ff") ||
     lower.startsWith("2001:db8")
   );

@@ -64,7 +64,7 @@ export interface SessionManagerOptions {
 export class SessionManager {
   private session: BrowserSession | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
-  private launching: Promise<BrowserSession> | undefined;
+  private launching: { profile: string; promise: Promise<BrowserSession> } | undefined;
   private launcher: Launcher;
   private headless: boolean;
   private idleTimeoutMs: number;
@@ -85,13 +85,27 @@ export class SessionManager {
   async launch(opts: { profile?: string } = {}): Promise<BrowserSession> {
     const profile = normalizeBrowserProfileName(opts.profile, this.defaultProfile);
     if (this.session?.profile === profile) return this.session;
-    if (this.launching) return this.launching;
+    if (this.launching) {
+      if (this.launching.profile === profile) return this.launching.promise;
+      try {
+        await this.launching.promise;
+      } catch (error: unknown) {
+        console.warn(
+          "[mcp-browser] Previous browser launch failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      return this.launch({ profile });
+    }
 
-    this.launching = this.openSession(profile).finally(() => {
-      this.launching = undefined;
+    const promise = this.openSession(profile).finally(() => {
+      if (this.launching?.promise === promise) {
+        this.launching = undefined;
+      }
     });
+    this.launching = { profile, promise };
 
-    return this.launching;
+    return promise;
   }
 
   private async openSession(profile: string): Promise<BrowserSession> {

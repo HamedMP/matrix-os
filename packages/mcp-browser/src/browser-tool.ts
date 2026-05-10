@@ -7,6 +7,7 @@ import { wrapBrowserExternalContent } from "./external-content.js";
 import {
   assertSafeBrowserUrl,
   isBrowserInputError,
+  normalizeBrowserProfileName,
   resolveBrowserArtifactPath,
   type ResolveHostname,
 } from "./security.js";
@@ -75,13 +76,14 @@ function wrapBrowserContent(content: string): string {
 }
 
 export function createBrowserTool(opts: BrowserToolOptions) {
+  const defaultProfile = opts.defaultProfile ?? "default";
   const manager = new SessionManager({
     launcher: opts.launcher,
     headless: opts.headless ?? true,
     idleTimeoutMs: opts.idleTimeoutMs ?? 300_000,
     timeout: opts.timeout ?? 30_000,
     profileRoot: join(opts.homePath, "data", "browser-profiles"),
-    defaultProfile: opts.defaultProfile ?? "default",
+    defaultProfile,
   });
   async function installRequestGuard(page: PageLike): Promise<void> {
     const guardedPage = page as PageLike & { [REQUEST_GUARD_INSTALLED]?: boolean };
@@ -102,9 +104,10 @@ export function createBrowserTool(opts: BrowserToolOptions) {
   }
 
   async function ensureSession(profile?: string) {
+    const requestedProfile = normalizeBrowserProfileName(profile, defaultProfile);
     let session = manager.getActive();
-    if (!session || (profile && session.profile !== profile)) {
-      session = await manager.launch({ profile });
+    if (!session || session.profile !== requestedProfile) {
+      session = await manager.launch({ profile: requestedProfile });
     }
     await installRequestGuard(session.page);
     manager.touch();

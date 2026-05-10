@@ -37,6 +37,16 @@ function createMockLauncher(browser: ReturnType<typeof createMockBrowser>) {
   return vi.fn().mockResolvedValue(browser);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("SessionManager", () => {
   let profileRoot: string;
   let mockPage: ReturnType<typeof createMockPage>;
@@ -128,6 +138,31 @@ describe("SessionManager", () => {
     await manager.launch({ profile: "work" });
     await manager.launch({ profile: "personal" });
 
+    expect(mockBrowser.close).toHaveBeenCalledTimes(1);
+    expect(launcher).toHaveBeenCalledTimes(2);
+    expect(manager.getActive()?.profile).toBe("personal");
+  });
+
+  it("serializes concurrent launches for different profiles", async () => {
+    const secondPage = createMockPage();
+    const secondBrowser = createMockBrowser(secondPage);
+    const firstLaunch = deferred<typeof mockBrowser>();
+    launcher.mockReset();
+    launcher.mockImplementationOnce(() => firstLaunch.promise);
+    launcher.mockResolvedValueOnce(secondBrowser);
+
+    const workLaunch = manager.launch({ profile: "work" });
+    await vi.waitFor(() => expect(launcher).toHaveBeenCalledTimes(1));
+
+    const personalLaunch = manager.launch({ profile: "personal" });
+    await Promise.resolve();
+    expect(launcher).toHaveBeenCalledTimes(1);
+
+    firstLaunch.resolve(mockBrowser);
+    const [workSession, personalSession] = await Promise.all([workLaunch, personalLaunch]);
+
+    expect(workSession.profile).toBe("work");
+    expect(personalSession.profile).toBe("personal");
     expect(mockBrowser.close).toHaveBeenCalledTimes(1);
     expect(launcher).toHaveBeenCalledTimes(2);
     expect(manager.getActive()?.profile).toBe("personal");

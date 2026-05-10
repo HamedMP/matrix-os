@@ -97,6 +97,21 @@ describe("Browser Tool (composite action dispatch)", () => {
       }));
     });
 
+    it("uses the default profile when later actions omit profile", async () => {
+      const defaultPage = createMockPage();
+      const defaultBrowser = createMockBrowser(defaultPage);
+      launcher.mockResolvedValueOnce(mockBrowser).mockResolvedValueOnce(defaultBrowser);
+
+      await execute({ action: "launch", profile: "work" });
+      const result = await execute({ action: "snapshot" });
+
+      expect(result.success).toBe(true);
+      expect(mockBrowser.close).toHaveBeenCalledTimes(1);
+      expect(launcher).toHaveBeenLastCalledWith(expect.objectContaining({
+        userDataDir: join(homePath, "data", "browser-profiles", "default"),
+      }));
+    });
+
     it("rejects invalid profile names before launching", async () => {
       const result = await execute({ action: "launch", profile: "../secret" });
       expect(result.success).toBe(false);

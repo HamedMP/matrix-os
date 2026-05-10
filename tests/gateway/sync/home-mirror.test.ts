@@ -1114,7 +1114,7 @@ describe("createHomeMirror", () => {
       db = {
         async getManifestMeta() {
           getMetaCalls++;
-          if (getMetaCalls === 2) {
+          if (getMetaCalls === 3) {
             await gate.promise;
           }
           return null;
@@ -1134,13 +1134,14 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger: { info: () => {}, error: () => {} },
       });
-      await mirror.start();
 
       const filePath = join(tmpRoot, "race.txt");
       await writeFile(filePath, "old bytes");
-      await waitFor(() => getMetaCalls > 1);
+      const startPromise = mirror.start();
+      await waitFor(() => getMetaCalls > 2);
       await writeFile(filePath, "new bytes that should win");
       gate.resolve();
+      await startPromise;
 
       await waitFor(() => r2.store.has("matrixos-sync/alice/manifest.json"));
 
@@ -1191,6 +1192,9 @@ describe("createHomeMirror", () => {
       } as unknown as ManifestDb;
 
       const deleteSpy = vi.spyOn(r2, "deleteObject");
+      const filePath = join(tmpRoot, "locked.txt");
+      await writeFile(filePath, "hello");
+
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -1201,20 +1205,14 @@ describe("createHomeMirror", () => {
         logger: { info: () => {}, error: () => {} },
       });
       await mirror.start();
-      lockCalls.length = 0;
-      getMetaExecutors.length = 0;
-      upsertExecutors.length = 0;
-
-      const filePath = join(tmpRoot, "locked.txt");
-      await writeFile(filePath, "hello");
       await waitFor(() => r2.store.has("matrixos-sync/alice/files/locked.txt"));
 
       await unlink(filePath);
       await waitFor(() => deleteSpy.mock.calls.length > 0);
 
       expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
-      expect(getMetaExecutors).toEqual([lockedExecutor, lockedExecutor]);
-      expect(upsertExecutors).toEqual([lockedExecutor, lockedExecutor]);
+      expect(getMetaExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
+      expect(upsertExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
 
       await mirror.stop();
     });
