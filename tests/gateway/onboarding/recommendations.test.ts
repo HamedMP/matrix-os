@@ -524,4 +524,71 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     expect(gmailListCalls).toHaveLength(1);
     expect(gmailDetailCalls).toHaveLength(1);
   });
+
+  it("does not reuse an in-flight recommendation when connection state changes", async () => {
+    const [gmailConnection] = await db.listConnectedServices(userId);
+    expect(gmailConnection).toBeDefined();
+    await db.disconnectService(gmailConnection!.id);
+
+    const firstAi = createDeferred<unknown>();
+    fetchFn.mockImplementationOnce(async () => await firstAi.promise);
+    fetchFn.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: JSON.stringify({ recommendations: [] }) }],
+            },
+          },
+        ],
+      }),
+    });
+
+    const request = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxEmails: 1000, codingAgents: ["codex"] }),
+    };
+    const first = app.request("/api/integrations/onboarding/recommendations", request);
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+
+    await db.connectService({
+      userId,
+      service: "gmail",
+      pipedreamAccountId: "pd_acc_gmail",
+      accountLabel: "Work Gmail",
+      accountEmail: "work@example.com",
+      scopes: ["gmail.readonly"],
+    });
+
+    const secondRes = await app.request("/api/integrations/onboarding/recommendations", request);
+    expect(secondRes.status).toBe(200);
+    const secondData = await secondRes.json();
+    expect(secondData.connectedServices).toEqual(["gmail"]);
+    expect(secondData.analyzedEmailCount).toBe(1);
+
+    firstAi.resolve({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: JSON.stringify({ recommendations: [] }) }],
+            },
+          },
+        ],
+      }),
+    });
+    const firstRes = await first;
+    expect(firstRes.status).toBe(200);
+    const firstData = await firstRes.json();
+    expect(firstData.connectedServices).toEqual([]);
+    expect(firstData.analyzedEmailCount).toBe(0);
+
+    const gmailListCalls = vi.mocked(pipedream.proxyGet).mock.calls.filter(([opts]) =>
+      opts.url === "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    );
+    expect(gmailListCalls).toHaveLength(1);
+  });
 });

@@ -5,7 +5,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
-import type { PlatformDb } from "../platform-db.js";
+import type { ConnectedServicesTable, PlatformDb } from "../platform-db.js";
 import {
   OnboardingRecommendationRequestSchema,
   buildPersonalizedOnboardingPlan,
@@ -89,9 +89,16 @@ function sweepOnboardingRecommendationInFlight(now = Date.now()): void {
 function onboardingRecommendationInFlightKey(
   userId: string,
   request: z.infer<typeof OnboardingRecommendationRequestSchema>,
+  activeConnections: ConnectedServicesTable[],
 ): string {
   return JSON.stringify({
     userId,
+    connections: activeConnections
+      .map((connection) => ({
+        service: connection.service,
+        accountId: connection.pipedream_account_id,
+      }))
+      .sort((a, b) => `${a.service}:${a.accountId}`.localeCompare(`${b.service}:${b.accountId}`)),
     includedServices: request.includedServices,
     excludedServices: request.excludedServices,
     missingServices: request.missingServices,
@@ -704,8 +711,13 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     const request = parsed.data;
+    const connections = await db.listConnectedServices(uid);
+    const activeConnections = connections.filter((connection) => connection.status === "active");
+    const connectedServices = activeConnections.map((connection) => connection.service);
+    const gmail = activeConnections.find((connection) => connection.service === "gmail");
+    const calendar = activeConnections.find((connection) => connection.service === "google_calendar");
     sweepOnboardingRecommendationInFlight();
-    const inFlightKey = onboardingRecommendationInFlightKey(uid, request);
+    const inFlightKey = onboardingRecommendationInFlightKey(uid, request, activeConnections);
     const existing = onboardingRecommendationInFlight.get(inFlightKey);
     if (existing) {
       return c.json(await existing.promise);
@@ -717,12 +729,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         if (!warnings.includes(warning)) warnings.push(warning);
       };
 
-      const connections = await db.listConnectedServices(uid);
-      const activeConnections = connections.filter((connection) => connection.status === "active");
-      const connectedServices = activeConnections.map((connection) => connection.service);
       const externalId = activeConnections.length > 0 ? await getOrCreateExternalId(uid) : uid;
-      const gmail = activeConnections.find((connection) => connection.service === "gmail");
-      const calendar = activeConnections.find((connection) => connection.service === "google_calendar");
 
       let emails: EmailSignal[] = [];
       let calendarEvents: CalendarEventSignal[] = [];
