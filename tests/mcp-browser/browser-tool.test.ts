@@ -54,6 +54,24 @@ function createMockBrowser(page: ReturnType<typeof createMockPage>) {
   };
 }
 
+function createMockRoute(url: string) {
+  return {
+    request: vi.fn().mockReturnValue({ url: vi.fn().mockReturnValue(url) }),
+    continue: vi.fn().mockResolvedValue(undefined),
+    abort: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("Browser Tool (composite action dispatch)", () => {
   let homePath: string;
   let mockPage: ReturnType<typeof createMockPage>;
@@ -166,11 +184,7 @@ describe("Browser Tool (composite action dispatch)", () => {
     it("blocks unsafe requests through the context request guard", async () => {
       await execute({ action: "navigate", url: "https://example.com" });
       const handler = mockPage.context().route.mock.calls[0][1];
-      const route = {
-        request: vi.fn().mockReturnValue({ url: vi.fn().mockReturnValue("http://127.0.0.1:3000") }),
-        continue: vi.fn().mockResolvedValue(undefined),
-        abort: vi.fn().mockResolvedValue(undefined),
-      };
+      const route = createMockRoute("http://127.0.0.1:3000");
 
       await handler(route);
 
@@ -185,6 +199,60 @@ describe("Browser Tool (composite action dispatch)", () => {
       await execute({ action: "navigate", url: "https://example.com" });
 
       expect(mockPage.route).toHaveBeenCalledWith("**/*", expect.any(Function));
+    });
+
+    it("deduplicates DNS lookups for guarded requests to the same host", async () => {
+      let resolveCalls = 0;
+      const cachedPage = createMockPage();
+      const cachedBrowser = createMockBrowser(cachedPage);
+      const cachedTool = createBrowserTool({
+        homePath,
+        launcher: vi.fn().mockResolvedValue(cachedBrowser) as never,
+        idleTimeoutMs: 300_000,
+        resolveHostname: async () => {
+          resolveCalls += 1;
+          return ["93.184.216.34"];
+        },
+      });
+
+      await cachedTool.execute({ action: "launch" });
+      const handler = cachedPage.context().route.mock.calls[0][1];
+      const routeA = createMockRoute("https://cdn.example/a.js");
+      const routeB = createMockRoute("https://cdn.example/b.css");
+
+      await Promise.all([handler(routeA), handler(routeB)]);
+
+      expect(resolveCalls).toBe(1);
+      expect(routeA.continue).toHaveBeenCalled();
+      expect(routeB.continue).toHaveBeenCalled();
+    });
+  });
+
+  describe("action serialization", () => {
+    it("queues a profile switch until the active action finishes", async () => {
+      const personalPage = createMockPage("https://personal.example");
+      const personalBrowser = createMockBrowser(personalPage);
+      const pendingNavigation = deferred<void>();
+      launcher.mockResolvedValueOnce(mockBrowser).mockResolvedValueOnce(personalBrowser);
+      mockPage.goto.mockImplementation(async () => {
+        await pendingNavigation.promise;
+        return { status: vi.fn().mockReturnValue(200) };
+      });
+
+      const workNavigate = execute({ action: "navigate", url: "https://example.com", profile: "work" });
+      await vi.waitFor(() => expect(mockPage.goto).toHaveBeenCalledTimes(1));
+
+      const personalSnapshot = execute({ action: "snapshot", profile: "personal" });
+      await Promise.resolve();
+
+      expect(launcher).toHaveBeenCalledTimes(1);
+      pendingNavigation.resolve();
+      const [navigateResult, snapshotResult] = await Promise.all([workNavigate, personalSnapshot]);
+
+      expect(navigateResult.success).toBe(true);
+      expect(snapshotResult.success).toBe(true);
+      expect(launcher).toHaveBeenCalledTimes(2);
+      expect(mockBrowser.close).toHaveBeenCalledTimes(1);
     });
   });
 

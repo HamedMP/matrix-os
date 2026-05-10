@@ -9,10 +9,13 @@ import {
   isBrowserInputError,
   normalizeBrowserProfileName,
   resolveBrowserArtifactPath,
+  resolveBrowserHostname,
   type ResolveHostname,
 } from "./security.js";
 
 const REQUEST_GUARD_INSTALLED = Symbol("matrixBrowserRequestGuardInstalled");
+const DNS_CACHE_MAX_ENTRIES = 256;
+const DNS_CACHE_TTL_MS = 60_000;
 
 export type BrowserAction =
   | "launch"
@@ -75,8 +78,42 @@ function wrapBrowserContent(content: string): string {
   return wrapBrowserExternalContent(content);
 }
 
+function createCachedResolveHostname(resolveHostname: ResolveHostname): ResolveHostname {
+  const cache = new Map<string, { expiresAt: number; promise: Promise<string[]> }>();
+
+  return (hostname) => {
+    const now = Date.now();
+    const key = hostname.toLowerCase();
+    const cached = cache.get(key);
+    if (cached && cached.expiresAt > now) {
+      cache.delete(key);
+      cache.set(key, cached);
+      return cached.promise;
+    }
+    if (cached) {
+      cache.delete(key);
+    }
+
+    const promise = resolveHostname(hostname).catch((error: unknown) => {
+      cache.delete(key);
+      throw error;
+    });
+    cache.set(key, { expiresAt: now + DNS_CACHE_TTL_MS, promise });
+
+    while (cache.size > DNS_CACHE_MAX_ENTRIES) {
+      const oldestKey = cache.keys().next().value;
+      if (!oldestKey) break;
+      cache.delete(oldestKey);
+    }
+
+    return promise;
+  };
+}
+
 export function createBrowserTool(opts: BrowserToolOptions) {
   const defaultProfile = opts.defaultProfile ?? "default";
+  const resolveHostname = createCachedResolveHostname(opts.resolveHostname ?? resolveBrowserHostname);
+  let actionQueue: Promise<void> = Promise.resolve();
   const manager = new SessionManager({
     launcher: opts.launcher,
     headless: opts.headless ?? true,
@@ -93,7 +130,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     abort(errorCode?: string): Promise<void>;
   }): Promise<void> {
     try {
-      await assertSafeBrowserUrl(route.request().url(), { resolveHostname: opts.resolveHostname });
+      await assertSafeBrowserUrl(route.request().url(), { resolveHostname });
       await route.continue();
     } catch (error) {
       console.warn(
@@ -130,7 +167,35 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     return session;
   }
 
-  async function execute(input: BrowserToolInput): Promise<BrowserToolResult> {
+  async function serializeAction<T>(run: () => Promise<T>): Promise<T> {
+    const previous = actionQueue;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => current, () => current);
+    actionQueue = queued;
+
+    try {
+      await previous;
+    } catch (error: unknown) {
+      console.warn(
+        "[mcp-browser] Previous browser action failed:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    try {
+      return await run();
+    } finally {
+      release();
+      if (actionQueue === queued) {
+        actionQueue = Promise.resolve();
+      }
+    }
+  }
+
+  async function executeAction(input: BrowserToolInput): Promise<BrowserToolResult> {
     const { action } = input;
 
     try {
@@ -163,7 +228,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           if (!input.url) {
             return { action, success: false, error: "navigate requires a url" };
           }
-          const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname: opts.resolveHostname });
+          const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname });
           const session = await ensureSession(input.profile);
           const page = session.page;
           await page.goto(safeUrl, { waitUntil: "domcontentloaded" });
@@ -326,7 +391,7 @@ export function createBrowserTool(opts: BrowserToolOptions) {
           const newPage = await ctx.newPage();
           await installRequestGuard(newPage);
           if (input.url) {
-            const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname: opts.resolveHostname });
+            const safeUrl = await assertSafeBrowserUrl(input.url, { resolveHostname });
             await newPage.goto(safeUrl, { waitUntil: "domcontentloaded" });
           }
           return { action, success: true, content: "New tab opened" };
@@ -407,6 +472,10 @@ export function createBrowserTool(opts: BrowserToolOptions) {
         error: "Browser action failed",
       };
     }
+  }
+
+  async function execute(input: BrowserToolInput): Promise<BrowserToolResult> {
+    return serializeAction(() => executeAction(input));
   }
 
   return { execute, close: () => manager.close() };

@@ -91,7 +91,7 @@ export function resolveBrowserArtifactPath(
 
 export type ResolveHostname = (hostname: string) => Promise<string[]>;
 
-async function defaultResolveHostname(hostname: string): Promise<string[]> {
+export async function resolveBrowserHostname(hostname: string): Promise<string[]> {
   const records = await lookup(hostname, { all: true, verbatim: true });
   return records.map((record) => record.address);
 }
@@ -214,7 +214,7 @@ export async function assertSafeBrowserUrl(
     return parsed.toString();
   }
 
-  const resolver = opts.resolveHostname ?? defaultResolveHostname;
+  const resolver = opts.resolveHostname ?? resolveBrowserHostname;
   let addresses: string[];
   try {
     addresses = await withTimeout(resolver(hostname), opts.dnsTimeoutMs ?? DNS_LOOKUP_TIMEOUT_MS);
