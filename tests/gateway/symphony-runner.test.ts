@@ -52,6 +52,14 @@ describe("Symphony runner", () => {
     expect(status.config.port).toBe(4066);
   });
 
+  it("fails instead of replacing an invalid persisted config with defaults", async () => {
+    await mkdir(join(homePath, "system"), { recursive: true });
+    await writeFile(join(homePath, "system", "symphony.json"), "{invalid-json");
+    const runner = createSymphonyRunner({ homePath, env: {} });
+
+    await expect(runner.status()).rejects.toThrow("Symphony configuration could not be loaded");
+  });
+
   it("refuses to start without a local Linear API key", async () => {
     const spawnProcess = vi.fn();
     const runner = createSymphonyRunner({ homePath, env: {}, spawnProcess });

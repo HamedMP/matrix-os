@@ -332,13 +332,14 @@ function issueHasRequiredLabels(issue: Issue, labelNames: string[]): boolean {
 
 async function fetchLinearIssues(baseConfig: SymphonyConfig, teamId: string, projectId: string, selectedState: string): Promise<Issue[]> {
   const collected: Issue[] = [];
+  const requiredLabels = baseConfig.requiredLabels.map((label) => label.trim()).filter(Boolean);
   let after: string | undefined;
   for (let page = 0; page < ISSUE_MAX_PAGES && collected.length < ISSUE_TARGET_COUNT; page += 1) {
     const issuePayload = await callService<unknown>("linear", "list_issues", {
       teamId,
       projectId: projectId || undefined,
       state: selectedState || undefined,
-      labelName: baseConfig.requiredLabels[0] || REQUIRED_LABELS[0],
+      ...(requiredLabels[0] ? { labelName: requiredLabels[0] } : {}),
       first: ISSUE_PAGE_SIZE,
       ...(after ? { after } : {}),
     });

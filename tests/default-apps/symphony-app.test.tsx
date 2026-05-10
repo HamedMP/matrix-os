@@ -53,6 +53,7 @@ describe("Symphony app", () => {
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
+  let integrationCalls: Array<{ action?: string; params?: Record<string, unknown> }> = [];
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
@@ -61,6 +62,7 @@ describe("Symphony app", () => {
     createdIssues = [];
     listedIssues = [];
     listedIssuePages = null;
+    integrationCalls = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -114,8 +116,9 @@ describe("Symphony app", () => {
       }
       if (url === "/api/integrations/call" && init?.method === "POST") {
         const body = typeof init.body === "string"
-          ? JSON.parse(init.body) as { action?: string; params?: { after?: string; variables?: { after?: string | null } } }
+          ? JSON.parse(init.body) as { action?: string; params?: Record<string, unknown> & { after?: string; variables?: { after?: string | null } } }
           : {};
+        integrationCalls.push({ action: body.action, params: body.params });
         if (body.action === "list_teams") {
           return json({ data: { teams: { nodes: [
             { id: "team_mat", key: "MAT", name: "Matrix" },
@@ -297,5 +300,30 @@ describe("Symphony app", () => {
 
     await waitFor(() => expect(screen.getByText("Second page full match")).toBeTruthy());
     expect(screen.queryByText("First page only")).toBeNull();
+  });
+
+  it("omits the Linear label filter when required labels are empty", async () => {
+    listedIssues = [{
+      id: "issue_unlabeled",
+      identifier: "MAT-8",
+      title: "Unlabeled task",
+      url: "https://linear.app/matrix-os/issue/MAT-8",
+      state: { id: "state_todo", name: "Todo" },
+      labels: { nodes: [] },
+    }];
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Required labels"), { target: { value: "" } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Sync Linear/ }));
+    });
+
+    await waitFor(() => expect(screen.getByText("Unlabeled task")).toBeTruthy());
+    const listIssuesCalls = integrationCalls.filter((call) => call.action === "list_issues");
+    expect(listIssuesCalls.at(-1)?.params).not.toHaveProperty("labelName");
   });
 });

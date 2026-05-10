@@ -123,6 +123,13 @@ export type SymphonyRunnerOptions = {
   spawnProcess?: SpawnProcess;
 };
 
+export class SymphonyConfigLoadError extends Error {
+  constructor() {
+    super("Symphony configuration could not be loaded");
+    this.name = "SymphonyConfigLoadError";
+  }
+}
+
 export function createSymphonyRunner(options: SymphonyRunnerOptions) {
   return new SymphonyRunner(options);
 }
@@ -155,12 +162,12 @@ class SymphonyRunner {
         return SymphonyConfigSchema.parse({});
       }
       console.error("[symphony] Failed to load config:", err);
-      return SymphonyConfigSchema.parse({});
+      throw new SymphonyConfigLoadError();
     }
     const parsed = SymphonyConfigUpdateSchema.safeParse(stored);
     if (!parsed.success) {
-      console.error("[symphony] Ignoring invalid config");
-      return SymphonyConfigSchema.parse({});
+      console.error("[symphony] Failed to parse config");
+      throw new SymphonyConfigLoadError();
     }
     return this.mergeConfig(parsed.data);
   }
