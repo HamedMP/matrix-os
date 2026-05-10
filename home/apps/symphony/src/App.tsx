@@ -42,12 +42,14 @@ const LABEL_MAX_PAGES = 10;
 const ISSUE_PAGE_SIZE = 100;
 const ISSUE_TARGET_COUNT = 50;
 const ISSUE_MAX_PAGES = 5;
-const SYMPHONY_STATES = [
+type SymphonyStateTemplate = { name: string; color: string; type: "backlog" | "unstarted" | "started" | "completed" | "canceled" };
+const SYMPHONY_STATES: SymphonyStateTemplate[] = [
   { name: "Todo", color: "#6b7280", type: "unstarted" },
   { name: "In Progress", color: "#2563eb", type: "started" },
   { name: "Rework", color: "#db6e1f", type: "started" },
   { name: "Merging", color: "#0f783c", type: "started" },
 ];
+const DEFAULT_ACTIVE_STATES = SYMPHONY_STATES.map((state) => state.name);
 const REQUIRED_LABELS = ["symphony"];
 
 type Connection = {
@@ -124,7 +126,7 @@ const DEFAULT_CONFIG: SymphonyConfig = {
   runnerPort: DEFAULT_RUNNER_PORT,
   teamKey: "MAT",
   requiredLabels: REQUIRED_LABELS,
-  activeStates: SYMPHONY_STATES.map((state) => state.name),
+  activeStates: DEFAULT_ACTIVE_STATES,
   projectSlug: "matrix-os",
   teamId: "",
   projectId: "",
@@ -276,6 +278,28 @@ function mergeRuntimeConfig(config: SymphonyConfig, status: SymphonyRuntimeStatu
   };
 }
 
+function normalizeNameList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const value of values) {
+    const name = value.trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
+}
+
+function templateForActiveState(name: string): SymphonyStateTemplate {
+  const builtIn = SYMPHONY_STATES.find((state) => state.name.toLowerCase() === name.toLowerCase());
+  return builtIn ? { ...builtIn, name } : { name, color: "#2563eb", type: "started" };
+}
+
+function templatesForActiveStates(activeStates: string[]): SymphonyStateTemplate[] {
+  return normalizeNameList(activeStates).map(templateForActiveState);
+}
+
 function selectLinearTeamId(config: SymphonyConfig, teams: Team[]): string {
   const keyMatch = teams.find((team) => team.key.toLowerCase() === config.teamKey.toLowerCase());
   if (keyMatch) return keyMatch.id;
@@ -382,7 +406,9 @@ function App() {
   const linearConnection = useMemo(() => connectionFor(connections, "linear"), [connections]);
   const githubConnection = useMemo(() => connectionFor(connections, "github"), [connections]);
   const selectedProject = projects.find((project) => project.id === config.projectId);
-  const missingSymphonyStates = SYMPHONY_STATES.filter(
+  const activeStateTemplates = useMemo(() => templatesForActiveStates(config.activeStates), [config.activeStates]);
+  const boardStates = useMemo(() => activeStateTemplates.map((state) => state.name), [activeStateTemplates]);
+  const missingSymphonyStates = activeStateTemplates.filter(
     (required) => !states.some((state) => state.name.toLowerCase() === required.name.toLowerCase()),
   );
 
@@ -480,6 +506,10 @@ function App() {
         setError("Symphony could not load saved settings.");
       });
   }, []);
+
+  useEffect(() => {
+    setSelectedState((current) => boardStates.includes(current) ? current : boardStates[0] ?? "");
+  }, [boardStates]);
 
   useEffect(() => {
     if (linearConnection) void refreshLinear(config);
@@ -692,7 +722,7 @@ function App() {
                 <Input value={config.requiredLabels.join(", ")} onChange={(event) => updateConfig({ requiredLabels: event.target.value.split(",").map((label) => label.trim()).filter(Boolean) })} onBlur={persistConfig} />
               </Field>
               <Field label="Active states">
-                <Input value={config.activeStates.join(", ")} onChange={(event) => updateConfig({ activeStates: event.target.value.split(",").map((state) => state.trim()).filter(Boolean) })} onBlur={persistConfig} />
+                <Input value={config.activeStates.join(", ")} onChange={(event) => updateConfig({ activeStates: normalizeNameList(event.target.value.split(",")) })} onBlur={persistConfig} />
               </Field>
               <Field label="Project slug">
                 <Input value={config.projectSlug} onChange={(event) => updateConfig({ projectSlug: event.target.value })} onBlur={persistConfig} placeholder="Linear slugId" />
@@ -758,7 +788,7 @@ function App() {
             </div>
             <Tabs>
               <TabsList>
-                {["Todo", "In Progress", "Rework", "Human Review", "Merging", "Done"].map((state) => (
+                {boardStates.map((state) => (
                   <TabsTrigger key={state} active={selectedState === state} onClick={() => setSelectedState(state)}>
                     {state}
                   </TabsTrigger>

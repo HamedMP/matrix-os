@@ -54,6 +54,7 @@ describe("Symphony app", () => {
   let listedIssues: unknown[] = [];
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let integrationCalls: Array<{ action?: string; params?: Record<string, unknown> }> = [];
+  let runtimeActiveStates: string[] = [];
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
@@ -63,6 +64,7 @@ describe("Symphony app", () => {
     listedIssues = [];
     listedIssuePages = null;
     integrationCalls = [];
+    runtimeActiveStates = ["Todo", "In Progress", "Merging", "Rework"];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -90,7 +92,7 @@ describe("Symphony app", () => {
               kind: "linear",
               teamKey: "MAT",
               requiredLabels: ["symphony"],
-              activeStates: ["Todo", "In Progress", "Merging", "Rework"],
+              activeStates: runtimeActiveStates,
             },
           },
         });
@@ -107,7 +109,7 @@ describe("Symphony app", () => {
             kind: "linear",
             teamKey: "OPS",
             requiredLabels: ["symphony"],
-            activeStates: ["Todo", "In Progress", "Merging", "Rework"],
+            activeStates: runtimeActiveStates,
           },
         });
       }
@@ -325,5 +327,32 @@ describe("Symphony app", () => {
     await waitFor(() => expect(screen.getByText("Unlabeled task")).toBeTruthy());
     const listIssuesCalls = integrationCalls.filter((call) => call.action === "list_issues");
     expect(listIssuesCalls.at(-1)?.params).not.toHaveProperty("labelName");
+  });
+
+  it("uses configured active states for board tabs and workflow state creation", async () => {
+    runtimeActiveStates = ["Ready", "Reviewing"];
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ready" })).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Reviewing" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Rework" })).toBeNull();
+    await waitFor(() => {
+      const listIssuesCalls = integrationCalls.filter((call) => call.action === "list_issues");
+      expect(listIssuesCalls.at(-1)?.params).toMatchObject({ state: "Ready" });
+    });
+
+    const createStatesButton = screen.getByRole("button", { name: /Create states/ }) as HTMLButtonElement;
+    await waitFor(() => expect(createStatesButton.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(createStatesButton);
+    });
+
+    await waitFor(() => {
+      const createdStates = integrationCalls.filter((call) => call.action === "create_workflow_state").map((call) => call.params);
+      expect(createdStates).toEqual([
+        { teamId: "team_mat", name: "Ready", color: "#2563eb", type: "started" },
+        { teamId: "team_mat", name: "Reviewing", color: "#2563eb", type: "started" },
+      ]);
+    });
   });
 });
