@@ -867,6 +867,7 @@ describe("createHomeMirror", () => {
         logger.error.mock.calls.some(
           ([message]: [string]) => message.includes("skipping push for too-big.txt"),
         ),
+        45_000,
       );
 
       expect(putSpy).not.toHaveBeenCalled();

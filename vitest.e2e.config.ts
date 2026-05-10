@@ -6,6 +6,7 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@": path.resolve(__dirname, "shell/src"),
+      "@matrix-os/kernel": path.resolve(__dirname, "packages/kernel/src"),
     },
   },
   test: {
