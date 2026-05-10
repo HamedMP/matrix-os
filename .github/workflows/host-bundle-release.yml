@@ -62,7 +62,6 @@ jobs:
 
       - name: Type check
         run: bun run typecheck
-        continue-on-error: true
 
       - name: Unit tests
         run: bun run test
@@ -186,7 +185,9 @@ jobs:
             echo "PLATFORM_SECRET not configured — skipping auto-deploy" >&2
             exit 0
           fi
-          echo "Security severity — triggering auto-deploy for $VERSION..."
+          echo "Security severity — waiting 60s for sync agents to discover manifest..."
+          sleep 60
+          echo "Triggering deploy for $VERSION..."
           curl --fail --silent --show-error --max-time 30 \
             -X POST "https://app.matrix-os.com/vps/deploy" \
             -H "Authorization: Bearer ${PLATFORM_SECRET}" \
