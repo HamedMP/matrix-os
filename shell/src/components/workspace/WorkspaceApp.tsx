@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -125,6 +125,8 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     [projects, selectedSlug],
   );
   const activeSlug = selectedProject?.slug ?? selectedSlug;
+  const activeSlugRef = useRef(activeSlug);
+  activeSlugRef.current = activeSlug;
 
   const loadProjects = useCallback(async () => {
     try {
@@ -151,6 +153,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
         fetchJson<{ previews: WorkspacePreview[] }>(`/api/projects/${encodedSlug}/previews?limit=20`),
         fetchJson<{ events: WorkspaceEvent[] }>(`/api/workspace/events?projectSlug=${encodedSlug}&limit=20`),
       ]);
+      if (activeSlugRef.current !== projectSlug) return;
       setTasks(taskData.tasks ?? []);
       setSessions(sessionData.sessions ?? []);
       setReviews(reviewData.reviews ?? []);
@@ -159,6 +162,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       setEvents(eventData.events ?? []);
       setError("");
     } catch (err: unknown) {
+      if (activeSlugRef.current !== projectSlug) return;
       setError(err instanceof Error ? err.message : "Workspace request failed");
     }
   }, []);
@@ -340,12 +344,16 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
           runtimePreference: "zellij",
         }),
       });
-      setAgentPrompt("");
-      setAgentMessage(data.session?.id ? `Started ${data.session.id}` : "Started agent");
-      await loadProjectDetail(activeSlug);
-      setError("");
+      if (activeSlugRef.current === activeSlug) {
+        setAgentPrompt("");
+        setAgentMessage(data.session?.id ? `Started ${data.session.id}` : "Started agent");
+        await loadProjectDetail(activeSlug);
+        setError("");
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Agent start failed");
+      if (activeSlugRef.current === activeSlug) {
+        setError(err instanceof Error ? err.message : "Agent start failed");
+      }
     } finally {
       setStartingAgent(false);
     }

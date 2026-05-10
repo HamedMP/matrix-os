@@ -285,11 +285,15 @@ describe("WorkspaceApp", () => {
       fireEvent.click(screen.getByText("Project 2"));
     });
 
+    await waitFor(() => expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0));
     expect(screen.getByRole("button", { name: /start agent/i })).toBeTruthy();
     resolveSession(json({ session: { id: "sess_agent123", status: "starting" } }));
     await act(async () => {
       await pendingSession;
     });
+    expect(screen.queryByText("Started sess_agent123")).toBeNull();
+    expect(screen.queryByText("feature/workspace")).toBeNull();
+    expect(screen.getAllByText("feature/two").length).toBeGreaterThan(0);
   });
 
   it("shows an actionable empty state when no managed projects exist", async () => {
