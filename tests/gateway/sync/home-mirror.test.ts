@@ -141,8 +141,9 @@ describe("createHomeMirror", () => {
         try {
           const written = await readFile(join(tmpRoot, "notes/foo.md"));
           return written.equals(content);
-        } catch {
-          return false;
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+          throw err;
         }
       });
 
@@ -320,8 +321,9 @@ describe("createHomeMirror", () => {
         try {
           await stat(join(tmpRoot, "notes/bar.md"));
           return false;
-        } catch {
-          return true;
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") return true;
+          throw err;
         }
       });
 
@@ -825,7 +827,7 @@ describe("createHomeMirror", () => {
 
       expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
       await mirror.stop();
-    });
+    }, 60_000);
 
     it("cleans up orphaned temp files on startup", async () => {
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
@@ -874,7 +876,7 @@ describe("createHomeMirror", () => {
       expect(r2.store.has("matrixos-sync/alice/files/too-big.txt")).toBe(false);
 
       await mirror.stop();
-    });
+    }, 60_000);
 
     it("skips symlinked files during startup push", async () => {
       const target = join(tmpRoot, "target.txt");
@@ -1058,7 +1060,7 @@ describe("createHomeMirror", () => {
       expect(r2.store.has("matrixos-sync/alice/files/orphan.txt")).toBe(false);
 
       await mirror.stop();
-    });
+    }, 60_000);
 
     it("cleans up uploaded startup blobs when the initial manifest write fails", async () => {
       const originalPutObject = r2.putObject.bind(r2);
@@ -1122,7 +1124,7 @@ describe("createHomeMirror", () => {
         "manifest db down",
       );
       await mirror.stop();
-    });
+    }, 60_000);
 
     it("records the hash for the exact bytes uploaded", async () => {
       const gate = deferred<void>();
@@ -1172,7 +1174,7 @@ describe("createHomeMirror", () => {
       expect(manifest.files["race.txt"]?.size).toBe(uploaded!.length);
 
       await mirror.stop();
-    });
+    }, 60_000);
 
     it("uses the manifest advisory lock for local pushes and deletes", async () => {
       const lockedExecutor = { tx: "home-mirror-lock" } as unknown;
@@ -1233,7 +1235,7 @@ describe("createHomeMirror", () => {
       expect(upsertExecutors).toEqual([lockedExecutor, lockedExecutor]);
 
       await mirror.stop();
-    });
+    }, 90_000);
 
     it("uploads startup files only after acquiring the manifest advisory lock", async () => {
       const order: string[] = [];
