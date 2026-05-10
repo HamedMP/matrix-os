@@ -652,7 +652,9 @@ function App() {
       if (config.requiredLabels.length > 0 && labelIds.length < config.requiredLabels.length) {
         throw new Error(REQUIRED_LABELS_MISSING_MESSAGE);
       }
-      const selectedWorkflowState = states.find((state) => state.name.toLowerCase() === selectedState.toLowerCase());
+      const selectedWorkflowState = states.find(
+        (state) => state.name.toLowerCase() === selectedState.toLowerCase() && state.team?.id === config.teamId,
+      );
       await callService("linear", "create_issue", {
         teamId: config.teamId,
         projectId: config.projectId || undefined,

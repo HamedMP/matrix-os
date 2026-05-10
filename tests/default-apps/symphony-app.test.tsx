@@ -50,7 +50,7 @@ describe("Symphony app", () => {
   let runtimeConfigShouldFail = false;
   let availableLabels: Array<{ id: string; name: string }> = [];
   let availableLabelPages: Record<string, { nodes: Array<{ id: string; name: string }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
-  let workflowStates: Array<{ id: string; name: string; type?: string; color?: string }> = [];
+  let workflowStates: Array<{ id: string; name: string; type?: string; color?: string; team?: { id: string; key?: string; name?: string } }> = [];
   let createdIssues: unknown[] = [];
   let listedIssues: unknown[] = [];
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
@@ -334,7 +334,7 @@ describe("Symphony app", () => {
   });
 
   it("finds required Linear labels on later pages before creating issues", async () => {
-    workflowStates = [{ id: "state_todo", name: "Todo", type: "unstarted", color: "#6b7280" }];
+    workflowStates = [{ id: "state_todo", name: "Todo", type: "unstarted", color: "#6b7280", team: { id: "team_mat" } }];
     availableLabelPages = {
       "": {
         nodes: [{ id: "label_symphony", name: "symphony" }],
@@ -367,6 +367,25 @@ describe("Symphony app", () => {
       labelIds: ["label_symphony", "label_urgent"],
       stateId: "state_todo",
     });
+  });
+
+  it("does not reuse workflow state ids from a different Linear team", async () => {
+    workflowStates = [{ id: "state_old_team", name: "Todo", type: "unstarted", color: "#6b7280", team: { id: "team_old" } }];
+    render(<App />);
+
+    await waitFor(() => expect((screen.getByLabelText("Team") as HTMLSelectElement).value).toBe("team_mat"));
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("New Linear ticket"), { target: { value: "Follow up" } });
+    });
+    const createButton = screen.getByRole("button", { name: /^Create$/ }) as HTMLButtonElement;
+    await waitFor(() => expect(createButton.disabled).toBe(false));
+
+    await act(async () => {
+      fireEvent.click(createButton);
+    });
+
+    await waitFor(() => expect(createdIssues).toHaveLength(1));
+    expect(createdIssues[0]).not.toMatchObject({ stateId: "state_old_team" });
   });
 
   it("filters the board by every required Linear label", async () => {
