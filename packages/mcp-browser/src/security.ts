@@ -143,6 +143,65 @@ function isBlockedIpv4(address: string): boolean {
   );
 }
 
+function expandIpv6(address: string): number[] | null {
+  let input = address.toLowerCase();
+  const dottedIpv4 = input.match(/(^|:)(\d+\.\d+\.\d+\.\d+)$/);
+  let ipv4Hextets: number[] = [];
+  if (dottedIpv4?.[2]) {
+    const octets = parseIpv4(dottedIpv4[2]);
+    if (!octets) return null;
+    ipv4Hextets = [
+      (octets[0] << 8) | octets[1],
+      (octets[2] << 8) | octets[3],
+    ];
+    input = input.slice(0, -dottedIpv4[2].length);
+    if (input.endsWith(":") && !input.endsWith("::")) {
+      input = input.slice(0, -1);
+    }
+  }
+
+  const parseHextets = (part: string): number[] | null => {
+    if (!part) return [];
+    const segments = part.split(":");
+    const hextets: number[] = [];
+    for (const segment of segments) {
+      if (!/^[0-9a-f]{1,4}$/.test(segment)) return null;
+      hextets.push(Number.parseInt(segment, 16));
+    }
+    return hextets;
+  };
+
+  const compression = input.indexOf("::");
+  let hextets: number[];
+  if (compression >= 0) {
+    if (input.indexOf("::", compression + 2) >= 0) return null;
+    const left = parseHextets(input.slice(0, compression));
+    const right = parseHextets(input.slice(compression + 2));
+    if (!left || !right) return null;
+    const missing = 8 - ipv4Hextets.length - left.length - right.length;
+    if (missing < 1) return null;
+    hextets = [...left, ...Array.from({ length: missing }, () => 0), ...right, ...ipv4Hextets];
+  } else {
+    const parsed = parseHextets(input);
+    if (!parsed) return null;
+    hextets = [...parsed, ...ipv4Hextets];
+    if (hextets.length !== 8) return null;
+  }
+
+  return hextets.length === 8 ? hextets : null;
+}
+
+function ipv4CompatibleAddress(address: string): string | null {
+  const hextets = expandIpv6(address);
+  if (!hextets || hextets.slice(0, 6).some((part) => part !== 0)) return null;
+  return [
+    (hextets[6] >> 8) & 0xff,
+    hextets[6] & 0xff,
+    (hextets[7] >> 8) & 0xff,
+    hextets[7] & 0xff,
+  ].join(".");
+}
+
 function isBlockedIpv6(address: string): boolean {
   const lower = address.toLowerCase();
   const mappedIpv4 = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
@@ -151,6 +210,10 @@ function isBlockedIpv6(address: string): boolean {
   }
   if (lower.startsWith("::ffff:")) {
     return true;
+  }
+  const compatibleIpv4 = ipv4CompatibleAddress(lower);
+  if (compatibleIpv4) {
+    return isBlockedIpv4(compatibleIpv4);
   }
 
   return (

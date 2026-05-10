@@ -71,4 +71,44 @@ describe("Browser MCP server", () => {
       }),
     );
   });
+
+  it("shares a single browser tool during concurrent cold starts", async () => {
+    let page: {
+      setDefaultTimeout: ReturnType<typeof vi.fn>;
+      on: ReturnType<typeof vi.fn>;
+      context: ReturnType<typeof vi.fn>;
+    };
+    const context = {
+      pages: vi.fn(() => [page]),
+      newPage: vi.fn(async () => page),
+      close: vi.fn(async () => undefined),
+      route: vi.fn(async () => undefined),
+    };
+    page = {
+      setDefaultTimeout: vi.fn(),
+      on: vi.fn(),
+      context: vi.fn(() => context),
+    };
+    playwrightMocks.launchPersistentContext.mockResolvedValue(context);
+
+    const server = createBrowserMcpServer({
+      homePath: "/tmp/test",
+      headless: true,
+      timeout: 5000,
+    });
+    const registered = server.instance as unknown as {
+      _registeredTools: {
+        browser: {
+          handler(input: { action: string }): Promise<unknown>;
+        };
+      };
+    };
+
+    await Promise.all([
+      registered._registeredTools.browser.handler({ action: "launch" }),
+      registered._registeredTools.browser.handler({ action: "launch" }),
+    ]);
+
+    expect(playwrightMocks.launchPersistentContext).toHaveBeenCalledTimes(1);
+  });
 });

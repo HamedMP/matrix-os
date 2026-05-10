@@ -65,7 +65,7 @@ BROWSER CAPABILITY (when enabled):
 - Use it to visit reference sites for design inspiration ("look at stripe.com and build something similar")
 - Take screenshots of reference sites to understand layouts before building
 - Extract text/content from documentation pages
-- Use the `profile` parameter when a task needs persistent login state; profile data is stored in ~/data/browser-profiles/
+- Use the `profile` parameter when a task needs persistent login state; profile data is stored in ~/data/browser-profiles/ and is excluded from home mirror sync
 - Screenshots are saved to ~/data/screenshots/
 
 If you encounter an unfamiliar domain, consider creating a new knowledge file in ~/agents/knowledge/ for future reference.

@@ -680,7 +680,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("ignores broadcasts for ignored paths (e.g. node_modules)", async () => {
+    it("ignores broadcasts for ignored paths (e.g. node_modules and browser profiles)", async () => {
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -695,15 +695,27 @@ describe("createHomeMirror", () => {
       const putObject = vi.spyOn(r2, "putObject");
       registry.broadcastChange("alice", "laptop-1", {
         type: "sync:change",
-        files: [{ path: "node_modules/evil.js", hash: "sha256:deadbeef", size: 10, action: "update" }],
+        files: [{ path: "node_modules/evil.js", hash: "sha256:" + "0".repeat(64), size: 10, action: "update" }],
         peerId: "laptop-1",
         manifestVersion: 4,
+      });
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: "data/browser-profiles/default/Cookies",
+          hash: "sha256:" + "0".repeat(64),
+          size: 10,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 5,
       });
       await settle(40);
 
       // The file must not have been downloaded -- there's no R2 entry for it
       // and no attempt to fetch.
       await expect(stat(join(tmpRoot, "node_modules/evil.js"))).rejects.toThrow(/ENOENT/);
+      await expect(stat(join(tmpRoot, "data/browser-profiles/default/Cookies"))).rejects.toThrow(/ENOENT/);
       expect(putObject).not.toHaveBeenCalled();
       await mirror.stop();
     });
@@ -811,6 +823,33 @@ describe("createHomeMirror", () => {
       await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
 
       expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
+      await mirror.stop();
+    });
+
+    it("keeps browser profile files out of startup and watcher uploads", async () => {
+      await mkdir(join(tmpRoot, "data/browser-profiles/default"), { recursive: true });
+      await writeFile(join(tmpRoot, "data/browser-profiles/default/Cookies"), "login state");
+      await writeFile(join(tmpRoot, "preexisting.md"), "present before watcher starts");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
+      expect(r2.store.has("matrixos-sync/alice/files/data/browser-profiles/default/Cookies")).toBe(false);
+
+      await writeFile(join(tmpRoot, "data/browser-profiles/default/Local State"), "more profile state");
+      await writeFile(join(tmpRoot, "after-start.md"), "watcher is active");
+      await waitFor(() => r2.store.has("matrixos-sync/alice/files/after-start.md"));
+
+      expect(r2.store.has("matrixos-sync/alice/files/data/browser-profiles/default/Local State")).toBe(false);
       await mirror.stop();
     });
 

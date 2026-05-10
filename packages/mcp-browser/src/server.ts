@@ -36,9 +36,19 @@ export function createBrowserMcpServer(config: BrowserServerConfig) {
   }
 
   let browserTool: ReturnType<typeof createBrowserTool> | undefined;
+  let browserToolInit: Promise<ReturnType<typeof createBrowserTool>> | undefined;
 
   async function ensureTool() {
     if (browserTool) return browserTool;
+    if (browserToolInit) return browserToolInit;
+    browserToolInit = createTool().catch((err: unknown) => {
+      browserToolInit = undefined;
+      throw err;
+    });
+    return browserToolInit;
+  }
+
+  async function createTool() {
     const launcher = await getLauncher();
     if (!launcher) {
       throw new Error("Browser is not available. Install Playwright to enable browser automation.");

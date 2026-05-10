@@ -72,7 +72,7 @@ Use a named profile when a tool or task needs its own login lane:
 }
 ```
 
-Profile names must match lowercase slugs (`default`, `work`, `github-work`). Switching profiles closes the active browser process before opening the next profile, so Matrix keeps a single bounded browser session per instance.
+Profile names must match lowercase slugs (`default`, `work`, `github-work`). Switching profiles closes the active browser process before opening the next profile, so Matrix keeps a single bounded browser session per instance. Browser profile directories are excluded from home mirror sync because they contain cookies, login databases, and transient browser lock/cache files.
 
 ## Security
 
