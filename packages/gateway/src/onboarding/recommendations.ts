@@ -4,9 +4,11 @@ import type { PipedreamConnectClient } from "../integrations/pipedream.js";
 export const MAX_ONBOARDING_EMAILS = 1000;
 const GMAIL_PAGE_SIZE = 500;
 const GMAIL_DETAIL_CONCURRENCY = 8;
-const GMAIL_SCAN_DEADLINE_MS = 45_000;
+export const GMAIL_SCAN_DEADLINE_MS = 45_000;
+const GMAIL_DETAIL_REQUEST_RESERVE_MS = 10_000;
 const CALENDAR_EVENT_LIMIT = 50;
 export const DEFAULT_RECOMMENDATION_MODEL = "gemini-3-flash-preview";
+export const GEMINI_RECOMMENDATION_TIMEOUT_MS = 30_000;
 
 const CODING_AGENT_IDS = ["claude_code", "codex", "hermes", "openclaw"] as const;
 
@@ -222,6 +224,7 @@ export type RecommendationWarning = "email_unavailable" | "calendar_unavailable"
 export interface RecommendationAiConfig {
   apiKey?: string;
   model?: string;
+  timeoutMs?: number;
   fetchFn?: (url: string, init: RequestInit) => Promise<{
     ok: boolean;
     status?: number;
@@ -268,7 +271,11 @@ function calendarHaystack(event: CalendarEventSignal): string {
 
 function matchesRule(haystack: string, rule: ServiceRule): boolean {
   return rule.aliases.some((alias) => new RegExp(`(^|[^a-z0-9])${escapeRegExp(alias)}([^a-z0-9]|$)`).test(haystack)) ||
-    rule.domains.some((domain) => haystack.includes(domain));
+    rule.domains.some((domain) => matchesDomain(haystack, domain));
+}
+
+function matchesDomain(haystack: string, domain: string): boolean {
+  return new RegExp(`(^|[^a-z0-9-])${escapeRegExp(domain)}($|[^a-z0-9.-])`).test(haystack);
 }
 
 function addEvidence(signal: DetectedServiceSignal, evidence: string | undefined): void {
@@ -382,6 +389,7 @@ function recommendationMatchesExcludedService(
   return excludedServiceIds.some((excludedId) => {
     const excludedRule = ruleForUserService(excludedId);
     const knownRule = SERVICE_RULES.some((rule) => rule.id === excludedRule.id);
+    const hasSpecificCustomAlias = excludedRule.aliases.some((alias) => slugify(alias).length >= 4);
     return serviceId === excludedId ||
       recommendationId === excludedId ||
       recommendationId === `connect-${excludedId}` ||
@@ -392,7 +400,7 @@ function recommendationMatchesExcludedService(
       recommendationId.startsWith(`replace-${excludedId}-`) ||
       recommendationId === `${excludedId}-replacement` ||
       recommendationId.startsWith(`${excludedId}-replacement-`) ||
-      (knownRule && matchesRule(recommendationText, excludedRule));
+      ((knownRule || hasSpecificCustomAlias) && matchesRule(recommendationText, excludedRule));
   });
 }
 
@@ -618,7 +626,9 @@ export async function fetchRecentGmailEmailSignals(opts: {
   const nowMs = opts.nowMs ?? Date.now;
   const startedAt = nowMs();
   const deadlineMs = opts.deadlineMs ?? GMAIL_SCAN_DEADLINE_MS;
-  const hasTimeRemaining = () => nowMs() - startedAt < deadlineMs;
+  const remainingMs = () => deadlineMs - (nowMs() - startedAt);
+  const hasTimeRemaining = () => remainingMs() > 0;
+  const hasDetailStartBudget = () => remainingMs() > GMAIL_DETAIL_REQUEST_RESERVE_MS;
   let pageToken: string | undefined;
 
   while (ids.length < cap && hasTimeRemaining()) {
@@ -645,7 +655,7 @@ export async function fetchRecentGmailEmailSignals(opts: {
   }
 
   return await mapWithConcurrency(ids, GMAIL_DETAIL_CONCURRENCY, async (id) => {
-    if (!hasTimeRemaining()) return null;
+    if (!hasDetailStartBudget()) return null;
     try {
       const message = await opts.pipedream.proxyGet({
         externalUserId: opts.externalUserId,
@@ -770,6 +780,8 @@ export async function generateAiRecommendations(input: {
   const apiKey = input.ai.apiKey;
   if (!apiKey) return null;
   const model = input.ai.model ?? DEFAULT_RECOMMENDATION_MODEL;
+  const timeoutMs = input.ai.timeoutMs ?? GEMINI_RECOMMENDATION_TIMEOUT_MS;
+  if (timeoutMs <= 0) return null;
   const fetchFn = input.ai.fetchFn ?? fetch;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
@@ -781,7 +793,7 @@ export async function generateAiRecommendations(input: {
         contents: [{ parts: [{ text: buildGeminiPrompt(input) }] }],
         generationConfig: { responseMimeType: "application/json" },
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(Math.min(timeoutMs, GEMINI_RECOMMENDATION_TIMEOUT_MS)),
     });
     if (!response.ok) {
       console.error("[onboarding-recommendations] Gemini returned HTTP", response.status ?? "unknown");

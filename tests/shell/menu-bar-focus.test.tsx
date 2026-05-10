@@ -2,8 +2,9 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MenuBar } from "../../shell/src/components/MenuBar.js";
-import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
+
+type MenuBarType = typeof import("../../shell/src/components/MenuBar.js").MenuBar;
+type UseWindowManagerType = typeof import("../../shell/src/hooks/useWindowManager.js").useWindowManager;
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: false }),
@@ -13,6 +14,16 @@ vi.mock("@clerk/nextjs", () => ({
 vi.mock("../../shell/src/components/AppSettingsDialog.js", () => ({
   AppSettingsDialog: () => null,
 }));
+
+let MenuBar: MenuBarType;
+let useWindowManager: UseWindowManagerType;
+
+beforeEach(async () => {
+  vi.resetModules();
+  ({ useWindowManager } = await import("../../shell/src/hooks/useWindowManager.js"));
+  ({ MenuBar } = await import("../../shell/src/components/MenuBar.js"));
+  resetStore();
+});
 
 function resetStore() {
   useWindowManager.setState({
@@ -27,10 +38,6 @@ function resetStore() {
 }
 
 describe("MenuBar focus display", () => {
-  beforeEach(() => {
-    resetStore();
-  });
-
   it("shows Matrix OS and Canvas when no app owns focus", () => {
     useWindowManager.getState().openWindow("Whiteboard", "apps/whiteboard", 80);
     useWindowManager.getState().clearFocus();

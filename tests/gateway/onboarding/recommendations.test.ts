@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { createPlatformDb, type PlatformDb } from "../../../packages/gateway/src/platform-db.js";
-import { createIntegrationRoutes } from "../../../packages/gateway/src/integrations/routes.js";
+import {
+  createIntegrationRoutes,
+  getOnboardingRecommendationGmailDeadlineMs,
+} from "../../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../../packages/gateway/src/integrations/pipedream.js";
 import {
   CODING_AGENT_OPTIONS,
@@ -267,6 +270,33 @@ describe("personalized onboarding recommendations", () => {
     }));
   });
 
+  it("filters AI recommendations that mention excluded custom services without service ids", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [],
+      calendarEvents: [],
+      connectedServices: [],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: ["Raycast"],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [
+        {
+          id: "daily-app-launcher-review",
+          category: "routine",
+          title: "Daily launcher review",
+          description: "Review Raycast snippets and shortcuts every morning.",
+          priority: "medium",
+        },
+      ],
+    });
+
+    expect(plan.recommendations).not.toContainEqual(expect.objectContaining({
+      id: "daily-app-launcher-review",
+    }));
+  });
+
   it("does not detect common English words as services without service domains", () => {
     const plan = buildPersonalizedOnboardingPlan({
       emails: [
@@ -292,10 +322,34 @@ describe("personalized onboarding recommendations", () => {
     );
   });
 
+  it("does not detect lookalike domains that merely contain a service domain", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [
+        { id: "msg_stripe_lookalike", from: "Billing <hello@mystripe.com>" },
+        { id: "msg_zoom_lookalike", from: "Meeting <updates@myzoom.us>" },
+        { id: "msg_todoist_lookalike", from: "Tasks <alerts@not-todoist.com>" },
+      ],
+      calendarEvents: [],
+      connectedServices: ["gmail"],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: [],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [],
+    });
+
+    expect(plan.detectedServices.map((service) => service.id)).not.toEqual(
+      expect.arrayContaining(["stripe", "zoom", "todoist"]),
+    );
+  });
+
   it("still detects service domains after alias false-positive guards", () => {
     const plan = buildPersonalizedOnboardingPlan({
       emails: [
         { id: "msg_slack_domain", from: "Slack <notify@slack.com>", subject: "New mention" },
+        { id: "msg_stripe_subdomain", from: "Stripe <updates@mail.stripe.com>", subject: "Invoice paid" },
       ],
       calendarEvents: [],
       connectedServices: ["gmail"],
@@ -311,6 +365,10 @@ describe("personalized onboarding recommendations", () => {
     expect(plan.detectedServices).toContainEqual(expect.objectContaining({
       id: "slack",
       name: "Slack",
+    }));
+    expect(plan.detectedServices).toContainEqual(expect.objectContaining({
+      id: "stripe",
+      name: "Stripe",
     }));
   });
 
@@ -344,7 +402,7 @@ describe("personalized onboarding recommendations", () => {
       externalUserId: "pd_ext_deadline",
       accountId: "pd_acc_gmail",
       maxEmails: 20,
-      deadlineMs: 1,
+      deadlineMs: 10_001,
       nowMs: () => now,
     });
 
@@ -606,6 +664,43 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     expect(gmailDetailCalls).toHaveLength(1);
   });
 
+  it("rejects excess distinct recommendation fan-outs for one user", async () => {
+    const deferredAi = createDeferred<unknown>();
+    fetchFn.mockImplementation(async () => await deferredAi.promise);
+
+    const request = (missingService: string) => ({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxEmails: 1000, missingServices: [missingService] }),
+    });
+    const first = app.request("/api/integrations/onboarding/recommendations", request("Raycast"));
+    const second = app.request("/api/integrations/onboarding/recommendations", request("Superhuman"));
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+
+    const thirdRes = await app.request(
+      "/api/integrations/onboarding/recommendations",
+      request("Obsidian"),
+    );
+    expect(thirdRes.status).toBe(429);
+    expect(await thirdRes.json()).toEqual({ error: "Recommendation analysis is busy" });
+
+    deferredAi.resolve({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: JSON.stringify({ recommendations: [] }) }],
+            },
+          },
+        ],
+      }),
+    });
+    const [firstRes, secondRes] = await Promise.all([first, second]);
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+  });
+
   it("does not reuse an in-flight recommendation when connection state changes", async () => {
     const [gmailConnection] = await db.listConnectedServices(userId);
     expect(gmailConnection).toBeDefined();
@@ -707,5 +802,25 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
       externalUserId: userId,
       accountId: "pd_acc_gmail",
     }));
+  });
+});
+
+describe("onboarding recommendation request budgets", () => {
+  it("reserves enough time for calendar and Gemini after Gmail", () => {
+    expect(getOnboardingRecommendationGmailDeadlineMs({
+      elapsedMs: 0,
+      hasCalendar: true,
+      hasAi: true,
+    })).toBeLessThan(45_000);
+    expect(getOnboardingRecommendationGmailDeadlineMs({
+      elapsedMs: 70_000,
+      hasCalendar: true,
+      hasAi: true,
+    })).toBe(0);
+    expect(getOnboardingRecommendationGmailDeadlineMs({
+      elapsedMs: 0,
+      hasCalendar: false,
+      hasAi: false,
+    })).toBe(45_000);
   });
 });

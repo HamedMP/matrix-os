@@ -8,6 +8,8 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import type { ConnectedServicesTable, PlatformDb } from "../platform-db.js";
 import {
   OnboardingRecommendationRequestSchema,
+  GEMINI_RECOMMENDATION_TIMEOUT_MS,
+  GMAIL_SCAN_DEADLINE_MS,
   buildPersonalizedOnboardingPlan,
   fetchRecentGmailEmailSignals,
   fetchUpcomingCalendarSignals,
@@ -66,9 +68,15 @@ type OnboardingRecommendationRouteResponse = PersonalizedOnboardingPlan & {
 };
 
 const ONBOARDING_RECOMMENDATION_INFLIGHT_LIMIT = 500;
-const ONBOARDING_RECOMMENDATION_INFLIGHT_TTL_MS = 70_000;
+const ONBOARDING_RECOMMENDATION_ACTIVE_LIMIT = 25;
+const ONBOARDING_RECOMMENDATION_ACTIVE_PER_USER_LIMIT = 2;
+const ONBOARDING_RECOMMENDATION_INFLIGHT_TTL_MS = 95_000;
+const ONBOARDING_RECOMMENDATION_ROUTE_BUDGET_MS = 88_000;
+const ONBOARDING_RECOMMENDATION_CALENDAR_RESERVE_MS = 12_000;
+const ONBOARDING_RECOMMENDATION_FINAL_RESERVE_MS = 2_000;
 
 const onboardingRecommendationInFlight = new Map<string, {
+  userId: string;
   startedAt: number;
   promise: Promise<OnboardingRecommendationRouteResponse>;
 }>();
@@ -84,6 +92,42 @@ function sweepOnboardingRecommendationInFlight(now = Date.now()): void {
     if (!oldestKey) break;
     onboardingRecommendationInFlight.delete(oldestKey);
   }
+}
+
+function countOnboardingRecommendationInFlightForUser(userId: string): number {
+  let count = 0;
+  for (const entry of onboardingRecommendationInFlight.values()) {
+    if (entry.userId === userId) count += 1;
+  }
+  return count;
+}
+
+export function getOnboardingRecommendationGmailDeadlineMs(opts: {
+  elapsedMs: number;
+  hasCalendar: boolean;
+  hasAi: boolean;
+}): number {
+  const reservedMs =
+    (opts.hasCalendar ? ONBOARDING_RECOMMENDATION_CALENDAR_RESERVE_MS : 0) +
+    (opts.hasAi ? GEMINI_RECOMMENDATION_TIMEOUT_MS : 0) +
+    ONBOARDING_RECOMMENDATION_FINAL_RESERVE_MS;
+  return Math.max(
+    0,
+    Math.min(
+      GMAIL_SCAN_DEADLINE_MS,
+      ONBOARDING_RECOMMENDATION_ROUTE_BUDGET_MS - opts.elapsedMs - reservedMs,
+    ),
+  );
+}
+
+function getOnboardingRecommendationAiTimeoutMs(elapsedMs: number): number {
+  return Math.max(
+    0,
+    Math.min(
+      GEMINI_RECOMMENDATION_TIMEOUT_MS,
+      ONBOARDING_RECOMMENDATION_ROUTE_BUDGET_MS - elapsedMs - ONBOARDING_RECOMMENDATION_FINAL_RESERVE_MS,
+    ),
+  );
 }
 
 function onboardingRecommendationInFlightKey(
@@ -722,8 +766,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (existing) {
       return c.json(await existing.promise);
     }
+    if (
+      onboardingRecommendationInFlight.size >= ONBOARDING_RECOMMENDATION_ACTIVE_LIMIT ||
+      countOnboardingRecommendationInFlightForUser(uid) >= ONBOARDING_RECOMMENDATION_ACTIVE_PER_USER_LIMIT
+    ) {
+      return c.json({ error: "Recommendation analysis is busy" }, 429);
+    }
 
     const responsePromise = (async (): Promise<OnboardingRecommendationRouteResponse> => {
+      const startedAt = Date.now();
+      const elapsedMs = () => Date.now() - startedAt;
       const warnings: RecommendationWarning[] = [];
       const addWarning = (warning: RecommendationWarning) => {
         if (!warnings.includes(warning)) warnings.push(warning);
@@ -742,13 +794,23 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       let calendarEvents: CalendarEventSignal[] = [];
 
       if (gmail) {
+        const gmailDeadlineMs = getOnboardingRecommendationGmailDeadlineMs({
+          elapsedMs: elapsedMs(),
+          hasCalendar: Boolean(calendar),
+          hasAi: Boolean(recommendationAi?.apiKey),
+        });
         try {
-          emails = await fetchRecentGmailEmailSignals({
-            pipedream,
-            externalUserId: externalId,
-            accountId: gmail.pipedream_account_id,
-            maxEmails: request.maxEmails,
-          });
+          if (gmailDeadlineMs <= 0) {
+            addWarning("email_unavailable");
+          } else {
+            emails = await fetchRecentGmailEmailSignals({
+              pipedream,
+              externalUserId: externalId,
+              accountId: gmail.pipedream_account_id,
+              maxEmails: request.maxEmails,
+              deadlineMs: gmailDeadlineMs,
+            });
+          }
         } catch (err) {
           console.error("[onboarding-recommendations] Gmail analysis failed:", err instanceof Error ? err.message : String(err));
           addWarning("email_unavailable");
@@ -756,12 +818,22 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }
 
       if (calendar) {
+        const aiReserveMs = recommendationAi?.apiKey ? GEMINI_RECOMMENDATION_TIMEOUT_MS : 0;
+        const calendarBudgetAvailable =
+          ONBOARDING_RECOMMENDATION_ROUTE_BUDGET_MS -
+          elapsedMs() -
+          aiReserveMs -
+          ONBOARDING_RECOMMENDATION_FINAL_RESERVE_MS;
         try {
-          calendarEvents = await fetchUpcomingCalendarSignals({
-            pipedream,
-            externalUserId: externalId,
-            accountId: calendar.pipedream_account_id,
-          });
+          if (calendarBudgetAvailable <= 0) {
+            addWarning("calendar_unavailable");
+          } else {
+            calendarEvents = await fetchUpcomingCalendarSignals({
+              pipedream,
+              externalUserId: externalId,
+              accountId: calendar.pipedream_account_id,
+            });
+          }
         } catch (err) {
           console.error("[onboarding-recommendations] Calendar analysis failed:", err instanceof Error ? err.message : String(err));
           addWarning("calendar_unavailable");
@@ -774,12 +846,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         missingServices: request.missingServices,
         codingAgents: request.codingAgents,
       };
+      const aiTimeoutMs = getOnboardingRecommendationAiTimeoutMs(elapsedMs());
       const aiRecommendations = await generateAiRecommendations({
         emails,
         calendarEvents,
         connectedServices,
         userPreferences,
-        ai: recommendationAi ?? {},
+        ai: {
+          ...(recommendationAi ?? {}),
+          timeoutMs: aiTimeoutMs,
+        },
       });
       if (!aiRecommendations) {
         addWarning("ai_unavailable");
@@ -804,6 +880,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     })();
 
     onboardingRecommendationInFlight.set(inFlightKey, {
+      userId: uid,
       startedAt: Date.now(),
       promise: responsePromise,
     });
