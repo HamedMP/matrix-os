@@ -122,6 +122,8 @@ describe("T404: Dispatcher batch mode", () => {
     ]);
 
     expect(order).toEqual(["serial-start"]);
+    expect(dispatcher.activeCount).toBe(1);
+    expect(dispatcher.queueLength).toBe(1);
 
     releaseSerial!();
     await Promise.all([serialPromise, batchPromise]);

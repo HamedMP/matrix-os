@@ -7,6 +7,7 @@ import { createProjectManager, PROJECT_SLUG_REGEX } from "./project-manager.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import { createStateOps, type OwnerScope } from "./state-ops.js";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { PromptContentSchema } from "./prompt-validation.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { SessionRegistry } from "./session-registry.js";
@@ -81,7 +82,7 @@ const StartSessionSchema = z.object({
   pr: z.number().int().positive().optional(),
   kind: z.enum(["shell", "agent"]),
   agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
-  prompt: z.string().max(100_000).optional(),
+  prompt: PromptContentSchema.optional(),
   runtimePreference: z.enum(["zellij"]).optional(),
   adminSandboxOverride: z.boolean().optional(),
 });

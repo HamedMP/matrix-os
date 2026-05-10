@@ -12,6 +12,9 @@ if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-l
 fi
 
 echo "[matrix-os-dev] Building kernel package..."
+# Dev container startup needs emitted kernel JS before the gateway starts.
+# This tolerant path is dev-only: production/CI build scripts still fail on
+# kernel type errors instead of running partially typed output.
 if ! pnpm --filter '@matrix-os/kernel' exec tsc --noEmitOnError false; then
   if [ ! -f /app/packages/kernel/dist/index.js ]; then
     echo "[matrix-os-dev] Kernel build failed before emitting dist"

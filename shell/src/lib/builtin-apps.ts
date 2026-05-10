@@ -1,11 +1,6 @@
 import type { LayoutWindow } from "@/hooks/useWindowManager";
 
-export const DEFAULT_PINNED_APPS = [
-  "__workspace__",
-  "__terminal__",
-  "__file-browser__",
-  "__chat__",
-] as const;
+export const DEFAULT_PINNED_APPS = [] as const;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["workspace", "__workspace__"],
@@ -35,10 +30,11 @@ export function normalizeBuiltInAppPath(path: string): string {
   return BUILT_IN_APP_ALIASES.get(path) ?? path;
 }
 
+const BUILT_IN_PATHS = new Set(["__workspace__", "__terminal__", "__file-browser__", "__chat__"]);
+
 export function isBuiltInAppPath(path: string): boolean {
   const normalized = normalizeBuiltInAppPath(path);
-  return normalized.startsWith("__terminal__")
-    || DEFAULT_PINNED_APPS.includes(normalized as (typeof DEFAULT_PINNED_APPS)[number]);
+  return normalized.startsWith("__terminal__") || BUILT_IN_PATHS.has(normalized);
 }
 
 export function normalizeBuiltInLayoutWindow(window: LayoutWindow): LayoutWindow {

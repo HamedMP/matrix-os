@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { SessionManager } from "../../packages/mcp-browser/src/session-manager.js";
 
 function createMockPage() {
@@ -34,7 +37,18 @@ function createMockLauncher(browser: ReturnType<typeof createMockBrowser>) {
   return vi.fn().mockResolvedValue(browser);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("SessionManager", () => {
+  let profileRoot: string;
   let mockPage: ReturnType<typeof createMockPage>;
   let mockBrowser: ReturnType<typeof createMockBrowser>;
   let launcher: ReturnType<typeof createMockLauncher>;
@@ -42,14 +56,16 @@ describe("SessionManager", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    profileRoot = mkdtempSync(join(tmpdir(), "browser-profiles-"));
     mockPage = createMockPage();
     mockBrowser = createMockBrowser(mockPage);
     launcher = createMockLauncher(mockBrowser);
-    manager = new SessionManager({ launcher: launcher as never, idleTimeoutMs: 5000 });
+    manager = new SessionManager({ launcher: launcher as never, idleTimeoutMs: 5000, profileRoot });
   });
 
   afterEach(async () => {
     await manager.close();
+    rmSync(profileRoot, { recursive: true, force: true });
     vi.useRealTimers();
   });
 
@@ -57,7 +73,14 @@ describe("SessionManager", () => {
     const session = await manager.launch();
     expect(session).toBeDefined();
     expect(session.page).toBeDefined();
+    expect(session.profile).toBe("default");
+    expect(session.profilePath).toBe(join(profileRoot, "default"));
+    expect(existsSync(join(profileRoot, "default"))).toBe(true);
     expect(launcher).toHaveBeenCalledTimes(1);
+    expect(launcher).toHaveBeenCalledWith(expect.objectContaining({
+      headless: true,
+      userDataDir: join(profileRoot, "default"),
+    }));
   });
 
   it("getActive() returns current session", async () => {
@@ -96,6 +119,103 @@ describe("SessionManager", () => {
     await manager.launch();
     await manager.launch();
     expect(launcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("launches named profiles in stable user data directories", async () => {
+    const session = await manager.launch({ profile: "work" });
+    expect(session.profile).toBe("work");
+    expect(session.profilePath).toBe(join(profileRoot, "work"));
+    expect(launcher).toHaveBeenCalledWith(expect.objectContaining({
+      userDataDir: join(profileRoot, "work"),
+    }));
+  });
+
+  it("switches profiles by closing the active browser first", async () => {
+    const secondPage = createMockPage();
+    const secondBrowser = createMockBrowser(secondPage);
+    launcher.mockResolvedValueOnce(mockBrowser).mockResolvedValueOnce(secondBrowser);
+
+    await manager.launch({ profile: "work" });
+    await manager.launch({ profile: "personal" });
+
+    expect(mockBrowser.close).toHaveBeenCalledTimes(1);
+    expect(launcher).toHaveBeenCalledTimes(2);
+    expect(manager.getActive()?.profile).toBe("personal");
+  });
+
+  it("serializes concurrent launches for different profiles", async () => {
+    const secondPage = createMockPage();
+    const secondBrowser = createMockBrowser(secondPage);
+    const firstLaunch = deferred<typeof mockBrowser>();
+    launcher.mockReset();
+    launcher.mockImplementationOnce(() => firstLaunch.promise);
+    launcher.mockResolvedValueOnce(secondBrowser);
+
+    const workLaunch = manager.launch({ profile: "work" });
+    await vi.waitFor(() => expect(launcher).toHaveBeenCalledTimes(1));
+
+    const personalLaunch = manager.launch({ profile: "personal" });
+    await Promise.resolve();
+    expect(launcher).toHaveBeenCalledTimes(1);
+
+    firstLaunch.resolve(mockBrowser);
+    const [workSession, personalSession] = await Promise.all([workLaunch, personalLaunch]);
+
+    expect(workSession.profile).toBe("work");
+    expect(personalSession.profile).toBe("personal");
+    expect(mockBrowser.close).toHaveBeenCalledTimes(1);
+    expect(launcher).toHaveBeenCalledTimes(2);
+    expect(manager.getActive()?.profile).toBe("personal");
+  });
+
+  it("does not return a being-closed session during a profile switch", async () => {
+    const defaultPage = createMockPage();
+    const defaultBrowser = createMockBrowser(defaultPage);
+    const secondWorkPage = createMockPage();
+    const secondWorkBrowser = createMockBrowser(secondWorkPage);
+    const closeStarted = deferred<void>();
+    const closeFinished = deferred<void>();
+    mockBrowser.close.mockImplementationOnce(async () => {
+      closeStarted.resolve();
+      await closeFinished.promise;
+    });
+
+    await manager.launch({ profile: "work" });
+    launcher.mockResolvedValueOnce(defaultBrowser).mockResolvedValueOnce(secondWorkBrowser);
+
+    const defaultLaunch = manager.launch();
+    await closeStarted.promise;
+
+    const workLaunch = manager.launch({ profile: "work" });
+    let workResolved = false;
+    void workLaunch.then(() => {
+      workResolved = true;
+    });
+    await Promise.resolve();
+
+    expect(workResolved).toBe(false);
+    closeFinished.resolve();
+    await defaultLaunch;
+    const workSession = await workLaunch;
+
+    expect(workSession.profile).toBe("work");
+    expect(workSession.browser).toBe(secondWorkBrowser);
+    expect(manager.getActive()?.browser).toBe(secondWorkBrowser);
+  });
+
+  it("rejects invalid profile names before launching", async () => {
+    await expect(manager.launch({ profile: "../secrets" })).rejects.toThrow(
+      "Invalid browser profile name",
+    );
+    expect(launcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid default profile names at construction", () => {
+    expect(() => new SessionManager({
+      launcher: launcher as never,
+      profileRoot,
+      defaultProfile: "Default Profile",
+    })).toThrow("Invalid browser profile name");
   });
 
   it("lazy start: no browser process until first launch", () => {
