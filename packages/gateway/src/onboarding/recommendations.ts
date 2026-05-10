@@ -322,6 +322,24 @@ function ruleForUserService(value: string): ServiceRule {
   };
 }
 
+function normalizeExcludedServiceIds(values: string[]): string[] {
+  const ids: string[] = [];
+  const push = (value: string) => {
+    const normalized = normalize(value);
+    if (normalized && !ids.includes(normalized)) ids.push(normalized);
+  };
+  for (const value of values) {
+    const slug = slugify(value);
+    push(value);
+    if (slug) {
+      push(slug);
+      push(slug.replace(/-/g, "_"));
+    }
+    push(ruleForUserService(value).id);
+  }
+  return ids;
+}
+
 function sortedSignals(signals: DetectedServiceSignal[]): DetectedServiceSignal[] {
   return [...signals].sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
@@ -382,48 +400,54 @@ function buildRuleRecommendations(
   signals: DetectedServiceSignal[],
   connectedServices: string[],
   codingAgents: CodingAgentId[],
+  excludedServiceIds: string[],
 ): OnboardingRecommendation[] {
   const recommendations: OnboardingRecommendation[] = [];
   const connected = connectedServices.map((service) => normalize(service));
+  const excluded = normalizeExcludedServiceIds(excludedServiceIds);
 
-  if (!connected.includes("gmail")) {
-    pushRecommendation(recommendations, {
-      id: "connect-gmail",
-      category: "connection",
-      title: "Connect Gmail",
-      description: "Use recent email context to identify the services and routines Matrix should set up first.",
-      serviceId: "gmail",
-      priority: "high",
-    });
-  } else {
-    pushRecommendation(recommendations, {
-      id: "workflow-inbox-triage",
-      category: "workflow",
-      title: "Create an inbox triage workflow",
-      description: "Summarize important senders, extract follow-ups, and turn repeated service emails into Matrix actions.",
-      serviceId: "gmail",
-      priority: "high",
-    });
+  if (!excluded.includes("gmail")) {
+    if (!connected.includes("gmail")) {
+      pushRecommendation(recommendations, {
+        id: "connect-gmail",
+        category: "connection",
+        title: "Connect Gmail",
+        description: "Use recent email context to identify the services and routines Matrix should set up first.",
+        serviceId: "gmail",
+        priority: "high",
+      });
+    } else {
+      pushRecommendation(recommendations, {
+        id: "workflow-inbox-triage",
+        category: "workflow",
+        title: "Create an inbox triage workflow",
+        description: "Summarize important senders, extract follow-ups, and turn repeated service emails into Matrix actions.",
+        serviceId: "gmail",
+        priority: "high",
+      });
+    }
   }
 
-  if (!connected.includes("google_calendar")) {
-    pushRecommendation(recommendations, {
-      id: "connect-google-calendar",
-      category: "connection",
-      title: "Connect Google Calendar",
-      description: "Use calendar context to suggest meeting prep, daily planning, and follow-up routines.",
-      serviceId: "google_calendar",
-      priority: "medium",
-    });
-  } else {
-    pushRecommendation(recommendations, {
-      id: "routine-calendar-brief",
-      category: "routine",
-      title: "Start a calendar briefing routine",
-      description: "Prepare a morning agenda with meeting context, open tasks, and follow-up prompts.",
-      serviceId: "google_calendar",
-      priority: "high",
-    });
+  if (!excluded.includes("google_calendar")) {
+    if (!connected.includes("google_calendar")) {
+      pushRecommendation(recommendations, {
+        id: "connect-google-calendar",
+        category: "connection",
+        title: "Connect Google Calendar",
+        description: "Use calendar context to suggest meeting prep, daily planning, and follow-up routines.",
+        serviceId: "google_calendar",
+        priority: "medium",
+      });
+    } else {
+      pushRecommendation(recommendations, {
+        id: "routine-calendar-brief",
+        category: "routine",
+        title: "Start a calendar briefing routine",
+        description: "Prepare a morning agenda with meeting context, open tasks, and follow-up prompts.",
+        serviceId: "google_calendar",
+        priority: "high",
+      });
+    }
   }
 
   for (const signal of signals) {
@@ -488,7 +512,7 @@ export function buildPersonalizedOnboardingPlan(input: {
   userPreferences: Omit<OnboardingRecommendationRequest, "maxEmails">;
   aiRecommendations: OnboardingRecommendation[];
 }): PersonalizedOnboardingPlan {
-  const excluded = input.userPreferences.excludedServices.map((service) => ruleForUserService(service).id);
+  const excluded = normalizeExcludedServiceIds(input.userPreferences.excludedServices);
   const signals: DetectedServiceSignal[] = [];
 
   for (const email of input.emails.slice(0, MAX_ONBOARDING_EMAILS)) {
@@ -533,6 +557,7 @@ export function buildPersonalizedOnboardingPlan(input: {
     detectedServices,
     input.connectedServices,
     input.userPreferences.codingAgents,
+    excluded,
   );
   const recommendations: OnboardingRecommendation[] = [];
   for (const recommendation of deterministic) {

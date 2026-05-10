@@ -63,16 +63,65 @@ describe("PersonalizedSetupStep", () => {
     fireEvent.click(screen.getByRole("button", { name: /gmail/i }));
 
     await waitFor(() => {
-      expect(openMock).toHaveBeenCalledWith(
-        "https://pipedream.test/oauth",
-        "_blank",
-        "width=600,height=700,noopener,noreferrer",
-      );
+      expect(openMock).toHaveBeenCalledWith("https://pipedream.test/oauth", "_blank", "width=600,height=700");
       expect(screen.getByText("Connection could not start.")).toBeTruthy();
     });
 
     expect(fetchMock.mock.calls.some(([input]) =>
       String(input).includes("/api/integrations/sync"),
     )).toBe(false);
+  });
+
+  it("keeps locally excluded services visible after refreshing suggestions", async () => {
+    let recommendationCalls = 0;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/integrations")) {
+        return jsonResponse({ connections: [] });
+      }
+      if (url.endsWith("/api/integrations/onboarding/recommendations")) {
+        recommendationCalls += 1;
+        return jsonResponse({
+          analyzedEmailCount: 1,
+          analyzedCalendarEventCount: 0,
+          detectedServices: recommendationCalls === 1
+            ? [{ id: "todoist", name: "Todoist", source: "email", confidence: 0.9 }]
+            : [],
+          recommendations: [],
+          warnings: [],
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(
+      <PersonalizedSetupStep
+        disabled={false}
+        onStartVoice={vi.fn()}
+        onStartText={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://gateway.test/api/integrations",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /suggest setup/i }));
+    const todoistChip = await screen.findByRole("button", { name: "Todoist" });
+    fireEvent.click(todoistChip);
+    fireEvent.click(screen.getByTitle("Refresh suggestions"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://gateway.test/api/integrations/onboarding/recommendations",
+        expect.objectContaining({
+          body: expect.stringContaining('"excludedServices":["todoist"]'),
+        }),
+      );
+    });
+    expect(screen.getByRole("button", { name: "Todoist" })).toBeTruthy();
   });
 });

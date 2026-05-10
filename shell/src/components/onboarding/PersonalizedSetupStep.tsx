@@ -87,6 +87,14 @@ function categoryLabel(category: Recommendation["category"]): string {
   }
 }
 
+function serviceLabel(serviceId: string): string {
+  return serviceId
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function shouldLogSetupWarning(err: unknown): boolean {
   return !(err instanceof DOMException && err.name === "AbortError");
 }
@@ -111,6 +119,22 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
     () => CONNECT_SERVICES.filter((service) => serviceConnected(connections, service.id)).map((service) => service.id),
     [connections],
   );
+  const visibleDetectedServices = useMemo(() => {
+    if (!plan) return [];
+    const services = [...plan.detectedServices];
+    const serviceIds = services.map((service) => service.id);
+    for (const id of excludedServices) {
+      if (serviceIds.includes(id)) continue;
+      services.push({
+        id,
+        name: serviceLabel(id),
+        source: "user_missing",
+        confidence: 0,
+      });
+      serviceIds.push(id);
+    }
+    return services;
+  }, [excludedServices, plan]);
 
   useEffect(() => {
     connectionsRef.current = connections;
@@ -186,7 +210,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
         setConnecting(null);
         return;
       }
-      const popup = window.open(data.url, "_blank", "width=600,height=700,noopener,noreferrer");
+      const popup = window.open(data.url, "_blank", "width=600,height=700");
       if (!popup) {
         setError("Connection could not start.");
         setConnecting(null);
@@ -473,11 +497,11 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
                 </button>
               </div>
 
-              {plan.detectedServices.length > 0 && (
+              {visibleDetectedServices.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Detected</div>
                   <div className="flex flex-wrap gap-2">
-                    {plan.detectedServices.map((service) => {
+                    {visibleDetectedServices.map((service) => {
                       const excluded = excludedServices.includes(service.id);
                       return (
                         <button

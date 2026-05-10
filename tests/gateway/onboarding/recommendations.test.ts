@@ -113,6 +113,24 @@ describe("personalized onboarding recommendations", () => {
     expect(plan.codingAgents.map((agent) => agent.id)).toEqual(["openclaw"]);
   });
 
+  it("does not emit deterministic recommendations for excluded connection services", () => {
+    const plan = buildPersonalizedOnboardingPlan({
+      emails: [],
+      calendarEvents: [],
+      connectedServices: [],
+      userPreferences: {
+        includedServices: [],
+        excludedServices: ["gmail", "google_calendar"],
+        missingServices: [],
+        codingAgents: [],
+      },
+      aiRecommendations: [],
+    });
+
+    expect(plan.recommendations).not.toContainEqual(expect.objectContaining({ serviceId: "gmail" }));
+    expect(plan.recommendations).not.toContainEqual(expect.objectContaining({ serviceId: "google_calendar" }));
+  });
+
   it("filters AI recommendations that point back to excluded services", () => {
     const plan = buildPersonalizedOnboardingPlan({
       emails: [todoistEmail],
