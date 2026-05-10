@@ -203,7 +203,10 @@ exec su-exec matrixos bash -c '
   cd /app
 
   echo "[matrix-os-dev] Building kernel package..."
-  pnpm --filter "@matrix-os/kernel" build
+  pnpm --filter "@matrix-os/kernel" build || {
+    echo "[matrix-os-dev] Kernel build failed"
+    exit 1
+  }
 
   # QMD: register collections + start MCP server (best-effort, background)
   if command -v qmd >/dev/null 2>&1 && [ -d "$MATRIX_HOME" ]; then
