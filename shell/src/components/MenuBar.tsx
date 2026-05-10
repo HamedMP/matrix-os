@@ -210,7 +210,13 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
       if (sel?.toString()) await navigator.clipboard.writeText(sel.toString());
     }},
     { label: "Paste", shortcut: "⌘V", action: async () => {
-      try { const text = await navigator.clipboard.readText(); document.execCommand("insertText", false, text); } catch { /* denied */ }
+      try {
+        const text = await navigator.clipboard.readText();
+        document.execCommand("insertText", false, text);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "NotAllowedError") return;
+        console.warn("[menu-bar] paste failed:", err instanceof Error ? err.message : String(err));
+      }
     }},
     { separator: true },
     { label: "Select All", shortcut: "⌘A", action: () => document.execCommand("selectAll") },
