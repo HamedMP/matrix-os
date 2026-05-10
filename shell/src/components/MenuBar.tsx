@@ -175,6 +175,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
   const focusedApp = apps.find((app) => app.path === focusedAppPath);
   const activeAppName = focusedApp?.name ?? focusedWindow?.title ?? "Matrix OS";
   const activeAppIconUrl = focusedApp?.iconUrl ?? FALLBACK_APP_ICON;
+  const focusIndicatorName = focusedWindow ? activeAppName : "Canvas";
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const closeMenu = useCallback(() => setOpenMenu(null), []);
@@ -249,7 +250,14 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
               }}
             />
           </div>
-          <MenuDropdown label={activeAppName} items={appItems} open={openMenu === "app"} onToggle={() => toggleMenu("app")} onClose={closeMenu} />
+          <MenuDropdown
+            label={activeAppName}
+            items={appItems}
+            open={openMenu === "app"}
+            onToggle={() => toggleMenu("app")}
+            onClose={closeMenu}
+          />
+          <span data-testid="menu-focus-indicator" className="sr-only">{focusIndicatorName}</span>
           <div className="mx-1 h-3 w-px bg-border/40" />
           <MenuDropdown label="File" items={fileItems} open={openMenu === "file"} onToggle={() => toggleMenu("file")} onClose={closeMenu} />
           <MenuDropdown label="Edit" items={editItems} open={openMenu === "edit"} onToggle={() => toggleMenu("edit")} onClose={closeMenu} />
