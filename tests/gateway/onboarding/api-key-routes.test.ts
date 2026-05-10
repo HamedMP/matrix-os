@@ -42,6 +42,7 @@ describe("Settings: API key endpoints", () => {
 
   afterEach(() => {
     rmSync(homePath, { recursive: true, force: true });
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });

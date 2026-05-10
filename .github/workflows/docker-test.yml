@@ -72,6 +72,8 @@ jobs:
             dev:
               image: matrix-os-dev:ci
               build: null
+              environment:
+                MATRIX_DOCKER_CHOWN_SOURCE: "true"
           EOF
 
       - name: Create external volumes

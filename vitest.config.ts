@@ -18,6 +18,10 @@ export default defineConfig({
     // waitFor polling can exceed the 5s vitest default.
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    // PGlite-backed suites are memory- and CPU-heavy during database startup.
+    // Keep file-level parallelism bounded so full-suite runs do not starve
+    // KyselyPGlite.create() hooks under shared CI or agent-machine load.
+    maxWorkers: 2,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {

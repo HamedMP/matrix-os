@@ -31,7 +31,7 @@ describe("MenuBar focus display", () => {
     resetStore();
   });
 
-  it("shows Matrix OS and Canvas when no app owns focus", () => {
+  it("shows Matrix OS when no app owns focus", () => {
     useWindowManager.getState().openWindow("Whiteboard", "apps/whiteboard", 80);
     useWindowManager.getState().clearFocus();
 
