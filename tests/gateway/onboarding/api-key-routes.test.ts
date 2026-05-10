@@ -26,6 +26,8 @@ describe("Settings: API key endpoints", () => {
   let app: Hono;
 
   beforeEach(() => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("CLAUDE_CODE_AUTH", "");
     homePath = resolve(mkdtempSync(join(tmpdir(), "settings-apikey-")));
     mkdirSync(join(homePath, "system"), { recursive: true });
     writeFileSync(join(homePath, "system/config.json"), "{}");

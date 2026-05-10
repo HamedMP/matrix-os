@@ -35,12 +35,9 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const updater = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update'), 'utf8');
 
-    expect(updater).toContain('system-bundles/channels/${channel}.json');
-    expect(updater).toContain('matrix-host-bundle.tar.gz');
-    expect(updater).toContain('sha256sum -c');
-    expect(updater).toContain('tar -xzf');
-    expect(updater).toContain('/opt/matrix/release.json');
-    expect(updater).toContain('systemctl restart matrix-gateway.service matrix-shell.service matrix-code.service');
+    expect(updater).toContain('/opt/matrix/app/.update-now');
+    expect(updater).toContain('/opt/matrix/app/.rollback-now');
+    expect(updater).toContain('journalctl -u matrix-sync-agent');
   });
 
   it('gateway launcher performs the customer VPS registration callback', () => {
