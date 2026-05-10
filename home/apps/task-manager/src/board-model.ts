@@ -1,4 +1,7 @@
 export type Priority = "low" | "medium" | "high" | "urgent";
+export type DelegationTarget = "matrix" | "hermes";
+export type DelegationTrigger = "manual" | "when_ready" | "on_review" | "scheduled";
+export type DelegationStatus = "queued" | "active" | "blocked" | "done";
 
 export interface Project {
   id: string;
@@ -19,6 +22,14 @@ export interface ChecklistItem {
   done: boolean;
 }
 
+export interface CardDelegation {
+  target: DelegationTarget;
+  trigger: DelegationTrigger;
+  instructions: string;
+  status: DelegationStatus;
+  updatedAt: string;
+}
+
 export interface Card {
   id: string;
   projectId: string;
@@ -30,6 +41,7 @@ export interface Card {
   assignee: string;
   dueDate: string;
   checklist: ChecklistItem[];
+  delegation: CardDelegation | null;
   order: number;
   createdAt: string;
   updatedAt: string;
@@ -53,6 +65,14 @@ export interface NewCardInput {
   assignee?: string;
   dueDate?: string;
   checklist?: ChecklistItem[];
+  delegation?: CardDelegation | null;
+}
+
+export interface DelegateCardInput {
+  target: DelegationTarget;
+  trigger?: DelegationTrigger;
+  instructions?: string;
+  status?: DelegationStatus;
 }
 
 export interface BoardSummary {
@@ -61,6 +81,8 @@ export interface BoardSummary {
   activeProjects: number;
   checklistDone: number;
   checklistTotal: number;
+  delegatedCards: number;
+  urgentCards: number;
 }
 
 export const DEFAULT_COLUMNS: BoardColumn[] = [
@@ -170,6 +192,7 @@ export function addCard(board: Board, input: NewCardInput): Board {
     assignee: input.assignee?.trim() ?? "",
     dueDate: input.dueDate ?? "",
     checklist: input.checklist ?? [],
+    delegation: normalizeDelegation(input.delegation),
     order: columnCards.length,
     createdAt: now(),
     updatedAt: now(),
@@ -214,6 +237,35 @@ export function moveCard(board: Board, cardId: string, targetColumnId: string, t
   };
 }
 
+export function moveCardToAdjacentColumn(board: Board, cardId: string, direction: "previous" | "next"): Board {
+  const card = board.cards.find((item) => item.id === cardId);
+  if (!card) return board;
+  const currentIndex = board.columns.findIndex((column) => column.id === card.columnId);
+  if (currentIndex < 0) return board;
+  const offset = direction === "next" ? 1 : -1;
+  const targetIndex = Math.max(0, Math.min(board.columns.length - 1, currentIndex + offset));
+  const targetColumn = board.columns[targetIndex];
+  if (!targetColumn || targetColumn.id === card.columnId) return board;
+  const targetCards = board.cards.filter((item) => item.columnId === targetColumn.id);
+  return moveCard(board, cardId, targetColumn.id, targetCards.length);
+}
+
+export function delegateCard(board: Board, cardId: string, input: DelegateCardInput): Board {
+  return updateCard(board, cardId, {
+    delegation: {
+      target: input.target,
+      trigger: input.trigger ?? "manual",
+      instructions: input.instructions?.trim() ?? "",
+      status: input.status ?? "queued",
+      updatedAt: now(),
+    },
+  });
+}
+
+export function clearDelegation(board: Board, cardId: string): Board {
+  return updateCard(board, cardId, { delegation: null });
+}
+
 export function toggleChecklistItem(board: Board, cardId: string, itemId: string): Board {
   return updateCard(board, cardId, {
     checklist: board.cards
@@ -241,6 +293,8 @@ export function summarizeBoard(board: Board): BoardSummary {
     activeProjects: activeProjectIds.length,
     checklistDone: checklist.filter((item) => item.done).length,
     checklistTotal: checklist.length,
+    delegatedCards: board.cards.filter((card) => card.delegation).length,
+    urgentCards: board.cards.filter((card) => card.priority === "urgent").length,
   };
 }
 
@@ -252,9 +306,61 @@ export function hydrateBoard(value: unknown): Board {
     version: 1,
     projects: candidate.projects.length > 0 ? candidate.projects : createBoard().projects,
     columns: Array.isArray(candidate.columns) && candidate.columns.length > 0 ? candidate.columns : DEFAULT_COLUMNS,
-    cards: normalizeOrders(sortCards(candidate.cards as Card[])),
+    cards: normalizeOrders(sortCards((candidate.cards as Card[]).map(normalizeCard))),
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : now(),
   };
+}
+
+function normalizeCard(card: Card): Card {
+  return {
+    ...card,
+    description: typeof card.description === "string" ? card.description : "",
+    priority: isPriority(card.priority) ? card.priority : "medium",
+    labels: Array.isArray(card.labels) ? card.labels.filter((label): label is string => typeof label === "string") : [],
+    assignee: typeof card.assignee === "string" ? card.assignee : "",
+    dueDate: typeof card.dueDate === "string" ? card.dueDate : "",
+    checklist: Array.isArray(card.checklist)
+      ? card.checklist.filter(isChecklistItem)
+      : [],
+    delegation: normalizeDelegation(card.delegation),
+    createdAt: typeof card.createdAt === "string" ? card.createdAt : now(),
+    updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : now(),
+  };
+}
+
+function normalizeDelegation(value: unknown): CardDelegation | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<CardDelegation>;
+  if (!isDelegationTarget(candidate.target)) return null;
+  return {
+    target: candidate.target,
+    trigger: isDelegationTrigger(candidate.trigger) ? candidate.trigger : "manual",
+    instructions: typeof candidate.instructions === "string" ? candidate.instructions : "",
+    status: isDelegationStatus(candidate.status) ? candidate.status : "queued",
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : now(),
+  };
+}
+
+function isPriority(value: unknown): value is Priority {
+  return value === "low" || value === "medium" || value === "high" || value === "urgent";
+}
+
+function isDelegationTarget(value: unknown): value is DelegationTarget {
+  return value === "matrix" || value === "hermes";
+}
+
+function isDelegationTrigger(value: unknown): value is DelegationTrigger {
+  return value === "manual" || value === "when_ready" || value === "on_review" || value === "scheduled";
+}
+
+function isDelegationStatus(value: unknown): value is DelegationStatus {
+  return value === "queued" || value === "active" || value === "blocked" || value === "done";
+}
+
+function isChecklistItem(value: unknown): value is ChecklistItem {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<ChecklistItem>;
+  return typeof item.id === "string" && typeof item.text === "string" && typeof item.done === "boolean";
 }
 
 function normalizeOrders(cards: Card[]): Card[] {

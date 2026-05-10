@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   addCard,
   createBoard,
+  delegateCard,
+  hydrateBoard,
+  moveCardToAdjacentColumn,
   moveCard,
   summarizeBoard,
   toggleChecklistItem,
@@ -67,6 +70,76 @@ describe("task board model", () => {
       activeProjects: 1,
       checklistDone: 1,
       checklistTotal: 2,
+      delegatedCards: 0,
+      urgentCards: 0,
     });
+  });
+
+  it("records Matrix and Hermes delegation intent on cards", () => {
+    let board = createBoard("Default");
+    board = addCard(board, {
+      columnId: "ready",
+      title: "Research integration path",
+      projectId: board.projects[0].id,
+    });
+
+    const card = board.cards[0];
+    board = delegateCard(board, card.id, {
+      target: "hermes",
+      trigger: "when_ready",
+      instructions: "Use a cloud worker and report tradeoffs before implementation.",
+    });
+
+    expect(board.cards[0].delegation).toMatchObject({
+      target: "hermes",
+      trigger: "when_ready",
+      status: "queued",
+      instructions: "Use a cloud worker and report tradeoffs before implementation.",
+    });
+    expect(summarizeBoard(board).delegatedCards).toBe(1);
+  });
+
+  it("hydrates legacy cards without delegation fields", () => {
+    const board = hydrateBoard({
+      version: 1,
+      projects: [{ id: "project-a", name: "A", color: "#2563eb", description: "" }],
+      columns: [{ id: "backlog", title: "Backlog", color: "#64748b" }],
+      cards: [{
+        id: "card-a",
+        projectId: "project-a",
+        columnId: "backlog",
+        title: "Legacy card",
+        description: "",
+        priority: "urgent",
+        labels: [],
+        assignee: "",
+        dueDate: "",
+        checklist: [],
+        order: 0,
+        createdAt: "2026-05-10T00:00:00.000Z",
+        updatedAt: "2026-05-10T00:00:00.000Z",
+      }],
+      updatedAt: "2026-05-10T00:00:00.000Z",
+    });
+
+    expect(board.cards[0].delegation).toBeNull();
+    expect(summarizeBoard(board).urgentCards).toBe(1);
+  });
+
+  it("moves cards to adjacent columns for touch and keyboard controls", () => {
+    let board = createBoard("Default");
+    board = addCard(board, {
+      columnId: "backlog",
+      title: "Touch move",
+      projectId: board.projects[0].id,
+    });
+
+    const card = board.cards[0];
+    board = moveCardToAdjacentColumn(board, card.id, "next");
+    expect(board.cards[0].columnId).toBe("ready");
+
+    board = moveCardToAdjacentColumn(board, card.id, "previous");
+    board = moveCardToAdjacentColumn(board, card.id, "previous");
+    expect(board.cards[0].columnId).toBe("backlog");
   });
 });
