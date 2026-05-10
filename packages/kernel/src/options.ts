@@ -69,12 +69,12 @@ function loadBrowserConfig(homePath: string): {
   }
 }
 
-function tryCreateBrowserServer(
+export async function tryCreateBrowserServer(
   homePath: string,
   browserConfig: { headless: boolean; timeout: number; idleTimeout: number; defaultProfile: string },
 ) {
   try {
-    const { createBrowserMcpServer } = require("@matrix-os/mcp-browser/server");
+    const { createBrowserMcpServer } = await import("@matrix-os/mcp-browser/server");
     return createBrowserMcpServer({ homePath, ...browserConfig });
   } catch (err: unknown) {
     console.warn("[kernel-options] Could not create browser MCP server:", err instanceof Error ? err.message : String(err));
@@ -115,7 +115,7 @@ export async function kernelOptions(config: KernelConfig) {
 
   const browserConfig = loadBrowserConfig(homePath);
   if (browserConfig) {
-    const browserServer = tryCreateBrowserServer(homePath, browserConfig);
+    const browserServer = await tryCreateBrowserServer(homePath, browserConfig);
     if (browserServer) {
       mcpServers["matrix-os-browser"] = browserServer;
       browserToolNames.push(...BROWSER_TOOL_NAMES);
