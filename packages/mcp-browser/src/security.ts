@@ -167,7 +167,8 @@ function isBlockedIpv6(address: string): boolean {
     lower.startsWith("fee") ||
     lower.startsWith("fef") ||
     lower.startsWith("ff") ||
-    lower.startsWith("2001:db8")
+    lower.startsWith("2001:db8") ||
+    lower.startsWith("2002:")
   );
 }
 

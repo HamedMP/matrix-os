@@ -5,6 +5,13 @@ import { tmpdir } from "node:os";
 import { createBrowserTool, type BrowserToolInput } from "../../packages/mcp-browser/src/browser-tool.js";
 
 function createMockPage() {
+  const context = {
+    pages: vi.fn().mockReturnValue([]),
+    newPage: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+    route: vi.fn().mockResolvedValue(undefined),
+  };
+
   return {
     goto: vi.fn().mockResolvedValue({ status: vi.fn().mockReturnValue(200) }),
     title: vi.fn().mockResolvedValue("Test Page"),
@@ -35,11 +42,7 @@ function createMockPage() {
     },
     on: vi.fn(),
     route: vi.fn().mockResolvedValue(undefined),
-    context: vi.fn().mockReturnValue({
-      pages: vi.fn().mockReturnValue([]),
-      newPage: vi.fn(),
-      close: vi.fn().mockResolvedValue(undefined),
-    }),
+    context: vi.fn().mockReturnValue(context),
   };
 }
 
@@ -156,6 +159,31 @@ describe("Browser Tool (composite action dispatch)", () => {
 
     it("installs a request guard before navigation", async () => {
       await execute({ action: "navigate", url: "https://example.com" });
+      expect(mockPage.context().route).toHaveBeenCalledWith("**/*", expect.any(Function));
+      expect(mockPage.route).not.toHaveBeenCalled();
+    });
+
+    it("blocks unsafe requests through the context request guard", async () => {
+      await execute({ action: "navigate", url: "https://example.com" });
+      const handler = mockPage.context().route.mock.calls[0][1];
+      const route = {
+        request: vi.fn().mockReturnValue({ url: vi.fn().mockReturnValue("http://127.0.0.1:3000") }),
+        continue: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await handler(route);
+
+      expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
+      expect(route.continue).not.toHaveBeenCalled();
+    });
+
+    it("falls back to a page request guard when context routing is unavailable", async () => {
+      const context = mockPage.context();
+      delete (context as { route?: unknown }).route;
+
+      await execute({ action: "navigate", url: "https://example.com" });
+
       expect(mockPage.route).toHaveBeenCalledWith("**/*", expect.any(Function));
     });
   });

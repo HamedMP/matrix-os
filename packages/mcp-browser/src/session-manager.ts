@@ -41,13 +41,27 @@ export interface PageLike {
       abort(errorCode?: string): Promise<void>;
     }) => Promise<void>,
   ): Promise<void>;
-  context(): { pages(): PageLike[]; newPage(): Promise<PageLike>; close(): Promise<void> };
+  context(): BrowserContextLike;
+}
+
+export interface BrowserContextLike {
+  pages(): PageLike[];
+  newPage(): Promise<PageLike>;
+  close(): Promise<void>;
+  route?(
+    url: string,
+    handler: (route: {
+      request(): { url(): string };
+      continue(): Promise<void>;
+      abort(errorCode?: string): Promise<void>;
+    }) => Promise<void>,
+  ): Promise<void>;
 }
 
 export interface BrowserLike {
   newPage(): Promise<PageLike>;
   close(): Promise<void>;
-  contexts(): Array<{ pages(): PageLike[]; newPage?: () => Promise<PageLike> }>;
+  contexts(): Array<BrowserContextLike>;
 }
 
 type Launcher = (opts?: { headless?: boolean; userDataDir?: string }) => Promise<BrowserLike>;

@@ -85,21 +85,37 @@ export function createBrowserTool(opts: BrowserToolOptions) {
     profileRoot: join(opts.homePath, "data", "browser-profiles"),
     defaultProfile,
   });
+  const guardedContexts = new WeakSet<object>();
+
+  async function handleGuardedRequest(route: {
+    request(): { url(): string };
+    continue(): Promise<void>;
+    abort(errorCode?: string): Promise<void>;
+  }): Promise<void> {
+    try {
+      await assertSafeBrowserUrl(route.request().url(), { resolveHostname: opts.resolveHostname });
+      await route.continue();
+    } catch (error) {
+      console.warn(
+        "[mcp-browser] Blocked browser request:",
+        error instanceof Error ? error.message : "unsafe request",
+      );
+      await route.abort("blockedbyclient");
+    }
+  }
+
   async function installRequestGuard(page: PageLike): Promise<void> {
+    const context = page.context();
+    if (context.route) {
+      if (guardedContexts.has(context)) return;
+      await context.route("**/*", handleGuardedRequest);
+      guardedContexts.add(context);
+      return;
+    }
+
     const guardedPage = page as PageLike & { [REQUEST_GUARD_INSTALLED]?: boolean };
     if (!page.route || guardedPage[REQUEST_GUARD_INSTALLED]) return;
-    await page.route("**/*", async (route) => {
-      try {
-        await assertSafeBrowserUrl(route.request().url(), { resolveHostname: opts.resolveHostname });
-        await route.continue();
-      } catch (error) {
-        console.warn(
-          "[mcp-browser] Blocked browser request:",
-          error instanceof Error ? error.message : "unsafe request",
-        );
-        await route.abort("blockedbyclient");
-      }
-    });
+    await page.route("**/*", handleGuardedRequest);
     guardedPage[REQUEST_GUARD_INSTALLED] = true;
   }
 

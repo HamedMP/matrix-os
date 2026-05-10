@@ -55,6 +55,9 @@ describe("browser security helpers", () => {
     await expect(assertSafeBrowserUrl("http://[fec0::1]:3000")).rejects.toThrow(
       "Browser navigation URL is not allowed",
     );
+    await expect(assertSafeBrowserUrl("http://[2002:7f00:0001::]:3000")).rejects.toThrow(
+      "Browser navigation URL is not allowed",
+    );
   });
 
   it("checks DNS results for hostname-based navigation URLs", async () => {
@@ -73,6 +76,12 @@ describe("browser security helpers", () => {
     await expect(
       assertSafeBrowserUrl("https://site-local.example", {
         resolveHostname: async () => ["fec0::1"],
+      }),
+    ).rejects.toThrow("Browser navigation URL is not allowed");
+
+    await expect(
+      assertSafeBrowserUrl("https://six-to-four.example", {
+        resolveHostname: async () => ["2002:7f00:0001::"],
       }),
     ).rejects.toThrow("Browser navigation URL is not allowed");
   });
