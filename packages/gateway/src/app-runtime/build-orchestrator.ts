@@ -24,6 +24,7 @@ interface BuildOrchestratorOptions {
 }
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
+const TIMEOUT_KILL_GRACE_MS = 2_000;
 
 export class BuildOrchestrator {
   private readonly concurrency: number;
@@ -161,6 +162,7 @@ export class BuildOrchestrator {
       let timeoutFired = false;
       let settled = false;
       let timer: ReturnType<typeof setTimeout>;
+      let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
 
@@ -176,19 +178,36 @@ export class BuildOrchestrator {
         signal: ac.signal,
       });
 
+      const timeoutResult = (): BuildResult => ({
+        ok: false,
+        error: new BuildError(
+          "timeout",
+          stage,
+          null,
+          `Build timed out after ${timeoutMs}ms`,
+        ),
+      });
+
+      const signalProcessGroup = (signal: NodeJS.Signals) => {
+        if (process.platform === "win32" || !child.pid) return;
+        try {
+          process.kill(-child.pid, signal);
+        } catch (err: unknown) {
+          const code = err instanceof Error && "code" in err ? String((err as NodeJS.ErrnoException).code) : "";
+          if (code !== "ESRCH") {
+            console.warn(`[build-orchestrator] failed to send ${signal} to timed-out build process group:`, err);
+          }
+        }
+      };
+
       timer = setTimeout(() => {
         timeoutFired = true;
         ac.abort();
-        if (process.platform !== "win32" && child.pid) {
-          try {
-            process.kill(-child.pid, "SIGTERM");
-          } catch (err: unknown) {
-            const code = err instanceof Error && "code" in err ? String((err as NodeJS.ErrnoException).code) : "";
-            if (code !== "ESRCH") {
-              console.warn("[build-orchestrator] failed to terminate timed-out build process group:", err);
-            }
-          }
-        }
+        signalProcessGroup("SIGTERM");
+        forceKillTimer = setTimeout(() => {
+          signalProcessGroup("SIGKILL");
+          finish(timeoutResult());
+        }, TIMEOUT_KILL_GRACE_MS);
       }, timeoutMs);
 
       // Ring-buffer output to cap memory. A verbose pnpm install / vite build
@@ -213,6 +232,7 @@ export class BuildOrchestrator {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
         const output = Buffer.concat(chunks).toString("utf8");
         writeFile(logPath, output.slice(0, MAX_LOG_SIZE))
           .catch((writeErr) => {
@@ -244,15 +264,7 @@ export class BuildOrchestrator {
         const stderrTail = output.slice(-2048);
 
         if (timeoutFired || ac.signal.aborted) {
-          finish({
-            ok: false,
-            error: new BuildError(
-              "timeout",
-              stage,
-              null,
-              `Build timed out after ${timeoutMs}ms`,
-            ),
-          });
+          finish(timeoutResult());
           return;
         }
 

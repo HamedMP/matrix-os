@@ -71,6 +71,21 @@ describe("BuildOrchestrator", () => {
     }
   }, 30_000);
 
+  it("settles timed-out builds that ignore SIGTERM", async () => {
+    const manifestPath = join(appDir, "matrix.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.build.install = `"${process.execPath}" -e "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"`;
+    await writeFile(manifestPath, JSON.stringify(manifest));
+
+    const start = Date.now();
+    const result = await orch.build("hello-vite", appDir, { timeoutMs: 100 });
+    expect(Date.now() - start).toBeLessThan(5_000);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result.error as BuildError).code).toBe("timeout");
+    }
+  }, 10_000);
+
   it("serializes concurrent builds for same slug", async () => {
     const results = await Promise.all([
       orch.build("hello-vite", appDir),
