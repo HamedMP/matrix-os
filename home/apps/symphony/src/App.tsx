@@ -278,6 +278,18 @@ function mergeRuntimeConfig(config: SymphonyConfig, status: SymphonyRuntimeStatu
   };
 }
 
+function statusAfterSavedRuntimeConfig(
+  current: SymphonyRuntimeStatus | null,
+  runtimeConfig: SymphonyRuntimeConfig,
+): SymphonyRuntimeStatus | null {
+  if (!current || current.running) return current;
+  return {
+    ...current,
+    dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
+    config: runtimeConfig,
+  };
+}
+
 function normalizeNameList(values: string[]): string[] {
   const seen = new Set<string>();
   const names: string[] = [];
@@ -433,11 +445,7 @@ function App() {
     try {
       const runtimeConfig = await saveRuntimeConfig(next);
       await writeConfig(next);
-      setRuntimeStatus((current) => current ? {
-        ...current,
-        dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
-        config: runtimeConfig,
-      } : current);
+      setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
       setError("Symphony settings could not be saved.");
@@ -452,11 +460,7 @@ function App() {
     try {
       const runtimeConfig = await saveRuntimeConfig(config);
       await writeConfig(config);
-      setRuntimeStatus((current) => current ? {
-        ...current,
-        dashboardUrl: `http://127.0.0.1:${runtimeConfig.port}`,
-        config: runtimeConfig,
-      } : current);
+      setRuntimeStatus((current) => statusAfterSavedRuntimeConfig(current, runtimeConfig));
     } catch (err: unknown) {
       console.warn("[symphony] config save failed:", err instanceof Error ? err.message : String(err));
       setError("Symphony settings could not be saved.");

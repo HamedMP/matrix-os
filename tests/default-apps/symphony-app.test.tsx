@@ -55,6 +55,8 @@ describe("Symphony app", () => {
   let listedIssuePages: Record<string, { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }> | null = null;
   let integrationCalls: Array<{ action?: string; params?: Record<string, unknown> }> = [];
   let runtimeActiveStates: string[] = [];
+  let runtimeRunning = false;
+  let runtimePort = 4066;
 
   beforeEach(() => {
     runtimeConfigShouldFail = false;
@@ -65,6 +67,8 @@ describe("Symphony app", () => {
     listedIssuePages = null;
     integrationCalls = [];
     runtimeActiveStates = ["Todo", "In Progress", "Merging", "Rework"];
+    runtimeRunning = false;
+    runtimePort = 4066;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/bridge/data") && init?.method !== "POST") {
@@ -75,19 +79,19 @@ describe("Symphony app", () => {
       }
       if (url === "/api/symphony/status") {
         return json({
-          running: false,
-          pid: null,
-          startedAt: null,
+          running: runtimeRunning,
+          pid: runtimeRunning ? 123 : null,
+          startedAt: runtimeRunning ? "2026-05-10T00:00:00.000Z" : null,
           lastExitAt: null,
           lastExitCode: null,
-          dashboardUrl: "http://127.0.0.1:4066",
+          dashboardUrl: `http://127.0.0.1:${runtimePort}`,
           linearApiKeyConfigured: true,
           config: {
             version: 1,
             serviceRoot: "/home/matrixos/code/symphony/elixir",
             binPath: "./bin/symphony",
             workflowPath: "/app/WORKFLOW.md",
-            port: 4066,
+            port: runtimePort,
             tracker: {
               kind: "linear",
               teamKey: "MAT",
@@ -99,17 +103,26 @@ describe("Symphony app", () => {
       }
       if (url === "/api/symphony/config" && init?.method === "POST") {
         if (runtimeConfigShouldFail) return json({ error: "failed" }, { status: 500 });
+        const requestedConfig = typeof init.body === "string"
+          ? JSON.parse(init.body) as Partial<{
+            serviceRoot: string;
+            binPath: string;
+            workflowPath: string;
+            port: number;
+            tracker: { teamKey: string; requiredLabels: string[]; activeStates: string[] };
+          }>
+          : {};
         return json({
           version: 1,
-          serviceRoot: "/home/matrixos/code/symphony/elixir",
-          binPath: "./bin/symphony",
-          workflowPath: "/app/WORKFLOW.md",
-          port: 4066,
+          serviceRoot: requestedConfig.serviceRoot ?? "/home/matrixos/code/symphony/elixir",
+          binPath: requestedConfig.binPath ?? "./bin/symphony",
+          workflowPath: requestedConfig.workflowPath ?? "/app/WORKFLOW.md",
+          port: requestedConfig.port ?? runtimePort,
           tracker: {
             kind: "linear",
-            teamKey: "OPS",
-            requiredLabels: ["symphony"],
-            activeStates: runtimeActiveStates,
+            teamKey: requestedConfig.tracker?.teamKey ?? "OPS",
+            requiredLabels: requestedConfig.tracker?.requiredLabels ?? ["symphony"],
+            activeStates: requestedConfig.tracker?.activeStates ?? runtimeActiveStates,
           },
         });
       }
@@ -211,6 +224,26 @@ describe("Symphony app", () => {
       content.includes("'./bin/my symphony'") &&
       content.includes("'/app/Work Flow.md'")
     ))).toBeTruthy();
+  });
+
+  it("keeps launch-time runner status visible after saving config while running", async () => {
+    runtimeRunning = true;
+    runtimePort = 4077;
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Running :4077")).toBeTruthy());
+    const portInput = screen.getByLabelText("Runner port") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(portInput, { target: { value: "4088" } });
+      fireEvent.blur(portInput);
+    });
+
+    await waitFor(() => {
+      const configCalls = vi.mocked(global.fetch).mock.calls.filter(([input]) => input === "/api/symphony/config");
+      expect(configCalls.length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText("Running :4077")).toBeTruthy();
+    expect(screen.queryByText("Running :4088")).toBeNull();
   });
 
   it("does not create issues when any required Linear label is missing", async () => {

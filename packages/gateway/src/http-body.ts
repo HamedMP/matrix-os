@@ -1,0 +1,11 @@
+import type { Context } from "hono";
+
+export function requestHasBody(c: Context): boolean {
+  const contentLength = c.req.header("content-length");
+  if (contentLength !== undefined) {
+    const parsed = Number(contentLength);
+    return !Number.isFinite(parsed) || parsed > 0;
+  }
+  if (c.req.header("transfer-encoding")) return true;
+  return c.req.raw.body !== null;
+}

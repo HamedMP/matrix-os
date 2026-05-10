@@ -315,15 +315,6 @@ class SymphonyRunner {
     }
     const child = this.process;
     if (!child) return this.status();
-    if (child.exitCode !== null || child.signalCode !== null) {
-      if (this.process === child) {
-        this.process = null;
-        this.runningConfig = null;
-      }
-      this.lastExitAt ??= new Date().toISOString();
-      this.lastExitCode = typeof child.exitCode === "number" ? child.exitCode : null;
-      return this.status();
-    }
 
     await new Promise<void>((resolveStop) => {
       let settled = false;
@@ -338,6 +329,10 @@ class SymphonyRunner {
         finish();
       }, SYMPHONY_STOP_TIMEOUT_MS);
       child.once("exit", finish);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        finish();
+        return;
+      }
       child.kill("SIGTERM");
     });
 
@@ -346,6 +341,7 @@ class SymphonyRunner {
       this.runningConfig = null;
     }
     this.lastExitAt ??= new Date().toISOString();
+    if (typeof child.exitCode === "number") this.lastExitCode ??= child.exitCode;
     return this.status();
   }
 
