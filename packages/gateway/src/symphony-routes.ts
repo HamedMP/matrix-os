@@ -4,6 +4,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod/v4";
 import {
   createSymphonyRunner,
+  SymphonyConfigLoadError,
   SymphonyConfigUpdateSchema,
   type SymphonyConfigUpdate,
   type SymphonyStartResult,
@@ -21,6 +22,21 @@ function status(code: number): ContentfulStatusCode {
 
 function errorBody(code: string, message: string): { error: { code: string; message: string } } {
   return { error: { code, message } };
+}
+
+function configLoadErrorBody() {
+  return errorBody("config_load_error", "Symphony configuration could not be loaded");
+}
+
+async function withConfigLoadError(c: Context, action: () => Promise<Response>): Promise<Response> {
+  try {
+    return await action();
+  } catch (err: unknown) {
+    if (err instanceof SymphonyConfigLoadError) {
+      return c.json(configLoadErrorBody(), status(503));
+    }
+    throw err;
+  }
 }
 
 async function parseOptionalJson<T>(c: Context, schema: z.ZodType<T>): Promise<
@@ -62,38 +78,44 @@ export function createSymphonyRoutes(options: {
   const limited = bodyLimit({ maxSize: SYMPHONY_BODY_LIMIT });
   const runner = options.runner ?? createSymphonyRunner({ homePath: options.homePath });
 
-  app.get("/status", async (c) => c.json(await runner.status()));
-  app.get("/config", async (c) => c.json(await runner.getConfig()));
+  app.get("/status", async (c) => withConfigLoadError(c, async () => c.json(await runner.status())));
+  app.get("/config", async (c) => withConfigLoadError(c, async () => c.json(await runner.getConfig())));
 
   app.post("/config", limited, async (c) => {
-    const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
-    if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
-    const config = await runner.saveConfig(parsed.value);
-    const runnerStatus = await runner.status();
-    options.onConfigChange?.({
-      port: config.port,
-      runningPort: runnerStatus.running ? runnerStatus.config.port : undefined,
+    return withConfigLoadError(c, async () => {
+      const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
+      if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
+      const config = await runner.saveConfig(parsed.value);
+      const runnerStatus = await runner.status();
+      options.onConfigChange?.({
+        port: config.port,
+        runningPort: runnerStatus.running ? runnerStatus.config.port : undefined,
+      });
+      return c.json(config);
     });
-    return c.json(config);
   });
 
   app.post("/start", limited, async (c) => {
-    const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
-    if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
-    const result = await runner.start(parsed.value);
-    if (result.ok) options.onConfigChange?.({ port: result.status.config.port });
-    return startResponse(c, result);
+    return withConfigLoadError(c, async () => {
+      const parsed = await parseOptionalJson<SymphonyConfigUpdate>(c, SymphonyConfigUpdateSchema);
+      if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
+      const result = await runner.start(parsed.value);
+      if (result.ok) options.onConfigChange?.({ port: result.status.config.port });
+      return startResponse(c, result);
+    });
   });
 
   app.post("/stop", limited, async (c) => {
-    const parsed = await parseOptionalJson(c, EmptyBodySchema);
-    if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
-    const runnerStatus = await runner.stop();
-    options.onConfigChange?.({
-      port: runnerStatus.config.port,
-      runningPort: runnerStatus.running ? runnerStatus.config.port : undefined,
+    return withConfigLoadError(c, async () => {
+      const parsed = await parseOptionalJson(c, EmptyBodySchema);
+      if (!parsed.ok) return c.json(errorBody(parsed.code, parsed.message), status(parsed.status));
+      const runnerStatus = await runner.stop();
+      options.onConfigChange?.({
+        port: runnerStatus.config.port,
+        runningPort: runnerStatus.running ? runnerStatus.config.port : undefined,
+      });
+      return c.json(runnerStatus);
     });
-    return c.json(runnerStatus);
   });
 
   return app;

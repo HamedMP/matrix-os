@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSymphonyRoutes } from "../../packages/gateway/src/symphony-routes.js";
+import { SymphonyConfigLoadError } from "../../packages/gateway/src/symphony-runner.js";
 
 const config = {
   version: 1 as const,
@@ -50,6 +51,52 @@ describe("Symphony routes", () => {
       running: false,
       dashboardUrl: "http://127.0.0.1:4066",
       config: { tracker: { teamKey: "MAT", requiredLabels: ["symphony"] } },
+    });
+  });
+
+  it("returns a structured config error when status cannot load config", async () => {
+    const runner = {
+      status: vi.fn(async () => {
+        throw new SymphonyConfigLoadError();
+      }),
+      getConfig: vi.fn(),
+      saveConfig: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner });
+
+    const res = await app.request("/status");
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: {
+        code: "config_load_error",
+        message: "Symphony configuration could not be loaded",
+      },
+    });
+  });
+
+  it("returns a structured config error when config cannot load config", async () => {
+    const runner = {
+      status: vi.fn(),
+      getConfig: vi.fn(async () => {
+        throw new SymphonyConfigLoadError();
+      }),
+      saveConfig: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const app = createSymphonyRoutes({ homePath: "/tmp/matrix", runner });
+
+    const res = await app.request("/config");
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: {
+        code: "config_load_error",
+        message: "Symphony configuration could not be loaded",
+      },
     });
   });
 

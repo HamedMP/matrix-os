@@ -40,4 +40,31 @@ describe("integrations registry", () => {
       typeErrors: ["labelIds: expected array, got string"],
     });
   });
+
+  it("omits the Linear label comparator when no label name is requested", () => {
+    const action = getAction("linear", "list_issues");
+    expect(action).toBeDefined();
+
+    const body = action!.directApi?.mapBody?.({ teamId: "team_mat", first: 25 }) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+
+    expect(body.query).not.toContain("labels:");
+    expect(body.query).not.toContain("$labelName");
+    expect(body.variables).not.toHaveProperty("labelName");
+  });
+
+  it("includes the Linear label comparator when a label name is requested", () => {
+    const action = getAction("linear", "list_issues");
+    expect(action).toBeDefined();
+
+    const body = action!.directApi?.mapBody?.({ teamId: "team_mat", labelName: "symphony", first: 25 }) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+
+    expect(body.query).toContain("labels: { name: { eq: $labelName } }");
+    expect(body.variables).toMatchObject({ labelName: "symphony" });
+  });
 });

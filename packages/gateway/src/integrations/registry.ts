@@ -573,16 +573,25 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             const state = stringOrUndefined(p.state);
             const labelName = stringOrUndefined(p.labelName);
             const after = stringOrUndefined(p.after);
+            const labelVariable = labelName ? ", $labelName: String!" : "";
+            const labelFilter = labelName ? "\n                    labels: { name: { eq: $labelName } }" : "";
+            const variables: Record<string, unknown> = {
+              first: cappedPositiveInt(p.first, 50, 100),
+              after: after ?? null,
+              teamId: teamId ?? null,
+              projectId: projectId ?? null,
+              state: state ?? null,
+            };
+            if (labelName) variables.labelName = labelName;
             return linearGraphqlBody(`
-              query MatrixLinearIssues($first: Int!, $after: String, $teamId: String, $projectId: String, $state: String, $labelName: String) {
+              query MatrixLinearIssues($first: Int!, $after: String, $teamId: String, $projectId: String, $state: String${labelVariable}) {
                 issues(
                   first: $first
                   after: $after
                   filter: {
                     team: { id: { eq: $teamId } }
                     project: { id: { eq: $projectId } }
-                    state: { name: { eq: $state } }
-                    labels: { name: { eq: $labelName } }
+                    state: { name: { eq: $state } }${labelFilter}
                   }
                   orderBy: updatedAt
                 ) {
@@ -603,14 +612,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
                   pageInfo { hasNextPage endCursor }
                 }
               }
-            `, {
-              first: cappedPositiveInt(p.first, 50, 100),
-              after: after ?? null,
-              teamId: teamId ?? null,
-              projectId: projectId ?? null,
-              state: state ?? null,
-              labelName: labelName ?? null,
-            });
+            `, variables);
           },
         },
       },
