@@ -143,10 +143,10 @@ function onboardingRecommendationInFlightKey(
         accountId: connection.pipedream_account_id,
       }))
       .sort((a, b) => `${a.service}:${a.accountId}`.localeCompare(`${b.service}:${b.accountId}`)),
-    includedServices: request.includedServices,
-    excludedServices: request.excludedServices,
-    missingServices: request.missingServices,
-    codingAgents: request.codingAgents,
+    includedServices: [...request.includedServices].sort(),
+    excludedServices: [...request.excludedServices].sort(),
+    missingServices: [...request.missingServices].sort(),
+    codingAgents: [...request.codingAgents].sort(),
     maxEmails: request.maxEmails,
   });
 }
@@ -832,6 +832,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
               pipedream,
               externalUserId: externalId,
               accountId: calendar.pipedream_account_id,
+              deadlineMs: calendarBudgetAvailable,
             });
           }
         } catch (err) {
@@ -857,7 +858,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
           timeoutMs: aiTimeoutMs,
         },
       });
-      if (!aiRecommendations) {
+      if (!aiRecommendations && Boolean(recommendationAi?.apiKey)) {
         addWarning("ai_unavailable");
       }
 

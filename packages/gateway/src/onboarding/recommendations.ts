@@ -7,6 +7,7 @@ const GMAIL_DETAIL_CONCURRENCY = 8;
 export const GMAIL_SCAN_DEADLINE_MS = 45_000;
 const GMAIL_DETAIL_REQUEST_RESERVE_MS = 10_000;
 const CALENDAR_EVENT_LIMIT = 50;
+const CALENDAR_FETCH_TIMEOUT_MS = 10_000;
 export const DEFAULT_RECOMMENDATION_MODEL = "gemini-3-flash-preview";
 export const GEMINI_RECOMMENDATION_TIMEOUT_MS = 30_000;
 
@@ -613,6 +614,24 @@ async function mapWithConcurrency<T, R>(
   return results.filter((item): item is R => item !== null);
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function fetchRecentGmailEmailSignals(opts: {
   pipedream: PipedreamConnectClient;
   externalUserId: string;
@@ -674,22 +693,31 @@ export async function fetchUpcomingCalendarSignals(opts: {
   pipedream: PipedreamConnectClient;
   externalUserId: string;
   accountId: string;
+  deadlineMs?: number;
   now?: Date;
 }): Promise<CalendarEventSignal[]> {
+  const timeoutMs = Math.min(opts.deadlineMs ?? CALENDAR_FETCH_TIMEOUT_MS, CALENDAR_FETCH_TIMEOUT_MS);
+  if (timeoutMs <= 0) {
+    throw new Error("Calendar fetch deadline exceeded");
+  }
   const now = opts.now ?? new Date();
   const timeMax = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
-  const response = await opts.pipedream.proxyGet({
-    externalUserId: opts.externalUserId,
-    accountId: opts.accountId,
-    url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-    params: {
-      singleEvents: "true",
-      orderBy: "startTime",
-      timeMin: now.toISOString(),
-      timeMax: timeMax.toISOString(),
-      maxResults: String(CALENDAR_EVENT_LIMIT),
-    },
-  });
+  const response = await withTimeout(
+    opts.pipedream.proxyGet({
+      externalUserId: opts.externalUserId,
+      accountId: opts.accountId,
+      url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      params: {
+        singleEvents: "true",
+        orderBy: "startTime",
+        timeMin: now.toISOString(),
+        timeMax: timeMax.toISOString(),
+        maxResults: String(CALENDAR_EVENT_LIMIT),
+      },
+    }),
+    timeoutMs,
+    "Calendar fetch deadline exceeded",
+  );
   const parsed = CalendarEventsResponseSchema.safeParse(response);
   if (!parsed.success) {
     throw new Error("Calendar events response was malformed");

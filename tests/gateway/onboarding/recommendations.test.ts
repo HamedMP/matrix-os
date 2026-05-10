@@ -11,6 +11,7 @@ import {
   CODING_AGENT_OPTIONS,
   buildPersonalizedOnboardingPlan,
   fetchRecentGmailEmailSignals,
+  fetchUpcomingCalendarSignals,
   generateAiRecommendations,
   type EmailSignal,
 } from "../../../packages/gateway/src/onboarding/recommendations.js";
@@ -410,6 +411,19 @@ describe("personalized onboarding recommendations", () => {
     expect(signals).toHaveLength(1);
   });
 
+  it("bounds calendar fetches by the remaining route deadline", async () => {
+    const pipedream = mockPipedream({
+      proxyGet: vi.fn(() => new Promise(() => {})),
+    });
+
+    await expect(fetchUpcomingCalendarSignals({
+      pipedream,
+      externalUserId: "pd_ext_calendar_deadline",
+      accountId: "pd_acc_calendar",
+      deadlineMs: 20,
+    })).rejects.toThrow("Calendar fetch deadline exceeded");
+  }, 1000);
+
   it("wraps third-party email and calendar fields as untrusted Gemini prompt data", async () => {
     const fetchFn = vi.fn().mockResolvedValue({
       ok: true,
@@ -618,7 +632,7 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     }));
   });
 
-  it("deduplicates concurrent recommendation fan-outs for the same user and request", async () => {
+  it("deduplicates concurrent recommendation fan-outs for the same request regardless of preference order", async () => {
     const deferredMessage = createDeferred<unknown>();
     pipedream.proxyGet = vi.fn(async ({ url }: { url: string }) => {
       if (url.includes("/users/me/messages/")) {
@@ -633,11 +647,28 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     const request = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxEmails: 1000, codingAgents: ["codex"] }),
+      body: JSON.stringify({
+        maxEmails: 1000,
+        includedServices: ["Linear", "Notion"],
+        excludedServices: ["Raycast", "Slack"],
+        missingServices: ["Todoist", "Superhuman"],
+        codingAgents: ["codex", "claude_code"],
+      }),
+    };
+    const reorderedRequest = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        maxEmails: 1000,
+        includedServices: ["Notion", "Linear"],
+        excludedServices: ["Slack", "Raycast"],
+        missingServices: ["Superhuman", "Todoist"],
+        codingAgents: ["claude_code", "codex"],
+      }),
     };
     const first = app.request("/api/integrations/onboarding/recommendations", request);
     await Promise.resolve();
-    const second = app.request("/api/integrations/onboarding/recommendations", request);
+    const second = app.request("/api/integrations/onboarding/recommendations", reorderedRequest);
 
     deferredMessage.resolve({
       id: "msg_todoist",
@@ -662,6 +693,31 @@ describe("POST /api/integrations/onboarding/recommendations", () => {
     );
     expect(gmailListCalls).toHaveLength(1);
     expect(gmailDetailCalls).toHaveLength(1);
+  });
+
+  it("does not warn about AI being unavailable when Gemini is not configured", async () => {
+    const deterministicApp = new Hono();
+    deterministicApp.route("/api/integrations", createIntegrationRoutes({
+      db,
+      pipedream,
+      webhookSecret: "whsec_test",
+      resolveUserId: async () => userId,
+    }));
+
+    const res = await deterministicApp.request("/api/integrations/onboarding/recommendations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxEmails: 1000, codingAgents: ["codex"] }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.warnings).not.toContain("ai_unavailable");
+    expect(data.recommendations).toContainEqual(expect.objectContaining({
+      serviceId: "todoist",
+      category: "connection",
+    }));
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it("rejects excess distinct recommendation fan-outs for one user", async () => {
