@@ -299,7 +299,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
                   key={service.id}
                   type="button"
                   onClick={() => handleConnect(service.id)}
-                  disabled={disabled || isConnecting || isConnected}
+                  disabled={disabled || connecting !== null || isConnected}
                   className="flex min-h-[84px] items-center gap-3 rounded-lg border border-border/70 bg-card/40 px-4 py-3 text-left transition-colors hover:border-foreground/30 hover:bg-card/70 disabled:cursor-default disabled:opacity-80"
                 >
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-foreground text-background">
