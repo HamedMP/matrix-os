@@ -514,6 +514,7 @@ function App() {
           const cards = visibleCards
             .filter((card) => card.columnId === column.id)
             .sort((a, b) => a.order - b.order);
+          const totalCards = columnCardCount(board, column.id);
           const draftValue = columnDrafts[column.id] ?? "";
           return (
             <div
@@ -530,7 +531,7 @@ function App() {
                 <span style={{ background: column.color }} />
                 <div>
                   <h2>{column.title}</h2>
-                  <small>{cards.length} tasks</small>
+                  <small>{cards.length === totalCards ? `${totalCards} tasks` : `${cards.length}/${totalCards} shown`}</small>
                 </div>
               </header>
               <form
