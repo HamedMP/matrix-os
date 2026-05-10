@@ -4,7 +4,7 @@ import {
   normalizeMatrixReleaseTag,
   resolveSystemUpdateState,
   severityBadgeStyle,
-} from "../../shell/src/components/settings/sections/system-update-state.js";
+} from "../../shell/src/components/settings/sections/system-update-state";
 
 describe("SystemSection version helpers", () => {
   it("ignores CLI releases when choosing Matrix OS app releases", () => {

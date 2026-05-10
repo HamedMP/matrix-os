@@ -64,7 +64,7 @@ import {
   isNewer,
   severityBadgeStyle,
   resolveSystemUpdateState,
-} from "./system-update-state.js";
+} from "./system-update-state";
 export { normalizeMatrixReleaseTag, isNewer, severityBadgeStyle, resolveSystemUpdateState };
 
 export function SystemSection() {
