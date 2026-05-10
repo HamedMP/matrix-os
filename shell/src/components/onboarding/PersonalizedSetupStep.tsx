@@ -181,10 +181,18 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
         return;
       }
       const data = await res.json();
-      if (typeof data.url === "string") {
-        const popup = window.open(data.url, "_blank", "width=600,height=700,noopener,noreferrer");
-        if (popup) popup.opener = null;
+      if (typeof data.url !== "string" || data.url.length === 0) {
+        setError("Connection could not start.");
+        setConnecting(null);
+        return;
       }
+      const popup = window.open(data.url, "_blank", "width=600,height=700,noopener,noreferrer");
+      if (!popup) {
+        setError("Connection could not start.");
+        setConnecting(null);
+        return;
+      }
+      popup.opener = null;
 
       if (pollRef.current) clearInterval(pollRef.current);
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);

@@ -356,18 +356,26 @@ function recommendationMatchesExcludedService(
 ): boolean {
   const serviceId = recommendation.serviceId ? ruleForUserService(recommendation.serviceId).id : undefined;
   const recommendationId = slugify(recommendation.id);
-  return excludedServiceIds.some((excludedId) =>
-    serviceId === excludedId ||
-    recommendationId === excludedId ||
-    recommendationId === `connect-${excludedId}` ||
-    recommendationId.startsWith(`connect-${excludedId}-`) ||
-    recommendationId === `${excludedId}-connect` ||
-    recommendationId.startsWith(`${excludedId}-connect-`) ||
-    recommendationId === `replace-${excludedId}` ||
-    recommendationId.startsWith(`replace-${excludedId}-`) ||
-    recommendationId === `${excludedId}-replacement` ||
-    recommendationId.startsWith(`${excludedId}-replacement-`)
-  );
+  const recommendationText = [
+    recommendation.title,
+    recommendation.description,
+    recommendation.matrixReplacement,
+  ].filter(Boolean).join(" ").toLowerCase();
+  return excludedServiceIds.some((excludedId) => {
+    const excludedRule = ruleForUserService(excludedId);
+    const knownRule = SERVICE_RULES.some((rule) => rule.id === excludedRule.id);
+    return serviceId === excludedId ||
+      recommendationId === excludedId ||
+      recommendationId === `connect-${excludedId}` ||
+      recommendationId.startsWith(`connect-${excludedId}-`) ||
+      recommendationId === `${excludedId}-connect` ||
+      recommendationId.startsWith(`${excludedId}-connect-`) ||
+      recommendationId === `replace-${excludedId}` ||
+      recommendationId.startsWith(`replace-${excludedId}-`) ||
+      recommendationId === `${excludedId}-replacement` ||
+      recommendationId.startsWith(`${excludedId}-replacement-`) ||
+      (knownRule && matchesRule(recommendationText, excludedRule));
+  });
 }
 
 function buildRuleRecommendations(
@@ -670,6 +678,12 @@ function sanitizePromptField(value: string | undefined, maxLength: number): stri
   return sanitized.length > maxLength ? sanitized.slice(0, maxLength) : sanitized;
 }
 
+function sanitizePromptList(values: string[], maxLength: number): string[] {
+  return values
+    .map((value) => sanitizePromptField(value, maxLength))
+    .filter((value): value is string => Boolean(value));
+}
+
 function buildGeminiPrompt(input: {
   emails: EmailSignal[];
   calendarEvents: CalendarEventSignal[];
@@ -679,9 +693,9 @@ function buildGeminiPrompt(input: {
   const payload = {
     connectedServices: input.connectedServices,
     codingAgents: input.userPreferences.codingAgents,
-    includedServices: input.userPreferences.includedServices,
-    missingServices: input.userPreferences.missingServices,
-    excludedServices: input.userPreferences.excludedServices,
+    includedServices: sanitizePromptList(input.userPreferences.includedServices, 80),
+    missingServices: sanitizePromptList(input.userPreferences.missingServices, 80),
+    excludedServices: sanitizePromptList(input.userPreferences.excludedServices, 80),
     emailSamples: input.emails.slice(0, 80).map((email) => ({
       id: email.id,
       from: sanitizePromptField(email.from, 160),
