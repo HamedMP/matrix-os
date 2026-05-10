@@ -114,6 +114,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollInFlightRef = useRef(false);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollAttemptRef = useRef(0);
 
   const connectedIds = useMemo(
     () => CONNECT_SERVICES.filter((service) => serviceConnected(connections, service.id)).map((service) => service.id),
@@ -183,6 +184,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
 
   useEffect(() => {
     return () => {
+      pollAttemptRef.current += 1;
       if (pollRef.current) clearInterval(pollRef.current);
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
       pollInFlightRef.current = false;
@@ -190,6 +192,9 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
   }, []);
 
   const handleConnect = useCallback(async (serviceId: string) => {
+    const attemptId = pollAttemptRef.current + 1;
+    pollAttemptRef.current = attemptId;
+    const isCurrentAttempt = () => pollAttemptRef.current === attemptId;
     setConnecting(serviceId);
     setError(null);
     try {
@@ -200,18 +205,21 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
+        if (!isCurrentAttempt()) return;
         setError("Connection could not start.");
         setConnecting(null);
         return;
       }
       const data = await res.json();
       if (typeof data.url !== "string" || data.url.length === 0) {
+        if (!isCurrentAttempt()) return;
         setError("Connection could not start.");
         setConnecting(null);
         return;
       }
       const popup = window.open(data.url, "_blank", "width=600,height=700");
       if (!popup) {
+        if (!isCurrentAttempt()) return;
         setError("Connection could not start.");
         setConnecting(null);
         return;
@@ -226,6 +234,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
         pollInFlightRef.current = true;
         void loadConnections(true)
           .then((next) => {
+            if (!isCurrentAttempt()) return;
             if (serviceConnected(next, serviceId)) {
               setConnecting(null);
               if (pollRef.current) clearInterval(pollRef.current);
@@ -235,10 +244,12 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
             }
           })
           .finally(() => {
+            if (!isCurrentAttempt()) return;
             pollInFlightRef.current = false;
           });
       }, 2000);
       pollTimeoutRef.current = setTimeout(() => {
+        if (!isCurrentAttempt()) return;
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = null;
         pollInFlightRef.current = false;
@@ -246,6 +257,7 @@ export function PersonalizedSetupStep({ disabled, onStartVoice, onStartText }: P
         setConnecting(null);
       }, 120_000);
     } catch (err) {
+      if (!isCurrentAttempt()) return;
       if (shouldLogSetupWarning(err)) {
         console.warn("[onboarding] integration connect failed:", err instanceof Error ? err.message : err);
       }
