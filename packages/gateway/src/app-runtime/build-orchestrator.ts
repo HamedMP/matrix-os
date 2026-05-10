@@ -232,9 +232,11 @@ export class BuildOrchestrator {
         resolve(result);
       };
 
+      let timeoutResolutionStarted = false;
       const resolveTimeout = (code: number | null) => {
+        if (timeoutResolutionStarted || settled) return;
+        timeoutResolutionStarted = true;
         clearTimeout(timer);
-        if (forceKillTimer) clearTimeout(forceKillTimer);
         const output = Buffer.concat(chunks).toString("utf8");
         void writeLog(output).finally(() => {
           resolveOnce({

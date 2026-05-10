@@ -95,10 +95,11 @@ describe("BuildOrchestrator", () => {
     const manifestPath = join(appDir, "matrix.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     const childPidPath = join(tmpDir, "child.pid");
+    const childScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);";
     const script = [
       'const { spawn } = require("node:child_process");',
       'const { writeFileSync } = require("node:fs");',
-      'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+      `const child = spawn(process.execPath, ["-e", ${JSON.stringify(childScript)}], { stdio: "ignore" });`,
       `writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));`,
       "setInterval(() => {}, 1000);",
     ].join(" ");
@@ -113,7 +114,7 @@ describe("BuildOrchestrator", () => {
     }
 
     const childPid = Number(await readFile(childPidPath, "utf8"));
-    await delay(200);
+    await delay(1_200);
     expect(isProcessAlive(childPid)).toBe(false);
   }, 5_000);
 

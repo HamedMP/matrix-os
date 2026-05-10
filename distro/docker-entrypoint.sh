@@ -44,9 +44,10 @@ else
 fi
 
 sync_bundled_directory_skills() {
-  bundled_home="$1"
+  local bundled_home="$1"
   [ -d "$bundled_home/.agents/skills" ] || return 0
   mkdir -p "$MATRIX_HOME/.agents/skills"
+  local src_skill skill_name dst_skill src_hash dst_hash
   for src_skill in "$bundled_home/.agents/skills"/*; do
     [ -d "$src_skill" ] || continue
     [ -f "$src_skill/SKILL.md" ] || continue
