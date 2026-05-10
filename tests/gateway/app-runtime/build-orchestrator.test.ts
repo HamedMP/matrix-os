@@ -75,7 +75,9 @@ describe("BuildOrchestrator", () => {
   it("resolves promptly when a timed-out child ignores SIGTERM", async () => {
     const manifestPath = join(appDir, "matrix.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    manifest.build.command = 'trap "" TERM; sleep 5';
+    const script = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);";
+    manifest.build.install = "node -e \"\"";
+    manifest.build.command = `node -e ${JSON.stringify(script)}`;
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 
     const startedAt = Date.now();

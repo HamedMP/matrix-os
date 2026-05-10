@@ -175,13 +175,10 @@ export class BuildOrchestrator {
       });
 
       const killProcessTree = (signal: NodeJS.Signals) => {
-        if (child.exitCode === null && child.signalCode === null) {
-          if (process.platform === "win32" || !child.pid) {
-            child.kill(signal);
-            return;
-          }
+        if (process.platform !== "win32" && child.pid) {
           try {
             process.kill(-child.pid, signal);
+            return;
           } catch (err: unknown) {
             const code = err instanceof Error && "code" in err
               ? (err as NodeJS.ErrnoException).code
@@ -190,6 +187,9 @@ export class BuildOrchestrator {
               console.warn("[build-orchestrator] failed to kill process group:", err);
             }
           }
+        }
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill(signal);
         }
       };
 
