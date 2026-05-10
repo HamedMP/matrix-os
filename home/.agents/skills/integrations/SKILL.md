@@ -64,6 +64,20 @@ list_available_services()
 
 The catalog comes from Matrix OS, not directly from Pipedream credentials in the coding-agent environment.
 
+### Standalone Claude Code/Codex Fallback
+
+Mirrored Claude Code/Codex skills may run outside the Matrix Agent SDK and may not have the `list_available_services` IPC tool. In that context, read the same catalog through the local gateway API instead of guessing or asking for Pipedream secrets:
+
+```bash
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:4000}"
+curl -fsS --max-time 10 \
+  -H "Authorization: Bearer ${MATRIX_AUTH_TOKEN:-}" \
+  -H "x-platform-user-id: ${MATRIX_CLERK_USER_ID:-}" \
+  "$GATEWAY_URL/api/integrations/available"
+```
+
+Use only Matrix gateway credentials already present in the environment. Do not paste tokens into files, do not commit them, and do not use raw Pipedream OAuth client credentials as a fallback.
+
 ## Available Services
 
 | Service | ID | Actions |

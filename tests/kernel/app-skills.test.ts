@@ -101,6 +101,8 @@ describe("T1440-T1445: AI skills for app building", () => {
       const content = readFileSync(skillPath("integrations"), "utf-8");
 
       expect(content).toContain("list_available_services");
+      expect(content).toContain("/api/integrations/available");
+      expect(content).toContain("GATEWAY_URL");
       expect(content).toContain("list_connected_services");
       expect(content).toContain("connect_service");
       expect(content).toContain("sync_services");

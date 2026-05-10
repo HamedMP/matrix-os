@@ -262,7 +262,7 @@ export class BuildOrchestrator {
           resolveOnce({
             ok: false,
             error: new BuildError(
-              "install_failed",
+              stage === "install" ? "install_failed" : "build_failed",
               stage,
               null,
               stderrTail || err.message,
