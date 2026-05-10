@@ -147,6 +147,7 @@ describe("Telegram voice note handling", () => {
       "https://api.telegram.org/file/bottest-token-123/voice/file_42.oga",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    await vi.waitFor(() => expect(stt.transcribe).toHaveBeenCalled());
   });
 
   it("dispatches transcript text as message content", async () => {

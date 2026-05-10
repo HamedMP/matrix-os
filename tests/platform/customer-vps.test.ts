@@ -724,7 +724,7 @@ describe('platform/customer-vps', () => {
     const page = readFileSync('www/content/docs/deployment/vps-per-user.mdx', 'utf8');
 
     expect(meta.pages).toContain('vps-per-user');
-    expect(page).toContain('## Phase 1 Scope');
+    expect(page).toContain('## Production Scope');
     expect(page).toContain('## Backup Retention');
     expect(page).toContain('## Manual Recovery');
     expect(page).toContain('## Rollback');

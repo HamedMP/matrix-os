@@ -159,6 +159,7 @@ export class BuildOrchestrator {
     return new Promise<BuildResult>((resolve) => {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), timeoutMs);
+      let settled = false;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
 
@@ -191,16 +192,26 @@ export class BuildOrchestrator {
       child.stdout?.on("data", appendChunk);
       child.stderr?.on("data", appendChunk);
 
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        const isAbort = ac.signal.aborted;
-        const stderrTail = Buffer.concat(chunks).toString("utf8").slice(-2048);
-        // Log writes are best-effort — the build has already failed and we
-        // surface that result below. Warn if the log write itself errors.
-        writeFile(logPath, Buffer.concat(chunks).toString("utf8").slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
+      const writeBuildLog = async (output: string): Promise<void> => {
+        try {
+          await writeFile(logPath, output.slice(0, MAX_LOG_SIZE));
+        } catch (writeErr: unknown) {
           console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
-        });
-        resolve({
+        }
+      };
+
+      const finish = (result: BuildResult, output: string): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        void writeBuildLog(output).finally(() => resolve(result));
+      };
+
+      child.on("error", (err) => {
+        const isAbort = ac.signal.aborted;
+        const output = Buffer.concat(chunks).toString("utf8");
+        const stderrTail = output.slice(-2048);
+        finish({
           ok: false,
           error: new BuildError(
             isAbort ? "timeout" : "install_failed",
@@ -208,22 +219,15 @@ export class BuildOrchestrator {
             null,
             isAbort ? `Build timed out after ${timeoutMs}ms` : stderrTail,
           ),
-        });
+        }, output);
       });
 
       child.on("close", (code) => {
-        clearTimeout(timer);
         const output = Buffer.concat(chunks).toString("utf8");
         const stderrTail = output.slice(-2048);
 
-        // Write log (truncated to MAX_LOG_SIZE). Best-effort: a missing log
-        // is recoverable; we still resolve the build result below.
-        writeFile(logPath, output.slice(0, MAX_LOG_SIZE)).catch((writeErr) => {
-          console.warn(`[build-orchestrator] log write to ${logPath} failed:`, writeErr);
-        });
-
         if (code !== 0) {
-          resolve({
+          finish({
             ok: false,
             error: new BuildError(
               stage === "install" ? "install_failed" : "build_failed",
@@ -231,11 +235,14 @@ export class BuildOrchestrator {
               code,
               stderrTail,
             ),
-          });
+          }, output);
           return;
         }
 
-        resolve({ ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } });
+        finish(
+          { ok: true, stamp: { sourceHash: "", lockfileHash: "", builtAt: 0, exitCode: 0 } },
+          output,
+        );
       });
     });
   }

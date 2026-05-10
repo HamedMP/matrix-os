@@ -82,24 +82,35 @@ export interface HomeMirrorConfig {
   extraIgnoreDirs?: Iterable<string>;
   /** Skip local auto-sync for files larger than this many bytes. */
   maxPushBytes?: number;
+  /** Disable chokidar local watching while keeping explicit push/delete methods available. Used by tests and one-shot sync flows. */
+  watchLocalChanges?: boolean;
 }
 
 export interface HomeMirror {
   start(): Promise<void>;
   stop(): Promise<void>;
+  pushLocalFile(relPath: string): Promise<void>;
+  pushLocalDelete(relPath: string): Promise<void>;
 }
 
-function createSerialQueue(
-  onError: (err: unknown) => void,
-): <T>(fn: () => Promise<T>) => Promise<T> {
+function createSerialQueue(onError: (err: unknown) => void): {
+  enqueue: <T>(fn: () => Promise<T>) => Promise<T>;
+  drain: () => Promise<void>;
+} {
   let chain: Promise<unknown> = Promise.resolve();
-  return <T>(fn: () => Promise<T>): Promise<T> => {
+  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
     const next = chain.then(fn, fn);
     chain = next.catch((err: unknown) => {
       onError(err);
       return undefined;
     });
     return next;
+  };
+  return {
+    enqueue,
+    async drain(): Promise<void> {
+      await chain;
+    },
   };
 }
 
@@ -301,12 +312,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   // Serial commit chain: home-mirror updates manifest in-process, but
   // multiple writes still need to read-modify-write the version counter.
-  const enqueue = createSerialQueue((err) => {
+  const queue = createSerialQueue((err) => {
     log.error(
       "serial queue task failed:",
       err instanceof Error ? err.message : String(err),
     );
   });
+  const enqueue = queue.enqueue;
 
   // Suppress watcher events for paths we just downloaded ourselves.
   // chokidar will emit `add`/`change` for files we wrote during initial
@@ -889,6 +901,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      if (config.watchLocalChanges === false) {
+        log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
+        return;
+      }
+
       watcher = watch(config.homeRoot, {
         persistent: true,
         ignoreInitial: true,
@@ -966,6 +983,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     async stop(): Promise<void> {
       stopRequested = true;
       await releaseResources();
+      await queue.drain();
+    },
+
+    async pushLocalFile(relPath: string): Promise<void> {
+      await pushFile(relPath);
+    },
+
+    async pushLocalDelete(relPath: string): Promise<void> {
+      await pushDelete(relPath);
     },
   };
 }

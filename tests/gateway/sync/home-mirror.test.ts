@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHomeMirror } from "../../../packages/gateway/src/sync/home-mirror.js";
+import { createHomeMirror as createHomeMirrorImpl } from "../../../packages/gateway/src/sync/home-mirror.js";
 import {
   createPeerRegistry,
   type PeerRegistry,
@@ -98,16 +98,39 @@ describe("createHomeMirror", () => {
   let r2: ReturnType<typeof createFakeR2>;
   let db: ManifestDb;
   let registry: PeerRegistry;
+  let activeMirrors: Array<ReturnType<typeof createHomeMirrorImpl>>;
+
+  function createHomeMirror(
+    ...args: Parameters<typeof createHomeMirrorImpl>
+  ): ReturnType<typeof createHomeMirrorImpl> {
+    const mirror = createHomeMirrorImpl(...args);
+    activeMirrors.push(mirror);
+    return mirror;
+  }
 
   beforeEach(async () => {
     tmpRoot = await mkdtemp(join(tmpdir(), "home-mirror-test-"));
     r2 = createFakeR2();
     db = createFakeManifestDb();
     registry = createPeerRegistry();
+    activeMirrors = [];
   });
 
   afterEach(async () => {
+    let stopError: unknown;
+    for (const mirror of [...activeMirrors].reverse()) {
+      try {
+        await mirror.stop();
+      } catch (err: unknown) {
+        stopError ??= err;
+      }
+    }
+    activeMirrors = [];
     await rm(tmpRoot, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    if (stopError) {
+      throw stopError;
+    }
   });
 
   describe("subscribe-to-broadcasts", () => {
@@ -834,9 +857,11 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("skips local auto-push for files over the configured max size", async () => {
+    it("skips local startup push for files over the configured max size", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const putSpy = vi.spyOn(r2, "putObject");
+      await writeFile(join(tmpRoot, "too-big.txt"), "12345");
+
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -849,13 +874,9 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      await writeFile(join(tmpRoot, "too-big.txt"), "12345");
-      await waitFor(() =>
-        logger.error.mock.calls.some(
-          ([message]: [string]) => message.includes("skipping push for too-big.txt"),
-        ),
-      );
-
+      expect(logger.error.mock.calls.some(
+        ([message]: [string]) => message.includes("skipping push for too-big.txt"),
+      )).toBe(true);
       expect(putSpy).not.toHaveBeenCalled();
       expect(r2.store.has("matrixos-sync/alice/files/too-big.txt")).toBe(false);
 
@@ -1030,15 +1051,12 @@ describe("createHomeMirror", () => {
         peerId: "gateway-alice",
         peerRegistry: registry,
         logger,
+        watchLocalChanges: false,
       });
       await mirror.start();
 
       await writeFile(join(tmpRoot, "orphan.txt"), "hello");
-      await waitFor(() =>
-        logger.error.mock.calls.some(
-          ([message]: [string]) => message.includes("push failed for orphan.txt:"),
-        ),
-      );
+      await expect(mirror.pushLocalFile("orphan.txt")).rejects.toThrow("manifest write failed");
 
       expect(r2.store.has("matrixos-sync/alice/files/orphan.txt")).toBe(false);
 
@@ -1133,16 +1151,18 @@ describe("createHomeMirror", () => {
         peerId: "gateway-alice",
         peerRegistry: registry,
         logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
       });
       await mirror.start();
 
       const filePath = join(tmpRoot, "race.txt");
       await writeFile(filePath, "old bytes");
+      const pushPromise = mirror.pushLocalFile("race.txt");
       await waitFor(() => getMetaCalls > 1);
       await writeFile(filePath, "new bytes that should win");
       gate.resolve();
 
-      await waitFor(() => r2.store.has("matrixos-sync/alice/manifest.json"));
+      await pushPromise;
 
       const uploaded = r2.store.get("matrixos-sync/alice/files/race.txt");
       const manifestBuf = r2.store.get("matrixos-sync/alice/manifest.json");
@@ -1207,10 +1227,10 @@ describe("createHomeMirror", () => {
 
       const filePath = join(tmpRoot, "locked.txt");
       await writeFile(filePath, "hello");
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/locked.txt"));
+      await mirror.pushLocalFile("locked.txt");
 
       await unlink(filePath);
-      await waitFor(() => deleteSpy.mock.calls.length > 0);
+      await mirror.pushLocalDelete("locked.txt");
 
       expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
       expect(getMetaExecutors).toEqual([lockedExecutor, lockedExecutor]);
