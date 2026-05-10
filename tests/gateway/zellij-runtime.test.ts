@@ -10,7 +10,7 @@ describe("zellij-runtime", () => {
   let homePath: string;
   const launch: AgentLaunchSpec = {
     command: "codex",
-    args: ["--sandbox", "workspace-write", "fix tests; rm -rf /"],
+    args: ["--sandbox", "workspace-write", "--", "fix tests; rm -rf /"],
     cwd: "/home/matrixos/home/projects/repo/worktrees/wt_123",
     env: {},
   };
@@ -32,7 +32,7 @@ describe("zellij-runtime", () => {
     expect(result.layoutPath).toBe(join(homePath, "system", "zellij", "layouts", "sess_abc123.kdl"));
     const layout = await readFile(result.layoutPath, "utf-8");
     expect(layout).toContain('command "codex"');
-    expect(layout).toContain('args "--sandbox" "workspace-write" "fix tests; rm -rf /"');
+    expect(layout).toContain('args "--sandbox" "workspace-write" "--" "fix tests; rm -rf /"');
     expect(layout).toContain('cwd "/home/matrixos/home/projects/repo/worktrees/wt_123"');
     expect(layout).not.toContain("sh -c");
   });
@@ -62,6 +62,58 @@ describe("zellij-runtime", () => {
       ["kill-session", "matrix-sess_abc123"],
       expect.any(Object),
     );
+  });
+
+  it("escapes newlines, tabs, and control characters in KDL layout strings", async () => {
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn() });
+    const launchWithControlChars: AgentLaunchSpec = {
+      command: "claude",
+      args: ["--", "line1\nline2\ttabbed\r\x00null\x07bel"],
+      cwd: "/home/matrixos/home/projects/repo",
+      env: {},
+    };
+
+    const result = await runtime.generateLayout({ sessionId: "sess_esc1", launch: launchWithControlChars });
+    const layout = await readFile(result.layoutPath, "utf-8");
+
+    expect(layout).toContain("\\n");
+    expect(layout).toContain("\\t");
+    expect(layout).toContain("\\r");
+    expect(layout).not.toContain("\x00");
+    expect(layout).not.toContain("\x07");
+    expect(layout).not.toMatch(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/);
+  });
+
+  it("preserves KDL string integrity when prompt contains quote-escape sequences", async () => {
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn() });
+    const launchWithQuotes: AgentLaunchSpec = {
+      command: "claude",
+      args: ["--", 'say "hello" and use \\backslash'],
+      cwd: "/home/matrixos/home/projects/repo",
+      env: {},
+    };
+
+    const result = await runtime.generateLayout({ sessionId: "sess_esc2", launch: launchWithQuotes });
+    const layout = await readFile(result.layoutPath, "utf-8");
+
+    expect(layout).toContain('\\"hello\\"');
+    expect(layout).toContain("\\\\backslash");
+  });
+
+  it("correctly escapes backslash followed by newline without collapsing sequences", async () => {
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn() });
+    const launchMixed: AgentLaunchSpec = {
+      command: "claude",
+      args: ["--", "before\\\nafter"],
+      cwd: "/home/matrixos/home/projects/repo",
+      env: {},
+    };
+
+    const result = await runtime.generateLayout({ sessionId: "sess_esc3", launch: launchMixed });
+    const layout = await readFile(result.layoutPath, "utf-8");
+
+    expect(layout).toContain("\\\\\\n");
+    expect(layout).not.toContain("\n" + "after");
   });
 
   it("returns degraded health when zellij is unavailable without exposing raw errors", async () => {
